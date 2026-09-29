@@ -118,7 +118,9 @@ export async function normalizeMacApplicationOwnershipV1(client) {
   }
 }
 
-export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin" }) {
+export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin", teardown: teardownOptions = {} }) {
+  if (teardownOptions === null || typeof teardownOptions !== "object" || Array.isArray(teardownOptions))
+    throw new Error("database_backup_verification_arguments_refused");
   if (!Number.isInteger(port) || port < 15620 || port > 15649 || typeof pgBin !== "string" || !isAbsolute(pgBin))
     throw new Error("database_backup_verification_arguments_refused");
   const bound = await readBoundBackup(backup);
@@ -133,8 +135,29 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
   // `finally` removed the data directory unconditionally — so a postmaster that
   // refused to stop survived with its 56-byte SysV shared-memory segment held
   // and nothing left to stop it with. This machine has 32 of those in total.
+  //
+  // `teardownOptions` is forwarded to the shared teardown, and ONLY the two
+  // observation seams the tests need: `pgCtl`, which replaces the COMMAND while
+  // the ladder and every liveness check still run, and `degradedLogger`, which
+  // changes where the degraded line is written. It exists for one reason: a
+  // `pg_ctl` stop that does not confirm inside its window is reachable only when
+  // a real postmaster is slow, so a test that has to observe what this function
+  // does with a degraded teardown has no other way in.
+  //
+  // An ALLOWLIST, not a spread, and deliberately so. Spreading the caller's
+  // object would let `dataDirectory`, `runDirectory`, `socketDirectory`, `port`,
+  // `pgBin` or `removeDirectories` be overridden — a caller could point the
+  // teardown at an empty directory and the verifier would report `verified: true`
+  // for a cluster it never stopped, leaving a live postmaster holding its SysV
+  // segment. That is precisely the leak this function exists to prevent, so every
+  // option that decides WHICH cluster is stopped is set here and cannot be
+  // replaced. A test that needs another one gets a new explicit entry, not a
+  // spread. The CLI below passes nothing at all.
+  const { pgCtl: pgCtlSeam, degradedLogger } = teardownOptions;
   const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: root,
-    socketDirectory: socket, port, pgBin });
+    socketDirectory: socket, port, pgBin,
+    ...(pgCtlSeam === undefined ? {} : { pgCtl: pgCtlSeam }),
+    ...(degradedLogger === undefined ? {} : { degradedLogger }) });
   let bodyFailure;
   try {
     await mkdir(socket, { mode: 0o700, recursive: true });
@@ -181,8 +204,23 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
     // keeps the data directory in that case so an operator can stop it by hand.
     // Its own failure is attached to the body's as a `cause` rather than raised
     // over the top of it, so a caller still has both.
+    //
+    // `stop()` throws for exactly two things: the postmaster SURVIVED, or the
+    // ladder reached `SIGKILL` and leaked its segment. A teardown that ended
+    // with the postmaster gone without reaching SIGKILL does not throw — it
+    // reports through `degraded()` and stderr — and that distinction is the
+    // point. It used to throw here for any non-first ladder step, so a `fast`
+    // stop that missed its window after the restore and an `immediate` that did
+    // not, printed `database backup verification FAIL` and set exit code 1 for
+    // a backup whose digests, ledger, ownership and grants had all matched.
+    // docs/BACKUP_AND_RESTORE.md:41-44 reserves `FAIL` for a mismatch and tells
+    // the operator to investigate a recovery incident, so a slow shutdown must
+    // not be able to produce that verdict.
     let teardownFailure;
     try { await teardown.stop(); } catch (stopError) { teardownFailure = stopError; }
+    if (teardown.degraded().length > 0)
+      console.error(`database backup verification: teardown degraded on port ${port}:`
+        + ` ${teardown.degraded().join(",")}`);
     if (teardownFailure !== undefined) {
       if (bodyFailure === undefined) throw teardownFailure;
       throw new AggregateError([bodyFailure, teardownFailure],

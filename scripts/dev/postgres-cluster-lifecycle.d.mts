@@ -98,6 +98,16 @@ export interface ClusterTeardownOptions {
    */
   readonly pgCtl?: ((args: readonly string[]) => void) | undefined;
   /**
+   * Where a degraded teardown is reported. Default: one line on stderr.
+   *
+   * A teardown that ends with the postmaster confirmed gone and did not reach
+   * `SIGKILL` is DEGRADED, not failed: the reasons are recorded and reported here
+   * rather than thrown, so a caller does not report a successful run as a failed
+   * one. A teardown that reached `SIGKILL`, or that left the postmaster running,
+   * still throws.
+   */
+  readonly degradedLogger?: ((line: string) => void) | undefined;
+  /**
    * How long the ladder waits for the postmaster to exit after a signal, in ms.
    * Default 30 s. Overridable so a test that drives a deliberately wedged
    * process is not made to wait 30 s per step.
@@ -110,6 +120,16 @@ export interface ClusterTeardownOptions {
 export interface ClusterTeardown {
   /** The recorded postmaster pid, once one has been published. */
   postmasterPid(): number | undefined;
+  /**
+   * Why the teardown degraded, in the order the reasons were recorded. Empty
+   * when it went cleanly, and for a teardown that has not run.
+   *
+   * A confirmed-gone, non-forced teardown reports here and does NOT throw: a
+   * `fast` stop that missed its window followed by an `immediate` that worked is
+   * a slow shutdown, not a leak, and throwing turned a verified backup into a
+   * `FAIL`. A teardown that reached `SIGKILL` is in this list and still throws.
+   */
+  degraded(): readonly string[];
   /**
    * Read the postmaster pid and remember it. A start site calls this the moment
    * `pg_ctl start` returns, so the teardown has a pid even when the caller's own

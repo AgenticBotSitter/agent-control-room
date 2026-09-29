@@ -30,7 +30,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -516,25 +516,44 @@ test("a released teardown is a no-op that leaves its cluster alone", async () =>
   await rm(scratch, { recursive: true, force: true });
 });
 
-test("a teardown that captured a pid, had it reaped, and whose pg_ctl refused, is reported as degraded",
+test("a teardown whose postmaster is confirmed gone reports degraded, and does NOT throw",
   async t => {
-    // The branch the mutations found: a postmaster that is GONE, whose every
-    // `pg_ctl stop` nevertheless failed. The ladder ends at the first step that
-    // finds it gone, and the cooperative refusal is still recorded — because a
-    // `pg_ctl` that reports failure and a postmaster that has stopped are
-    // different facts, and only the second one is a clean teardown.
+    // Review finding 1 (PR #438). A postmaster that is GONE, whose every
+    // `pg_ctl stop` nevertheless failed. The postmaster being gone is what
+    // releases its 56-byte SysV segment, so a teardown that ends with it gone
+    // leaked nothing.
+    //
+    // It used to THROW `disposable_postgres_stop_degraded` here, and
+    // `scripts/ops/verify-database-backup.mjs` re-raised that out of its
+    // `finally` when the body had already succeeded — so a backup whose digests,
+    // ledger, ownership and grants all matched printed `FAIL` and exited 1,
+    // which is the "investigate this as a recovery incident" response
+    // docs/BACKUP_AND_RESTORE.md:41-44 reserves for a mismatch. Only a teardown
+    // that was actually FORCED, or that left the postmaster running, may do
+    // that.
+    //
+    // The reason is not swallowed: it is on stderr, and on `degraded()`.
     const scratch = await mkdtemp(join(tmpdir(), "shm-degraded-"));
     const data = join(scratch, "run", "data");
     await mkdir(data, { recursive: true });
+    const logged = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = chunk => { logged.push(String(chunk)); return true; };
+    t.after(() => { process.stderr.write = originalWrite; });
     const pgCtl = refusingPgCtl();
+    // No `degradedLogger`: the DEFAULT sink is what an operator sees, so the
+    // default is what is asserted.
     const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: join(scratch, "run"),
       socketDirectory: join(scratch, "socket"), port: 56203, pgCtl: pgCtl.exec });
 
     // No postmaster.pid and a `pg_ctl status` that reports no server: both
-    // agree, so the shutdown IS confirmed — but the stop itself failed, and
-    // that has to surface rather than being swallowed.
-    await assert.rejects(teardown.stop(), /disposable_postgres_stop_degraded/,
-      "a failed cooperative stop must be reported even when the postmaster is gone");
+    // agree, so the shutdown IS confirmed.
+    await teardown.stop();
+    assert.equal(teardown.degraded().length, 1,
+      "the failed stop must still be reported, just not by throwing");
+    assert.match(teardown.degraded()[0], /pg_ctl_stop_failed/u);
+    assert.match(logged.join("\n"), /pg_ctl_stop_failed/u,
+      "an operator running this by hand must still see WHY the stop degraded");
     assert.equal(pgCtl.calls.filter(call => call.includes("status")).length, 1,
       "with no captured pid, pg_ctl status is the only evidence a shutdown happened, so it is asked for");
     // The directory IS removed here, and that is right: the postmaster is
@@ -542,7 +561,7 @@ test("a teardown that captured a pid, had it reaped, and whose pg_ctl refused, i
     // evidence. The directories are kept only when a postmaster SURVIVED, which
     // is the case the operator has to act on.
     assert.equal(existsSync(data), false,
-      "a confirmed shutdown removes the data directory even when the stop itself was reported as failed");
+      "a confirmed shutdown removes the data directory");
     await rm(scratch, { recursive: true, force: true });
   });
 
@@ -580,6 +599,135 @@ test("a teardown that reaches SIGKILL reports it, because SIGKILL is the one pat
       /disposable_postgres_stop_degraded:[^:]*:.*postmaster_required_sigkill_which_leaks_its_shared_memory_segment/,
       "a forced teardown cost the machine a 56-byte segment and must be reported as a failure");
     assert.equal(pidAlive(sleeper), false, "the ladder's last step must have actually ended the process");
+    await rm(scratch, { recursive: true, force: true });
+  });
+
+test("a REAL postmaster stopped cooperatively-then-SIGQUIT resolves, and leaks no segment",
+  needsPgOrFail(), async t => {
+    // Review finding 1 (PR #438), against a real PostgreSQL 17 postmaster.
+    //
+    // The reported scenario: `pg_ctl -m fast` does not confirm inside its window
+    // (a slow checkpoint after the write-heavy restore this module is used to
+    // clean up), and the ladder falls through to `immediate`, or here to
+    // `SIGQUIT`, which does stop the postmaster. `forced` is false, so nothing
+    // leaked. The old code still threw `disposable_postgres_stop_degraded` on the
+    // recorded `fast` failure, and `scripts/ops/verify-database-backup.mjs` turned
+    // that into a `FAIL` for a backup that had verified.
+    //
+    // Driven through the real production composition — a real postmaster, the
+    // real ladder, the real teardown, the real `ipcs` — with only the `pg_ctl`
+    // COMMAND replaced, which is the seam the module already documents. The
+    // refusal is a real shutdown's shape: a `fast` stop that has not finished
+    // reports failure while the postmaster is still up.
+    const scratch = await mkdtemp(join(tmpdir(), "shm-fasttimeout-"));
+    const run = join(scratch, "run"), data = join(run, "data"), socket = join(scratch, "socket");
+    await mkdir(socket, { recursive: true, mode: 0o700 });
+    const port = takePort();
+    const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: run,
+      socketDirectory: socket, port, pgBin: PG_BIN,
+      pgCtl: args => {
+        // The stop requests refuse, as they do while a real `fast` shutdown is
+        // still finishing. `pg_ctl status` and the started-cluster answers are
+        // the real thing, so only the STOP is stubbed.
+        if (args.includes("stop")) throw new Error("pg_ctl: server does not take a fast shutdown request");
+        return execFileSync(join(PG_BIN, "pg_ctl"), args, { encoding: "utf8", timeout: 90_000 });
+      } });
+    t.after(async () => {
+      if (pidAlive(teardown.postmasterPid() ?? -1)) {
+        try { await exec(join(PG_BIN, "pg_ctl"), ["-D", data, "-m", "immediate", "-w", "-t", "20", "stop"], { timeout: 30_000 }); }
+        catch { /* reported by the assertions below */ }
+      }
+      await rm(scratch, { recursive: true, force: true });
+    });
+
+    // `LC_ALL` is not optional: without a valid locale PostgreSQL aborts
+    // startup with "postmaster became multithreaded during startup", which reads
+    // as a port or permission problem and sends you looking in the wrong place.
+    const env = { PATH: "/usr/bin:/bin", LC_ALL: "C" };
+    await exec(join(PG_BIN, "initdb"), ["-D", data, "-U", "postgres", "--auth-local=trust",
+      "--auth-host=reject", "--no-locale", "--encoding=UTF8"], { timeout: 120_000, env });
+    await exec(join(PG_BIN, "pg_ctl"), ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "60", "-o",
+      `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`,
+      "start"], { timeout: 120_000, env });
+    const postmasterPid = await teardown.capturePostmasterPid();
+    assert.ok(postmasterPid, "the cluster must be up before anything is torn down");
+    assert.equal(pidAlive(postmasterPid), true);
+
+    const logged = [];
+    // The DEFAULT sink is asserted here, not an injected one: this is the line an
+    // operator sees when they run the verifier or a lane by hand, so proving that
+    // the default path writes it is the claim that matters. `process.stderr.write`
+    // is what the module uses, and the test runner's own TAP output goes to stdout,
+    // so capturing it here does not swallow the run's report.
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = chunk => { logged.push(String(chunk)); return true; };
+    t.after(() => { process.stderr.write = originalWrite; });
+    // The whole assertion of the fix: this RESOLVES. A postmaster that is gone
+    // and leaked nothing did not turn a verified backup into a FAIL.
+    await teardown.stop();
+    assert.equal(pidAlive(postmasterPid), false, "the ladder must actually have stopped the postmaster");
+    await assertNoSegmentFrom(postmasterPid, "fast-timeout then SIGQUIT");
+    assert.ok(teardown.degraded().length >= 1,
+      "the refused `fast` step must still be reported as the reason it degraded");
+    assert.ok(teardown.degraded().some(reason => /pg_ctl_stop_fast_failed/u.test(reason)),
+      `the degraded reason must name the refused step: ${teardown.degraded().join(", ")}`);
+    assert.ok(teardown.degraded().every(reason => !/postmaster_required_sigkill/u.test(reason)),
+      "a postmaster that stopped on SIGQUIT did not require SIGKILL");
+    assert.match(logged.join(""), /disposable_postgres_stop_degraded/u,
+      "the degraded teardown is logged on stderr by default, not silently swallowed");
+  });
+
+test("a teardown that reaches SIGKILL against a REAL wedged process still throws",
+  needsPgOrFail(), async t => {
+    // The other half of the pair, and the reason the fix is not "never throw".
+    //
+    // A real PostgreSQL postmaster cannot be made to ignore SIGQUIT — the signal
+    // handler is installed by `InitPostgresDeathWatchHandle` and cannot be
+    // replaced — so a real postmaster always stops at the ladder's third step.
+    // SIGKILL is therefore reachable only from a process that genuinely traps
+    // SIGQUIT, which is what this fixture is: a real process this test started
+    // and recorded, with `SIGQUIT` set to `IGNORE` before it announces itself
+    // ready. The module's own LOST-EXIT-PATH reasoning (`cooperativeStopSync` and
+    // the `exit` hook) is defended the same way, and the file already uses this
+    // exact fixture for the `pgCtl`-seam variant above.
+    //
+    // What makes it a GUARD and not a restatement: the neighbouring test proves
+    // the same ladder RESOLVES when the postmaster stops, so a mutation that
+    // stopped the throw from depending on `ladder.forced` fails this one and
+    // passes that one. Neither direction survives alone.
+    const scratch = await mkdtemp(join(tmpdir(), "shm-forced-real-"));
+    const data = join(scratch, "run", "data");
+    await mkdir(data, { recursive: true });
+    const child = spawn("/usr/bin/perl",
+      ["-e", '$SIG{QUIT} = "IGNORE"; $| = 1; print "ready\\n"; sleep 30'],
+      { stdio: ["ignore", "pipe", "ignore"], detached: true });
+    const wedgedPid = child.pid;
+    t.after(() => { try { process.kill(wedgedPid, "SIGKILL"); } catch { /* the ladder ended it */ } });
+    // Readiness is the fixture's own announcement, not a sleep: a default
+    // disposition would make SIGQUIT fatal and the test would then be testing
+    // the wrong branch.
+    await new Promise((resolveReady, reject) => {
+      child.stdout.once("data", resolveReady);
+      child.once("error", reject);
+      setTimeout(() => reject(new Error("the wedged process never became ready")), 10_000);
+    });
+    await writeFile(join(data, "postmaster.pid"), `${wedgedPid}\n`, "utf8");
+    const logged = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = chunk => { logged.push(String(chunk)); return true; };
+    t.after(() => { process.stderr.write = originalWrite; });
+    const pgCtl = refusingPgCtl();
+    const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: join(scratch, "run"),
+      socketDirectory: join(scratch, "socket"), port: 56204, pgBin: PG_BIN, pgCtl: pgCtl.exec,
+      graceMs: 1_000, tickMs: 50 });
+
+    await assert.rejects(teardown.stop(),
+      /disposable_postgres_stop_degraded:[^:]*:.*postmaster_required_sigkill_which_leaks_its_shared_memory_segment/u,
+      "a teardown that reached SIGKILL leaked a segment and must still be a failure");
+    assert.equal(pidAlive(wedgedPid), false, "the ladder's last step must have actually ended the process");
+    assert.ok(teardown.degraded().some(reason => /postmaster_required_sigkill/u.test(reason)),
+      "the leak itself must be the reported reason, not a cooperative step");
+    assert.match(logged.join("\n"), /disposable_postgres_stop_degraded/u);
     await rm(scratch, { recursive: true, force: true });
   });
 

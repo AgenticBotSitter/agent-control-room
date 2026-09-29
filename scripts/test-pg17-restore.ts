@@ -152,7 +152,14 @@ try {
     catch (error) { teardownFailure = error; }
   }
   if (!started || stopped) await rm(run, { recursive: true, force: true });
-  console.log(JSON.stringify({ cleanup: !started || stopped }));
+  console.log(JSON.stringify({ cleanup: !started || stopped,
+    // A teardown that stopped the postmaster without reaching SIGKILL did not
+    // throw, and did not leak: a `fast` stop that missed its window followed by an
+    // `immediate` that worked is a slow shutdown, not a defect. It is reported
+    // here, and on stderr, rather than turned into a failed run — this script's
+    // JSON is the evidence the operator keeps, and marking a completed restore
+    // failed on a timing artefact misreports it.
+    ...(teardown.degraded().length > 0 ? { teardownDegraded: teardown.degraded() } : {}) }));
   if (teardownFailure !== undefined) {
     // Rethrown with `cause` set rather than raised bare, because a `throw` from
     // a `finally` REPLACES the body's error: raising it plain would make a

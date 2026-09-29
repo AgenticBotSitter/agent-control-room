@@ -243,7 +243,7 @@ try {
     // The shared ladder, then the directory removal. The old code reported
     // `cleanup: true` from a flag it set itself, so a postmaster that refused to
     // stop was reported as a clean teardown while still holding its 56-byte SysV
-    // segment. A failure here now throws, and a throw from a `finally` REPLACES
+    // segment. A failure here still throws, and a throw from a `finally` REPLACES
     // the body's error — so the body's failure is reported alongside the
     // teardown failure rather than lost behind it.
     let teardownFailure: unknown;
@@ -252,7 +252,14 @@ try {
       catch (error) { teardownFailure = error; }
     }
     if (!attempted || stopped) await rm(run, { recursive: true });
-    console.log(JSON.stringify({ cleanup: !attempted || stopped }));
+    console.log(JSON.stringify({ cleanup: !attempted || stopped,
+      // A teardown that stopped the postmaster without reaching SIGKILL did not
+      // throw, and did not leak: a `fast` stop that missed its window followed by
+      // an `immediate` that worked is a slow shutdown, not a defect. It is
+      // reported here, and on stderr, rather than turned into a failed run — this
+      // script's JSON is the evidence the operator keeps, and marking a completed
+      // run failed on a timing artefact misreports it.
+      ...(teardown.degraded().length > 0 ? { teardownDegraded: teardown.degraded() } : {}) }));
     if (teardownFailure !== undefined) {
       // Rethrown with `cause` set rather than raised bare, because a `throw`
       // from a `finally` REPLACES the body's error: raising it plain would make

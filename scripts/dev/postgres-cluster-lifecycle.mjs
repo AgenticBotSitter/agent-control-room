@@ -146,6 +146,17 @@ export function createClusterTeardown(options) {
   let postmasterPid;
   /** Recorded so a failure names the pid, the data directory, and the port. */
   const failures = [];
+  /**
+   * Where a degraded teardown is reported.
+   *
+   * stderr by default, because that is where an operator running
+   * `scripts/ops/verify-database-backup.mjs` or a test lane by hand is already
+   * looking, and the line has to be visible without a caller opting in — a
+   * swallowed reason is how a postmaster that refused to stop came to be
+   * reported as a clean teardown once already. Overridable so a test can read
+   * the line instead of letting it interleave with the runner's own output.
+   */
+  const logDegraded = options.degradedLogger ?? (line => { process.stderr.write(`${line}\n`); });
 
   const rememberPid = async () => {
     postmasterPid ??= await readPostmasterPid(dataDirectory);
@@ -217,11 +228,23 @@ export function createClusterTeardown(options) {
             : `${step.signal ?? "signal"}_did_not_stop_the_postmaster`);
         }
       }
+      // A failure, not a detail: a postmaster that refused every cooperative
+      // shutdown had to be SIGKILLed, and that SIGKILL is the only path that
+      // leaves its 56-byte SysV segment behind with a dead creator. Reporting
+      // a clean teardown here would hide both.
+      //
+      // This is the ONLY teardown failure the LADDER branch may produce: the
+      // no-captured-pid branch below throws `disposable_postgres_shutdown_unconfirmed`. A ladder that ended with the postmaster gone and did not reach
+      // SIGKILL leaked nothing, so its earlier failed steps are a slow shutdown
+      // and not a defect — and a caller that turns them into an exception
+      // reports a successful run as a failure. `scripts/ops/verify-database-backup.mjs`
+      // did exactly that: a `fast` stop that did not confirm inside its 60 s
+      // window after the restore, followed by an `immediate` that did, printed
+      // `FAIL` and exited 1 for a backup whose digests, ledger, ownership and
+      // grants had all matched, which docs/BACKUP_AND_RESTORE.md:41-44 reserves
+      // for a mismatch. Those reasons are still recorded and still reported (on
+      // `degraded()` and on stderr); they just no longer change the verdict.
       if (ladder.forced) {
-        // A failure, not a detail: a postmaster that refused every cooperative
-        // shutdown had to be SIGKILLed, and that SIGKILL is the only path that
-        // leaves its 56-byte SysV segment behind with a dead creator. Reporting
-        // a clean teardown here would hide both.
         failures.push("postmaster_required_sigkill_which_leaks_its_shared_memory_segment");
       }
       // Reaching here means the ladder ended with the postmaster gone, and the
@@ -234,8 +257,8 @@ export function createClusterTeardown(options) {
       // ladder would be a guard that can never fire, and a guard that can never
       // fire is a comment wearing code's clothes. MUTATION-CHECKED: disabling it
       // changes no test result, which is the evidence that it is not a guard.
-      // The uncertainty that CAN happen is handled one branch down, where there
-      // is no pid to signal and `pg_ctl status` is the only evidence.
+      // The uncertainty that CAN happen is handled one branch down, where there is
+      // no pid to signal and `pg_ctl status` is the only evidence.
       //
       // `postmasterPid` is intentionally NOT cleared: it is the evidence a
       // post-teardown liveness check needs, and the process is confirmed gone.
@@ -272,9 +295,26 @@ export function createClusterTeardown(options) {
     stopped = true;
     if (failures.length > 0) {
       // The postmaster is confirmed gone, so this is not a leak, but the
-      // cooperative path did fail and that is worth surfacing rather than
-      // swallowing.
-      throw new Error(`disposable_postgres_stop_degraded:${port}:${failures.join(",")}`);
+      // cooperative path did not go cleanly and that is worth surfacing rather
+      // than swallowing. It is reported, not THROWN, and that is the whole point
+      // of the change: a caller must be able to distinguish "the cluster is
+      // gone and nothing leaked" (this) from "the cluster survived" (the throw
+      // above) and from "we had to SIGKILL it and a segment leaked"
+      // (`ladder.forced`). Silently swallowing is what the old verifier did and
+      // is why a postmaster that refused to stop was once reported as a clean
+      // teardown; throwing is what the interim version did and is why a
+      // verified backup was once reported as a mismatch. Reporting is the third
+      // option that keeps both facts.
+      const line = `disposable_postgres_stop_degraded:${port}:${failures.join(",")}`;
+      logDegraded(line);
+      // Except when the ladder reached SIGKILL, which is a genuine failure and
+      // stays one: a teardown that had to be forced did leak a segment, and the
+      // whole purpose of the ladder is that a caller learns about that. The
+      // `failures.includes` is a filter, not a second copy of the condition —
+      // `ladder.forced` is not in scope here, and this string is produced by
+      // exactly one line above.
+      if (failures.includes("postmaster_required_sigkill_which_leaks_its_shared_memory_segment"))
+        throw new Error(line);
     }
   };
 
@@ -347,6 +387,25 @@ export function createClusterTeardown(options) {
   return {
     /** The recorded postmaster pid, once `initdb`/`pg_ctl start` published one. */
     postmasterPid: () => postmasterPid,
+    /**
+     * Why the teardown degraded, in the order the reasons were recorded.
+     *
+     * A teardown that ends with the postmaster confirmed gone does not throw for
+     * the steps that did not stop it on their own — that is a slow shutdown, not
+     * a leak, and a caller that reports it as a failure reports a successful run
+     * as a failed one. These reasons are still available here, and are also
+     * written to stderr, so nothing is swallowed and nothing is fatal:
+     *
+     *   - `pg_ctl_stop_<mode>_failed` / `<signal>_did_not_stop_the_postmaster` /
+     *     `pg_ctl_stop_failed` — a step did not stop the postmaster, but a later
+     *     step did.
+     *   - `postmaster_required_sigkill_which_leaks_its_shared_memory_segment` —
+     *     the ladder reached SIGKILL. This one DOES throw, because that SIGKILL
+     *     leaves a SysV segment behind.
+     *
+     * Empty when the teardown went cleanly, and for a teardown that has not run.
+     */
+    degraded: () => failures.slice(),
     /**
      * Read the postmaster pid and remember it.
      *

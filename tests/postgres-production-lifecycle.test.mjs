@@ -3,10 +3,10 @@
 // --auth-host=reject. Needs the PG 17 bin directory (PG_BIN or the Debian default).
 import assert from "node:assert/strict";
 import test, { before, after } from "node:test";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, mkdir, rm, cp, readdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -15,7 +15,7 @@ import { applyMigrations, readSchemaDigest } from "../deploy/postgres/apply-migr
 // The shared disposable-cluster teardown. `.mjs` because
 // `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
 // `.ts` module could not be imported by one of its own callers.
-import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
+import { createClusterTeardown, pidAlive } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 import { backupDatabase } from "../deploy/postgres/backup-database.mjs";
 import { restoreDatabase } from "../deploy/postgres/restore-database.mjs";
 import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.mjs";
@@ -1055,6 +1055,120 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const verified = await verifyMacLocalDatabaseBackupV1({ backup: macBackup, port: 15633, pgBin: BIN });
   assert.equal(verified.verified, true);
   assert.equal(verified.identityDigest, manifest.restoreIdentityDigest);
+  // The same backup, verified again against a teardown whose `pg_ctl` stops all
+  // refuse — a real `fast` shutdown that misses its 60 s window after this
+  // script's write-heavy restore, with `immediate`/`SIGQUIT` ending it. The
+  // verification is identical, the postmaster is gone, nothing leaked, and the
+  // verdict must be the SAME `verified: true`.
+  //
+  // It used to be a `disposable_postgres_stop_degraded` throw out of the
+  // `finally`, which the CLI turns into `database backup verification FAIL` and
+  // `process.exitCode = 1` — a `FAIL` for a backup whose digests, ledger,
+  // ownership and grants had all matched, and the response
+  // docs/BACKUP_AND_RESTORE.md:41-44 prescribes for a mismatch. Port 15635 is
+  // this lane's own block; the degraded reason is still logged, and the
+  // companion assertion is that a FORCED teardown is still a failure.
+  const degraded = [];
+  const verifiedThroughSlowShutdown = await verifyMacLocalDatabaseBackupV1({ backup: macBackup,
+    port: 15635, pgBin: BIN, teardown: { degradedLogger: line => { degraded.push(line); },
+      pgCtl: args => {
+        if (args.includes("stop")) throw new Error("pg_ctl: server does not take a fast shutdown request");
+        execFileSync(join(BIN, "pg_ctl"), args, { encoding: "utf8", timeout: 90_000 });
+      } } });
+  assert.equal(verifiedThroughSlowShutdown.verified, true,
+    "a slow shutdown must not turn a verified backup into a failure");
+  assert.equal(verifiedThroughSlowShutdown.identityDigest, manifest.restoreIdentityDigest,
+    "the verdict is the backup's, and it is unchanged by how the cluster stopped");
+  assert.ok(degraded.some(line => /disposable_postgres_stop_degraded/u.test(line)),
+    `the degraded teardown must still be reported: ${degraded.join(" | ")}`);
+
+  // The seam cannot be pointed at another cluster, and this is where that is
+  // observable rather than asserted. The first call above hijacks
+  // `dataDirectory`/`runDirectory`/`socketDirectory`/`port`/`pgBin`/
+  // `removeDirectories` at the same time as supplying the refusing `pg_ctl` —
+  // the exact combination a spread would have honoured, which would leave the
+  // verifier's OWN postmaster running while `stop()` reported a clean teardown of
+  // an empty directory. The allowlist means those keys never arrive, so the stop
+  // below runs against the directory the verifier created and this `pgCtl` — the
+  // one standing in for the real binary — sees the real `-D`.
+  const hijack = { dataDirectory: join(run, "not-the-cluster"),
+    runDirectory: join(run, "not-the-cluster"), socketDirectory: join(run, "not-the-cluster"),
+    port: 1, pgBin: "/also/unused/bin", removeDirectories: false };
+  const realDirectories = [], livePids = [];
+  const notHijacked = await verifyMacLocalDatabaseBackupV1({ backup: macBackup,
+    port: 15638, pgBin: BIN, teardown: { ...hijack,
+      degradedLogger: line => { degraded.push(line); },
+      pgCtl: args => {
+        const directory = args[args.indexOf("-D") + 1] ?? "";
+        realDirectories.push(directory);
+        // The pid is read HERE, at the first `pg_ctl` of the teardown, because
+        // that is the last moment `postmaster.pid` exists: PostgreSQL removes it
+        // on shutdown and the directory is then deleted. Reading it after
+        // `stop()` returns would find nothing and prove nothing.
+        if (livePids.length === 0) {
+          try { livePids.push(Number(readFileSync(join(directory, "postmaster.pid"), "utf8").split("\n")[0])); }
+          catch { /* recorded as missing below */ }
+        }
+        execFileSync(join(BIN, "pg_ctl"), args, { encoding: "utf8", timeout: 90_000 });
+      } } });
+  assert.equal(notHijacked.verified, true);
+  assert.ok(realDirectories.length > 0 && realDirectories.every(directory => directory !== hijack.dataDirectory),
+    `the stop must target the verifier's own cluster, not a caller-supplied path: ${realDirectories.join(", ")}`);
+  // And the real cluster the verifier started for that call is gone, not orphaned.
+  // Attributed by the postmaster pid recorded in the REAL `-D` at teardown time,
+  // not by a directory listing: four test slots share this login, so another
+  // job's cluster in the temp dir is not this test's leak, and counting them
+  // would report someone else's.
+  assert.deepEqual(livePids, [livePids[0]].filter(value => Number.isInteger(value) && value > 0),
+    "the real cluster must have published a postmaster pid in the teardown's own data directory");
+  for (const pid of livePids) assert.equal(pidAlive(pid), false,
+    `a hijacked teardown left the verifier's own postmaster ${pid} running`);
+
+  // The same thing through the ACTUAL command an operator types, as a real
+  // subprocess, so the printed verdict and the exit code are observed rather
+  // than inferred. The `pg_ctl` in `shimBin` refuses every `stop` and forwards
+  // everything else to the real binary, so the verifier really does initdb,
+  // restore and verify a backup, and really does reach the ladder, which then
+  // ends the real postmaster on `immediate`/`SIGQUIT`. Nothing in the repository
+  // is configured to do this: a `pg_bin` whose `pg_ctl` does not take a shutdown
+  // request is a real condition (a wrapper, a wrapper script, a hardlinked
+  // binary from another install), and it is the only way to reach the branch
+  // from the CLI, which has no injection seam.
+  const shimBin = join(run, "shim-bin");
+  await mkdir(shimBin, { recursive: true });
+  for (const name of ["initdb", "pg_restore", "pg_dump", "psql", "postgres", "pg_ctl"]) {
+    await writeFile(join(shimBin, name), `#!/bin/sh\nexec ${JSON.stringify(join(BIN, name))} "$@"\n`, { mode: 0o755 });
+  }
+  await writeFile(join(shimBin, "pg_ctl"),
+    `#!/bin/sh\nfor argument in "$@"; do\n  if [ "$argument" = "stop" ]; then\n    echo "pg_ctl: server does not take a fast shutdown request" >&2\n    exit 1\n  fi\ndone\nexec ${JSON.stringify(join(BIN, "pg_ctl"))} "$@"\n`, { mode: 0o755 });
+  // `promisify(execFile)` REJECTS on a non-zero exit, so a plain `await` would
+  // report "undefined !== 0" and hide the output that says why. The result is
+  // captured either way, so a failure prints what the CLI actually said.
+  const cli = await exec(process.execPath, [join(ROOT, "scripts/ops/verify-database-backup.mjs"),
+    "--backup", macBackup, "--port", "15636", "--pg-bin", shimBin],
+    { encoding: "utf8", timeout: 300_000, maxBuffer: 1 << 24 })
+    .then(value => ({ stdout: value.stdout, stderr: value.stderr, code: 0 }),
+      error => ({ stdout: error.stdout ?? "", stderr: error.stderr ?? "", code: error.code ?? null }));
+  assert.equal(cli.code, 0,
+    `a verified backup must exit 0 even when its cluster needed several shutdown steps:\n${cli.stderr}`);
+  assert.match(cli.stdout, /^database backup verification PASS: sha256:[a-f0-9]{64}$/mu,
+    `a verified backup must print PASS: ${cli.stdout} ${cli.stderr}`);
+  assert.match(cli.stderr, /disposable_postgres_stop_degraded/u,
+    `the degraded teardown must still be visible to the operator: ${cli.stderr}`);
+
+  // And the CLI still fails, loudly, on a real mismatch — the `FAIL` that
+  // docs/BACKUP_AND_RESTORE.md:41-44 describes. Without this, "a degraded
+  // teardown no longer fails the run" would be indistinguishable from "the run
+  // can no longer fail".
+  await exec(process.execPath, [join(ROOT, "scripts/ops/verify-database-backup.mjs"),
+    "--backup", join(macBackup, "..", "does-not-exist"), "--port", "15637", "--pg-bin", BIN],
+    { encoding: "utf8", timeout: 60_000 }).then(
+    () => assert.fail("the CLI must exit non-zero when the backup does not verify"),
+    error => {
+      assert.equal(error.code, 1);
+      assert.match(error.stderr, /^database backup verification FAIL: /mu);
+    });
+
   const dumpPath = join(macBackup, "database.dump"), altered = await readFile(dumpPath);
   altered[0] ^= 0xff;
   await writeFile(dumpPath, altered);
