@@ -48,6 +48,7 @@ import type { TaskAssignmentRoute } from "./task-assignment-coordinator";
 import { captureTaskModelCatalogV1 } from "./task-model-selection";
 import { createMacLocalSelectedTaskModelV1, macLocalWorkerModelSelectionV1 } from "./mac-local-task-model-selection";
 import { sanitizedDatabaseFailureV1 } from "./sanitized-database-failure";
+import { loadUsagePriceTableFromRootV1 } from "../../usage/v1/usage-price-table-loader";
 
 type SelectedWorker = Readonly<{ kind: "hermes" | "claude-code" | "codex";
   worker: OwnerTrustedLocalEnablementV1["workers"][number]; route: TaskAssignmentRoute; adapterId: string }>;
@@ -83,6 +84,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   const tenantId = configuration.localOwnerSession.tenantId;
   const workspaceId = configuration.workspaceId;
   const runtime = await loadMacLocalTaskRuntimeFromRootV1(protectedRoot);
+  const usagePriceTable = await loadUsagePriceTableFromRootV1(protectedRoot);
   const rows = await input.database.client.query<{ project_id: string; created_at: string | Date }>(
     `SELECT p.id AS project_id,h.created_at FROM projects p
       JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
@@ -223,7 +225,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
         nodeId: value.route.nodeId, capabilityProbeId: value.route.capabilityProbeId })) });
     application = await createMacLocalCurrentThreeAgentTaskApplicationV1({
       web: { tenantId, workspaceId, database: withAvailability(input.database),
-        tasks: { harnessIntegrityKey: keys.harness, modelCatalog,
+        tasks: { harnessIntegrityKey: keys.harness, modelCatalog, ...(usagePriceTable ? { usagePriceTable } : {}),
           results: { integrityKey: keys.results, storageClass: "local", storage },
           reviews: { integrityKey: keys.review, checkpoints: checkpointStore },
           ownerReviews: { integrityKey: keys.review, checkpoints: checkpointStore,

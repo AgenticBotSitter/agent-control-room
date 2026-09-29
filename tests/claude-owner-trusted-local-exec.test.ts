@@ -34,7 +34,9 @@ test("runs only the reviewed Mac-local Claude arguments and exposes no inherited
   assert.deepEqual(received.args, captured.args); assert.equal(received.prompt, "hello");
   assert.equal(received.env.includes("SECRET_SHOULD_NOT_LEAK"), false);
   assert.deepEqual(Object.keys(captured.env ?? {}).sort(), ["HOME", "LANG", "LOGNAME", "PATH", "TMPDIR", "USER"]);
-  assert.equal(result.usageReported, true); assert.deepEqual(await readdir(cwd), []);
+  assert.equal(result.usageReported, true);
+  assert.deepEqual(result.usage, { inputTokens: 4, outputTokens: 2, totalTokens: 6 });
+  assert.deepEqual(await readdir(cwd), []);
 });
 
 test("passes a chosen effort only when startup verified the installed CLI supports it", async () => {

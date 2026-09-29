@@ -31,7 +31,7 @@ test("runs a text-only Hermes task with protected model selection and no inherit
   assert.deepEqual(received.args, captured.args); assert.equal(received.prompt, "hello");
   assert.equal(received.env.includes("SECRET_SHOULD_NOT_LEAK"), false);
   assert.deepEqual(Object.keys(captured.env ?? {}).sort(), ["HOME", "LANG", "PATH", "TMPDIR"]);
-  assert.deepEqual(result.usage, { inputTokens: 2, outputTokens: 3, totalTokens: 5 }); assert.deepEqual(await readdir(cwd), []);
+  assert.deepEqual(result.usage, { inputTokens: 2, outputTokens: 3, totalTokens: 5, cachedInputTokens: 0 }); assert.deepEqual(await readdir(cwd), []);
 });
 
 test("the shared adapter sends a named per-task Hermes profile through the real executor", async () => {

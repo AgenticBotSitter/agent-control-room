@@ -25,7 +25,8 @@ export const OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1 = Object.freeze([
 ] as const);
 
 export type OwnerTrustedLocalClaudeExecResultV1 = Readonly<
-  | { status: "completed"; text: string; usageReported: boolean }
+  | { status: "completed"; text: string; usageReported: boolean;
+      usage?: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number }> }
   | { status: "failed" | "canceled" | "timed_out" | "cleanup_uncertain"; reason: string }
 >;
 
@@ -122,6 +123,7 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
     return await new Promise<OwnerTrustedLocalClaudeExecResultV1>(resolve => {
       const decoder = createClaudeCodeStreamDecoderV1();
       let settled = false, bytes = 0, remainder = "", terminalText: string | undefined, usageReported = false;
+      let usage: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number }> | undefined;
       let stop: "canceled" | "timed_out" | "failed" | undefined;
       let killer: ReturnType<typeof setTimeout> | undefined;
       const utf8 = new StringDecoder("utf8");
@@ -155,7 +157,7 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
         if (frame.kind === "decode_error") return terminate("failed");
         if (frame.kind === "result") {
           if (frame.outcome !== "succeeded" || frame.resultText === undefined) return terminate("failed");
-          terminalText = frame.resultText; usageReported = frame.usageReported;
+          terminalText = frame.resultText; usageReported = frame.usageReported; usage = frame.usage;
         }
       };
       const receive = (chunk: Buffer) => {
@@ -191,7 +193,7 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
         }
         if (code !== 0 || decoder.state().failed || !decoder.state().terminalObserved || terminalText === undefined)
           return finish(failed("failed", "process_or_output_refused"));
-        finish(Object.freeze({ status: "completed" as const, text: terminalText, usageReported }));
+        finish(Object.freeze({ status: "completed" as const, text: terminalText, usageReported, ...(usage ? { usage } : {}) }));
       });
       try { stdin.end(input.prompt, "utf8"); } catch { terminate("failed"); }
     });

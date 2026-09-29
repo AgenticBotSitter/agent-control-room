@@ -6,6 +6,7 @@ import type { QueueAttention } from "../../../src/web/v1/queue-attention-wire";
 import { BrowserRequestError } from "../../../src/web/v1/browser-client";
 import { PrivateTaskAttention } from "./task-attention";
 import { useLocalRuntime } from "../local-runtime";
+import { LoadingState, UnavailableState } from "../owner-ui";
 
 export function QueueAttentionPanel({ snapshot }: { snapshot: QueueAttention }) {
   return <section aria-labelledby="recovery-heading"><h2 id="recovery-heading">Reconnect recovery</h2>
@@ -44,7 +45,12 @@ export function PrivateNeedsMe() {
       setLoading(true); setData(undefined); setError(undefined); setRefresh(value => value + 1);
     }}>Check recovery status</button>
     <p>Checking status never starts or retries work.</p>
-    {loading && <p role="status">Checking…</p>}{error && <p role="alert">{error}</p>}
+    {loading && <LoadingState>Checking…</LoadingState>}
+    {/* The failure sentence is rendered in the unavailable treatment rather than a
+        bare alert paragraph, so "could not check" looks different from "checking"
+        and from an empty list. It keeps role="alert" because a read that failed is
+        the one thing here that must interrupt. */}
+    {error && <UnavailableState urgent>{error}</UnavailableState>}
     {data && <QueueAttentionPanel snapshot={data} />}</> : <section aria-labelledby="local-recovery-heading">
       <h2 id="local-recovery-heading">Task recovery</h2>
       <p>Open the exact task to check its saved delivery and result evidence. This page does not start, retry or replace work.</p>

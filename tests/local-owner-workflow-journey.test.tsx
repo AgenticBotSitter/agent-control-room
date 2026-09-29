@@ -23,11 +23,15 @@ const task = {
 };
 
 function savedDetail(state: TaskDetail["task"]["state"] = "succeeded"): TaskDetail {
+  const usageRollup = { runs: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, wallTimeMs: 0,
+    knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0, unknownCostRuns: 0,
+    unknownCostReasons: [] as TaskDetail["usageRollup"]["unknownCostReasons"] };
   return {
     project: { projectId: task.projectId, title: "Owner journey", summary: "Disposable owner journey", origin: "ordinary",
       lifecycle: "active", version: 1, createdAt: at, updatedAt: at, lifecycleEditable: true },
     task: { ...task, state }, instructions: "Inspect the returned evidence before accepting it.", inputDigest: digest, observedAt: at,
-    modelSelection: null, ownershipLeases: [],
+    modelSelection: null, ownershipLeases: [], usageRollup,
+    priceTable: { state: "not_recorded", tableId: null, recordedAt: null },
     attempts: [], earlierAttemptsOmitted: false, preparedFor: "codex", localRouteObservation: { state: "not_observed", adapter: "codex" },
     hermesDeliveryRecovery: { source: "not_applicable" }, progressSource: "configured", dispatch: "configured",
     artifacts: "configured", review: "recorded",

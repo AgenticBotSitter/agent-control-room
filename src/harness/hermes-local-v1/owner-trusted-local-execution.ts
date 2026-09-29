@@ -55,11 +55,14 @@ export function createOwnerTrustedLocalHermesExecutionAdapterV1(executor: OwnerT
   return Object.freeze({ async execute(input) {
     if (!input || !(input.signal instanceof AbortSignal) || input.signal.aborted) unavailable();
     const selected = "select" in fixed ? await fixed.select(input.delivery.identity.jobId) : fixed;
+    const startedAt = new Date().toISOString();
     const result = await executor.execute(Object.freeze({ executablePath: fixed.executablePath,
       workingDirectory: fixed.workingDirectory, deadlineMs: fixed.deadlineMs,
       profile: selected.profile, model: selected.model, provider: selected.provider,
       prompt: prompt(input.delivery.input), signal: input.signal }));
-    if (result.status === "completed") return Object.freeze({ kind: "completed" as const, text: result.text });
-    return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}` });
+    const finishedAt = new Date().toISOString();
+    if (result.status === "completed") return Object.freeze({ kind: "completed" as const, text: result.text, startedAt, finishedAt,
+      usage: result.usage });
+    return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}`, startedAt, finishedAt, usage: null });
   } });
 }
