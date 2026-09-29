@@ -285,6 +285,19 @@ test("the execution freshness fence's scope table stays un-lockable, so no lock 
       const rows = (await adminClient.query("SELECT has_any_column_privilege('control_room_task_coordinator', t, 'UPDATE') AS lockable FROM unnest(ARRAY['control_leases','control_assignment_lease_scopes']) AS t")).rows as { lockable: boolean }[];
       await adminClient.end();
       assert.deepEqual(rows, [{ lockable: true }, { lockable: false }]);
+
+      // The two statements the fence actually issues, executed for real as the
+      // coordinator login. The scope read is the one that used to carry
+      // FOR SHARE, so this is the statement whose privilege broke; the lease
+      // read is the lock the fence still legitimately takes.
+      const fence = new Client(postgres.connection("coordinator"));
+      fence.on("error", () => {});
+      await fence.connect();
+      try {
+        await assert.rejects(fence.query("SELECT scope_kind,path_fold FROM control_assignment_lease_scopes LIMIT 1 FOR SHARE"),
+          /permission denied/u, "the coordinator login cannot take the lock the fence used to ask for");
+        await fence.query("SELECT id FROM control_leases LIMIT 1 FOR UPDATE OF control_leases");
+      } finally { await fence.end().catch(() => {}); }
       return postgres.appliedMigrations;
     }, { port: FENCE_PORT, allowedPorts: [FENCE_PORT], boundMs: 240_000 });
     assert.equal(result.cleanedUp, true); assert.deepEqual(result.leftovers, []); assert.ok(result.value >= 1);
