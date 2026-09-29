@@ -40,6 +40,14 @@ sentence ending in "the new test:", and an inline-code mention of
 real line-start evidence item, so pointing at prose is not a substitute for
 citing a test, a job, or a command.
 
+Only `-` and `*` are accepted as bullet markers. A `+` or `1.` bullet, or a
+blockquote-prefixed bullet, contributes no evidence and fails the check.
+
+One consequence of the line-start rule: a hard-wrapped sentence whose
+continuation line happens to begin with `test:`, `ci:`, or `cmd:` is still read
+as an evidence item and held to the rules above. Rewrap the sentence so no line
+starts with one of those words.
+
 The check fails closed when the event payload, changed-path diff, evidence
 shape, or reference cannot be read. PR bodies larger than 64 KiB are rejected.
 It never prints PR-body content or referenced values; diagnostics contain only

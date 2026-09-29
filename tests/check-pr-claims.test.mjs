@@ -345,12 +345,39 @@ test("prose that merely contains the word test: is not a test reference", () => 
 test("an inline-code package script inside a bullet is not a reference", () => {
   const root = fixture();
   try {
+    // Package script and evidence on the SAME line, so the test isolates the
+    // inline-code span rather than a following line's indentation. A marker
+    // that is not at the start of the line is prose even when it is last.
+    const body = "## Evidence\n\n- `pnpm test:database` 38/38 and `pnpm run test:attack-kit` both passed.\n  ci: Quick checks";
+    assert.deepEqual(inspect(root, body), { ok: true, errors: [], warnings: 0 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a marker at the end of a prose line is not a reference", () => {
+  const root = fixture();
+  try {
+    const body = "## Evidence\n\n- Every lane ran, including `pnpm test:database` 38/38.  ci: Quick checks";
+    const result = inspect(root, body);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.includes("evidence_reference_missing"),
+      "a mid-line marker must not count as the bullet's evidence");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a wrapped prose line that begins with a marker is still read as an item", () => {
+  const root = fixture();
+  try {
+    // Documented trade-off: the rule is line-start, so a hard-wrapped sentence
+    // whose continuation begins with "cmd:" is treated as a command reference
+    // and held to the fenced-output rule. It fails closed, it does not pass.
     const body = `## Evidence
 
-- Every lane ran, including \`pnpm test:database\` 38/38 and
-  \`pnpm run test:attack-kit\` on a disposable cluster.
-  ci: Quick checks`;
-    assert.deepEqual(inspect(root, body), { ok: true, errors: [], warnings: 0 });
+- The lock order is described in the
+  cmd: paragraph below, which names no command.
+  test: tests/example.test.mjs::keeps the claim honest`;
+    const result = inspect(root, body);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.includes("command_output_missing"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -509,7 +536,7 @@ test("restoring the whole-line reference scan makes the false-positive cases fai
     const proseBody = "## Evidence\n\n- The deadlock is gone, as the new test: shows on a real cluster.\n  test: tests/example.test.mjs::keeps the claim honest";
     const source = readFileSync(join(repositoryRoot, "scripts/ci/check-pr-claims.mjs"), "utf8");
     const loose = "const ref = referenceAtLineStart(line);";
-    assert.ok(source.includes(loose), "the reference parser must have a line-start entry point to mutate");
+    assert.ok(source.includes(loose), "update this mutation target: the parser call site moved");
     const mutated = source.replace(loose,
       'const match = /(?:^|\\s)(test|ci|cmd):\\s*(.+?)\\s*$/iu.exec(line);'
       + " const ref = match ? { type: match[1].toLowerCase(), value: match[2] } : null;");
