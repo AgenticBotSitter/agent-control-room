@@ -179,6 +179,28 @@ test("a revoked worker is refused at once and its lease cannot be used", async t
   await assert.rejects(f.owner.issueRekeyCode(ownerIdentity(), worker.joined.workerId), /conflict/u);
 });
 
+test("revoking the worker row alone is enough: its still-active credential is refused everywhere", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const worker = await joinWorker(f, "Half revoked");
+  const task = await offer(f, PROJECT_A, "half-1");
+  const claim = await worker.client.claim(task.offerId, "claim-key-half001");
+  // Only the owner-side worker row changes; the credential row stays active.
+  await f.raw.query(`UPDATE fleet_workers SET state='revoked',revoked_at=now(),revoked_by_identity_id='identity:fleet-owner'`);
+  assert.equal((await f.query("SELECT state FROM fleet_worker_credentials"))[0]!.state, "active");
+  await assert.rejects(worker.client.me(), /unauthenticated/u);
+  await assert.rejects(f.raw.query(`INSERT INTO fleet_worker_events(tenant_id,event_id,claim_id,worker_id,kind,message,
+    idempotency_key,occurred_at) VALUES($1,'fleet-event:${"9".repeat(32)}',$2,$3,'progress','x','direct-key-half1',now())`,
+  [FLEET_TENANT, claim.claimId, worker.joined.workerId]), /worker event rejected/u);
+});
+
+test("a worker cannot claim work that needs a capability it was not given", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const worker = await joinWorker(f, "Writer only", [PROJECT_A], ["writing"]);
+  const task = await offer(f, PROJECT_A, "code-1", "code.change");
+  assert.deepEqual(await worker.client.work(), []);
+  await assert.rejects(worker.client.claim(task.offerId, "claim-key-capab01"), /not_found/u);
+});
+
 test("credential rotation retires the old secret and owner re-key replaces it", async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Rotating");
@@ -339,6 +361,10 @@ test("end to end: enroll, claim, progress, submit, owner asks for changes, resub
   const files = await f.owner.listResultFiles(ownerIdentity(), awaiting[0]!.resultId);
   assert.deepEqual(files.map(value => value.fileName), ["note.md"]);
   await assert.rejects(f.owner.review(ownerIdentity(), { resultId: awaiting[0]!.resultId, decision: "revision_requested" }), /invalid/u);
+  // The worker's own identity can never record a review of its result.
+  await assert.rejects(f.raw.query(`INSERT INTO fleet_result_reviews(tenant_id,review_id,result_id,decision,
+    reviewed_by_identity_id,reviewed_at) SELECT $1,'fleet-review:${"8".repeat(32)}',$2,'accepted',identity_id,now()
+    FROM fleet_workers WHERE worker_id=$3`, [FLEET_TENANT, awaiting[0]!.resultId, worker.joined.workerId]), /review rejected/u);
   await f.owner.review(ownerIdentity(), { resultId: awaiting[0]!.resultId, decision: "revision_requested",
     note: "Please add a summary line." });
   const mine = await worker.client.claims();
