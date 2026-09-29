@@ -147,16 +147,19 @@ test("failed review and verification refreshes remove stale owner actions until 
   const root = createRoot(dom.window.document.getElementById("root")!);
   const action = (label: string) => [...dom.window.document.querySelectorAll("button")].find(button => button.textContent === label);
   try {
+    reviewWorkspace.get(binding).setFeedback("Please correct the missing evidence.");
     await React.act(async () => { root.render(<><OwnerTaskReview {...binding} workspace={reviewWorkspace} onSaved={() => {}} />
       <OwnerTaskVerification {...binding} workspace={verificationWorkspace} onSaved={() => {}} /></>); });
     await flushRead();
     assert.equal(action("Accept")?.disabled, false, "the successful review read enables its action");
     assert.equal(action("I read it and it’s correct")?.disabled, false, "the successful verification read enables its action");
+    assert.equal(action("Request changes")?.disabled, false, "the successful review read enables its change-request action");
 
     reviewMode = "fail"; verificationMode = "fail";
     await React.act(async () => { dom.window.dispatchEvent(new dom.window.Event("focus")); });
     await flushRead();
     assert.equal(action("Accept"), undefined, "a failed review refresh removes stale acceptance actions");
+    assert.equal(action("Request changes"), undefined, "a failed review refresh removes stale change-request actions");
     assert.equal(action("I read it and it’s correct"), undefined, "a failed verification refresh removes stale verification actions");
     assert.match(dom.window.document.body.textContent ?? "", /current access does not permit/);
 
@@ -164,6 +167,7 @@ test("failed review and verification refreshes remove stale owner actions until 
     await React.act(async () => { action("Refresh recorded review")?.click(); action("Refresh human verification")?.click(); });
     await flushRead();
     assert.equal(action("Accept")?.disabled, false, "a fresh review success restores its action");
+    assert.equal(action("Request changes")?.disabled, false, "a fresh review success restores its change-request action");
     assert.equal(action("I read it and it’s correct")?.disabled, false, "a fresh verification success restores its action");
   } finally {
     await React.act(async () => { root.unmount(); }); dom.window.close();
