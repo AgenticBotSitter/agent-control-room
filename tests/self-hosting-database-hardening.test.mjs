@@ -118,10 +118,69 @@ test("work-intake proposal tables stay confined to the bound tenant's registered
   assert.doesNotMatch(migration, /FORCE ROW LEVEL SECURITY/u);
 });
 
+test("0102 confines owner-approval items to visible batches and widens only the intake revision read scope", async () => {
+  const migration = await readFile("db/migrations/0102_work_batch_owner_approval.sql", "utf8");
+  const down = await readFile("db/down/0102_work_batch_owner_approval.sql", "utf8");
+  const statement = (source, head) => source.match(new RegExp(`${head}\\b[\\s\\S]*?;`, "u"))?.[0] ?? "";
+  const normalize = source => source.replace(/\s+/gu, " ").replace(/\( /gu, "(").trim();
+  const visibleBatch = table => `EXISTS (
+    SELECT 1 FROM public.work_batches w
+    WHERE w.tenant_id=${table}.tenant_id AND w.id=${table}.batch_id)`;
+  const itemScope = `(NOT public.is_work_intake_session() OR (${boundTenant("work_batch_items")}
+    AND ${visibleBatch("work_batch_items")}))`;
+  assert.match(migration, /ALTER TABLE work_batch_items ENABLE ROW LEVEL SECURITY;/u);
+  assert.equal(normalize(statement(migration, "CREATE POLICY work_batch_items_existing_access")), normalize(`
+    CREATE POLICY work_batch_items_existing_access ON work_batch_items
+      AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);`));
+  assert.equal(normalize(statement(migration, "CREATE POLICY work_batch_items_work_intake_scope")), normalize(`
+    CREATE POLICY work_batch_items_work_intake_scope ON work_batch_items
+      AS RESTRICTIVE FOR ALL USING ${itemScope} WITH CHECK ${itemScope};`));
+  const agentEdited = `EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batch_revisions.tenant_id AND i.id=work_batch_revisions.edited_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake')`;
+  // Read scope only: no WITH CHECK clause, so 0093's insert check still applies.
+  assert.equal(normalize(statement(migration, "ALTER POLICY work_batch_revisions_work_intake_scope")), normalize(`
+    ALTER POLICY work_batch_revisions_work_intake_scope ON work_batch_revisions
+      USING (NOT public.is_work_intake_session() OR (${boundTenant("work_batch_revisions")}
+        AND (${agentEdited} OR ${visibleBatch("work_batch_revisions")})));`));
+  assert.equal(normalize(statement(down, "ALTER POLICY work_batch_revisions_work_intake_scope")), normalize(`
+    ALTER POLICY work_batch_revisions_work_intake_scope ON work_batch_revisions
+      USING (NOT public.is_work_intake_session() OR (${boundTenant("work_batch_revisions")} AND ${agentEdited}));`));
+  assert.match(down, /DROP POLICY work_batch_items_work_intake_scope ON work_batch_items;\s+DROP POLICY work_batch_items_existing_access ON work_batch_items;\s+ALTER TABLE work_batch_items DISABLE ROW LEVEL SECURITY;/u);
+  assert.doesNotMatch(migration, /FORCE ROW LEVEL SECURITY/u);
+});
+
 test("the real-Postgres harness supplies the required work-intake bootstrap credential", async () => {
   const harness = await readFile("tests/support/attack-kit/real-postgres.ts", "utf8");
   assert.match(harness,
     /control_room_work_intake_agent:\s*randomBytes\(24\)\.toString\("base64url"\)/u);
   assert.match(harness,
     /CONTROL_ROOM_WORK_INTAKE_PASSWORD:\s*ROLE_PASSWORDS\.control_room_work_intake_agent/u);
+});
+
+test("the 0102 rollback preserves the S1 trigger search_path hardening", async () => {
+  const down = await readFile("db/down/0102_work_batch_owner_approval.sql", "utf8");
+  const restored = down.match(/CREATE OR REPLACE FUNCTION\s+guard_initial_work_batch_revision_insert\s*\([^)]*\)\s+RETURNS[\s\S]*?\$\$[\s\S]*?\$\$\s*;/iu)?.[0] ?? "";
+  assert.match(restored, hardenedSearchPath);
+  assert.match(restored, /FROM\s+public\.work_batches\s+b/iu);
+});
+
+test("0102 pins every owner trigger authority fence and the browser inbox boundary", async () => {
+  const migration = await readFile("db/migrations/0102_work_batch_owner_approval.sql", "utf8");
+  const count = pattern => migration.match(pattern)?.length ?? 0;
+  assert.equal(count(/i\.actor_type='human'\s+AND\s+i\.state='active'/gu), 2);
+  assert.equal(count(/g\.role_key='owner'/gu), 2);
+  assert.equal(count(/\(g\.revoked_at\s+IS\s+NULL\s+OR\s+g\.revoked_at>pg_catalog\.statement_timestamp\(\)\)\s+AND\s+\(g\.expires_at\s+IS\s+NULL\s+OR\s+g\.expires_at>pg_catalog\.statement_timestamp\(\)\)/gu), 2);
+  assert.equal(count(/g\.allowed_actions\s+@>\s+'\["work_batches\.decide"\]'::jsonb\s+OR\s+g\.allowed_actions\s+@>\s+'\["\*"\]'::jsonb/gu), 2);
+  assert.match(migration, /pg_catalog\.pg_has_role\(session_user,[\s\S]*?pg_catalog\.pg_roles\s+WHERE\s+rolname='control_room_private_web'\),'member'\)[\s\S]*?OLD\.id\s+NOT\s+LIKE\s+'attention:work-batch:%'/u);
+});
+
+test("0102 bounds migration locks and uses bigint counters", async () => {
+  const migration = await readFile("db/migrations/0102_work_batch_owner_approval.sql", "utf8");
+  assert.match(migration, /SET LOCAL lock_timeout = '1s';\s+SET LOCAL statement_timeout = '5s';\s+ALTER TABLE work_batches/u);
+  assert.match(migration, /ADD COLUMN auth_material_version bigint NOT NULL DEFAULT 1/u);
+  assert.match(migration, /ordinal bigint NOT NULL CHECK \(ordinal BETWEEN 0 AND 31\)/u);
+  assert.match(migration, /job_attempt_count bigint NOT NULL DEFAULT 0/u);
+  assert.doesNotMatch(migration, /\b(?:auth_material_version|ordinal|job_attempt_count) integer\b/u);
 });
