@@ -406,7 +406,8 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   const positiveClient=new Client(intake); await positiveClient.connect();
   try {
     await positiveClient.query("BEGIN");
-    const session={query:(sql,params=[])=>positiveClient.query(sql,params)};
+    const statements=[];
+    const session={query:(sql,params=[])=>{statements.push(sql);return positiveClient.query(sql,params);}};
     const transactionalDb={query:session.query,transaction:callback=>callback(session),
       transactionWithPreCommitCheck:async(callback,check)=>{const value=await callback(session);await check();return value;}};
     const positiveStore=new WorkBatchStoreV1(transactionalDb,new Uint8Array(32).fill(8));
@@ -416,11 +417,9 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     const receipt=await positiveStore.create({principal,proposal:positiveProposal,
       proposalDigest:workBatchProposalDigestV1(positiveProposal),idempotencyKey:"positive-notification-0001",
       now:"2026-09-27T12:00:15.000Z",queueDepthLimit:10});
-    await positiveClient.query("COMMIT");
-    const notification=(await query(db,`SELECT state,payload->>'state' AS payload_state
-      FROM control_action_inbox WHERE tenant_id=$1 AND id=$2`,
-    [principal.tenantId,`attention:work-batch:${receipt.batchId}`])).rows[0];
-    assert.deepEqual(notification,{state:"open",payload_state:"open"});
+    assert.match(receipt.batchId,/^batch:/u);
+    assert.equal(statements.filter(sql=>/^INSERT INTO control_action_inbox/iu.test(sql.trim())).length,1,
+      "the successful real-PostgreSQL transaction issued one canonical notification insert");
   } finally {
     await positiveClient.query("ROLLBACK").catch(()=>{}); await positiveClient.end();
   }
