@@ -146,7 +146,7 @@ export class FleetGatewayStoreV1 {
         safeMetadata: { codeId: row.id, credentialId, platform, architecture, connectorVersion } });
       return Object.freeze({ workerId: row.worker_id, nodeId: linked.nodeId, displayName: row.display_name,
         workerKind: row.worker_kind, projectIds: row.project_ids, capabilities: row.capabilities,
-        maxConcurrent: row.max_concurrent, credentialExpiresAt: expiresAt, purpose: row.purpose });
+        maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: expiresAt, purpose: row.purpose });
     });
   }
 
