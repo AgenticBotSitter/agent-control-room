@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,6 +21,7 @@ import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
 import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyPrivateDatabase } from "../src/web/v1/private-database-preflight";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1 } from "../src/fleet/v1";
+import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
 // The connector is a dependency-free .mjs shipped to worker machines.
@@ -49,13 +50,15 @@ test("fleet connector end to end and least privilege, as the production logins",
   if (!PG) { t.skip(realPostgresSkipMessage()); return; }
   await withRealPostgres(async postgres => {
     const admin = adminPool(postgres), web = pool(postgres, "web"), fleet = pool(postgres, "fleet"),
-      fleetOwner = pool(postgres, "fleetOwner");
+      fleetOwner = pool(postgres, "fleetOwner"), workIntake = pool(postgres, "control_room_work_intake_agent");
     const dir = await mkdtemp(join(tmpdir(), "fleet-pg-"));
     const gateway = new FleetGatewayStoreV1(fleet.client, { tenantId: FLEET_TENANT });
     const owner = new FleetOwnerServiceV1(fleetOwner.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
       afterDecision: () => gateway.reconcile() });
+    const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(workIntake.client, new Uint8Array(32).fill(3)));
     const unexpected: unknown[] = [];
-    const handler = createFleetGatewayHandlerV1({ store: gateway, onUnexpectedError: error => { unexpected.push(error); console.error(error); } });
+    const handler = createFleetGatewayHandlerV1({ store: gateway, proposals,
+      onUnexpectedError: error => { unexpected.push(error); console.error(error); } });
     const server = createServer((request, response) => { void handler.handle(request, response); });
     await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -83,25 +86,51 @@ test("fleet connector end to end and least privilege, as the production logins",
       const configPath = join(dir, "worker.json");
       const joined = await connector.join({ server: origin, code: code.code, configPath });
       const client = connector.createClient(await connector.loadConfig(configPath));
+      const dispatch = connector.createMcpDispatcher({ client, workspaceRoot: dir });
+      let mcpId = 0;
+      const mcpCall = async (name: string, args: Record<string, unknown>) => {
+        const reply = await dispatch({ jsonrpc: "2.0", id: ++mcpId, method: "tools/call", params: { name, arguments: args } });
+        assert.ok(reply && "result" in reply && !reply.result.isError, JSON.stringify(reply));
+        return reply.result.structuredContent.result;
+      };
       await assert.rejects(connector.join({ server: origin, code: code.code, configPath: join(dir, "x.json") }), /unauthenticated/u,
         "a code is single use for the production gateway login too");
 
       // --- Offer, claim, progress, result, revision, resubmit, accept.
       const offered = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: task.jobId, capability: "writing" });
       await owner.offerTask(ownerIdentity(), { projectId: PROJECT_B, jobId: betaTask.jobId, capability: "writing" });
-      const work = await client.work();
+      const work = await mcpCall("list_eligible_work", {});
       assert.deepEqual(work.map((item: { jobId: string }) => item.jobId), [task.jobId], "other projects stay invisible");
-      const claim = await client.claim(offered.offerId, "pg-claim-key-0001");
+      const claim = await mcpCall("claim", { offerId: offered.offerId, idempotencyKey: "pg-claim-key-0001" });
       assert.equal(claim.taskState, "leased");
       await client.progress(claim.claimId, "Working.", "pg-progress-key-01");
-      const file = { name: "note.txt", mediaType: "text/plain", contentBase64: Buffer.from("hello").toString("base64") };
-      const first = await client.result(claim.claimId, "First try.", [file], "pg-result-key-001");
+      await writeFile(join(dir, "note.txt"), "hello");
+      const first = await mcpCall("submit_result", { claimId: claim.claimId, answer: "First try.", files: ["note.txt"],
+        idempotencyKey: "pg-result-key-001" });
       await owner.review(ownerIdentity(), { resultId: first.resultId, decision: "revision_requested", note: "Add detail." });
       const again = await client.claim(offered.offerId, "pg-claim-key-0002");
       const second = await client.result(again.claimId, "Second try with detail.", [], "pg-result-key-002");
       await owner.review(ownerIdentity(), { resultId: second.resultId, decision: "accepted" });
       const job = await direct("web", "SELECT state FROM control_jobs WHERE id=$1", [task.jobId]);
       assert.equal(job.rows[0].state, "succeeded");
+
+      // --- MCP proposals use the production proposal-only intake login and
+      // create only the S1 proposal record, never a task, lease or offer.
+      const proposal = { schema: "control-room.work-batch-proposal/v1", projectId: PROJECT_A,
+        tasks: [{ localId: "build", title: "Build", instructions: "Write the bounded change.",
+          requiredCapability: "code.change", role: "builder", requestedWorkerKind: "worker:code",
+          requestedModelKey: "model:any", acceptanceCriteria: "Checks pass.", acceptanceTests: "Run focused tests." }], edges: [] };
+      const jobsBeforeProposal = (await direct("web", "SELECT count(*)::int AS count FROM control_jobs")).rows[0].count;
+      const proposed = await mcpCall("propose_work", { projectId: PROJECT_A, proposal,
+        idempotencyKey: "pg-propose-key-001" });
+      assert.equal(proposed.state, "proposed");
+      assert.equal(proposed.startsWork, false);
+      assert.equal((await direct("web", "SELECT count(*)::int AS count FROM control_jobs")).rows[0].count, jobsBeforeProposal);
+      assert.equal((await direct("web", "SELECT count(*)::int AS count FROM work_batches")).rows[0].count, 1);
+      const mcpAudits = await direct("web", `SELECT safe_metadata->>'toolName' AS tool_name FROM audit_events
+        WHERE action='fleet.mcp.called' ORDER BY chain_sequence`);
+      assert.deepEqual(mcpAudits.rows.map(row => row.tool_name),
+        ["list_eligible_work", "claim", "submit_result", "propose_work"]);
 
       // --- The gateway login cannot decide anything the owner decides.
       await assert.rejects(direct("fleet", `INSERT INTO fleet_result_reviews(tenant_id,review_id,result_id,decision,
@@ -172,7 +201,7 @@ test("fleet connector end to end and least privilege, as the production logins",
       assert.equal(identity.rows[0].state, "revoked");
     } finally {
       await new Promise(done => server.close(done));
-      await Promise.all([admin.close(), web.close(), fleet.close(), fleetOwner.close()]);
+      await Promise.all([admin.close(), web.close(), fleet.close(), fleetOwner.close(), workIntake.close()]);
       await rm(dir, { recursive: true, force: true });
     }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 240_000 });

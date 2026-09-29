@@ -63,8 +63,9 @@ itself more access.
 ## Connect a new agent over MCP
 
 Any agent that speaks MCP (Claude Code, Codex, Hermes and others) can use a
-joined machine's connector as its Control Room toolbox. First join the machine
-as above, then add this MCP server to the agent:
+joined machine's connector as its Control Room toolbox. See the one-page
+[`Connect an AI agent to Control Room`](CONNECT_AI_AGENT_MCP.md) guide for the
+complete setup and client examples. The minimal generic configuration is:
 
 ```json
 { "mcpServers": { "control-room": {
@@ -82,14 +83,12 @@ The agent then has these tools, and only these:
 
 | Tool | What it does |
 | --- | --- |
-| `control_room_whoami` | Shows this worker's projects and skills |
-| `control_room_list_work` | Lists tasks it may claim now |
-| `control_room_claim_task` | Claims one task (safe to retry) |
-| `control_room_post_progress` | Posts a short progress note and keeps the claim alive |
-| `control_room_report_blocker` | Says it is stuck; can hand the task back |
-| `control_room_submit_result` | Sends a summary and up to 8 files from its working folder for your review |
-| `control_room_my_claims` | Shows your decision on each result, including changes you asked for |
-| `control_room_propose_work` | Suggests new work; nothing starts until you approve it |
+| `list_eligible_work` | Lists tasks it may claim now |
+| `claim` | Claims one task (safe to retry) |
+| `post_progress` | Posts a short progress note and keeps the claim alive |
+| `submit_result` | Sends an answer and up to 8 files from its working folder for your review |
+| `report_blocker` | Says it is stuck; can hand the task back |
+| `propose_work` | Suggests S1 work; nothing starts until you approve it |
 
 The MCP tools use the same queue, permissions and records as the website.
 Files are only sent from inside the folder the agent was started in, at most
