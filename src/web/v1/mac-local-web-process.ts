@@ -41,7 +41,7 @@ export interface MacLocalWebProcessOptionsV1 {
   revisions?: TaskRevisionOperation;
   /** Read capabilities from the same host-owned task application as the
    * submission operations. Without them, a published result looks absent. */
-  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey">;
+  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey" | "usagePriceTable">;
   /** Host-owned append-only projection; this wrapper receives no writer. */
   projectEvents?: ProjectEventReadSourceV1;
   /** Host-generation display state built only after pinned executable
