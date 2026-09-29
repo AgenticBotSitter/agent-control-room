@@ -16,12 +16,12 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 }
 
 // Generated from the public migrations in filename order (0001-0002, then
-// 0003-0093, 0100, 0101, 0102, 0104, 0105, 0106, 0108, 0155, 0156, 0157),
-// including generic external-content migrations 0025/0026, read from a live
-// PostgreSQL 17 cluster installed the production way (see
+// 0003-0093, 0100, 0101, 0102, 0104, 0105, 0106, 0108, 0109, 0135, 0155, 0156,
+// 0157, 0173-0179), including generic external-content migrations 0025/0026,
+// read from a live PostgreSQL 17 cluster installed the production way (see
 // scripts/operations-mode-digest.ts). Catalog query below; not a mutable
 // database marker.
-export const privateWebSchemaDigest = "d2ccecf5717a5ea0dbd6a02aff3cdc35cbd9c6757b6052462a91151d785db49e";
+export const privateWebSchemaDigest = "TO_BE_RECOMPUTED_FROM_A_LIVE_CLUSTER";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -42,19 +42,22 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "installation_operations_mode_revisions", "installation_effective_operations_mode",
-  "control_action_inbox"] as const;
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries",
+  "installation_operations_mode_revisions", "installation_effective_operations_mode"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
   "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
-  "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
+  "control_policy_decisions", "control_project_lifecycle_events", "control_project_event_stream_heads", "control_project_events", "control_project_coordinator_heads",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
 inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 inserts.add("control_job_dependencies");
+inserts.add("control_project_settings"); inserts.add("pipeline_unattended_transitions");
+inserts.add("owner_web_push_subscriptions"); inserts.add("owner_web_push_deliveries");
 inserts.add("installation_operations_mode_revisions");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
@@ -85,11 +88,18 @@ const updates: Record<string, readonly string[]> = {
     "assigned_at", "updated_at", "revoked_at", "payload"],
   control_project_delegation_policies: ["state", "version", "updated_at"],
   control_idempotency: ["status", "result", "completed_at"],
+  control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
   control_action_inbox: ["state", "payload"],
   work_batches: ["state", "approval_identity_id", "approved_at", "decision_reason_code", "decision_digest",
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
+  pipeline_templates: ["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"],
+  pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
+    "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
+  control_project_settings: ["eligible_worker_kinds", "max_concurrent_tasks", "default_worker_kind",
+    "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
+  owner_web_push_deliveries: ["state", "status_code", "completed_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
@@ -134,7 +144,7 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_project_coordination_operation_jobs", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_task_model_selections",
   "control_task_declared_scopes", "control_assignment_lease_scopes", "work_batches", "work_batch_items",
-  "work_batch_effective_queue_admissions"];
+  "work_batch_effective_queue_admissions", "control_project_event_stream_heads", "control_project_events"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
@@ -144,12 +154,15 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_project_coordination_operation_jobs", "control_action_inbox", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
-  "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
+  "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
+  "control_project_event_stream_heads", "control_project_events"]);
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "pipeline_unattended_transitions", "pipeline_advance_receipts",
   "control_agent_review_plans", "control_pipeline_build_publications",
   "installation_operations_mode_revisions");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
+coordinatorInserts.add("pipeline_advance_receipts");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
@@ -169,7 +182,10 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_work_resources: ["coordinator_lock"],
   control_attempt_resource_admissions: ["state", "version", "retired_at", "retirement_kind", "retirement_proof_digest"],
   control_attempt_resource_scopes: ["coordinator_lock"],
+  pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag",
+    "unattended_last_swept_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
+  control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
@@ -193,12 +209,13 @@ const evidenceReads = ["workspaces", "control_identities", "control_role_grants"
   "control_worker_delivery_receipts", "control_worktree_change_audit_plans", "control_worktree_change_audit_records",
   "control_task_execution_plans", "control_codex_activation_transmission_intents", "control_codex_result_publications",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_native_result_write_reservations",
-  "control_durable_result_write_reservations",
+  "control_durable_result_write_reservations", "control_project_event_stream_heads", "control_project_events",
   "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
 const evidenceInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_artifact_manifests",
   "control_native_artifact_receipts", "control_native_result_write_reservations",
   "control_worktree_change_audit_plans", "control_worktree_change_audit_records",
-  "control_durable_result_write_reservations", "audit_events", "control_audit_chain_heads"]);
+  "control_durable_result_write_reservations", "control_project_event_stream_heads", "control_project_events",
+  "audit_events", "control_audit_chain_heads"]);
 const evidenceUpdates: Record<string, readonly string[]> = {
   control_jobs: ["result_lock"], control_attempts: ["evidence_lock"], control_leases: ["evidence_lock"],
   projects: ["coordinator_lock"], control_manual_project_heads: ["coordinator_lock"],
@@ -207,6 +224,7 @@ const evidenceUpdates: Record<string, readonly string[]> = {
   control_native_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+  control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
 };
 const sessionReads = ["workspaces", "control_identities", "control_role_grants", "control_nodes", "control_node_keys",
   "node_protocol_connections", "node_protocol_replay"];
@@ -218,18 +236,19 @@ const sessionUpdates: Record<string, readonly string[]> = {
  * `createOwnerTrustedLocalCliPublishV1` (run registration + `workflowIdForJob`)
  * and `publishDurableResultV1` (with the durable reservation Postgres port)
  * execute in one transaction. Review-tray registration stays on `results`. */
-const publisherReads = ["workspaces", "control_identities", "control_role_grants", "control_jobs", "control_attempts", "adapter_registry",
+const publisherReads = ["workspaces", "control_identities", "control_role_grants", "projects", "control_jobs", "control_attempts", "adapter_registry",
   "control_task_model_selections",
   "control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
-  "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
+  "audit_events", "control_audit_chain_heads", "control_project_event_stream_heads", "control_project_events", "work_intake_tenant_binding"];
 const publisherInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
-  "audit_events", "control_audit_chain_heads"]);
+  "audit_events", "control_audit_chain_heads", "control_project_event_stream_heads", "control_project_events"]);
 const publisherUpdates: Record<string, readonly string[]> = {
   control_harness_runs: ["publisher_lock", "state", "last_sequence", "run_digest", "run_auth_tag", "payload", "updated_at", "last_observed_at"], control_native_review_plans: ["publisher_lock"],
   control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+  control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
 };
 // The reviewer holds no table privilege: it reads and commits only through
 // read_agent_review_plan and commit_agent_review, pinned below.
@@ -400,7 +419,8 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
   const allowedReads = kind === "agentReviewer" ? agentReviewerReads : kind === "newsCoordinator" ? newsCoordinatorReads : kind === "newsIngestion" ? newsIngestionReads : kind === "ideaRuntime" ? ideaRuntimeReads : kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "publisher" ? publisherReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
   const allowedInserts = kind === "agentReviewer" ? agentReviewerInserts : kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "publisher" ? publisherInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
   const allowedUpdates = kind === "agentReviewer" ? agentReviewerUpdates : kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "publisher" ? publisherUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
-  const allowedDeletes = kind === "coordinator" ? coordinatorDeletes : new Set<string>();
+  const allowedDeletes = kind === "coordinator" ? coordinatorDeletes : kind === "web"
+    ? new Set(["owner_web_push_subscriptions"]) : new Set<string>();
   try {
     await db.transaction(async tx => {
       await verifySession(tx, config, role);

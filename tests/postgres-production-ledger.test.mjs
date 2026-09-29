@@ -14,11 +14,31 @@ import { restoreDatabase } from "../deploy/postgres/restore-database.mjs";
 import { computeDatabaseRestoreIdentity, parseArtifactSetDigest, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
+// The number of files the ledger covers, derived so adding a migration never needs this test edited.
+const MIGRATION_FILES = (await collectLedgerEntries(ROOT)).length;
+
+/**
+ * The committed ledger's own entry count.
+ *
+ * The three assertions below used to hard-code it, and every migration this
+ * branch has ever added re-broke them: a hard-coded count is a tripwire for the
+ * next author, not a check. It is read from the committed ledger instead, so
+ * the assertions still compare the SAME number against three different code
+ * paths (the verifier, the planner, and the CLI) -- which is what they are
+ * actually for -- without needing an edit whenever a migration lands.
+ */
+const committedLedger = JSON.parse(
+  await readFile(join(ROOT, "deploy/postgres/migration-ledger.json"), "utf8"));
+const LEDGER_FILES = committedLedger.entries.length;
+assert.ok(Number.isInteger(LEDGER_FILES) && LEDGER_FILES > 0, "committed ledger must have entries");
+assert.equal(LEDGER_FILES, (await collectLedgerEntries(ROOT)).length,
+  "the committed ledger must cover exactly the working tree's files");
 
 test("committed ledger matches the working tree", async () => {
   const result = await verifyMigrationLedger({ rootDir: ROOT });
-  assert.equal(result.files, 104);
+  assert.equal(result.files, MIGRATION_FILES);
   assert.match(result.digest, /^[a-f0-9]{64}$/);
+  assert.equal(result.digest, committedLedger.digest);
 });
 
 test("private web cannot update another subsystem's shared action-inbox row", async () => {
@@ -80,7 +100,7 @@ test("ledger refuses altered, missing, extra and reordered files", async t => {
 test("operator tools are inert without explicit targets", async () => {
   const planned = await applyMigrations({});
   assert.equal(planned.planned, true);
-  assert.equal(planned.files, 104);
+  assert.equal(planned.files, MIGRATION_FILES);
   const backup = await backupDatabase({});
   assert.equal(backup.planned, true);
   const restore = await restoreDatabase({});
@@ -155,7 +175,7 @@ test("migration CLI refuses the removed single-target form and partial pairs", a
   // No flags: effect-free plan, exit 0, no connection attempted.
   const plan = JSON.parse((await cli([])).stdout);
   assert.equal(plan.planned, true);
-  assert.equal(plan.files, 104);
+  assert.equal(plan.files, MIGRATION_FILES);
   // The documented single --target form never worked: loud refusal, non-zero exit.
   await assert.rejects(cli(["--target", "host=/none dbname=x user=y"]), /migration_removed_flag/);
   // Partial pairs are refused before any connection.

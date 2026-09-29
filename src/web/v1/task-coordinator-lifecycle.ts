@@ -44,6 +44,9 @@ import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
 import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
+import type { CoordinationCostEvidencePortV1 } from "../../project-coordination/v1/schemas";
+import { PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
+  ProductionPipelineAdvanceCapabilityV1 } from "../../pipelines/v1";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -105,6 +108,9 @@ export type TaskCoordinatorConfiguration = {
    * Requires quality/result configuration so predecessor acceptance is checked
    * from retained bytes and checkpoint-authenticated Completion Gate state. */
   workBatches?: { integrityKey: Uint8Array; selectionAuthority: WorkBatchQueueSelectionAuthorityV1 };
+  /** Explicit installation-owned unattended continuation. Absent is disabled;
+   * a configured callback still defaults operationally off until it returns true. */
+  pipelineAdvance?: { enabled: () => boolean; costEvidence: CoordinationCostEvidencePortV1 };
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
   /** Installation-owned, authenticated result reader for a supported local adapter.
@@ -142,6 +148,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   if (input.workBatches && (!(input.workBatches.integrityKey instanceof Uint8Array)
     || input.workBatches.integrityKey.length !== 32 || !input.quality
     || typeof input.workBatches.selectionAuthority?.assertCurrent !== "function"))
+    throw new Error("task_coordinator_config_invalid");
+  if (input.pipelineAdvance && (!input.workBatches || !input.approvals || !input.nativeSubmission
+    || typeof input.pipelineAdvance.enabled!=="function"||typeof input.pipelineAdvance.costEvidence?.currentCost!=="function"))
     throw new Error("task_coordinator_config_invalid");
   if (input.ensurePlanningProject !== undefined && typeof input.ensurePlanningProject !== "function")
     throw new Error("task_coordinator_config_invalid");
@@ -332,32 +341,45 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         throw new Error("work_batch_result_unavailable");
       return proof;
     };
+    // The accepted-result proof is derived from the coordinator's own lifecycle
+    // and transition history. control_transition_events is not readable by the
+    // private-web login, and a permission error there aborts the caller's
+    // transaction even when the JavaScript error is caught, so a page that only
+    // wanted presentation failed closed. Every proof read therefore runs in its
+    // own short transaction on this pool. The caller's session is never used
+    // for these statements, and nothing outside the minimal proof below crosses
+    // the boundary. The authority still compares against its HMAC-bound
+    // snapshot, so observing a newer accepted result refuses rather than widens.
+    const proofOnOwnPool = async <T>(work: (tx: DatabaseSession) => Promise<T>): Promise<T | null> => {
+      try { return await db.transaction(work); } catch { return null; }
+    };
     const ownerAuthority = Object.freeze({
       assertCurrent: (selection: WorkBatchQueueSelectionV1) => assertSelection(selection) === true,
-      async isAcceptedResultCurrent(tx: DatabaseSession, selection: Readonly<{
+      async isAcceptedResultCurrent(_caller: DatabaseSession, selection: Readonly<{
         sourceJobId: string; workerId: string; nodeId: string }>) {
-        try { await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true; }
-        catch { return false; }
+        return await proofOnOwnPool(async tx => {
+          await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true;
+        }) === true;
       },
-      async acceptedResultRevision(tx: DatabaseSession, selection: Readonly<{
+      async acceptedResultRevision(_caller: DatabaseSession, selection: Readonly<{
         sourceJobId: string; workerId: string; nodeId: string }>) {
-        try {
+        return await proofOnOwnPool(async tx => {
           const proof = await proofForSource(tx, selection);
           await assertAcceptedResultCurrent(tx, proof);
           const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
           return accepted.target.revisionNumber;
-        } catch { return null; }
+        });
       },
-      async acceptedResultProof(tx: DatabaseSession, selection: Readonly<{
+      async acceptedResultProof(_caller: DatabaseSession, selection: Readonly<{
         sourceJobId: string; workerId: string; nodeId: string }>) {
-        try {
+        return await proofOnOwnPool(async tx => {
           const proof = await proofForSource(tx, selection);
           await assertAcceptedResultCurrent(tx, proof);
           const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
           return Object.freeze({ executionJobId: proof.executionJobId, attemptId: proof.attemptId,
             harnessRunId: proof.runId, artifactId: proof.artifactId,
             contentHash: proof.contentHash, revision: accepted.target.revisionNumber });
-        } catch { return null; }
+        });
       },
     });
     return Object.freeze({ integrityKey, ownerAuthority,
@@ -397,6 +419,15 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
     input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex, transitionAdmission,
     workBatchAuthority?.assignmentAuthority);
+  const pipelineAdvance = input.pipelineAdvance && workBatchAuthority ? (() => {
+    const supporting=new ProductionPipelineAdvanceAuthorityV1(scope,input.workBatches!.selectionAuthority,
+      workBatchAuthority.ownerAuthority,input.pipelineAdvance!.costEvidence,input.clock);
+    const capability=new ProductionPipelineAdvanceCapabilityV1(supporting,assignment,{
+      enqueueAssignedInSession:(tx,value,authority)=>assignment.enqueuePipelineHermes021InSession(tx,value,authority),
+    });
+    return new PipelineAdvanceServiceV1(db,scope,workBatchAuthority.integrityKey,
+      {unattendedEnabled:input.pipelineAdvance.enabled,capability},input.clock);
+  })():undefined;
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
@@ -540,6 +571,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const assignments: TaskAssignmentOperation = Object.freeze({ ...scope,
     assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
     revoke: (...args) => run(() => assignment.revoke(...args)),
+    cancel: (...args) => run(() => assignment.cancel(...args)),
     options: (...args) => run(() => assignment.options(...args)),
     projectOptions: (...args) => run(() => assignment.projectOptions(...args)) });
   const approvals: TaskApprovalOperation | undefined = input.approvals ? Object.freeze({ ...scope,
@@ -624,6 +656,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
+    ...(pipelineAdvance?{pipelineAdvance:Object.freeze({advance:pipelineAdvance.advance.bind(pipelineAdvance),
+      sweep:pipelineAdvance.advanceReady.bind(pipelineAdvance)})}:{}),
     ...(workBatchAuthority ? { workBatchAuthority: workBatchAuthority.ownerAuthority } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),

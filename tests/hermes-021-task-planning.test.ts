@@ -26,6 +26,8 @@ import { advanceInstallationTransitionRecordV1, createInstallationTransitionReco
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { HERMES_NATIVE_ADAPTER } from "../src/harness/v1/native-run-identifiers";
 import { taskPlanningTemplateChoiceSchema } from "../src/web/v1/task-planning-wire";
+import { LinearPipelineServiceV1 } from "../src/pipelines/v1";
+import type { WorkBatchAssignmentAdmissionAuthority } from "../src/web/v1/task-assignment-coordinator";
 
 test("the planning wire accepts the canonical Hermes native adapter identifier", () => {
   assert.deepEqual(taskPlanningTemplateChoiceSchema.parse({ id: "template:hermes-native", adapter: HERMES_NATIVE_ADAPTER }),
@@ -207,7 +209,7 @@ test("a Hermes 0.21 worker template creates a pinned text-review plan, not an ol
   const localPolicy = { assertAdmitted() { throw new Error("stale_policy_must_not_be_used"); } };
 
   let launches = 0;
-  const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)),
+  const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, f.harnessKey),
     delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(24),
     binding: localBinding, policy: localPolicy, terminalResultStorage: f.storage }, clock: () => deliveryNow };
   const results = { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: f.storage,
@@ -297,7 +299,7 @@ test("a Hermes 0.21 worker template creates a pinned text-review plan, not an ol
   const restartedExecutor = createHermes021LocalSubprocessQueueExecutorV1({ tenantId: binding.tenantId,
     execution: { ...execution,
       preparation: new Hermes021MacosDispatchPreparationV1(f.db, planner, localBinding, () => deliveryNow),
-      runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)) },
+      runs: new HarnessRunStoreV1(f.db, f.harnessKey) },
     results, assertAuthority: delivery => assert.equal(delivery.authorityDigest, saved.job.authority.digest),
     host: { async execute() { launches++; throw new Error("restart must never invoke Hermes"); } },
   });
@@ -348,5 +350,73 @@ test("a Hermes 0.21 worker template creates a pinned text-review plan, not an ol
     projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
     leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest }), /hermes_021_macos_dispatch_preparation_unavailable/);
   assert.equal(launches, 1, "a late revoke never reaches the local Hermes runner");
+
+  // The unattended path must retain the canonically authorized human owner as
+  // the approver on the existing queue intent. The ordinary pickup authority
+  // then rechecks that owner's current grant; no service identity bypass or
+  // second delivery queue is introduced.
+  const pipelineKey = new Uint8Array(32).fill(94);
+  const pipeline = new LinearPipelineServiceV1(f.db, f.scope, pipelineKey,
+    { assertCurrent: () => true, isAcceptedResultCurrent: () => false }, () => instant + 8000);
+  const pipelineStages = (["build", "check", "signoff"] as const).map((stageKind, ordinal) => ({
+    ordinal, stageKind, role: (["builder", "checker", "validator"] as const)[ordinal]!,
+    description: `Hermes ${stageKind} stage.`, requiredCapability: HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
+    workerId: route.executorId, workerKind: "hermes" as const, nodeId: route.nodeId,
+    selectionKey: `hermes.021.${stageKind}`, model: "hermes-0.21", effort: "medium" as const,
+    provider: "local", profile: "hermes-021", maxLoops: stageKind === "signoff" ? 0 : 1,
+    ...(stageKind === "build" ? { allowedPaths: ["src/**"], maximumChangedFiles: 4, maximumChangedBytes: 4096 } : {}),
+  }));
+  const pipelineTemplate = await pipeline.createTemplate(f.identity, binding.projectId, {
+    name: "Hermes unattended pickup", description: "Exercise the installed Hermes queue authority.",
+    stages: pipelineStages, maxTotalLoops: 2, maxDurationSeconds: 3600,
+  });
+  const pipelineRun = await pipeline.instantiate(f.identity, binding.projectId,
+    { templateId: pipelineTemplate.templateId, title: "Unattended Hermes pickup" }, "hermes-unattended-pickup-0001");
+  const pipelinePlan = await planner.plan(f.identity, binding.projectId, pipelineRun.jobIds[0]!, sha256Digest({
+    title: "Unattended Hermes pickup", instructions: "Exercise the installed Hermes queue authority.",
+  }));
+  const admission: WorkBatchAssignmentAdmissionAuthority = { integrityKey: pipelineKey,
+    assertCurrent: async () => {}, assertAcceptedResultCurrent: async () => {} };
+  const unattendedReferences: Parameters<NativeTaskSubmission["enqueueInSession"]>[1][] = [];
+  const unattendedQueue = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000,
+    [], new NativeApprovalPacketStore(new Uint8Array(32).fill(95), []),
+    { enqueueInSession: async (_tx, reference) => { unattendedReferences.push(reference); } }, undefined, undefined, admission);
+  const policyDigest = sha256Digest("hermes-unattended-policy");
+  await f.db.query(`INSERT INTO control_project_delegation_policies(tenant_id,id,project_id,coordinator_identity_id,
+    coordinator_version,state,version,policy_digest,owner_identity_id,owner_identity_digest,allowed_actions,eligible_routes,
+    risk_ceiling,effect_ceiling,max_total_tasks,max_total_cost_microusd,max_concurrent_tasks,valid_from,valid_until,payload,
+    created_at,updated_at) VALUES($1,'policy:hermes-unattended',$2,'identity:test',1,'active',1,$3,'identity:test',$4,
+    '["tasks.assign"]',$5,'low','none',3,1000,2,$6,$7,'{}',$6,$6)`, [binding.tenantId, binding.projectId,
+    policyDigest, sha256Digest("identity:test"), JSON.stringify([route.nodeId]), at(7000), at(120_000)]);
+  const serverQueued = await f.db.transaction(async tx => {
+    let commitDeadline = instant + 60_000;
+    const current = { assertCurrent: async () => {}, commitDeadline: (value: number) => { commitDeadline = value; } };
+    const serverAssigned = await unattendedQueue.assignScheduledInSession(tx, { projectId: binding.projectId,
+      jobId: pipelinePlan.receipt.jobId, nodeId: route.nodeId, expectedInputDigest: pipelinePlan.receipt.inputDigest }, current);
+    return unattendedQueue.enqueuePipelineHermes021InSession(tx, {
+      tenantId: binding.tenantId, projectId: binding.projectId, runId: pipelineRun.runId, stageOrdinal: 0,
+      sourceJobId: pipelineRun.jobIds[0]!, executionJobId: pipelinePlan.receipt.jobId,
+      workerId: route.executorId, workerKind: "hermes", nodeId: route.nodeId,
+      selectionKey: pipelineStages[0]!.selectionKey, model: pipelineStages[0]!.model,
+      effort: pipelineStages[0]!.effort, provider: pipelineStages[0]!.provider, profile: pipelineStages[0]!.profile,
+      attemptId: serverAssigned.receipt.attemptId, leaseId: serverAssigned.receipt.leaseId,
+      leaseEpoch: serverAssigned.receipt.leaseEpoch, inputDigest: pipelinePlan.receipt.inputDigest,
+      policyId: "policy:hermes-unattended", approvingOwnerIdentityId: "identity:test",
+      idempotencyKey: "pipeline-advance:hermes-unattended:0", commitDeadline,
+    }, { actorId: "service:pipeline-advance:v1", assertCurrent: async () => {} });
+  });
+  assert.equal(serverQueued.replayed, false);
+  assert.equal(unattendedReferences.length, 1);
+  const unattendedLocated = await unattendedQueue.locateApprovedHermes021LocalQueueDelivery(
+    unattendedReferences[0]!, new AbortController().signal);
+  assert.equal(unattendedLocated.kind, "hermes-021-local");
+  assert.equal(unattendedLocated.task.jobId, pipelinePlan.receipt.jobId);
+  assert.equal((await f.db.query<{ queued_by: string }>(`SELECT record->>'queuedBy' queued_by FROM control_native_task_queue
+    WHERE tenant_id=$1 AND job_id=$2`, [binding.tenantId, pipelinePlan.receipt.jobId])).rows[0]?.queued_by, "identity:test");
+  await f.db.query(`UPDATE control_role_grants SET revoked_at=$1 WHERE tenant_id=$2 AND identity_id='identity:test'
+    AND role_key='owner'`, [at(8000), binding.tenantId]);
+  await assert.rejects(unattendedQueue.locateApprovedHermes021LocalQueueDelivery(
+    unattendedReferences[0]!, new AbortController().signal), /access_denied/,
+  "the existing pickup authority rechecks the approving owner's current grant");
 
 });

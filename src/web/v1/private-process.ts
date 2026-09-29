@@ -52,7 +52,7 @@ import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { createOperationsModeHttpHandlerV1 } from "./operations-mode-http";
 import { WebOperationsModeServiceV1, type OperationsModeStopAuthorityV1 } from "./operations-mode-service";
-import { LinearPipelineServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
+import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
 import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { ProjectActivityServiceV1 } from "./project-activity-service";
@@ -108,6 +108,8 @@ export interface PrivateWebProcessOptions {
   operatorSurface?: { read: (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string;
   }) => Promise<OperatorSurfaceSnapshotV1> };
+  /** Bounded per-node task and terminal-result attribution from canonical records. */
+  workerBoard?: { read: (input: { tenantId: string; now: string }) => Promise<unknown> };
   /** Owner-only canonical attention reader supplied by trusted composition.
    * It is intentionally separate from the full operator snapshot so the
    * coordinator role needs access only to the inbox table for this route. */
@@ -257,6 +259,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const operatorSurface = options.operatorSurface ? Object.freeze({
     read: options.operatorSurface.read.bind(options.operatorSurface),
   }) : undefined;
+  if (options.workerBoard && typeof options.workerBoard.read !== "function") throw new Error("invalid_private_app_config");
+  const workerBoard = options.workerBoard ? Object.freeze({ read: options.workerBoard.read.bind(options.workerBoard) }) : undefined;
   if (options.actionInboxSource && typeof options.actionInboxSource.read !== "function") throw new Error("invalid_private_app_config");
   const actionInboxSource = options.actionInboxSource ? Object.freeze({
     read: options.actionInboxSource.read.bind(options.actionInboxSource),
@@ -283,13 +287,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const revisions = options.revisions ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     plan: options.revisions.plan.bind(options.revisions) }) : undefined;
   if (options.assignment && (options.assignment.tenantId !== options.tenantId || options.assignment.workspaceId !== options.workspaceId
-    || [options.assignment.assign, options.assignment.expire, options.assignment.revoke,
+    || [options.assignment.assign, options.assignment.expire, options.assignment.revoke, options.assignment.cancel,
       options.assignment.options, options.assignment.projectOptions]
       .some(method => typeof method !== "function")))
     throw new Error("invalid_private_app_config");
   const assignment = options.assignment ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     assign: options.assignment.assign.bind(options.assignment), expire: options.assignment.expire.bind(options.assignment),
-    revoke: options.assignment.revoke.bind(options.assignment),
+    revoke: options.assignment.revoke.bind(options.assignment), cancel: options.assignment.cancel.bind(options.assignment),
     options: options.assignment.options.bind(options.assignment), projectOptions: options.assignment.projectOptions.bind(options.assignment) }) : undefined;
   const drainMs = options.drainMs ?? 30_000;
   if (options.approvals && (options.approvals.tenantId !== options.tenantId || options.approvals.workspaceId !== options.workspaceId
@@ -310,7 +314,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey,
     options.ideaProjects ? new WebIdeaProjectLifecycleOperation(options.database.client,
       { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.ideaProjects.integrityKey, clock) : undefined,
-    productConfiguration);
+    productConfiguration, options.tasks?.harnessIntegrityKey);
   const connections = new WebConnectionService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
@@ -321,6 +325,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const pipelines = options.workBatches ? new LinearPipelineServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,
     options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories) : undefined;
+  const pipelineAdvance = options.workBatches ? new PipelineAdvanceServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
   const operationsMode = options.operationsMode ? new WebOperationsModeServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.operationsMode.integrityKey, clock,
     options.operationsMode.stop) : undefined;
@@ -494,6 +500,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read(scope));
             if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
             return Response.json({ snapshot }, { headers: privateResponseHeaders });
+          }
+          if (url.pathname === "/api/v1/workers-board") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!workerBoard) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return { tenantId: options.tenantId, now: actor.now };
+            });
+            return Response.json(await workerBoard.read(scope), { headers: privateResponseHeaders });
           }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
           if (observations) {
@@ -837,7 +852,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               gatewayAssertionProfile, service: workBatches, clock })(request);
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
-              gatewayAssertionProfile, service: pipelines, clock })(request);
+              gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
           return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
@@ -869,7 +884,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelinesPage[2]) {
             let batchId: string;
             try { batchId = decodeURIComponent(pipelinesPage[2]); } catch { throw new WebAccessError("invalid_request"); }
-            await workBatches.view(identity, id, batchId);
+            if(pipelines&&batchId.startsWith("pipeline-run:"))await pipelines.view(identity,id,batchId);
+            else await workBatches.view(identity, id, batchId);
           } else await workBatches.list(identity, id);
         } else if (taskSummaryPage) {
           if (url.search) throw new WebAccessError("invalid_request");

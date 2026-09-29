@@ -187,8 +187,9 @@ test("the executable down migration refuses records and removes every owned obje
     await empty.exec(await readFile(`db/migrations/${file}`, "utf8"));
   // Every policy that reads the intake binding must be dropped first, newest
   // migration first: 0155's operations-mode tenant policy, then the
-  // build-publication one from 0108.
+  // unattended-advance one from 0109, then the build-publication one from 0108.
   await empty.exec(await readFile("db/down/0155_installation_operations_modes.sql", "utf8"));
+  await empty.exec(await readFile("db/down/0109_pipeline_unattended_advance.sql", "utf8"));
   await empty.exec(await readFile("db/down/0108_pipeline_build_publications.sql", "utf8"));
   await empty.exec(queueDown); await empty.exec(ownerDown); await empty.exec(down);
   const objects = await empty.query<{ batches: string | null; revisions: string | null; first_guard: string | null; second_guard: string | null }>(

@@ -15,6 +15,7 @@ import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import { captureWorkBatchQueueCatalogV1, createWorkBatchQueueSelectionAuthorityV1,
   type WorkBatchQueueAdmissionAuthorityV1, type WorkBatchQueueCatalogV1,
   type WorkBatchQueueSelectionAuthorityV1 } from "../../work-intake/v1";
+import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
@@ -59,6 +60,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workBatchIntegrityKey?: Uint8Array;
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+  ownerWebPush?: OwnerWebPushConfigV1;
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
@@ -72,6 +74,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     origin: configuration.localOwnerSession.origin,
     port: configuration.port,
     localOwnerSession: configuration.localOwnerSession,
+    ...(configuration.remoteAccess ? { remoteAccess: configuration.remoteAccess } : {}),
     ...(input.localOwnerSessionStore ? { localOwnerSessionStore: input.localOwnerSessionStore } : {}),
     ...(input.initialLocalOwnerSessions ? { initialLocalOwnerSessions: input.initialLocalOwnerSessions } : {}),
     workspaceId: configuration.workspaceId,
@@ -86,6 +89,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     ...(input.workBatchIntegrityKey ? { workBatchQueueCatalog: input.workBatchQueueCatalog
       ?? createMacLocalWorkBatchQueueCatalogV1(configuration) } : {}),
     ...(input.workBatchQueueAdmissionAuthority ? { workBatchQueueAdmissionAuthority: input.workBatchQueueAdmissionAuthority } : {}),
+    ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -137,6 +141,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
   workBatchIntegrityKey?: Uint8Array;
+  ownerWebPush?: OwnerWebPushConfigV1;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
@@ -181,6 +186,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           workerReadiness,
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
+          ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
         });
         if (!input.startQueueWorker) return web;
         if (!taskApplication?.queueDelivery || !databaseRoles) throw new Error("mac_local_host_configuration_invalid");

@@ -40,7 +40,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const signedOutFile = await app.handle(request("/api/v1/projects/project:test/tasks/job:test/files/artifact:test?disposition=preview&token=untrusted"),
     () => new Response("unused"));
   assert.equal(signedOutFile.status, 401, "file preview requires an authenticated owner session before a ticket is considered");
-  for (const path of ["/", "/projects", "/projects/project:unknown/tasks"]) {
+  for (const path of ["/", "/morning", "/projects", "/projects/project:unknown/tasks"]) {
     const signedOutPage = await app.handle(request(path), () => { throw new Error("must not render signed-out page"); });
     assert.equal(signedOutPage.status, 303);
     assert.equal(signedOutPage.headers.get("location"), `${origin}/session`);
@@ -65,6 +65,11 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const home = await app.handle(request("/", { headers: { cookie: cookie! } }), () => new Response("real home shell"));
   assert.equal(home.status, 200);
   assert.equal(await home.text(), "real home shell");
+  const morning = await app.handle(request("/morning", { headers: { cookie: cookie! } }), () => new Response("real morning shell"));
+  assert.equal(morning.status, 200); assert.equal(await morning.text(), "real morning shell");
+  const morningWithQuery = await app.handle(request("/morning?unexpected=value", { headers: { cookie: cookie! } }),
+    () => { throw new Error("the morning page must reject query strings before it renders"); });
+  assert.equal(morningWithQuery.status, 400);
   const foreignPort = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin: "http://127.0.0.1:1", "content-type": "application/json",
     "idempotency-key": "mac-local-project-foreign-port-001" }, body: JSON.stringify({ title: "Foreign port", summary: "Must be refused" }) }),
   () => new Response("unused"));
@@ -336,7 +341,7 @@ test("the Mac-local wrapper forwards the existing assignment operation through l
         candidates: [], recommendation: { state: "not_available", availability: "unknown", startsWork: false, grantsExecutionAuthority: false },
         receipt: null, startsWork: false, candidateEvidence: "configured_routes_only" };
     }, async assign() { commandCalls += 1; throw new Error("not used"); }, async expire() { throw new Error("not used"); },
-      async revoke() { throw new Error("not used"); } },
+      async revoke() { throw new Error("not used"); }, async cancel() { throw new Error("not used"); } },
   });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {

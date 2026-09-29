@@ -22,25 +22,32 @@ import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.m
 import { computeDatabaseRestoreIdentity, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
+import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
 import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
 import { AuditStore } from "../src/audit/audit-store.ts";
 import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
 import { WorkBatchOwnerServiceV1 } from "../src/work-intake/v1/owner-service.ts";
 import { workBatchProposalDigestV1 } from "../src/work-intake/v1/digest.ts";
-import { sha256Digest } from "../src/security/canonical-digest.ts";
-import { hmacSha256Tag } from "../src/security/digest.ts";
+import { sha256Digest, canonicalJson } from "../src/security/canonical-digest.ts";
+import { hmacSha256Tag, computeAuthorityDigest } from "../src/security/digest.ts";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery.ts";
 import { derivePipelineBuildPublicationEvidenceKeyV1 } from "../src/pipelines/v1/build-publication-authority.ts";
 import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/rollback-checkpoint.ts";
 import { SecurityStore } from "../src/security/security-store.ts";
-import { LinearPipelineServiceV1 } from "../src/pipelines/v1/index.ts";
+import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
+  ProductionPipelineAdvanceCapabilityV1 } from "../src/pipelines/v1/index.ts";
 import { AgentReviewServiceV1, CompletionGateStoreV1 } from "../src/completion-gate/v1/index.ts";
+import { nativeReviewPlanTag, nativeReviewTarget } from "../src/completion-gate/v1/native-review-plan.ts";
+import { buildTaskResultManifestV1 } from "../src/artifacts/v1/durable-result-publication.ts";
+import { resultBytesHash } from "../src/artifacts/v1/native-results.ts";
+import { createTaskCoordinatorLifecycle } from "../src/web/v1/task-coordinator-lifecycle.ts";
 import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { WebTaskService } from "../src/web/v1/task-service.ts";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
 import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
-import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyAgentReviewerDatabase } from "../src/web/v1/private-database-preflight.ts";
+import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyAgentReviewerDatabase, verifyPrivateDatabase,
+  verifyTaskCoordinatorDatabase } from "../src/web/v1/private-database-preflight.ts";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database.ts";
 import { privatePgOptions } from "../src/web/v1/private-pg-options.ts";
 import { now as webNow, request as webRequest, trust as webTrust } from "./helpers/web-foundation.ts";
@@ -265,6 +272,9 @@ const AGENT_REVIEW_GRANTS = "REVOKE ALL ON control_agent_review_plans FROM contr
 const PUBLICATION_GRANTS = "REVOKE ALL ON control_pipeline_build_publications\n"
   + "  FROM control_room_application, control_room_reader, control_room_schedule_admissions,\n"
   + "  control_room_github_broker, control_room_work_intake;\n";
+// S7's two tables join the pipeline REVOKE list, so they are removed first.
+const UNATTENDED_GRANTS = ",\n  pipeline_unattended_transitions, pipeline_advance_receipts";
+const UNATTENDED_OBJECTS = ["pipeline_unattended_transitions", "pipeline_advance_receipts"];
 const QUEUE_GRANTS = ", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads";
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
@@ -354,39 +364,66 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
   }
 }
 
+// The pending suffix is always the newest migration files, so every rung below
+// names 0107 and 0135 as well as its own stage: a rung that did not would be
+// asserting a pending set the applier never sees. 0107 grants on roles and
+// creates no object, and 0135's object reaches the shared roles through
+// production_table_grants.sql's blanket `ON ALL TABLES` grants rather than a
+// per-table REVOKE, so neither appears in `newObjects`; the 0107 grant
+// convergence itself is asserted against a purpose-built cluster in
+// tests/project-activity-lifecycle-postgres.test.ts, which applies the real
+// role files to its own database and reads the privileges as the server reports
+// them.
+//
 // A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes
-// S3's queue migration, S4's pipeline migration, S5's agent-review migration
-// and S6's build-publication migration, in that order.
-test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review and build-publication migrations", needsPg, () =>
+// S3's queue migration, S4's pipeline migration, S5's agent-review migration,
+// 0107's activity grants, S6's build-publication migration, S7's
+// unattended-advance migration and 0135's project settings, in that order.
+test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s2",
     pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql", "_agent_review_plans.sql",
-      "_pipeline_build_publications.sql"],
-    withoutGrants: [QUEUE_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+      "_task_project_activity_events.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
+    withoutGrants: [QUEUE_GRANTS, UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["work_batch_queue_admissions", "work_batch_agent_queue_heads", "work_batch_effective_queue_admissions",
       "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans",
-      "control_pipeline_build_publications"] }));
+      "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, then S6's 0108.
-test("upgrade from main's applied ledger appends only the pipeline, agent-review and build-publication migrations", needsPg, () =>
+// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, 0107,
+// S6's 0108, S7's 0109 and 0135.
+test("upgrade from main's applied ledger appends only the pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
-    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_pipeline_build_publications.sql"],
-    withoutGrants: [PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_task_project_activity_events.sql",
+      "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
+    withoutGrants: [UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
-      "control_agent_review_plans", "control_pipeline_build_publications"] }));
+      "control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 (0105 applied) takes S5's 0106, then S6's 0108.
-test("upgrade from main plus S4's applied ledger appends only the agent-review and build-publication migrations", needsPg, () =>
+// A database at main plus S4 (0105 applied) takes S5's 0106, 0107, S6's 0108,
+// S7's 0109 and 0135.
+test("upgrade from main plus S4's applied ledger appends only the agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s4",
-    pending: ["_agent_review_plans.sql", "_pipeline_build_publications.sql"],
-    withoutGrants: [AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
-    newObjects: ["control_agent_review_plans", "control_pipeline_build_publications"] }));
+    pending: ["_agent_review_plans.sql", "_task_project_activity_events.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
+    withoutGrants: [UNATTENDED_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+    newObjects: ["control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 and S5 (0106 applied) takes only S6's 0108: no
-// duplicate ledger_order, and a second run is a clean no-op.
-test("upgrade from main plus S4 and S5's applied ledger appends only the build-publication migration", needsPg, () =>
+// A database at main plus S4 and S5 (0106 applied) is the first that takes
+// 0107's activity grants, then S6's 0108, S7's 0109 and 0135.
+test("upgrade from main plus S4 and S5's applied ledger appends only the activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s5",
-    pending: ["_pipeline_build_publications.sql"], withoutGrants: [PUBLICATION_GRANTS],
-    newObjects: ["control_pipeline_build_publications"] }));
+    pending: ["_task_project_activity_events.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
+    withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS],
+    newObjects: ["control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
+
+// A database at main plus S4, S5 and 0107 (0108 applied) takes S7's 0109 and
+// 0135: no duplicate ledger_order, and a second run is a clean no-op.
+test("upgrade from main plus S4, S5 and 0107's applied ledger appends only the unattended-advance and project-settings migrations", needsPg, () =>
+  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s6",
+    pending: ["_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
+    withoutGrants: [UNATTENDED_GRANTS],
+    newObjects: UNATTENDED_OBJECTS }));
 
 test("tampered history fails closed: altered, deleted-row and forged-digest states", needsPg, async () => {
   await freshDatabase("cr_prod_tamper");
@@ -700,8 +737,10 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   assert.deepEqual(retained,{column_update:true,guard_count:1,policy_count:1});
   await query(db,"DROP POLICY test_dependent_policy ON audit_events");
   // The owner-approval slice depends on the intake tables, and the queue and
-  // build-publication tenant policies read the intake binding. Exercise the
-  // reviewed recovery order, newest first, before removing the base slice.
+  // build-publication and unattended-advance tenant policies read the intake
+  // binding. Exercise the reviewed recovery order, newest first, before
+  // removing the base slice.
+  await query(db,await readFile(join(ROOT,"db/down/0109_pipeline_unattended_advance.sql"),"utf8"));
   await query(db,await readFile(join(ROOT,"db/down/0108_pipeline_build_publications.sql"),"utf8"));
   await query(db,queueDown);
   await query(db,ownerDown);
@@ -791,7 +830,10 @@ test("S5 agent-review reads and writes run on the Mac-local production logins", 
 
 // The build stage's retained execution: the attempt, harness run, verified
 // artifact and canonical Codex result that the Completion Gate accepted.
-async function seedBuildExecution(client,own,suffix,at){
+// `deferResultRows` omits the artifact manifest and receipt, for the caller that
+// writes a receipt the real result store can verify. Both relations are
+// append-only, so such a row cannot be corrected after the fact.
+async function seedBuildExecution(client,own,suffix,at,{deferResultRows=false}={}){
   const tenantId=own.tenantId, projectId=own.project.projectId, jobId=own.pipeline.jobIds[0];
   const nodeId=`node:build:${suffix}`, workerId=`worker:build:${suffix}`, attemptId=`attempt:build-${suffix}`;
   const runId=`run:build-${suffix}`, artifactId=`artifact:build-${suffix}`, contentHash=own.targetRecord.subjectDigest;
@@ -807,13 +849,15 @@ async function seedBuildExecution(client,own,suffix,at){
     VALUES($1,$2,$3,$4,$5,$6,'connector:codex-owner-trusted-local-v1','codex',$7,NULL,NULL,'succeeded',1,$8,$9,'{}'::jsonb,$10,$10,$10)`,
   [runId,tenantId,projectId,jobId,attemptId,nodeId,`sha256:${"4".repeat(64)}`,`sha256:${"5".repeat(64)}`,
     `hmac-sha256:${"6".repeat(64)}`,at]);
-  await client.query(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,content_hash,
-    state,version,payload,created_at,updated_at) VALUES($1,$2,$3,NULL,$4,$5,$6,'verified',1,$7::jsonb,$8,$8)`,
-  [artifactId,tenantId,projectId,jobId,attemptId,contentHash,JSON.stringify({id:artifactId,tenantId,state:"verified",
-    version:1,projectId,jobId,attemptId,contentHash}),at]);
-  await client.query(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,
-    receipt,auth_tag) VALUES($1,$2,$3,$4,$5,$6,'{}'::jsonb,$7)`,
-  [tenantId,projectId,jobId,attemptId,runId,artifactId,`hmac-sha256:${"7".repeat(64)}`]);
+  if(!deferResultRows){
+    await client.query(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,content_hash,
+      state,version,payload,created_at,updated_at) VALUES($1,$2,$3,NULL,$4,$5,$6,'verified',1,$7::jsonb,$8,$8)`,
+    [artifactId,tenantId,projectId,jobId,attemptId,contentHash,JSON.stringify({id:artifactId,tenantId,state:"verified",
+      version:1,projectId,jobId,attemptId,contentHash}),at]);
+    await client.query(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,
+      receipt,auth_tag) VALUES($1,$2,$3,$4,$5,$6,'{}'::jsonb,$7)`,
+    [tenantId,projectId,jobId,attemptId,runId,artifactId,`hmac-sha256:${"7".repeat(64)}`]);
+  }
   const publicationId=`publication:build-${suffix}`, recordDigest=sha256Digest(`canonical ${suffix}`);
   await client.query(`INSERT INTO control_codex_result_publications(tenant_id,project_id,job_id,attempt_id,run_id,publication_id,
     record_digest,record,auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`,
@@ -918,6 +962,376 @@ test("S6 build publication runs on the Mac-local production logins and stays ten
       await client.query("REVOKE SELECT ON control_pipeline_build_publications FROM control_room_work_intake");
       await client.query("DELETE FROM work_intake_tenant_binding");
     }
+  }));
+
+// An owner delegation policy and the active coordinator head it is bound to,
+// for the S7 advance path.
+async function seedAdvancePolicy(client,own,policyId,at){
+  const identityId="identity:web-advance", owner=sha256Digest(identityId);
+  await client.query(`INSERT INTO control_project_coordinator_heads(tenant_id,project_id,state,coordinator_identity_id,
+    coordinator_actor_type,assigned_by_owner_identity_id,version,assigned_at,updated_at,payload)
+    VALUES($1,$2,'active',$3,'human',$3,1,$4,$4,'{}')`,[own.tenantId,own.project.projectId,identityId,at]);
+  await client.query(`INSERT INTO control_project_delegation_policies(tenant_id,id,project_id,coordinator_identity_id,
+    coordinator_version,state,version,policy_digest,owner_identity_id,owner_identity_digest,allowed_actions,eligible_routes,
+    risk_ceiling,effect_ceiling,max_total_tasks,max_total_cost_microusd,max_concurrent_tasks,valid_from,valid_until,payload,
+    created_at,updated_at) VALUES($1,$2,$3,$4,1,'active',1,$5,$4,$5,'["tasks.assign"]',
+    '["node:build:advance","node:check:advance","node:validate:advance"]','low','none',
+    3,1000,2,$6,$7,'{}',$6,$6)`,[own.tenantId,policyId,own.project.projectId,identityId,owner,
+    new Date(webNow-1000).toISOString(),new Date(webNow+600_000).toISOString()]);
+}
+
+// Every S7 statement runs on the Mac-local login that executes it in
+// production: private-process.ts builds the owner consent and history routes
+// on the web pool, and task-coordinator-lifecycle.ts builds the advance and
+// the bounded sweep on the coordinator pool. Row locks need UPDATE privilege,
+// so a lock the login may not take fails here and nowhere else.
+test("S7 unattended consent, advance, sweep and history run on the Mac-local production logins", needsPg, () =>
+  withMacLocalLogins("cr_unattended_logins",async({client,login})=>{
+    const coordinator=login("control_room_coordinator"), web=login("control_room_web");
+    const at=new Date(webNow).toISOString(), key=new Uint8Array(32).fill(57);
+    const checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
+    const own=await seedAgentReviewTenant(client,"advance",key,checkpoints,at);
+    const scope={tenantId:own.tenantId,workspaceId:own.workspaceId}, projectId=own.project.projectId;
+    const runId=own.pipeline.runId, buildJob=own.pipeline.jobIds[0];
+    await seedAdvancePolicy(client,own,"policy:advance",at);
+    // Both logins' startup preflights accept the real installed grants,
+    // including S7's column grants and its two tables.
+    const preflightScope={tenantId:own.tenantId,workspaceId:own.workspaceId,ownerIdentityId:"identity:web-advance",
+      issuer:webTrust.issuer};
+    await verifyPrivateDatabase(web.db,web.config,preflightScope,Date.now(),{nativeQueue:true});
+    await verifyTaskCoordinatorDatabase(coordinator.db,coordinator.config,preflightScope,Date.now(),{nativeQueue:true});
+    const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
+    const view=await new LinearPipelineServiceV1(web.db,scope,key,{assertCurrent:()=>true,isAcceptedResultCurrent:()=>false},
+      ()=>webNow).view(identity,projectId,runId);
+
+    // Owner consent on the web login, then an exact replay.
+    const owner=new PipelineAdvanceServiceV1(web.db,scope,key,{},()=>webNow);
+    const command={runId,templateId:view.templateId,policyId:"policy:advance",enabled:true,
+      expectedRunVersion:view.runVersion,expectedTemplateVersion:view.templateVersion};
+    const consent=await owner.setUnattended(identity,projectId,command,"pipeline-unattended-logins-0001");
+    assert.equal(consent.replayed,false);
+    assert.equal((await owner.setUnattended(identity,projectId,command,"pipeline-unattended-logins-0001")).replayed,true);
+
+    // The coordinator advances stage 0 through the production read authority.
+    // Assignment and the native queue are the existing protected composition,
+    // so they are stubbed to one real attempt row.
+    // The coordinator advances each stage through the production read
+    // authority. The Completion Gate acceptance, assignment and the native
+    // queue are the existing protected composition, so they are stubbed: the
+    // stub accepts the stages in `accepted` and returns one real attempt row.
+    const [,checkJob,signoffJob]=own.pipeline.jobIds;
+    await client.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
+      VALUES($1,$2,$3,$3,'{}'::jsonb,$4)`,[own.tenantId,projectId,signoffJob,`hmac-sha256:${"9".repeat(64)}`]);
+    const attempts=new Map();
+    for (const [job,stage] of [[buildJob,"build"],[signoffJob,"validate"]]) {
+      const nodeId=`node:${stage}:advance`, workerId=`worker:${stage}:advance`, attemptId=`attempt:${stage}-advance`;
+      await client.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
+        VALUES($1,$2,'active',1,'key:stage',$3::jsonb,$4,$4)`,
+      [nodeId,own.tenantId,JSON.stringify({id:nodeId,tenantId:own.tenantId,state:"active",version:1,identityKeyId:"key:stage"}),at]);
+      await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,
+        payload,created_at,updated_at) VALUES($1,$2,$3,1,'offered',1,$4,$5,1,$6::jsonb,$7,$7)`,
+      [attemptId,own.tenantId,job,workerId,nodeId,JSON.stringify({id:attemptId,tenantId:own.tenantId,state:"offered",version:1,
+        jobId:job,attemptNumber:1,workerId,nodeId,leaseEpoch:1}),at]);
+      attempts.set(job,attemptId);
+    }
+    attempts.set(checkJob,"attempt:review-advance");
+    const accepted=new Set();
+    let queued=0;
+    const supporting=new ProductionPipelineAdvanceAuthorityV1(scope,{assertCurrent:()=>true},
+      {acceptedResultProof:async(_tx,value)=>accepted.has(value.sourceJobId)?{executionJobId:value.sourceJobId}:null,
+        isAcceptedResultCurrent:async(_tx,value)=>accepted.has(value.sourceJobId)},
+      {currentCost:async()=>({kind:"known",admittedCostMicroUsd:10,evidenceDigest:sha256Digest("cost")})},()=>webNow);
+    const capability=new ProductionPipelineAdvanceCapabilityV1(supporting,
+      {assignScheduledInSession:async(_tx,value)=>({receipt:{attemptId:attempts.get(value.jobId),
+        leaseId:`lease:${value.jobId}`,leaseEpoch:1},replayed:false})},
+      {enqueueAssignedInSession:async()=>{queued+=1;return {queueId:`queue:advance-logins-${queued}`,replayed:false};}});
+    const advance=new PipelineAdvanceServiceV1(coordinator.db,scope,key,{unattendedEnabled:()=>true,capability},()=>webNow);
+    const receipt=await advance.advance(runId,"policy:advance");
+    assert.deepEqual([receipt.startsWork,receipt.stageOrdinal,receipt.jobId,receipt.attemptId,receipt.replayed],
+      [true,0,buildJob,"attempt:build-advance",false]);
+    // The bounded sweep selects the consented run, moves its cursor and
+    // replays the stored receipt without a second queue effect.
+    const swept=await advance.advanceReady(8);
+    assert.equal(swept.checked,1);
+    assert.deepEqual(swept.advanced.map(value=>[value.stageOrdinal,value.replayed]),[[0,true]]);
+    assert.equal(queued,1);
+    assert.notEqual((await client.query("SELECT unattended_last_swept_at FROM pipeline_runs WHERE id=$1",[runId]))
+      .rows[0].unattended_last_swept_at,null);
+    // A later stage's acceptance cannot skip the unaccepted current stage:
+    // the run stays on stage 0 and replays its receipt.
+    accepted.add(checkJob);
+    assert.deepEqual(await advance.advance(runId,"policy:advance").then(value=>[value.stageOrdinal,value.replayed]),[0,true]);
+    accepted.delete(checkJob);
+    // The coordinator login may write the run's ordinal column, but an
+    // unsigned move is refused before any stage is resolved or queued.
+    const signed=(await client.query("SELECT current_stage_ordinal FROM pipeline_runs WHERE id=$1",[runId])).rows[0];
+    await coordinator.direct.query("UPDATE pipeline_runs SET current_stage_ordinal=2 WHERE id=$1",[runId]);
+    await assert.rejects(advance.advance(runId,"policy:advance"),error=>error.safeReason==="pipeline_integrity_failed");
+    await coordinator.direct.query("UPDATE pipeline_runs SET current_stage_ordinal=$2 WHERE id=$1",
+      [runId,signed.current_stage_ordinal]);
+    // The sweep cursor is the one unsigned column; moving it only reorders
+    // sweeps and never authorizes anything.
+    await coordinator.direct.query("UPDATE pipeline_runs SET unattended_last_swept_at='1970-01-01' WHERE id=$1",[runId]);
+    assert.equal(queued,1);
+    // Each accepted stage moves the run exactly one ordinal, checking the
+    // predecessor edge; the accepted final stage completes the run.
+    accepted.add(buildJob);
+    assert.deepEqual(await advance.advance(runId,"policy:advance").then(value=>[value.stageOrdinal,value.jobId]),[1,checkJob]);
+    accepted.add(checkJob);
+    assert.deepEqual(await advance.advance(runId,"policy:advance").then(value=>[value.stageOrdinal,value.jobId]),[2,signoffJob]);
+    accepted.add(signoffJob);
+    const done=await advance.advance(runId,"policy:advance");
+    assert.deepEqual([done.startsWork,done.state],[false,"succeeded"]);
+    assert.equal(queued,3);
+    assert.deepEqual((await client.query(`SELECT state,current_stage_ordinal,(SELECT count(*)::int FROM pipeline_advance_receipts
+      WHERE pipeline_run_id=$1) receipts FROM pipeline_runs WHERE id=$1`,[runId])).rows[0],
+    {state:"succeeded",current_stage_ordinal:null,receipts:3});
+    // The Hermes route's owner re-check locks the policy and identity rows as
+    // the coordinator; both carry a column the coordinator may update.
+    assert.deepEqual((await client.query(`SELECT
+      has_any_column_privilege('control_room_task_coordinator','control_project_delegation_policies','UPDATE') policies,
+      has_any_column_privilege('control_room_task_coordinator','control_identities','UPDATE') identities`)).rows[0],
+    {policies:true,identities:true});
+
+    // The shared intake login holds no grant on either new table. Were one
+    // ever added, the tenant binding would still hide every other tenant's rows.
+    const intake={...target("cr_unattended_logins","control_room_work_intake_agent"),
+      password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+    await client.query("INSERT INTO tenants(id,display_name) VALUES('tenant:advance-other','Other tenant')");
+    for (const table of ["pipeline_unattended_transitions","pipeline_advance_receipts"]) {
+      await assert.rejects(query(intake,`SELECT tenant_id FROM ${table}`),/permission denied/u,table);
+      await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:advance-other')");
+      await client.query(`GRANT SELECT ON ${table} TO control_room_work_intake`);
+      try {
+        assert.deepEqual((await query(intake,`SELECT DISTINCT tenant_id FROM ${table}`)).rows,[],table);
+        await client.query("DELETE FROM work_intake_tenant_binding");
+        assert.deepEqual((await query(intake,`SELECT DISTINCT tenant_id FROM ${table}`)).rows,[],table);
+        await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[own.tenantId]);
+        assert.deepEqual((await query(intake,`SELECT DISTINCT tenant_id FROM ${table}`)).rows,[{tenant_id:own.tenantId}],table);
+      } finally {
+        await client.query(`REVOKE SELECT ON ${table} FROM control_room_work_intake`);
+        await client.query("DELETE FROM work_intake_tenant_binding");
+      }
+    }
+
+    // Owner history on the web login includes the consent and the advance.
+    const history=await owner.historyForOwner(identity,projectId,runId);
+    assert.ok(history.events.some(event=>event.action==="pipelines.unattended.enabled"));
+    assert.ok(history.events.some(event=>event.action==="pipelines.stage.advanced"));
+  }));
+
+// A minimal valid native planning template authority, exactly the shape
+// captureNativeTaskTemplates accepts. The proof path never plans, so the
+// envelope only has to be well formed.
+async function nativeTemplateAuthority(projectId) {
+  const authority = { projectId, allowedExecutor: "executor:hermes-native",
+    allowedOperations: ["harness.hermes.native.start"], credentialRefs: ["credential:test"], filesystemRoots: [],
+    networkPolicy: "allowlist", allowedNetworkDestinations: ["https://agent.example.test:443"],
+    effectPolicy: "approval_required", maxRisk: "low", maxDurationSeconds: 60, maxConcurrentEffects: 1,
+    expiresAt: new Date(webNow + 300_000).toISOString(), digest: "" };
+  authority.digest = computeAuthorityDigest(authority);
+  return authority;
+}
+
+// A genuinely accepted build stage on the real Mac-local logins.
+//
+// The S5 review found that the pipeline run view called the real
+// acceptedResultProof on the WEB transaction, and that proof reads
+// control_transition_events, which control_room_web may not read. The view
+// therefore aborted with database_unavailable on the production login.
+//
+// The review target is DERIVED from the review plan and the retained receipt by
+// nativeReviewTarget, exactly as the real publisher registers it. This
+// reconstructs the seeded review target (own.targetRecord) from a real plan and
+// receipt, so the plan, receipt, target and transition event all agree on the
+// same subject. If the derivation ever stopped reproducing the registered
+// target, the real verifyTaskReviewTargetV1 would refuse the proof — so this
+// asserts the equality rather than trusting it.
+function acceptedResultRecords(own, build, profile, reviewKey, at) {
+  const tenantId = own.tenantId, projectId = own.project.projectId, artifactId = build.artifactId;
+  // The seeded target's subject digest is sha256Digest("retained result"), which
+  // is the digest of the canonical JSON encoding of that string, so the retained
+  // bytes are those bytes, quotes included.
+  const bytes = new TextEncoder().encode(JSON.stringify("retained result"));
+  const contentHash = resultBytesHash(bytes);
+  const manifest = buildTaskResultManifestV1({ artifactId, tenantId, projectId, jobId: build.jobId,
+    attemptId: build.attemptId, workflowId: own.pipeline.workflowId, nodeId: build.nodeId,
+    contentHash, sizeBytes: bytes.byteLength, storageClass: "local", opaqueLocator: `local:${artifactId}`, createdAt: at });
+  const receipt = { schema: "control-room.native-result-receipt/v1", artifactId, tenantId, projectId,
+    jobId: build.jobId, attemptId: build.attemptId, runId: build.runId, nodeId: build.nodeId,
+    snapshotDigest: sha256Digest("snapshot"), snapshotVersion: 1, contentHash, sizeBytes: bytes.byteLength,
+    manifestDigest: sha256Digest(manifest), receivedAt: at, byteCheck: "matched_recorded_claim", qualityAccepted: false };
+  const plan = nativeReviewPlanRowV1(reviewKey, { tenantId, projectId, jobId: build.jobId,
+    runId: build.runId, attemptId: build.attemptId, nodeId: build.nodeId,
+    targetId: own.targetRecord.id, profile, producer: own.targetRecord.producer, at });
+  const target = nativeReviewTarget(plan.plan, receipt);
+  if (canonicalJson(target) !== canonicalJson(own.targetRecord)) throw new Error("accepted target does not match the registered target");
+  return { targetId: target.id, target, targetDigest: sha256Digest(target), plan, receipt, manifest, bytes, contentHash };
+}
+
+// Writes the chain the real proof path reads. The succeeded job state and the
+// appended transition event come first: the proof query joins on them, and the
+// event's idempotency_key must match 'native-completion:%:job'. The canonical
+// payload mirror trigger requires payload.state and payload.version to track the
+// columns, and jsonb_set needs to_jsonb for the number.
+async function writeAcceptedBuildStage(client, own, build, resultKey, records, at) {
+  const tenantId = own.tenantId, projectId = own.project.projectId, { receipt, manifest, plan } = records;
+  const key = sha256Digest(`native completion ${build.artifactId}`).slice(7);
+  await client.query("UPDATE control_jobs SET state='succeeded',version=2,updated_at=$1,payload=jsonb_set(jsonb_set(payload,'{state}',to_jsonb('succeeded'::text)),'{version}',to_jsonb(2)) WHERE tenant_id=$2 AND id=$3",
+    [at, tenantId, build.jobId]);
+  await client.query(`INSERT INTO control_transition_events(id,tenant_id,entity_kind,entity_id,from_state,to_state,
+      from_version,to_version,actor_id,actor_type,idempotency_key,safe_metadata,occurred_at)
+    VALUES($1,$2,'job',$3,'running','succeeded',1,2,'service:native-task-completion','service',$4,$5::jsonb,$6)`,
+    [`transition:native-completion:${key}:job`, tenantId, build.jobId, `native-completion:${key}:job`,
+      JSON.stringify({ receipt: { targetDigest: records.targetDigest } }), at]);
+  // The manifest must precede the receipt: the receipt's foreign key names it.
+  await client.query(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,content_hash,
+      state,version,payload,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'uploaded',$8,$9::jsonb,$10,$10)`,
+    [build.artifactId, tenantId, projectId, manifest.workflowId, build.jobId, build.attemptId, records.contentHash,
+      manifest.version, JSON.stringify(manifest), at]);
+  await client.query(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,
+      receipt,auth_tag) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`,
+    [tenantId, projectId, build.jobId, build.attemptId, build.runId, build.artifactId, JSON.stringify(receipt),
+      hmacSha256Tag(resultKey, { purpose: "native-result-receipt/v1", receipt })]);
+  await client.query(`INSERT INTO control_native_review_plans(tenant_id,project_id,job_id,run_id,plan,auth_tag)
+    VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [tenantId, projectId, build.jobId, build.runId,
+    JSON.stringify(plan.plan), plan.auth_tag]);
+}
+
+// The authenticated review plan the proof path selects before reading bytes.
+// A native-review-plan/v1 is the matching pair for a native result receipt, and
+// the review target is derived from it by nativeReviewTarget, exactly as the
+// real publisher registers it. The seeded review tenant's target is a fixture
+// for the agent-review tests; the run-view test derives the production target
+// instead, so the plan, receipt, target and transition event all agree.
+function nativeReviewPlanRowV1(reviewKey, { tenantId, projectId, jobId, runId, attemptId, nodeId, targetId,
+  profile, producer, at }) {
+  const material = { schema: "control-room.native-review-plan/v1", tenantId, runId,
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile), plannedAt: at,
+    projectId, jobId, attemptId, nodeId, inputDigest: sha256Digest("input"), authorityDigest: sha256Digest("authority"),
+    bindingDigest: sha256Digest("binding"), targetId, producer };
+  return { plan: material, auth_tag: nativeReviewPlanTag(reviewKey, material) };
+}
+
+// The S5 defect, proved on the real logins with the REAL ownerAuthority.
+//
+// The pipeline run view runs on the private-web login. Its accepted-result
+// proof reads control_transition_events through the task coordinator, and
+// control_room_web holds no SELECT on that table. Running that read on the
+// caller's transaction aborted it, so the page failed with
+// database_unavailable even though the JavaScript error was caught. The fix
+// routes the proof through the coordinator's own pool. This test builds a real
+// accepted result, composes the real createTaskCoordinatorLifecycle, renders the
+// view AS control_room_web, and asserts both the working proof and the
+// unchanged narrow web privilege.
+test("the pipeline run view renders on the production web login through the real accepted-result authority", needsPg, () =>
+  withMacLocalLogins("cr_run_view_authority", async ({ client, login }) => {
+    const coordinator = login("control_room_coordinator"), web = login("control_room_web");
+    const at = new Date(webNow).toISOString(), reviewKey = new Uint8Array(32).fill(63);
+    const harnessKey = new Uint8Array(32).fill(64), resultKey = new Uint8Array(32).fill(65);
+    const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
+    const own = await seedAgentReviewTenant(client, "view", reviewKey, checkpoints, at);
+    const build = await seedBuildExecution(client, own, "view", at, { deferResultRows: true });
+    const scope = { tenantId: own.tenantId, workspaceId: own.workspaceId };
+    const accepted = acceptedResultRecords(own, build, own.profile, reviewKey, at);
+    await writeAcceptedBuildStage(client, own, build, resultKey, accepted, at);
+    // Completion Gate acceptance: an independent reviewer's accepted decision
+    // and the profile's one required verification scenario, both committed
+    // through the real store so its tenant state digest advances. The target is
+    // already registered by seedAgentReviewTenant, and acceptedResultRecords
+    // proved the plan and receipt derive exactly that record.
+    const gate = new CompletionGateStoreV1(client, reviewKey, checkpoints, () => at);
+    const { targetId, targetDigest } = accepted;
+    // The reviewer is the check stage's protected agent principal, which the
+    // seeded tenant already proved independent of the build producer: different
+    // worker, agent profile, harness and model family.
+    await gate.recordReview({ ...own.reviewPayload(), id: `review:${targetId}`, targetId, targetDigest });
+    await gate.recordVerification({ schemaVersion: "control-room-completion-gate/v1",
+      id: `verification:${targetId}`, tenantId: own.tenantId, projectId: own.project.projectId,
+      targetId, targetDigest, acceptanceProfileId: own.profile.id,
+      acceptanceProfileDigest: sha256Digest(own.profile),
+      scenarioId: own.profile.requiredVerificationScenarioIds[0], outcome: "passed",
+      verifier: { actorId: "identity:web-view", actorType: "human" },
+      evidenceDigests: [sha256Digest("view verification")], verifiedAt: at,
+      grantsApproval: false, grantsExecutionAuthority: false });
+
+    // The real lifecycle on the real coordinator pool, with the real work-batch
+    // authority. Only the host-generation selection check is supplied, exactly as
+    // mac-local-host.ts composes it. The retained bytes are served by the local
+    // result store's own read port, keyed by artifact id.
+    const storage = { read: async artifactId => artifactId === build.artifactId ? accepted.bytes : undefined };
+    const lifecycle = createTaskCoordinatorLifecycle({
+      scope, database: { client: coordinator.db, close: async () => {}, isAvailable: () => true },
+      planning: { template: { id: "template:view", adapter: "hermes-native-runs/v1",
+        instructions: "Use only the supplied information.", acceptanceProfileId: own.profile.id,
+        acceptanceProfileDigest: sha256Digest(own.profile),
+        authority: await nativeTemplateAuthority(own.project.projectId) },
+        integrityKey: new Uint8Array(32).fill(66), reviewIntegrityKey: reviewKey, checkpoints },
+      routes: own.routes,
+      workBatches: { integrityKey: reviewKey, selectionAuthority: { assertCurrent: () => true } },
+      quality: { integrityKey: reviewKey, harnessIntegrityKey: harnessKey, scenarios: [],
+        results: { integrityKey: resultKey, storageClass: "local", storage }, checkpoints },
+      clock: () => webNow });
+    const authority = lifecycle.workBatchAuthority;
+    assert.equal(typeof authority?.acceptedResultProof, "function");
+
+    const selection = { sourceJobId: build.jobId, workerId: build.workerId, nodeId: build.nodeId };
+    // The caller's session is handed to the authority and must be ignored: the
+    // web login cannot read the lifecycle table the proof joins on. This session
+    // throws on any statement, exactly as the real web transaction does once
+    // PostgreSQL has aborted it.
+    const unreadableSession = { query: async () => { throw new Error("permission denied for table control_transition_events"); } };
+    assert.deepEqual(await authority.acceptedResultProof(unreadableSession, selection),
+      { executionJobId: build.jobId, attemptId: build.attemptId, harnessRunId: build.runId,
+        artifactId: build.artifactId, contentHash: accepted.contentHash, revision: 0 });
+    assert.equal(await authority.isAcceptedResultCurrent(unreadableSession, selection), true);
+    assert.equal(await authority.acceptedResultRevision(unreadableSession, selection), 0);
+    // An unbound selection resolves to no proof, never to another stage's.
+    assert.equal(await authority.acceptedResultProof(unreadableSession, { ...selection, nodeId: "node:build:other" }), null);
+
+    // The reason the proof cannot run on the caller, and the exact symptom the
+    // review reported: on the production web login this statement fails the
+    // request with database_unavailable, because the private driver withholds
+    // the server's refusal text. Catching the JavaScript error does not repair
+    // the aborted transaction, so the view died here. The authority avoids it
+    // by issuing the identical statement on its own pool, never on the caller.
+    const proofStatement = `SELECT j.id FROM control_task_execution_plans p JOIN control_jobs j
+      ON j.tenant_id=p.tenant_id AND j.id=p.job_id
+      JOIN control_transition_events e ON e.tenant_id=j.tenant_id AND e.entity_kind='job' AND e.entity_id=j.id
+      WHERE p.tenant_id=$1 AND p.source_job_id=$2`;
+    await assert.rejects(web.db.transaction(tx => tx.query(proofStatement, [own.tenantId, build.jobId])),
+      /database_unavailable/u, "the web login cannot run the proof's own statement");
+    await assert.rejects(web.direct.query(proofStatement, [own.tenantId, build.jobId]), /permission denied/u,
+      "the web login's plain client names the missing grant");
+    assert.equal((await coordinator.db.query(proofStatement, [own.tenantId, build.jobId])).rows.length, 1,
+      "the coordinator login runs the identical statement");
+
+    // The view, rendered AS control_room_web, on the web transaction.
+    const identity = createAccessVerifier(webTrust)(webRequest(), webNow);
+    const view = await new LinearPipelineServiceV1(web.db, scope, reviewKey, authority, () => webNow)
+      .view(identity, own.project.projectId, own.pipeline.runId);
+    assert.equal(view.stages[0].state, "completed",
+      "the accepted build stage must read as completed, not uncertain");
+    assert.equal(view.stages[0].round, 0);
+    assert.equal(view.stages[0].predecessorResultDigest, null);
+    assert.equal(view.stages[1].predecessorResultDigest, accepted.contentHash,
+      "the next stage must show the accepted predecessor result digest");
+    // The same view through the same real authority on the coordinator login.
+    const coordinatorView = await new LinearPipelineServiceV1(coordinator.db, scope, reviewKey, authority, () => webNow)
+      .view(identity, own.project.projectId, own.pipeline.runId);
+    assert.deepEqual(coordinatorView.stages, view.stages,
+      "the proof must not depend on which pool the caller presents from");
+
+    // Least privilege is unchanged: the web login still cannot read the
+    // lifecycle table the proof reads, which is the whole reason the proof runs
+    // on the coordinator pool.
+    const catalog = target("cr_run_view_authority");
+    assert.equal((await query(catalog, `SELECT has_table_privilege('control_room_web',
+      'control_transition_events','SELECT') AS allowed`)).rows[0].allowed, false);
+    assert.equal((await query(catalog, `SELECT has_table_privilege('control_room_task_coordinator',
+      'control_transition_events','SELECT') AS allowed`)).rows[0].allowed, true);
+    await assert.rejects(web.direct.query("SELECT id FROM control_transition_events"), /permission denied/u);
+    await lifecycle.close();
   }));
 
 // The commit boundary stores the payloads it is given, and the Completion Gate
@@ -1096,10 +1510,21 @@ test("agent-review down migration removes every surviving direct privilege", nee
 async function catalogState(db){
   const client=postgresDatabase(db);
   const acl=(await client.query(`SELECT jsonb_build_object(
-    'relations',(SELECT jsonb_agg(jsonb_build_array(c.relname,c.relkind,c.relacl::text,c.relrowsecurity,
-      pg_get_userbyid(c.relowner)) ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    -- An acl rendered as text lists its grantees in role-OID order, so two
+    -- databases holding the IDENTICAL privilege set print it in a different
+    -- order whenever the roles were created in a different sequence -- which is
+    -- exactly what a baseline and a head database are. The grantee list is
+    -- therefore sorted, so the comparison is over the privilege set rather than
+    -- over an artefact of creation order, while still failing the moment a grant
+    -- is added or dropped.
+    'relations',(SELECT jsonb_agg(jsonb_build_array(c.relname,c.relkind,
+      (SELECT string_agg('{x}'::text, ', ' ORDER BY '{x}'::text) FROM unnest(COALESCE(c.relacl, ARRAY[]::aclitem[])) AS x),
+      c.relrowsecurity, pg_get_userbyid(c.relowner)) ORDER BY c.relname)
+      FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relkind IN ('r','v','p','S') AND c.relname<>'control_room_schema_migrations'),
-    'columns',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attacl::text) ORDER BY c.relname,a.attnum)
+    'columns',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,
+      (SELECT string_agg('{x}'::text, ', ' ORDER BY '{x}'::text) FROM unnest(COALESCE(a.attacl, ARRAY[]::aclitem[])) AS x))
+      ORDER BY c.relname,a.attnum)
       FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relkind IN ('r','v','p') AND a.attnum>0 AND NOT a.attisdropped AND a.attacl IS NOT NULL),
     'functions',(SELECT jsonb_agg(jsonb_build_array(p.oid::regprocedure::text,p.proacl::text,p.proconfig,
@@ -1110,11 +1535,16 @@ async function catalogState(db){
   return {schema:await readSchemaDigest(client),acl};
 }
 
-// 0108's down file returns a head database to exactly the main + S4 + S5
+// 0109's then 0108's down files return a head database to exactly the main + S4 + S5
 // state: the same objects and function bodies, and the same privileges.
-test("0108 down returns a head database to exactly the main plus S4 and S5 state", needsPg, async () => {
-  const { stage, ledgerPath } = await stageAppliedPrefix({ pending: ["_pipeline_build_publications.sql"],
-    withoutGrants: [PUBLICATION_GRANTS] });
+test("0109 then 0108 down return a head database to exactly the main plus S4 and S5 state", needsPg, async () => {
+  // The baseline is a state that predates 0108, so it predates 0135 too: the
+  // pending suffix is always the newest files, and 0135 is now the newest. A
+  // down file for 0109/0108 has to be compared against a database that never had
+  // 0135's objects, or the comparison is against a state no release was in.
+  const { stage, ledgerPath } = await stageAppliedPrefix({
+    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
+    withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS] });
   try {
     await freshDatabase("cr_prod_s6_baseline");
     await applyMigrations({ target: target("cr_prod_s6_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s6_baseline"),
@@ -1123,10 +1553,104 @@ test("0108 down returns a head database to exactly the main plus S4 and S5 state
     await applyMigrations({ target: target("cr_prod_s6_down"), bootstrapTarget: bootstrapTarget("cr_prod_s6_down"),
       migrateTarget: migrateTarget("cr_prod_s6_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
     assert.notDeepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
+    // 0135 first, in reverse order: the baseline predates it, so the head has to
+    // be rolled back past it before the two states are comparable at all.
+    await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0135_control_project_settings.sql"), "utf8"));
+    await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
     await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0108_pipeline_build_publications.sql"), "utf8"));
     assert.deepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
   } finally {
     await rm(stage, { recursive: true, force: true });
+  }
+});
+
+// S7's additions to the Mac-local role files. Removing them rebuilds the S6
+// role state; each must be present verbatim, so a changed grant fails here.
+const S7_ROLE_EDITS = {
+  "private_web_roles.sql": [
+    "  pipeline_ordered_stage_runs, pipeline_unattended_transitions,\n  control_pipeline_build_publications",
+    "  pipeline_ordered_stage_runs, control_pipeline_build_publications",
+    "GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web;\n"
+      + "GRANT UPDATE (may_advance_unattended, version, updated_at, record_digest, auth_tag)\n"
+      + "  ON pipeline_templates TO control_room_private_web;\n"
+      + "GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest,\n"
+      + "  record_digest, auth_tag) ON pipeline_runs TO control_room_private_web;\n", ""],
+  "task_coordinator_roles.sql": [
+    "control_pipeline_build_publications, pipeline_unattended_transitions, pipeline_advance_receipts,",
+    "control_pipeline_build_publications,",
+    "GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator;\n"
+      + "GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at)\n"
+      + "  ON pipeline_runs TO control_room_task_coordinator;\n", ""],
+};
+const MAC_ROLE_FILES = ["private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
+  "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql", "agent_reviewer_roles.sql"];
+const MAC_ROLE_GROUPS = ["control_room_private_web", "control_room_task_coordinator", "control_room_native_results",
+  "control_room_local_result_publisher", "control_room_agent_reviewer", "control_room_native_queue_worker"];
+
+// The narrow-role installer's database steps, from the real role files with
+// `edits` applied, as the cluster superuser the fixed queue expects. Roles are
+// cluster-wide, so a second database skips the files' plain CREATE ROLE.
+async function installMacRoleFiles(database, edits = {}, absentObjects = []) {
+  const client = new Client(target(database, "postgres")); await client.connect();
+  try {
+    await client.query(await readFile(join(ROOT, "db/roles/production_roles.sql"), "utf8"));
+    if (!(await inspectFixedQueueSchemaV1(client)).schemaExists) await installFixedQueueSchemaV1(client);
+    await client.query(await readFile(join(ROOT, "db/roles/private_web_database.sql"), "utf8"));
+    for (const file of MAC_ROLE_FILES) {
+      let sql = await readFile(join(ROOT, "db/roles", file), "utf8");
+      // Grants on objects this database does not have are removed from their
+      // statement rather than the whole file: an S6-era baseline predates 0135,
+      // so replaying the shipped role files onto it raises 42P01 on
+      // `control_project_settings`, and dropping the statements that mention it
+      // would drop the grants that DO apply along with it.
+      for (const object of absentObjects)
+        sql = sql
+          .split(/(?=^GRANT )/gmu).map(statement => (
+            new RegExp(`\\b${object}\\b`, "u").test(statement) ? "" : statement)).join("");
+      const pairs = edits[file] ?? [];
+      for (let index = 0; index < pairs.length; index += 2) {
+        assert.ok(sql.includes(pairs[index]), `${file}: ${pairs[index]}`);
+        sql = sql.replace(pairs[index], pairs[index + 1]);
+      }
+      for (const [statement, role] of sql.matchAll(/^CREATE ROLE (\w+)[^;]*;/gmu))
+        if ((await client.query("SELECT 1 FROM pg_roles WHERE rolname=$1", [role])).rows.length) sql = sql.replace(statement, "");
+      await client.query(sql);
+    }
+  } finally { await client.end(); }
+}
+
+// 0109's down file returns a Mac-local head database to exactly the S6 state:
+// the same objects, and the same privileges for every role, including the web
+// and coordinator column grants that exist only in the Mac-local role files.
+test("0109 down returns a Mac-local head database to exactly the main plus S4, S5 and S6 state", needsPg, async () => {
+  const { stage, ledgerPath } = await stageAppliedPrefix({ pending: ["_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
+    withoutGrants: [UNATTENDED_GRANTS] });
+  const admin = adminDb();
+  const createdPostgres = !(await query(admin, "SELECT 1 FROM pg_roles WHERE rolname='postgres'")).rows.length;
+  if (createdPostgres) await query(admin, "CREATE ROLE postgres SUPERUSER LOGIN");
+  assert.deepEqual((await query(admin, "SELECT rolname FROM pg_roles WHERE rolname=ANY($1::text[])", [MAC_ROLE_GROUPS])).rows, []);
+  try {
+    await freshDatabase("cr_prod_s7_baseline");
+    await applyMigrations({ target: target("cr_prod_s7_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s7_baseline"),
+      migrateTarget: migrateTarget("cr_prod_s7_baseline"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
+    // The baseline predates 0135, so its role files are installed without the
+    // grants on 0135's table; the head database gets the shipped files whole.
+    await installMacRoleFiles("cr_prod_s7_baseline", S7_ROLE_EDITS, ["control_project_settings"]);
+    await freshDatabase("cr_prod_s7_down");
+    await applyMigrations({ target: target("cr_prod_s7_down"), bootstrapTarget: bootstrapTarget("cr_prod_s7_down"),
+      migrateTarget: migrateTarget("cr_prod_s7_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
+    await installMacRoleFiles("cr_prod_s7_down");
+    const head = await catalogState(target("cr_prod_s7_down"));
+    assert.notDeepEqual(head, await catalogState(target("cr_prod_s7_baseline")));
+    // 0135 first, in reverse order: the baseline predates it, so the head has to
+    // be rolled back past it before the two states are comparable at all.
+    await query(target("cr_prod_s7_down"), await readFile(join(ROOT, "db/down/0135_control_project_settings.sql"), "utf8"));
+    await query(target("cr_prod_s7_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
+    assert.deepEqual(await catalogState(target("cr_prod_s7_down")), await catalogState(target("cr_prod_s7_baseline")));
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+    for (const database of ["cr_prod_s7_baseline", "cr_prod_s7_down"]) await query(admin, `DROP DATABASE IF EXISTS ${database}`);
+    for (const role of [...MAC_ROLE_GROUPS, ...createdPostgres ? ["postgres"] : []]) await query(admin, `DROP ROLE IF EXISTS ${role}`);
   }
 });
 

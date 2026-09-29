@@ -11,6 +11,7 @@ import { assertProjectLifecycleTransitionV1 } from "../../idea-lab/v1/contracts"
 import { ideaLabProjectLifecycleActionsV1 } from "../../idea-lab/v1/lifecycle-service";
 import type { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-operation";
 import { ideaProjectActionTarget } from "./project-wire";
+import { projectSettingsSchema, projectSettingsDraftSchema, type ProjectSettings } from "./project-settings-wire";
 
 import { catalogProjectIdSchema, lifecycleSchema, projectCreateSchema, projectTransitionSchema, projectViewSchema,
   type EffectiveProjectPresentation, type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
@@ -19,6 +20,7 @@ import { PRODUCT_CONFIGURATION_SCHEMA_V1, parseProductConfigurationV1, type Prod
 import { buildProjectPresentationV1, computeEffectiveProjectPresentationV1, parseStoredProjectPresentationV1,
   ProjectPresentationError, verifyProjectTemplateSelectionV1,
   type EffectiveProjectPresentationV1, type ProjectPresentationV1 } from "../../config/v1/project-presentation";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
 const iso = (value: string | Date) => new Date(value).toISOString();
 type CatalogRow = { id: string; adapter_id: string; payload: unknown; title: string; summary: string;
   lifecycle: WebProject["lifecycle"] | null; version: number | string | null; created_at: string | Date | null;
@@ -38,16 +40,19 @@ export class WebProjectService {
   private readonly ideas?: IdeaLabProjectRegistryStoreV1;
   private readonly productConfiguration?: Readonly<ProductConfigurationV1>;
   private readonly configurationDigest?: string;
+  private readonly projectEvents?: TaskProjectEventWriterV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     clock: () => number = Date.now, ideaIntegrityKey?: Uint8Array,
     private readonly ideaLifecycle?: WebIdeaProjectLifecycleOperation,
-    productConfiguration?: Readonly<ProductConfigurationV1>) {
+    productConfiguration?: Readonly<ProductConfigurationV1>, projectEventRootKey?: Uint8Array) {
     this.authority = new WebSessionAuthority(db, scope, clock);
     if (ideaIntegrityKey !== undefined) this.ideas = new IdeaLabProjectRegistryStoreV1(db, ideaIntegrityKey);
     if (productConfiguration !== undefined) {
       this.productConfiguration = productConfiguration;
       this.configurationDigest = configurationDigestFor(productConfiguration);
     }
+    if (projectEventRootKey !== undefined) this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+      deriveProjectEventIntegrityKeyV1(projectEventRootKey), () => new Date(clock()).toISOString()));
   }
 
   private async authorized<T>(identity: VerifiedWebIdentity, action: string, projectId: string | undefined,
@@ -298,6 +303,11 @@ export class WebProjectService {
           WHEN $1='manual_project_active' THEN 'planned' WHEN $1='manual_project_paused' THEN 'waiting' ELSE normalized_state END
         WHERE tenant_id=$4 AND id=$5`,
         [`manual_project_${lifecycle}`, String(project.version), actor.now, this.scope.tenantId, projectId]);
+      if (this.projectEvents && (lifecycle === "completed" || lifecycle === "archived")) {
+        await this.projectEvents.appendInSession(tx, { ...this.scope, projectId, subjectId: projectId,
+          action: lifecycle === "completed" ? "project_completed" : "project_archived", sourceId: projectId,
+          sourceVersion: `project-v${project.version}`, occurredAt: actor.now });
+      }
       // Project lifecycle never cancels a job, changes a lease or creates an external effect.
       return project;
     });
@@ -306,6 +316,70 @@ export class WebProjectService {
   async transitionIdea(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
     if (!this.ideaLifecycle) throw new Error("idea_lifecycle_not_configured");
     return this.ideaLifecycle.transition(identity, projectId, value, key);
+  }
+
+  /** Raw settings row, unauthorized -- callers (readSettings and the assignment coordinator's own
+   * eligibility/concurrency checks) hold or re-check their own authorization on the same
+   * transaction. An absent row means "no settings saved": unrestricted, uncapped, no default. */
+  async readSettingsRowInSession(tx: DatabaseSession, projectId: string): Promise<Readonly<{
+    version: number; eligibleWorkerKinds: readonly string[] | null; maxConcurrentTasks: number | null;
+    defaultWorkerKind: string | null; defaultModel: string | null; defaultEffort: string | null; updatedAt: string | null }>> {
+    const row = (await tx.query<{ eligible_worker_kinds: string[] | null; max_concurrent_tasks: number | string | null;
+      default_worker_kind: string | null; default_model: string | null; default_effort: string | null;
+      version: number | string; updated_at: string | Date }>(
+      `SELECT eligible_worker_kinds,max_concurrent_tasks,default_worker_kind,default_model,default_effort,version,updated_at
+       FROM control_project_settings WHERE tenant_id=$1 AND project_id=$2`, [this.scope.tenantId, projectId])).rows[0];
+    if (!row) return { version: 0, eligibleWorkerKinds: null, maxConcurrentTasks: null,
+      defaultWorkerKind: null, defaultModel: null, defaultEffort: null, updatedAt: null };
+    return { version: Number(row.version), eligibleWorkerKinds: row.eligible_worker_kinds,
+      maxConcurrentTasks: row.max_concurrent_tasks === null ? null : Number(row.max_concurrent_tasks),
+      defaultWorkerKind: row.default_worker_kind, defaultModel: row.default_model, defaultEffort: row.default_effort,
+      updatedAt: iso(row.updated_at) };
+  }
+
+  async readSettings(identity: VerifiedWebIdentity, projectId: string): Promise<ProjectSettings> {
+    return this.authenticated(identity, async (tx, actor) => {
+      const project = await this.getViewInSession(tx, actor, projectId);
+      if (project.origin !== "ordinary") throw new WebAccessError("not_found");
+      const row = await this.readSettingsRowInSession(tx, projectId);
+      return projectSettingsSchema.parse({ projectId, ...row, updatedAt: row.updatedAt ?? actor.now });
+    }, true);
+  }
+
+  /** Owner-only, version-checked write. `projects.settings` requires the owner role explicitly
+   * (the third `true`), the same way tasks.assign does for revoke/cancel -- an operator grant can
+   * never edit these regardless of its own allowed_actions. */
+  async updateSettings(identity: VerifiedWebIdentity, projectId: string, draft: unknown): Promise<ProjectSettings> {
+    const parsed = projectSettingsDraftSchema.safeParse(draft);
+    if (!parsed.success) throw new WebAccessError("invalid_request");
+    return this.authenticated(identity, async (tx, actor) => {
+      actor.require("projects.read", projectId); actor.require("projects.settings", projectId, true);
+      const project = await this.getViewInSession(tx, actor, projectId);
+      if (project.origin !== "ordinary") throw new WebAccessError("not_found");
+      const existing = (await tx.query<{ version: number | string }>(
+        `SELECT version FROM control_project_settings WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE`,
+        [this.scope.tenantId, projectId])).rows[0];
+      const currentVersion = existing ? Number(existing.version) : 0;
+      if (currentVersion !== parsed.data.expectedVersion) throw new WebAccessError("conflict");
+      const { eligibleWorkerKinds, maxConcurrentTasks, defaultWorkerKind, defaultModel, defaultEffort } = parsed.data;
+      const nextVersion = currentVersion + 1;
+      const eligibleJson = eligibleWorkerKinds ? JSON.stringify(eligibleWorkerKinds) : null;
+      if (existing) {
+        await tx.query(`UPDATE control_project_settings SET eligible_worker_kinds=$1::jsonb,max_concurrent_tasks=$2,
+          default_worker_kind=$3,default_model=$4,default_effort=$5,version=$6,updated_by_identity_id=$7,updated_at=$8
+          WHERE tenant_id=$9 AND project_id=$10`,
+        [eligibleJson, maxConcurrentTasks, defaultWorkerKind, defaultModel, defaultEffort,
+          nextVersion, actor.id, actor.now, this.scope.tenantId, projectId]);
+      } else {
+        await tx.query(`INSERT INTO control_project_settings(tenant_id,project_id,eligible_worker_kinds,max_concurrent_tasks,
+          default_worker_kind,default_model,default_effort,version,updated_by_identity_id,updated_at)
+          VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10)`,
+        [this.scope.tenantId, projectId, eligibleJson, maxConcurrentTasks, defaultWorkerKind, defaultModel, defaultEffort,
+          nextVersion, actor.id, actor.now]);
+      }
+      return projectSettingsSchema.parse({ projectId, version: nextVersion, eligibleWorkerKinds, maxConcurrentTasks,
+        defaultWorkerKind, defaultModel, defaultEffort, updatedAt: actor.now });
+    });
   }
 
   private async command(identity: VerifiedWebIdentity, action: string, projectId: string | undefined, value: unknown, key: string,

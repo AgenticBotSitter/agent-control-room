@@ -4,7 +4,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LocalRuntimeContextV1, parseLocalStatusV1 } from "../private-app/app/local-runtime";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
-import { PipelineAttention, PipelineBatchDetail, PipelineBatchList, PrivateProjectPipelines, createWorkBatchOwnerBrowserClient } from
+import { PipelineAttention, PipelineBatchDetail, PipelineBatchList, PrivateProjectPipelines, createPipelineRunOwnerBrowserClient,
+  createWorkBatchOwnerBrowserClient } from
   "../private-app/app/project-pipelines-workspace";
 import type { WorkBatchOwnerViewV1 } from "../src/work-intake/v1/owner-schemas";
 
@@ -64,6 +65,26 @@ test("linear pipeline route renders a read-only run projection without a start c
   assert.match(html, /Eligibility alone never starts work/);
   assert.match(html, /Loading saved pipeline runs/);
   assert.doesNotMatch(html, /<button[^>]*>Start/);
+});
+
+test("pipeline run owner client binds exact consent versions and authenticated history",async()=>{
+  const requests:{path:string;init?:RequestInit}[]=[];
+  const transport=(async(input:RequestInfo|URL,init?:RequestInit)=>{const path=String(input);requests.push({path,init});
+    if(path.endsWith("/history"))return Response.json({runId:"pipeline-run:alpha",projectId,events:[],truncated:false,
+      chainVerified:true,observedAt:"2026-09-27T12:00:00.000Z",startsWork:false,grantsExecutionAuthority:false});
+    return Response.json({transitionId:"transition:alpha",runId:"pipeline-run:alpha",templateId:"template:alpha",
+      policyId:"policy:alpha",enabled:true,runVersion:5,templateVersion:3,occurredAt:"2026-09-27T12:00:00.000Z",
+      replayed:false,startsWork:false,grantsExecutionAuthority:false},{status:201});}) as typeof fetch;
+  const client=createPipelineRunOwnerBrowserClient(transport,()=>"pipeline-consent:test-0001");
+  const run={runId:"pipeline-run:alpha",projectId,title:"Run",state:"active" as const,templateId:"template:alpha",
+    runVersion:4,templateVersion:3,unattended:false,mayAdvanceUnattended:false,stages:[],
+    updatedAt:"2026-09-27T11:00:00.000Z",startsWork:false as const,grantsExecutionAuthority:false as const} as any;
+  assert.equal((await client.history(projectId,run.runId)).chainVerified,true);
+  const receipt=await client.setUnattended(projectId,run,"policy:alpha",true);assert.equal(receipt.startsWork,false);
+  const post=requests.at(-1)!;assert.equal(post.path,"/api/v1/projects/project%3Aalpha/pipeline-runs/pipeline-run%3Aalpha/unattended");
+  assert.equal((post.init?.headers as Record<string,string>)["idempotency-key"],"pipeline-consent:test-0001");
+  assert.deepEqual(JSON.parse(String(post.init?.body)),{runId:"pipeline-run:alpha",templateId:"template:alpha",
+    policyId:"policy:alpha",enabled:true,expectedRunVersion:4,expectedTemplateVersion:3});
 });
 
 test("local runtime parser accepts pipelines and still refuses unknown project sections", () => {
