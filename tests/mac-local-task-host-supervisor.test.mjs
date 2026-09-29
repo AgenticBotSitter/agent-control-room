@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -571,6 +572,32 @@ test("mac:up continues past an unreadable state file to its own actionable refus
   assert.match(output, /task settings missing: run pnpm mac:prepare-task-runtime/u,
     "the actionable remedy must be the failure the owner sees");
   assert.doesNotMatch(output, /mac_local_host_state_invalid/u, "an internal identifier is not a remedy");
+});
+
+test("the task host serves even when its recorded stop reason is unreadable", async t => {
+  // mac:up narrowing its own read is not sufficient on its own. mac:up launches the supervisor as a
+  // separate process, and the supervisor re-reads the same file for the same log line. If only the
+  // wrapper is narrowed, a loose state file moves the failure rather than removing it: mac:up
+  // reports it and continues, the supervisor then dies on its own read, and the owner is left with
+  // "supervisor error" after 90 seconds. Both halves have to be narrowed, so this drives the real
+  // supervisor and requires the host to actually reach serving.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  await writeFile(paths.hostState, `${JSON.stringify({ state: "stopped", reason: "exit code 0",
+    at: "2026-09-27T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  await chmod(paths.hostState, 0o644);
+  const child = spawn(process.execPath, [join(repoRoot, "scripts/mac-local/task-host-supervisor.mjs"),
+    "--protected-root", root],
+    { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: join(root, "home") } });
+  t.after(async () => { if (pidAlive(child.pid)) child.kill("SIGKILL"); });
+  const started = await waitFor(() => {
+    if (child.exitCode !== null) return false;
+    return readFileSync(paths.hostState, "utf8").includes("\"state\":\"running\"");
+  }, "supervisor never reached running with an unreadable state file", 30_000)
+    .then(() => true, () => false);
+  const log = readFileSync(paths.hostLog, "utf8");
+  assert.ok(started, `the host must serve, not die, on an unreadable state file. log:\n${log}`);
+  assert.match(log, /could not be read/u, "the condition must be recorded so the owner can see it");
+  assert.doesNotMatch(log, /supervisor error/u, "an unreadable stop reason is not a supervisor error");
 });
 
 test("the exact-command selector refuses a recycled or unrelated pid", async t => {
