@@ -21,8 +21,18 @@ test("research draft response cannot cross a project or story-version change", a
   const props = { projectId: "project:one", story, close: () => {} };
   const render = value => act(async () => root.render(React.createElement(NewsResearchForm, value)));
   const submit = () => act(async () => dom.window.document.querySelector("form").dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })));
+  const proposal = (projectId, digest) => ({ contractVersion: "control-room-news/v1", proposalId: "proposal:fixture",
+    tenantId: "tenant:web", workspaceId: "workspace:web", projectId, storyId: story.storyId, storyDigest: digest,
+    actionId: "research_brief", actionCatalogDigest: `sha256:${"a".repeat(64)}`, requestedTitle: "Synthetic research",
+    goal: "Verify the source before acting.", deliverableKind: "report", routeProfileId: "route:research",
+    requiredCapability: "capability:research", requestedPlatform: "any", risk: "low", reasoningProfile: "research_deep",
+    effortHint: "medium", sourceEvidenceDigests: [`sha256:${"b".repeat(64)}`], sourceUrls: [story.canonicalUrl],
+    requestedByActorDigest: `sha256:${"c".repeat(64)}`, requestedAt: "2026-09-09T00:00:00.000Z",
+    proposalIdempotencyKey: `sha256:${"d".repeat(64)}`, status: "draft", requiresOwnerReview: true, createsWorkItem: false,
+    dispatchState: "not_requested", grantsApproval: false, grantsNetworkAuthority: false, grantsCommandAuthority: false,
+    grantsLeaseAuthority: false, grantsExecutionAuthority: false, proposalDigest: `sha256:${"e".repeat(64)}` });
   const preview = (projectId, digest, instructions) => ({ projectId, storyId: story.storyId, storyDigest: digest,
-    draft: { title: "Synthetic research", instructions }, saved: false, dispatch: "not_requested" });
+    proposal: proposal(projectId, digest), draft: { title: "Synthetic research", instructions }, saved: false, dispatch: "not_requested" });
   try {
     await render(props); await submit();
     assert.equal(pending.length, 1);
@@ -40,8 +50,8 @@ test("research draft response cannot cross a project or story-version change", a
     assert.match(dom.window.document.body.textContent, /Current research instructions/);
     const save = [...dom.window.document.querySelectorAll("button")].find(button => button.textContent === "Save proposed task");
     await act(async () => save.click());
-    assert.match(pending[3].url, /projects\/project%3Atwo\/tasks$/);
-    assert.equal(JSON.parse(pending[3].options.body).instructions, "Current research instructions");
+    assert.match(pending[3].url, /projects\/project%3Atwo\/tasks\/from-news$/);
+    assert.equal(JSON.parse(pending[3].options.body).storyDigest, nextStory.storyDigest);
     await act(async () => pending[3].resolve(Response.json({ receipt: { projectId: "project:two", jobId: "job:fixture",
       requestId: "request:fixture", createdAt: "2026-09-09T00:00:00.000Z", submission: "proposed", startsWork: false }, replayed: false })));
     assert.match(dom.window.document.body.textContent, /Task saved for review. No bot has been started/);
@@ -68,7 +78,16 @@ test("project switch preserves an uncertain save client and retries only its ori
     await act(async () => root.render(React.createElement(NewsResearchForm, props)));
     await act(async () => dom.window.document.querySelector("form").dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })));
     await act(async () => pending[0].resolve(Response.json({ projectId: props.projectId, storyId: story.storyId,
-      storyDigest: story.storyDigest, draft: { title: "First research", instructions: "ORIGINAL PRIVATE DRAFT" }, saved: false, dispatch: "not_requested" })));
+      storyDigest: story.storyDigest, proposal: { contractVersion: "control-room-news/v1", proposalId: "proposal:fixture",
+        tenantId: "tenant:web", workspaceId: "workspace:web", projectId: props.projectId, storyId: story.storyId, storyDigest: story.storyDigest,
+        actionId: "research_brief", actionCatalogDigest: `sha256:${"a".repeat(64)}`, requestedTitle: "First research", goal: "Verify first.",
+        deliverableKind: "report", routeProfileId: "route:research", requiredCapability: "capability:research", requestedPlatform: "any",
+        risk: "low", reasoningProfile: "research_deep", effortHint: "medium", sourceEvidenceDigests: [`sha256:${"b".repeat(64)}`],
+        sourceUrls: [story.canonicalUrl], requestedByActorDigest: `sha256:${"c".repeat(64)}`, requestedAt: "2026-09-09T00:00:00.000Z",
+        proposalIdempotencyKey: `sha256:${"d".repeat(64)}`, status: "draft", requiresOwnerReview: true, createsWorkItem: false,
+        dispatchState: "not_requested", grantsApproval: false, grantsNetworkAuthority: false, grantsCommandAuthority: false,
+        grantsLeaseAuthority: false, grantsExecutionAuthority: false, proposalDigest: `sha256:${"e".repeat(64)}` },
+      draft: { title: "First research", instructions: "ORIGINAL PRIVATE DRAFT" }, saved: false, dispatch: "not_requested" })));
     await act(async () => button("Save proposed task").click());
     await act(async () => root.render(React.createElement(NewsResearchForm, { ...props, projectId: "project:two", story: { ...story, title: "Second story" } })));
     assert.doesNotMatch(dom.window.document.body.textContent, /ORIGINAL PRIVATE DRAFT/);
