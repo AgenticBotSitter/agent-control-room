@@ -15,6 +15,8 @@ import { applyPendingMacMigrationsV1, runMacDatabaseUpgradeCommandV1 } from
   "../scripts/mac-local/database-upgrade-remote.mjs";
 import { captureProvisionedMacLocalConfigurationV1, finishMacLocalDatabaseUpgradeV1,
   prepareMacLocalDatabaseUpgradeV1 } from "../scripts/mac-local/provision-database.mjs";
+import { readMacUpgradeLedgerHeadV1 } from "../scripts/mac-local/upgrade.mjs";
+import { readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight.ts";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from "../src/web/v1/mac-local-database-roles.ts";
 import { captureWorkIntakeServerConfigurationV1 } from "../src/work-intake/v1/installed-configuration.ts";
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
@@ -160,6 +162,25 @@ test("every missing login bundles into one code, and the VPS upgrade creates eac
   assert.equal((await stat(protectedRoot)).mode & 0o777, 0o700);
   assert.equal((await stat(config)).mode & 0o777, 0o700);
   assert.equal((await stat(passwords)).mode & 0o777, 0o700);
+
+  // The Mac command records this non-secret identity before it stops the host
+  // and compares it before rollback. It reads through the real restricted web
+  // login, not the postgres operator used to prepare this fixture — and that
+  // login has no row access to the migration ledger at all (the same
+  // least-privilege denial `tests/postgres-production-lifecycle.test.mjs` and
+  // `tests/project-coordination-web-role.test.ts` pin), so prove the direct
+  // read is refused before proving the real command succeeds anyway.
+  const webSession = connectTarget(tcp("control_room_web", legacyPassword("control_room_web")));
+  await webSession.connect();
+  try {
+    await assert.rejects(webSession.query("SELECT 1 FROM control_room_schema_migrations LIMIT 1"), /permission denied/);
+  } finally { await webSession.end(); }
+  const ledger = JSON.parse(await readFile(join(repoRoot, "deploy/postgres/migration-ledger.json"), "utf8"));
+  const lastMigration = ledger.entries.filter(entry => (entry.kind ?? "migrate") === "migrate").at(-1);
+  const expectedDigest = await readPrivateWebSchemaDigest(state.client);
+  assert.deepEqual(await readMacUpgradeLedgerHeadV1(protectedRoot), {
+    file: lastMigration.file, order: lastMigration.order, digest: `sha256:${expectedDigest}`,
+  });
 
   // A repeat prepare/finish is now a clean no-op, not a refusal.
   assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1({ protectedRoot, mainCommit }),

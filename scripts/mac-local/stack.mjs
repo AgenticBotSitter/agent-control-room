@@ -17,7 +17,7 @@ export function runtimePaths(root) {
   const runtime = join(root, "runtime");
   return Object.freeze({ runtime, provider: join(runtime, "task-provider.mjs"),
     hostPid: join(runtime, "task-host.pid"), hostLog: join(runtime, "task-host.log"),
-    hostState: join(runtime, "task-host-state.json") });
+    hostState: join(runtime, "task-host-state.json"), upgradePrevious: join(runtime, "upgrade-previous.json") });
 }
 
 export const taskHostCommand = root => [process.execPath, "scripts/mac-local/start-task-host.mjs", "--owner-attended", "--protected-root", root];

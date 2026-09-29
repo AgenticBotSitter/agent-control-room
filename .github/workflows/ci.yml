@@ -409,7 +409,7 @@ jobs:
       - name: Phase 2B contracts
         run: pnpm run test:phase2b
       - name: Component lanes
-        run: pnpm run test:components
+        run: pnpm run test:components && pnpm run test:mac-upgrade
       # The shared attack-test kit and its own tests. This lane installs
       # PostgreSQL 17 above, so the kit's real-cluster tests must run here
       # rather than skip: tests/attack-kit.test.ts calls
