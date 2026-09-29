@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "728cb7d6024785bca106943e563d4b4ca312592ce5da64dc41db8ac4961afbaa",
+  "digest": "fb74ab25fc54ea6128e982cf3a815b7ff2c2bbc963dee15b55896f66ca89b51b",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -593,7 +593,7 @@
     {
       "file": "db/migrations/0140_fleet_worker_connector.sql",
       "order": 99,
-      "sha256": "1ab97ef4471ebcc6e33dcff8aaecaf1ffff66a1dd30635a8739afe90ebfd01de",
+      "sha256": "2f01a51d14b263178c0600dbb1528990ba5702a68a1984fb5afd9aeab2011a36",
       "kind": "migrate"
     },
     {

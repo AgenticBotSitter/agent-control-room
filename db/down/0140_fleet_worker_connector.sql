@@ -48,8 +48,5 @@ DROP FUNCTION guard_fleet_presence_write();
 DROP FUNCTION guard_fleet_credential_write();
 DROP FUNCTION guard_fleet_worker_write();
 DROP FUNCTION guard_fleet_enrollment_code_write();
-DROP FUNCTION fleet_valid_scope(text[],text[]);
-DROP FUNCTION fleet_owner_authorized(text,text,text[],text,timestamptz);
-DROP FUNCTION is_fleet_gateway_session();
 DROP TABLE fleet_gateway_role_anchor;
 COMMIT;

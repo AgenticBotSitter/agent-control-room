@@ -85,7 +85,7 @@
   },
   {
     "file": "db/migrations/0140_fleet_worker_connector.sql",
-    "find": "OR NOT public.fleet_owner_authorized(NEW.tenant_id,NEW.reviewed_by_identity_id,ARRAY[result.project_id],\n      'tasks.reviews.record',NEW.reviewed_at)",
+    "find": "owner_identity.id=NEW.reviewed_by_identity_id AND",
     "replace": "",
     "test": "node --import tsx --test --test-name-pattern \"end to end\" tests/fleet-connector.test.ts",
     "why": "only the owner can review a fleet result"

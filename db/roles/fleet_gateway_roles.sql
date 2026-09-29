@@ -20,7 +20,7 @@ ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_fleet_gateway;
 -- The marker that identifies this privilege class to the 0140 guards.
 GRANT SELECT ON fleet_gateway_role_anchor TO control_room_fleet_gateway;
-GRANT EXECUTE ON FUNCTION fleet_valid_scope(text[],text[]) TO control_room_fleet_gateway;
+GRANT EXECUTE ON FUNCTION fleet_claim_is_live(text,text,text) TO control_room_fleet_gateway;
 -- The shared audit table's work-intake row policy reads these, as for the
 -- coordinator and web roles. Neither grants any intake authority.
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_fleet_gateway;
@@ -59,7 +59,6 @@ GRANT UPDATE (coordinator_lock) ON tenants, control_manual_project_heads, projec
 -- Owner-side fleet actions run on the existing private web login. It records
 -- the owner's decisions; it cannot consume codes, issue credentials, claim,
 -- or move canonical job state.
-GRANT EXECUTE ON FUNCTION fleet_valid_scope(text[],text[]) TO control_room_private_web;
 GRANT SELECT ON fleet_enrollment_codes, fleet_workers, fleet_worker_credentials, fleet_worker_presence,
   fleet_work_offers, fleet_claims, fleet_worker_events, fleet_results, fleet_result_files,
   fleet_result_reviews TO control_room_private_web;

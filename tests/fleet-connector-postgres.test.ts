@@ -19,7 +19,8 @@ import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type R
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
-import { privateWebSchemaDigest, readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight";
+import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyPrivateDatabase,
+  verifyTaskCoordinatorDatabase } from "../src/web/v1/private-database-preflight";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1 } from "../src/fleet/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
@@ -34,7 +35,7 @@ function pool(postgres: RealPostgres, role: string) {
   const config = { host: "127.0.0.1", port: postgres.port, database: postgres.database,
     username: login.user, password: login.password, majorVersion: 17 as const };
   const bound = bindPrivatePgPool(new Pool({ ...privatePgOptions(config), host: login.host }));
-  return { client: bound.client as DatabaseClient, close: () => bound.close() };
+  return { client: bound.client as DatabaseClient, config, close: () => bound.close() };
 }
 function adminPool(postgres: RealPostgres) {
   const admin = postgres.admin({ database: postgres.database });
@@ -66,6 +67,14 @@ test("fleet connector end to end and least privilege, as the production logins",
       assert.equal(await readPrivateWebSchemaDigest(admin.client), privateWebSchemaDigest,
         "the recorded private web schema digest matches a live cluster with 0140 applied");
       await seedFleetTenant((sql, params) => admin.client.query(sql, params));
+      // The existing exact-privilege preflights still pass with the fleet
+      // grants and guards installed: no new definer-rights function, and the
+      // web login's fleet rights are exactly the declared owner-decision set.
+      const scope = { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE, ownerIdentityId: "identity:fleet-owner", issuer: "test" };
+      await verifyPrivateDatabase(web.client, web.config, scope, Date.now(), { nativeQueue: true });
+      const coordinator = pool(postgres, "coordinator");
+      try { await verifyTaskCoordinatorDatabase(coordinator.client, coordinator.config, scope, Date.now(), { nativeQueue: true }); }
+      finally { await coordinator.close(); }
       const task = await seedProposedTask(admin.client, PROJECT_A, "pg-1");
       const betaTask = await seedProposedTask(admin.client, PROJECT_B, "pg-beta");
       const untouched = await seedProposedTask(admin.client, PROJECT_A, "pg-not-offered");

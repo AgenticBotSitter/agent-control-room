@@ -18,7 +18,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // Generated from public migrations 0001-0105 (filename order: ...0093,0100,0101,0102,0104,0105),
 // including generic external-content migrations 0025/0026. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "2560288e30b4d1dbcbfe819f0ab8078a25ef6bcf2d43e2491bc5fe0bac60daf4";
+export const privateWebSchemaDigest = "7cc10601651e6862cd25b9afd1253a01d759cb9fb6d9a0b3f81c0520a9df9816";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -39,7 +39,10 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
-  "control_action_inbox"] as const;
+  "control_action_inbox",
+  // T2-F fleet: the owner's fleet decisions and read-only views of worker records.
+  "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers",
+  "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -50,6 +53,7 @@ inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 inserts.add("control_job_dependencies");
+inserts.add("fleet_enrollment_codes"); inserts.add("fleet_work_offers"); inserts.add("fleet_result_reviews");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -84,6 +88,8 @@ const updates: Record<string, readonly string[]> = {
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
   tenants: ["coordinator_lock"],
+  fleet_enrollment_codes: ["state"], fleet_workers: ["state", "revoked_at", "revoked_by_identity_id"],
+  fleet_worker_credentials: ["state", "ended_at"], fleet_work_offers: ["state", "closed_at", "close_reason"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
@@ -405,7 +411,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                 OR pg_get_userbyid(a.grantee) NOT IN ('control_room_application','control_room_reader','control_room_backup',
                   'control_room_work_intake','control_room_private_web','control_room_task_coordinator',
                   'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
-                  'control_room_idea_creation','control_room_news_coordinator')))
+                  'control_room_idea_creation','control_room_news_coordinator','control_room_fleet_gateway')))
           )))
         OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
           WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))

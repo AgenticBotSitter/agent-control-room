@@ -7,11 +7,10 @@
 -- claim path, and the guards below confine the dedicated fleet gateway login
 -- to fleet-offered jobs, fleet-enrolled nodes and owner-recorded decisions.
 --
--- Guard trigger functions are SECURITY DEFINER so the checks they call run
--- with the schema owner's EXECUTE rights: every existing role that writes jobs,
--- attempts or leases keeps working without a new function grant. They are
--- trigger-only and cannot be called directly; session_user still identifies
--- the real login.
+-- Guard trigger functions run as the invoker and call no helper function the
+-- web or existing roles would need EXECUTE on: the private-database preflight
+-- permits no extra definer-rights function and no extra EXECUTE grant. The
+-- gateway-session and owner checks are therefore written out inline.
 
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
@@ -22,51 +21,6 @@ CREATE TABLE fleet_gateway_role_anchor (
   singleton boolean PRIMARY KEY CHECK (singleton)
 );
 REVOKE ALL ON fleet_gateway_role_anchor FROM PUBLIC;
-
-CREATE FUNCTION is_fleet_gateway_session() RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM pg_catalog.pg_class c
-    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(c.relacl,
-      pg_catalog.acldefault('r',c.relowner))) a
-    JOIN pg_catalog.pg_roles s ON s.rolname=session_user
-    WHERE c.oid='public.fleet_gateway_role_anchor'::pg_catalog.regclass
-      AND a.grantee<>0 AND a.grantee<>c.relowner
-      AND a.privilege_type='SELECT'
-      AND pg_catalog.pg_has_role(s.oid,a.grantee,'member')
-      AND NOT s.rolsuper
-  )
-$$;
-
--- One owner check shared by every owner-authored fleet row. The action must be
--- granted explicitly or by wildcard, and the grant must cover every project.
-CREATE FUNCTION fleet_owner_authorized(p_tenant text, p_identity text, p_projects text[],
-  p_action text, p_at timestamptz) RETURNS boolean
-LANGUAGE sql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.control_identities i
-    JOIN public.control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
-    WHERE i.tenant_id=p_tenant AND i.id=p_identity AND i.actor_type='human' AND i.state='active'
-      AND g.role_key='owner' AND g.revoked_at IS NULL
-      AND (g.expires_at IS NULL OR g.expires_at>p_at)
-      AND (g.project_ids @> '["*"]'::jsonb OR g.project_ids @> pg_catalog.to_jsonb(p_projects))
-      AND (g.allowed_actions @> pg_catalog.jsonb_build_array(p_action) OR g.allowed_actions @> '["*"]'::jsonb))
-$$;
-REVOKE ALL ON FUNCTION public.fleet_owner_authorized(text,text,text[],text,timestamptz) FROM PUBLIC;
-
-CREATE FUNCTION fleet_valid_scope(p_projects text[], p_capabilities text[]) RETURNS boolean
-LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, public, pg_temp AS $$
-  SELECT pg_catalog.cardinality(p_projects) BETWEEN 1 AND 20
-    AND pg_catalog.cardinality(p_capabilities) BETWEEN 1 AND 16
-    AND pg_catalog.array_ndims(p_projects)=1 AND pg_catalog.array_ndims(p_capabilities)=1
-    AND NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(p_projects) p
-      WHERE p IS NULL OR p !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$' OR p='*')
-    AND NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(p_capabilities) c
-      WHERE c IS NULL OR c !~ '^[a-z][a-z0-9._-]{1,63}$')
-    AND (SELECT pg_catalog.count(DISTINCT p) FROM pg_catalog.unnest(p_projects) p)=pg_catalog.cardinality(p_projects)
-    AND (SELECT pg_catalog.count(DISTINCT c) FROM pg_catalog.unnest(p_capabilities) c)=pg_catalog.cardinality(p_capabilities)
-$$;
 
 -- One-time enrollment codes. The code itself is never stored; a join code
 -- names the worker it will create, and a re-key code names an existing worker.
@@ -90,7 +44,12 @@ CREATE TABLE fleet_enrollment_codes (
   PRIMARY KEY (tenant_id,id),
   UNIQUE (code_digest),
   FOREIGN KEY (tenant_id,created_by_identity_id) REFERENCES control_identities(tenant_id,id) ON DELETE RESTRICT,
-  CHECK (public.fleet_valid_scope(project_ids,capabilities)),
+  CHECK (pg_catalog.cardinality(project_ids) BETWEEN 1 AND 20 AND pg_catalog.array_ndims(project_ids)=1
+    AND pg_catalog.array_position(project_ids,NULL) IS NULL
+    AND pg_catalog.array_to_string(project_ids,' ') ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}( [A-Za-z0-9][A-Za-z0-9._:-]{2,179})*$'
+    AND pg_catalog.cardinality(capabilities) BETWEEN 1 AND 16 AND pg_catalog.array_ndims(capabilities)=1
+    AND pg_catalog.array_position(capabilities,NULL) IS NULL
+    AND pg_catalog.array_to_string(capabilities,' ') ~ '^[a-z][a-z0-9._-]{1,63}( [a-z][a-z0-9._-]{1,63})*$'),
   CHECK (expires_at > created_at AND expires_at <= created_at + interval '15 minutes'),
   CHECK ((state='consumed') = (consumed_at IS NOT NULL)),
   CHECK (consumed_at IS NULL OR (consumed_at >= created_at AND consumed_at < expires_at))
@@ -122,7 +81,12 @@ CREATE TABLE fleet_workers (
   FOREIGN KEY (tenant_id,identity_id) REFERENCES control_identities(tenant_id,id) ON DELETE RESTRICT,
   FOREIGN KEY (tenant_id,enrolled_from_code_id) REFERENCES fleet_enrollment_codes(tenant_id,id) ON DELETE RESTRICT,
   FOREIGN KEY (tenant_id,revoked_by_identity_id) REFERENCES control_identities(tenant_id,id) ON DELETE RESTRICT,
-  CHECK (public.fleet_valid_scope(project_ids,capabilities)),
+  CHECK (pg_catalog.cardinality(project_ids) BETWEEN 1 AND 20 AND pg_catalog.array_ndims(project_ids)=1
+    AND pg_catalog.array_position(project_ids,NULL) IS NULL
+    AND pg_catalog.array_to_string(project_ids,' ') ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}( [A-Za-z0-9][A-Za-z0-9._:-]{2,179})*$'
+    AND pg_catalog.cardinality(capabilities) BETWEEN 1 AND 16 AND pg_catalog.array_ndims(capabilities)=1
+    AND pg_catalog.array_position(capabilities,NULL) IS NULL
+    AND pg_catalog.array_to_string(capabilities,' ') ~ '^[a-z][a-z0-9._-]{1,63}( [a-z][a-z0-9._-]{1,63})*$'),
   CHECK ((state='revoked') = (revoked_at IS NOT NULL AND revoked_by_identity_id IS NOT NULL)),
   CHECK (revoked_at IS NULL OR revoked_at >= enrolled_at)
 );
@@ -288,17 +252,28 @@ CREATE TABLE fleet_result_reviews (
 -- ---------------------------------------------------------------------------
 
 CREATE FUNCTION guard_fleet_enrollment_code_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE worker public.fleet_workers%ROWTYPE;
 BEGIN
   IF TG_OP='INSERT' THEN
     IF NEW.state<>'issued' OR NEW.consumed_at IS NOT NULL
       OR NEW.created_at>pg_catalog.statement_timestamp()+interval '1 minute'
       OR NEW.expires_at<=pg_catalog.statement_timestamp()
-      OR NOT public.fleet_owner_authorized(NEW.tenant_id,NEW.created_by_identity_id,NEW.project_ids,
-        CASE NEW.purpose WHEN 'join' THEN 'workers.enroll' ELSE 'workers.manage' END,NEW.created_at)
+      OR NOT EXISTS (SELECT 1 FROM public.control_identities owner_identity
+      JOIN public.control_role_grants owner_grant ON owner_grant.tenant_id=owner_identity.tenant_id
+        AND owner_grant.identity_id=owner_identity.id
+      WHERE owner_identity.tenant_id=NEW.tenant_id AND owner_identity.id=NEW.created_by_identity_id AND owner_identity.actor_type='human'
+        AND owner_identity.state='active' AND owner_grant.role_key='owner' AND owner_grant.revoked_at IS NULL
+        AND (owner_grant.expires_at IS NULL OR owner_grant.expires_at>NEW.created_at)
+        AND (owner_grant.project_ids @> '["*"]'::jsonb OR owner_grant.project_ids @> pg_catalog.to_jsonb(NEW.project_ids))
+        AND (owner_grant.allowed_actions @> pg_catalog.jsonb_build_array(CASE NEW.purpose WHEN 'join' THEN 'workers.enroll' ELSE 'workers.manage' END::text)
+          OR owner_grant.allowed_actions @> '["*"]'::jsonb))
       OR EXISTS (SELECT 1 FROM pg_catalog.unnest(NEW.project_ids) p WHERE NOT EXISTS (
-        SELECT 1 FROM public.projects pr WHERE pr.tenant_id=NEW.tenant_id AND pr.id=p)) THEN
+        SELECT 1 FROM public.projects pr WHERE pr.tenant_id=NEW.tenant_id AND pr.id=p))
+      OR (SELECT pg_catalog.count(DISTINCT p) FROM pg_catalog.unnest(NEW.project_ids) p)
+        <>pg_catalog.cardinality(NEW.project_ids)
+      OR (SELECT pg_catalog.count(DISTINCT c) FROM pg_catalog.unnest(NEW.capabilities) c)
+        <>pg_catalog.cardinality(NEW.capabilities) THEN
       RAISE EXCEPTION 'fleet enrollment code rejected';
     END IF;
     SELECT * INTO worker FROM public.fleet_workers w WHERE w.tenant_id=NEW.tenant_id AND w.worker_id=NEW.worker_id;
@@ -329,7 +304,7 @@ CREATE TRIGGER fleet_enrollment_codes_guard BEFORE INSERT OR UPDATE ON fleet_enr
   FOR EACH ROW EXECUTE FUNCTION public.guard_fleet_enrollment_code_write();
 
 CREATE FUNCTION guard_fleet_worker_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF TG_OP='INSERT' THEN
     IF NEW.state<>'active' OR NEW.revoked_at IS NOT NULL OR NOT EXISTS (
@@ -357,8 +332,15 @@ BEGIN
     IS DISTINCT FROM ROW(OLD.tenant_id,OLD.worker_id,OLD.node_id,OLD.identity_id,OLD.worker_kind,OLD.display_name,
       OLD.project_ids,OLD.capabilities,OLD.max_concurrent,OLD.enrolled_from_code_id,OLD.enrolled_at)
     OR OLD.state<>'active' OR NEW.state<>'revoked'
-    OR NOT public.fleet_owner_authorized(NEW.tenant_id,NEW.revoked_by_identity_id,NEW.project_ids,
-      'workers.manage',NEW.revoked_at) THEN
+    OR NOT EXISTS (SELECT 1 FROM public.control_identities owner_identity
+      JOIN public.control_role_grants owner_grant ON owner_grant.tenant_id=owner_identity.tenant_id
+        AND owner_grant.identity_id=owner_identity.id
+      WHERE owner_identity.tenant_id=NEW.tenant_id AND owner_identity.id=NEW.revoked_by_identity_id AND owner_identity.actor_type='human'
+        AND owner_identity.state='active' AND owner_grant.role_key='owner' AND owner_grant.revoked_at IS NULL
+        AND (owner_grant.expires_at IS NULL OR owner_grant.expires_at>NEW.revoked_at)
+        AND (owner_grant.project_ids @> '["*"]'::jsonb OR owner_grant.project_ids @> pg_catalog.to_jsonb(NEW.project_ids))
+        AND (owner_grant.allowed_actions @> pg_catalog.jsonb_build_array('workers.manage'::text)
+          OR owner_grant.allowed_actions @> '["*"]'::jsonb)) THEN
     RAISE EXCEPTION 'fleet worker update rejected';
   END IF;
   RETURN NEW;
@@ -368,7 +350,7 @@ CREATE TRIGGER fleet_workers_guard BEFORE INSERT OR UPDATE ON fleet_workers
   FOR EACH ROW EXECUTE FUNCTION public.guard_fleet_worker_write();
 
 CREATE FUNCTION guard_fleet_credential_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF TG_OP='INSERT' THEN
     IF NEW.state<>'active' OR NEW.ended_at IS NOT NULL
@@ -401,7 +383,7 @@ CREATE TRIGGER fleet_worker_credentials_guard BEFORE INSERT OR UPDATE ON fleet_w
   FOR EACH ROW EXECUTE FUNCTION public.guard_fleet_credential_write();
 
 CREATE FUNCTION guard_fleet_presence_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.fleet_workers w
       WHERE w.tenant_id=NEW.tenant_id AND w.worker_id=NEW.worker_id AND w.state='active')
@@ -416,12 +398,19 @@ CREATE TRIGGER fleet_worker_presence_guard BEFORE INSERT OR UPDATE ON fleet_work
   FOR EACH ROW EXECUTE FUNCTION public.guard_fleet_presence_write();
 
 CREATE FUNCTION guard_fleet_offer_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF TG_OP='INSERT' THEN
     IF NEW.state<>'open' OR NEW.closed_at IS NOT NULL
-      OR NOT public.fleet_owner_authorized(NEW.tenant_id,NEW.offered_by_identity_id,ARRAY[NEW.project_id],
-        'tasks.assign',NEW.created_at)
+      OR NOT EXISTS (SELECT 1 FROM public.control_identities owner_identity
+      JOIN public.control_role_grants owner_grant ON owner_grant.tenant_id=owner_identity.tenant_id
+        AND owner_grant.identity_id=owner_identity.id
+      WHERE owner_identity.tenant_id=NEW.tenant_id AND owner_identity.id=NEW.offered_by_identity_id AND owner_identity.actor_type='human'
+        AND owner_identity.state='active' AND owner_grant.role_key='owner' AND owner_grant.revoked_at IS NULL
+        AND (owner_grant.expires_at IS NULL OR owner_grant.expires_at>NEW.created_at)
+        AND (owner_grant.project_ids @> '["*"]'::jsonb OR owner_grant.project_ids @> pg_catalog.to_jsonb(ARRAY[NEW.project_id]))
+        AND (owner_grant.allowed_actions @> pg_catalog.jsonb_build_array('tasks.assign'::text)
+          OR owner_grant.allowed_actions @> '["*"]'::jsonb))
       OR NOT EXISTS (SELECT 1 FROM public.control_jobs j WHERE j.tenant_id=NEW.tenant_id AND j.id=NEW.job_id
         AND j.project_id=NEW.project_id AND j.state IN ('proposed','ready')
         AND NOT EXISTS (SELECT 1 FROM public.control_leases l WHERE l.tenant_id=j.tenant_id AND l.job_id=j.id)) THEN
@@ -446,7 +435,12 @@ BEGIN
           AND newer.job_id=r.job_id AND newer.submitted_at>r.submitted_at)) THEN
     RAISE EXCEPTION 'fleet work offer close rejected';
   END IF;
-  IF NEW.close_reason='withdrawn' AND public.is_fleet_gateway_session() THEN
+  IF NEW.close_reason='withdrawn' AND (EXISTS (SELECT 1 FROM pg_catalog.pg_class anchor
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(anchor.relacl,pg_catalog.acldefault('r',anchor.relowner))) acl
+    JOIN pg_catalog.pg_roles login ON login.rolname=session_user
+    WHERE anchor.oid='public.fleet_gateway_role_anchor'::pg_catalog.regclass AND acl.grantee<>0
+      AND acl.grantee<>anchor.relowner AND acl.privilege_type='SELECT'
+      AND pg_catalog.pg_has_role(login.oid,acl.grantee,'member') AND NOT login.rolsuper)) THEN
     RAISE EXCEPTION 'fleet work offer close rejected';
   END IF;
   RETURN NEW;
@@ -459,7 +453,7 @@ CREATE TRIGGER fleet_work_offers_guard BEFORE INSERT OR UPDATE ON fleet_work_off
 -- inside its project scope, with the offered capability, within capacity, and
 -- only while no other attempt of the job holds a live lease.
 CREATE FUNCTION guard_fleet_claim_insert() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE worker public.fleet_workers%ROWTYPE; offer public.fleet_work_offers%ROWTYPE;
 BEGIN
   SELECT * INTO worker FROM public.fleet_workers w WHERE w.tenant_id=NEW.tenant_id AND w.worker_id=NEW.worker_id;
@@ -487,7 +481,7 @@ CREATE TRIGGER fleet_claims_guard BEFORE INSERT ON fleet_claims
 -- The claim row must be backed by the exact canonical attempt and active lease
 -- by commit, so a claim cannot exist without the shared lease path.
 CREATE FUNCTION enforce_fleet_claim_lease() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.control_leases l JOIN public.control_attempts a
       ON a.tenant_id=l.tenant_id AND a.id=l.attempt_id
@@ -516,7 +510,7 @@ $$;
 REVOKE ALL ON FUNCTION public.fleet_claim_is_live(text,text,text) FROM PUBLIC;
 
 CREATE FUNCTION guard_fleet_worker_event_insert() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF NOT public.fleet_claim_is_live(NEW.tenant_id,NEW.claim_id,NEW.worker_id)
     OR NEW.occurred_at>pg_catalog.statement_timestamp()+interval '1 minute' THEN
@@ -529,7 +523,7 @@ CREATE TRIGGER fleet_worker_events_guard BEFORE INSERT ON fleet_worker_events
   FOR EACH ROW EXECUTE FUNCTION public.guard_fleet_worker_event_insert();
 
 CREATE FUNCTION guard_fleet_result_insert() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF NOT public.fleet_claim_is_live(NEW.tenant_id,NEW.claim_id,NEW.worker_id)
     OR NEW.submitted_at>pg_catalog.statement_timestamp()+interval '1 minute'
@@ -545,7 +539,7 @@ CREATE TRIGGER fleet_results_guard BEFORE INSERT ON fleet_results
   FOR EACH ROW EXECUTE FUNCTION public.guard_fleet_result_insert();
 
 CREATE FUNCTION guard_fleet_result_file_insert() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE result public.fleet_results%ROWTYPE;
 BEGIN
   SELECT * INTO result FROM public.fleet_results r WHERE r.tenant_id=NEW.tenant_id AND r.result_id=NEW.result_id;
@@ -563,7 +557,7 @@ CREATE TRIGGER fleet_result_files_guard BEFORE INSERT ON fleet_result_files
 
 -- A result commits only with exactly its declared files and bytes.
 CREATE FUNCTION enforce_fleet_result_files_complete() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF (SELECT pg_catalog.count(*) FROM public.fleet_result_files f
       WHERE f.tenant_id=NEW.tenant_id AND f.result_id=NEW.result_id)<>NEW.file_count
@@ -578,14 +572,21 @@ CREATE CONSTRAINT TRIGGER fleet_results_files_complete AFTER INSERT ON fleet_res
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.enforce_fleet_result_files_complete();
 
 CREATE FUNCTION guard_fleet_result_review_insert() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE result public.fleet_results%ROWTYPE;
 BEGIN
   SELECT * INTO result FROM public.fleet_results r WHERE r.tenant_id=NEW.tenant_id AND r.result_id=NEW.result_id;
   IF result.result_id IS NULL
     OR NEW.reviewed_at>pg_catalog.statement_timestamp()+interval '1 minute'
-    OR NOT public.fleet_owner_authorized(NEW.tenant_id,NEW.reviewed_by_identity_id,ARRAY[result.project_id],
-      'tasks.reviews.record',NEW.reviewed_at)
+    OR NOT EXISTS (SELECT 1 FROM public.control_identities owner_identity
+      JOIN public.control_role_grants owner_grant ON owner_grant.tenant_id=owner_identity.tenant_id
+        AND owner_grant.identity_id=owner_identity.id
+      WHERE owner_identity.tenant_id=NEW.tenant_id AND owner_identity.id=NEW.reviewed_by_identity_id AND owner_identity.actor_type='human'
+        AND owner_identity.state='active' AND owner_grant.role_key='owner' AND owner_grant.revoked_at IS NULL
+        AND (owner_grant.expires_at IS NULL OR owner_grant.expires_at>NEW.reviewed_at)
+        AND (owner_grant.project_ids @> '["*"]'::jsonb OR owner_grant.project_ids @> pg_catalog.to_jsonb(ARRAY[result.project_id]))
+        AND (owner_grant.allowed_actions @> pg_catalog.jsonb_build_array('tasks.reviews.record'::text)
+          OR owner_grant.allowed_actions @> '["*"]'::jsonb))
     OR EXISTS (SELECT 1 FROM public.fleet_results newer WHERE newer.tenant_id=result.tenant_id
       AND newer.job_id=result.job_id AND newer.submitted_at>result.submitted_at)
     OR NOT EXISTS (SELECT 1 FROM public.fleet_work_offers o WHERE o.tenant_id=result.tenant_id
@@ -647,9 +648,14 @@ CREATE TRIGGER fleet_result_reviews_no_truncate BEFORE TRUNCATE ON fleet_result_
 -- ---------------------------------------------------------------------------
 
 CREATE FUNCTION guard_fleet_gateway_identity_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF NOT public.is_fleet_gateway_session() THEN RETURN NEW; END IF;
+  IF NOT (EXISTS (SELECT 1 FROM pg_catalog.pg_class anchor
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(anchor.relacl,pg_catalog.acldefault('r',anchor.relowner))) acl
+    JOIN pg_catalog.pg_roles login ON login.rolname=session_user
+    WHERE anchor.oid='public.fleet_gateway_role_anchor'::pg_catalog.regclass AND acl.grantee<>0
+      AND acl.grantee<>anchor.relowner AND acl.privilege_type='SELECT'
+      AND pg_catalog.pg_has_role(login.oid,acl.grantee,'member') AND NOT login.rolsuper)) THEN RETURN NEW; END IF;
   IF TG_OP='INSERT' THEN
     IF NEW.actor_type<>'agent' OR NEW.auth_provider<>'work-intake' OR NEW.state<>'active'
       OR NEW.id !~ '^identity:fleet:[a-f0-9]{32}$' THEN
@@ -671,10 +677,15 @@ CREATE TRIGGER control_identities_fleet_gateway_guard BEFORE INSERT OR UPDATE ON
   FOR EACH ROW EXECUTE FUNCTION public.guard_fleet_gateway_identity_write();
 
 CREATE FUNCTION guard_fleet_gateway_grant_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE worker public.fleet_workers%ROWTYPE;
 BEGIN
-  IF NOT public.is_fleet_gateway_session() THEN RETURN NEW; END IF;
+  IF NOT (EXISTS (SELECT 1 FROM pg_catalog.pg_class anchor
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(anchor.relacl,pg_catalog.acldefault('r',anchor.relowner))) acl
+    JOIN pg_catalog.pg_roles login ON login.rolname=session_user
+    WHERE anchor.oid='public.fleet_gateway_role_anchor'::pg_catalog.regclass AND acl.grantee<>0
+      AND acl.grantee<>anchor.relowner AND acl.privilege_type='SELECT'
+      AND pg_catalog.pg_has_role(login.oid,acl.grantee,'member') AND NOT login.rolsuper)) THEN RETURN NEW; END IF;
   SELECT * INTO worker FROM public.fleet_workers w WHERE w.tenant_id=NEW.tenant_id AND w.identity_id=NEW.identity_id;
   IF TG_OP='INSERT' THEN
     -- The only grant a fleet worker ever holds: proposal-only intake in its
@@ -704,9 +715,14 @@ CREATE TRIGGER control_role_grants_fleet_gateway_guard BEFORE INSERT OR UPDATE O
   FOR EACH ROW EXECUTE FUNCTION public.guard_fleet_gateway_grant_write();
 
 CREATE FUNCTION guard_fleet_gateway_node_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF NOT public.is_fleet_gateway_session() THEN RETURN NEW; END IF;
+  IF NOT (EXISTS (SELECT 1 FROM pg_catalog.pg_class anchor
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(anchor.relacl,pg_catalog.acldefault('r',anchor.relowner))) acl
+    JOIN pg_catalog.pg_roles login ON login.rolname=session_user
+    WHERE anchor.oid='public.fleet_gateway_role_anchor'::pg_catalog.regclass AND acl.grantee<>0
+      AND acl.grantee<>anchor.relowner AND acl.privilege_type='SELECT'
+      AND pg_catalog.pg_has_role(login.oid,acl.grantee,'member') AND NOT login.rolsuper)) THEN RETURN NEW; END IF;
   IF TG_OP='INSERT' THEN
     IF NEW.state<>'active' OR NEW.id !~ '^node:fleet:[a-f0-9]{32}$' THEN
       RAISE EXCEPTION 'fleet gateway node write rejected';
@@ -727,9 +743,14 @@ CREATE TRIGGER control_nodes_fleet_gateway_guard BEFORE INSERT OR UPDATE ON cont
 -- Nodes and identities the gateway creates must belong to a fleet worker row
 -- written in the same transaction.
 CREATE FUNCTION enforce_fleet_gateway_enrollment_bound() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF NOT public.is_fleet_gateway_session() THEN RETURN NULL; END IF;
+  IF NOT (EXISTS (SELECT 1 FROM pg_catalog.pg_class anchor
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(anchor.relacl,pg_catalog.acldefault('r',anchor.relowner))) acl
+    JOIN pg_catalog.pg_roles login ON login.rolname=session_user
+    WHERE anchor.oid='public.fleet_gateway_role_anchor'::pg_catalog.regclass AND acl.grantee<>0
+      AND acl.grantee<>anchor.relowner AND acl.privilege_type='SELECT'
+      AND pg_catalog.pg_has_role(login.oid,acl.grantee,'member') AND NOT login.rolsuper)) THEN RETURN NULL; END IF;
   IF (TG_TABLE_NAME='control_nodes' AND NOT EXISTS (SELECT 1 FROM public.fleet_workers w
         WHERE w.tenant_id=NEW.tenant_id AND w.node_id=NEW.id))
     OR (TG_TABLE_NAME='control_identities' AND NOT EXISTS (SELECT 1 FROM public.fleet_workers w
@@ -747,9 +768,14 @@ CREATE CONSTRAINT TRIGGER control_identities_fleet_gateway_bound AFTER INSERT ON
 -- The gateway may only create attempts and leases that a guarded fleet claim
 -- already names, and may only move fleet-claimed attempts and leases.
 CREATE FUNCTION guard_fleet_gateway_attempt_lease_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF NOT public.is_fleet_gateway_session() THEN RETURN NEW; END IF;
+  IF NOT (EXISTS (SELECT 1 FROM pg_catalog.pg_class anchor
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(anchor.relacl,pg_catalog.acldefault('r',anchor.relowner))) acl
+    JOIN pg_catalog.pg_roles login ON login.rolname=session_user
+    WHERE anchor.oid='public.fleet_gateway_role_anchor'::pg_catalog.regclass AND acl.grantee<>0
+      AND acl.grantee<>anchor.relowner AND acl.privilege_type='SELECT'
+      AND pg_catalog.pg_has_role(login.oid,acl.grantee,'member') AND NOT login.rolsuper)) THEN RETURN NEW; END IF;
   IF TG_TABLE_NAME='control_attempts' THEN
     IF NOT EXISTS (SELECT 1 FROM public.fleet_claims fc WHERE fc.tenant_id=NEW.tenant_id AND fc.attempt_id=NEW.id
         AND fc.job_id=NEW.job_id AND fc.node_id=NEW.node_id AND fc.worker_id=NEW.worker_id) THEN
@@ -770,10 +796,15 @@ CREATE TRIGGER control_leases_fleet_gateway_guard BEFORE INSERT OR UPDATE ON con
 -- Job state moves by the gateway are bound to the owner's offer and review:
 -- it cannot finish, fail or cancel work the owner did not decide.
 CREATE FUNCTION guard_fleet_gateway_job_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE offer public.fleet_work_offers%ROWTYPE; decision text;
 BEGIN
-  IF NOT public.is_fleet_gateway_session() THEN RETURN NEW; END IF;
+  IF NOT (EXISTS (SELECT 1 FROM pg_catalog.pg_class anchor
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(anchor.relacl,pg_catalog.acldefault('r',anchor.relowner))) acl
+    JOIN pg_catalog.pg_roles login ON login.rolname=session_user
+    WHERE anchor.oid='public.fleet_gateway_role_anchor'::pg_catalog.regclass AND acl.grantee<>0
+      AND acl.grantee<>anchor.relowner AND acl.privilege_type='SELECT'
+      AND pg_catalog.pg_has_role(login.oid,acl.grantee,'member') AND NOT login.rolsuper)) THEN RETURN NEW; END IF;
   SELECT * INTO offer FROM public.fleet_work_offers o WHERE o.tenant_id=NEW.tenant_id AND o.job_id=NEW.id;
   SELECT rv.decision INTO decision FROM public.fleet_results r LEFT JOIN public.fleet_result_reviews rv
     ON rv.tenant_id=r.tenant_id AND rv.result_id=r.result_id
@@ -802,9 +833,14 @@ CREATE TRIGGER control_jobs_fleet_gateway_guard BEFORE UPDATE ON control_jobs
 -- First-claim request/workflow activation and final fulfilment: only for the
 -- workflow of a fleet-offered job.
 CREATE FUNCTION guard_fleet_gateway_workflow_write() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF NOT public.is_fleet_gateway_session() THEN RETURN NEW; END IF;
+  IF NOT (EXISTS (SELECT 1 FROM pg_catalog.pg_class anchor
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(anchor.relacl,pg_catalog.acldefault('r',anchor.relowner))) acl
+    JOIN pg_catalog.pg_roles login ON login.rolname=session_user
+    WHERE anchor.oid='public.fleet_gateway_role_anchor'::pg_catalog.regclass AND acl.grantee<>0
+      AND acl.grantee<>anchor.relowner AND acl.privilege_type='SELECT'
+      AND pg_catalog.pg_has_role(login.oid,acl.grantee,'member') AND NOT login.rolsuper)) THEN RETURN NEW; END IF;
   IF NEW.id<>OLD.id OR NEW.tenant_id<>OLD.tenant_id OR NOT EXISTS (
       SELECT 1 FROM public.fleet_work_offers o JOIN public.control_jobs j ON j.tenant_id=o.tenant_id AND j.id=o.job_id
       JOIN public.control_workflows wf ON wf.tenant_id=j.tenant_id AND wf.id=j.workflow_id
