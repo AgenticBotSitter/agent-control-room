@@ -77,7 +77,7 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
   startedAt?:number|null;updatedAt?:number;
   states?: PipelineStageResolutionV1["state"][];
   disableDuringDispatch?:boolean;coordinatorDeadline?:number;advanceClockBeforePrecommit?:number;staleConsent?:boolean;
-  tamperConsent?:boolean;
+  tamperConsent?:boolean;usage?:{taskUnits?:number;concurrentTasks?:number;committedCostMicroUsd?:number};
   driftAfterSweepSelection?:boolean}={}){
   const rows=signedRows(overrides),policy={id:"policy:test",project_id:"project:test",coordinator_identity_id:"agent:lead",
     coordinator_version:1,owner_identity_id:"identity:owner",state:"active",version:1,policy_digest:digest("p"),allowed_actions:["tasks.assign"],
@@ -152,7 +152,7 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     authorizeDelegationInSession:async(_tx,selection)=>({receiptId:"delegation:one",receiptDigest:digest("d"),policyId:"policy:test",
       policyVersion:1,policyDigest:digest("p"),coordinatorVersion:1,ownerIdentityId:"identity:owner",action:"tasks.assign",routeId:overrides.route??`route:${["one","two","three"][selection.stageOrdinal]}`,
       executorId:selection.workerId,taskUnits:0,committedCostMicroUsd:0,nextCost:{kind:"known",microUsd:10,evidenceDigest:digest("e")},
-      concurrentTasks:0,validUntil:iso(60000)}),
+      concurrentTasks:0,validUntil:iso(60000),...overrides.usage}),
     assignAndQueueInSession:async(_tx,_input,gate)=>{if(overrides.coordinatorDeadline!==undefined)
       gate.commitDeadline(overrides.coordinatorDeadline);if(overrides.disableDuringDispatch)enabled=false;await gate.assertCurrent();
       effects+=1;return{attemptId:"attempt:one",queueId:"queue:one",replayed:false};}};
@@ -179,6 +179,18 @@ test("template and run unattended consent are both required",async()=>{const f=f
 test("a stale authenticated owner consent refuses before assignment or queue effects",async()=>{const f=fixture({staleConsent:true});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_not_authorized");assert.equal(f.effects,0);});
+// The policy allowances are the caps: max_total_tasks 3, max_concurrent_tasks 2
+// and max_total_cost_microusd 1000 in the fixture policy; the next stage costs 10.
+test("exhausted policy allowances refuse before assignment or queue effects",async()=>{
+  for(const [usage,reason] of [[{taskUnits:3},"policy_task_allowance_exhausted"],
+    [{concurrentTasks:2},"policy_concurrency_exhausted"],[{committedCostMicroUsd:991},"policy_cost_allowance_exhausted"]] as const){
+    const f=fixture({usage});
+    await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+      (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason===reason,reason);
+    assert.equal(f.effects,0,reason);}
+  const edge=fixture({usage:{taskUnits:2,concurrentTasks:1,committedCostMicroUsd:990}});
+  assert.equal((await edge.service.advance("pipeline-run:test","policy:test")).startsWork,true);assert.equal(edge.effects,1);
+});
 test("a forged owner consent tag refuses advance before assignment or queue effects",async()=>{
   const f=fixture({tamperConsent:true});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
