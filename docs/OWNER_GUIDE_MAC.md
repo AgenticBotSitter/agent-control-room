@@ -252,7 +252,8 @@ This is off by default. The app still binds only to `127.0.0.1`. Two optional do
 Tailscale Serve for your phone and Cloudflare Tunnel + Access for your other computers. Both are
 configured in the protected `remoteAccess` block and explained step by step in
 [REMOTE_ACCESS_GUIDE.md](REMOTE_ACCESS_GUIDE.md). Use Serve, never Funnel. An older
-`localOwnerSession.trustedOrigin` line still works as the Tailscale address.
+`localOwnerSession.trustedOrigin` line still works as the Tailscale address, but only if it is
+a `ts.net` address; any other address stops Control Room from starting.
 
 ## 9. Known limitations (read before you rely on this)
 

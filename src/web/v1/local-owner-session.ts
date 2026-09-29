@@ -213,14 +213,16 @@ input:focus-visible,button:focus-visible{outline:3px solid var(--green);outline-
  * link elsewhere cannot end the owner's session. The page first revokes the
  * Control Room session (a same-origin DELETE that still needs the exact Origin),
  * then continues to `next`: the local sign-in page, or Cloudflare's fixed
- * Access logout path, which ends the Access session for this browser. */
+ * Access logout path on this app's own domain. That ends this application's
+ * Access cookie in this browser; it does not end a wider Cloudflare login,
+ * which only Revoke session in Zero Trust does. */
 export function renderLocalOwnerSignOutPageV1(next: "/session" | "/cdn-cgi/access/logout"): Response {
   if (next !== "/session" && next !== "/cdn-cgi/access/logout") throw new Error("invalid_sign_out_target");
   const page = signInPageV1()
     .replace("<title>Control Room sign in</title>", "<title>Control Room sign out</title>")
     .replace(/<a class="skip-link"[\s\S]*<\/main>/u, `<a class="skip-link" href="#private-main">Skip to sign out</a>
 <main id="private-main" tabindex="-1">
-<h1>Sign out</h1><p>This ends your Control Room session on this device${next === "/session" ? "" : " and signs you out of Cloudflare Access"}.</p>
+<h1>Sign out</h1><p>This ends your Control Room session on this device${next === "/session" ? "" : " and this site's Cloudflare sign-in in this browser"}.</p>
 <form id="sign-out"><button>Sign out</button></form>
 <p id="message" role="status"></p>
 <script>document.getElementById("sign-out").addEventListener("submit",async e=>{e.preventDefault();try{await fetch("/api/v1/local-owner-session",{method:"DELETE"})}catch{}location.assign(${JSON.stringify(next)})});</script>

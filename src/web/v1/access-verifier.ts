@@ -94,8 +94,14 @@ function decode(value: string): unknown {
 
 /** Pure credential verification; no discovery, network, credential store or provider call. */
 export function createAccessVerifier(trust: AccessTrust,
-  profileValue: GatewayAssertionProviderProfileV1 = cloudflareAccessGatewayAssertionProfileV1) {
+  profileValue: GatewayAssertionProviderProfileV1 = cloudflareAccessGatewayAssertionProfileV1,
+  /** Optional tolerance for a verifier clock that runs behind the issuer's.
+   * It applies to iat and nbf only, never to exp or the session ceiling. */
+  options: Readonly<{ clockToleranceSeconds?: number }> = {}) {
   const profile = captureGatewayAssertionProviderProfileV1(profileValue);
+  const clockToleranceSeconds = options.clockToleranceSeconds ?? 0;
+  if (!Number.isSafeInteger(clockToleranceSeconds) || clockToleranceSeconds < 0 || clockToleranceSeconds > 60)
+    throw new Error("invalid_access_trust");
   const issuer = new URL(trust.issuer);
   if (issuer.protocol !== "https:" || issuer.origin !== trust.issuer || !trust.audience
     || !Number.isSafeInteger(trust.validUntilMs) || !Number.isSafeInteger(trust.maxSessionSeconds)
@@ -130,10 +136,10 @@ export function createAccessVerifier(trust: AccessTrust,
         // jsonwebtoken treats clockTimestamp=0 as a request for wall-clock time.
         ignoreExpiration: true, ignoreNotBefore: true });
       const claims = (profile.claimContract === "cloudflare_access_app" ? cloudflareClaimsSchema : baseClaimsSchema).parse(decode(c));
-      const now = nowMs / 1000;
+      const now = nowMs / 1000, issuedBy = now + clockToleranceSeconds;
       const expires = Math.min(claims.exp, claims.iat + maxSessionSeconds);
-      if (claims.iss !== expectedIssuer || !claims.aud.includes(audience) || claims.iat > now
-        || claims.nbf !== undefined && claims.nbf > now || claims.exp <= claims.iat || expires <= now
+      if (claims.iss !== expectedIssuer || !claims.aud.includes(audience) || claims.iat > issuedBy
+        || claims.nbf !== undefined && claims.nbf > issuedBy || claims.exp <= claims.iat || expires <= now
         || !Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp)) throw new Error();
       return Object.freeze({ provider: expectedIssuer, subject: claims.sub,
         tokenDigest: `sha256:${createHash("sha256").update(token).digest("hex")}`,

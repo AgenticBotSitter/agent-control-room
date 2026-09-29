@@ -35,6 +35,9 @@ export type MacLocalRemoteAccessV1 = Readonly<{
 }>;
 
 const ownerEmail = z.string().min(3).max(254).regex(/^[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$/u);
+// Tailscale login names are email-like but need no dot in the domain for
+// GitHub or passkey identities (for example `name@github`, `name@passkey`).
+const tailscaleLogin = z.string().min(3).max(254).regex(/^[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*$/u);
 const exactHttpsOrigin = z.string().max(253 + 8).refine(value => {
   try {
     const url = new URL(value);
@@ -43,11 +46,12 @@ const exactHttpsOrigin = z.string().max(253 + 8).refine(value => {
       && url.hostname.includes(".") && url.hostname !== "localhost";
   } catch { return false; }
 });
+const tailnetOrigin = exactHttpsOrigin.refine(value => new URL(value).hostname.endsWith(".ts.net"));
 const remoteAccessSchema = z.object({
   schema: z.literal(MAC_LOCAL_REMOTE_ACCESS_V1),
   tailscale: z.object({
-    origin: exactHttpsOrigin.refine(value => new URL(value).hostname.endsWith(".ts.net")),
-    ownerLogin: ownerEmail.optional(),
+    origin: tailnetOrigin,
+    ownerLogin: tailscaleLogin.optional(),
   }).strict().optional(),
   cloudflare: z.object({
     origin: exactHttpsOrigin.refine(value => !new URL(value).hostname.endsWith(".ts.net")),
@@ -64,14 +68,16 @@ const remoteAccessSchema = z.object({
 }).strict();
 
 /** Captures owner-held configuration. The legacy single `trustedOrigin` from
- * the owner-session block is the Tailscale origin; naming both is refused so
- * one address cannot silently take two policies. */
+ * the owner-session block is the Tailscale origin, so it must pass the same
+ * tailnet (`.ts.net`) rule; naming both is refused so one address cannot
+ * silently take two policies. */
 export function captureMacLocalRemoteAccessV1(value: unknown, loopbackOrigin: string,
   legacyTrustedOrigin?: string): MacLocalRemoteAccessV1 {
   let parsed: z.infer<typeof remoteAccessSchema> | undefined;
   try { parsed = value === undefined ? undefined : remoteAccessSchema.parse(value); }
   catch { throw new Error("mac_local_remote_access_invalid"); }
-  if (legacyTrustedOrigin !== undefined && parsed?.tailscale) throw new Error("mac_local_remote_access_invalid");
+  if (legacyTrustedOrigin !== undefined && (parsed?.tailscale || !tailnetOrigin.safeParse(legacyTrustedOrigin).success))
+    throw new Error("mac_local_remote_access_invalid");
   const tailscale = parsed?.tailscale ?? (legacyTrustedOrigin !== undefined ? { origin: legacyTrustedOrigin } : undefined);
   const cloudflare = parsed?.cloudflare;
   if (parsed && !parsed.tailscale && !parsed.cloudflare) throw new Error("mac_local_remote_access_invalid");
@@ -97,8 +103,11 @@ export class RemoteAccessRefusedError extends Error {
 
 /** Tailscale Serve deletes any client-supplied identity headers and adds its
  * own for a tailnet user. Tagged devices carry none and are refused when an
- * owner login is configured. */
+ * owner login is configured. Funnel traffic (from the public internet) is
+ * marked by Tailscale with `Tailscale-Funnel-Request` and is always refused,
+ * so turning Funnel on by mistake never publishes the site. */
 export function admitTailscaleRequestV1(access: MacLocalTailscaleAccessV1, headers: Headers): void {
+  if (headers.has("tailscale-funnel-request")) throw new RemoteAccessRefusedError();
   if (access.ownerLogin === undefined) return;
   const login = headers.get("tailscale-user-login");
   if (!login || !/^[\x21-\x7e]+$/u.test(login) || login.toLowerCase() !== access.ownerLogin) throw new RemoteAccessRefusedError();
@@ -151,7 +160,9 @@ export function createCloudflareAccessGateV1(options: Readonly<{
   let verifierFor: AccessTrust | undefined, verifier: ReturnType<typeof createAccessVerifier> | undefined;
   let lastForcedRefresh = Number.NEGATIVE_INFINITY;
   const verifierOf = (trust: AccessTrust) => {
-    if (verifierFor !== trust) { verifier = createAccessVerifier(trust, cloudflareAccessGatewayAssertionProfileV1); verifierFor = trust; }
+    // A Mac clock slightly behind Cloudflare must not refuse a freshly issued token.
+    if (verifierFor !== trust) { verifier = createAccessVerifier(trust, cloudflareAccessGatewayAssertionProfileV1,
+      { clockToleranceSeconds: 60 }); verifierFor = trust; }
     return verifier!;
   };
   return Object.freeze({

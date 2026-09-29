@@ -108,7 +108,8 @@ export function remoteAccessPlan(configuration: MacLocalProtectedConfigurationV1
       `  5. pnpm mac:remote-access check --protected-root ${protectedRoot}`,
       `  6. cloudflared tunnel --config ${join(protectedRoot, "config", "cloudflared.yml")} run control-room`,
       `  Then open ${access.cloudflare.origin} on the other computer: Cloudflare login + MFA, then your owner code.`,
-      "  Sign out: the Sign out link in Control Room ends both sessions.", "");
+      "  Sign out: the Sign out link ends the Control Room session and this site's Cloudflare sign-in in that browser.",
+      "  Lost device: Zero Trust -> My Team -> Users -> you -> Revoke session.", "");
   }
   return lines;
 }
@@ -131,8 +132,12 @@ export async function checkRemoteAccess(configuration: MacLocalProtectedConfigur
   const access = configuration.remoteAccess;
   pass(`the website binds only to ${configuration.localOwnerSession.origin}`);
   if (!access) { pass("no remote path is configured; only this Mac can open Control Room"); return { ok, lines }; }
-  if (access.tailscale) pass(`Tailscale origin ${access.tailscale.origin} is a tailnet (.ts.net) address`
-    + (access.tailscale.ownerLogin ? " and requires your tailnet login" : ""));
+  // Computed here, not assumed from the loader: a PASS line must be a checked fact.
+  if (access.tailscale && new URL(access.tailscale.origin).hostname.endsWith(".ts.net"))
+    pass(`Tailscale origin ${access.tailscale.origin} is a tailnet (.ts.net) address`
+      + (access.tailscale.ownerLogin ? " and requires your tailnet login" : ""));
+  else if (access.tailscale) fail(`Tailscale origin ${access.tailscale.origin} is not a tailnet (.ts.net) address;`
+    + " put your ts.net address in remoteAccess.tailscale");
   if (access.cloudflare) {
     pass("Cloudflare Access tokens are verified against the team keys, AUD tag, issuer, time and owner email");
     const path = join(protectedRoot, "config", "cloudflared.yml");

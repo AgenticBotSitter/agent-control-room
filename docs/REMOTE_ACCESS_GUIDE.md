@@ -41,11 +41,14 @@ block at the top level of `mac-local.json`. Keep only the doors you want.
 ```
 
 - `origin` is the exact HTTPS address: no path, port, slash or wildcard.
-- `ownerLogin` (optional) must be your Tailscale login in lower case. With it, only your
-  own tailnet account gets in, not other people or tagged devices on the tailnet.
+- `ownerLogin` (optional) must be your Tailscale login in lower case, as the Tailscale admin
+  console shows it (for example `you@example.com`, or `you@github` / `you@passkey`). With it,
+  only your own tailnet account gets in, not other people or tagged devices on the tailnet.
 - `ownerEmail` must be the exact email Cloudflare signs in, in lower case.
 - If an older `trustedOrigin` line is in `localOwnerSession`, remove it and use
-  `remoteAccess.tailscale` instead (both together are refused).
+  `remoteAccess.tailscale` instead (both together are refused). Until you do, the old line
+  works only if it is your Tailscale `ts.net` address; any other address stops Control Room
+  from starting.
 
 Run `pnpm mac:remote-access plan --protected-root <protected-root>` to see your exact commands.
 
@@ -56,7 +59,8 @@ Run `pnpm mac:remote-access plan --protected-root <protected-root>` to see your 
 3. Start Control Room (`pnpm mac:up -- --protected-root <protected-root>`), open the `ts.net`
    address on the phone and sign in with your owner code.
 
-Never use `tailscale funnel`. It would publish the address to the whole internet.
+Never use `tailscale funnel`. It would publish the address to the whole internet. Control Room
+refuses every request Tailscale marks as coming through Funnel, but do not rely on that.
 To turn it off: `tailscale serve --https=443 off`.
 
 ## 3. Other computers: Cloudflare Access, then the tunnel
@@ -91,12 +95,16 @@ To turn it off: `tailscale serve --https=443 off`.
 
 The tunnel only dials out to Cloudflare, so nothing on the Mac is reachable from the
 internet. On another computer, open your private address: Cloudflare login + MFA, then your
-owner code.
+owner code. Straight after the Cloudflare login you may see a short "Continue to Control Room"
+page for a moment; it moves on by itself (or click the link).
 
 ## Signing out, expiry and revoking
 
 - **Sign out** (in the Control Room menu) ends the Control Room session on that device. On the
-  Cloudflare address it also ends the Cloudflare Access session.
+  Cloudflare address it also ends this site's Cloudflare sign-in in that browser. It does not
+  sign you out of Cloudflare everywhere: while your wider Cloudflare login lasts, the next visit
+  may let you straight back to the owner-code page without MFA. Use **Revoke session** (below)
+  when that matters.
 - Control Room sessions end on their own after the configured time (at most 24 hours). An
   expired Cloudflare token is refused even if the Control Room session is still valid.
 - **Lost device:** Zero Trust → **My Team → Users** → you → **Revoke session**, and on

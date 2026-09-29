@@ -3,7 +3,8 @@ import test, { after } from "node:test";
 import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { sha256Digest } from "../src/security";
 import { createAccessKeyLoader } from "../src/web/v1/access-key-cache";
-import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
+import { createAccessVerifier } from "../src/web/v1/access-verifier";
+import { captureLocalOwnerSessionProfileV1, LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
 import { captureMacLocalProtectedConfigurationV1, MAC_LOCAL_PROTECTED_CONFIGURATION_V1 } from "../src/web/v1/mac-local-protected-configuration";
 import { admitTailscaleRequestV1, captureMacLocalRemoteAccessV1, createCloudflareAccessGateV1,
@@ -11,7 +12,7 @@ import { admitTailscaleRequestV1, captureMacLocalRemoteAccessV1, createCloudflar
   type MacLocalCloudflareAccessV1 } from "../src/web/v1/mac-local-remote-access";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createMacLocalControlRoomServiceV1 } from "../src/web/v1/mac-local-serving";
-import { createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
+import { createMacLocalNodeHandler, createPrivateNodeHandler } from "../src/web/v1/private-node-handler";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
@@ -84,8 +85,11 @@ test("Cloudflare Access gate admits only a fully valid owner token", async () =>
   await refused(gate.admit(headers(token(keyA, { type: "org" }))), "not an application token");
   await refused(gate.admit(headers(token(keyA, { exp: Math.floor(nowMs / 1000) - 1 }))), "expired");
   await refused(gate.admit(headers(token(keyA, { exp: Math.floor(nowMs / 1000) }))), "expires now");
-  await refused(gate.admit(headers(token(keyA, { nbf: Math.floor(nowMs / 1000) + 60 }))), "not yet valid");
-  await refused(gate.admit(headers(token(keyA, { iat: Math.floor(nowMs / 1000) + 60 }))), "issued in the future");
+  // Up to 60 s of Mac clock lag behind Cloudflare is tolerated for iat and nbf, never for exp.
+  await gate.admit(headers(token(keyA, { iat: Math.floor(nowMs / 1000) + 30, nbf: Math.floor(nowMs / 1000) + 30 })));
+  await gate.admit(headers(token(keyA, { iat: Math.floor(nowMs / 1000) + 60, nbf: Math.floor(nowMs / 1000) + 60 })));
+  await refused(gate.admit(headers(token(keyA, { nbf: Math.floor(nowMs / 1000) + 61 }))), "not yet valid");
+  await refused(gate.admit(headers(token(keyA, { iat: Math.floor(nowMs / 1000) + 61 }))), "issued in the future");
   await refused(gate.admit(headers(token(keyA, { iat: Math.floor(nowMs / 1000) - 86_401, exp: Math.floor(nowMs / 1000) + 60 }))),
     "older than the session ceiling");
   await refused(gate.admit(headers(token(stranger))), "bad signature under a known key id");
@@ -101,6 +105,15 @@ test("Cloudflare Access gate admits only a fully valid owner token", async () =>
   await refused(gate.admit(headers("not-a-token")), "garbage");
   gate.close();
   await refused(gate.admit(headers(token(keyA))), "closed gate");
+});
+
+test("the clock tolerance is opt-in and bounded to 60 seconds", () => {
+  const trust = { issuer: teamDomain, audience, validUntilMs: nowMs + 3_600_000, maxSessionSeconds: 3600, keys: [keyA.published] };
+  const early = new Request(cloudflareOrigin, { headers: { "cf-access-jwt-assertion": token(keyA, { iat: Math.floor(nowMs / 1000) + 30 }) } });
+  assert.throws(() => createAccessVerifier(trust)(early, nowMs), "no tolerance by default (the hosted verifier is unchanged)");
+  assert.equal(createAccessVerifier(trust, undefined, { clockToleranceSeconds: 60 })(early, nowMs).subject.length > 0, true);
+  for (const clockToleranceSeconds of [-1, 61, 1.5]) assert.throws(() => createAccessVerifier(trust, undefined, { clockToleranceSeconds }),
+    /invalid_access_trust/, String(clockToleranceSeconds));
 });
 
 test("Cloudflare Access gate refuses a non-ASCII email that case-folds onto the owner", async () => {
@@ -170,7 +183,10 @@ test("remote access configuration is exact, private-name free and refuses unsafe
     ["ip", { ...good, cloudflare: { ...good.cloudflare, origin: "https://203.0.113.9" } }],
     ["credentials", { ...good, cloudflare: { ...good.cloudflare, origin: "https://u:p@private-app.example.invalid" } }],
     ["tailnet name on the Cloudflare path", { ...good, cloudflare: { ...good.cloudflare, origin: tailnetOrigin } }],
-    ["non-tailnet Tailscale origin", { ...good, tailscale: { origin: cloudflareOrigin } }],
+    ["non-tailnet Tailscale origin", { ...good, tailscale: { origin: "https://public-proxy.example.invalid" } }],
+    ["uppercase Tailscale login", { ...good, tailscale: { origin: tailnetOrigin, ownerLogin: "Name@github" } }],
+    ["Tailscale login without a domain", { ...good, tailscale: { origin: tailnetOrigin, ownerLogin: "name@" } }],
+    ["Tailscale login with spaces", { ...good, tailscale: { origin: tailnetOrigin, ownerLogin: "na me@github" } }],
     ["team domain elsewhere", { ...good, cloudflare: { ...good.cloudflare, teamDomain: "https://keys.example.invalid" } }],
     ["team domain with path", { ...good, cloudflare: { ...good.cloudflare, teamDomain: `${teamDomain}/x` } }],
     ["short aud", { ...good, cloudflare: { ...good.cloudflare, audience: "abc" } }],
@@ -185,6 +201,15 @@ test("remote access configuration is exact, private-name free and refuses unsafe
   for (const [name, value] of bad) assert.throws(() => captureMacLocalRemoteAccessV1(value, loopback), /mac_local_remote_access_invalid/, name);
   assert.throws(() => captureMacLocalRemoteAccessV1(good, loopback, tailnetOrigin), /mac_local_remote_access_invalid/,
     "legacy and new Tailscale origins together are ambiguous");
+  // The legacy origin becomes the Tailscale gate, so it must pass the same tailnet rule.
+  for (const legacy of ["https://public-proxy.example.invalid", "https://example.ts.net.attacker.invalid"])
+    assert.throws(() => captureMacLocalRemoteAccessV1(undefined, loopback, legacy), /mac_local_remote_access_invalid/, legacy);
+  assert.throws(() => captureMacLocalRemoteAccessV1({ schema: MAC_LOCAL_REMOTE_ACCESS_V1, cloudflare: good.cloudflare }, loopback,
+    "https://public-proxy.example.invalid"), /mac_local_remote_access_invalid/, "legacy non-tailnet beside Cloudflare");
+  // Tailscale logins for GitHub and passkey identities have no dot in the domain.
+  for (const ownerLogin of ["name@github", "name@passkey", "first.last+tag@example.invalid"])
+    assert.equal(captureMacLocalRemoteAccessV1({ ...good, tailscale: { origin: tailnetOrigin, ownerLogin } }, loopback).tailscale?.ownerLogin,
+      ownerLogin);
   assert.throws(() => captureMacLocalRemoteAccessV1({ ...good, tailscale: undefined,
     cloudflare: { ...good.cloudflare, origin: "https://same.example.ts.net" } }, loopback), /mac_local_remote_access_invalid/);
 });
@@ -205,6 +230,9 @@ test("protected configuration derives the session origins from remoteAccess and 
   const withRemote = captureMacLocalProtectedConfigurationV1({ ...base, remoteAccess: { schema: MAC_LOCAL_REMOTE_ACCESS_V1,
     tailscale: { origin: tailnetOrigin }, cloudflare: { origin: cloudflareOrigin, teamDomain, audience, ownerEmail: owner } } });
   assert.deepEqual(withRemote.localOwnerSession.remoteOrigins, [tailnetOrigin, cloudflareOrigin]);
+  assert.throws(() => captureMacLocalProtectedConfigurationV1({ ...base, localOwnerSession: { ...base.localOwnerSession,
+    trustedOrigin: "https://public-proxy.example.invalid" } }), /mac_local_protected_configuration_invalid/,
+  "a legacy origin that is not a tailnet address is refused, not treated as Tailscale");
   const legacy = captureMacLocalProtectedConfigurationV1({ ...base, localOwnerSession: { ...base.localOwnerSession, trustedOrigin: tailnetOrigin } });
   assert.deepEqual(legacy.remoteAccess, { tailscale: { origin: tailnetOrigin } });
   assert.equal(legacy.localOwnerSession.trustedOrigin, undefined);
@@ -220,6 +248,18 @@ test("Tailscale owner login check, when configured, needs the exact Serve identi
   for (const value of [undefined, "", "other@example.invalid", `${owner}.attacker.test`])
     assert.throws(() => admitTailscaleRequestV1({ origin: tailnetOrigin, ownerLogin: owner },
       new Headers(value === undefined ? {} : { "tailscale-user-login": value })), RemoteAccessRefusedError);
+  admitTailscaleRequestV1({ origin: tailnetOrigin, ownerLogin: "name@github" }, new Headers({ "tailscale-user-login": "Name@GitHub" }));
+  // Defence in depth below the HTTP layer: a non-ASCII login must not case-fold onto the owner.
+  assert.equal("\u212Aim@example.invalid".toLowerCase(), "kim@example.invalid");
+  assert.throws(() => admitTailscaleRequestV1({ origin: tailnetOrigin, ownerLogin: "kim@example.invalid" },
+    { get: (name: string) => name === "tailscale-user-login" ? "\u212Aim@example.invalid" : null, has: () => false } as unknown as Headers),
+  RemoteAccessRefusedError, "Kelvin sign");
+});
+
+test("Tailscale Funnel traffic is always refused on the Tailscale origin", () => {
+  for (const access of [{ origin: tailnetOrigin }, { origin: tailnetOrigin, ownerLogin: owner }])
+    assert.throws(() => admitTailscaleRequestV1(access, new Headers({ "tailscale-funnel-request": "?1", "tailscale-user-login": owner })),
+      RemoteAccessRefusedError, JSON.stringify(access));
 });
 
 async function exchange(handler: ReturnType<typeof createMacLocalNodeHandler>, host: string,
@@ -250,6 +290,14 @@ test("with no remote path configured the transport is exactly loopback-only", as
   assert.throws(() => createMacLocalNodeHandler({ origin: loopback, application: { isReady: () => true, close: async () => {} },
     handler: async () => new Response("ok"), assets: assets([]), secondaryOrigin: tailnetOrigin,
     remoteOrigins: [{ origin: tailnetOrigin, admit: () => {} }] }), /mac_local_serving_config_invalid/);
+  assert.throws(() => createMacLocalNodeHandler({ origin: loopback, application: { isReady: () => true, close: async () => {} },
+    handler: async () => new Response("ok"), assets: assets([]), remoteOrigins: [tailnetOrigin, cloudflareOrigin,
+      "https://third.example.invalid"].map(origin => ({ origin, admit: () => {} })) }), /mac_local_serving_config_invalid/,
+  "at most two remote paths");
+  assert.throws(() => createPrivateNodeHandler({ origin: "https://hosted.example.invalid",
+    application: { isReady: () => true, close: async () => {} }, handler: async () => new Response("ok"), assets: assets([]),
+    remoteOrigins: [{ origin: cloudflareOrigin, admit: () => {} }] }), /private_serving_config_invalid/,
+  "only the Mac-local transport accepts remote-origin gates");
 });
 
 test("remote origins pass only their gate, and proxy headers are checked but never relayed", async () => {
@@ -418,6 +466,9 @@ test("each remote path keeps the owner session, CSRF, sign-out, expiry and revoc
       "Content-Length", String(write.length), "Sec-Fetch-Site", "cross-site"] })).status, 403, `${path.name}: cross-site write`);
     const signOutPage = await go({ path: "/sign-out" });
     assert.equal(signOutPage.status, 200);
+    for (const [name, value] of [["sec-fetch-site", "cross-site"], ["x-forwarded-for", "198.51.100.7"]])
+      assert.equal((await app.handle(new Request(`${path.origin}/sign-out`, { headers: { [name]: value } }), () => new Response("page"))).status,
+        403, `${path.name}: the sign-out page is refused for ${name}`);
     assert.match(signOutPage.body, path.name === "Cloudflare" ? /"\/cdn-cgi\/access\/logout"/ : /location\.assign\("\/session"\)/);
     assert.equal((await go({ path: "/api/v1/local-owner-session", method: "DELETE", headers: ["Cookie", cookie, "Origin", path.origin] })).status, 204);
     assert.equal((await go({ path: "/api/v1/projects", headers: ["Cookie", cookie] })).status, 401, `${path.name}: revoked session`);
@@ -457,6 +508,16 @@ test("the service composition refuses session origins without matching gates", (
     /mac_local_remote_access_invalid/, "an origin without its gate");
   assert.throws(() => createMacLocalControlRoomServiceV1({ ...base, localOwnerSession: { ...session, remoteOrigins: [tailnetOrigin] },
     remoteAccess: { cloudflare } }), /mac_local_remote_access_invalid/, "mismatched origins");
+  assert.throws(() => createMacLocalControlRoomServiceV1({ ...base, localOwnerSession: { ...session, trustedOrigin: tailnetOrigin,
+    remoteOrigins: [cloudflareOrigin] }, remoteAccess: { tailscale: { origin: tailnetOrigin }, cloudflare } }),
+  /mac_local_remote_access_invalid/, "the legacy origin beside remoteAccess");
+  for (const remoteOrigins of [["http://private-app.example.invalid"], ["https://u:p@private-app.example.invalid"],
+    [`${cloudflareOrigin}/path`], [tailnetOrigin, cloudflareOrigin, "https://third.example.invalid"]])
+    assert.throws(() => captureLocalOwnerSessionProfileV1({ ...session, remoteOrigins }), /invalid_local_owner_session_profile/,
+      remoteOrigins.join(" "));
+  assert.throws(() => createMacLocalWebProcessV1({ origin: loopback, workspaceId: "workspace:x", database: base.database,
+    localOwnerSession: { ...session, remoteOrigins: [tailnetOrigin] }, cloudflareAccessOrigin: cloudflareOrigin }),
+  /mac_local_web_process_config_invalid/, "the Cloudflare origin must be one of the session origins");
   const service = createMacLocalControlRoomServiceV1({ ...base, localOwnerSession: { ...session, remoteOrigins: [cloudflareOrigin] },
     remoteAccess: { cloudflare }, remoteAccessRuntime: { loadKeys: async () => [keyA.published] } });
   assert.equal(typeof service.start, "function");

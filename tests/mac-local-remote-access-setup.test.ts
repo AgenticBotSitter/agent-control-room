@@ -105,3 +105,32 @@ test("check passes a correct setup and fails edits, loose modes and leaked priva
   const leaked = await checkRemoteAccess(configuration, root, repository);
   assert.equal(leaked.ok, false); assert.match(leaked.lines.join("\n"), /leak\.md/);
 });
+
+test("check never reports a non-tailnet Tailscale origin as a tailnet address", async t => {
+  const root = await protectedRoot({ schema: MAC_LOCAL_REMOTE_ACCESS_V1, tailscale: { origin: tailnetOrigin } });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configuration = await loadMacLocalProtectedConfigurationFromRootV1(root);
+  const tailnet = await checkRemoteAccess(configuration, root, undefined);
+  assert.equal(tailnet.ok, true); assert.match(tailnet.lines.join("\n"), /PASS {2}Tailscale origin .* is a tailnet \(\.ts\.net\) address/u);
+  // The loader already refuses such a configuration; the check computes the fact itself anyway.
+  const publicProxy = await checkRemoteAccess({ ...configuration,
+    remoteAccess: { tailscale: { origin: "https://public-proxy.example.invalid" } } }, root, undefined);
+  assert.equal(publicProxy.ok, false);
+  assert.doesNotMatch(publicProxy.lines.join("\n"), /PASS {2}Tailscale origin/u);
+  assert.match(publicProxy.lines.join("\n"), /FAIL {2}Tailscale origin https:\/\/public-proxy\.example\.invalid is not a tailnet/u);
+});
+
+test("a legacy trustedOrigin that is not a tailnet address stops loading, so check cannot pass it", async t => {
+  const root = await protectedRoot();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, "config", "mac-local.json");
+  const value = JSON.parse(await readFile(file, "utf8"));
+  value.localOwnerSession.trustedOrigin = "https://public-proxy.example.invalid";
+  await writeFile(file, JSON.stringify(value), { mode: 0o600 });
+  // The loader reports every configuration refusal with one code.
+  await assert.rejects(loadMacLocalProtectedConfigurationFromRootV1(root), /mac_local_protected_configuration_root_invalid/u);
+  value.localOwnerSession.trustedOrigin = tailnetOrigin;
+  await writeFile(file, JSON.stringify(value), { mode: 0o600 });
+  const legacy = await loadMacLocalProtectedConfigurationFromRootV1(root);
+  assert.deepEqual(legacy.remoteAccess, { tailscale: { origin: tailnetOrigin } });
+});
