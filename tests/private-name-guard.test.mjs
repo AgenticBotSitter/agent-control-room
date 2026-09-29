@@ -170,6 +170,54 @@ test("the guard is driven against the real repository checkout, not a fixture", 
     "the matched term must not be disclosed in the output");
 });
 
+test("a push to main fails closed and says it is a push, not an unreadable payload", () => {
+  // The workflow also runs on `push: branches:[main]` and `workflow_dispatch`. Those are
+  // unambiguously runs of this repository, so they fail closed -- but the message has to
+  // name the event that actually happened, or an owner reading a red main build is told
+  // the payload was unreadable when it was read perfectly well.
+  const root = fixture();
+  const dir = mkdtempSync(join(tmpdir(), "control-room-event-"));
+  const pushEvent = join(dir, "push.json");
+  const dispatchEvent = join(dir, "dispatch.json");
+  writeFileSync(pushEvent, JSON.stringify({
+    event_name: "push", ref: "refs/heads/main", repository: { full_name: REPOSITORY },
+  }));
+  writeFileSync(dispatchEvent, JSON.stringify({
+    event_name: "workflow_dispatch", repository: { full_name: REPOSITORY },
+  }));
+  try {
+    const push = spawnSync(process.execPath, [guard], {
+      cwd: root, encoding: "utf8",
+      env: { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: REPOSITORY, GITHUB_EVENT_PATH: pushEvent },
+    });
+    assert.equal(push.status, 1, "a push to main is a run of this repository and must not skip");
+    assert.match(push.stderr, /a push event, which is a run of this repository/u);
+    assert.doesNotMatch(push.stderr, /unreadable|could not be read/u,
+      "the payload was readable; saying otherwise sends an owner down the wrong path");
+
+    const dispatch = skipDecision({
+      GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: REPOSITORY, GITHUB_EVENT_PATH: dispatchEvent,
+    });
+    assert.equal(dispatch.skip, false);
+    assert.match(dispatch.reason, /^a workflow_dispatch event/u);
+
+    // The event name is echoed into a CI log, so a crafted payload must not reach it.
+    const hostileEvent = join(dir, "hostile.json");
+    writeFileSync(hostileEvent, JSON.stringify({
+      event_name: "push\n::error::injected", repository: { full_name: REPOSITORY },
+    }));
+    const hostile = skipDecision({
+      GITHUB_ACTIONS: "true", GITHUB_EVENT_PATH: hostileEvent,
+    });
+    assert.equal(hostile.skip, false, "a readable non-fork payload still fails closed");
+    assert.match(hostile.reason, /a non-pull-request event/u);
+    assert.doesNotMatch(hostile.reason, /::error::/u, "no payload text may reach the CI log");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("guard finds case-insensitive content and filename matches without disclosing the term", () => {
   const root = fixture();
   try {

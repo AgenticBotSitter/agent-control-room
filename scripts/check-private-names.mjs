@@ -85,33 +85,44 @@ export function findPrivateNameMatches({ root = process.cwd(), env = process.env
 // The fork signal is GitHub's own: the event payload names both the repository the
 // workflow runs in and the repository the pull request comes from. They differ only
 // for a fork. `GITHUB_ACTIONS` alone is not enough, because it is `true` for forks too.
-function readEventPullRequest(env) {
-  if (!env.GITHUB_EVENT_PATH) return null;
+function readEvent(env) {
+  if (!env.GITHUB_EVENT_PATH) return { state: "absent" };
   try {
-    const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8"));
-    return event.pull_request ? event : null;
+    return { state: "readable", event: JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8")) };
   } catch {
-    return null;
+    return { state: "unreadable" };
   }
+}
+
+// Names the event from GitHub's own field, with a fixed fallback: this string is printed
+// in a CI log, so it must not carry an arbitrary slice of an untrusted payload.
+function eventName(event) {
+  return /^[a-z_]{1,40}$/u.test(event.event_name ?? "") ? event.event_name : "non-pull-request";
 }
 
 // Returns whether a run that cannot supply a list is allowed to skip. Anything this
 // cannot prove is a fork is treated as a run of this repository, because the proof has
 // to come from the payload: treating unreadable input as a fork would let a caller
-// delete GITHUB_EVENT_PATH to buy a clean skip. GitHub always writes the payload on a
-// pull_request event, so the unprovable case is the abnormal one, and the abnormal case
-// is the one that must not skip. Returns the reason either way, so a skip can explain
-// itself.
+// delete GITHUB_EVENT_PATH to buy a clean skip. GitHub always writes the payload, so
+// the unprovable case is the abnormal one, and the abnormal case is the one that must
+// not skip. Returns the reason either way, so a skip can explain itself — and a refusal
+// can explain itself too, which is why a push to main reads as a push rather than as an
+// unreadable payload it is not.
 export function skipDecision(env = process.env) {
   if (env.GITHUB_ACTIONS !== "true") {
     return { skip: true, reason: "not a GitHub Actions run" };
   }
-  const event = readEventPullRequest(env);
-  if (event === null) {
-    return {
-      skip: false,
-      reason: "the pull-request event payload is unreadable, so a fork cannot be ruled out",
-    };
+  const { state, event } = readEvent(env);
+  if (state === "absent") {
+    return { skip: false, reason: "no event payload was provided, so a fork cannot be ruled out" };
+  }
+  if (state === "unreadable") {
+    return { skip: false, reason: "the event payload could not be read, so a fork cannot be ruled out" };
+  }
+  if (!event.pull_request) {
+    // A push to main or a manual dispatch: unambiguously a run of this repository, so
+    // it fails closed, and it says so for the reason that actually applies.
+    return { skip: false, reason: `a ${eventName(event)} event, which is a run of this repository` };
   }
   const head = event.pull_request.head?.repo?.full_name;
   const base = event.repository?.full_name ?? env.GITHUB_REPOSITORY;
