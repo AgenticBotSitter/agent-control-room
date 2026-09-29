@@ -1,6 +1,10 @@
 -- S5: server-created plans are the only authority an agent reviewer may use.
 -- The plan is negative authority: it grants neither execution nor owner
 -- approval and binds one check-stage run to one predecessor target.
+
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
 CREATE TABLE control_agent_review_plans (
   id text NOT NULL,
   tenant_id text NOT NULL,
