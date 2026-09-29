@@ -21,7 +21,7 @@ import { basename, dirname, extname, join as joinPath, resolve, sep } from "node
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
-export const CONNECTOR_VERSION = "0.1.0";
+export const CONNECTOR_VERSION = "0.2.0";
 const CONFIG_SCHEMA = "control-room.fleet-connector/v1";
 const SECRET_PATTERN = /^crf_[A-Za-z0-9_-]{43}$/u;
 const CODE_PATTERN = /^crj_[A-Za-z0-9_-]{43}$/u;
@@ -31,6 +31,13 @@ const MEDIA_TYPES = Object.freeze({ ".txt": "text/plain", ".log": "text/plain", 
   ".csv": "text/csv", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg", ".pdf": "application/pdf" });
 const MAX_FILE_BYTES = 262_144;
+const MAX_RESULT_BYTES = 65_536;
+const MAX_PROPOSAL_BYTES = 256 * 1024;
+const MAX_MCP_MESSAGE_BYTES = 512 * 1024;
+const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u;
+const OFFER_PATTERN = /^fleet-offer:[a-f0-9]{32}$/u;
+const CLAIM_PATTERN = /^fleet-claim:[a-f0-9]{32}$/u;
+const PROJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
 
 export const sha256 = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 export const newSecret = () => `crf_${randomBytes(32).toString("base64url")}`;
@@ -116,6 +123,7 @@ export function createClient(config, fetcher = globalThis.fetch) {
       { summary, idempotencyKey, ...(files.length ? { files } : {}) }),
     propose: (projectId, proposal, idempotencyKey) => call("POST",
       `/fleet/v1/projects/${encodeURIComponent(projectId)}/proposals`, { proposal, idempotencyKey }),
+    mcpCall: (callId, toolName) => call("POST", "/fleet/v1/mcp/calls", { callId, toolName }),
   });
 }
 
@@ -199,48 +207,71 @@ export async function workspaceFile(root, relative) {
 // ---------------------------------------------------------------------------
 // MCP server (stdio, newline-delimited JSON-RPC 2.0)
 // ---------------------------------------------------------------------------
-const noAuthority = "It uses this machine's own worker credential and grants nothing: it cannot approve, accept, merge or change permissions.";
+const noAuthority = "It uses this machine's own worker credential and grants nothing: it cannot approve, accept, merge, grant or widen permissions.";
 export const MCP_TOOLS = Object.freeze([
-  { name: "control_room_whoami", description: `Show this worker's projects, capabilities and credential expiry. ${noAuthority}`,
+  { name: "list_eligible_work", description: `List tasks this worker may claim now (its projects and capabilities only). ${noAuthority}`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "control_room_list_work", description: `List tasks this worker may claim now (its projects and capabilities only). ${noAuthority}`,
-    inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "control_room_claim_task", description: `Claim one listed task. Creates a time-limited lease through the normal queue; retrying with the same arguments returns the same claim. ${noAuthority}`,
+  { name: "claim", description: `Claim one listed task. Creates a time-limited lease through the normal queue; retrying with the same arguments returns the same claim. ${noAuthority}`,
     inputSchema: { type: "object", properties: { offerId: { type: "string" }, idempotencyKey: { type: "string" } },
       required: ["offerId"], additionalProperties: false } },
-  { name: "control_room_post_progress", description: `Post a short progress note on a claimed task. This also keeps the lease alive. ${noAuthority}`,
+  { name: "post_progress", description: `Post a short progress note on a claimed task. This also keeps the lease alive. ${noAuthority}`,
     inputSchema: { type: "object", properties: { claimId: { type: "string" }, message: { type: "string", maxLength: 2000 },
       idempotencyKey: { type: "string" } }, required: ["claimId", "message"], additionalProperties: false } },
-  { name: "control_room_report_blocker", description: `Report that a claimed task is blocked. Set release to true to hand it back for another worker. Nothing is marked done. ${noAuthority}`,
+  { name: "submit_result", description: `Submit the result of a claimed task for owner review: an answer (at most 64 KiB) and up to 8 files (256 KiB each, 1 MiB total) from inside the current workspace. The owner decides; submitting does not accept anything. ${noAuthority}`,
+    inputSchema: { type: "object", properties: { claimId: { type: "string" }, answer: { type: "string", maxLength: MAX_RESULT_BYTES },
+      files: { type: "array", maxItems: 8, items: { type: "string", description: "Path relative to the workspace." } },
+      idempotencyKey: { type: "string" } }, required: ["claimId", "answer"], additionalProperties: false } },
+  { name: "report_blocker", description: `Report that a claimed task is blocked. Set release to true to hand it back for another worker. Nothing is marked done. ${noAuthority}`,
     inputSchema: { type: "object", properties: { claimId: { type: "string" }, message: { type: "string", maxLength: 2000 },
       release: { type: "boolean" }, idempotencyKey: { type: "string" } }, required: ["claimId", "message"], additionalProperties: false } },
-  { name: "control_room_submit_result", description: `Submit the result of a claimed task for owner review: a summary (at most 64 KiB) and up to 8 files (256 KiB each, 1 MiB total) from inside the current workspace. The owner decides; submitting does not accept anything. ${noAuthority}`,
-    inputSchema: { type: "object", properties: { claimId: { type: "string" }, summary: { type: "string" },
-      files: { type: "array", maxItems: 8, items: { type: "string", description: "Path relative to the workspace." } },
-      idempotencyKey: { type: "string" } }, required: ["claimId", "summary"], additionalProperties: false } },
-  { name: "control_room_my_claims", description: `List this worker's claims and the owner's decision on each result, including requested changes. ${noAuthority}`,
-    inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "control_room_propose_work", description: `Propose new work for the owner to approve (a work-batch proposal). It never starts work by itself. ${noAuthority}`,
+  { name: "propose_work", description: `Propose S1 work for the owner to approve. It never creates a task, lease or execution and never starts work by itself. ${noAuthority}`,
     inputSchema: { type: "object", properties: { projectId: { type: "string" }, proposal: { type: "object" },
       idempotencyKey: { type: "string" } }, required: ["projectId", "proposal"], additionalProperties: false } },
 ]);
+
+function validIdempotency(value) {
+  return value === undefined || typeof value === "string" && IDEMPOTENCY_PATTERN.test(value);
+}
+
+function validateMcpArguments(name, args) {
+  const plain = args && typeof args === "object" && !Array.isArray(args)
+    && (Object.getPrototypeOf(args) === Object.prototype || Object.getPrototypeOf(args) === null);
+  if (!plain) return false;
+  const tool = MCP_TOOLS.find(value => value.name === name);
+  if (!tool) return false;
+  const allowed = Object.keys(tool.inputSchema.properties);
+  if (Object.keys(args).some(key => !allowed.includes(key))
+    || (tool.inputSchema.required ?? []).some(key => !(key in args)) || !validIdempotency(args.idempotencyKey)) return false;
+  if (name === "list_eligible_work") return Object.keys(args).length === 0;
+  if (name === "claim") return typeof args.offerId === "string" && OFFER_PATTERN.test(args.offerId);
+  if (name === "post_progress" || name === "report_blocker") return typeof args.claimId === "string"
+    && CLAIM_PATTERN.test(args.claimId) && typeof args.message === "string" && args.message.trim().length > 0
+    && args.message.length <= 2000 && (name !== "report_blocker" || args.release === undefined || typeof args.release === "boolean");
+  if (name === "submit_result") return typeof args.claimId === "string" && CLAIM_PATTERN.test(args.claimId)
+    && typeof args.answer === "string" && args.answer.trim().length > 0
+    && Buffer.byteLength(args.answer, "utf8") <= MAX_RESULT_BYTES
+    && (args.files === undefined || Array.isArray(args.files) && args.files.length <= 8
+      && args.files.every(path => typeof path === "string" && path.length > 0));
+  if (name === "propose_work") return typeof args.projectId === "string" && PROJECT_PATTERN.test(args.projectId)
+    && args.proposal && typeof args.proposal === "object" && !Array.isArray(args.proposal)
+    && Buffer.byteLength(JSON.stringify(args.proposal), "utf8") <= MAX_PROPOSAL_BYTES;
+  return false;
+}
 
 export function createMcpDispatcher({ client, workspaceRoot }) {
   const key = (tool, args) => typeof args.idempotencyKey === "string" ? args.idempotencyKey
     : idempotencyKeyFor(tool, Object.fromEntries(Object.entries(args).filter(([k]) => k !== "idempotencyKey")));
   const tools = {
-    control_room_whoami: () => client.me(),
-    control_room_list_work: () => client.work(),
-    control_room_claim_task: args => client.claim(args.offerId, key("claim", args)),
-    control_room_post_progress: args => client.progress(args.claimId, args.message, key("progress", args)),
-    control_room_report_blocker: args => client.blocker(args.claimId, args.message, key("blocker", args), args.release === true),
-    control_room_submit_result: async args => {
+    list_eligible_work: () => client.work(),
+    claim: args => client.claim(args.offerId, key("claim", args)),
+    post_progress: args => client.progress(args.claimId, args.message, key("progress", args)),
+    submit_result: async args => {
       const files = [];
-      for (const path of Array.isArray(args.files) ? args.files.slice(0, 9) : []) files.push(await workspaceFile(workspaceRoot, path));
-      return client.result(args.claimId, args.summary, files, key("result", args));
+      for (const path of args.files ?? []) files.push(await workspaceFile(workspaceRoot, path));
+      return client.result(args.claimId, args.answer, files, key("result", args));
     },
-    control_room_my_claims: () => client.claims(),
-    control_room_propose_work: args => client.propose(args.projectId, args.proposal, key("propose", args)),
+    report_blocker: args => client.blocker(args.claimId, args.message, key("blocker", args), args.release === true),
+    propose_work: args => client.propose(args.projectId, args.proposal, key("propose", args)),
   };
   return async function dispatch(message) {
     if (!message || message.jsonrpc !== "2.0" || typeof message.method !== "string") {
@@ -258,12 +289,12 @@ export function createMcpDispatcher({ client, workspaceRoot }) {
       case "tools/call": {
         const name = message.params?.name, args = message.params?.arguments ?? {};
         const tool = MCP_TOOLS.find(value => value.name === name);
-        if (!tool || typeof args !== "object" || Array.isArray(args))
-          return { jsonrpc: "2.0", id: message.id, error: { code: -32602, message: "Unknown tool" } };
-        const allowed = Object.keys(tool.inputSchema.properties);
-        if (Object.keys(args).some(k => !allowed.includes(k)) || (tool.inputSchema.required ?? []).some(k => !(k in args)))
-          return reply({ isError: true, content: [{ type: "text", text: "The arguments do not match this tool." }] });
         try {
+          const callId = `mcp-call:${randomBytes(16).toString("hex")}`;
+          await client.mcpCall(callId, tool ? name : "unsupported");
+          if (!tool) return { jsonrpc: "2.0", id: message.id, error: { code: -32602, message: "Unknown tool" } };
+          if (!validateMcpArguments(name, args))
+            return reply({ isError: true, content: [{ type: "text", text: "The arguments do not match this tool." }] });
           const value = await tools[name](args);
           return reply({ content: [{ type: "text", text: JSON.stringify(value, null, 2) }], structuredContent: { result: value } });
         } catch (error) {
@@ -282,7 +313,10 @@ export async function serveMcp({ configPath, input = process.stdin, output = pro
   const lines = createInterface({ input, crlfDelay: Infinity });
   for await (const line of lines) {
     if (!line.trim()) continue;
-    if (Buffer.byteLength(line) > 4 * 1024 * 1024) continue;
+    if (Buffer.byteLength(line) > MAX_MCP_MESSAGE_BYTES) {
+      output.write(`${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Request too large" } })}\n`);
+      continue;
+    }
     let message;
     try { message = JSON.parse(line); }
     catch { output.write(`${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } })}\n`); continue; }

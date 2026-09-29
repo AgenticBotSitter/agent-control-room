@@ -170,13 +170,18 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     // Every other route: authenticate first, then read the body.
     const known = path === "/fleet/v1/me" || path === "/fleet/v1/heartbeat" || path === "/fleet/v1/rotate"
-      || path === "/fleet/v1/work" || path === "/fleet/v1/claims" || claimRoute.test(path) || proposalRoute.test(path);
+      || path === "/fleet/v1/work" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
+      || claimRoute.test(path) || proposalRoute.test(path);
     if (!known) return fleetFail("not_found");
     const principal = await authenticated(request);
     if (method === "GET" && path === "/fleet/v1/me") return send(response, 200, { ok: true, result: options.store.me(principal) });
     if (method === "GET" && path === "/fleet/v1/work") return send(response, 200, { ok: true, result: await options.store.listWork(principal) });
     if (method === "GET" && path === "/fleet/v1/claims") return send(response, 200, { ok: true, result: await options.store.myClaims(principal) });
     if (method !== "POST") return fleetFail("not_found");
+    if (path === "/fleet/v1/mcp/calls") {
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["callId", "toolName"]);
+      return send(response, 201, { ok: true, result: await options.store.recordMcpCall(principal, body as never) });
+    }
     if (path === "/fleet/v1/heartbeat") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"]);
       return send(response, 200, { ok: true, result: await options.store.heartbeat(principal, body as never) });

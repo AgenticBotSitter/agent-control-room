@@ -22,6 +22,9 @@ export const FLEET_RESULT_LIMITS_V1 = Object.freeze({ summaryBytes: 65_536, file
 export const FLEET_MEDIA_TYPES_V1 = Object.freeze(["text/plain", "text/markdown", "text/csv", "application/json",
   "image/png", "image/jpeg", "application/pdf"] as const);
 const fileNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/u;
+const mcpCallPattern = /^mcp-call:[a-f0-9]{32}$/u;
+const mcpToolNames = Object.freeze(["list_eligible_work", "claim", "post_progress", "submit_result",
+  "report_blocker", "propose_work", "unsupported"] as const);
 const platforms = Object.freeze({ macos: "macos", linux: "linux", windows: "windows" } as const);
 
 const iso = (value: string | Date) => new Date(value).toISOString();
@@ -71,6 +74,28 @@ export class FleetGatewayStoreV1 {
     const now = this.#clock();
     if (!Number.isSafeInteger(now)) return fleetFail("unavailable");
     return new Date(now).toISOString();
+  }
+
+  /** Records an authenticated MCP tool attempt before the tool is validated or
+   * executed. The event contains no arguments or credential material. */
+  async recordMcpCall(principal: FleetWorkerPrincipalV1, input: Readonly<{ callId: unknown; toolName: unknown }>) {
+    if (typeof input.callId !== "string" || !mcpCallPattern.test(input.callId)
+      || typeof input.toolName !== "string" || !mcpToolNames.includes(input.toolName as never)) return fleetFail("invalid");
+    const callId = input.callId, toolName = input.toolName;
+    const auditId = `audit:fleet-mcp:${callId.slice("mcp-call:".length)}`;
+    return this.db.transaction(async tx => {
+      const prior = (await tx.query<{ actor_id: string; target_id: string; safe_metadata: { toolName?: string } }>(
+        "SELECT actor_id,target_id,safe_metadata FROM audit_events WHERE id=$1", [auditId])).rows[0];
+      if (prior) {
+        if (prior.actor_id !== principal.identityId || prior.target_id !== principal.workerId
+          || prior.safe_metadata.toolName !== toolName) return fleetFail("conflict");
+        return Object.freeze({ recorded: true, replayed: true });
+      }
+      await appendAuditWith(tx, { id: auditId, tenantId: this.#tenantId, actorId: principal.identityId,
+        actorType: "worker", action: "fleet.mcp.called", targetType: "worker", targetId: principal.workerId,
+        correlationId: callId, occurredAt: this.#now(), safeMetadata: { toolName } });
+      return Object.freeze({ recorded: true, replayed: false });
+    });
   }
 
   /** Redeems one enrollment code. The machine generated its credential locally

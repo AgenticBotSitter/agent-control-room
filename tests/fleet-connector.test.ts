@@ -526,7 +526,7 @@ test("two tasks in one project with no declared file areas cannot be held at onc
   assert.deepEqual(await f.query("SELECT claim_id FROM fleet_claims WHERE idempotency_key='claim-key-scope02'"), []);
 });
 
-test("MCP server: lists only bounded tools, claims through the gateway, and keeps files inside the workspace", async t => {
+test("MCP server: exposes the six worker tools, audits calls, uses the gateway, and keeps files inside the workspace", async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "MCP agent");
   const task = await offer(f, PROJECT_A, "mcp-1");
@@ -551,29 +551,31 @@ test("MCP server: lists only bounded tools, claims through the gateway, and keep
   assert.equal((init.result!.serverInfo as { name: string }).name, "control-room");
   const tools = (await call("tools/list")).result!.tools as Array<{ name: string }>;
   const names = tools.map(tool => tool.name);
-  assert.deepEqual(names.sort(), ["control_room_claim_task", "control_room_list_work", "control_room_my_claims",
-    "control_room_post_progress", "control_room_propose_work", "control_room_report_blocker", "control_room_submit_result",
-    "control_room_whoami"]);
+  assert.deepEqual(names, ["list_eligible_work", "claim", "post_progress", "submit_result", "report_blocker", "propose_work"]);
   assert.ok(!names.some(name => /approve|accept|merge|grant|permission|review/u.test(name)));
   const text = (reply: { result?: Record<string, unknown> }) => JSON.parse((reply.result!.content as Array<{ text: string }>)[0]!.text);
-  const listed = text(await call("tools/call", { name: "control_room_list_work", arguments: {} }));
+  const listed = text(await call("tools/call", { name: "list_eligible_work", arguments: {} }));
   assert.equal(listed[0].offerId, task.offerId);
-  const claim = text(await call("tools/call", { name: "control_room_claim_task", arguments: { offerId: task.offerId } }));
-  const again = text(await call("tools/call", { name: "control_room_claim_task", arguments: { offerId: task.offerId } }));
+  const claim = text(await call("tools/call", { name: "claim", arguments: { offerId: task.offerId } }));
+  const again = text(await call("tools/call", { name: "claim", arguments: { offerId: task.offerId } }));
   assert.equal(again.claimId, claim.claimId, "identical retries are idempotent");
-  const escape = await call("tools/call", { name: "control_room_submit_result",
-    arguments: { claimId: claim.claimId, summary: "done", files: ["link.txt"] } });
+  const escape = await call("tools/call", { name: "submit_result",
+    arguments: { claimId: claim.claimId, answer: "done", files: ["link.txt"] } });
   assert.equal(escape.result!.isError, true);
-  const traversal = await call("tools/call", { name: "control_room_submit_result",
-    arguments: { claimId: claim.claimId, summary: "done", files: ["../secret.txt"] } });
+  const traversal = await call("tools/call", { name: "submit_result",
+    arguments: { claimId: claim.claimId, answer: "done", files: ["../secret.txt"] } });
   assert.equal(traversal.result!.isError, true);
-  const extra = await call("tools/call", { name: "control_room_claim_task", arguments: { offerId: task.offerId, approve: true } });
+  const extra = await call("tools/call", { name: "claim", arguments: { offerId: task.offerId, approve: true } });
   assert.equal(extra.result!.isError, true);
-  const done = text(await call("tools/call", { name: "control_room_submit_result",
-    arguments: { claimId: claim.claimId, summary: "Answer attached.", files: ["answer.md"] } }));
+  const done = text(await call("tools/call", { name: "submit_result",
+    arguments: { claimId: claim.claimId, answer: "Answer attached.", files: ["answer.md"] } }));
   assert.equal(done.taskState, "waiting_approval");
-  const unknown = await call("tools/call", { name: "control_room_accept_result", arguments: {} });
+  const unknown = await call("tools/call", { name: "accept", arguments: {} });
   assert.ok(unknown.error);
+  const audit = await f.query<{ safe_metadata: { toolName: string } }>(
+    "SELECT safe_metadata FROM audit_events WHERE action='fleet.mcp.called' ORDER BY chain_sequence");
+  assert.deepEqual(audit.map(row => row.safe_metadata.toolName), ["list_eligible_work", "claim", "claim", "submit_result",
+    "submit_result", "claim", "submit_result", "unsupported"]);
   input.end(); await serving;
 });
 
