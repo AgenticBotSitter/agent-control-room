@@ -9,13 +9,18 @@ export const operationsModeSetInputSchemaV1 = z.object({
   reason: z.string().max(240).default(""),
 }).strict();
 
+/** The current mode, as the owner sees it.
+ *
+ * `revision` is 0 only when no decision has ever been recorded. That is a real
+ * state, not a placeholder: the owner is looking at an installation nobody has
+ * paused, and the view must say so rather than inventing a first decision. */
 export const operationsModeViewSchemaV1 = z.object({
   schema: z.literal("control-room.installation-operations-mode-view/v1"),
   mode: operationsModeV1,
   reason: z.string(),
   setByIdentityId: z.string(),
   setAt: z.string(),
-  revision: z.number().int().positive(),
+  revision: z.number().int().nonnegative(),
   replayed: z.boolean(),
   /** Set when the mode is not running: no new claim or start may be admitted. */
   admitsNewWork: z.boolean(),

@@ -31,7 +31,9 @@ export function createOperationsModeBrowserClient(transport: typeof fetch = fetc
         const response = await call("GET", undefined, signal);
         if (!response.ok) throw new BrowserRequestError(failure(response.status));
         const view = operationsModeViewSchemaV1.parse(await readBrowserJson(response));
-        if (view.revision < 0 || (view.revision === 0 && view.mode !== "running")) throw new Error();
+        // Revision 0 with a non-running mode is not a state the server can hold:
+        // it would mean "paused by nobody".
+        if (view.revision === 0 && (view.mode !== "running" || view.setAt !== "")) throw new Error();
         return view;
       } catch (error) {
         throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
