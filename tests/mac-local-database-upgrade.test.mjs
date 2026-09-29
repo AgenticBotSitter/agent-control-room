@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, readFile, writeFile, stat, rm } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readdir, readFile, writeFile, stat, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { captureProvisionedMacLocalConfigurationV1,
   prepareMacLocalDatabaseUpgradeV1, finishMacLocalDatabaseUpgradeV1,
   prepareProvisionedWorkIntakeConfigurationV1,
@@ -344,9 +345,9 @@ test("queue fingerprint ignores which UTC days have queue_stats partitions but n
   assert.equal(normalizeQueueCatalogV1({ namespace: [{ nspname: "control_room_queue" }] }).namespace[0].nspname, "control_room_queue");
 });
 
-test("the role manifest names every role the schema files create or grant to, with no dangerous attribute", async () => {
-  const { databaseRoleManifestV1: manifest, databaseRoleAttributesV1 } =
-    await import("../scripts/mac-local/database-role-manifest.mjs");
+test("the role manifest names every role the migrations, down files and schema files touch, with no dangerous attribute", async t => {
+  const { databaseRoleManifestV1: manifest, databaseRoleAttributesV1, databaseRoleNamesInSqlV1,
+    unknownDatabaseRoleNamesV1 } = await import("../scripts/mac-local/database-role-manifest.mjs");
   const logins = Object.keys(manifest.logins), known = new Set([...manifest.groups, ...logins]);
   assert.equal(known.size, manifest.groups.length + logins.length, "a name is either a group or a login");
   for (const [login, { group }] of Object.entries(manifest.logins)) assert.ok(manifest.groups.includes(group), login);
@@ -362,6 +363,99 @@ test("the role manifest names every role the schema files create or grant to, wi
   for (const match of (await readFile(new URL("../deploy/postgres/apply-migrations.mjs", import.meta.url), "utf8"))
     .matchAll(/CREATE ROLE (control_room_[a-z_]+)/gu)) named.add(match[1]);
   assert.deepEqual([...named].filter(role => !known.has(role)).sort(), []);
+
+  // The migrations and down files are applied to the same database the upgrade
+  // repairs, and they name roles in the statements that run against it. Every
+  // name in every file has to be one the upgrade itself creates, checks or
+  // revokes, or the owner has a live role the tool never reasons about.
+  const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+  const onDisk = [];
+  for (const directory of ["db/migrations", "db/down"])
+    for (const name of (await readdir(join(repositoryRoot, directory))).sort())
+      if (name.endsWith(".sql")) onDisk.push(`${directory}/${name}`);
+  const touched = new Map();
+  for (const file of onDisk) {
+    for (const [name, forms] of databaseRoleNamesInSqlV1(await readFile(join(repositoryRoot, file), "utf8"))) {
+      const existing = touched.get(name);
+      if (existing) for (const form of forms) existing.add(form);
+      else touched.set(name, new Set(forms));
+    }
+  }
+  // Every file on disk is scanned, not only the ledger's entries, so a migration
+  // added without regenerating the ledger is still checked here.
+  const ledger = JSON.parse(await readFile(join(repositoryRoot, "deploy/postgres/migration-ledger.json"), "utf8"));
+  const ledgerMigrations = new Set(ledger.entries.map(entry => entry.file));
+  for (const file of onDisk) {
+    const down = file.startsWith("db/down/");
+    const up = `db/migrations/${file.slice("db/down/".length)}`;
+    assert.ok(down ? ledgerMigrations.has(up) : ledgerMigrations.has(file), `${file} is in the migration ledger`);
+  }
+  assert.ok(onDisk.length > 100, "the scan sees the whole migration and down set");
+  assert.deepEqual([...touched.keys()].filter(role => !known.has(role)).sort(), [], "no role is named outside the manifest");
+  assert.deepEqual([...touched.keys()].sort(),
+    ["control_room_agent_reviewer", "control_room_native_results", "control_room_private_web",
+      "control_room_task_coordinator", "control_room_work_intake"],
+  "the migrations name these manifest roles and no others");
+
+  // The scanner reads what SQL actually means, so prove it on a temp copy of
+  // the tree with a role the manifest has never heard of planted in each
+  // statement form a migration can use. A green scan over the real files alone
+  // would be just as green over a scanner that never matches anything.
+  const planted = "control_room_planted_unknown";
+  const copy = await mkdtemp(join(tmpdir(), "mac-db-role-manifest-"));
+  t.after(() => rm(copy, { recursive: true, force: true }));
+  await cp(join(repositoryRoot, "db"), join(copy, "db"), { recursive: true });
+  const statements = {
+    "create": `CREATE ROLE ${planted} NOLOGIN;`,
+    "alter": `ALTER ROLE ${planted} NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;`,
+    "drop": `DROP ROLE ${planted};`,
+    "member": `GRANT control_room_reader TO ${planted} IN ROLE control_room_backup;`,
+    "admin": `GRANT control_room_backup TO ${planted} WITH ADMIN OPTION;`,
+    "grant": `GRANT SELECT ON control_nodes TO ${planted};`,
+    "revoke": `REVOKE ALL ON control_nodes FROM ${planted};`,
+    "owner": `ALTER VIEW control_nodes OWNER TO ${planted};`,
+    "owned": `DROP OWNED BY ${planted} CASCADE;`,
+    "session": `SET ROLE ${planted};`,
+    "grantor": `GRANT SELECT ON control_nodes TO control_room_reader GRANTED BY ${planted};`,
+    "catalog": `IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${planted}') THEN END IF;`,
+  };
+  const probe = join(copy, "db/migrations/0110_planted_probe.sql"), probeDown = join(copy, "db/down/0110_planted_probe.sql");
+  for (const [form, statement] of Object.entries(statements)) {
+    await writeFile(probe, statement);
+    await writeFile(probeDown, statement);
+    assert.deepEqual(unknownDatabaseRoleNamesV1([await readFile(probe, "utf8")]), [planted],
+      `a ${form} statement in a migration names a role outside the manifest`);
+    assert.deepEqual(unknownDatabaseRoleNamesV1([await readFile(probeDown, "utf8")]), [planted],
+      `a ${form} statement in a down file names a role outside the manifest`);
+    // A commented-out statement is not a role the database ever sees and must
+    // not fail the manifest.
+    assert.deepEqual(unknownDatabaseRoleNamesV1([`-- ${statement}\n/* ${statement} */\n`]), [],
+      `a commented-out ${form} statement is not a live role`);
+  }
+  // The planted copy fails the same check the real files pass, in both places.
+  const copyFiles = [];
+  for (const directory of ["db/migrations", "db/down"])
+    for (const name of (await readdir(join(copy, directory))).sort())
+      if (name.endsWith(".sql")) copyFiles.push(join(copy, directory, name));
+  assert.deepEqual([...unknownDatabaseRoleNamesV1(await Promise.all(
+    copyFiles.map(file => readFile(file, "utf8"))))], [planted],
+  "the whole copied tree, with the probe still in it, fails the manifest check");
+
+  assert.deepEqual(unknownDatabaseRoleNamesV1(["GRANT SELECT ON control_nodes TO PUBLIC;\n"
+    + "ALTER TABLE control_nodes OWNER TO CURRENT_USER;\n"
+    + "REVOKE EXECUTE ON FUNCTION f() FROM PUBLIC;\n"
+    + "REVOKE TEMPORARY ON DATABASE control_room FROM PUBLIC;\n"
+    + "GRANT control_room_backup TO control_room_web;\n"
+    + "EXECUTE format('REVOKE SELECT ON control_nodes FROM %I', 'control_room_private_web');\n"
+    + "GRANT SELECT ON control_nodes TO \"control_room_reader\";"]), [], "pseudo-roles are not manifest roles");
+  assert.deepEqual(unknownDatabaseRoleNamesV1(["GRANT SELECT ON control_nodes TO control_room_private_web;\n"
+    + "REVOKE ALL ON control_nodes FROM control_room_work_intake;\n"
+    + "CREATE ROLE control_room_backup NOLOGIN;\n"]), [], "every known role still passes");
+  assert.deepEqual(unknownDatabaseRoleNamesV1([
+    `GRANT SELECT ON control_nodes TO ${planted}, control_room_private_web;`,
+    `REVOKE ALL ON control_nodes FROM control_room_work_intake, ${planted};`,
+  ]), [planted], "one unknown name in a list fails, and the known ones do not");
+
   for (const role of known) {
     const attributes = databaseRoleAttributesV1(role);
     assert.match(attributes, /^(?:NO)?LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS$/u);
