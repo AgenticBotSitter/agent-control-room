@@ -21,6 +21,11 @@ import { SecurityStore } from "../src/security";
 import { codexCurrentAdmissionSchemaV1 } from "../src/web/v1/codex-activation-transmission-intent";
 import { createCodexResultReturnBodyV1, CODEX_RESULT_RETURN_FEATURE_V1 } from "../src/harness/codex-v1/result-return";
 import { ServerNodeSession } from "../src/node-control/server-node-session";
+import { createCodexSessionIngressV1 } from "../src/node-control/codex-session-ingress";
+import { createCodexCurrentAdmissionReadResponderV1 } from "../src/web/v1/codex-current-admission-read";
+import { CODEX_CURRENT_ADMISSION_READ_FEATURE_V1 } from "../src/harness/codex-v1/current-admission-read-contract";
+import { CODEX_DELIVERY_FEATURE } from "../src/harness/codex-v1/delivery-contract";
+import { CODEX_ACTIVATION_FEATURE } from "../src/harness/codex-v1/activation-contract";
 import { CodexResultIntakeV1 } from "../src/web/v1/codex-result-intake";
 import { ManagedNativeSessions } from "../src/web/v1/managed-native-sessions";
 import { codexTaskExecutionPlanSchemaV3, TaskExecutionPlanner } from "../src/web/v1/task-execution-planner";
@@ -121,9 +126,15 @@ async function prepared(storage = new ControlledStorage(), resultText = "Exact s
     updatedAt: currentJob.createdAt });
   const plannedJob = { ...currentJob, state: "proposed" as const, version: 0, updatedAt: currentJob.createdAt };
   const connectorProfileDigest = sha256Digest("profile:codex"), workspaceIntentDigest = sha256Digest("workspace:intent");
+  const revisionAuthority = { ...authority, expiresAt: at(600_000), digest: sha256Digest("pending") };
+  revisionAuthority.digest = computeAuthorityDigest(revisionAuthority);
+  const revisionTemplate = { id: "template:codex-revision", adapter: CODEX_APP_SERVER_ADAPTER,
+    instructions: "Use the saved task only", authority: revisionAuthority,
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile),
+    connectorProfileDigest, workspaceIntentDigest } as const;
   const plan = codexTaskExecutionPlanSchemaV3.parse({ schema: "control-room.task-execution-plan/v3",
     tenantId: "tenant:test", projectId: "project:test", sourceJobId: "job:proposal",
-    sourceDigest: sha256Digest("source"), sourceInputDigest: inputDigest, templateDigest: sha256Digest("template"),
+    sourceDigest: sha256Digest("source"), sourceInputDigest: inputDigest, templateDigest: sha256Digest(revisionTemplate),
     plannedBy: "identity:test", plannedAt: at(-60_000), input: { prompt, instructions }, request, workflow, job: plannedJob,
     acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile), adapter: CODEX_APP_SERVER_ADAPTER,
     connectorProfileDigest, workspaceIntentDigest });
@@ -143,7 +154,7 @@ async function prepared(storage = new ControlledStorage(), resultText = "Exact s
     nodeKeyValidUntil: keyRow.valid_until ? new Date(keyRow.valid_until).toISOString() : null,
     authorityDigest: currentJob.authority.digest, authorityExpiresAt: currentJob.authority.expiresAt,
     approvalKeyId: "approval-key:test", approvalExpiresAt: at(300_000), ownerTrustRevisionDigest: sha256Digest("trust"),
-    queueId: "queue:codex", dispatchMessageId: "message:dispatch", dispatchFrameDigest: sha256Digest("dispatch-frame"),
+    queueId: `native-queue:${"c".repeat(64)}`, dispatchMessageId: "message:dispatch", dispatchFrameDigest: sha256Digest("dispatch-frame"),
     receiptMessageId: "message:receipt", receiptFrameDigest: sha256Digest("receipt-frame"),
     permitDigest: sha256Digest("permit"), inputDigest, operationDigest: sha256Digest("operation"),
     effectClaimKey: sha256Digest("effect"), enrollmentDigest: sha256Digest("enrollment"), connectorProfileDigest,
@@ -255,6 +266,7 @@ async function prepared(storage = new ControlledStorage(), resultText = "Exact s
     } };
   };
   return { f, storage, publisher, publisherInstance, publication, terminalEvidence, qualificationReceipt, checkpoints, inputDigest,
+    revisionTemplate, admission, activationFrame: frame,
     bytes: new TextEncoder().encode(text), qualificationTrust,
     setNow(value: number) { clockNow = value; }, revokeAuthority() { authorityCurrent = false; } };
 }
@@ -310,6 +322,133 @@ function failOnce(base: DatabaseClient, fragment: string): DatabaseClient {
   return { query: base.query.bind(base), transaction: work => base.transaction(tx => work(intercepted(tx))),
     transactionWithPreCommitCheck: (work, check) => base.transactionWithPreCommitCheck(tx => work(intercepted(tx)), check) };
 }
+
+function mountedIngress(x: Awaited<ReturnType<typeof prepared>>, qualificationMaximumAgeMs = 300_000) {
+  const keys = generateKeyPairSync("ed25519");
+  const reference = { schema: "control-room.native-task-submission/v1" as const,
+    tenantId: "tenant:test", projectId: "project:test", jobId: "job:test", attemptId: "attempt:test",
+    queueId: x.admission.queueId, inputDigest: x.inputDigest, packetDigest: sha256Digest("queued-packet") };
+  let revoked = false, reads = 0, authenticationCalls = 0, standaloneAuthenticationCalls = 0;
+  const responder = createCodexCurrentAdmissionReadResponderV1({
+    coordinator: { async readCurrentCodexQueuedAdmission(ref, expected) {
+      reads++;
+      if (revoked) throw new Error("revoked");
+      assert.deepEqual(ref, { ...reference, packetDigest: sha256Digest("queued-packet") });
+      assert.equal(expected.activationFrameDigest, sha256Digest(x.activationFrame));
+      return { currentAdmission: x.admission, activationFrameDigest: expected.activationFrameDigest,
+        startsWork: false, grantsExecutionAuthority: false };
+    } },
+    authenticator: { async verify() { standaloneAuthenticationCalls++; throw new Error("second authenticator forbidden"); } },
+    tenantId: reference.tenantId, nodeId: x.admission.nodeId, connectionId: x.admission.connectionId,
+    transportIdentity: "transport:test", clock: () => Date.parse(at(2000)),
+  });
+  const intake = new CodexResultIntakeV1(x.publisherInstance(), {
+    qualificationReceipt: x.qualificationReceipt, qualificationPublicKeySpki: x.qualificationTrust.publicKeySpki,
+    qualificationMaximumAgeMs,
+  });
+  const mount = createCodexSessionIngressV1({ responder, result: intake, reference });
+  const features = [CODEX_DELIVERY_FEATURE, CODEX_ACTIVATION_FEATURE, CODEX_RESULT_RETURN_FEATURE_V1,
+    CODEX_CURRENT_ADMISSION_READ_FEATURE_V1];
+  const seen = new Set<string>(), sent: string[] = [];
+  const config = { tenantId: reference.tenantId, nodeId: x.admission.nodeId, nodeKeyId: x.admission.nodeKeyId,
+    serverId: "server:test", serverKeyId: "server-key:test", serverPublicKeySpki:
+      keys.publicKey.export({ type: "spki", format: "der" }).toString("base64url"),
+    transportIdentity: "transport:test", features, maxFrameBytes: 262_144, heartbeatIntervalSeconds: 30 };
+  const ports = { clock: () => Date.parse(at(2000)), authentication: { async verify(raw: string) {
+    authenticationCalls++;
+    const frame = JSON.parse(raw);
+    const delivery = seen.has(frame.messageId) ? "duplicate" as const : "accepted" as const;
+    seen.add(frame.messageId); return { frame, delivery };
+  } } as never, async sign(value: Parameters<typeof signNodeFrame>[0]) { return signNodeFrame(value, keys.privateKey); },
+  async send(raw: string) { sent.push(raw); } };
+  const session = new ServerNodeSession(config, ports, mount);
+  Object.assign(session, { state: "codex_activation_sent_unconfirmed", connectionId: x.admission.connectionId,
+    deadline: Date.parse(at(60_000)), features, preparedCodexActivationFrame: x.activationFrame });
+  const read = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+    tenantId: reference.tenantId, actorId: x.admission.nodeId, keyId: x.admission.nodeKeyId,
+    connectionId: x.admission.connectionId, sequence: 19, messageId: "message:owned-read",
+    correlationId: "correlation:owned-read", sentAt: at(1500), expiresAt: at(30_000), nonce: "a".repeat(43),
+    type: "harness.codex.current-admission.read", body: { schema: "control-room.codex-current-admission-read-request/v1",
+      queueId: reference.queueId, projectId: reference.projectId, jobId: reference.jobId, attemptId: reference.attemptId,
+      nodeId: x.admission.nodeId, inputDigest: reference.inputDigest, packetDigest: reference.packetDigest,
+      activationFrameDigest: sha256Digest(x.activationFrame), currentAdmissionDigest: sha256Digest(x.admission),
+      challengeNonce: "b".repeat(43), startsWork: false, grantsExecutionAuthority: false } }, x.f.keys.privateKey);
+  return { session, intake, responder, reference, mount, config, ports, sent, read,
+    revoke() { revoked = true; }, counts() { return { reads, authenticationCalls, standaloneAuthenticationCalls }; } };
+}
+
+test("owned Codex ingress authenticates each frame once and uses session signing and canonical publication", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  const m = mountedIngress(x);
+  assert.deepEqual(m.counts(), { reads: 0, authenticationCalls: 0, standaloneAuthenticationCalls: 0 });
+  m.reference.packetDigest = sha256Digest("caller-mutated");
+  await m.session.receiveCodexCurrentAdmissionRead(JSON.stringify(m.read));
+  assert.equal(m.counts().authenticationCalls, 1);
+  assert.equal(m.counts().standaloneAuthenticationCalls, 0);
+  const answer = JSON.parse(m.sent[0]!);
+  assert.equal(answer.type, "harness.codex.current-admission.read.response");
+  assert.equal(answer.causationId, m.read.messageId);
+  assert.equal(answer.body.startsWork, false);
+  const receipt = await m.session.receiveCodexResultReturn(JSON.stringify(composedReturnFrame(x)));
+  assert.equal(receipt.grantsExecutionAuthority, false);
+  assert.equal(m.counts().authenticationCalls, 2);
+  assert.equal(x.storage.putCalls, 1);
+  assert.equal(m.sent.length, 2);
+  await assert.rejects(m.session.receiveCodexResultReturn(JSON.stringify(composedReturnFrame(x))), /replay/);
+  assert.equal(x.storage.putCalls, 1);
+});
+
+test("owned Codex ingress refuses copies, proxies, reuse and per-call receiver substitution", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  const m = mountedIngress(x);
+  for (const value of [{}, { ...m.mount }, new Proxy(m.mount, {})]) {
+    assert.throws(() => new ServerNodeSession(m.config, m.ports, value as never), /unavailable/);
+  }
+  assert.throws(() => new ServerNodeSession(m.config, m.ports, m.mount), /unavailable/);
+  for (const responder of [{ ...m.responder }, new Proxy(m.responder, {})]) {
+    assert.throws(() => createCodexSessionIngressV1({ responder, result: m.intake, reference: m.reference }));
+  }
+  for (const result of [{ ...m.intake }, new Proxy(m.intake, {}), Object.create(CodexResultIntakeV1.prototype)]) {
+    assert.throws(() => createCodexSessionIngressV1({ responder: m.responder, result, reference: m.reference }));
+  }
+  await assert.rejects(m.session.acceptCodexResultReturn(JSON.stringify(composedReturnFrame(x)), m.intake), /owns/);
+  assert.equal(m.counts().authenticationCalls, 0);
+  assert.throws(() => Object.defineProperty(m.session, "receiveCodexResultReturn", { value() {} }));
+  assert.equal(x.storage.putCalls, 0);
+});
+
+test("owned Codex ingress closes on read replay and refuses revoked result publication", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  const m = mountedIngress(x);
+  await m.session.receiveCodexCurrentAdmissionRead(JSON.stringify(m.read));
+  await assert.rejects(m.session.receiveCodexCurrentAdmissionRead(JSON.stringify(m.read)), /replay/);
+  await assert.rejects(m.session.receiveCodexResultReturn(JSON.stringify(composedReturnFrame(x))));
+  const second = mountedIngress(x); second.revoke();
+  await assert.rejects(second.session.receiveCodexResultReturn(JSON.stringify(composedReturnFrame(x))), /revoked/);
+  assert.equal(x.storage.putCalls, 0); assert.equal(second.sent.length, 0);
+  const third = mountedIngress(x); third.revoke();
+  await assert.rejects(third.session.receiveCodexCurrentAdmissionRead(JSON.stringify(third.read)), /revoked/);
+  const expired = mountedIngress(x, 1);
+  await assert.rejects(expired.session.receiveCodexCurrentAdmissionRead(JSON.stringify(expired.read)));
+  await assert.rejects(expired.session.receiveCodexResultReturn(JSON.stringify(composedReturnFrame(x))));
+  assert.equal(expired.sent.length, 0); assert.equal(x.storage.putCalls, 0);
+});
+
+test("owned Codex ingress refuses mismatched frame, missing feature, profile and connection", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  for (const change of ["packet", "feature", "profile", "connection", "key"]) {
+    const m = mountedIngress(x);
+    const frame = structuredClone(m.read);
+    if (change === "packet") frame.body.packetDigest = sha256Digest("other");
+    if (change === "key") frame.keyId = "key:other";
+    if (change === "feature") Object.assign(m.session, { features: [CODEX_RESULT_RETURN_FEATURE_V1] });
+    if (change === "connection") Object.assign(m.session, { connectionId: "connection:other" });
+    if (change === "profile") Object.assign(m.session, { preparedCodexActivationFrame: {
+      ...x.activationFrame, body: { ...x.activationFrame.body, connectorProfileDigest: sha256Digest("other") } } });
+    await assert.rejects(m.session.receiveCodexCurrentAdmissionRead(JSON.stringify(frame)));
+    assert.equal(m.sent.length, 0); assert.equal(x.storage.putCalls, 0);
+  }
+});
 
 function loseCommitAcknowledgementOnce(base: DatabaseClient,
   match: (sql: string, params: unknown[] | undefined) => boolean): DatabaseClient {
@@ -481,15 +620,7 @@ test("a Codex change request produces one inert authenticated Codex revision pla
   const reviewed = await owner.reviews.record(owner.identity, "project:test", "job:test", {
     artifactId: saved.receipt.artifactId, targetId: saved.target.id, targetDigest: sha256Digest(saved.target),
     contentHash: saved.receipt.contentHash, decision: "changes_requested", feedback }, "codex-revision-plan");
-  const currentJob = await x.f.canonical.get("tenant:test", "job", "job:test");
-  assert.ok(currentJob?.kind === "job");
-  const revisionAuthority = { ...currentJob.authority, expiresAt: at(600_000), digest: sha256Digest("pending") };
-  revisionAuthority.digest = computeAuthorityDigest(revisionAuthority);
-  const template = { id: "template:codex-revision", adapter: CODEX_APP_SERVER_ADAPTER,
-    instructions: "Use the saved task only", authority: revisionAuthority,
-    acceptanceProfileId: saved.target.acceptanceProfileId, acceptanceProfileDigest: saved.target.acceptanceProfileDigest,
-    connectorProfileDigest: x.publication.connection.connectorProfileDigest,
-    workspaceIntentDigest: sha256Digest("workspace:intent") } as const;
+  const template = x.revisionTemplate;
   const inspection = codexInspection(x);
   const planner = new TaskExecutionPlanner(x.f.db, { tenantId: "tenant:test", workspaceId: "workspace:test" },
     { template, integrityKey: taskPlanKey, reviewIntegrityKey: reviewKey, checkpoints: x.checkpoints },

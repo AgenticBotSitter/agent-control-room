@@ -71,13 +71,23 @@ test("compiled private routes use the installed process, real disposable SQL, an
   const files = await (await handler(request(filesPath))).json();
   assert.equal(files.projectId, project.projectId); assert.equal(files.resultSource, "not_configured");
   assert.deepEqual(files.items, []); assert.equal(files.startsWork, false);
+  const projectInboxPath = `/api/v1/projects/${encodeURIComponent(project.projectId)}/inbox`;
+  const projectInbox = await (await handler(request(projectInboxPath))).json();
+  assert.equal(projectInbox.projectId, project.projectId); assert.equal(projectInbox.mode, "inbox");
+  assert.equal(projectInbox.items[0].task.jobId, taskReceipt.jobId); assert.equal(projectInbox.startsWork, false);
+  const projectReviewsPath = `/api/v1/projects/${encodeURIComponent(project.projectId)}/reviews`;
+  const projectReviews = await (await handler(request(projectReviewsPath))).json();
+  assert.equal(projectReviews.projectId, project.projectId); assert.equal(projectReviews.mode, "reviews");
+  assert.deepEqual(projectReviews.items, []); assert.equal(projectReviews.startsWork, false);
   const filesPage = await handler(request(`${path}/files`)); assert.equal(filesPage.status, 200);
   assert.match(await filesPage.text(), /Project files/);
   const reviewsPage = await handler(request(`${path}/reviews`)); assert.equal(reviewsPage.status, 200);
   assert.match(await reviewsPage.text(), /Project reviews/);
   const activityPage = await handler(request(`${path}/activity`)); assert.equal(activityPage.status, 200);
   assert.match(await activityPage.text(), /Project activity/);
-  for (const section of ["inbox", "agents", "automations"]) {
+  const inboxPage = await handler(request(`${path}/inbox`)); assert.equal(inboxPage.status, 200);
+  assert.match(await inboxPage.text(), /Loading saved project attention/);
+  for (const section of ["agents", "automations"]) {
     const sectionPage = await handler(request(`${path}/${section}`)); assert.equal(sectionPage.status, 200, section);
     assert.match(await sectionPage.text(), /Loading project/, section);
   }
@@ -136,7 +146,7 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
   for (const protectedPath of ["/projects", "/ideas", "/api/v1/ideas", "/connections", "/workers", "/settings", "/api/v1/connections", path, `/projects/${encodeURIComponent(idea.projectId)}`,
-    taskPath, attentionPath, overviewPath, filesPath, `${path}/inbox`, `${path}/agents`, `${path}/automations`, `${path}/files`, `${path}/reviews`, `${path}/activity`, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
+    taskPath, attentionPath, overviewPath, filesPath, projectInboxPath, projectReviewsPath, `${path}/inbox`, `${path}/agents`, `${path}/automations`, `${path}/files`, `${path}/reviews`, `${path}/activity`, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
     `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
   await app.close(); assert.equal((await handler(request("/projects"))).status, 503);

@@ -5,40 +5,40 @@ import { harnessRunEventSchemaV1, harnessRunSchemaV1 } from "./schemas";
 import type { HarnessRunEventV1, HarnessRunState, HarnessRunV1 } from "./types";
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "./native-observation";
 
-interface EventRow {
+export interface StoredHarnessRunEventRowV1 {
   tenant_id: string; run_id: string; sequence: number | string; occurred_at: string | Date; source: string;
   source_event_key_digest: string; event_digest: string; event_auth_tag: string; payload: HarnessRunEventV1; recorded_at: string | Date;
 }
-interface RunRow {
+export interface StoredHarnessRunRowV1 {
   id: string; tenant_id: string; project_id: string; job_id: string; attempt_id: string; node_id: string; adapter_id: string;
   harness: string; native_session_key_digest: string; parent_run_id: string | null; revision_of_run_id: string | null;
   payload: HarnessRunV1; last_sequence: number | string; run_digest: string; run_auth_tag: string; state: string;
-  created_at: string | Date; updated_at: string | Date; last_observed_at: string | Date; event_rows: EventRow[];
+  created_at: string | Date; updated_at: string | Date; last_observed_at: string | Date; event_rows: StoredHarnessRunEventRowV1[];
 }
 
-const runProjection = `r.id,r.tenant_id,r.project_id,r.job_id,r.attempt_id,r.node_id,r.adapter_id,r.harness,
-  r.native_session_key_digest,r.parent_run_id,r.revision_of_run_id,r.payload,r.last_sequence,r.run_digest,r.run_auth_tag,
-  r.state,r.created_at,r.updated_at,r.last_observed_at,
+export const harnessRunProjectionV1 = (alias = "r") => `${alias}.id,${alias}.tenant_id,${alias}.project_id,${alias}.job_id,${alias}.attempt_id,${alias}.node_id,${alias}.adapter_id,${alias}.harness,
+  ${alias}.native_session_key_digest,${alias}.parent_run_id,${alias}.revision_of_run_id,${alias}.payload,${alias}.last_sequence,${alias}.run_digest,${alias}.run_auth_tag,
+  ${alias}.state,${alias}.created_at,${alias}.updated_at,${alias}.last_observed_at,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('tenant_id',e.tenant_id,'run_id',e.run_id,'sequence',e.sequence,
     'occurred_at',e.occurred_at,'source',e.source,'source_event_key_digest',e.source_event_key_digest,
     'event_digest',e.event_digest,'event_auth_tag',e.event_auth_tag,'payload',e.payload,'recorded_at',e.recorded_at)
-    ORDER BY e.sequence) FROM control_harness_run_events e WHERE e.tenant_id=r.tenant_id AND e.run_id=r.id),'[]'::jsonb) AS event_rows`;
+    ORDER BY e.sequence) FROM control_harness_run_events e WHERE e.tenant_id=${alias}.tenant_id AND e.run_id=${alias}.id),'[]'::jsonb) AS event_rows`;
 
 function iso(value: string | Date): string { return new Date(value).toISOString(); }
 
-function runAuthMaterial(row: Omit<RunRow,"event_rows"|"run_auth_tag">): Record<string,unknown> {
+function runAuthMaterial(row: Omit<StoredHarnessRunRowV1,"event_rows"|"run_auth_tag">): Record<string,unknown> {
   return { id:row.id,tenantId:row.tenant_id,projectId:row.project_id,jobId:row.job_id,attemptId:row.attempt_id,nodeId:row.node_id,
     adapterId:row.adapter_id,harness:row.harness,nativeSessionKeyDigest:row.native_session_key_digest,parentRunId:row.parent_run_id,
     revisionOfRunId:row.revision_of_run_id,state:row.state,lastSequence:Number(row.last_sequence),runDigest:row.run_digest,
     createdAt:iso(row.created_at),updatedAt:iso(row.updated_at),lastObservedAt:iso(row.last_observed_at) };
 }
 
-function eventAuthMaterial(row: Omit<EventRow,"event_auth_tag">): Record<string,unknown> {
+function eventAuthMaterial(row: Omit<StoredHarnessRunEventRowV1,"event_auth_tag">): Record<string,unknown> {
   return { tenantId:row.tenant_id,runId:row.run_id,sequence:Number(row.sequence),occurredAt:iso(row.occurred_at),source:row.source,
     sourceEventKeyDigest:row.source_event_key_digest,eventDigest:row.event_digest,recordedAt:iso(row.recorded_at) };
 }
 
-function verifiedEvent(row: EventRow, integrityKey: Uint8Array): HarnessRunEventV1 {
+function verifiedEvent(row: StoredHarnessRunEventRowV1, integrityKey: Uint8Array): HarnessRunEventV1 {
   const event = harnessRunEventSchemaV1.parse(row.payload) as HarnessRunEventV1;
   const material = eventAuthMaterial(row);
   if (sha256Digest(event) !== row.event_digest || hmacSha256Tag(integrityKey,material) !== row.event_auth_tag
@@ -48,7 +48,7 @@ function verifiedEvent(row: EventRow, integrityKey: Uint8Array): HarnessRunEvent
   return event;
 }
 
-function verifiedRun(row: RunRow, integrityKey: Uint8Array): HarnessRunV1 {
+export function verifyStoredHarnessRunV1(row: StoredHarnessRunRowV1, integrityKey: Uint8Array): HarnessRunV1 {
   const run = harnessRunSchemaV1.parse(row.payload) as HarnessRunV1;
   const events=row.event_rows.map((event)=>verifiedEvent(event,integrityKey)); const lastSequence=Number(row.last_sequence);
   if (sha256Digest(run)!==row.run_digest || hmacSha256Tag(integrityKey,runAuthMaterial(row))!==row.run_auth_tag
@@ -77,9 +77,9 @@ export class HarnessRunStoreV1 {
       throw new Error("native registration must contain only initial evidence");
     }
     return this.db.transaction(async (tx) => {
-      const existing = await tx.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [run.tenantId, run.id]);
+      const existing = await tx.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [run.tenantId, run.id]);
       if (existing.rows[0]) {
-        const verified = verifiedRun(existing.rows[0],this.integrityKey);
+        const verified = verifyStoredHarnessRunV1(existing.rows[0],this.integrityKey);
         if (verified.nativeTask && run.nativeTask) {
           const initial: HarnessRunV1 = { ...verified, state: "discovered", cancelState: "not_requested",
             updatedAt: verified.createdAt, lastObservedAt: verified.createdAt };
@@ -113,9 +113,9 @@ export class HarnessRunStoreV1 {
     const snapshot = nativeTaskSnapshotBodySchema.parse(input);
     assertNoSecretMaterial(snapshot, "native task snapshot");
     return this.db.transactionWithPreCommitCheck(async tx => {
-      const row = (await tx.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [tenantId, snapshot.runId])).rows[0];
+      const row = (await tx.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [tenantId, snapshot.runId])).rows[0];
       if (!row) throw new Error("native task not registered");
-      const run = verifiedRun(row, this.integrityKey), registration = run.nativeTask;
+      const run = verifyStoredHarnessRunV1(row, this.integrityKey), registration = run.nativeTask;
       if (!registration || run.nodeId !== nodeId || run.projectId !== snapshot.projectId || run.jobId !== snapshot.jobId
         || run.attemptId !== snapshot.attemptId || run.nativeSessionKeyDigest !== snapshot.sessionKeyDigest
         || registration.bindingDigest !== snapshot.bindingDigest || registration.leaseId !== snapshot.leaseId
@@ -143,12 +143,13 @@ export class HarnessRunStoreV1 {
   private async appendWithin(tx: DatabaseSession, event: HarnessRunEventV1, native = false): Promise<{ run: HarnessRunV1; replayed: boolean }> {
     assertNoSecretMaterial(event, "harness event");
     const eventDigest = sha256Digest(event);
-      const current = await tx.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [event.tenantId,event.runId]);
+      const current = await tx.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2 FOR UPDATE`, [event.tenantId,event.runId]);
       const row = current.rows[0];
       if (!row) throw new Error("harness run not found");
-      const run = verifiedRun(row,this.integrityKey);
+      const run = verifyStoredHarnessRunV1(row,this.integrityKey);
       if (Boolean(run.nativeTask) !== native) throw new Error("native and legacy observation paths cannot be mixed");
-      const prior = await tx.query<EventRow>(`SELECT tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2 AND (sequence=$3 OR source_event_key_digest=$4)`, [event.tenantId,event.runId,event.sequence,event.sourceEventKeyDigest]);
+      if (run.remoteTask && !native) throw new Error("remote task observations require private remote ingestion");
+      const prior = await tx.query<StoredHarnessRunEventRowV1>(`SELECT tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2 AND (sequence=$3 OR source_event_key_digest=$4)`, [event.tenantId,event.runId,event.sequence,event.sourceEventKeyDigest]);
       if (prior.rows[0]) {
         verifiedEvent(prior.rows[0],this.integrityKey);
         if (prior.rows[0].event_digest !== eventDigest) throw new Error("harness event replay conflict");
@@ -202,29 +203,71 @@ export class HarnessRunStoreV1 {
   }
 
   async get(tenantId: string, runId: string): Promise<HarnessRunV1 | undefined> {
-    const result = await this.db.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2`, [tenantId,runId]);
-    return result.rows[0] ? verifiedRun(result.rows[0],this.integrityKey) : undefined;
+    const result = await this.db.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2`, [tenantId,runId]);
+    return result.rows[0] ? verifyStoredHarnessRunV1(result.rows[0],this.integrityKey) : undefined;
   }
 
   /** A single SQL snapshot verifies the run and its history together. Presentation may omit older
    * points only after full existing integrity verification; it must not mix two observation revisions. */
   async inspect(tenantId: string, runId: string): Promise<{ run: HarnessRunV1; events: HarnessRunEventV1[] } | undefined> {
-    const row = (await this.db.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2`,
+    const row = (await this.db.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()} FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=$2`,
       [tenantId, runId])).rows[0];
-    return row ? { run: verifiedRun(row, this.integrityKey), events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) } : undefined;
+    return row ? { run: verifyStoredHarnessRunV1(row, this.integrityKey), events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) } : undefined;
+  }
+
+  /** Fixed-query equivalent of inspect for bounded presentation reads. */
+  async inspectMany(tenantId: string, runIds: readonly string[]): Promise<ReadonlyMap<string,
+    { run: HarnessRunV1; events: HarnessRunEventV1[] }>> {
+    const ids = [...new Set(runIds)];
+    if (!ids.length) return new Map();
+    const rows = (await this.db.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()}
+      FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=ANY($2::text[]) ORDER BY r.id COLLATE "C"`,
+    [tenantId, ids])).rows;
+    const requested = new Set(ids), output = new Map<string, { run: HarnessRunV1; events: HarnessRunEventV1[] }>();
+    for (const row of rows) {
+      if (!requested.has(row.id) || output.has(row.id)) throw new Error("harness run integrity failure");
+      const run = verifyStoredHarnessRunV1(row, this.integrityKey);
+      output.set(row.id, { run, events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) });
+    }
+    return output;
+  }
+
+  /** One bounded query for task-detail attempt histories. */
+  async inspectAttempts(tenantId: string, projectId: string, jobId: string,
+    attemptIds: readonly string[]): Promise<ReadonlyMap<string, readonly { run: HarnessRunV1; events: HarnessRunEventV1[] }[]>> {
+    const ids = [...new Set(attemptIds)];
+    if (!ids.length) return new Map();
+    const rows = (await this.db.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()}
+      FROM unnest($4::text[]) WITH ORDINALITY wanted(attempt_id,attempt_order)
+      CROSS JOIN LATERAL (SELECT candidate.* FROM control_harness_runs candidate
+        WHERE candidate.tenant_id=$1 AND candidate.project_id=$2 AND candidate.job_id=$3
+          AND candidate.attempt_id=wanted.attempt_id
+        ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 11) r
+      ORDER BY wanted.attempt_order,r.created_at DESC,r.id DESC`, [tenantId, projectId, jobId, ids])).rows;
+    const requested = new Set(ids), output = new Map<string, { run: HarnessRunV1; events: HarnessRunEventV1[] }[]>();
+    for (const row of rows) {
+      const run = verifyStoredHarnessRunV1(row, this.integrityKey);
+      if (!requested.has(run.attemptId) || run.tenantId !== tenantId || run.projectId !== projectId || run.jobId !== jobId)
+        throw new Error("harness run integrity failure");
+      const values = output.get(run.attemptId) ?? [];
+      if (values.some(value => value.run.id === run.id)) throw new Error("harness run integrity failure");
+      values.push({ run, events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) });
+      output.set(run.attemptId, values);
+    }
+    return output;
   }
 
   async events(tenantId: string, runId: string, limit = 200): Promise<HarnessRunEventV1[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("invalid harness event limit");
     const run=await this.get(tenantId,runId); if (!run) return [];
-    const result = await this.db.query<EventRow>(`SELECT tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2 ORDER BY sequence ASC LIMIT $3`, [tenantId,runId,limit]);
+    const result = await this.db.query<StoredHarnessRunEventRowV1>(`SELECT tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2 ORDER BY sequence ASC LIMIT $3`, [tenantId,runId,limit]);
     return result.rows.map((row)=>verifiedEvent(row,this.integrityKey));
   }
 
   async watch(tenantId: string, limit = 100): Promise<HarnessRunV1[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error("invalid session watch limit");
-    const result = await this.db.query<RunRow>(`SELECT ${runProjection} FROM control_harness_runs r WHERE r.tenant_id=$1 ORDER BY r.last_observed_at DESC,r.id ASC LIMIT $2`, [tenantId,limit]);
-    return result.rows.map((row)=>verifiedRun(row,this.integrityKey));
+    const result = await this.db.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()} FROM control_harness_runs r WHERE r.tenant_id=$1 ORDER BY r.last_observed_at DESC,r.id ASC LIMIT $2`, [tenantId,limit]);
+    return result.rows.map((row)=>verifyStoredHarnessRunV1(row,this.integrityKey));
   }
 
   private updatedRun(run: HarnessRunV1, state: HarnessRunState, event: HarnessRunEventV1): HarnessRunV1 {

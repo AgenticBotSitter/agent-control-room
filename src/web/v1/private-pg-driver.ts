@@ -1,5 +1,16 @@
 import { PrivateDatabaseError, type PrivateDatabaseDriver } from "./bounded-database";
 
+function definiteSqlState(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  let code: unknown;
+  try { code = Reflect.get(error, "code"); } catch { return undefined; }
+  if (typeof code !== "string" || !/^[0-9A-Z]{5}$/u.test(code)) return undefined;
+  // Connection loss (08), operator/crash shutdown (57P), resource exhaustion
+  // (53), internal errors (XX) and statement_completion_unknown (40003) do not
+  // prove what the server did; they stay uncertain and quarantine the pool.
+  return /^(08|57P|53|XX)/u.test(code) || code === "40003" ? undefined : code;
+}
+
 /** Trusted node-postgres pool surface. Construction and credentials belong to
  * server composition; importing this adapter performs no connection attempt. */
 export interface PrivatePgPool {
@@ -50,7 +61,11 @@ export function createPrivatePgDriver(pool: PrivatePgPool,
               const result = await client.query(statement, params);
               if (stopped || released) throw new PrivateDatabaseError("database_outcome_uncertain");
               return { rows: result.rows as T[] };
-            } catch { throw new PrivateDatabaseError("database_outcome_uncertain"); }
+            } catch (error) {
+              const sqlState = definiteSqlState(error);
+              if (sqlState) throw new PrivateDatabaseError("database_unavailable", sqlState);
+              throw new PrivateDatabaseError("database_outcome_uncertain");
+            }
           },
           release,
         };

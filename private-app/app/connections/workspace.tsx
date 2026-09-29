@@ -1,25 +1,53 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ConnectionCenterPanel } from "../../../app/components/connection-center";
 import { ConnectionBrowserError, readPrivateConnections, type PrivateConnectionSnapshot } from "../../../src/web/v1/connection-browser-client";
 import { PrivateHeader } from "../private-header";
 import { PrivateOperatorCapacityWorkspace } from "../operator-capacity-workspace";
+import { useInstallationTopology } from "../installation-topology";
+import { InstallationTopologySummary } from "../installation-topology-summary";
+import { LocalWorkerRouteStatus } from "../local-worker-route-status";
 
 export type PrivateConnectionViewState = { state: "loading" } | { state: "ready"; snapshot: PrivateConnectionSnapshot }
   | { state: "unavailable"; code: ConnectionBrowserError["code"] };
 
-export function PrivateConnectionView({ data, onRefresh }: { data: PrivateConnectionViewState; onRefresh: () => void }) {
+export function PrivateConnectionView({ data, onRefresh, children }: { data: PrivateConnectionViewState; onRefresh: () => void; children?: ReactNode }) {
+  const unavailableCopy = data.state === "unavailable" ? {
+    authentication_required: {
+      heading: "Your session has ended",
+      message: "Your session ended before the connection inventory could be read. Sign in again; no sample data is shown.",
+    },
+    access_denied: {
+      heading: "Owner access is required",
+      message: "Your account is not allowed to view the connection inventory. No sample data is shown.",
+    },
+    not_found: {
+      heading: "Connection inventory is not served here",
+      message: "This installation does not serve the connection inventory. No sample data is shown.",
+    },
+    unavailable: {
+      heading: "Connection inventory unavailable",
+      message: "The saved inventory could not be verified, or its private setup is not configured. No sample or old connection data is shown.",
+    },
+  }[data.code] : undefined;
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <div className="private-heading"><h1>Connections</h1><p>Saved enrollments and their last verified signals.</p>
       <p>This inventory covers all workspaces in this Control Room account.</p></div>
+    {children}
     <p className="private-note">This is the existing Hermes 0.21 enrollment inventory, not a live fleet monitor.
-      The new cross-machine agent connection and task runner are not connected here yet.</p>
+      Saved setup plans and verified worker signals are shown separately so a planned route is never presented as a running agent.</p>
     <p className="private-note">Worker platform details, eligible capabilities, available slots, current work and usage are not part of this inventory.
       The operator capacity panel below shows the recorded capacity and outcome evidence, read separately and read-only. Cancel and resume are unsupported here. Open a prepared task to see only the assignment choices that its configured service can actually verify.</p>
     <div className="private-actions"><button type="button" onClick={onRefresh} disabled={data.state === "loading"}>Refresh connections</button></div>
-    {data.state === "unavailable" ? <section className="private-notice" role="alert">
-      <h2>{data.code === "authentication_required" ? "Your session has ended" : data.code === "access_denied" ? "Owner access is required" : "Connection inventory unavailable"}</h2>
-      <p>{data.code === "unavailable" ? "The saved inventory could not be verified, or its private setup is not configured. No sample or old connection data is shown." : "Sign in with an account allowed to view the connection inventory."}</p>
+    {data.state === "unavailable" ? <section className="private-notice">
+      <h2>{unavailableCopy!.heading}</h2>
+      {/* The live region is the two sentences that state the failure. The
+        * recovery link sits outside it, so navigating to it does not drag the
+        * control into the announcement and re-rendering the 30s poll does not
+        * re-announce it. */}
+      <div role="alert">
+        <p>{unavailableCopy!.message}</p>
+      </div>
       {data.code === "authentication_required" && <><p>Signing in again through Access logout also ends Access sessions for other protected applications.</p>
         <a href="/cdn-cgi/access/logout">Sign in again</a></>}
     </section> : <>
@@ -39,6 +67,7 @@ export function PrivateConnectionView({ data, onRefresh }: { data: PrivateConnec
 export function PrivateConnections() {
   const [data, setData] = useState<PrivateConnectionViewState>({ state: "loading" });
   const [refresh, setRefresh] = useState(0);
+  const installationTopology = useInstallationTopology();
   useEffect(() => {
     let live = true, generation = 0;
     const load = async () => {
@@ -57,5 +86,8 @@ export function PrivateConnections() {
     window.addEventListener("focus", focus);
     return () => { live = false; generation++; clearInterval(interval); window.removeEventListener("focus", focus); };
   }, [refresh]);
-  return <PrivateConnectionView data={data} onRefresh={() => setRefresh(value => value + 1)} />;
+  return <PrivateConnectionView data={data} onRefresh={() => setRefresh(value => value + 1)}>
+    <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
+    <LocalWorkerRouteStatus setup={installationTopology?.setup} state={installationTopology?.state ?? "loading"} />
+  </PrivateConnectionView>;
 }

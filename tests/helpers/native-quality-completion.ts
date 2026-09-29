@@ -14,8 +14,9 @@ import { at, registration } from "../native-task-fixture";
 import type { TaskSourcePreparation } from "./task-assignment";
 
 export const qualityText = "# Result\nA useful synthetic document with an explicit result.\n# Evidence\nThe fixture supplied this evidence.\n";
-export async function nativeQualityCompletionFixture(text = qualityText, prepareSource?: TaskSourcePreparation) {
-  const x = await nativeTaskLifecycleFixture({ prepareSource });
+export async function nativeQualityCompletionFixture(text = qualityText, prepareSource?: TaskSourcePreparation,
+  configuration: { topologyRoute?: "local" | "remote" } = {}) {
+  const x = await nativeTaskLifecycleFixture({ prepareSource, topologyRoute: configuration.topologyRoute });
   try {
     await x.handoff.start(); const reviewPlan = await x.register(); await x.publish();
     x.advance(); await x.handoff.poll(); await x.publish();

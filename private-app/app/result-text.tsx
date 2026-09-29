@@ -12,7 +12,7 @@ export function ResultText({ text, label = "Agent result text" }: { text: string
       <Markdown remarkPlugins={[remarkGfm]} skipHtml components={{
         img: ({ alt }) => <span>[Image omitted{alt ? `: ${alt}` : ""}]</span>,
         a: ({ href, children }) => href && /^https?:\/\//i.test(href)
-          ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+          ? <a href={href} target="_blank" rel="noopener noreferrer">{children} <span aria-label="external link">(external)</span></a>
           : <span>{children}</span>,
       }}>{text}</Markdown>
     </div>

@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createTaskHttpHandler } from "../src/web/v1/task-http";
+import { taskDraft, taskFixture } from "./helpers/web-task";
+import { now, origin, request, trust } from "./helpers/web-foundation";
+
+test("task detail presents only the server-recorded prepared worker", async t => {
+  const f = await taskFixture();
+  t.after(() => f.db.close());
+  const saved = await f.handler(request(f.path, "POST", taskDraft, "prepared-worker-source"));
+  assert.equal(saved.status, 201);
+  const command = await saved.json() as { receipt: { jobId: string } };
+  const detailPath = `${f.path}/${encodeURIComponent(command.receipt.jobId)}`;
+  const calls: unknown[][] = [];
+  const preparedJobId = "job:prepared-child";
+  const handler = createTaskHttpHandler({ origin, trust, service: f.tasks, clock: () => now,
+    planning: { async plan() { throw new Error("not reached by task detail"); }, async readPreparedWorker(...input) {
+      calls.push(input);
+      return "claude" as const;
+    }, async readSavedContinuation(_identity, projectId, sourceJobId) {
+      const source = await f.tasks.detail(f.identity, projectId, sourceJobId);
+      const observedAt = new Date(now).toISOString();
+      return { receipt: { projectId, sourceJobId, jobId: preparedJobId, sourceInputDigest: source.inputDigest,
+        inputDigest: `sha256:${"f".repeat(64)}`, plannedAt: observedAt, startsWork: false as const, grantsExecutionAuthority: false as const },
+      preparedTask: { jobId: preparedJobId, state: "leased" as const, version: 2, updatedAt: observedAt } };
+    }, async readConfiguredLocalRoute() { return "configured" as const; } } });
+
+  const response = await handler(request(detailPath));
+  assert.equal(response.status, 200);
+  const detail = await response.json() as { preparedFor: unknown; localRouteObservation: { state: unknown; adapter: unknown } };
+  assert.equal(detail.preparedFor, "claude");
+  assert.deepEqual(detail.localRouteObservation, { state: "not_observed", adapter: "claude" });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.slice(1), [f.project.projectId, command.receipt.jobId]);
+
+  const planningResponse = await handler(request(`${detailPath}/plan`));
+  assert.equal(planningResponse.status, 200);
+  const planning = await planningResponse.json() as {
+    availability: string; savedPlan: { jobId: string }; preparedTask: { jobId: string; state: string } };
+  assert.equal(planning.availability, "already_planned");
+  assert.equal(planning.savedPlan.jobId, preparedJobId);
+  assert.deepEqual(planning.preparedTask, { jobId: preparedJobId, state: "leased", version: 2,
+    updatedAt: new Date(now).toISOString() });
+
+  // A browser parameter cannot choose a worker or reinterpret the saved plan.
+  assert.equal((await handler(request(`${detailPath}?preparedFor=hermes`))).status, 400);
+  const withoutPlanning = createTaskHttpHandler({ origin, trust, service: f.tasks, clock: () => now });
+  const without = await (await withoutPlanning(request(detailPath))).json() as { preparedFor: unknown; localRouteObservation: unknown };
+  assert.equal(without.preparedFor, null);
+  assert.deepEqual(without.localRouteObservation, { state: "not_prepared", adapter: null });
+});

@@ -3,6 +3,7 @@ import { LocalPilotErrorV1 } from "./runtime";
 import type { LocalPilotProjectTasksV1 } from "./project-tasks";
 import { catalogProjectIdSchema, projectCreateSchema, projectTransitionSchema } from "../../web/v1/project-wire";
 import { taskDraftSchema } from "../../web/v1/task-wire";
+import { taskProjectAgentOptionsSchema } from "../../web/v1/task-project-agents-wire";
 import { WebAccessError } from "../../web/v1/access-verifier";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "../../web/v1/http-common";
 
@@ -15,6 +16,11 @@ const reads = z.discriminatedUnion("resource", [
   z.object({ resource: z.literal("task"), projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict(),
   z.object({ resource: z.literal("results"), projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema,
     artifactId: catalogProjectIdSchema.optional() }).strict(),
+  z.object({ resource: z.literal("home") }).strict(),
+  z.object({ resource: z.literal("overview"), projectId: catalogProjectIdSchema }).strict(),
+  z.object({ resource: z.literal("agents"), projectId: catalogProjectIdSchema }).strict(),
+  z.object({ resource: z.literal("attention"), projectId: catalogProjectIdSchema,
+    mode: z.enum(["inbox", "reviews"]), after: catalogProjectIdSchema.optional() }).strict(),
 ]);
 const writes = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("create_project"), draft: projectCreateSchema }).strict(),
@@ -47,6 +53,10 @@ export function createLocalPilotProjectTaskHandlerV1(runtime: LocalPilotProjectT
           case "tasks": return json(await runtime.listTasks(request, query.projectId, query.after));
           case "task": return json(await runtime.getTask(request, query.projectId, query.jobId));
           case "results": return json(await runtime.getResults(request, query.projectId, query.jobId, query.artifactId));
+          case "home": return json(await runtime.home(request));
+          case "overview": return json(await runtime.projectOverview(request, query.projectId));
+          case "agents": return json(taskProjectAgentOptionsSchema.parse(await runtime.projectAgents(request, query.projectId)));
+          case "attention": return json(await runtime.projectAttention(request, query.projectId, query.mode, query.after));
         }
       }
       if (request.method !== "POST") throw new WebAccessError("not_found");

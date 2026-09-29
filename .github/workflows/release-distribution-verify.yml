@@ -1,0 +1,112 @@
+name: Release distribution verification
+
+# This is deliberately a manual, non-publishing rehearsal. It validates the
+# exact macOS GitHub Release asset and checksum sidecar; it cannot create tags,
+# releases, attestations, deployments, or installations.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-distribution-verify-${{ github.repository_id }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-macos-release-asset:
+    name: Build and verify macOS release asset
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+      - name: Install the locked build inputs without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Type check and run the release-package fixtures
+        run: |
+          set -euo pipefail
+          pnpm run check
+          pnpm run test:local-installation
+          node --test tests/macos-local-launcher-bundle.test.mjs
+      - name: Build the portable release input
+        run: |
+          set -euo pipefail
+          pnpm run build
+      - name: Assemble two independent macOS release packages and compare them
+        env:
+          RELEASE_SOURCE_ROOT: ${{ github.workspace }}
+          RELEASE_OUTPUT_ROOT: ${{ runner.temp }}/agent-control-room-release-verify
+        run: |
+          set -euo pipefail
+          test -n "${RELEASE_SOURCE_ROOT}"
+          test -n "${RELEASE_OUTPUT_ROOT}"
+          mkdir -p "${RELEASE_OUTPUT_ROOT}"
+
+          node scripts/build-protected-directory-native.mjs \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/native-one"
+          node scripts/build-installation-journal-native.mjs \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/journal-native-one"
+          node scripts/assemble-local-release.mjs \
+            --release-root "${RELEASE_SOURCE_ROOT}" \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/release-one"
+          node scripts/assemble-macos-local-launcher.mjs \
+            --source-root "${RELEASE_SOURCE_ROOT}" \
+            --release-directory "${RELEASE_OUTPUT_ROOT}/release-one" \
+            --native-artifact-directory "${RELEASE_OUTPUT_ROOT}/native-one" \
+            --journal-native-artifact-directory "${RELEASE_OUTPUT_ROOT}/journal-native-one" \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/bundle-one"
+
+          node scripts/build-protected-directory-native.mjs \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/native-two"
+          node scripts/build-installation-journal-native.mjs \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/journal-native-two"
+          node scripts/assemble-local-release.mjs \
+            --release-root "${RELEASE_SOURCE_ROOT}" \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/release-two"
+          node scripts/assemble-macos-local-launcher.mjs \
+            --source-root "${RELEASE_SOURCE_ROOT}" \
+            --release-directory "${RELEASE_OUTPUT_ROOT}/release-two" \
+            --native-artifact-directory "${RELEASE_OUTPUT_ROOT}/native-two" \
+            --journal-native-artifact-directory "${RELEASE_OUTPUT_ROOT}/journal-native-two" \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/bundle-two"
+
+          cmp "${RELEASE_OUTPUT_ROOT}/release-one/SHA256SUMS" "${RELEASE_OUTPUT_ROOT}/release-two/SHA256SUMS"
+          cmp "${RELEASE_OUTPUT_ROOT}/native-one/SHA256SUMS" "${RELEASE_OUTPUT_ROOT}/native-two/SHA256SUMS"
+          cmp "${RELEASE_OUTPUT_ROOT}/journal-native-one/SHA256SUMS" "${RELEASE_OUTPUT_ROOT}/journal-native-two/SHA256SUMS"
+          (
+            cd "${RELEASE_OUTPUT_ROOT}/bundle-one"
+            set -- ./*.tar.gz
+            test "$#" -eq 1
+            test -f "$1"
+            shasum -a 256 "$1" > SHA256SUMS
+          )
+          (
+            cd "${RELEASE_OUTPUT_ROOT}/bundle-two"
+            set -- ./*.tar.gz
+            test "$#" -eq 1
+            test -f "$1"
+            shasum -a 256 "$1" > SHA256SUMS
+          )
+          cmp "${RELEASE_OUTPUT_ROOT}/bundle-one/SHA256SUMS" "${RELEASE_OUTPUT_ROOT}/bundle-two/SHA256SUMS"
+          bundle_one=$(awk 'NR == 1 { print $2 }' "${RELEASE_OUTPUT_ROOT}/bundle-one/SHA256SUMS")
+          bundle_two=$(awk 'NR == 1 { print $2 }' "${RELEASE_OUTPUT_ROOT}/bundle-two/SHA256SUMS")
+          test -n "${bundle_one}"
+          test "${bundle_one}" = "${bundle_two}"
+          cmp "${RELEASE_OUTPUT_ROOT}/bundle-one/${bundle_one}" "${RELEASE_OUTPUT_ROOT}/bundle-two/${bundle_two}"
+          (cd "${RELEASE_OUTPUT_ROOT}/bundle-one" && shasum -a 256 -c SHA256SUMS)
+
+          {
+            echo "### Release distribution verification"
+            echo ""
+            echo "- macOS bundle: \`${bundle_one}\`"
+            echo "- SHA-256: \`$(awk 'NR == 1 { print $1 }' "${RELEASE_OUTPUT_ROOT}/bundle-one/SHA256SUMS")\`"
+            echo "- Built twice from this revision and compared byte-for-byte."
+            echo "- This manual workflow did not upload an artifact, create a GitHub Release or tag, sign files, create an attestation, install the product, or use repository secrets."
+          } >> "$GITHUB_STEP_SUMMARY"

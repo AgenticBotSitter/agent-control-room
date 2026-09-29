@@ -8,7 +8,7 @@ export const taskAttentionReasons = ["proposal", "assignment", "approval", "fail
   "delivery_check", "submission_needed", "delivery_pending", "delivery_uncertain", "delivery_rejected"] as const;
 export const taskAttentionCategories = ["uncertainty", "failure", "approval", "review", "preparation"] as const;
 export const taskAttentionUrgencies = ["urgent", "soon", "normal"] as const;
-type TaskAttentionReason = typeof taskAttentionReasons[number];
+export type TaskAttentionReason = typeof taskAttentionReasons[number];
 
 export function taskAttentionPresentation(reasons: readonly TaskAttentionReason[]) {
   const has = (...values: TaskAttentionReason[]) => values.some(value => reasons.includes(value));

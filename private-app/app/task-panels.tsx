@@ -1,11 +1,13 @@
-import type { TaskDetail, TaskDraft, TaskPage, TaskRun } from "../../src/web/v1/task-wire";
+import type { HermesDeliveryRecovery, TaskDetail, TaskDraft, TaskPage, TaskRun } from "../../src/web/v1/task-wire";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 
 export const taskStateLabel: Record<TaskPage["tasks"][number]["state"], string> = {
   proposed: "Proposal saved", ready: "Ready for assignment", leased: "Assigned", running: "In progress",
-  waiting_approval: "Waiting for approval", succeeded: "Job recorded complete", failed: "Job failed", cancelled: "Job cancelled",
+  waiting_approval: "Waiting for approval", succeeded: "Completed", failed: "Job failed", cancelled: "Job cancelled",
   orphaned: "Assignment lost", rejected: "Proposal rejected",
 };
+export const taskSummaryStateLabel = (task: TaskPage["tasks"][number]) => task.state === "succeeded" && task.qualityStatus === "accepted"
+  ? "Completed · Accepted" : taskStateLabel[task.state];
 const nativeLabel: Record<NonNullable<TaskRun["nativeState"]>, string> = { prepared: "Prepared", dispatching: "Starting",
   queued: "Agent queued", running: "Agent working", waiting_approval: "Agent waiting for approval", stopping: "Stop requested",
   completed: "Agent reports completion", failed: "Agent reports failure", cancelled: "Agent reports cancellation",
@@ -21,18 +23,27 @@ export function taskStateGuidance(detail: TaskDetail): TaskGuidance {
   const runningContradiction = detail.task.state === "running" && (detail.progressSource !== "configured" || !latestRun
     || latestRun.nativeState !== null && ["completed", "failed", "cancelled", "interrupted"].includes(latestRun.nativeState)
     || ["succeeded", "failed", "cancelled"].includes(latestRun.state));
-  const uncertain = detail.task.state === "orphaned" || runningContradiction || !!latestRun && (latestRun.stale
+  const uncertain = runningContradiction || !!latestRun && (latestRun.stale
     || latestRun.state === "disconnected" || latestRun.nativeState === "ambiguous"
     || latestRun.availability !== null && latestRun.availability !== "current");
   if (uncertain) return { heading: "Check what was already recorded", uncertain: true,
     explanation: "The latest agent information is missing, old, disconnected or uncertain. Checking reads the saved status only. It does not retry this task or send replacement work." };
+  if (detail.preparedFor && latestRun?.state === "succeeded") return { heading: "Review the returned result", uncertain: false,
+    href: "#task-results", action: "Go to results",
+    explanation: "The local run reported success. Inspect the saved result and its review evidence before accepting the work." };
   switch (detail.task.state) {
-    case "proposed": return { heading: "Prepare the saved proposal", uncertain: false, href: "#task-planning",
-      action: "Go to preparation", explanation: "Review the requested result and prepare a separate runnable task. This does not assign or start an agent." };
+    case "proposed": return detail.preparedFor
+      ? { heading: "Choose an eligible machine", uncertain: false, href: "#task-assignment",
+        action: "Go to assignment", explanation: "This task is prepared for a local worker. Assignment reserves a machine; it does not start the work." }
+      : { heading: "Prepare the saved proposal", uncertain: false, href: "#task-planning",
+        action: "Go to preparation", explanation: "Review the requested result and prepare a separate runnable task. This does not assign or start an agent." };
     case "ready": return { heading: "Choose an eligible machine", uncertain: false, href: "#task-assignment",
       action: "Go to assignment", explanation: "The task is prepared. Assignment reserves a machine; it does not by itself start the work." };
-    case "leased": return { heading: "Review the recorded assignment", uncertain: false, href: "#task-assignment",
-      action: "Go to assignment", explanation: "A machine reservation is recorded. Check its current state before approving any execution." };
+    case "leased": return detail.preparedFor
+      ? { heading: "Review local execution approval", uncertain: false, href: "#task-approval",
+        action: "Go to approval", explanation: "A machine reservation is recorded. Review the fresh local preview or saved submission receipt before assuming work was queued." }
+      : { heading: "Review the recorded assignment", uncertain: false, href: "#task-assignment",
+        action: "Go to assignment", explanation: "A machine reservation is recorded. Check its current state before approving any execution." };
     case "waiting_approval": return { heading: "Owner approval is required", uncertain: false, href: "#task-approval",
       action: "Go to approval", explanation: "Review the exact prepared request and its limits. Approval and queuing remain separate recorded steps." };
     case "succeeded": return { heading: "Review the returned result", uncertain: false, href: "#task-results",
@@ -43,8 +54,8 @@ export function taskStateGuidance(detail: TaskDetail): TaskGuidance {
       explanation: "Control Room will not create replacement work automatically. Check the saved evidence before deciding whether to prepare a new task." };
     case "cancelled": return { heading: "The task was cancelled", uncertain: false,
       explanation: "Cancellation is recorded. This page will not restart the task; check saved status if an outside process may still be finishing." };
-    case "orphaned": return { heading: "Check what was already recorded", uncertain: true,
-      explanation: "The assignment was lost. Checking reads the saved status only. It does not retry this task or send replacement work." };
+    case "orphaned": return { heading: "Reassign or cancel this task", uncertain: false, href: "#task-assignment",
+      action: "Choose a worker again", explanation: "The old reservation ended without a confirmed run. Choose a worker again below, or leave the task unassigned." };
     case "rejected": return { heading: "The proposal was rejected", uncertain: false,
       explanation: "No work should start from this proposal. Create a new proposal only after deciding what should change." };
     default: return detail.task.state satisfies never;
@@ -61,10 +72,12 @@ export function TaskStateGuidance({ detail, refreshing, onRefresh }: { detail: T
     </div></section>;
 }
 
-export function TaskProposalForm({ draft, setDraft, pending, preparing = false, uncertain, onSave }: { draft: TaskDraft;
-  setDraft: (value: TaskDraft) => void; pending: boolean; preparing?: boolean; uncertain: boolean; onSave: () => void }) {
-  return <form className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
-    <h2>Propose a task</h2><p className="private-note">Save what you want done. Saving does not assign or start an agent.
+export function TaskProposalForm({ draft, setDraft, modelOptions = [], pending, preparing = false, uncertain, onSave }: { draft: TaskDraft;
+  setDraft: (value: TaskDraft) => void; modelOptions?: TaskPage["modelOptions"]; pending: boolean; preparing?: boolean; uncertain: boolean; onSave: () => void }) {
+  const choices = modelOptions.flatMap(worker => worker.choices.map(choice => ({ ...choice, workerKind: worker.workerKind })));
+  const selected = choices.find(choice => choice.key === draft.model);
+  return <form id="new-task" className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
+    <h2>New task</h2><p className="private-note">Describe and save the work you want done. Saving does not assign or start an agent.
       Open the saved task to check preparation and assignment availability.</p>
     <p className="private-note">An agent reporting completion is not acceptance; result review is a separate step.
       Eligible capabilities, available slots, current work, and cancel or resume support are checked after preparation.
@@ -74,8 +87,26 @@ export function TaskProposalForm({ draft, setDraft, pending, preparing = false, 
     <label htmlFor="task-instructions">What should the agent deliver?</label>
     <textarea id="task-instructions" required rows={8} maxLength={4000} value={draft.instructions} disabled={pending || preparing || uncertain}
       aria-describedby="task-secrets-note" onChange={event => setDraft({ ...draft, instructions: event.target.value })} />
+    {!!choices.length && <><label htmlFor="task-model">Model (optional)</label><select id="task-model" value={draft.model ?? ""}
+      disabled={pending || preparing || uncertain} onChange={event => {
+        const choice = choices.find(item => item.key === event.target.value);
+        setDraft({ ...draft, model: choice?.key || undefined,
+          effort: choice ? (choice.efforts.includes(draft.effort as never) ? draft.effort : choice.efforts[0]) : undefined });
+      }}><option value="">Worker default</option>{choices.map(choice => <option key={`${choice.workerKind}:${choice.key}`}
+        value={choice.key}>{choice.workerKind}: {choice.label}</option>)}</select>
+      {selected && <><label htmlFor="task-effort">Effort</label><select id="task-effort" value={draft.effort ?? selected.efforts[0]}
+        disabled={pending || preparing || uncertain} onChange={event => setDraft({ ...draft, effort: event.target.value as TaskDraft["effort"] })}>
+        {selected.efforts.map(value => <option key={value} value={value}>{value}</option>)}</select>
+      {selected.limited && <p className="private-note">Uses more of your Claude limit.</p>}</>}</>}
+    <label htmlFor="task-scopes">Owned file or directory paths (optional)</label>
+    <textarea id="task-scopes" rows={4} value={(draft.scopes ?? []).map(scope => `${scope.path}${scope.kind === "tree" ? "/" : ""}`).join("\n")}
+      disabled={pending || preparing || uncertain} placeholder={"src/example.ts\ndocs/"}
+      onChange={event => setDraft({ ...draft, scopes: event.target.value.split("\n").map(value => value.trim()).filter(Boolean)
+        .map(value => ({ kind: value.endsWith("/") ? "tree" as const : "file" as const,
+          path: (value === "/" ? "" : value.replace(/\/$/u, "")).toLowerCase() })) })} />
+    <p className="private-note">One repository-relative path per line. End a directory with “/”. Overlapping active assignments are refused.</p>
     <p id="task-secrets-note" className="private-note">Include the desired result and limits. Never paste passwords, tokens or private keys.</p>
-    <button type="submit" disabled={pending || preparing || uncertain}>{preparing ? "Reading experiment…" : pending ? "Saving proposal…" : "Save proposal"}</button>
+    <button type="submit" disabled={pending || preparing || uncertain}>{preparing ? "Reading experiment…" : pending ? "Saving task…" : "Save task"}</button>
   </form>;
 }
 
@@ -86,7 +117,7 @@ export function TaskCatalogPanel({ page, after, href = (projectId, jobId, cursor
     <h2>Saved tasks</h2>
     {!page.tasks.length ? <p>{after ? "No more tasks on this page." : "No tasks have been saved for this project."}</p>
       : <ul className="private-task-list">{page.tasks.map(task => <li key={task.jobId}><a href={href(task.projectId, task.jobId)}>
-        <span className="private-state">{taskStateLabel[task.state]}</span><h3>{task.title}</h3>
+        <span className="private-state">{taskSummaryStateLabel(task)}</span><h3>{task.title}</h3>
         <span className="private-note"><ConfiguredTimestamp value={task.createdAt} prefix="Saved" /></span><span className="private-open">View task →</span>
       </a></li>)}</ul>}
     <nav className="private-actions" aria-label="Task pages">
@@ -99,11 +130,18 @@ export function TaskCatalogPanel({ page, after, href = (projectId, jobId, cursor
 function RunPanel({ run }: { run: TaskRun }) {
   const retained = run.stale || run.state === "disconnected" || run.availability !== null && run.availability !== "current";
   const label = run.nativeState ? nativeLabel[run.nativeState] : run.state.replaceAll("_", " ");
+  const routeLabel = run.routeEvidence === "local_hermes" ? "local Hermes Agent adapter"
+    : run.routeEvidence === "local_claude" ? "local Claude Code adapter"
+      : run.routeEvidence === "local_codex" ? "local Codex adapter"
+        : run.routeEvidence === "other_or_unknown" ? "another or unknown adapter" : undefined;
   return <section className="private-run" aria-label="Agent observation">
     <h4>{run.harness} · {retained ? "Agent progress is not current" : label}</h4>
     {retained && <p className="private-notice">Not a current live signal. {run.availability ? `Availability: ${run.availability}. ` : ""}
       Last reported state: {label}.</p>}
-    <p>{run.source === "legacy" ? "Legacy adapter evidence" : "Native agent evidence"} · <ConfiguredTimestamp value={run.lastObservedAt} prefix="Last observed" /></p>
+    <p>{run.source === "native_snapshot" ? "Native agent evidence"
+      : run.routeEvidence && run.routeEvidence !== "other_or_unknown" ? "Local agent evidence" : "Legacy adapter evidence"} · <ConfiguredTimestamp value={run.lastObservedAt} prefix="Last observed" /></p>
+    {run.model && <p><strong>Model:</strong> {run.profile ? `${run.profile} · ` : ""}{run.model} · effort {run.effort ?? "unknown"}{run.provider ? ` · ${run.provider}` : ""}</p>}
+    {routeLabel && <p className="private-note">Saved adapter route: {routeLabel}. This identifies the signed run record only; it does not prove that this computer still has that worker configured, available, or running.</p>}
     <dl className="private-task-facts"><div><dt>First observed working</dt><dd>{run.firstObservedExecutionAt ? <ConfiguredTimestamp value={run.firstObservedExecutionAt} /> : "Unknown"}</dd></div>
       <div><dt>Reported tokens</dt><dd>{run.usage?.totalTokens === null || run.usage?.totalTokens === undefined ? "Unknown" : run.usage.totalTokens.toLocaleString()}</dd></div>
       <div><dt>Cost</dt><dd>Unavailable — no enforced dollar limit</dd></div></dl>
@@ -118,12 +156,88 @@ function RunPanel({ run }: { run: TaskRun }) {
   </section>;
 }
 
+export function HermesDeliveryRecoveryPanel({ recovery }: { recovery: HermesDeliveryRecovery }) {
+  if (recovery.source === "not_applicable") return null;
+  if (recovery.source === "not_configured") return <section className="private-panel" aria-label="Local Hermes recovery">
+    <h2>Local Hermes recovery</h2><p>Recovery inspection is not configured for this task. This does not mean that no delivery or result exists.</p>
+  </section>;
+  if (recovery.source === "ambiguous_attempt") return <section className="private-panel private-notice" aria-label="Local Hermes recovery">
+    <h2>Local Hermes recovery needs attention</h2><p>More than one saved attempt exists, so Control Room will not guess which delivery record to inspect.</p>
+  </section>;
+  if (recovery.source === "unavailable") return <section className="private-panel private-notice" aria-label="Local Hermes recovery">
+    <h2>Local Hermes recovery is unavailable</h2><p>Control Room could not safely read the saved delivery record. It has not started, retried, resumed, published, or contacted Hermes.</p>
+  </section>;
+  const labels = { no_authenticated_delivery: "No saved authenticated delivery", delivery_receipt_unresolved: "Delivery receipt saved; terminal result not staged",
+    terminal_result_staged: "Terminal result safely staged" } as const;
+  return <section className="private-panel" aria-label="Local Hermes recovery"><h2>Local Hermes recovery</h2>
+    <p className="private-state">{labels[recovery.status.state]}</p>
+    {recovery.status.state === "terminal_result_staged" && <><p>A bounded terminal record is saved for recovery. Its text and private runner settings are not shown here.</p>
+      {recovery.status.terminal && <dl className="private-task-facts"><div><dt>Saved result size</dt><dd>{recovery.status.terminal.sizeBytes.toLocaleString()} bytes</dd></div>
+        <div><dt>Reported tokens</dt><dd>{recovery.status.terminal.totalTokens.toLocaleString()}</dd></div>
+        <div><dt>Reported duration</dt><dd>{recovery.status.terminal.durationMs.toLocaleString()} ms</dd></div></dl>}</>}
+    {recovery.status.state !== "terminal_result_staged" && <p>This is a saved-delivery check only. It does not prove that Hermes is running or that a result was published.</p>}
+    <p className="private-note">This panel cannot start, retry, resume, publish, or contact Hermes.</p>
+  </section>;
+}
+
+function LocalRouteObservationPanel({ detail }: { detail: TaskDetail }) {
+  const observation = detail.localRouteObservation;
+  if (observation.state === "not_prepared") return null;
+  const name = observation.adapter === "hermes" ? "Hermes Agent" : observation.adapter === "claude" ? "Claude Code"
+    : observation.adapter === "codex" ? "Codex" : "this route";
+  const text = observation.state === "not_local_route"
+    ? "This task has a saved worker category, but it is not one of the supported local routes."
+    : observation.state === "not_observed"
+      ? `This task is prepared for ${name}, but no matching saved local run observation exists yet.`
+      : observation.state === "configured_local_route"
+        ? `Control Room's trusted server configuration and fresh saved task record agree on the prepared ${name} local route.`
+        : observation.state === "needs_attention"
+          ? `The saved ${name} route observation needs attention. Control Room will not guess whether it is still working.`
+          : `Control Room has a saved ${name} route observation, but it is not current task activity.`;
+  return <section className="private-panel" aria-label="Local task route"><h2>Local task route</h2>
+    <p className={observation.state === "needs_attention" ? "private-notice" : "private-state"}>{text}</p>
+    <p className="private-note">This is saved evidence for this task only. It does not show a worker identity, prove availability for another task, or start, retry, or contact an agent.</p>
+  </section>;
+}
+
+export function TaskRevisionTaskLinks({ projectId, links }: { projectId: string; links: NonNullable<TaskDetail["revisionLinks"]> }) {
+  if (!links.previousJobId && !links.nextJobId) return null;
+  return <div className="private-note" aria-label="Revision task links">
+    <p>This is Revision {links.revisionNumber} in a linked task history. Each revision remains a separate task.</p>
+    {links.previousJobId && <p><a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(links.previousJobId)}`}>Open previous task</a></p>}
+    {links.nextJobId && <p><a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(links.nextJobId)}`}>Open revised task</a></p>}
+  </div>;
+}
+
 export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
+  const preparedFor = detail.preparedFor === "hermes" ? "Hermes Agent" : detail.preparedFor === "codex" ? "Codex"
+    : detail.preparedFor === "claude" ? "Claude Code" : detail.preparedFor === "configured_worker" ? "Configured worker" : undefined;
+  const preparedRouteDetail = detail.preparedFor === "hermes"
+    ? "This route is limited to one bounded task in its assigned local workspace. Before it can receive work, its local qualification and separate owner enablement must be recorded."
+    : detail.preparedFor === "claude"
+      ? "This route is limited to one text-only review. Its fixed first-task policy does not allow tools, add-ons, saved sessions, or unattended permission prompts."
+      : detail.preparedFor === "codex"
+        ? "This route has a saved Control Room task contract, but this page does not claim that a local Codex worker is available."
+        : detail.preparedFor === "configured_worker"
+          ? "This route is a saved plan category. Assignment still checks the configured route and does not start a worker." : undefined;
   return <div className="private-task-detail">
-    <section className="private-panel"><span className="private-state">{taskStateLabel[detail.task.state]}</span><h2>{detail.task.title}</h2>
+    <section className="private-panel"><span className="private-state">{taskSummaryStateLabel(detail.task)}</span><h2>{detail.task.title}</h2>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
+      {detail.modelSelection?.model && <p><strong>Chosen model:</strong> {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
+        {detail.modelSelection.model} · effort {detail.modelSelection.effort}{detail.modelSelection.provider ? ` · ${detail.modelSelection.provider}` : ""}</p>}
       <p className="private-note"><ConfiguredTimestamp value={detail.task.createdAt} prefix="Saved" /> · <ConfiguredTimestamp value={detail.task.updatedAt} prefix="Job record updated" /></p>
-      {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}</section>
+      {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}
+      <TaskRevisionTaskLinks projectId={detail.task.projectId}
+        links={detail.revisionLinks ?? { previousJobId: null, nextJobId: null, revisionNumber: 0 }} /></section>
+    {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
+      <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p>
+      <p className="private-note">{preparedRouteDetail}</p>
+      <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p></section>}
+    <LocalRouteObservationPanel detail={detail} />
+    {!!detail.ownershipLeases.length && <section className="private-panel" aria-label="Ownership leases"><h2>Ownership leases</h2>
+      {detail.ownershipLeases.map(lease => <div key={`${lease.nodeId}:${lease.expiresAt}`}><p><strong>{lease.nodeId}</strong> · {lease.current ? "active" : lease.state} · expires <ConfiguredTimestamp value={lease.expiresAt} /></p>
+        <ul>{lease.scopes.map(scope => <li key={`${scope.kind}:${scope.path}`}>{scope.kind}: <code>{scope.path || "/"}</code></li>)}</ul></div>)}</section>}
+    <HermesDeliveryRecoveryPanel recovery={detail.hermesDeliveryRecovery} />
     <section className="private-panel"><h2>Agent progress</h2>
       <p>{detail.dispatch === "configured"
         ? "Task submission is configured. A recorded submission is not proof that an agent is online or has started."

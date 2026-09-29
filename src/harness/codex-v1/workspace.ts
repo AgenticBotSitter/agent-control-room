@@ -93,6 +93,23 @@ export class CodexWorkspaceManagerV1 {
     finally { this.busy.delete(lease.runId); }
   }
 
+  /**
+   * Returns the manager-owned active lease for a later trusted composition.
+   * This is deliberately narrower than the exported structural lease check:
+   * a structurally valid lease can be manufactured, but it cannot pass this
+   * check unless this manager created it and has not cleaned it up.  Do not
+   * expose a workspace manager instance to a worker or browser.
+   */
+  requireActiveLease(leaseValue: CodexWorkspaceLeaseV1): CodexWorkspaceLeaseV1 {
+    const lease = { ...leaseValue };
+    assertCodexWorkspaceLeaseV1(lease);
+    const active = this.active.get(lease.runId);
+    if (!active || !sameLease(active, lease) || this.busy.has(lease.runId)) {
+      throw new Error("Codex workspace lease is not active");
+    }
+    return { ...active };
+  }
+
   private async cleanupExclusive(lease: CodexWorkspaceLeaseV1): Promise<void> {
     const active = this.active.get(lease.runId);
     assertCodexWorkspaceLeaseV1(lease);

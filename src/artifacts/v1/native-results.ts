@@ -32,21 +32,45 @@ export interface NativeResultReadConfiguration {
   storageIoMs?: number;
 }
 export interface NativeResultConfiguration extends NativeResultReadConfiguration { storage: ArtifactStoragePortV1 & ArtifactReadPortV1 }
-type Row = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string; artifact_id: string;
+export type StoredTaskResultRowV1 = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string; artifact_id: string;
   receipt: unknown; auth_tag: string; manifest: unknown; content_hash: string; state: string; version: number;
   workflow_id: string; created_at: string | Date; updated_at: string | Date };
+type Row = StoredTaskResultRowV1;
 type ReservationRow = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string;
   artifact_id: string; identity_digest: string; state: string; contract_digest: string; reservation: unknown;
   auth_tag: string; created_at: string | Date; updated_at: string | Date };
-const selection = `r.tenant_id,r.project_id,r.job_id,r.attempt_id,r.run_id,r.artifact_id,r.receipt,r.auth_tag,
+export const storedTaskResultSelectionV1 = `r.tenant_id,r.project_id,r.job_id,r.attempt_id,r.run_id,r.artifact_id,r.receipt,r.auth_tag,
   m.payload AS manifest,m.content_hash,m.state,m.version,m.workflow_id,m.created_at,m.updated_at
   FROM control_native_artifact_receipts r JOIN control_artifact_manifests m
   ON m.tenant_id=r.tenant_id AND m.id=r.artifact_id AND m.project_id=r.project_id
     AND m.job_id=r.job_id AND m.attempt_id=r.attempt_id`;
+const selection = storedTaskResultSelectionV1;
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 export const nativeResultId = (tenantId: string, runId: string) => `artifact:native:${sha256Digest({ tenantId, runId }).slice(7)}`;
 export const resultBytesHash = (bytes: Uint8Array) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+
+export function verifyStoredTaskResultRowV1(row: StoredTaskResultRowV1, integrityKey: Uint8Array,
+  storageClass: "local" | "r2"): { receipt: TaskResultReceipt; manifest: ArtifactManifestRecord } {
+  const parsed = nativeResultReceiptSchema.safeParse(row.receipt);
+  const receipt = parsed.success ? parsed.data : codexResultReceiptSchemaV1.parse(row.receipt);
+  const manifest = artifactManifestRecordSchema.parse(row.manifest);
+  const purpose = receipt.schema === "control-room.native-result-receipt/v1"
+    ? "native-result-receipt/v1" : "codex-result-receipt/v1";
+  const expected = Buffer.from(hmacSha256Tag(integrityKey, { purpose, receipt }));
+  const actual = Buffer.from(row.auth_tag);
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual) || sha256Digest(manifest) !== receipt.manifestDigest
+    || receipt.artifactId !== row.artifact_id || receipt.tenantId !== row.tenant_id || receipt.projectId !== row.project_id
+    || receipt.jobId !== row.job_id || receipt.attemptId !== row.attempt_id || receipt.runId !== row.run_id
+    || manifest.id !== receipt.artifactId || manifest.tenantId !== receipt.tenantId || manifest.projectId !== receipt.projectId
+    || manifest.jobId !== receipt.jobId || manifest.attemptId !== receipt.attemptId || manifest.producerId !== receipt.nodeId
+    || manifest.contentHash !== receipt.contentHash || manifest.sizeBytes !== receipt.sizeBytes || manifest.contentHash !== row.content_hash
+    || manifest.state !== "uploaded" || row.state !== manifest.state || Number(row.version) !== manifest.version
+    || row.workflow_id !== manifest.workflowId || new Date(row.created_at).toISOString() !== manifest.createdAt
+    || new Date(row.updated_at).toISOString() !== manifest.updatedAt
+    || manifest.storageClass !== storageClass || manifest.mimeType !== "text/plain; charset=utf-8") throw new Error("result_integrity_failed");
+  return { receipt, manifest };
+}
 
 export function checkedResultBytes(value: Uint8Array, claim: { contentHash: string; sizeBytes: number }): { bytes: Uint8Array; text: string } {
   if (!(value instanceof Uint8Array) || value.byteLength > 65_536 || value.byteLength !== claim.sizeBytes) throw new Error("result_content_unavailable");
@@ -91,25 +115,8 @@ export class NativeResultStore {
       this.storageUncertain = state.storageUncertain;
     }
   }
-  private verify(row: Row): { receipt: TaskResultReceipt; manifest: ArtifactManifestRecord } {
-    const parsed = nativeResultReceiptSchema.safeParse(row.receipt);
-    const receipt = parsed.success ? parsed.data : codexResultReceiptSchemaV1.parse(row.receipt);
-    const manifest = artifactManifestRecordSchema.parse(row.manifest);
-    const purpose = receipt.schema === "control-room.native-result-receipt/v1"
-      ? "native-result-receipt/v1" : "codex-result-receipt/v1";
-    const expected = Buffer.from(hmacSha256Tag(this.integrityKey, { purpose, receipt }));
-    const actual = Buffer.from(row.auth_tag);
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual) || sha256Digest(manifest) !== receipt.manifestDigest
-      || receipt.artifactId !== row.artifact_id || receipt.tenantId !== row.tenant_id || receipt.projectId !== row.project_id
-      || receipt.jobId !== row.job_id || receipt.attemptId !== row.attempt_id || receipt.runId !== row.run_id
-      || manifest.id !== receipt.artifactId || manifest.tenantId !== receipt.tenantId || manifest.projectId !== receipt.projectId
-      || manifest.jobId !== receipt.jobId || manifest.attemptId !== receipt.attemptId || manifest.producerId !== receipt.nodeId
-      || manifest.contentHash !== receipt.contentHash || manifest.sizeBytes !== receipt.sizeBytes || manifest.contentHash !== row.content_hash
-      || manifest.state !== "uploaded" || row.state !== manifest.state || Number(row.version) !== manifest.version
-      || row.workflow_id !== manifest.workflowId || new Date(row.created_at).toISOString() !== manifest.createdAt
-      || new Date(row.updated_at).toISOString() !== manifest.updatedAt
-      || manifest.storageClass !== this.storageClass || manifest.mimeType !== "text/plain; charset=utf-8") throw new Error("result_integrity_failed");
-    return { receipt, manifest };
+  private verify(row: StoredTaskResultRowV1): { receipt: TaskResultReceipt; manifest: ArtifactManifestRecord } {
+    return verifyStoredTaskResultRowV1(row, this.integrityKey, this.storageClass);
   }
   private reservationAuthTag(reservation: NativeResultReservationV1): string {
     return hmacSha256Tag(this.integrityKey, { purpose: "native-result-write-reservation/v1", reservation });
@@ -281,19 +288,19 @@ export class NativeResultStore {
     assertCurrent(); return captured;
   }
   async list(tx: DatabaseSession, tenantId: string, projectId: string, jobId: string) {
-    const rows = (await tx.query<Row>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3
+    const rows = (await tx.query<StoredTaskResultRowV1>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3
       ORDER BY r.artifact_id COLLATE "C" LIMIT 51`, [tenantId, projectId, jobId])).rows;
     return { receipts: rows.slice(0, 50).map(row => this.verify(row).receipt), additionalResultsOmitted: rows.length > 50 };
   }
   /** Exact signed metadata read for bounded summary surfaces. It does not acquire
    * artifact bytes and cannot be used as a quality or completion decision. */
   async readReceipt(tx: DatabaseSession, tenantId: string, projectId: string, jobId: string, artifactId: string) {
-    const row = (await tx.query<Row>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
+    const row = (await tx.query<StoredTaskResultRowV1>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
       [tenantId, projectId, jobId, artifactId])).rows[0];
     return row ? this.verify(row).receipt : undefined;
   }
   async read(tx: DatabaseSession, tenantId: string, projectId: string, jobId: string, artifactId: string) {
-    const row = (await tx.query<Row>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
+    const row = (await tx.query<StoredTaskResultRowV1>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
       [tenantId, projectId, jobId, artifactId])).rows[0];
     if (!row) return undefined;
     const { receipt } = this.verify(row), bytes = await this.io(signal => this.readBytes(artifactId, signal));

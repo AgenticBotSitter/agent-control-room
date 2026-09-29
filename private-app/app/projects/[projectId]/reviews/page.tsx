@@ -1,11 +1,14 @@
-import { PrivateProjectTaskView } from "../../../project-task-views";
+import { PrivateProjectResultReview } from "../../../project-result-review-workspace";
 import { decodePrivateRouteSegment } from "../../../route-segment";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Project reviews · Control Room" };
 
-export default async function Page({ params }: { params: Promise<{ projectId: string }> }) {
+export default async function Page({ params, searchParams }: { params: Promise<{ projectId: string }>;
+  searchParams: Promise<{ after?: string | string[] }> }) {
   const { projectId: rawProjectId } = await params;
   const projectId = decodePrivateRouteSegment(rawProjectId);
-  return <PrivateProjectTaskView key={projectId} projectId={projectId} view="reviews" />;
+  const { after } = await searchParams;
+  return <PrivateProjectResultReview key={`${projectId}:${typeof after === "string" ? after : ""}`} projectId={projectId}
+    mode="reviews" after={typeof after === "string" ? after : undefined} />;
 }

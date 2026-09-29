@@ -7,6 +7,7 @@ import { stageAsyncCompletionCheckpoint } from "./async-staged-checkpoint";
 import { documentStructureRulesSchema } from "./document-structure-contract";
 import { verifyDocumentStructure } from "./document-structure-verifier";
 import type { CompletionVerificationV1 } from "./types";
+import type { TaskResultInspectionSourceV1 } from "./task-result-inspection";
 
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/), digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const descriptor = z.object({ scenarioId: id, acceptanceProfileId: id, acceptanceProfileDigest: digest,
@@ -20,11 +21,13 @@ export type NativeQualityRequest = z.infer<typeof nativeQualityRequestSchema>;
 export class NativeResultVerificationService {
   private readonly descriptors: AutomaticDocumentScenario[];
   private readonly config: NativeQualityConfiguration;
+  private readonly inspectionSource?: TaskResultInspectionSourceV1;
   private lastObserved = Number.NEGATIVE_INFINITY;
   private time() { const now = this.clock(); if (!Number.isSafeInteger(now) || now < this.lastObserved) throw new Error("native_verification_unavailable");
     this.lastObserved = now; return now; }
   constructor(private readonly db: DatabaseClient, config: NativeQualityConfiguration,
-    scenarios: readonly AutomaticDocumentScenario[], private readonly clock: () => number = Date.now) {
+    scenarios: readonly AutomaticDocumentScenario[], private readonly clock: () => number = Date.now,
+    inspectionSource?: TaskResultInspectionSourceV1) {
     this.descriptors = z.array(descriptor).max(50).parse(scenarios); assertNoSecretMaterial(this.descriptors);
     if (new Set(this.descriptors.map(value => JSON.stringify([value.acceptanceProfileId, value.acceptanceProfileDigest, value.scenarioId]))).size !== this.descriptors.length)
       throw new Error("native_verification_configuration_invalid");
@@ -32,6 +35,9 @@ export class NativeResultVerificationService {
       results: { ...config.results, integrityKey: Uint8Array.from(config.results.integrityKey), storage: { read: config.results.storage.read.bind(config.results.storage) } },
       checkpoints: { read: config.checkpoints.read.bind(config.checkpoints), advance: config.checkpoints.advance.bind(config.checkpoints),
         initialize: () => { throw new Error("native_verification_provisioning_unavailable"); } } };
+    if (inspectionSource !== undefined && typeof inspectionSource.inspectSubmitted !== "function")
+      throw new Error("native_verification_configuration_invalid");
+    this.inspectionSource = inspectionSource && Object.freeze({ inspectSubmitted: inspectionSource.inspectSubmitted.bind(inspectionSource) });
   }
   async verify(input: NativeQualityRequest, assertCurrent: () => void) {
     const request = nativeQualityRequestSchema.parse(input); assertNoSecretMaterial(request); assertCurrent();
@@ -40,8 +46,10 @@ export class NativeResultVerificationService {
       throw new Error("native_verification_unavailable"); assertCurrent(); return now; };
     const result = await this.db.transactionWithPreCommitCheck(async tx => {
       current();
-      const context = await new NativeResultSubmissionService(this.db, { ...this.config, checkpoints: staged.checkpoints })
-        .inspectSubmitted(tx, request.tenantId, request.runId);
+      const context = this.inspectionSource
+        ? await this.inspectionSource.inspectSubmitted(tx, request.tenantId, request.runId)
+        : await new NativeResultSubmissionService(this.db, { ...this.config, checkpoints: staged.checkpoints })
+          .inspectSubmitted(tx, request.tenantId, request.runId);
       if (request.targetDigest !== context.snapshot.targetDigest || request.contentHash !== context.result.receipt.contentHash
         || context.snapshot.status === "superseded") throw new Error("native_verification_unavailable");
       const scenarios = this.descriptors.filter(value => value.acceptanceProfileId === context.profile.id

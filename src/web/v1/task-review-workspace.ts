@@ -20,13 +20,13 @@ export function createTaskReviewWorkspace(makeClient = createTaskReviewBrowserCl
       client, revisionClient, getSnapshot: () => snapshot,
       subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
       setFeedback(feedback: string) { if (!snapshot.pending && !client.hasPending()) update({ feedback }); },
-      async save(decision?: TaskReviewDraft["decision"]) {
+      async save(decision?: TaskReviewDraft["decision"], acceptanceAttestation?: TaskReviewDraft["acceptanceAttestation"]) {
         if (snapshot.pending) return undefined;
         update({ pending: true, error: undefined });
         try {
           const receipt = decision ? await client.record(bound.projectId, bound.jobId, { artifactId: bound.artifactId,
             targetId: bound.targetId, targetDigest: bound.targetDigest, contentHash: bound.contentHash, decision,
-            feedback: decision === "changes_requested" ? snapshot.feedback : "" }) : await client.retrySave();
+            feedback: decision === "changes_requested" ? snapshot.feedback : "", ...(acceptanceAttestation ? { acceptanceAttestation } : {}) }) : await client.retrySave();
           update({ receipt, feedback: "" }); return receipt;
         } catch (reason) { update({ error: reason instanceof BrowserRequestError ? reason : new BrowserRequestError("uncertain") }); }
         finally { update({ pending: false }); }

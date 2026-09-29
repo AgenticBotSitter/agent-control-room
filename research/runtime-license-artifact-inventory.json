@@ -1,11 +1,11 @@
 {
   "schema": "control-room.runtime-license-artifact-inventory/v1",
-  "manifestSha256": "7c018840b9afe24c76cc23bf1b28ce2b35c14417b045278b65e92f892f56be08",
-  "lockSha256": "6fdb15b4d7cea20edc11feeadaea07aabb7a6ccbcf7a40d0c75c130b535299f9",
-  "inventoryDigest": "8d3731e9837c7ae309a948327fa08c18027d607503cc701eb4973367c8a9491e",
+  "manifestSha256": "8e3e8bc11dc823048c82e46f96fd7d7beceb6e2cbf48dce63e867090fa9f43ad",
+  "lockSha256": "5be04739af0e32b35420a29cb4ed0383ea28b6ef939f8f8dcdfb04b524042b46",
+  "inventoryDigest": "3f63b91f0c670be0bb76fa2d09a0cbcd52422408b8c890fefb07f574341c59d1",
   "completeDistributionClearance": true,
   "scope": "complete for the declared artifact inputs only; #64 independently verifies the assembled release tree",
-  "repository": "cr-issue-163",
+  "repository": "acr-codex-18",
   "installed": {
     "count": 193,
     "rootTextCollected": 189,

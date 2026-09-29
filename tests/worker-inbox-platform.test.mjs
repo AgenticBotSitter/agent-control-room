@@ -63,7 +63,7 @@ function githubIssue(number, labels) {
 function githubComment(body) {
   return {
     body,
-    user: { login: "MarvinAi5" },
+    user: { login: "owner-account" },
     author_association: "MEMBER",
     html_url: `https://github.com/${REPOSITORY_NAME}/issues/0#issuecomment-1`,
   };
@@ -144,7 +144,7 @@ function controllerAssignment({ state = "changes-required", number = 199, worker
 function claimComment({ workerId = WORKER_ID, number = 199, outcome = "ACCEPTED", request = 2 } = {}) {
   return controllerComment(
     `CLAIM ${outcome} — record\n`
-    + `<!-- agent-control-room-claim:v2 issue=${number} request=${request} actor=MarvinAi5 worker=${workerId} -->`,
+    + `<!-- agent-control-room-claim:v2 issue=${number} request=${request} actor=owner-account worker=${workerId} -->`,
   );
 }
 

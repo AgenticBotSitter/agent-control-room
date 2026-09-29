@@ -20,10 +20,10 @@ export function ConnectionCenterPanel({ data }: { data: ConnectionCenterDataStat
   const { projection } = data;
   return <>
     <section className="metric-grid connection-center-summary" aria-label="Connection summary">
-      <article className="metric-card"><span className="metric-icon green">◫</span><div><small>Enrolled</small><strong>{projection.summary.connectionCount}</strong><em>Protected roster entries</em></div></article>
-      <article className="metric-card"><span className="metric-icon blue">⌁</span><div><small>Recent signals</small><strong>{projection.summary.currentSignalCount}</strong><em>{projection.summary.staleSignalCount} stale · {projection.summary.missingSignalCount} missing</em></div></article>
-      <article className="metric-card"><span className="metric-icon amber">!</span><div><small>Needs setup</small><strong>{projection.summary.attentionCount}</strong><em>Qualification or authority gates</em></div></article>
-      <article className="metric-card"><span className="metric-icon violet">◎</span><div><small>Live panels</small><strong>{projection.summary.livePanelEligibleCount}</strong><em>No eligibility inferred</em></div></article>
+      <article className="metric-card"><span className="metric-icon green" aria-hidden="true">◫</span><div><small>Enrolled</small><strong>{projection.summary.connectionCount}</strong><em>Protected roster entries</em></div></article>
+      <article className="metric-card"><span className="metric-icon blue" aria-hidden="true">⌁</span><div><small>Recent signals</small><strong>{projection.summary.currentSignalCount}</strong><em>{projection.summary.staleSignalCount} stale · {projection.summary.missingSignalCount} missing</em></div></article>
+      <article className="metric-card"><span className="metric-icon amber" aria-hidden="true">!</span><div><small>Needs setup</small><strong>{projection.summary.attentionCount}</strong><em>Qualification or authority gates</em></div></article>
+      <article className="metric-card"><span className="metric-icon violet" aria-hidden="true">◎</span><div><small>Live panels</small><strong>{projection.summary.livePanelEligibleCount}</strong><em>No eligibility inferred</em></div></article>
     </section>
     <section className="detail-card connection-runtime-card">
       <div><p className="eyebrow">Reviewed compatibility baseline</p><h2>Hermes {projection.reviewedRuntime.releaseLine}</h2>

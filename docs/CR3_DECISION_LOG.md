@@ -1,0 +1,6247 @@
+> **Restore note:** Restored from history on 2026-09-27; historical architecture record; newer decisions in `docs/LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md` take precedence where they conflict.
+
+# CR-3 architecture decision log
+
+**Purpose:** Preserve what was decided, why, what it costs, and what would justify changing it.  
+**Status:** Accepted 2026-08-22; later changes require a superseding decision record.
+
+## Decision format
+
+Each record contains context, decision, alternatives, trade-offs, and reevaluation triggers. A future change supersedes a record; it does not erase the original reasoning.
+
+## ADR-001 — Public-code security model
+
+**Decision:** Assume attackers know the complete implementation and protocol. Authenticate and authorize every operation independently of source secrecy.
+
+**Why:** A future public repository must not become a map that grants access. Security by obscurity fails even for private repositories once code, logs, or binaries leak.
+
+**Alternatives rejected:** Keep endpoints/protocols private; rely on hard-to-guess URLs or API shapes.
+
+**Trade-off:** More identity, policy, replay, and conformance work is required from the beginning.
+
+**Reevaluate:** Never reverse the principle; only strengthen controls.
+
+## ADR-002 — Modular monolith before microservices
+
+**Decision:** Deploy one Control Room application with strong internal module boundaries and one database.
+
+**Why:** The initial private-server VPS host has limited resources and one operator. Networked microservices add failure modes, credentials, queues, tracing burden, and transactional complexity without current scale benefits.
+
+**Alternatives rejected:** Separate scheduler, API, UI, identity, notification, and adapter services immediately.
+
+**Trade-off:** Internal modules share a failure domain and deployment cadence.
+
+**Reevaluate:** Independent scaling, security isolation, team ownership, or availability requirements become measurable.
+
+## ADR-003 — PostgreSQL is the sole global write authority
+
+**Decision:** Production global state lives in one PostgreSQL primary. PGlite is for local development/tests.
+
+**Why:** Leases, approvals, budgets, idempotency, and cross-project allocation require transactional truth. The repository already uses PostgreSQL-compatible migrations.
+
+**Alternatives rejected:** R2/SQLite synchronization, Git as runtime database, per-node multi-writer stores.
+
+**Trade-off:** The primary is a service dependency and initial availability bottleneck.
+
+**Reevaluate:** Add a dedicated standby/managed database when RTO or criticality demands it; preserve single-primary semantics.
+
+## ADR-004 — Node journals, not global replicas
+
+**Decision:** Nodes persist only their own bounded attempt/replay/checkpoint journal.
+
+**Why:** Journals allow reconnect and recovery without exposing all operational data or implementing distributed consensus on heterogeneous devices.
+
+**Alternatives rejected:** Full database copy on every worker; worker election after server loss.
+
+**Trade-off:** Nodes cannot schedule new work while Control Room is unavailable.
+
+**Reevaluate:** An offline-site operating requirement is explicitly adopted and a consensus/security design is funded.
+
+## ADR-005 — Native centralized workflow state machine for v1
+
+**Decision:** Implement leases, retries, approvals, history, idempotency, and reconciliation in Control Room on PostgreSQL behind a workflow interface.
+
+**Why:** The required state semantics are modest and already align with the core database. It avoids running a second orchestration platform on the private-server VPS.
+
+**Alternatives rejected/deferred:** Hatchet now; DBOS now; Temporal now; Hermes Kanban as global scheduler.
+
+**Trade-off:** We own correctness tests and a focused amount of workflow code.
+
+**Reevaluate:** Scheduling density, horizontal control-plane scale, or workflow operations UI materially exceed the native implementation.
+
+## ADR-006 — Outbound HTTPS/WebSocket worker connectivity
+
+**Decision:** Node bridges initiate outbound TLS connections to Control Room. No worker listener is required.
+
+**Why:** Works behind NAT, reduces exposed ports, survives different networks, and is less dependent on Proton VPN/Tailscale coexistence.
+
+**Alternatives rejected:** Server dialing workers directly; SSH as the job transport; shared filesystem polling.
+
+**Trade-off:** Long-lived reconnect, backpressure, and durable delivery logic must be implemented.
+
+**Reevaluate:** A constrained environment forbids outbound persistent connections; add a polling transport without changing lifecycle contracts.
+
+## ADR-007 — Cloudflare edge, Tailscale optional
+
+**Decision:** Use Cloudflare Tunnel/Access as the expected protected web ingress. Keep Tailscale as optional native-console and maintenance networking.
+
+**Why:** Tunnel removes public origin ports; Access fits owner authentication; ordinary outbound HTTPS keeps workers portable. Tailscale remains useful but should not stop orchestration if another VPN interferes.
+
+**Alternatives rejected:** Build a Control Room VPN; require every node to join one tailnet; expose origin services directly.
+
+**Trade-off:** Cloudflare becomes an edge dependency and requires careful JWT validation and recovery instructions.
+
+**Reevaluate:** A deployment cannot use Cloudflare; swap the edge adapter while retaining TLS and application identity requirements.
+
+## ADR-008 — Application device identity in addition to edge service auth
+
+**Decision:** Enroll each node with its own asymmetric key and immutable ID. Cloudflare service tokens may be an outer layer only.
+
+**Why:** Shared/symmetric edge credentials do not express node identity, local ceilings, rotation, or per-node revocation adequately.
+
+**Alternatives rejected:** Tailscale IP as identity; password-manager token as identity; one fleet-wide API key.
+
+**Trade-off:** Enrollment, key storage, rotation, revocation, and replay protection must be built.
+
+**Reevaluate:** Replace cryptographic implementation with a mature workload-identity provider only behind the same identity contract.
+
+## ADR-009 — Node-local ceilings and separate consequential approval
+
+**Decision:** Nodes enforce immutable maximum authority locally. High-risk effects require owner approval evidence that the online dispatch key cannot forge.
+
+**Why:** A signature from a compromised Control Room key cannot constrain the compromised server. Local restrictions and a separately protected owner factor contain blast radius.
+
+**Alternatives rejected:** Trust any correctly signed server job; let Telegram alone approve every action.
+
+**Trade-off:** Some actions pause for stronger confirmation; approval key recovery becomes important.
+
+**Reevaluate:** Mechanism may evolve, but the separation stays.
+
+## ADR-010 — Secrets resolve at the node or destination
+
+**Decision:** Central records contain credential references. Authorized node brokers or destination systems resolve/inject values just in time.
+
+**Why:** The scheduler needs to know resolvability, not secret plaintext. This prevents the central database/API from becoming a universal secret exfiltration point.
+
+**Alternatives rejected:** Send credentials in job payloads; transfer secrets between agents; add a central plaintext `getSecret` API.
+
+**Trade-off:** Nodes need provider integrations and jobs may be eligible only on certain nodes.
+
+**Reevaluate:** Add new providers behind the broker contract; do not centralize values.
+
+## ADR-011 — Project and harness adapters are orthogonal
+
+**Decision:** Project adapters model domain/authority; harness adapters model agent lifecycle.
+
+**Why:** Content Blooms can run through multiple harnesses, and Hermes can work for multiple projects. Combining them creates an integration matrix and lock-in.
+
+**Alternatives rejected:** One bespoke adapter for every project-harness pair.
+
+**Trade-off:** Canonical contracts require careful translation.
+
+**Reevaluate:** Never collapse globally; optional composite convenience packages may bundle independent adapters.
+
+## ADR-012 — MCP is northbound, not the internal queue
+
+**Decision:** Expose typed Control Room actions through MCP for Codex/Claude/Hermes clients. Keep internal delivery on the node protocol and PostgreSQL workflow state.
+
+**Why:** MCP is excellent for tool discovery and agent interaction but does not replace leases, heartbeats, durable retries, or node telemetry.
+
+**Alternatives rejected:** Model every worker as a remotely callable MCP server and infer orchestration from tool calls.
+
+**Trade-off:** Two clean interfaces exist instead of one overloaded protocol.
+
+**Reevaluate:** Add MCP transports/features without moving authoritative orchestration into it.
+
+## ADR-013 — Typed executors, no default general shell
+
+**Decision:** Jobs call typed, validated executor operations. General shell execution is absent unless a node owner explicitly enables a scoped executor.
+
+**Why:** A universal remote shell defeats least privilege and makes public protocol knowledge dangerous.
+
+**Alternatives rejected:** Send arbitrary command strings from Control Room.
+
+**Trade-off:** New deterministic operations require adapter work.
+
+**Reevaluate:** Add an opt-in trusted-development executor with strict path/tool/risk constraints, never as the universal default.
+
+## ADR-014 — R2 for artifacts and recovery, not coordination
+
+**Decision:** R2 stores large objects, manifests/anchors, and encrypted backups. It does not hold locks, leases, or authoritative queues.
+
+**Why:** Object storage is durable and inexpensive but lacks the transaction semantics required for orchestration.
+
+**Alternatives rejected:** Poll files in R2 to coordinate agents; synchronize SQLite databases through object storage.
+
+**Trade-off:** PostgreSQL and the node protocol remain necessary.
+
+**Reevaluate:** None for authority; alternate object stores may implement the same artifact interface.
+
+## ADR-015 — Cross-platform native bridge with optional containers
+
+**Decision:** Ship one portable node protocol and platform-specific service packaging. Containers are an executor/deployment option, not a universal requirement.
+
+**Why:** Mac, Windows, Ubuntu, WSL2, GPU workloads, and future nodes have different strengths. A Docker-only worker would exclude or complicate important capabilities.
+
+**Alternatives rejected:** Require Docker everywhere; make Hermes the node bridge.
+
+**Trade-off:** Service supervision, process cancellation, paths, and secret storage require OS-specific implementations/tests.
+
+**Reevaluate:** Add platform packages while keeping the protocol stable.
+
+## ADR-016 — Specialist dashboards remain specialist
+
+**Decision:** Control Room shows normalized worker/project state and protected deep links. Thin plugins may show Control Room context inside a harness.
+
+**Why:** Proxying or reimplementing every dashboard expands attack surface and couples UI to unstable internals.
+
+**Alternatives rejected:** iframe/proxy every harness console; patch Hermes core.
+
+**Trade-off:** Some advanced administration opens a separate protected interface.
+
+**Reevaluate:** Build a dedicated native panel only when repeated owner workflow justifies it.
+
+## ADR-017 — Deterministic policy before AI management
+
+**Decision:** Code evaluates hard eligibility, authority, cost, security, leases, and transitions. An orchestrator agent proposes workflows, explains decisions, triages, and recommends within those limits.
+
+**Why:** Models are useful managers but cannot be the sole enforcement mechanism, especially under prompt injection.
+
+**Alternatives rejected:** Let a manager agent directly issue unrestricted commands or edit policy.
+
+**Trade-off:** More explicit schemas and rule logic; less magical flexibility.
+
+**Reevaluate:** Models may improve but remain untrusted for permission grants.
+
+## ADR-018 — Backup/PITR before distributed worker consensus
+
+**Decision:** Recover with encrypted PostgreSQL backups/WAL and optional later standby; use node journals for reconciliation.
+
+**Why:** This achieves practical recovery with far less complexity and exposure than multi-writer replication across personal devices.
+
+**Alternatives rejected:** All nodes retain global state and vote on recovery.
+
+**Trade-off:** Initial system has recovery-based availability, not seamless failover.
+
+**Reevaluate:** Add a dedicated PostgreSQL standby when measured RTO/criticality justifies it.
+
+## ADR-019 — CR-3 stops before live integrations
+
+**Decision:** Architecture, contracts, migration designs, and build backlog precede credential use, deployment changes, and source mutations.
+
+**Why:** Security and authority need owner review before the system can act across machines.
+
+**Alternatives rejected:** Discover architecture while connecting production systems.
+
+**Trade-off:** One deliberate design milestone before visible automation.
+
+**Reevaluate:** Superseded when the owner accepts CR-3 and authorizes the first bounded implementation phase.
+
+## ADR-020 — Current releases through pinned, staged upgrades
+
+**Decision:** Track current supported releases, but pin exact production versions/digests and promote upgrades through disposable tests, one canary node, and then the fleet.
+
+**Why:** Automatically installing every latest release can introduce breaking protocol changes, regressions, compromised dependencies, or incompatible database migrations across all machines simultaneously.
+
+**Alternatives rejected:** Freeze dependencies indefinitely; automatically update every node to latest without conformance tests.
+
+**Trade-off:** The fleet can trail a new release briefly while tests run, and urgent security patches need an accelerated canary path.
+
+**Reevaluate:** Change cadence and automation as conformance coverage improves; never remove rollback or staged promotion.
+
+## ADR-021 — Asymmetric node identity and digested single-use enrollment
+
+**Decision:** Nodes generate Ed25519 keys locally, enroll their public key through a class-scoped maximum-15-minute single-use token and signed challenge, and sign canonical application frames. Control Room persists only the token digest, public key, key lifecycle, and bounded replay state.
+
+**Why:** A public protocol needs identity independent of Hermes, Codex, Claude, operating system, Cloudflare, or a shared VPN credential. Asymmetric keys let one node be revoked without rotating the fleet and keep private material off the VPS.
+
+**Alternatives rejected:** Shared fleet API key; Cloudflare service token as the only identity; central generation/storage of node private keys; unsigned TLS-only application messages.
+
+**Trade-off:** Each platform needs protected private-key storage and rotation packaging, and every message pays canonicalization/signature verification cost.
+
+**Reevaluate:** Algorithms may be added through a new negotiated protocol version. Do not permit in-place key-byte replacement or silent downgrade in v1.
+
+## ADR-022 — Exact delivery retry is distinct from conflicting replay
+
+**Decision:** After successful signature verification, an exact repeated frame is acknowledged as a duplicate and never reprocessed. Reuse of its message ID or nonce with any different connection, sequence, signature, or complete-frame digest fails closed as a replay conflict.
+
+**Why:** At-least-once delivery must survive acknowledgement loss without turning a legitimate retry into either a security incident or a duplicate effect. Signature verification alone cannot distinguish exact retry from altered replay without durable frame identity.
+
+**Alternatives rejected:** Reject every repeat with no acknowledgement path; process an exact repeat through ordinary handlers; allow a new body under the same message ID.
+
+**Trade-off:** Replay storage adds a complete-frame digest and the transport must preserve a duplicate-only branch that cannot reach mutation handlers.
+
+**Reevaluate:** Retention may change, but replay tombstones must outlive the maximum accepted frame/retry window.
+
+## ADR-023 — Owner-anchored ceiling intersects server lease authority
+
+**Decision:** A node acts only inside the strict intersection of an owner-signed local ceiling, complete signed lease authority, typed executor capability, and current local gates. The owner provisioning-key pin arrives out-of-band; the Control Room may relay but cannot author or widen the ceiling.
+
+**Why:** Containment of a compromised Control Room is impossible if its own key can define the machine maximum or deliver the sole trust anchor.
+
+**Alternatives rejected:** Server-signed ceiling; unsigned local policy; digest-only lease grants.
+
+**Trade-off:** Enrollment and recovery require an owner-present provisioning ceremony and monotonic local state.
+
+**Reevaluate:** Add fleet provisioning conveniences only when they preserve an independent owner trust path.
+
+## ADR-024 — Private key storage and public trust are separate interfaces
+
+**Decision:** Node private-key signing, server public-key trust, and approval public-key trust use separate interfaces and stores. No general key-store interface also decides protocol trust.
+
+**Why:** Secret protection, online server-key rotation, and owner approval have different compromise and lifecycle boundaries.
+
+**Alternatives rejected:** One `NodeKeyStore` with signing and `verifyTrust`; storing node private keys centrally.
+
+**Trade-off:** Three small adapters replace one superficially simpler abstraction.
+
+**Reevaluate:** Implementations may share a platform backend, but the authority interfaces remain separate.
+
+## ADR-025 — Expiry has a pure decision path and an event monitor
+
+**Decision:** Admission and pre-effect checks are pure functions of an injected clock. A runtime monitor only emits expiry events. The effective deadline is the earliest applicable deadline; expiry cannot be renewed back into execution.
+
+**Why:** One admission-time check misses long-running work, while wall-clock reads inside policy destroy determinism. Post-expiry resurrection widens authority.
+
+**Alternatives rejected:** Admission-only expiry; policy-owned timers; implicit post-expiry grace.
+
+**Trade-off:** Executors need a wrapper and fake-timer tests. Hard stopping can create ambiguous effects.
+
+**Reevaluate:** Add typed no-effect cleanup or measured advisory thresholds without granting new post-expiry effects.
+
+## ADR-026 — Effect identity is independent of delivery identity
+
+**Decision:** Durable effect admission is keyed by tenant/node/project/job/attempt/operation digest. Message ID is delivery deduplication only. A pre-effect marker separates safe re-evaluation from honest ambiguity; ambiguous effects never auto-retry.
+
+**Why:** At-least-once delivery may re-offer the same effect under a fresh message ID. Message-scoped claims can double-fire.
+
+**Alternatives rejected:** Message-scoped claims; in-memory locks alone; exactly-once claims; blind retry after crash.
+
+**Trade-off:** Durable claim/tombstone state and human or destination-assisted ambiguity resolution are required.
+
+**Reevaluate:** Destination-specific evidence can automate settlement but cannot weaken the ambiguous default.
+
+## ADR-027 — Approval-required effects use a separate owner attestation
+
+**Decision:** Approval-required effects need a single-use, digest-bound attestation signed by a separately trusted owner/approval key. An online Control Room assertion alone cannot satisfy this gate.
+
+**Why:** A compromised online server can forge its own statement that a human approved. The node can verify a signed attestation even though it cannot witness the human act.
+
+**Alternatives rejected:** Server-only approval flag; AI approval; unbound reusable approval.
+
+**Trade-off:** Consequential effects remain disabled until the CR-8 approval flow can issue the attestation.
+
+**Reevaluate:** Additional factors may be supported through new attestation versions; never collapse the approval key into ordinary server signing.
+
+## ADR-028 — Canonical target enforcement precedes execution
+
+**Decision:** Filesystem paths and network destinations are canonicalized before authorization. Files stay within real-path roots. General v1 networking is exact HTTPS destinations with TLS hostname verification, connect-time address pinning, and independent redirect authorization.
+
+**Why:** Raw strings permit traversal, symlink escape, redirect inheritance, DNS rebinding, and confusion between an IP and authenticated host identity.
+
+**Alternatives rejected:** Lexical path prefixes; raw URL equality; inherited redirects; IP pinning without TLS verification; opaque executor networking.
+
+**Trade-off:** Non-TLS and opaque networking remain unavailable until a typed weaker class is deliberately designed.
+
+**Reevaluate:** Add network classes only with explicit ceiling vocabulary, executor enforcement, and integration proof.
+
+## ADR-029 — Denial detail stays local
+
+**Decision:** The node keeps detailed denial evidence locally and emits a closed coarse wire vocabulary with rate limiting/coalescing. Wire receipts contain no free text, raw errors, refused arguments, allowlists, or ceiling identifiers/digests.
+
+**Why:** A compromised server can probe local ceilings through detailed differential responses, and raw failures frequently leak secrets or private paths.
+
+**Alternatives rejected:** Rich policy codes on wire; raw exception forwarding; stable ceiling IDs; disabling production denial limits.
+
+**Trade-off:** Remote operators see less detail and may need a protected node-local view for diagnosis.
+
+**Reevaluate:** Add privacy-preserving diagnostics only after a realistic workload corpus proves they do not become an oracle.
+
+## ADR-030 — Server trust rotation is owner-root authorized
+
+**Decision:** Nodes accept only monotonic owner-root-signed server trust bundles anchored by an out-of-band pin. Online server keys cannot authorize their own replacement, revoked keys never reactivate, and a bundle cannot leave zero active keys.
+
+**Why:** Online-key self-rotation does not contain a compromised server. Re-enrollment is too disruptive and crosses the same compromised channel.
+
+**Alternatives rejected:** Online self-rotation; silent replacement; routine re-enrollment; first-slice `valid_until` without a clock-skew contract.
+
+**Trade-off:** Server-key rotation requires an owner step and offline revocation remains bounded by already-held authority deadlines.
+
+**Reevaluate:** Automate owner signing through a protected service only if it remains outside the online Control Room trust boundary.
+
+## ADR-031 — Private-key provider selection never silently downgrades
+
+**Decision:** Each deployment explicitly selects exactly one private-key provider. A native-provider failure never causes runtime fallback to encrypted-file mode. Encrypted-file mode is selected directly and requires an operator-configured protected file, file descriptor, or platform secret facility for its unwrap secret. Test-memory mode is structurally unavailable in production.
+
+**Why:** Automatic fallback lets availability failures silently weaken key protection and gives a compromised process influence over its trust level. Environment variables and command-line arguments also expose unwrap material too broadly.
+
+**Alternatives rejected:** Native-first auto-detection; default-on fallback flags; environment-variable or command-line unwrap secrets; production access to the memory fake.
+
+**Trade-off:** A failed native provider requires an explicit operator configuration change. On the probed Linux VPS, encrypted-file is configured as the primary mode rather than discovered as a fallback.
+
+**Reevaluate:** A future owner-signed deployment policy may authorize a planned provider transition, but a node never makes that downgrade autonomously.
+
+## ADR-032 — Security artifact adoption uses an independent prepared high-water store
+
+**Decision:** A node persists the current signed ceiling and server-trust bundle in one SQLite database and their monotonic high-water records in a distinct SQLite database path. Adoption follows `verify -> prepare high-water -> commit artifact -> commit high-water -> acknowledge`. A prepared record names the exact signed-body digest. Initial provisioning is a separate owner-present operation. Operational adoption cannot create missing trust state.
+
+**Why:** Updating only the mutable artifact permits replay after rollback. Pretending two SQLite files share an atomic transaction would create a crash window. A durable prepared record instead converts every crash boundary into either deterministic completion or a fail-closed state that requires the exact pending owner artifact.
+
+**Alternatives rejected:** One mutable file with an adjacent version field; automatic regeneration when high-water state is missing; accepting the highest file found; server-directed bootstrap; online-key self-rotation; treating two databases as one atomic commit.
+
+**Trade-off:** A crash after prepare but before artifact commit temporarily locks that security object until the same signed owner artifact is supplied again. A same-UID attacker or coordinated rollback of both database files remains outside this mechanism's guarantee; CR-6 service isolation, ownership, backup, and host-hardening rehearsals must reduce that risk.
+
+**Reevaluate:** Replace the second SQLite store with a stronger platform monotonic primitive when a supported cross-platform mechanism is proven. Preserve the prepared-artifact recovery semantics and never migrate by silently resetting a high-water value.
+
+## ADR-033 — Local executor capability classifies external effects
+
+**Decision:** The node's locally registered executor capability, not a server request flag alone, declares which operation IDs cross an external-effect boundary. A normalized request is invalid unless its `externalEffect` value exactly matches that local classification. The operation digest is recomputed locally over stable job/attempt identity, executor, operation, credentials, normalized target, risk, effect classification, duration, and measurable cost.
+
+**Why:** A compromised online server could otherwise relabel a write, upload, publish, or other consequential operation as non-effectful and bypass approval, concurrency, ambiguity, and effect-policy checks. Trusting an unbound operation digest would create the same bypass with different spelling.
+
+**Alternatives rejected:** Trust the request's boolean; infer effectfulness from a target kind; classify only network operations as effects; let each executor decide after policy admission; accept an opaque server-supplied operation digest.
+
+**Trade-off:** Every executor adapter must maintain a closed local operation catalogue and version capability changes. An unknown or mismatched operation denies until the local adapter is updated.
+
+**Reevaluate:** A future signed executor manifest may supply the catalogue, but it must be anchored in local deployment trust and must not be mutable by an ordinary online Control Room key.
+
+## ADR-034 — Admission commits before inbound processing and acknowledgement
+
+**Decision:** A bridge command that has a local policy plan is not marked processed or acknowledged until its accepted/refused decision is committed to the durable local admission store. The stable operation key binds tenant, node, project, job, attempt, and normalized operation digest. Multiple delivery message IDs may alias the same exact admission, but only one accepted admission may exist for an operation key.
+
+**Why:** Acknowledging first can lose the only command after a crash. Re-evaluating an exact retry at a later clock instant can produce contradictory history. Keying admissions by delivery message ID alone lets a fresh-message re-offer bypass deduplication.
+
+**Alternatives rejected:** Ack then persist; queue in memory; one admission per message ID; overwrite the prior decision; re-evaluate exact inputs on every retry; permit multiple accepted admissions before effect-claim serialization.
+
+**Trade-off:** A storage failure leaves the authenticated inbox row unprocessed and causes retry/backpressure. A prior refusal may coexist with a later differently authorized admission, but the partial uniqueness constraint still permits at most one accepted admission for the stable operation.
+
+**Reevaluate:** CR-5C effect claims may unify admission and effect identity in one transaction, but it must preserve fresh-message aliases, original-decision replay, and commit-before-ack ordering.
+
+## ADR-035 — Runtime authority expires at the earliest immutable clamp
+
+**Decision:** Every admitted execution persists one effective deadline equal to the earliest ceiling/authority duration deadline, authority expiry, lease expiry, approval expiry, and executor-reservation expiry. Deadline equality is expired. A pre-expiry lease renewal may replace only the lease-expiry component under a strictly increasing epoch and the same authority digest. Expiry is locally terminal for new work and effects; in-flight work also records a cancellation request. No late renewal or server message can resurrect the same execution identity.
+
+**Why:** Admission-time validity does not prove execution-time authority. Restart, clock boundaries, delayed renewal, and server disconnection must not extend a grant implicitly. Persisting the contributing clamps makes the decision deterministic and auditable after restart.
+
+**Alternatives rejected:** Admission-only expiry checks; server timers as authority; grace after expiry; last-arriving deadline wins; replacing authority on renewal; reviving an expired attempt; relying on an in-memory timer; treating cancellation delivery as proof that an effect did not fire.
+
+**Trade-off:** Work can stop at a strict boundary and restart classification is conservative. Running work may need cancellation even when it was harmless. Whether an external effect fired remains ambiguous until the effect-claim slice adds durable pre-effect evidence.
+
+**Reevaluate:** Measured deployments may configure an advisory `expiring_soon` threshold, but it cannot alter the effective deadline. A new attempt/effect identity may be admitted after expiry through the normal authority path; the old identity never revives.
+
+## ADR-036 — Target authority produces pinned local identity plans
+
+**Decision:** A canonical target string is necessary but not sufficient for execution. Filesystem targets require real-path, volume, and object-identity evidence under a directory root, with a separate absent-new-file plan and mandatory pre-use revalidation. Network targets remain exact canonical HTTPS host/port tuples. DNS names resolve once into a bounded pinned address set; prohibited address classes deny unless the ceiling exactly names the same canonical IPv4 literal. The connected address and port plus TLS certificate hostname verification must match the plan. Redirects receive new authorization. Executors that cannot expose/control their final destination are ineligible.
+
+**Why:** Lexical prefixes do not contain symlink, junction, reparse, mount, case-alias, device-name, or alternate-stream behavior. Raw URL equality does not contain IDNA/numeric aliases, redirects, DNS rebinding, private-address pivots, or TLS-host confusion. Separating authorization evidence from actual I/O keeps these checks deterministic and reviewable.
+
+**Alternatives rejected:** Lexical path prefixes; canonical-string-only filesystem authorization; overwrite through the new-file path; silent URL normalization; inherited redirect authority; repeated resolution during one connection; IP pinning without TLS hostname verification; allowing opaque/browser networking under the general v1 HTTPS class; live-network unit tests.
+
+**Trade-off:** Some legitimate aliases, submounts, local hostnames, opaque tools, and IPv6 literal destinations deny in v1. Pre-use object revalidation narrows but cannot alone eliminate the final filesystem race; platform-specific atomic open/delete behavior remains a rehearsal gate.
+
+**Reevaluate:** Add a network or filesystem class only with a new typed ceiling/executor contract and enforcement proof. A future IPv6 literal exception needs an unambiguous bracketed canonical grammar. Destination-specific long-lived DNS policy may change only after measured workloads justify it; it cannot weaken per-connection pins or TLS identity.
+
+## ADR-037 — Effect truth is durable, effect-scoped, and honestly ambiguous
+
+**Decision:** Every external effect receives a node-local claim keyed by tenant, node, project, job, attempt, and normalized operation digest before dispatch. Delivery message IDs are aliases, not effect identity. Immediately before the external boundary, one transaction persists the complete pre-effect marker and executing transition. Recovery may re-evaluate only an unmarked claim; a marker or executing state without terminal truth becomes ambiguous and never auto-retries. Potentially fired effects settle only from destination receipt or affirmative non-execution evidence. Terminal history may compact only after every relevant horizon, and only into a permanent digest tombstone in this slice.
+
+**Why:** Delivery deduplication cannot contain a fresh-message retry of the same effect. A crash after dispatch can make both success and failure plausible; silently choosing failure permits duplicate publication, upload, payment, or mutation. Keeping the exact normalized operation and authority binding beside the pre-effect marker makes recovery mechanical and auditable.
+
+**Alternatives rejected:** Message-scoped claims; in-memory locks; writing the marker after the effect; treating acknowledgement loss as failure; automatic retry from ambiguity; cancellation as proof of non-execution; claiming exactly-once semantics; deleting all terminal history at a fixed local age; caller-assembled claim authority.
+
+**Trade-off:** Ambiguous work can require destination evidence or a human decision and may remain blocked indefinitely. The node retains tombstones without a deletion mechanism, and the separate node-local ledger adds another durable store to operate and back up.
+
+**Reevaluate:** Destination adapters may automate evidence collection when they use the same stable idempotency key and produce verifiable evidence. A future owner policy may authorize tombstone deletion only after it defines and enforces every retention horizon; unknown remains retain. Real process-kill and concurrent-process behavior remains a CR-5Q/CR-6 rehearsal gate.
+
+## ADR-038 — Private-key providers are explicit boot-unlock adapters with no downgrade
+
+**Decision:** Production selects exactly one provider that must match the actual runtime platform and key-reference mode. macOS reads one Keychain generic-password item, Windows decrypts one DPAPI CurrentUser blob, and the portable provider opens one AES-256-GCM envelope whose 32-byte unwrap secret comes from an owner-only POSIX file, one-shot inherited descriptor, or injected platform facility. Native failures never select encrypted-file mode. OS commands run without a shell; private plaintext uses stdout/stdin only at boot unlock and never an argument. Signing remains in process behind `NodePrivateKeyStore`.
+
+**Why:** Provider discovery and fallback let availability failures silently reduce key protection. Environment variables and command arguments are widely observable. Keychain and DPAPI are viable for boot retrieval but do not supply non-exportable Ed25519 signing on the probed machines, while the headless Linux container has no usable native key store.
+
+**Alternatives rejected:** Native-first auto-detection; automatic native-to-file fallback; environment-variable or argv unwrap secrets; Windows LocalMachine DPAPI; per-frame subprocess signing; storing plaintext PKCS#8; treating POSIX mode bits as Windows ACL evidence; production construction of the memory fake; claiming immediate `KeyObject` zeroization.
+
+**Trade-off:** The Ed25519 key remains in the node process while unlocked and is vulnerable to same-account process compromise. Native provisioning requires a separate safe enrollment helper. Windows service startup depends on a loaded user profile; macOS background access depends on Keychain session and ACL behavior; Linux security depends on the unwrap-secret delivery mechanism.
+
+**Reevaluate:** A vetted native binding may replace either CLI adapter behind the same interface. Secure Enclave P-256 or TPM keys require an explicit protocol algorithm change, not an adapter shortcut. Provider status cannot advance from implemented to qualified until the real macOS, Windows, and Linux packets pass.
+
+## ADR-039 — Host qualification separates checkout preparation from owner-attended effects
+
+**Decision:** Every host qualification starts with a stock-Node stage-zero check. Missing checkout dependencies produce a structured setup requirement rather than an improvised repair. Setup uses the pinned pnpm version and lockfile with `CI=true`, attempts cache-only installation first, requires separate authorization before network access, and executes no package lifecycle scripts. macOS native qualification can begin only from the repository-owned attached-terminal launcher after the owner types the exact one-shot confirmation phrase; a worker-reported token or acknowledgement is not human-presence evidence.
+
+**Why:** A clean Linux checkout could not launch the TypeScript readiness command, while an agent-generated macOS acknowledgement could not prove that a human was available during the Keychain prompt window. Combining setup, readiness, and native effects made a recoverable prerequisite look like a qualification failure and encouraged workers to expand their own authority.
+
+**Alternatives rejected:** Assume every checkout is preinstalled; link another checkout's dependencies; automatically fall back from offline to network; allow pnpm to choose lifecycle scripts interactively; embed shell-specific setup strings; accept a worker-supplied owner token; let a background agent invoke the macOS harness directly; treat preparation success as native-provider qualification.
+
+**Trade-off:** Fresh hosts may require two separately authorized steps before qualification, and macOS qualification cannot be fully unattended. Denying package lifecycle scripts means the full application build relies on distributed platform packages and must remain part of repository validation.
+
+**Reevaluate:** A signed, hermetic qualification bundle could replace dependency preparation after its contents and provenance are independently reproducible. A future OS-native presence primitive may replace typed confirmation, but agent possession of a reusable secret or token remains insufficient.
+
+## ADR-040 — Human attention is a first-class cross-harness projection
+
+**Decision:** Control Room provides one Action Inbox and Session Watch projection for questions, reviews, approvals, failures, ambiguity, incidents, expiring authority, and native sessions waiting for direction. Every item names the requested action, reason, blocked work, legal responses, evidence, age/expiry, and delivery status.
+
+**Why:** A technically correct scheduler still fails operationally if the owner must open every harness and project to discover what is waiting. Native session lists are useful but cannot represent cross-project or non-agent work.
+
+**Alternatives rejected:** One inbox per harness; raw chat notifications as the work record; Kanban state alone; hiding unavailable or blocked work.
+
+**Trade-off:** Control Room must normalize attention without importing unrestricted transcripts or pretending every harness supports the same interaction verbs.
+
+**Reevaluate:** Add new attention types through versioned adapter capabilities; do not weaken the common reason/action/evidence contract.
+
+## ADR-041 — Review, verification, preference, and approval are separate authorities
+
+**Decision:** A review evaluates quality against an immutable target and acceptance profile. Verification evaluates named scenarios and binds claims to evidence. Preference selects among acceptable alternatives. Approval authorizes one exact consequential operation. No record implicitly grants the function of another.
+
+**Phase 2B protected-file implementation:** Mac-local result lists contain only metadata plus separate 60-second HMAC tickets for preview and download. Each ticket binds project, task, run, artifact, content digest, byte count, disposition, and expiry; authenticated authorization and the current stored receipt are checked again before returning bounded `text/plain`. Raw HTML is never interpreted, remote images are omitted, and external links are visibly marked. The former direct JSON content route is closed.
+
+**Phase 2B human-verification implementation:** Every Mac-local acceptance profile names a human-owner scenario separately from its automatic text-structure scenario. The default provider supplies the existing human-only verification service and registers descriptors for both startup and live-created projects. Automated quality processing knows only the structure scenario and therefore cannot create, infer, or substitute the human record. The owner control records pass/fail/blocked/inconclusive without completing, approving, or authorizing the job.
+
+**Why:** An aesthetically approved video may still be unauthorized to publish, while a securely authorized operation may still produce unacceptable work. Artifact presence does not prove a claim.
+
+**Alternatives rejected:** One approve/reject flag for everything; artifact upload equals verification; review acceptance authorizes publication; operation approval implies quality.
+
+**Trade-off:** Completion has more explicit states and may require two owner decisions for a reviewed consequential effect.
+
+**Reevaluate:** The UI may combine compatible low-risk interactions, but persistence and audit must retain the distinct decisions and authorities.
+
+## ADR-042 — Completion Gates use bounded revision lineage
+
+**Decision:** Submitted work passes deterministic checks, required independent review, bounded correction cycles, verification scenarios, and an evidence-backed decision. Review-requested changes create explicit revision lineage and immutable superseded targets. Exceeding the configured correction limit creates attention.
+
+**Phase 2B implementation:** The Mac-local revision command materializes a new proposed job with separate assignment and approval. Authenticated execution-plan lineage is read back for presentation, so the source task links to the revised task and the revised task links to its predecessor; neither page infers lineage from a URL or mutable browser state.
+
+**Why:** Technical retry is not the same as intentionally changing a result after feedback. Unlimited self-repair loops consume resources, hide repeated failure, and can let the producer silently redefine success.
+
+**Alternatives rejected:** Treat requested changes as a retry; overwrite the original artifact; unbounded agent repair; merge or publish immediately after an agent claims success.
+
+**Trade-off:** Some salvageable work pauses for human direction after the revision budget is exhausted.
+
+**Reevaluate:** Project acceptance profiles may tune the limit and required evidence, but cannot erase lineage or authorize an effect.
+
+## ADR-043 — Procedures and knowledge are versioned separately from policy and authority
+
+**Decision:** Procedure packages describe repeatable methods; knowledge bundles provide facts and context; policy determines eligibility and gates; authority envelopes grant bounded operations. Procedures and knowledge carry immutable versions, digests, provenance, trust, compatibility, and promotion history. Neither can grant authority.
+
+**Why:** Combining instructions, project facts, permissions, and acceptance criteria in one prompt makes work packets brittle and lets untrusted content look like authorization. Successful instructions need reuse without uncontrolled drift.
+
+**Alternatives rejected:** Harness-local skills as the only registry; prompts as policy; automatically activate agent-written playbooks; copy secrets or permissions into procedure text.
+
+**Trade-off:** Package promotion and compatibility add lifecycle work, and harness-native skills require adapter mappings.
+
+**Reevaluate:** A future package standard may unify transport, but the four semantic boundaries remain.
+
+## ADR-044 — Reviewer independence and deterministic risk floors are enforceable policy
+
+**Decision:** Review policies may require separation from the producer by worker, agent profile, harness, or model family. Joint authors are not independent final reviewers of their combined output. AI risk and quality scores are advisory and may raise scrutiny but never lower the deterministic risk floor.
+
+**Phase 2B implementation:** Completion principals retain worker, agent-profile, harness, adapter, and (when known) model-family provenance. Project profiles select either the minimum `different_worker` policy or the preferred `different_model_family` policy. Configured agent provenance axes fail closed when missing or equal; human-owner reviews remain allowed and distinct from agent cross-review.
+
+**Why:** Self-review and correlated model failure can make repeated review cosmetic. Model-generated risk scores are vulnerable to prompt injection and optimistic misclassification.
+
+**Alternatives rejected:** Producer is always sufficient reviewer; count multiple turns from the same agent as independent; AI score can downgrade a migration, credential use, publication, spend, or sensitive destination.
+
+**Trade-off:** Strict independence can reduce eligible reviewer capacity and create visible bottlenecks.
+
+**Reevaluate:** Evidence may justify a narrower independence rule for a task class, but deterministic authorization and risk floors remain non-negotiable.
+
+## ADR-045 — Proprietary agent products integrate at adapter or client boundaries
+
+**Decision:** Zide may become a northbound MCP client or protected native console. Devin may become a provider-backed harness adapter. Neither is a Control Room core dependency or authority. Documented APIs, MCP, and licensed reference components are preferred over UI scraping or copied proprietary behavior.
+
+**Why:** Zide's product is proprietary and desktop-workflow-centered; Devin's core platform is proprietary and cloud-software-agent-centered. Control Room must continue operating with owner-selected harnesses, machines, deterministic tools, and projects.
+
+**Alternatives rejected:** Rebuild Control Room as a Zide plugin; use Devin as the global database/scheduler; scrape proprietary dashboards; copy publicly visible but unlicensed code.
+
+**Trade-off:** Optional integrations arrive later and cannot reproduce every native feature in the normalized interface.
+
+**Reevaluate:** Promote an integration only after a stable supported seam, license review, conformance fixtures, least-privilege authentication, and exit strategy are proven.
+
+## ADR-046 — External agents submit bounded candidates into frozen integration waves
+
+**Decision:** Codex freezes non-overlapping task capsules in a versioned build wave. Eligible agents acquire ready capsules through a globally serialized GitHub claim transition, may hold several independent claims within a route limit, submit machine-described results to the named `integration/<block>` branch, and never target `main`. Submission releases route capacity before review so production can continue. Untouched work may return to ready; started or attempted work becomes blocked for triage. Automated intake can quarantine a result but cannot accept it. An independent verifier evaluates meaningful producer output, Codex promotes accepted commits, and one Codex-owned block pull request reaches `main`.
+
+**Why:** A large legacy issue queue allowed stale, speculative, overlapping, and direct-to-main work to accumulate. Each worker pull request became an unplanned architecture and integration decision, so review cost grew faster than accepted output. Frozen contracts and mechanical intake move scope failures ahead of semantic review while preserving external implementation capacity.
+
+**Alternatives rejected:** Agent self-assignment from a standing backlog; one worker PR per integration decision on `main`; shared live checkouts; accepting a passing worker test suite as merge authority; allowing producers to verify or merge their own work; keeping speculative future scaffolds merge-ready.
+
+**Trade-off:** Codex must keep enough ready, non-overlapping capsules in each wave, and accepted worker commits may wait for a block integration window. GitHub issue comments temporarily serialize claims until Control Room can perform atomic scheduling itself. Small tasks with high packet cost remain architect-owned.
+
+**Reevaluate:** When Control Room can schedule itself, replace GitHub wave metadata with the canonical job/attempt/result records while preserving frozen inputs, exact authority, producer/verifier separation, quarantine, and architect-owned integration.
+
+## ADR-047 — Worker capacity builds product; it does not earn work through calibration queues
+
+**Decision:** External routes receive only real bounded implementation, test, integration-candidate, platform-evidence, or necessary product-documentation work. Control Room does not issue qualification-only or instruction-following capsules as a prerequisite to useful work. Eligibility is evaluated per capsule from the frozen contract, risk, platform, required tools, prior observed behavior where available, and independent-review boundary. Effect-free work for the next block may proceed on an isolated integration branch while a platform-specific gate remains unresolved, but it cannot change the current block's disposition or reach `main` without Codex's completion-gate decision.
+
+**Why:** Calibration packets consumed worker and review time without materially advancing the executable system. The V2 intake contract already constrains scope, commits, effects, and review. Real code with deterministic acceptance supplies better capability evidence while also building the product.
+
+**Alternatives rejected:** Repeated T0 calibration waves; model-reputation promotion; allowing unbounded real work to avoid qualification overhead; treating parallel future-block work as proof that the prior block passed; removing result manifests or independent review.
+
+**Trade-off:** A route may fail on its first real task and consume bounded review capacity. Capsules must therefore remain small, non-overlapping, and architect-frozen, and higher-risk work still requires stronger evidence or owner authority.
+
+**Reevaluate:** When Control Room has measured per-route task outcomes, scheduling may use those records to rank eligible routes. It must not reintroduce make-work qualification or turn model reputation into authority.
+
+## ADR-048 — The remaining build runs from one dependency graph and a continuous production queue
+
+**Decision:** `docs/CONTROL_ROOM_COMPLETION_PROGRAM.md` is the architect-owned execution graph from CR-5D through CR-10. Codex retains architecture, security, authority, migrations, cross-module integration, adversarial acceptance, and release decisions. External workers receive every non-overlapping, contract-ready production slice in batches, may continue claiming independent work while earlier submissions are reviewed, and do not wait for the owner to relay ordinary job messages. Codex promotes accepted dependencies and publishes newly unlocked capsules. Only credentials, installs, native-host actions, live infrastructure, consequential effects, and required integration/release approvals return to the owner.
+
+**Why:** Tiny sequential waves underused available workers and turned the owner into a message bus. Publishing speculative future implementations would be equally wasteful because workers would have to invent contracts or rebuild against changed foundations. A complete dependency graph makes all remaining work visible while allowing the ready frontier to expand continuously as real contracts and integrations land.
+
+**Alternatives rejected:** One capsule followed by one review followed by another capsule; asking the owner to forward every claim and result; opening every future phase as immediately claimable; delegating security or integration to increase apparent parallelism; rebuilding the entire product in one shared branch.
+
+**Trade-off:** Codex must actively keep the ready frontier stocked, batch reviews, and resolve dependencies. Some serial gates remain unavoidable, but they are named before work begins and do not block unrelated effect-free production.
+
+**Reevaluate:** When CR-7 northbound MCP and Control Room scheduling are operational, import this graph and capsule/result history into canonical jobs, attempts, evidence, and integration gates. Preserve the ownership split, frozen contracts, dependency checks, and owner-effect boundaries.
+
+## ADR-049 — Native agent authentication lives behind an at-most-once credential broker
+
+**Decision:** A native agent worker never receives saved provider authentication, a readable credential store, inherited credential material, or a direct provider route. Control Room provisions a separately isolated broker with one short-lived run/model/endpoint grant and bounded input, output, and provider-call ceilings. The broker durably claims each request before dispatch; retry after claim cannot redispatch, and restart uncertainty becomes ambiguity. Permit and ticket digests are evidence, not bearer credentials. Broker provisioning and settlement remain internal. Experimental client transports are not production security boundaries.
+
+**Why:** The first read-only native Codex call proved that a model-controlled command could read the disposable saved-auth file. Workspace sandboxing does not isolate credentials. A stateless proxy would also permit duplicate provider effects after timeout or crash and would let a worker replay a valid request beyond its intended call budget.
+
+**Alternatives rejected:** Saved auth in a disposable worker profile; hiding `CODEX_HOME`; environment-only redaction; direct provider networking from the worker; a static digest permit without a consumption ledger; automatic retry after uncertain dispatch; treating Codex app-server WebSocket as a production credential boundary while its documented transport is experimental.
+
+**Trade-off:** Native execution now needs a separate least-privilege process identity, private durable ledger, local IPC authentication, broker-only provider egress, and operational recovery for ambiguous calls. At-most-once dispatch can consume a call allowance without obtaining a result when the broker crashes before or during the provider request.
+
+**Reevaluate:** A supported upstream run-scoped credential delegation mechanism may replace the local broker only if it independently proves credential unreadability, direct-egress denial, exact run/model/call bounds, revocation, durable replay containment, and sanitized evidence.
+
+## ADR-050 — Northbound MCP records proposals but never becomes orchestration authority
+
+**Decision:** Control Room targets the stateless MCP `2026-07-28` core for its northbound agent interface. Every request requires a short-lived signed scope grant plus possession of its bound bearer secret. MCP may expose redacted scoped observations and record job, delegation, or approval proposals. It cannot create an approval attestation, mint authority, claim or lease work, dispatch an executor, issue a credential, or perform an effect. Internal policy review, canonical workflow materialization, leases, retries, and node delivery remain outside MCP.
+
+**Why:** Agents need one discoverable interface to request work and inspect results, but a tool call is not a durable scheduling or authorization protocol. Treating a tool name or client session as capability would bypass Control Room's tenant, replay, approval, lease, and effect gates.
+
+**Alternatives rejected:** MCP as the internal worker queue; session-scoped authorization; tools that directly approve or execute; returning credentials through tools; accepting client-supplied parent authority; allowing proposal recording to imply dispatch.
+
+**Trade-off:** Proposal materialization requires a separate internal idempotent workflow, and clients must poll scoped job/artifact evidence rather than treating a tool receipt as completion.
+
+**Reevaluate:** New MCP transports or protocol revisions may replace wire details after compatibility and security review. The separation between northbound intent, canonical orchestration, authority, and effects remains.
+
+## ADR-051 — Harness adapters publish observations, not operational authority
+
+**Decision:** The public harness adapter SDK is restricted to a pinned manifest, compatibility decision, and safe normalization of node-local frames into canonical harness events. It exposes no lifecycle execution, approval, credentials, scheduling, lease, dispatch, artifact publication, or effect method. Raw native identifiers stay node-local and become tenant/node/adapter-bound digests before output. Hermes and Codex retain their existing protected lifecycle and security modules behind this boundary.
+
+**Why:** A shared adapter interface is useful only if it prevents a new adapter from treating its transport client as an authority bypass. Lifecycle capabilities differ across harnesses, and a common `start` or `approve` method would obscure the stricter provider-specific requirements.
+
+**Alternatives rejected:** One universal execution interface; adapters that return raw native IDs; conformance that launches external harnesses; treating a passing fixture as native qualification; letting example adapters inherit workflow or approval power.
+
+**Trade-off:** Execution remains in protected adapter-specific modules and later adapters must implement a small wrapper rather than a full generic runtime.
+
+**Reevaluate:** A future public operation layer may be considered only after canonical authority, replay, credential, isolation, and effect gates can be represented without weakening the strictest current adapter.
+
+## ADR-052 — Package activation is an append-only reviewed pointer change
+
+**Decision:** Procedure and knowledge bodies are immutable digest-addressed versions. Reviews, exact harness mappings, promotions, and rollbacks are separate append-only records. The only mutable registry record is a serialized active-version pointer for one tenant/project/kind/name channel. Activation requires an accepted independent review, a verified exact-version harness mapping, and the caller's expected prior digest. Rollback appends a new activation event and may select only a previously active reviewed version. Package resolution explicitly denies policy, approval, dispatch, execution, credentials, and authority.
+
+**Why:** Editing trust into a package body would destroy provenance, while allowing a mutable status or automatic run-outcome promotion would let reusable prompt content become permission. Exact review and mapping evidence must survive later activation and rollback decisions without reinterpretation.
+
+**Alternatives rejected:** Mutable package documents; trust flags rewritten in place; automatic activation after a successful run; compatibility by adapter name without exact versions; rollback by deleting history; treating procedure selection as execution authority.
+
+**Trade-off:** Every useful revision creates several small immutable records and activation needs optimistic concurrency. Consumers must combine package compatibility with separate policy, lease, authority, and effect gates.
+
+**Reevaluate:** A signed package distribution standard may replace the transport format, but immutable bodies, independent review, exact compatibility, append-only activation history, and authority separation remain mandatory.
+
+## ADR-053 — Telegram is a presentation and response-proposal channel
+
+**Decision:** Telegram may deliver recipient-scoped redacted notifications, collect short-lived authenticated bounded response proposals for low/medium-risk items, and deep-link to the protected dashboard. It never proves owner identity, creates a consequential approval, grants execution authority, dispatches work, or carries a credential. High/critical-risk items are deep-link only. Every callback is bound to a strict server-side record, signed within Telegram's callback-size limit, chat-bound, expiring, and consumed idempotently.
+
+**Why:** Messaging is useful for attention but its account/session, forwarded content, bot transport, and callback replay properties are not a strong approval or execution boundary. Keeping the system of record and all consequential authority in Control Room preserves ADR-009 and ADR-041 while still supporting fast operator response.
+
+**Alternatives rejected:** Treat any Telegram button as approval; put operation authority or secrets in callback data; trust usernames or inbound chat IDs as enrollment; allow high-risk inline actions; send raw artifacts or transcripts; let callback retry repeat downstream effects.
+
+**Trade-off:** High-risk actions require opening the authenticated dashboard, and low/medium responses require a separate policy/materialization step. Durable idempotency and live recipient verification add deployment work.
+
+**Reevaluate:** Transport and signing details may evolve after live qualification, but Telegram's inability to grant approval or execution authority remains.
+
+## ADR-054 — Credential material is consumed inside a node-local single-use broker
+
+**Decision:** Central Control Room, MCP, harness adapters, workers, and message channels may carry only logical credential references and safe catalog metadata. After exact node-local policy admission, a node-private broker issues one short-lived purpose-bound invocation, claims it before provider resolution, passes bytes only to a fixed trusted local consumer, and returns a negative-authority safe receipt. Exact terminal replay cannot reacquire material. Any uncertainty after claim is terminal ambiguity. Provider locators remain digest-only outside the provider-private boundary, and live providers are unavailable until their durable local claim, IPC, process, cleanup, and canary contracts pass.
+
+**Why:** Returning a resolved credential to central orchestration or a general worker would turn every prompt, log, tool, adapter, and retry path into a disclosure boundary. Claim-before-resolution and terminal ambiguity also prevent a crash or timeout from silently consuming the same credential twice for an effect whose first outcome is unknown.
+
+**Alternatives rejected:** Central vault proxy with plaintext responses; secrets in jobs, prompts, environment variables, command arguments, logs, or artifacts; bearer references that resolve without exact local admission; generic node-local `getSecret` RPC; automatic retry after provider, consumer, or cleanup uncertainty; treating buffer zeroing as proof that no copy exists.
+
+**Trade-off:** Every credential-using operation needs a typed local consumer and provider adapter. At-most-once use may consume an invocation without a result, and production requires node-private durable claims, authenticated narrow IPC, provider-specific least privilege, restart recovery, and owner-attended operational proof.
+
+**Reevaluate:** A provider-native workload identity or one-time delegated credential may replace local byte resolution if it preserves exact tenant/project/job/operation scope, prevents central plaintext access, supports revocation and expiry, and supplies durable at-most-once evidence.
+
+## ADR-055 — Source-scheduled adapter reads are evidence and lifecycle changes cannot rewrite source truth
+
+**Decision:** A source-scheduled adapter release declares only reviewed sanitized reads and carries no command, lease, network, or execution authority. Each read binds exact source scope, release, snapshot, opaque cursor, record digests, and the current adapter-control-state digest. Disable is immediate. Upgrade and rollback are expected-state append-only transitions that preserve committed cursor and receipt high-water. Rollback may select only a previously reviewed release and never re-enables an already disabled adapter. The source retains eligibility, leases, and domain transitions throughout.
+
+**Why:** Content Blooms already owns durable scheduling and lease truth. Treating a Control Room projection, cursor reset, adapter downgrade, or local enabled flag as source authority would create two schedulers and make crashes or rollbacks capable of replaying old work. Preserving read high-water and negative authority lets Control Room recover or replace its projection without rewriting the source.
+
+**Alternatives rejected:** Direct edits to source workflow tables; Control Room-issued leases for source-scheduled work; adapter activation as network authorization; command fields hidden in read records; cursor rewind on rollback; deleting receipts on disable; automatically re-enabling after rollback; accepting a producer's unreviewed adapter release.
+
+**Trade-off:** Live reads need a separate authenticated connector and protected activation store. Rollback cannot erase a bad source observation and may require re-projecting from the preserved cursor or an explicit source snapshot. Placement changes arrive later as versioned source requests with source receipts rather than direct lease mutation.
+
+**Reevaluate:** Content Blooms may explicitly delegate a bounded command in CR9A-CB-050 after the read path, redaction, idempotency, disable, rollback, and source-receipt gates pass. Its core source-scheduled lease authority remains unless a separately reviewed future contract changes the project authority mode.
+
+## ADR-056 — Content Blooms placement is a versioned source preference with source-settled truth
+
+**Decision:** The first Content Blooms command is only `setWorkerPreference` for one exact transcription work item and one eligible observed route. A request binds the accepted declaration and read release, a lifecycle revision that changes on enable/disable/upgrade/rollback but not ordinary reads, the exact source record version/checksum/digest, route-comparison and route-observation digests, job/attempt/effect identity, medium risk, strong approval, and one deterministic source-echoed idempotency key. Dispatch additionally requires authoritative approval resolution, a separately trusted node attestation, durable effect claim, and pre-effect marker. Content Blooms settles accepted, already-applied, or rejected truth. Missing post-marker truth is ambiguous and never auto-retries.
+
+**Why:** A route recommendation is useful but is neither source eligibility nor a lease. Binding the expected source version prevents a stale projection from overwriting newer source truth. Separating lifecycle revision from read high-water keeps synchronization from cancelling valid approval while making disable and rollback real command invalidation barriers. Stable idempotency and source receipts allow safe reconciliation without pretending exactly-once delivery.
+
+**Alternatives rejected:** Direct Control Room lease takeover; hidden placement inside a read; low-risk or approval-free classification; request ID as effect identity; new idempotency key on retry; retry after an unknown post-marker result; treating a local accepted receipt as source truth; allowing disable then re-enable to revive an old authorization; allowing a route comparison to dispatch directly.
+
+**Trade-off:** Every placement needs exact source and route evidence, a fresh lifecycle-bound approval, protected claim/marker storage, and an authenticated source receipt. A harmless lifecycle change intentionally invalidates pending placement. Ambiguity may require operator-visible source reconciliation and can consume an authorization without an immediate result.
+
+**Reevaluate:** CB-060 may implement the bounded command against injected fakes after durable request, authorization, claim, marker, receipt, ambiguity, replay, and tombstone storage pass. Live transport remains a separate owner-authorized rehearsal and cannot change source lease ownership.
+
+## ADR-057 — Fake-backed placement uses one protected at-most-once ledger and packages remain non-authoritative
+
+**Decision:** The first placement runtime stores the reviewed declaration, exact request, central approval records, separately verified node attestation, effect claim, pre-effect marker, source or ambiguity outcome, and permanent replay tombstone in one scope-bound HMAC-authenticated ledger. Request ID, source idempotency key, operation digest, node attestation nonce, and effect claim are independently unique. A duplicate marker cannot dispatch. Restart may re-evaluate only an unmarked claim; every marked unknown result becomes ambiguity. The only callable source is an exact injected fake with no endpoint or credential path. The research/transcription/article project pack is stored and independently reviewed through the package registry but remains inactive and non-authoritative.
+
+**Why:** Durable state must make the safe recovery choice mechanical. Splitting replay identity from protected outcome truth or allowing a generic transport during fake acceptance would leave a path for duplicate placement. Treating reviewed instructions as runtime authority would bypass the same approval and effect gates the placement ledger is intended to enforce.
+
+**Alternatives rejected:** In-memory placement locks; request-ID-only deduplication; a generic connector interface in the fake phase; redispatch after a duplicate marker; treating a source timeout as rejection; overwriting ambiguity with a later local receipt; deleting full outcomes when a tombstone is written; automatically activating a reviewed project pack; letting procedure text grant approval or execution.
+
+**Trade-off:** The local slice creates several small authenticated rows and requires separate central and node approval evidence. An uncertain fake call may consume the effect without a final answer. Full outcomes remain stored even after a tombstone, and project packages require a later exact harness mapping and activation decision before use.
+
+**Reevaluate:** CB-080/090 may add one owner-authorized authenticated read rehearsal only after endpoint identity, credential custody, transport authentication, rollback, cleanup, and evidence scope are frozen. A live placement write remains a separate explicit authorization and must preserve the same ledger and source-reconciliation rules.
+
+## ADR-058 — Project Workspaces turn project evidence into proposals without becoming authority
+
+**Decision:** Every project receives the same ordered owner-facing workspace shell for Overview, Inbox, Work, Agents, Automations, Files and artifacts, Reviews, Activity, and Settings. Project adapters may append bounded extension sections but cannot replace the core. ABS AI and Tech News may curate verified story projections and prepare digest-bound action proposals. A story URL is evidence, not fetch authority. An action proposal remains a draft, creates no work item, requires owner review, and grants no approval, network, command, lease, dispatch, publication, or execution authority.
+
+**Why:** Control Room's project view is operationally strong but does not yet provide a fluid information-to-action workspace. A news project needs daily briefs, source health, queues, archive/history, evidence, and article actions without turning a content card or AI ranking into an orchestration bypass. The shared shell lets other projects add useful owner workflows while preserving the canonical scheduler, Completion Gate, package registry, node ceiling, and effect ledger.
+
+**Alternatives rejected:** Copy a separate dashboard into the core; make ABS a standalone scheduler; let a story button dispatch immediately; treat search snippets, newsletters, or AI summaries as verified source truth; store current model names as permission; let a project extension replace the global Work or Reviews view; let the private workspace publish directly to the public ABS site.
+
+**Trade-off:** Proposal materialization adds one explicit step before useful work enters the queue, and project-specific sections need versioned schemas. Live collection and publication require later source, privacy, credential, cost, retry, and destination contracts. The initial visible action buttons remain disabled until durable proposal storage and owner review are connected.
+
+**Reevaluate:** CR9D-ABS-040 may connect accepted proposals to canonical workflows after replay, scope, policy, route, package, and Action Inbox tests pass. Live collection and publication remain separately owner-authorized and cannot weaken the proposal boundary.
+
+## ADR-059 — ABS review materializes only non-runnable work and restart uncertainty is terminal
+
+**Decision:** An ABS proposal review is a digest-bound owner decision, not a Control Room approval. Only an accepted exact review may materialize one deterministic canonical draft request, proposed workflow, and proposed job in a single transaction. The job has no credentials, filesystem roots, network destinations, effect permission, attempt, lease, dispatch, or outbox event. Collector and monitor declarations are immutable, canonical-schedule-backed, and disabled by default. The current block may record synthetic run evidence only. A run found unsettled after restart becomes terminally ambiguous; only a definite allowlisted pre-effect failure may create a separately identified bounded retry.
+
+**Why:** Turning a news-card click or owner content decision directly into runnable work would bypass ordinary route, readiness, policy, lease, and effect controls. Separating review from approval preserves the useful information-to-work flow while keeping scheduling authority canonical. Terminal restart ambiguity prevents a monitor or collector from silently duplicating work when its prior outcome is unknown.
+
+**Alternatives rejected:** Dispatch on article action; treat proposal acceptance as strong-factor approval; create a ready job; sequential non-transactional request/workflow/job writes; embed live endpoints or credentials in schedule declarations; start a background timer when a declaration is saved; automatically retry a run that crossed its start boundary; overwrite run history; treat local receipt creation as proof that an agent or source ran.
+
+**Trade-off:** A reviewed item still needs ordinary readiness, route, package, policy, lease, and execution steps before useful agent work begins. Live collection needs a separate owner-authorized packet, and ambiguous runs may require manual source reconciliation instead of immediate retry.
+
+**Reevaluate:** CR9D-ABS-060 may add one frozen owner-authorized live-read rehearsal after endpoint identity, source allowlist, credential custody, privacy, cost, timeout, cleanup, and evidence contracts are accepted. It cannot turn schedule declaration, review acceptance, or local materialization into live authority.
+
+## ADR-060 — ABS live reads require an exact owner packet and protected at-most-once evidence
+
+**Decision:** An ABS live read may target only a frozen, canonically ordered set of exact public unauthenticated HTTPS RSS or sitemap endpoints. The request binds endpoint identity, source set, project/job/attempt/effect identity, byte/item/time/cost ceilings, allowed content types, and one stable idempotency key while explicitly denying redirects, cookies, credentials, model calls, raw-body retention, execution, and publication. A separate non-synthetic strong owner decision must bind that exact operation before an owner-live authorization can exist. Durable claim precedes transport preparation and a marker precedes the first possible read. Any uncertainty after the marker is terminal ambiguity and cannot retry. Cleanup and terminal truth remain authenticated in the same protected ledger. The accepted repository coordinator is simulation-only, uses injected results, contains no network path, and rejects owner-live authorization.
+
+**Why:** Reading a public feed is still an external effect with SSRF, redirect, privacy, replay, cost, and crash ambiguity risks. An enabled schedule or accepted article action cannot safely stand in for endpoint-specific authority. Keeping the first runtime fake-only proves the durable rules without turning the contract itself into a network capability.
+
+**Alternatives rejected:** Treat public URLs as harmless and fetch on discovery; let a schedule enable the collector; accept redirects; reuse browser cookies; resolve credentials through a generic connector; return or persist raw bodies; retry after timeout or restart; mint a new idempotency key after ambiguity; treat approval as agent-execution or publication authority; ship an unreviewed generic HTTP client in the simulation block.
+
+**Trade-off:** A real read requires a separately reviewed native transport and one owner-approved populated packet. Terminal ambiguity may consume a single-use authorization without stories. Public feeds that require redirects, authentication, cookies, or query tokens are not eligible for this lane.
+
+**Reevaluate:** CR9D-ABS-070 may prepare publication packages locally without publication. A real ABS read remains blocked until exact sources, transport implementation, authoritative approval resolution, and operational cleanup evidence are reviewed and the owner authorizes that single packet.
+
+## ADR-061 — ABS publication uses immutable revisions and two-boundary idempotency
+
+**Decision:** ABS publication preparation binds one immutable content artifact and revision, source and Completion Gate evidence digests, exact destination identity and path, high-risk strong-approval operation, and a stable destination idempotency key. Declared editorial acceptance requires authoritative Completion Gate resolution before live use and never grants approval. A protected ledger claims the stable semantic publication before a pre-effect marker. The destination must independently absorb the same idempotency key and return exact revision and receipt evidence. A changed delivery/request ID cannot create a new publication identity. Definite rejection before mutation is terminal; every uncertainty after the marker is terminal ambiguity with no automatic retry. CR9D-ABS-070 implements only an injected fake destination and rejects owner-live authority.
+
+**Why:** Publication is public, consequential, and difficult to undo. Relying only on queue delivery deduplication permits a fresh message to repeat the same revision, while relying only on a destination promise leaves restart ambiguity unrecorded. Binding the content revision and destination at both boundaries makes duplicate behavior testable without pretending the effect is exactly once.
+
+**Alternatives rejected:** Publish from an accepted review; embed a mutable draft body in an authorization; use request/message ID as the destination key; let a new request ID republish the same revision; retry after timeout or restart; accept a destination URL without an exact adapter identity; treat a fake receipt as public truth; allow configured-live destinations into the simulation coordinator; store destination credentials in the package or ledger.
+
+**Trade-off:** Every changed article revision requires a new package, review evidence, approval, and idempotency identity. Ambiguity can require owner-visible destination reconciliation. A live rehearsal remains blocked until a native destination adapter, authoritative evidence resolution, node attestation, credential custody, and rollback procedure are accepted.
+
+**Reevaluate:** CR9D-ABS-080 may perform one exact owner-authorized rehearsal or record a disabled disposition. It cannot weaken the immutable revision, two-boundary idempotency, protected marker, receipt, cleanup, or ambiguity rules.
+
+## ADR-062 — Missing live-publication evidence becomes durable disabled truth
+
+**Decision:** CR9D-ABS-080 records publication readiness as one canonically ordered nine-gate assessment. Every gate carries an exact evidence class, current state, evidence digest when present, check time, optional expiry, and negative-authority flags. Candidate package and destination identities must each be complete ID/digest pairs. Only current evidence for every gate plus both complete identities can produce an owner-approval candidate; a candidate still grants no approval, execution, or publication authority. Missing or expired evidence produces a digest-bound disabled disposition with no attempt, mutation, effect, or automatic retry. Assessments and dispositions append atomically to a scope-bound authenticated ledger. A later assessment cannot rewrite the prior disposition, and whole-file rollback remains blocked on an independent checkpoint.
+
+**Why:** The permitted alternative to a live rehearsal must be operational truth rather than an informal note. Without exact negative evidence, a future operator could mistake prepared contracts, an accepted article, configured destination text, or old approval for readiness. Append-only disabled records preserve why nothing ran and force future work to re-establish every prerequisite.
+
+**Alternatives rejected:** Treat absence as implicitly disabled; mark the preparation block as a live pass; carry blockers only in prose; allow partial package or destination identity; let all-green checks authorize publication; reuse a disabled disposition as a retry; overwrite the old assessment; claim rollback resistance from an HMAC database without an independent checkpoint.
+
+**Trade-off:** Reassessment requires nine explicit evidence records and new immutable identities. The local ledger adds authenticated state but cannot by itself detect restoration of an older complete file. A real attempt therefore remains blocked until protected checkpoint custody and every native/live prerequisite exist.
+
+**Reevaluate:** A future owner-directed ABS publication block may consume a new candidate assessment only after authoritative evidence resolution and a separately approved one-use window. ADR-061's effect ledger, marker, destination idempotency, receipt, cleanup, and ambiguity rules remain controlling.
+
+## ADR-063 — Wayfarer media moves through an immutable graph and synthetic evidence never becomes quality authority
+
+**Decision:** Lo-Fi Wayfarer uses one digest-bound six-stage graph: model render and audio candidate feed QC and review, review feeds assembly, and assembly feeds publication preparation. Every stage binds exact artifact roles, producer lineage, logical route ceilings, and a CR-8 Completion Gate profile. Artifact declarations contain IDs, digests, content types, size ceilings, retention classes, and quarantine behavior but no bytes, paths, signed locators, credentials, or storage authority. Synthetic execution may emit only no-byte envelopes, non-authoritative QC observations, and negative-authority receipts. Synthetic prerequisite evidence can advance only the synthetic rehearsal; it explicitly is not authoritative Completion Gate resolution. Retention expiry produces an owner-reviewed proposal and never deletes automatically. Unreal remains ineligible until a separately measured owner-controlled benchmark exists. Publication preparation cannot upload or publish.
+
+**Why:** Media workflows are large, branching, and expensive. Without immutable roles and lineage, a stale proxy, wrong audio take, or mismatched render could reach assembly. Without explicit synthetic semantics, deterministic test evidence could be mistaken for independent quality acceptance. Without a storage-neutral artifact contract, project instructions could smuggle paths, credentials, or deletion authority before the storage boundary is reviewed.
+
+**Alternatives rejected:** One mutable project folder as truth; artifact filename as identity; QC implied by successful encoding; producer self-review; synthetic pass equals Completion Gate pass; assembly before accepted review; automatic cleanup at retention expiry; enable Unreal based on a declared GPU; embed R2 keys or signed URLs in the pack; let publication preparation call an uploader.
+
+**Trade-off:** Every real artifact needs an immutable envelope and every stage needs explicit verification. The first workflow produces metadata rather than media, and retention execution needs another protected state machine. High-value media may remain quarantined or blocked while independent evidence is gathered.
+
+**Reevaluate:** CR9B-WF-040 may add storage scope and lifecycle contracts without accessing storage. CR9B-WF-080 remains the first possible measured Unreal benchmark, and upload/publication remains separately destination-idempotent and owner-approved.
+
+## ADR-064 — Wayfarer storage identity is public metadata while every usable locator remains private authority
+
+**Decision:** Wayfarer has exactly two logical artifact stores at this boundary: local-private and R2-private. Control Room binds each immutable artifact declaration to a store-specific object-key digest, short-lived capacity proposal, retention class, and broker-private locator-reference digest. It stores no path, bucket, account, endpoint, signed URL, locator value, credential reference, or bytes. Object keys are immutable and overwrite is forbidden. One retry is allowed only after definite failure before the write marker. Integrity mismatch quarantines. Unknown outcome or restart after the marker is terminal ambiguity and cannot retry. Retention produces only independently evidenced owner-review candidates; legal hold always wins. Cleanup receipts are not deletion evidence. The accepted implementation evaluates injected metadata only and enables neither local nor R2 access.
+
+**Why:** A filename, path, bucket key, or signed URL can disclose private topology and can also become de facto access authority. Binding public identity to digests while keeping resolvable location in a separate protected broker allows Control Room to reason about lineage, capacity, integrity, and retention without becoming a storage credential vault. Store-specific identity prevents local and R2 operations for the same artifact from colliding. Terminal post-marker ambiguity prevents a restart from silently creating duplicate large objects.
+
+**Alternatives rejected:** Put paths or R2 keys in project records; use filenames as artifact identity; one shared ID for local and R2 copies; overwrite objects in place; store presigned URLs; let a capacity proposal write; retry after a marker, timeout, or restart; treat digest mismatch as a transient failure; automatically delete at retention expiry; let cleanup imply deletion; use R2 as a queue or lock service.
+
+**Trade-off:** A future adapter needs a protected locator registry and extra reconciliation work. Operators cannot repair an ambiguous write by pressing retry. Retention creates visible review work instead of background deletion. Local and R2 copies retain distinct records even when their artifact declaration is identical.
+
+**Reevaluate:** CR9B-WF-050 may add a fake adapter with no locator-resolution seam. A real local or R2 adapter requires a new owner-controlled qualification and must preserve store identity, locator custody, no-overwrite, marker, ambiguity, retention, legal-hold, and deletion-evidence rules.
+
+## ADR-065 — Wayfarer project views show unresolved evidence while fake storage and scheduling remain non-operative
+
+**Decision:** The accepted Wayfarer fake adapter holds only immutable metadata and enforces exact replay, no-overwrite, per-store capacity, quarantine, and terminal ambiguity without a locator-resolution or byte seam. The project workspace binds each stage digest to its independent-review target, shows synthetic evidence separately from authoritative completion, and omits command and approval controls. Its storage cards expose only accounted fake metadata and explicitly do not prove object existence. GPU and scratch scenarios reuse the deterministic eligibility and bottleneck engines with injected synthetic signals, but selection creates no reservation, dispatch, release, execution, or approval authority. Unreal remains explicitly ineligible even when declared synthetic resources are generous.
+
+**Why:** A visually complete media workspace can mislead an operator into believing that synthetic stages, fake object metadata, or a scheduler selection represent completed media or executable work. Keeping the negative authority in both the contract and the presentation prevents a rehearsal from becoming an accidental control plane.
+
+**Alternatives rejected:** Display the old fixture's simulated Unreal work as active; add disabled render or approval buttons; interpret a matching fake digest as object existence; let a changed replay consume capacity; combine local and R2 fake stores; infer real GPU readiness from declared capability; treat bottleneck relief as a release instruction; make synthetic QC resolve independent review.
+
+**Trade-off:** The workspace is useful for planning and review but deliberately cannot start work. Every real byte, storage locator, native tool, measured benchmark, review decision, upload, and publication effect requires a later protected boundary.
+
+**Reevaluate:** CR9B-WF-080 may add one frozen owner-controlled Unreal benchmark packet and either measured evidence from a separately authorized attempt or an explicit disabled disposition. It cannot reinterpret WF-050/060/070 evidence as native qualification.
+
+## ADR-066 — Unreal benchmark readiness is an ordered durable gate and missing native evidence becomes disabled truth
+
+**Decision:** Wayfarer freezes one digest-bound Unreal scene/render workload before any native attempt. It fixes 1920 by 1080 output, 300 frames, one warm-up, three measured runs, median wall-clock aggregation, exact metrics/evidence classes, a 15-minute ceiling, one attempt, 16 GiB memory, 64 GiB scratch, zero provider cost, and forbidden network. Thirteen ordered readiness gates bind the packet to private scene, tool, executor, node approval, hardware, GPU, scratch, network, measurement, integrity, cleanup, and owner-window evidence. Complete readiness creates only a candidate for a fresh owner-attended approval window. Measured pass is only an independently reviewable route-qualification candidate and cannot automatically activate Unreal or resolve media completion. Missing gates produce an authenticated append-only disabled disposition with no attempt or retry.
+
+**Why:** A declared GPU, installed-looking application, synthetic benchmark, or complete checklist does not prove that a private scene can be rendered safely and repeatably. A durable disabled result prevents operators and later agents from treating absence of evidence as permission or silently repeating a native attempt.
+
+**Alternatives rejected:** Discover and launch Unreal automatically; install or repair the tool during qualification; accept filenames or paths as scene/tool identity; benchmark an arbitrary scene; vary the workload between machines; permit network or provider fallback; treat three measured runs as three retryable attempts; retry a timeout or restart after the marker; enable the route from a synthetic pass; let benchmark success complete the media stage; store raw scene/render bytes or native output in Control Room.
+
+**Trade-off:** The current WF-080 result is disabled rather than a performance number. A real attempt requires substantial private native evidence and owner attendance. Even a measured pass needs independent review and a later pack/route change before Unreal becomes eligible.
+
+**Reevaluate:** WF-090/100 may add a frozen executor and upload-preparation package only in disabled, no-effect form against this packet. WF-110/120 remain separately destination-idempotent and owner-approved. A later measured benchmark requires a new exact readiness assessment and authorization without weakening the one-attempt or ambiguity rules.
+
+## ADR-067 — A frozen executor has no native seam and upload is not publication
+
+**Decision:** The accepted WF-090 Unreal executor binds the exact WF-080 packet, readiness assessment, and disabled disposition but contains no command, native adapter, process launcher, filesystem reader, private-locator resolver, credential resolver, network client, artifact writer, or cancellation controller. Its only current output is a digest-bound `disabled_before_start` admission and negative receipt with zero attempt or effect. WF-100 binds immutable declarations for the episode master, assembly manifest, and publication package into two separate future high-risk boundaries: private upload and public publication. Neither boundary contains a destination or credential. Each later effect independently requires an exact owner-supplied destination, qualified adapter, protected credential reference, node authority, fresh strong approval, stable destination idempotency, durable claim, pre-effect marker, destination receipt, cleanup receipt, and terminal ambiguity without automatic retry.
+
+**Why:** A class named executor can be mistaken for runnable authority even when the benchmark is disabled. Likewise, an uploaded private master can be mistaken for permission to publish publicly. Removing the native seam makes the present refusal structural rather than conventional, while separate delivery identities prevent one approval or idempotency key from crossing effect boundaries.
+
+**Alternatives rejected:** Store a dormant command line; accept injected process or filesystem callbacks; let the disabled executor create a job or effect claim; record synthetic cleanup as native cleanup; embed a destination placeholder URL, bucket, path, channel, or credential reference; treat private upload as publication staging under one approval; reuse message or request IDs as destination idempotency; retry after a marker; let prepared artifact declarations stand in for bytes, QC, review, or Completion Gate resolution.
+
+**Trade-off:** WF-090 cannot be toggled on; a real adapter requires a newly reviewed implementation and qualification. Delivery remains metadata-only until every artifact and destination prerequisite exists. Operators must approve upload and publication independently, and terminal ambiguity may require manual destination reconciliation.
+
+**Reevaluate:** WF-110/120 may add the exact destination/idempotency/approval readiness contract and either a separately owner-authorized rehearsal or authenticated disabled state. It cannot mutate this package into live authority or combine the two delivery boundaries.
+
+## ADR-068 — Delivery readiness is separate for upload and publication and missing evidence becomes durable disabled truth
+
+**Decision:** Wayfarer private upload and public publication use separate exact destination identities, immutable content sets, operation digests, stable destination idempotency keys, strong approval requests, readiness assessments, and dispositions. Ten ordered gates bind the preparation package, artifact content, Completion Gate resolution, destination, adapter, credential custody, node authority, idempotency qualification, reconciliation, and fresh owner window. All-green evidence creates only an owner-window candidate. Missing evidence produces a boundary-specific authenticated disabled disposition with no attempt, effect, retry, approval, or execution authority. Each lane advances independently in an append-only keyed ledger and requires an independent checkpoint before live use.
+
+**Why:** A private master upload and public publication have different consequences and destinations. A shared approval, request ID, or delivery key could make one effect authorize or duplicate the other. Durable negative truth prevents a prepared package or configured-looking destination from being mistaken for readiness.
+
+**Alternatives rejected:** One combined delivery operation; request ID as destination idempotency; raw destination or credential material in the control plane; approval as execution authority; all-green readiness as authority; one shared readiness row; overwrite the disabled record; retry after a marker, timeout, restart, or unknown result; claim rollback resistance without an independent checkpoint.
+
+**Trade-off:** Upload and publication require separate evidence and owner decisions. Reconciliation may be manual after ambiguity. The present result is disabled because no real media, destination, adapter, credential, node authority, or approval window exists.
+
+**Reevaluate:** A future owner-directed delivery rehearsal may consume one new exact candidate assessment. It must preserve the separate lanes, stable destination idempotency, claim, marker, receipt, cleanup, terminal ambiguity, and no-retry rules.
+
+## ADR-069 — Project adapters reject foreign scope before project evidence can cross boundaries
+
+**Decision:** ABS News, Content Blooms, and Wayfarer retain distinct tenant/workspace/project scope tuples. Wayfarer preparation, destination, request, readiness, disposition, and operator-view contracts require the exact Wayfarer workspace and project identities. A foreign object cannot become Wayfarer evidence by copying fields or recomputing an outer digest. Cross-project isolation is part of CR9 acceptance rather than a presentation convention.
+
+**Why:** Digest integrity proves that a record was unchanged after signing; it does not prove the record belongs to the correct project unless scope is also normative. A structurally valid record with a foreign project ID could otherwise enter later delivery logic and confuse evidence or authorization lineage.
+
+**Alternatives rejected:** Trust the caller to select the right adapter; validate scope only when an effect begins; rely on presentation project IDs; accept arbitrary workspace/project values in downstream delivery schemas; treat a recomputed digest as sufficient scope proof.
+
+**Trade-off:** Wayfarer contracts cannot be reused by simply changing IDs. A new media project needs its own accepted adapter contract or an explicitly versioned generic contract with equivalent scope binding.
+
+**Reevaluate:** A future multi-project media package may generalize these schemas only after project identity, adapter identity, evidence lineage, and effect authority remain exactly bound and cross-project adversarial tests pass.
+
+## ADR-070 — Production begins as seven distinct least-privilege services behind a protected edge
+
+**Decision:** The first production candidate is a recovery-based single-host modular monolith with seven distinct service roles: edge connector, Control Room application, one-shot migration runner, PostgreSQL primary, backup controller, audit anchor, and independent operations observer. Each role has a distinct derived operating-system principal. Only the migration runner may mutate schema. PostgreSQL is the sole global write authority. Nodes initiate outbound authenticated connections through the protected edge and have no direct inbound listener. Approved object storage is for immutable artifacts, backup archives, and audit anchors, never coordination. Fifteen exact authenticated flows are allowed and every unknown flow is denied. The architecture contract contains no hostnames, addresses, ports, credentials, or deployable configuration.
+
+**Why:** A smaller initial failure domain is operable by one owner, while identity and flow separation prevent the modular monolith from collapsing into one overpowered process. Protected ingress and outbound-only nodes avoid publishing an origin or every worker. PostgreSQL preserves transactional authority that object storage cannot safely replace.
+
+**Alternatives rejected:** Public application origin; direct inbound node control; one shared root or host-administrator service account; permanently privileged migration capability; database credentials shared across application, backup, and audit roles; object storage as queue or lock; multi-primary database before recovery evidence exists; hostnames, ports, or credentials embedded in the architecture contract.
+
+**Trade-off:** A single primary does not provide transparent failover, so restore quality and measured recovery objectives become important. More service identities and explicit flows require additional packaging work even on one host.
+
+**Reevaluate:** A later high-availability phase may add replicas or another host only after real backup/restore, canary, monitoring, incident, and RPO/RTO evidence is independently accepted. It must preserve distinct principals, single authoritative write semantics, exact flows, protected ingress, and outbound node connectivity.
+
+## ADR-071 — Readiness, health, and lifecycle evidence never become deployment authority
+
+**Decision:** A release is immutable and reference-only. Deployment admission requires eighteen exact ordered, current gates covering topology, release/signature/provenance/SBOM, configuration and credential custody, edge policy, backup/WAL/restore, migration/rollback, health/resources/monitoring/audit, and a fresh owner window. All-green admission creates only an owner-window candidate. Health uses role-specific independently observed, freshness-bounded probes and yields only a readiness candidate. Deployment progresses through a one-host canary and a separate owner promotion decision. Failed canary becomes rollback-pending; uncertain state after change is terminal ambiguity. Automatic promotion, rollback, down migration, and retry after change are forbidden.
+
+**Why:** Green dashboards and complete checklists are evidence, not consent and not proof that a side effect occurred. Separating observation, planning, approval, and effect authority prevents automation or stale evidence from silently changing production. A canary constrains the first release exposure without pretending a single-host system has a second production host.
+
+**Alternatives rejected:** Deploy when tests pass; treat health as service-control permission; allow a service to self-attest its health; auto-promote a healthy canary; auto-rollback a failed canary; retry after a timeout or restart; run schema migration inside the steady-state application; use down migrations as the default database rollback.
+
+**Trade-off:** Deployment and rollback require deliberate owner interaction and may stop in an ambiguous state needing reconciliation. More evidence must be produced and kept fresh before an owner window opens.
+
+**Reevaluate:** Native deployment tooling may be added only behind a newly reviewed effect boundary with durable claim, marker, receipt, cleanup, and reconciliation semantics. It cannot weaken the eighteen gates or turn health into authority.
+
+## ADR-072 — Recovery proves a disposable restore before any cutover, and application rollback is not database restore
+
+**Decision:** Backup identity is an immutable digest-only manifest binding release, database/schema, base backup, bounded WAL, audit head/anchor, protected locator/key references, signature, and restore window. Recovery targets only a distinct disposable isolated identity and follows eleven ordered phases from isolation and verification through base restore, bounded WAL replay, integrity/audit validation, node-journal reconciliation, independent health validation, and a fresh owner cutover request. Restored central data cannot overwrite node-local journal truth. Production overwrite, direct cutover, down migration, implicit retry, and cutover from restoration evidence are forbidden. Application-only rollback requires a canary and leaves a verified compatible database unchanged; restoring a prior database requires a separately bound verified backup and the recovery path.
+
+**Why:** A backup is not credible until it can restore into a clean isolated target and reconcile with independent system truth. Direct production restore combines destructive data mutation, validation, and cutover into one unsafe action. Separating application rollback from database recovery avoids using down migrations or an old database merely because an application release failed.
+
+**Alternatives rejected:** Trust a backup upload receipt; restore over production first; target an existing production identity; replay unbounded WAL; skip the external audit anchor; replace node journals with restored central state; automatically cut over a healthy restore; silently retry after a restore marker; bundle database rollback into every application rollback.
+
+**Trade-off:** Recovery needs disposable capacity, independent validation, explicit reconciliation, and an additional owner decision. Ambiguous or failed cleanup can stop the process without an automatic retry.
+
+**Reevaluate:** A real clean-host rehearsal may supply measured RPO/RTO and operational evidence under a separate owner-controlled attempt. Production cutover remains a distinct high-risk gate even after the rehearsal passes.
+
+## ADR-073 — Production packaging begins as canonical non-deployable references with exact peer separation
+
+**Decision:** Compose and Linux systemd outputs are canonical value-free references bound to the accepted topology and release, not deployable configuration. Compose uses ten internal two-peer networks for the ten host-local flows rather than a broad shared application or operations network; external flows are digest declarations only. Every service drops all capabilities, uses no-new-privileges, has bounded resources and restart, contains no command/entrypoint/port/host namespace, and has a distinct unresolved user and immutable artifact reference. Linux units have no install section, require an unresolved owner marker, use distinct users, strict system protections, exact address families, and no secondary commands. PostgreSQL is the only writable role and migration remains one-shot with no restart.
+
+**Why:** A realistic-looking template is easily mistaken for approved deployment configuration. Making the output structurally non-deployable allows packaging and security semantics to be tested before host, image, path, account, or credential choices exist. Two-peer networks reduce unintended lateral reach that a shared internal network would permit.
+
+**Alternatives rejected:** Ready-to-run Compose; published origin ports; one internal network for all roles; Docker socket or privileged helper; commands embedded in templates; shared users; systemd install targets; root services; shell pre/post hooks; automatically restarting migration; writable application or observer roots.
+
+**Trade-off:** Later native packaging must resolve references and add independently reviewed enforcement for declared external flows. The references cannot be used directly for a rehearsal.
+
+**Reevaluate:** OPS-080/090 may consume these references for planning and disabled runbooks. Native renderers require a separately reviewed value-binding boundary and owner-authorized target; they cannot weaken exact peers, identities, hardening, or activation stops.
+
+## ADR-074 — Protected-edge provider examples carry shape but no provider value or network authority
+
+**Decision:** Owner ingress and node protocol remain separate exact logical routes with different authentication, audience, freshness, and replay requirements. Both use an outbound connector, expose no public origin, and deny wildcard, redirect, bypass, and inbound node access. The Cloudflare Tunnel and Access-shaped example contains unresolved identity references only and no account, zone, domain, hostname, tunnel, credential, SDK, client, or provider operation. Current truth is a seven-blocker disabled disposition with zero effects. A fake policy match can become only an owner-review candidate.
+
+**Why:** Provider-specific examples are useful for implementation, but values or callable clients would turn an architecture reference into a latent infrastructure mutation seam. Separate owner and node routes prevent a human access decision from becoming node-protocol authority or vice versa.
+
+**Alternatives rejected:** Public application origin; one owner/node route; wildcard hostname or audience; redirect-based compatibility; inbound node listener; embedded provider identifiers; dormant SDK/client; validate by contacting a live provider; treat a matching fake route table as network approval.
+
+**Trade-off:** Actual provider correctness, DNS, tunnel connectivity, and access behavior remain completely unproved. Later value binding and native validation require owner attendance and fresh evidence.
+
+**Reevaluate:** A separately authorized provider rehearsal may bind one exact account/zone/domain/tunnel set and produce protected receipts. It must preserve no-public-origin, route separation, deny-unknown behavior, exact audiences, and non-authoritative readiness.
+
+## ADR-075 — Health collection admits only repository-created fake adapters and re-derives resource truth
+
+**Decision:** OPS-040's current collector accepts only frozen in-memory fake adapters created by a repository factory and registered in a private weak identity map. It calls exactly the role-required probes, marks every other role/probe cell not applicable without an adapter call, and requires an observer identity distinct from all production service principals. Resource samples are bounded policy inputs, not adapter verdicts: the coordinator derives pass/fail and the parser derives it again and cross-binds it to health evidence. The resulting projection is read-only and has no action controls.
+
+**Why:** A generic injected callback would be an undeclared native/network execution seam, and an adapter-supplied green status could hide threshold drift. Factory-only fake adapters make this phase genuinely effect-free while exercising orchestration. Independent derivation makes re-signing changed metrics insufficient.
+
+**Alternatives rejected:** Accept any object with a probe method; perform native checks during reference work; allow service self-report as sufficient; call adapters for inapplicable probes; let adapters decide resource status; treat missing metrics as healthy; expose restart or deploy controls beside the health projection.
+
+**Trade-off:** These results prove contract behavior only, not host health. Real probe adapters and persistence remain future security boundaries.
+
+**Reevaluate:** Native adapters may be added only as separately qualified implementations with exact I/O, timeout, identity, redaction, freshness, and failure contracts. They must not share the fake-adapter admission path or turn readiness into service-control authority.
+
+## ADR-076 — Backup planning is a pure no-command contract and fake execution has authenticated terminal truth
+
+**Decision:** OPS-050 separates the protected backup/WAL contract and no-command CLI from the test-only SQLite lifecycle ledger. The protected path binds topology, release, database identity, digest-only object/key/signer references, retention ceilings, bounded estimates, immutable encrypted manifest requirements, and stable operation identity while importing no database, storage, filesystem, subprocess, or network client. Fake execution uses a repository-created in-memory adapter plus a one-use lifecycle claim, pre-effect marker, and digest-bound receipt. Whole-ledger HMAC state and an external checkpoint port detect mutation or rollback. Reopening after a marker without a receipt is terminal ambiguity and cannot redispatch.
+
+**Why:** A backup contract that imports a database or storage client is already an execution seam, even when current code calls it only in a dry run. Conversely, a fake lifecycle still needs honest crash semantics so later orchestration cannot learn unsafe retry behavior. Keeping the pure contract separate from the ledger makes the absence of commands and clients structural while preserving reusable effect-state discipline.
+
+**Alternatives rejected:** Embed a dormant backup or encryption command; accept a bucket, path, URL, key, credential, or resolved locator; treat uploaded bytes or a storage receipt as manifest verification; place SQLite in the protected contract path; allow retention above the ceiling; retry after a marker, timeout, restart, or unknown result; accept caller-created fake adapters; let a valid manifest grant restore authority.
+
+**Trade-off:** The current CLI cannot perform or even prepare a native backup command. The fake ledger's in-memory acceptance checkpoint is not production rollback-resistant custody. External manifest signature verification, protected-reference resolution, capacity allocation, real backup/WAL tools, and durable independent checkpoints remain unimplemented.
+
+**Reevaluate:** A native backup boundary requires a separately reviewed adapter, owner-supplied exact target, protected reference broker, qualified process and storage identities, real rollback-resistant checkpoint, claim/marker/receipt/cleanup/reconciliation, and explicit owner authority. It cannot be added to the pure contract module or weaken terminal ambiguity.
+
+## ADR-077 — Disposable recovery consumes a target once and can produce only a cleaned recovery candidate
+
+**Decision:** OPS-060 recovery runs only against a repository-declared empty disposable fake identity that differs from every production principal and is consumed once. The coordinator enforces all eleven OPS-000 phases in exact order, records markers before synthetic base restore and WAL replay, refuses restored central data as a replacement for node-journal truth, requires external audit-anchor evidence and a validator distinct from the recovery worker, calculates RPO/RTO, and requires authenticated cleanup before attestation. Missing anchor, self-validation, node overwrite, cleanup failure, reordered work, duplicate targets, and unsettled post-marker restart are terminal failures or ambiguity. The attestation remains `recovery_candidate_only` and grants no readiness, cutover, restore, approval, or execution authority.
+
+**Why:** Successful restoration and successful production recovery are different claims. Reusing a target, skipping cleanup, allowing the restorer to validate itself, or opening cutover from restored data would make a fake rehearsal look like operational permission. Exact phase and identity binding lets the harness test recovery reasoning without creating a hidden database, host, or cutover seam.
+
+**Alternatives rejected:** Restore over an existing or production target; reuse a disposable target; run phases out of order; replay unbounded WAL; skip the audit anchor; overwrite node journals; accept restorer self-validation; attest before cleanup; treat RPO/RTO as production measurements; automatically request or open cutover; retry an uncertain restore; ship a container, database, storage, network, or native adapter in the fake coordinator.
+
+**Trade-off:** The accepted evidence proves state-machine behavior only. It contains no real bytes, process, storage system, database, host, or measured native recovery. A cleanup failure blocks attestation, and ambiguity may require an owner to reconcile rather than retry.
+
+**Reevaluate:** A real clean-host recovery rehearsal requires new owner-scoped authority, exact isolated capacity, qualified backup/restore/WAL adapters, protected reference custody, independent native validation, cleanup proof, and separately accepted measurements. Production cutover remains a later fresh strong-owner gate even after a real rehearsal passes.
+
+## ADR-078 — Monitoring has a closed vocabulary, treats absence as uncertainty, and cannot acquire effect authority
+
+**Decision:** OPS-070 freezes nine metric types, nine alert rules, four queue classes, seven service roles, and exactly thirty digest-bound series. It admits no caller-defined labels, raw tenant/project IDs, destinations, credentials, or authority fields. Missing, stale, and explicitly unknown observations are visible unknown alerts rather than healthy results. Incident clearance requires two consecutive current passing samples and accepts only batches produced by the repository evaluator, so a re-signed handcrafted clear cannot close an incident. Correlated incident transitions may create proposal-only notification evidence on open and escalation. The current adapter is privately admitted and always stops before provider contact or delivery.
+
+**Why:** Unbounded labels leak sensitive values and turn monitoring storage into an uncontrolled data plane. Treating absent data as green hides collector failure. A valid-looking alert payload is not sufficient evidence that the monitoring rules ran, and a notification is an external effect rather than an approval or operational command.
+
+**Alternatives rejected:** Caller-defined labels or series; raw project, tenant, host, or service values; missing data treated as healthy; one passing observation closes an incident; caller-signed clear evidence; notification on every evaluation; provider or destination configuration in the monitoring contract; alerts that authorize restart, deploy, rollback, restore, or incident response.
+
+**Trade-off:** The exact vocabulary is intentionally inflexible, the in-memory stores are not production durability, and owner-visible uncertainty may remain until two trustworthy observations arrive. Real collection and notification require separately reviewed adapters and value binding.
+
+**Reevaluate:** Production monitoring may add qualified collectors, durable protected storage, accepted thresholds, and a gated notification boundary only after exact identities, redaction, cardinality, freshness, integrity, destination custody, rate limits, acknowledgement, and external-effect semantics are reviewed. It cannot weaken missing-data behavior or turn alert evidence into authority.
+
+## ADR-079 — Canary and rollback planning records effect truth without owning an effect path
+
+**Decision:** OPS-080 composes one exact eighteen-gate deployment candidate with an exact same-topology, same-release application rollback plan, then produces eight ordered proposal-only steps, three owner questions, and four distinct intents for forward migration, one-host canary, promotion, and application rollback. Canary cannot bypass verified forward-migration evidence. Promotion requires independently verified pass evidence; application rollback requires independently verified failure evidence; the branches are mutually exclusive. Database restoration is rejected from this planner and remains in recovery. Claims and markers record external evidence but grant no authority. Complete post-marker outcomes require both effect and independent receipts. Restart before a marker is definite pre-change failure; restart after a marker is terminal ambiguity; neither retries. The current ledger uses authenticated portable snapshots, an external checkpoint, and a test-only state port while the executor seam is permanently disabled.
+
+**Why:** A useful deployment plan must preserve sequence and crash truth without quietly becoming deployment software. Treating a green canary as promotion consent, a failed canary as rollback consent, or application rollback as permission to restore a database combines evidence with authority and can magnify an incident. Separate branch evidence and terminal ambiguity allow later native work to reconcile facts without teaching unsafe automatic behavior.
+
+**Alternatives rejected:** Auto-promote on green health; auto-rollback on failed health; start canary before migration evidence; allow both promotion and rollback branches; use a down migration; restore a database as part of application rollback; retry after a marker, restart, timeout, partial receipt, or unknown outcome; accept stale owner windows or substituted gates; embed a dormant command, target, service client, database client, provider client, or native executor.
+
+**Trade-off:** The planner cannot deploy anything, and the current state port is not production persistence. An owner or later qualified boundary must make every consequential choice, supply independent evidence, and reconcile ambiguity. This adds stops but prevents a planner or dashboard from acquiring effect authority.
+
+**Reevaluate:** A native canary or rollback boundary requires a separately reviewed value-binding and executor design with exact host, service, release, approval, claim, marker, receipt, cleanup, credential, checkpoint, and reconciliation contracts. It cannot import execution into this planner, weaken branch separation, or retry terminal ambiguity.
+
+## ADR-080 — Operations runbooks compile evidence order without compiling an executor
+
+**Decision:** OPS-090 freezes eight exact state machines for deploy, forward migration, one-host canary, application rollback, backup/WAL, isolated restore, incident isolation, and audit-anchor recovery. Each graph has exact ordered evidence classes, explicit owner-gate rehearsal points, a disabled effect slot, and mandatory cleanup and reconciliation. Instances are bound to one definition, scope, and operation and are authenticated as complete resumable state. Evidence is synthetic, fresh, exact-step-bound, non-authorizing, and carries no raw output. Exact replay is inert; changed, skipped, mixed-operation, stale, or forged evidence fails closed. Before a change boundary, failure, uncertainty, or abort blocks. At or after a change boundary, it may proceed only to cleanup and reconciliation and then terminates in ambiguity. No runbook contains a native executor, command, target, credential, retry, approval, or authority.
+
+**Why:** A useful runbook must make sequence, stopping conditions, crash uncertainty, cleanup, and reconciliation machine-checkable without making a guide or state record callable. Compiling effect machinery beside these graphs would let evidence or an owner-facing screen become a latent action path. Authentication prevents an ordinary re-digest from rewriting resume truth, while exact graph comparison prevents semantic drift from being hidden behind valid hashes.
+
+**Alternatives rejected:** Free-form prose as the only runbook; caller-defined or reorderable steps; owner prompts treated as approval; stale evidence accepted; evidence reused across operations; skip directly to verification or reconciliation; automatic retry after failure, timeout, restart, or unknown result; unknown native outcome treated as failure or success; cleanup optional; executable commands or dormant clients embedded in definitions; a generic injected executor; production target or credential fields.
+
+**Trade-off:** The runbooks can prove only graph and state-machine behavior. They cannot perform, prepare, or authorize an operation, and synthetic owner gates are not human decisions. Production persistence, protected key/checkpoint custody, exact values, qualified adapters, real receipts, and owner-attended decisions remain future boundaries.
+
+**Reevaluate:** Any native operational path requires a new reviewed value-binding and effect boundary outside this module, with protected persistence, exact target and identity, fresh strong approval, claim-before-effect, marker, independently bound receipt, cleanup, reconciliation, cancellation, and terminal ambiguity. It cannot add callable execution to these accepted definitions or convert rehearsal evidence into authority.
+
+## ADR-081 — Privacy disposition is an evidence and review decision, never an inferred delete command
+
+**Decision:** OPS-100 freezes fourteen exact data classes, revisioned project-scoped retention rules, digest-only disposition requests, externally grounded legal-hold and release evidence, retention/reference/inventory evidence, a fixed fail-closed precedence order, candidate-only proposals, and a control-free projection. Audit/security truth remains an indefinite append-only full record. Replay, approval, work, scope, artifact-metadata, and quarantine truth can at most compact to required digest tombstones after every dependency horizon. Unknown horizons, active references, missing policy values, early expiry, and active holds preserve data. Legal hold wins before every request kind. Control Room makes no legal determination, and the current executor is structurally disabled before any storage or native action.
+
+**Why:** A retention date or deletion request is not proof that data is unreferenced, outside a hold, legally disposable, approved for destruction, or actually deleted. Separating classification, policy, evidence, review, authority, and effect prevents a missing value or green projection from causing irreversible loss. Preserving audit truth and replay tombstones keeps security, idempotency, and later reconciliation possible.
+
+**Alternatives rejected:** One universal retention duration; default deletion when policy is missing; raw subject identity in Control Room; Control Room deciding legal validity; legal release as deletion authority; deletion when any dependency horizon is unknown; full removal of replay/audit evidence; source content deleted solely from a local projection; automatic quarantine cleanup; commands, locators, credentials, storage clients, or generic executors in the policy module; candidate or owner review treated as approval; automatic retry after uncertainty.
+
+**Trade-off:** Current results are conservative and may retain data until external policy, legal, inventory, reference, and dependency evidence is complete. Production cleanup cannot run from this module, and source systems may need separate reconciliation. Additional durable custody and owner-controlled effect machinery are required before any real disposition.
+
+**Reevaluate:** OPS-110 may build a dry-run/idempotent cleanup ledger around exact candidates, but must preserve hold/audit precedence, dependency horizons, tombstones, scope, claim/marker/receipt/cleanup/reconciliation, and terminal ambiguity. A native deletion adapter requires a later separate owner-authorized and independently reviewed effect boundary.
+
+## ADR-082 — Cleanup rehearsal has one action-specific identity and preserves uncertainty instead of retrying
+
+**Decision:** OPS-110 re-derives every dry-run plan from the complete OPS-100 primary evidence and freezes twelve ordered checks and gates. Body deletion, digest-tombstone compaction, source reconciliation, and quarantine have separate action and evidence requirements. A repository-created fake inventory can produce only a bounded review candidate. HMAC plus an independent rollback checkpoint authenticates one stable operation and idempotency key. Exact replay is inert, duplicate start conflicts, restart after a claim but before a marker is definite pre-marker failure, and restart after a marker without a receipt is terminal ambiguity. Synthetic success requires independent postcondition, audit, and action-specific tombstone/quarantine/source evidence. The executor remains disabled before any client or effect.
+
+**Why:** A dry run is useful only if it exercises the same identity, evidence order, terminal proof, and crash rules a later real cleanup must preserve. Treating already-absent data, an existing tombstone, or restart uncertainty as success would allow duplicate or unverifiable destruction. Separate evidence per action prevents a quarantine record or source receipt from masquerading as deletion proof.
+
+**Alternatives rejected:** Generic cleanup action; trust the OPS-100 proposal without re-deriving it; caller-injected inventory callback; inventory body or locator reads; existing absence treated as deletion proof; shared idempotency across actions; start the same plan twice; retry after claim, marker, restart, or unknown result; omit a tombstone for deletion or compaction; reuse quarantine or source evidence as a tombstone; ordinary digest without authenticated state; authenticated state without an independent high-water checkpoint; safe projection without authentication; dormant storage client or native executor.
+
+**Trade-off:** The accepted CLI and lifecycle are synthetic and cannot clean anything. Conservative reconciliation may leave work unresolved when terminal-looking evidence already exists. Production use requires additional durable custody, real adapters, owner authority, and independent receipts.
+
+**Reevaluate:** CR10A-OPS-120/130 may consume these contracts only for separately owner-authorized native rehearsals and final disposition. Any native adapter must remain outside the pure module, preserve the four action lanes and twelve gates, and cannot retry or infer success after ambiguity.
+
+## ADR-083 — Public packaging is default-private and release evidence cannot certify itself
+
+**Decision:** CR10B-PUB-000 admits only eight explicit public material classes under eight exact logical roots; every unclassified or private class is denied. Canonical manifests bind ordered regular-file metadata, exact compatibility policy, source/lock/SBOM/license/NOTICE/provenance/scan/reproducibility digests, and explicit absence declarations without reading content bytes. Compatibility accepts only exact contract identifiers and the supported release line and rejects wildcards, unknown versions, prereleases, substitutions, and downgrades. A signature digest is only an unverified claim. A separately bound independent external verification report remains evidence rather than certification. Eleven ordered, freshness-bounded gates may create only a blocked, synthetic-only, or independent-review candidate. Every candidate is `not_certified`, requires later independent review and a fresh owner decision, and grants no build, signing, installation, upload, or publication authority. The current publisher contains no effect client and always stops before provider contact.
+
+**Why:** Copying files into a public-looking directory, hashing them, or attaching a signature-shaped record does not prove that private values were excluded, dependencies are licensed, provenance is complete, a verifier was independent, or a release is safe. Default-private classification prevents path placement from becoming disclosure authority. Separating content digests, signature claims, external verification reports, certification, and owner publication authority prevents a self-produced green record from promoting itself.
+
+**Alternatives rejected:** Allowlist only by file path or extension; public-by-default repository traversal; symlinks or executable entries; semver ranges, wildcard contracts, or automatic downgrade; signature digest treated as cryptographic verification; producer self-verification; synthetic scan or install evidence treated as release-ready; one combined signing/certification flag; certification implied by all-green metadata; candidate or independent review treated as owner publication approval; dormant registry, signer, filesystem, process, credential, or network clients in the contract.
+
+**Trade-off:** The accepted boundary cannot build a package or prove that any current file is public-safe. Later package builders must emit exact logical metadata and obtain independent evidence, and conservative version policy requires a contract revision when support lines expand. Real signing, clean-room installation, disclosure resources, and publication remain later owner-controlled work.
+
+**Reevaluate:** CR10B implementation may populate only the frozen public roots and must preserve observation-only SDK authority, synthetic examples, canonical manifests, and default-private exclusions. CR10C and CR10Q may add mechanical and independent evidence but cannot turn a digest into verification, let a candidate certify itself, or publish without a fresh protected owner decision and separately qualified effect boundary.
+
+## ADR-084 — Local public candidates expose observation data only and reject added callable surface
+
+**Decision:** PUB-010 through PUB-040 create four source-only package candidates at the exact roots frozen by PUB-000. The public core exposes bounded observation schemas, canonical digests, immutable data, and sensitive-value rejection. The adapter SDK has only compatibility evaluation and observation normalization; package code rejects an adapter carrying any additional own method. The conformance kit consumes supplied in-memory fixtures only. Hermes-shaped, Codex-shaped, and generic adapters transform fabricated frames only. Every manifest remains private and source-only, has one export, and declares no build, binary, publish, registry, provider, process, filesystem, network, environment, access, approval, operation, scheduling, lease, dispatch, or effect surface.
+
+**Why:** A public package boundary must be useful for integrations without becoming a route into an installed harness, private application runtime, or consequential action. Narrow contracts and package-level scans make that separation testable before later clean-room and release work.
+
+**Alternatives rejected:** Re-export the private harness SDK; expose start, cancel, resume, approval, access, or generic command callbacks; identify a local executable or installed harness; make reference adapters inspect real frames; accept undeclared adapter methods; ship package build or publish scripts; treat local source candidates as release artifacts.
+
+**Trade-off:** These candidates are intentionally narrower than the private Control Room runtime and cannot prove released-package behavior. They are not a clean-room installation, distributable archive, license disposition, SBOM, signature, or publication claim.
+
+**Reevaluate:** PUB-050 through PUB-080 may add synthetic deployment examples, guides, reproducible local tooling, and a clean-room contract only if no tool contacts a registry, reads protected values, executes an installed harness, or promotes the candidates from private local source to a release.
+
+## ADR-085 — Reproducibility planning and synthetic reproduction cannot claim a clean-room installation
+
+**Decision:** PUB-050 through PUB-080 add a fifth fabricated-only workspace candidate, five tested public guides, two public schemas, declarative release metadata, an exact nine-step release plan, two synthetic reproduction observations, and a disabled materializer. The plan binds package topology and evidence order while denying archive creation, package installation, registry/network/native-harness contact, signing, upload, publication, and release authority. A synthetic clean-room assessment requires different runner identities and identical output digests, but can produce only `synthetic_candidate_only`. It always records that no actual clean-room installation and no release artifact were observed and that independent external evidence is required.
+
+**Why:** Deterministic planning, public instructions, and repeatable fabricated evidence are useful preparation, but running twice in one prepared repository is not an independent clean-room installation. Encoding that distinction prevents local green tests from silently satisfying the PUB-000 release gate.
+
+**Alternatives rejected:** Create an archive in this phase; install local packages and call it clean-room; contact a registry in offline mode; treat two correlated executions as independent; accept mismatched outputs; infer release authority from a reproducible digest; place a filesystem, process, registry, network, signer, uploader, or provider client behind a disabled flag.
+
+**Trade-off:** The current rehearsal proves deterministic contract behavior only. It does not prove released package contents, dependency availability, license acceptability, a complete SBOM, public-data safety, installation instructions, or independent reproduction.
+
+**Reevaluate:** CR10C may mechanically inventory and scan the frozen candidate roots. CR10Q may accept real clean-room and security evidence only from an independently controlled environment and exact candidate. Neither may convert synthetic observations into certification or publication authority.
+
+## ADR-086 — Mechanical public-tree evidence is bounded, digest-only, and cannot make a legal or release decision
+
+**Decision:** CR10C-MECH-010 through MECH-040 inspect only the eight already-classified public roots. The inspector rejects symlinks and special entries, has no caller-controlled search path, returns ordered metadata and digests rather than file bodies, records five exact candidate manifests and their direct dependencies, records LICENSE and NOTICE digests without a legal conclusion, normalizes the two public schemas, two fabricated fixtures, and local public Markdown links, and runs a bounded private-data scanner. A finding carries only public candidate path, detector kind, and digest and blocks the result. A clean result can become only `mechanical_candidate_only`; it never declares public-tree safety, license acceptability, certification, or release authority.
+
+**Why:** A broad repository scan can leak the very private values it is meant to detect, while an unconstrained scanner can be pointed at host state or silently wander outside the release input. License text and a direct-dependency list are useful evidence but are not legal advice or complete supply-chain analysis. Keeping the inputs fixed and outputs digest-only permits repeatable checking without conflating mechanical observation with an independent reviewer or release owner.
+
+**Alternatives rejected:** Scan the whole checkout or arbitrary paths; include matching source text in reports; permit symlinks; let a clean regular expression scan certify public safety; infer license acceptability from a LICENSE file; treat a package manifest as a complete SBOM; write a release artifact; upload a report; run a package manager, archive builder, registry request, signer, provider, or native harness; downgrade a sensitive finding into a warning.
+
+**Trade-off:** The scanner intentionally has a finite detector vocabulary and no transitive-dependency resolver. It can report that the frozen source candidates meet the current mechanical criteria, not that the source is legally publishable, exhaustive, independently safe, or installable. Findings may require confidential owner handling outside the evidence record.
+
+**Reevaluate:** CR10C-MECH-050 may make a conservative Codex-owned evidence disposition. CR10Q must separately perform threat/privacy/recovery review and independently controlled clean-room evidence. Neither may weaken the fixed roots, output redaction, blocked-finding behavior, or disabled effect boundary.
+
+## ADR-087 — Public-tree disposition preserves legal uncertainty and blocks release before independent review
+
+**Decision:** CR10C-MECH-050 converts the fixed mechanical audit and narrow prepared-workspace dependency observations into one exact 17-gate disposition. Six mechanically established gates are `passed_local`; the missing complete project license text and missing package-manifest license declarations are `failed`; and nine authority, attribution, independent-evidence, final-artifact, signature, clean-room, security-review, and owner-decision gates are `not_observed`. Every failed or unobserved gate is a blocker. The only accepted result is `blocked_before_independent_review`, with unresolved owner licensing authority and no approval to make the candidate tree public.
+
+**Why:** An SPDX identifier file is not the complete license text, local dependency metadata is not independent provenance, and a clean bounded scan is not an independent privacy or security review. Recording those distinctions as exact gate states prevents a mechanically green candidate from silently becoming a legal conclusion, certification, or release authorization.
+
+**Alternatives rejected:** Insert a complete project license or manifest declaration without confirmed owner authority; infer a license grant from repository contents; treat the local Zod MIT files as independent provenance; mark unobserved evidence as failed or passed interchangeably; let a public projection expose paths, digests, or license bodies; create an archive; install packages; contact a registry or provider; sign, upload, publish, or change repository visibility; allow the candidate or reviewer to grant owner release authority.
+
+**Trade-off:** The disposition is useful because it identifies exact blockers, but it deliberately leaves the candidate unreleasable. Resolving the two license failures requires owner authority and may require legal review. CR10Q must still perform independent threat, privacy, recovery, artifact, and clean-room work against the exact candidate.
+
+**Reevaluate:** CR10Q may change a gate only with evidence bound to the exact candidate and reviewer identity. It may not grant a license, infer owner authority, or approve publication. Complete license text, manifest metadata, signing resources, repository visibility, and the first public release remain protected owner decisions.
+
+## ADR-088 — Public conformance validates ordinary data but does not sandbox adapter code
+
+**Decision:** Every public digest, redaction, freezing, adapter, fixture, compatibility, normalization, and conformance-case data boundary first copies bounded ordinary data without executing Proxy traps or accessors. Proxies, accessors, symbols, sparse arrays, custom prototypes, cycles, non-finite numbers, excessive depth/nodes/keys/string size, hidden methods, and mutable shape substitution fail closed. Adapter method references are captured from one exact ordinary object. The conformance runner nevertheless executes those caller-supplied functions in the caller's JavaScript process and must always state that it is a validator, not a sandbox.
+
+**Why:** Structural method names can restrict the public API shape but cannot prove that arbitrary JavaScript code is harmless. At the same time, accepting reflective or accessor-backed data would let hostile values execute before the validator made a decision. Separating exact data collection from code-isolation claims gives downstream users a truthful boundary.
+
+**Alternatives rejected:** Spread or clone untrusted objects before Proxy/accessor rejection; let Zod inspect arbitrary host objects directly; freeze caller objects in place; accept inherited, hidden, symbol, sparse, or custom-prototype shapes; infer effect-free behavior from an adapter's method names; call a conformance pass a sandbox verdict; add a process/network isolation client to the public candidate.
+
+**Trade-off:** The public validator is stricter and rejects some JavaScript objects that could serialize successfully. Trusted adapter code still runs with its host process authority. Untrusted third-party adapter execution requires a separately designed isolated runner with explicit capability, resource, credential, egress, cleanup, and review gates.
+
+**Reevaluate:** CR10Q-SEC-010 must independently reproduce the hostile boundary cases and verify the corrected documentation. Any future third-party adapter runner reopens architecture and independent security review; the current public conformance kit cannot be reused as its isolation boundary.
+
+## ADR-089 — Public ordinary-data records exclude prototype-mutating names and bound property names
+
+**Decision:** Public ordinary-data snapshots create null-prototype record copies, define copied properties explicitly, reject `__proto__`, `constructor`, and `prototype`, and reject empty or longer-than-256-character property names before visiting their values. The security gate must test both the exact accepted name-length ceiling and the first rejected length, prove reserved-key rejection occurs before nested behavior or adapter execution, and bind human scope claims to the machine-counted inventory. A negative independent report remains immutable; remediation is a new producer claim that requires a different independent re-reviewer.
+
+**Why:** A syntactically ordinary own data property can acquire special behavior when assigned to a normal object. If it becomes inherited state, own-key redaction and compatibility checks can disagree about what evidence was actually supplied. Unbounded property names also defeat the stated resource ceiling even when values and key counts are bounded. Machine-readable identity does not excuse a contradictory human scope count.
+
+**Alternatives rejected:** Copy untrusted records with `{}` assignment; permit reserved names because JSON can represent them; scan inherited state after copying; bound values but not property names; silently edit or replace the independent report; treat producer regressions as independent acceptance; re-run only the three findings while skipping the original 24-case matrix; let the architect accept its own remediation.
+
+**Trade-off:** The public boundary rejects a small class of JSON-shaped objects and long property names that could otherwise serialize. This is intentional for a narrow public contract. Existing trustworthy callers must rename reserved fields or shorten names before admission.
+
+**Reevaluate:** CR10Q-SEC-025 must be performed by a reviewer different from the original reviewer, architect, and candidate producer. It must bind the unchanged negative report, remediated candidate identity, all three findings, and all 24 original cases. Acceptance still cannot grant a license, certify a final artifact, satisfy real clean-room or signature evidence, or authorize publication.
+
+## ADR-090 — Agent conversations are bounded proposal surfaces, never job or authority records
+
+**Decision:** Project Agent Team views compose evidence-backed identity, presence, reviewed packages, schedules, canonical work, and owner attention without becoming a second worker registry or scheduler. `working` requires a current lease or authenticated heartbeat plus exact current work. War Rooms allow two to six members, at most three rounds and ten messages, at most four reciprocal agent-pair messages, and fixed duration, reasoning, and cost ceilings. Only bounded safe summaries enter the current projection. An exact `@agent` mention may create a digest-bound owner-review draft handoff, never a work item, dispatch, approval, lease, provider grant, or execution authority. Full audit remains canonical outside the room projection.
+
+**Why:** Hermes Bot Mode's named profiles, conversations, routines, and group rooms create a useful people-first experience, but fire-and-forget messaging, recent-activity presence, shared provider access, desktop-local history, and conversational loops are too weak for durable orchestration. Separating team visibility from job and authority truth lets Control Room gain the fluid experience without making chat behavior a security or completion boundary.
+
+**Alternatives rejected:** Treat a bot profile as a worker permit; mark activity as working without lease/heartbeat evidence; let a routine execute because it is scheduled; use room history as the canonical job or evidence log; dispatch directly from a mention; permit unbounded bot-to-bot recursion; store raw prompts, memory, native profiles, or provider sessions in the projection; share provider access across agent profiles; call unqualified Hermes Bot Mode RPCs; configure or deploy the reserved domain in the local UI phase.
+
+**Trade-off:** The first Team view is deliberately read-only and summary-only. Draft handoffs still require ordinary owner review and materialization, and room ceilings may stop a useful conversation early. Durable rooms, unread state, retention, legal hold, and native Bot Mode reads require additional implementation and review.
+
+**Reevaluate:** CR11A-TEAM-020 may add authenticated local persistence only after exact minimization, integrity, retention, legal-hold, unread, cleanup, and restart semantics are frozen. CR11A-TEAM-040/050 may add a read-only pinned Hermes Bot Mode seam only after separate conformance and owner authorization. Neither may weaken canonical job/approval/evidence authority or turn `agentcontrolroom.xyz` inventory into deployment permission.
+
+## ADR-091 — Durable Agent Team state stores safe events, not conversations or authority
+
+**Decision:** TEAM-020 uses one private SQLite ledger per exact tenant/workspace/project. Four append-only record kinds cover bounded safe room events, owner read receipts, owner-review draft handoffs, and revisioned preservation/legal-hold hooks. Every row and the complete ordered state are HMAC-authenticated, and an independent compare-and-swap checkpoint must match before use or append. Exact replay is inert; changed replay, row or schema mutation, sequence drift, foreign scope, changed key, and complete-database rollback fail closed. Read receipts are monotonic but do not acknowledge action. Retention is `blocked_unconfigured`, legal holds preserve, and no cleanup or deletion executor exists. The UI consumes only a strict digest-bound unread/needs-you/saved-draft projection.
+
+**Why:** A useful room must survive restart and show the owner what changed, but storing full conversations or treating persistence as orchestration would create a second unreviewed audit, memory, and authority plane. Row authentication alone cannot detect deletion or replacement of the complete database; whole-state authentication plus external high-water comparison is required. An explicit preservation default prevents missing policy from silently becoming deletion authority.
+
+**Alternatives rejected:** Store raw prompts, full messages, memory, native profiles, provider sessions, or usable locators; use browser storage as durable truth; share one database across projects; accept mutable rows or non-monotonic read cursors; let a read receipt clear action requirements; save a handoff without its exact source mention; use an ordinary digest without HMAC; keep rollback state inside the protected database; invent a production retention duration; add cleanup, job materialization, dispatch, provider, Hermes, network, D1, R2, or deployment clients.
+
+**Trade-off:** The ledger is local and summary-only. It cannot restore full conversation content, and preserving records until policy is supplied may retain more metadata than a later owner policy chooses. The repository checkpoint is test-only, so production rollback resistance, multi-user authentication, hosted persistence, backup, and cleanup remain unimplemented.
+
+**Reevaluate:** TEAM-030 may materialize only a freshly owner-reviewed exact draft through existing canonical proposed-work and Action Inbox boundaries and must remain no-dispatch. Hosted persistence or cleanup requires a separately reviewed authenticated service, protected key/checkpoint custody, owner policy, backup/recovery, monitoring, and effect semantics. TEAM-040/050 remain separate pinned read-only Hermes qualification gates.
+
+## ADR-092 — Agent Team handoffs require one authenticated exact review and atomic proposed-work materialization
+
+**Decision:** TEAM-030 records one append-only authenticated owner decision for one exact saved handoff. Accepted, rejected, and withdrawn are distinct durable outcomes. Exact replay is inert; a second or changed decision, stale proposal, different source lineage, or foreign scope fails closed. Only `accepted` may enter one transaction that creates a draft request, proposed workflow, proposed zero-effect job, and resolved Action Inbox item. Any conflict rolls back all new canonical records. The materialized job is fixed to the Agent Team handoff specification, the sole `prepare.agent-handoff` operation, no credentials, no filesystem roots, no network, no effects, zero concurrent effects, and zero cost authority. Review is not approval, and materialization is not dispatch.
+
+**Why:** A fluid team surface needs a short path from discussion to real tracked work, but letting chat state or a saved draft create runnable work would establish a second scheduler and authority plane. Binding the owner decision to the exact proposal and committing attention plus canonical work together prevents stale approval, split-brain UI state, and partial materialization after a crash or conflict.
+
+**Alternatives rejected:** Dispatch directly from a mention or review; treat a read receipt as consent; accept mutable or repeated owner decisions; collapse rejection and withdrawal into deletion; materialize request, workflow, job, and attention in separate transactions; create a ready job, attempt, lease, approval, effect intent, or outbox event; permit credentials, filesystem, network, cost, or effects; let a synthetic fixture stand in for a real owner decision; contact Hermes, a provider, hosted storage, or deployment infrastructure.
+
+**Trade-off:** The local interface can display the exact review choices but cannot yet record a real owner action through protected hosted ingress. Accepted synthetic evidence proves the transaction and restart rules, not that the owner approved a real handoff or that any agent can run it. Proposed work still needs ordinary later scheduling and execution authority.
+
+**Reevaluate:** TEAM-040 may consume only pinned injected Hermes Bot Mode observations through a read-only normalization seam. TEAM-050 requires separate owner authorization for one native read qualification. Neither may reuse review evidence as provider, execution, dispatch, or hosted authority.
+
+## ADR-093 — Hermes Bot Mode enters Control Room through an injected-only exact-pin read seam
+
+**Decision:** TEAM-040 accepts only an exact ordinary-data Hermes Bot Mode observation injected into adapter `adapter.hermes.bot-mode.read.v1`. Compatibility is frozen to Hermes package `0.20.6`, revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`, ordered profile/room/routine/safe-summary reads, and an empty write set. Normalized identity binds tenant, workspace, project, profile-key digest, and device-key digest. Collections retain distinct observed, absent, and unknown truth. `working` requires a current canonical Control Room lease or authenticated heartbeat with current work; Bot Mode activity alone is only availability. Existing War Room ceilings remain exact. The adapter and conformance surface contain no native reader, runtime connection, provider path, schedule writer, work materializer, approval, dispatch, or executor.
+
+**Why:** Hermes Bot Mode provides the people-first profiles, rooms, and routines needed for a fluid project view, but its local activity and conversation state cannot become Control Room identity, scheduling, audit, completion, or authority truth. An injected-only seam lets the repository prove schema, identity, minimization, resource, and compatibility behavior before any installed runtime is contacted. Exact negative capability and collection truth prevent missing evidence from being upgraded into availability or authority.
+
+**Alternatives rejected:** Discover or read the installed Hermes profile during repository implementation; accept a compatible version range or research repository as runtime authority; use Bot Mode activity as working evidence; merge identities across devices; infer profiles from rooms or messages; collapse absent and unknown; retain full messages, prompts, memory, native paths, provider sessions, or shared provider access; expose connect, send, schedule, approve, dispatch, execute, or generic extension methods; let a conformance pass qualify a native runtime.
+
+**Trade-off:** The adapter is useful for deterministic development and UI-compatible projection but proves nothing about the installed Hermes method set, real profile/device identity, native sanitization boundary, or runtime behavior. Until TEAM-050, Control Room cannot truthfully claim a native Bot Mode read integration.
+
+**Reevaluate:** TEAM-050 may record a disabled disposition or, with separate exact owner authorization, execute one frozen one-profile/one-room sanitized read-only qualification. It must preserve the exact pin and empty write set, perform no provider call or full-content read, prove the native method and identity boundary, sanitize before persistence, and stop on drift. Any broader read, write, schedule, message, provider, deployment, or recurring integration requires a later contract and owner gate.
+
+## ADR-094 — Native Hermes reads stop before contact when sanitation begins after receipt
+
+**Decision:** TEAM-050 accepts `blocked_before_attempt` for Hermes package `0.20.6` at revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`. Source inspection is a mandatory readiness gate and does not consume the one authorized runtime attempt. A candidate is ineligible unless the native method itself selects one profile and at most one room, returns metadata only before crossing the boundary, proves stable profile/device identity, and has no provider or write path. The official `profiles.list` result is over-broad and contains room-message text, `profiles.describe` reads SOUL and configuration, and direct `profile.yaml` parsing encounters room-message text before filtering. Therefore no native call or profile-file read occurred and native Bot Mode reads remain disabled.
+
+**Why:** Redacting after an over-broad response protects persistence but does not prevent Control Room from reading data outside the owner's exact authorization. A narrow authorization cannot be widened by hiding the excess afterward. Readiness must be proven from the exact pinned method before private runtime data crosses the boundary.
+
+**Alternatives rejected:** Call `profiles.list` and discard other profiles; call `profiles.describe` and retain only a display name; parse `profile.yaml` and ignore log text after YAML decoding; treat bounded message text as metadata; use a raw native path or model/provider as identity; claim the unused attempt can be retried later; convert source inspection into native qualification.
+
+**Trade-off:** Control Room cannot yet populate its Agent Team view from this Mac's live Hermes Bot Mode state. The accepted TEAM-040 injected-only adapter remains useful for UI and repository development, but native truth stays absent until Hermes exposes a filtered metadata-only read method.
+
+**Reevaluate:** TEAM-060 may freeze the exact upstream-safe method shape and a disabled Control Room bridge using fixtures only. Any Hermes patch, installation, native contact, profile or room read, provider call, or retry needs a later exact pin and new owner authorization.
+
+## ADR-095 — A future Hermes bridge starts with signed producer minimization and an empty runtime pin set
+
+**Decision:** TEAM-060 fixes the future Hermes method to `profiles.control_room_projection`. Requests contain one profile digest selector, one optional room digest selector, and one nonce digest. Responses contain exactly one profile and zero or one room as bounded metadata, explicit omission claims, and negative provider/write truth, signed for at most sixty seconds by a separately pinned Ed25519 device key. Control Room validates injected signed fixtures into digest-bound safe results but retains no raw key or signature. The bridge is disabled, has no native reader or effect method, and its accepted Hermes revision list is empty.
+
+**Why:** TEAM-050 demonstrated that redacting a broad native response after receipt is not compatible with a narrow authorization. Producer-side allowlisting removes message and configuration content before it crosses the native boundary. Signed profile/device identity, nonce binding, and a separate exact runtime pin prevent metadata shape alone from masquerading as authenticated current native truth.
+
+**Alternatives rejected:** Wrap `profiles.list`; parse `profile.yaml` in Control Room; trust bounded message text; accept a version range; infer device identity from a path or hostname; let a result carry its own unpinned key; retain public key or signature in the project projection; activate from fixture conformance; add a generic RPC or native-reader method to the bridge; use unsigned display metadata as identity proof.
+
+**Trade-off:** The contract requires a small Hermes producer change, stable protected device-key custody, a private selector mapping, nonce consumption, and a new native qualification. Until those exist, the bridge remains unable to populate the live Agent Team view.
+
+**Reevaluate:** A later owner-authorized phase may review an exact upstream Hermes commit and native packet. Separately, CR11B-AUTO-000 may continue product progress by defining the continuous real-work ready frontier without depending on native Hermes reads.
+
+## ADR-096 — Continuous queue stocking produces authenticated proposals, never authority
+
+**Decision:** CR11B-AUTO-000 compiles current bounded project goals, dependency and review truth, blockers, canonical work, prior frontier proposals, route observations, cost/risk limits, capacity, and an exact repository policy fixture into authenticated proposal-only frontier evaluations. The fixture and every proposal explicitly state that owner policy is unverified. Hard gates run before deterministic priority, fair-share, and starvation ranking. Exact intent duplicates are suppressed within the source, against every canonical work state, and against authenticated frontier history. Each proposal and complete evaluation is digest- and HMAC-bound. A private fake SQLite ledger authenticates rows and complete state against an external compare-and-swap checkpoint and feeds prior proposal identity into later cycles. The safe view has no approval, ready, claim, lease, dispatch, execution, provider, message, GitHub, or external-effect capability.
+
+**Why:** The owner should not have to keep telling agents what to do next, but an automatic idea generator cannot become an unreviewed scheduler or authority source. Continuous operation also makes cycle-local duplicate checking insufficient: a restarted controller must remember what it already proposed. Separating canonical source revision from frontier-history revision keeps later proposal evidence from making stale project or route truth appear fresh.
+
+**Alternatives rejected:** Let the controller create ready jobs; treat priority or starvation as authority; silently retry failed/cancelled/rejected/expired exact intent; accept missing or stale dependency/route truth; let the caller declare away prior proposals; use a digest without a private authenticator; keep rollback state in the same database; expose source evidence, authentication tags, or objective text in the operator projection; add a timer, provider, bot-message, GitHub, or dispatch client in the contract phase.
+
+**Trade-off:** The phase can continuously produce and preserve useful proposals, but nothing runs yet. Inputs are repository fixtures rather than protected canonical adapters, the rollback checkpoint is test-only, and every proposal still requires a later materialization policy. Conservative duplicate suppression requires a new intent digest for an explicit retry.
+
+**Reevaluate:** AUTO-010 may add authenticated canonical read adapters, a local cycle service, and portfolio/Project Workspace views while remaining proposal-only. AUTO-020 may define standing owner policy and atomic proposed-work materialization. Automatic ready promotion, bot handoff, and protected activation remain separate AUTO-030/040 security and owner gates.
+
+## ADR-097 — A ready-frontier cycle requires four agreeing authenticated reads and remains manually triggered
+
+**Decision:** CR11B-AUTO-010 composes one frontier source only after separate `projects`, `work`, `attention`, and `capacity` reads authenticate the same tenant, sorted project scope, revision, read group, and observation time. Work candidates do not carry self-declared review or blocker truth; one exact attention overlay is required for every candidate. The cycle service accepts only an explicit manual request with a null schedule identity, calls each lane once, records only through the authenticated AUTO-000 ledger, and derives latest/history views from verified durable evaluations. Portfolio and Project Workspace projections expose bounded titles and gate reasons while omitting objectives, candidate/intent/source-evidence identity, authentication tags, policy identity, access data, and private locators. Every request, result, projection, service, and view denies work creation, approval, ready, claim, lease, dispatch, execution, provider contact, and external effects.
+
+**Why:** Connecting the controller to repository modules creates a new confused-deputy and stale-cut risk. A single broad source could mix project truth from one revision, capacity from another, and caller-inferred review state. Separate authenticated lanes with one exact cut make disagreement visible and make source failure leave the durable ledger unchanged. Deriving the operator model from the authenticated ledger makes restart/history behavior match decision truth without storing a second mutable queue. Manual-only invocation lets the owner see the integrated product before a standing policy or automatic materialization exists.
+
+**Alternatives rejected:** Trust one caller-composed object without lane authentication; let work candidates declare their own review or blocker status; accept partial or differently scoped reads; treat a fresh capacity read as freshness for stale project truth; store a second unauthenticated UI queue; expose source objectives, evidence, or auth tags; put approve, create-work, ready, dispatch, or run controls in the frontier view; add a timer or recurrence loop; contact Hermes, providers, GitHub, agents, hosted storage, DNS, or deployment infrastructure.
+
+**Trade-off:** The first integrated cycle needs four coordinated reads and cannot run automatically. Non-proposed UI rows use generic labels and safe reasons rather than source titles, and a repository fixture still stands in for protected service ingress. The extra binding and negative capability make the current screen honest but defer the no-relay experience.
+
+**Reevaluate:** AUTO-020 may add a separately authenticated standing owner-policy enrollment contract and atomically materialize an accepted frontier proposal as canonical proposed work plus owner attention. It must preserve exact proposal/source/policy lineage, keep policy activation distinct from proposal review, and stop before ready, scheduling, claim, lease, dispatch, execution, provider contact, agent messages, GitHub creation, recurrence activation, or any external effect. AUTO-030 requires an independent security review before any protected automatic promotion or handoff.
+
+## ADR-098 — Standing policy may materialize only authenticated non-runnable proposed work
+
+**Decision:** CR11B-AUTO-020 records an append-only HMAC-authenticated standing-policy lifecycle for repository simulation only. Each revision binds tenant/workspace scope, its exact predecessor, digest-only owner evidence, effective/expiry time, maximum proposal age, and exact project/route/platform/capability/risk/cost ceilings. Suspension and revocation preserve the prior ceiling; revocation is terminal. The private ledger authenticates every row and complete state against an external rollback checkpoint. Materialization holds the current-policy revision guard through one canonical transaction and accepts only an authenticated current evaluation and exact unexpired proposal. It creates one draft request, proposed workflow, proposed zero-effect job, and resolved Action Inbox item or creates none. Stable canonical identifiers derive from the proposal, while definition and attention evidence bind the evaluation, source, frontier policy, and standing policy. The receipt is digest- and HMAC-bound. No policy or materialization grants approval, ready, scheduling, claim, lease, dispatch, provider, agent-message, GitHub, or effect authority.
+
+**Why:** A standing policy removes repetitive per-proposal owner relay only if its scope cannot drift and revocation cannot race the canonical write. Separating stable proposal identity from the full authorization lineage prevents a revised policy from duplicating the same work while still making changed evidence conflict visibly. Holding the policy guard through the canonical commit gives suspension and materialization one deterministic order. Keeping the result proposed and structurally non-runnable preserves the ordinary readiness and execution authority planes.
+
+**Alternatives rejected:** Treat the unverified AUTO-000 policy fixture as owner authority; accept a caller-supplied proposal without ledger authentication; let capabilities or routes use prefixes or wildcards; update policy rows in place; reactivate a revoked policy; change ceilings during suspension or revocation; check policy and release the lock before committing canonical work; create request, workflow, job, and attention in separate transactions; derive new canonical identifiers from each policy revision; accept an unsigned receipt; create a ready job, schedule, attempt, lease, approval, effect intent, outbox message, provider call, agent message, GitHub item, or production action.
+
+**Trade-off:** The phase can prove no-relay proposed-work creation in a repository simulation, but it cannot enroll a real owner policy or run the resulting job. The SQLite key and rollback checkpoint are test fixtures, the canonical transaction is local PGlite/PostgreSQL-compatible evidence, and policy plus canonical storage do not yet have protected hosted custody. A conservative stable proposal identity means changed policy lineage conflicts rather than silently rematerializing work.
+
+**Reevaluate:** AUTO-030 may add protected automatic ready promotion and scheduler/jobber handoff only after an independent security review of AUTO-020 and exact policy, duplicate, revocation, readiness, reservation, and rollback boundaries. AUTO-040 remains the owner-gated end-to-end no-relay simulation and protected activation packet. Neither phase may infer production policy enrollment from repository fixture evidence.
+
+## ADR-099 — Ready promotion is a separately reviewed atomic internal handoff, not dispatch
+
+**Decision:** CR11B-AUTO-030 adds a separate append-only HMAC-authenticated ready-policy lifecycle rather than widening the AUTO-020 standing policy that explicitly denies readiness. Every ready-policy revision binds its exact parent standing-policy revision, a separate review digest, repository-simulation scope, global and project active-ready ceilings, exact route/platform/capability/risk/cost limits, and bounded resource reservation parameters. Promotion re-authenticates the frontier evaluation and materialization receipt, holds both current-policy guards, selects only the exact candidate through the deterministic scheduler, and commits the canonical proposed-to-ready transition, database reservation, and canonical internal-handoff outbox record in one transaction. The handoff remains pending and grants no approval, schedule, claim, lease, dispatch, execution, provider, agent-message, GitHub, or effect authority. Exact replay is inert; conflict or capacity failure rolls the transaction back.
+
+**Why:** Readiness creates shared-capacity and downstream-delivery obligations that are absent from proposed work. Treating it as a standing-policy flag would erase the separate review gate and allow policy drift between checks. Treating an outbox record as dispatch would also confuse durable intent with acknowledged delivery or execution authority. Nested policy guards plus one canonical transaction give revocation, concurrency, capacity, and rollback a deterministic boundary while leaving actual delivery disabled.
+
+**Alternatives rejected:** Change the AUTO-020 policy in place to permit ready; accept caller-declared current policy or scheduler selection; check policy before releasing its lock; reserve capacity in memory; transition the job and write the handoff in separate transactions; create a schedule, attempt, lease, claim, GitHub issue, agent message, provider request, or effect intent; let a handoff consumer run in this phase; count repository fixture review as production independent review; accept partial or ambiguous replay as success.
+
+**Trade-off:** The repository can now prove an all-or-nothing ready/internal-handoff boundary, but no worker receives or executes the work. Policy keys and rollback checkpoints are fixtures, the canonical database remains local evidence, and there is no protected outbox consumer or cross-service delivery reconciliation. AUTO-030 remains unaccepted until a different independent agent reviews the exact candidate.
+
+**Reevaluate:** After the independent review passes, AUTO-040 may build an owner-gated end-to-end no-relay simulation with injected delivery and explicit protected-activation evidence. Real policy enrollment, agent messaging, GitHub work creation, dispatch, execution, provider contact, credentials, recurrence activation, hosting, and production effects remain separate owner gates.
+
+## ADR-100 — Independent review moves the ready handoff out of generic delivery and makes policy guards capabilities
+
+**Decision:** The rejected AUTO-030 candidate is not accepted. Its remediation supersedes ADR-099's shared-outbox transport and caller-convention persistence boundary. A frontier job can enter ready only through a canonical operation holding simultaneous unforgeable standing- and ready-policy guard capabilities. Generic transition and generic claim reject frontier work orders. A required trusted clock limits promotion-time skew to five seconds and supplies current policy/materialization freshness. Tenant-scoped canonical idempotency binds one request ID to its exact request digest, receipt, job, reservation, and handoff. The handoff is stored in dedicated `control_ready_frontier_handoffs` state, outside `control_outbox`; no generic delivery or consumer can claim it. Replay locks the tenant first and requires the exact ready job, active reservation, resource-head capacity, transition, completed request, and pending internal handoff.
+
+**Why:** Independent reviewers reproduced five security failures in the original candidate: generic ready bypass, stale direct persistence after revocation, conflicting request reuse, stale replay truth, and invalid observation time. A second transaction audit also proved that caller history could revive expired truth and generic delivery could claim the purportedly internal packet. Fixing isolated conditions while retaining alternate mutation and delivery paths would leave the core invariant false. Capability-bound policy guards and a dedicated one-state handoff make the negative-authority boundary structural rather than conventional.
+
+**Alternatives rejected:** Keep the shared outbox and ask consumers to ignore the topic; trust an exported persistence helper to be called only from the service; treat a tenant lock as authorization; accept caller promotion time as current time; let request IDs be descriptive rather than durable idempotency keys; return a historical active/pending receipt after reservation expiry; reject simultaneous exact requests instead of converging; let reentrant same-store policy calls roll back an outer transaction; interpret the negative review as a documentation gap.
+
+**Trade-off:** Migration `0027` adds a dedicated table that has no consumer and therefore cannot yet deliver work. The trusted clock and live guard capabilities are process-local repository evidence, and full multi-session PostgreSQL scheduling remains unproven. This is intentionally conservative: ambiguous or advanced state rejects replay, and frontier-ready jobs cannot be claimed until a separately reviewed consumer and claim authorization exist.
+
+**Reevaluate:** A different independent agent must re-run every original and supplemental attack against the exact remediated commit. Only an accepted re-review may close AUTO-030. AUTO-040 may then add an injected no-relay simulation, but a real handoff consumer, protected production policy/clock custody, agent/GitHub delivery, scheduling, claims, leases, provider contact, deployment, and effects remain separate gates.
+
+## ADR-101 — Ready promotion requires one exact-operation authorization through database completion
+
+**Decision:** The rejected first remediation is not accepted. Its second remediation supersedes ADR-100's identity-only policy capabilities at the canonical port. While both authenticated current-policy operations are live, only the promotion service may mint one opaque authorization bound to the complete parsed promotion receipt, both full policy snapshots, exact materialization time, and trusted clock. Canonical acquisition registers an in-flight use synchronously, derives every ceiling, resource, request, receipt, transition, reservation, and handoff fact from the hidden binding, and releases the use only after the actual database promise settles. Authorization retirement awaits all registered uses, so an unawaited call cannot let policy revocation overtake an outstanding transaction. Trusted time is sampled after policy queues and repeatedly after the tenant lock at commit-sensitive boundaries; it must be canonical, non-decreasing, within promotion skew, inside both policy intervals, inside materialization age, and before job-authority, reservation, and handoff expiry. Receipt-only operator projection rejects observations outside the active handoff interval.
+
+**Why:** A different independent re-review proved that a legitimate live guard bound only to policy ID/revision/digest could carry caller-inflated ready/resource values, that a fire-and-forget public canonical promise could commit after both guards retired and ready policy was revoked, and that pre-queue clock sampling could authorize an already-expired write. It also proved that an authenticated historical receipt alone was being presented as current pending truth. The protected invariant therefore needs operation ownership, not just identity liveness, and write-boundary time, not a pre-queue observation.
+
+**Alternatives rejected:** Add more caller-field comparisons without a hidden authenticated source; expose an authorization mint helper; rely on TypeScript `private` for runtime security; recheck a WeakMap only once before the first `await`; require callers to await by convention; let a callback return while a database use is unregistered; sample the clock before queued guards; use caller `occurredAt` to expire capacity; label every authenticated historical receipt pending; rewrite either immutable negative report to satisfy whitespace tooling.
+
+**Trade-off:** The authorization and trusted clock remain process-local repository evidence, and deliberately abandoned registered work can hold policy progress until its database promise settles. Receipt-only projection is conservative and fails rather than claiming current state after expiry. Multi-process PostgreSQL behavior, production policy/clock custody, internal-handoff consumption, and cross-service ambiguity remain unproved. The two Markdown hard-break lines in the first immutable review are retained and documented instead of being silently normalized.
+
+**Reevaluate:** An agent different from both prior reviewers must attack the exact second-remediation commit, including direct-port field substitution, unawaited promise escape, queue and transaction time advance, stale projection, every original finding, and all negative-authority paths. Only an accepted report may close AUTO-030. AUTO-040 and every real scheduling, delivery, claim, lease, dispatch, provider, agent, GitHub, hosting, or production effect remain separate gates.
+
+## ADR-102 — Canonical ready promotion accepts only an opaque token and receipt projection is historical
+
+**Decision:** The rejected second remediation is not accepted. Its third remediation removes the caller-owned promotion fact object from the canonical port. The port accepts only one privately minted, single-acquire opaque authorization token, synchronously clones its hidden authenticated receipt and complete policy bindings, and derives every database write fact locally. The non-decreasing trusted clock is checked after the ready transition, after the dedicated handoff write, after promotion-request completion at the final callback boundary, and after replay's last evidence read. Receipt-only projection is explicitly historical and always reports zero current ready jobs and zero current pending handoffs. Two independent policy-store/service stacks prove duplicate convergence at the shared local canonical transaction boundary.
+
+**Why:** The second-remediation reviewer found that exact pre-write comparisons did not protect mutable caller values reused after `await`, reproduced a transaction that committed after policy and reservation expiry during `transitionWith`, identified the equivalent replay return-time gap, and demonstrated that a receipt could not reveal early canonical reservation release. The reviewer also showed that a Promise test through one policy store serialized before the canonical database boundary. Removing caller facts is stronger than expanding time-of-check comparisons; final clock samples make crossed expiry abort the atomic transaction; a historical label avoids inventing current truth; separate stores establish the local concurrency claim.
+
+**Alternatives rejected:** Freeze or shallow-copy selected caller fields; add another caller-vs-binding comparison before each write; treat a pre-transition clock sample as a commit-time guarantee; return replay after long evidence reads without a final time sample; infer current pending state from nominal receipt expiry; call same-store queued Promises database concurrency evidence; claim multi-process PostgreSQL behavior from local PGlite evidence; alter any prior negative review.
+
+**Trade-off:** Reconstructing the exact write bundle in the canonical module duplicates some receipt-to-persistence mapping but eliminates a mutable confused-deputy surface. Clock validity is proven through the final transaction callback, not an external database commit timestamp. Receipt-only UI is deliberately less live until an authenticated current-state projection exists. The local separate-store test still does not prove independent process or hosted PostgreSQL behavior.
+
+**Reevaluate:** A new independent reviewer, different from every prior reviewer, must attack the exact third-remediation commit and re-run all `REV`, `RR`, and `SRR` findings. AUTO-040 and all real policy custody, current-state projection ingress, handoff consumption, scheduling, claims, leases, agent/provider/GitHub contact, deployment, and effects remain separate gates.
+
+## ADR-103 — Transaction-owner pre-commit checks and post-transaction ambiguity close the timing claim
+
+**Decision:** The rejected third remediation is not accepted. Its fourth remediation adds a mandatory `transactionWithPreCommitCheck` operation to the canonical database abstraction. Both PostgreSQL and PGlite adapters run the trusted-time predicate after the complete application callback and before returning control to their transaction manager for commit initiation. Canonical ready promotion and replay also resample time after the transaction promise settles and before returning. Expiry through the abort-capable pre-commit boundary rolls the transaction back; expiry detected only after a successful commit produces explicit canonical ambiguity and never a current new/replay success result.
+
+**Why:** The third-remediation reviewer held the real database transaction after the canonical callback's final check, advanced time beyond policy and reservation expiry, and then allowed commit. The same boundary let replay return current success after expiry. Application-callback checks could not cover a later awaited transaction-owner delay. Moving the predicate into the adapter makes it run after that delay while rollback is still available. The post-transaction sample handles the distinct case where time advances only after commit, when rollback is impossible but a current-success claim can still be denied honestly.
+
+**Alternatives rejected:** Continue adding checks inside the canonical callback; claim that callback completion is database commit; treat a post-commit expired result as current; attempt to roll back after the transaction promise has resolved; hide the residual physical database commit timestamp limitation; use a database wrapper that can omit the predicate; weaken the atomic bundle or historical projection; alter any negative report.
+
+**Trade-off:** The process clock still cannot prove the external database's physical commit timestamp. The adapter predicate is the last abort-capable boundary and contains no awaited application seam before commit initiation. A rare expiry after successful commit but before service return is explicit ambiguity backed by durable idempotency lineage, not a success result. Production database-clock custody and reconciliation remain later gates.
+
+**Reevaluate:** A new independent reviewer, different from every prior reviewer, must reproduce both `TRR` probes against the exact fourth-remediation commit and re-run all earlier findings. AUTO-040 and real hosted PostgreSQL, protected clock/policy custody, ambiguity reconciliation, handoff consumption, scheduling, agent/provider/GitHub contact, deployment, and effects remain separate gates.
+
+## ADR-104 — AUTO-030 is accepted only as the exact effect-free snapshot
+
+**Decision:** Exact commit `adf0804a52a13d544192afc90506c3e989254ffd` is accepted for the repository-only ready-promotion and dedicated internal-handoff claim. A fresh reviewer, different from every prior reviewer, independently closed all `REV`, `RR`, `SRR`, and `TRR` attacks and returned `ACCEPTED_EFFECT_FREE_REPOSITORY_SNAPSHOT`. Its unchanged report is bound by SHA-256 `18df9e9611c5f9053962b776b8261304512b98244ba7b627fd99f4821a79fa2`. The four earlier negative reports remain negative immutable evidence. Acceptance covers the token-only hidden binding, policy lifetime through database completion, mandatory transaction-owner pre-commit freshness predicate, post-transaction ambiguity, atomic reservation/ready/handoff/request bundle, exact replay, local independent-store concurrency, historical projection, generic delivery/claim isolation, and zero-control/effect boundary.
+
+**Why:** The fifth review reproduced the formerly failing callback-to-commit seam against the fourth remediation and observed complete rollback, then crossed expiry after successful transaction completion and observed ambiguity instead of new or replay success. It also independently repeated the full hostile matrix and repository gates. This supplies the missing independent evidence without broadening the claim beyond what the repository proves.
+
+**Alternatives rejected:** Discard or rewrite earlier negative reports; call the phase accepted at an earlier rejected commit; infer live PostgreSQL or physical commit-timestamp proof from PGlite and dependency-source evidence; interpret an authenticated historical receipt as current handoff truth; treat acceptance as authority to consume the handoff, create GitHub work, contact an agent/provider, claim, lease, dispatch, execute, or activate production policy.
+
+**Trade-off:** AUTO-030 deliberately ends with a pending dedicated handoff and no consumer. Multi-process hosted PostgreSQL, protected production policy/clock/key/checkpoint custody, current-state ingress, and cross-service ambiguity reconciliation remain unproved. The accepted snapshot is therefore a safe repository bridge, not an operational scheduler.
+
+**Reevaluate:** AUTO-040 may compose the accepted repository modules through an injected fake no-relay consumer and durable reconciliation ledger, and may generate a separately digest-bound protected activation packet. AUTO-040 must remain effect-free, must not activate itself, and needs a fresh independent review. Any real policy enrollment, consumer, GitHub/agent/provider contact, scheduling, claim, lease, dispatch, execution, recurrence, hosting, deployment, or production effect remains separately owner-authorized.
+
+## ADR-105 — No-relay evidence terminates at an exact fixed fake and cannot activate production
+
+**Decision:** CR11B-AUTO-040 composes the accepted proposal, materialization, and ready-promotion modules only through one privately registered exact in-memory fake. The coordinator captures the fake's base method, rejects subclasses and caller-selected ports, writes a durable delivery marker before contact, and permits one attempt. A matched acknowledgement inside the authenticated delivery window is terminal success; thrown, malformed, early, late, or restart-unsettled delivery is terminal ambiguity with no retry. A private HMAC-authenticated SQLite ledger plus external rollback checkpoint preserves exact terminal replay and detects state rollback. The operator projection is sanitized and non-authorizing. A separately keyed activation packet binds the exact simulation run and accepted AUTO-030 evidence, enumerates every missing production gate, and always remains blocked with every effect permission false.
+
+**Why:** The product needs to prove that work can travel through the full internal repository path without the owner relaying messages, while preventing a successful simulation from becoming an accidental production switch. A fixed fake removes arbitrary callback and consumer behavior from the proof. The pre-contact marker and fail-ambiguous restart rule prevent an uncertain delivery from being repeated. A separate activation packet makes remaining production work explicit without conflating evidence with authority.
+
+**Alternatives rejected:** Accept an arbitrary injected delivery callback; dispatch through generic outbox or agent/GitHub clients; retry after a post-marker exception; accept an acknowledgement outside its start/deadline window; infer current state from an unauthenticated receipt; expose authentication or handoff payloads in the UI; let a simulation success flip a production flag; omit hosted database, multi-process, clock, policy, credential, consumer, reconciliation, owner, or independent-review gates from activation evidence.
+
+**Trade-off:** The repository now proves one complete no-owner-relay simulation, but the fixed fake is deliberately not a production consumer. The local ledger and injected clocks/keys/checkpoints do not prove hosted multi-process operation or protected custody. Terminal ambiguity requires later reconciliation rather than automatic retry. The production activation packet is useful planning evidence but grants no capability.
+
+**Reevaluate:** A fresh independent reviewer must attack the exact AUTO-040 candidate before the repository snapshot can be accepted. Any real consumer channel, policy enrollment, hosted PostgreSQL, protected clock/key/checkpoint or credential custody, agent/provider/GitHub contact, scheduling, claim, lease, dispatch, execution, recurrence, hosting, deployment, or external effect requires a later contract, production proof, fresh owner approval, and any required independent review.
+
+## ADR-106 — AUTO-040 composition uses runtime-private capabilities, not caller assertions
+
+**Decision:** The rejected AUTO-040 candidate is not accepted. Its first remediation captures exact registered materialization,
+promotion, store, fake, and fixed repository-clock implementations in ECMAScript-private slots or closures, freezes their
+instances and prototype surfaces, and invokes captured base methods. Ledger mutation requires a module-private capability
+held only by that coordinator. A packet can be built only from the exact frozen acknowledged run object returned by the
+composed operation. Start state, start/deadline chronology, and complete terminal-row capacity are durable facts, and the
+complete packet input is snapshotted once without executing caller behavior.
+
+**Why:** Separate reviewers proved that TypeScript `private readonly` fields were writable runtime properties, a Proxy
+replacement could execute after the marker and produce acknowledged success, activation time could change between reads,
+the public store could authenticate fabricated success, replay ignored changed start state, deadline state could be false,
+and a completion could exceed the configured row ceiling. These were structural failures even though every original test
+passed. Runtime-private bindings and capabilities remove the alternate mutation path; frozen eligible-run identity prevents
+a valid HMAC-shaped clone from becoming composed-path evidence; preflight capacity prevents partial canonical progress.
+
+**Alternatives rejected:** Treat TypeScript privacy or source-string scans as runtime isolation; expose the store mutation
+token; accept any HMAC-valid run as coordinator evidence; re-read hostile input after validation; validate chronology only
+in the coordinator; reserve only marker capacity; rewrite either negative report; interpret the blocked packet as authority.
+
+**Trade-off:** The repository fixed clock is deterministic and cannot represent a production clock. Activation eligibility
+is intentionally process-local and must be re-established by an exact coordinator replay after restart. The local SQLite
+ledger, in-memory checkpoint, and same-process capacity preflight still do not prove hosted multi-process convergence.
+
+**Reevaluate:** Different independent reviewers must reproduce all `AUTO040-SAR` and `AUTO040-DR` findings against the
+exact remediation commit. Any remaining finding keeps AUTO-040 open. Production consumer, reconciliation, database,
+clock/key/checkpoint/policy custody, credential brokerage, owner approval, deployment, and effects remain later gates.
+
+## ADR-107 — AUTO-040 binds the complete collaborator graph, not only the coordinator surface
+
+**Decision:** The first AUTO-040 remediation remains rejected for security acceptance despite its accepted durability
+re-review. Its second remediation makes every collaborator admitted to the repository-only composed path a registered exact
+runtime object whose mutable state is ECMAScript-private and whose instance, prototype, database operations, and accepted
+base operation are captured before use. Materialization and promotion retain only exact evaluation, policy-guard,
+canonical-write, and clock closures. The no-relay promotion binder accepts only a promotion service constructed with the
+registered fixed repository clock. Generic AUTO-030 clocks remain available to the earlier isolated contract but cannot
+enter AUTO-040. The canonical database adapter captures raw query and transaction functions once and freezes its exposed
+client, preventing later caller replacement from entering the captured canonical path.
+
+**Why:** The first security re-review replaced neither the frozen coordinator nor either frozen service. Instead it added
+an own `evaluation` method to the still externally held simulation store after the whole composition existed. Both services
+dynamically dispatched through that alias, executed the hostile callback twice, contacted the fake, and returned an
+acknowledged run. Top-level privacy therefore did not close the dependency graph. Capturing only the exact complete graph,
+including policy stores, canonical persistence, and promotion time, removes the arbitrary-callback seam before any marker
+or canonical mutation can occur.
+
+**Alternatives rejected:** Treat a frozen coordinator as proof that nested objects are immutable; capture only the public
+evaluation method while leaving database, verification, or guard helpers runtime-public; trust a caller-held canonical
+store or clock because its TypeScript type is narrow; repair only the exact reproduced method name; discard the accepted
+durability report or rewrite the negative security report; infer security acceptance from producer tests.
+
+**Trade-off:** Repository store and canonical instances are intentionally frozen, so test instrumentation must occur at the
+captured database or clock boundary rather than by replacing accepted repository methods. This is a stronger local runtime
+boundary but still does not establish hostile-process isolation, protected production clock/key/checkpoint custody, hosted
+multi-process PostgreSQL convergence, or a qualified real consumer.
+
+**Reevaluate:** A fresh reviewer different from all implementation and earlier review agents must reproduce the nested
+alias attack and probe assignment, deletion, `defineProperty`, Proxy, subclass, own-method, and prototype replacement for
+evaluation, both policy stores, canonical persistence, and both clock uses on the exact second-remediation commit. Any
+remaining callback or alternate consumer/effect seam keeps AUTO-040 open. Production activation remains separately gated.
+
+## ADR-108 — AUTO-040 repository provenance is exact; structural persistence ports are not authority
+
+**Decision:** The second AUTO-040 remediation remains rejected. Its third remediation separates generic persistence from
+repository-simulation provenance. Only a client created and privately registered by the module-owned test-only PGlite
+factory can mark a `CanonicalStore` as eligible for the no-relay composition; generic PGlite adapters, inherited wrappers,
+ordinary ducks, and the networked PostgreSQL client remain usable elsewhere but cannot bind the AUTO-040 materialization or
+promotion services. The raw PGlite receiver remains inside the factory closure. Each of the four frontier SQLite stores
+accepts rollback-checkpoint operations only through a binder for the exact registered in-memory reference implementation,
+and that binder invokes captured base methods over ECMAScript-private state. Canonical database-method discovery uses data
+descriptors and rejects accessor or Proxy behavior without invoking it.
+
+**Why:** The second-remediation reviewer changed only caller-owned delegate state beneath already captured database and
+checkpoint method identities. Those methods still consulted their mutable receivers, executed arbitrary callbacks, and
+then allowed an acknowledged repository simulation. The same structural canonical boundary admitted a client backed by
+networked PostgreSQL. Freezing and branding outer objects therefore did not prove the behavior or provenance of their
+nested ports. Private factory state and captured exact checkpoint implementations remove the receiver-alias path rather
+than adding another surface assertion.
+
+**Alternatives rejected:** Treat captured function identity as captured behavior; allow any object satisfying
+`DatabaseClient` or `RollbackCheckpointStoreV1` into AUTO-040; brand every `adaptPglite` result; identify PGlite by a
+caller-visible constructor check while retaining the raw receiver; freeze a caller-owned receiver without controlling its
+closure state; remove generic PostgreSQL support from unrelated contracts; alter the negative review report.
+
+**Trade-off:** AUTO-040 now uses a test-only module-private PGlite factory and the in-memory checkpoint reference, so it
+still does not prove hosted PostgreSQL, durable protected checkpoint custody, multi-process convergence, or production
+runtime isolation. Those are explicit later gates. The exact factory is loaded only when the repository simulation calls
+it and is not bundled into the production application.
+
+**Reevaluate:** A fresh reviewer different from every implementation and prior review agent must attack the exact
+third-remediation commit. It must reproduce `AUTO040-SSRR-001`, test mutable receiver and closure state, ordinary ducks,
+network-capable clients, accessors, Proxies, subclasses, and inherited wrappers across the database and all four checkpoint
+seams, and repeat every earlier `SAR` path. Any callback, network-capable alternate path, false acknowledgement, or other
+consumer/effect seam keeps AUTO-040 open. Production activation remains separately gated.
+
+## ADR-109 — AUTO-040 pins dependency implementation provenance before constructing a trusted receiver
+
+**Decision:** The third AUTO-040 remediation remains rejected. Its fourth remediation treats exact pinned dependency
+implementation identity as part of the repository-simulation authority boundary. Before constructing a PGlite receiver,
+the factory verifies the PGlite 0.3.14 constructor, both prototype levels, every executable method/getter descriptor,
+descriptor flags, and function-source SHA-256 against an in-repository manifest. Drift fails before construction. The
+complete verified executable surface is then installed as non-writable, non-configurable own descriptors on the withheld
+receiver. The exposed frozen client binds only verified operations, and only that client can receive the private
+repository-simulation brand.
+
+**Why:** The third-remediation reviewer changed the shared PGlite `transaction` prototype before calling the private
+factory. Factory ownership alone then branded the changed method, which ran twice during an otherwise acknowledged
+simulation. Withholding and freezing the returned client did not prove the implementation from which its captured
+operation came. A pinned manifest rejects earlier drift, while a sealed private receiver prevents later shared-prototype
+changes from affecting dynamic internal dispatch.
+
+**Alternatives rejected:** Treat a module-private factory as sufficient provenance; validate only `query`, `transaction`,
+and `exec` while leaving their dynamically dispatched helpers mutable; freeze the shared third-party prototypes globally;
+bundle PGlite into the production application solely to capture early references; accept package-lock identity without
+runtime implementation validation; alter the immutable third-remediation report.
+
+**Trade-off:** The manifest deliberately binds this repository-only fixture to exact PGlite 0.3.14 executable source.
+Updating that development dependency requires an explicit manifest review and new evidence. This remains local test
+database evidence; it does not prove hosted PostgreSQL, process isolation, durable protected checkpoint custody, or a
+qualified production consumer.
+
+**Reevaluate:** A fresh reviewer different from the implementation author and all earlier AUTO-040 reviewers must
+reproduce `AUTO040-STRR-001`, vary every accepted PGlite executable descriptor before construction and after receiver
+creation, and repeat all `SAR` and `SSRR` paths plus ordinary completion, replay, ambiguity, rollback, blocked activation,
+and negative-authority checks. Any admitted changed behavior, alternate consumer/effect seam, or false acknowledgement
+keeps AUTO-040 open. Production activation remains separately gated.
+
+## ADR-110 — AUTO-040 closes only on exact independent evidence and remains non-production
+
+**Decision:** Exact fourth-remediation commit `fb549ebbcf5a2cbd9ca3d3cbef6842578e280074` is accepted for the local,
+single-process, effect-free AUTO-040 repository simulation. The accepting independent report is immutable at SHA-256
+`bc1b02f52b68ad9ce836253eb890c4df561513eed158b8a7875de4c7200cde07`. Its acceptance closes `SAR-001`, `SAR-002`,
+`DR-001` through `DR-004`, `SSRR-001`, and `STRR-001` only for that exact snapshot.
+
+**Why:** The fresh reviewer independently varied all 34 executable PGlite descriptors before factory construction and
+together after private receiver creation, repeated alternate database and four-checkpoint matrices, re-ran complete
+completion/replay/ambiguity/rollback/activation evidence, and found no concrete defect or alternate effect path. Producer
+tests alone did not close the phase; the exact different-reviewer evidence did.
+
+**Trade-off:** Source and descriptor pinning intentionally couples the repository fixture to PGlite 0.3.14. The accepted
+simulation still does not prove hosted PostgreSQL, protected clock/key/checkpoint/policy custody, multi-process convergence,
+a real consumer, credential brokerage, cross-service ambiguity reconciliation, or production isolation.
+
+**Reevaluate:** Any PGlite change, dependency-manifest change, accepted receiver-surface change, real consumer, hosted
+database, protected policy enrollment, or activation design requires a new bounded contract and proportionate fresh
+review. Private GitHub transfer may preserve the accepted bytes, but merge still requires owner approval and cannot grant
+production authority.
+
+## ADR-111 — AUTO-050 describes every production proof but cannot mint production readiness
+
+**Decision:** CR11B-AUTO-050 consumes an authenticated AUTO-040 activation packet and converts its nine blockers into
+exact ordered production-proof requirements. Each requirement fixes one evidence class, proof authority, complete binding
+set, freshness rule, and independence rule, but repository output is always `unobserved` with no evidence digest and no
+authority. The plan fixes a separate-service-principal, mutually authenticated consumer, transactional single-owner
+handoff claim, hosted PostgreSQL, node-local protected-reference broker, protected clock, owner-signed policy high-water,
+and destination-evidence ambiguity model without implementing any of them. Assessment is always `blocked_design_only`;
+the only disposition is disabled before consumer construction. A pure reconciliation table makes every post-marker
+unknown non-retriable and performs no action.
+
+**Why:** AUTO-040 made the remaining production work visible but left only names for nine gates. The next safe step is to
+define exactly what each gate must bind and who may prove it, while preventing caller booleans, repository fixtures, or a
+successful simulation from becoming production readiness. Separating design truth from proof ingestion also prevents a
+future verifier from being smuggled into this candidate as an arbitrary callback or structural port.
+
+**Alternatives rejected:** Accept caller-supplied `qualified` states or evidence digests; let repository tests satisfy a
+production gate; treat independent review as owner approval; build a consumer or database client before the proof
+contract; embed protected configuration or reference values; allow destination absence immediately after a marker to
+authorize retry; expose an activation method or operational UI control; treat the accepted AUTO-040 packet as authority;
+merge or activate based on producer tests.
+
+**Trade-off:** AUTO-050 provides a complete, testable production-boundary blueprint but deliberately leaves all nine gates
+unproved. A later proof-ingress service must verify external attestations under protected custody and will require its own
+contract, storage, rollback, identity, and concurrency review. A later consumer remains a separate owner-authorized block.
+
+**Reevaluate:** A fresh independent reviewer must attack the exact committed AUTO-050 candidate, all nine gate mappings,
+packet and chronology binding, qualified-evidence forgery, reconciliation transitions, secret-safe projection, and source
+absence of effect clients. Any real verifier, evidence store, hosted database, process, consumer, broker, network,
+destination contact, policy enrollment, owner-decision ingress, deployment, or activation code reopens security review and
+requires explicit owner authority.
+
+**First-review amendment:** Independent review of `f046ccee689fc41ed91c7827f885a255f9eb8024` rejected the candidate
+because public digest rewriting could discard authenticated packet chronology and could alias disposition plan/assessment
+IDs across artifacts. The first remediation therefore adds keyed plan provenance, repeats its verification and full
+chronology at downstream assessment boundaries, enforces the deterministic disposition ID, and checks every shared
+identity and chronology before projection. The negative report remains immutable. Only a different reviewer may accept an
+exact remediation commit, and that acceptance still cannot satisfy any of the nine production gates.
+
+**Acceptance amendment:** A different reviewer independently reproduced both defects on the rejected snapshot and accepted
+exact default-disabled remediation commit `2a47f57c3b1015b279ee51e95690d10d147b112a`. Accepted report SHA-256 is
+`fa6580952fff46798bf10e9562bd824db3507571d4bec1001eb5c10d6886a611`. This closes AUTO-050 design integrity only; all
+nine production proofs remain unobserved and no production verifier, consumer, deployment, or external effect is accepted.
+
+## ADR-112 — AUTO-060 authenticates fixture proof observations without qualifying production
+
+**Decision:** CR11B-AUTO-060 accepts only owner-, issuer-, and where required independent-verifier-signed Ed25519 proof
+envelopes under literal `repository_fixture_only` trust. Each proof binds the complete authenticated AUTO-050 plan,
+assessment, gate requirement, ordered binding digests, evidence aggregate, identity/key, trust revision, and chronology.
+The private local SQLite ledger authenticates every row and whole state with keys held outside the database and compares a
+separate rollback checkpoint. Trust revisions are linear; exact replay is inert; expiry, revocation, and later trust
+revision remain visible. Every observation is `observed_unqualified`; even nine current observations retain all nine
+blockers and zero qualified proofs.
+
+**Why:** AUTO-050 named exact proof requirements but intentionally had no verifier or evidence store. The next safe seam is
+to make cryptographic and persistence attacks testable without letting repository-generated keys, fixtures, or booleans
+mint production readiness. Binding trust mode and negative authority into every artifact prevents successful fixture
+verification from being relabelled as protected custody.
+
+**Alternatives rejected:** Accept a caller `qualified` flag; let a proof digest satisfy a gate without every ordered
+binding; accept a verifier sharing issuer identity, key, or signed independence domain; trust an unchained or rolled-back
+bundle; store raw evidence or private keys; keep rollback truth inside the protected database; let nine fixture proofs
+unlock owner approval or activation; add a consumer, protected-reference resolver, hosted database, network client, or
+effect path to proof intake.
+
+**Trade-off:** The root and rollback checkpoint are repository-fixture/test references, SQLite is local and
+single-process, and no production clock, key, revocation, database, or evidence custody is proved. A trust update
+supersedes earlier observations even when the same key remains active, deliberately requiring renewed evidence. This is
+safer but more operationally expensive.
+
+**Reevaluate:** A different independent reviewer must attack the exact frozen candidate before acceptance. Any production
+root, durable protected checkpoint, hosted multi-process ledger, real evidence collection, owner approval issuance,
+consumer, activation, deployment, or external effect is a new owner-authorized block with fresh security review. AUTO-060
+fixture observations can never be migrated or relabelled into production qualification.
+
+**First-review amendment:** Independent review rejected exact candidate
+`f77108fc3c556970bff4cc94c4b952a0336a8cac` in immutable report SHA-256
+`fc22ddd3ee62f432eeaee5d5cbc0aca6715872fa7733e095979ac1ea3457f9cf`. Canonical signatures, store-only chronological
+assessment, irreversible full-chain identity revocation, trust-advance-safe exact replay, and per-operation private-file
+and exact-schema checks remediate its five findings. The original negative report remains unchanged. A different reviewer
+must accept an exact remediation commit; no producer test or remediation itself closes AUTO-060.
+
+**Second-review amendment:** A new different reviewer rejected exact first-remediation commit
+`fb2f0a3dd4e2e128ae6076daadad10938fec1438` in immutable report SHA-256
+`1aa0119e9eb8504d471586c88d62ab44b533f16190d2c9c57fbe58cad30e9dc2`. Although the direct raw-observation assessor was
+gone, a caller could still modify store-derived gate status, recompute the public assessment digest, and obtain a forged
+observed-status projection through exported parsers. The second remediation removes every public digest-only assessment
+or projection trust consumer and the public raw-assessment method. The only trusted view is now built and deep-frozen
+inside one authenticated store operation after complete ledger, checkpoint, trust, and AUTO-050 chain verification.
+Public digests remain content identity only. A third different reviewer must accept the new exact commit; negative
+authority stayed intact throughout both rejections.
+
+**Third-review amendment:** A third different reviewer rejected exact second-remediation commit
+`0d7287fbdc06af3f8c220dad8227f0f99855b64a` in immutable report SHA-256
+`303133e1297cb28a475b14bc51e0a77d20436a93cf4c23b410ebb544f2624323`. The public assessment and projection path was
+closed, but the verifier still consulted a mutable schema object exported by the direct proof-schema module. Own-method
+substitution made it authenticate one valid package while the ledger stored another changed envelope; restoration exposed
+the mismatch as an integrity failure. The third remediation deletes that module, moves proof and ledger schemas plus their
+primitive dependencies behind module-private state, and captures original parser operations into frozen closures. AUTO-050
+boundary schemas now use private primitives and expose only frozen captured parser closures, so public schema aliases,
+own-method replacement, deletion, and prototype drift are non-authoritative. A fourth different reviewer was required to
+accept the exact third-remediation commit. No rejection or remediation grants production proof, approval, activation, consumer,
+network, dispatch, deployment, or effect authority.
+
+**Acceptance amendment:** A fourth different reviewer accepted exact third-remediation commit
+`be01058e2edeeddb7bbd2655eaf668ed86b9d0e2`, tree `f8b16104082ade92812c82792c04611a1c40073e`, in immutable report
+SHA-256 `8651708829f346e26ea60afec18418bd150844b063aa8d07e2afdd1f5bd6d61e`. It independently mutated public schema
+methods and a shared prototype before and after store construction, attempted change, deletion, and prototype replacement
+on every exported frozen production parser, retried the prior changed-binding envelope, and verified zero append plus clean
+restart integrity. All `IR`, `FRR`, and `SRR` findings are closed only for that exact effect-free snapshot. AUTO-060 is
+complete, but every fixture proof remains unqualified and all protected custody, hosted database, policy, consumer,
+activation, deployment, and effect gates remain blocked.
+
+## ADR-113 — AUTO-070 qualifies the qualification machinery, never the production environment
+
+**Decision:** CR11B-AUTO-070 carries the complete authenticated AUTO-050 assessment and accepted AUTO-060 identities into
+an HMAC-bound, one-hour repository-fake qualification plan. Three distinct single-purpose logical service identities and
+eight canonical scenarios model policy high-water, database-boundary time, terminal revocation convergence, serializable
+claim uniqueness, external checkpoint CAS, restore rollback detection, and post-marker ambiguity. The private in-process
+fake accepts no collaborator ports. Its authenticated report is re-derived on every parse, exposes only transcript
+digests, and always retains all nine blockers and zero qualified proofs. The public projection omits authentication,
+identity, evidence, protected material, and controls and makes every production capability false.
+
+**Why:** AUTO-060 can authenticate fixture evidence but cannot safely jump straight to a hosted environment. The next
+boundary must first make the distributed-state and custody claims precise and make their negative paths reproducible.
+Calling this output a fake qualification, and cryptographically binding that mode into every artifact, prevents a green
+repository rehearsal from being mistaken for production proof.
+
+**Alternatives rejected:** Connect to a caller-selected database; accept caller-supplied clock, checkpoint, process, or
+adapter callbacks; treat local PGlite or SQLite as hosted PostgreSQL; let a successful rehearsal remove blockers; expose
+raw transcripts or identity details; trust a report after only digest/HMAC recomputation; perform a disposable live run
+without a separate controlled-effect packet; construct the production consumer in the qualification block.
+
+**Trade-off:** The foundation proves contract completeness and deterministic failure classification, not real process
+isolation, hosted database semantics, availability, custody, backup/restore, or operational readiness. A later live
+qualification remains a separately owner-authorized controlled effect and must retain sanitized evidence and exact
+cleanup. The fake produces no artifact that can be promoted into AUTO-060 production proof.
+
+**Reevaluate:** A fresh independent reviewer must attack the exact committed candidate before acceptance. Any live
+database/provider contact, process or worker start, production key or policy enrollment, protected clock/checkpoint read,
+credential-store access, live evidence collection, consumer, owner approval, activation, deployment, or effect requires a
+new bounded contract and explicit authority.
+
+**First-review amendment:** Independent review rejected exact candidate
+`28c6603478ffbb6036dea348475f402984bfbbae`, tree `44f05681e39de44dfc979451be4bee919dc5fc5e`, in immutable report
+SHA-256 `4a15ae85d35fe6bd71866dc69cc36f8b2cb378d7357db9f90d6d5db697c2f86f`. Post-load replacement of
+`Object.freeze` disabled the claimed deep freeze, and selective `Set.prototype.add` replacement made the explicit
+service-identity-alias fault authenticate as an eight-pass fake report. Production authority stayed false, but the
+qualification truth was rejected. The remediation captures freeze/value/frozen-state operations before module exposure,
+verifies recursive freezes, replaces shared collections and array helpers in scenario decisions with private loops, and
+pins the canonical digest runtime surface with an exact-method and private sentinel check. New tests reproduce both
+finding paths before and after artifact construction, keep all eight faults canonical, and make other shared-helper drift
+fail closed. A different reviewer must accept the exact remediation commit; passing producer tests cannot close the
+finding.
+
+**First-remediation re-review amendment:** A different reviewer rejected exact remediation
+`1dff163808ef2866eb44ec83394ff64789959f57`, tree `4829070eb0b4429dc577404daaaea697f439b2b0`, in immutable report
+SHA-256 `2d212bfa071437b1af10c0ac9c00432df0d4823d2196a3ee235e8feaec17ebab`. An inherited setter at numeric
+`Array.prototype` index `1` could intercept trusted writes into initially empty arrays and make the modeled
+service-identity alias authenticate as an eight-pass report. Negative production authority remained intact, but
+qualification truth was again rejected. The second remediation removes inherited indexed writes from the trusted path:
+three-way identity, role, revocation, and claim decisions use scalars, and service roles, scenario results, report-order
+comparison, and projection status use complete array literals with own indexed data. A hostile regression installs the
+numeric setter, requires all eight faults to fail exactly once with deeply frozen artifacts and all nine blockers,
+restores the prototype, and re-verifies the authentic report. A third different reviewer must accept the exact second
+remediation commit.
+
+**Second-remediation re-review amendment:** A third different reviewer accepted the inherited-index closure but rejected
+exact remediation `2cea5975e2c346cf171dbd49c5ab55592ab18578`, tree
+`a1eca854dc027078a915834b80418583a9d3b0b0`, in immutable report SHA-256
+`7e759fdb942ee07f6647f31ce365c0d9ff5883f178ed310fb30e058dc6cba763`. Substituted
+`Date.prototype.getTime` and `Date.prototype.toISOString` could make an impossible timestamp pass schema validation while
+captured `Date.parse` returned `NaN`, bypassing every chronology denial comparison. Production authority stayed false.
+The third remediation captures the instance methods, verifies their exact descriptors before artifact work, invokes only
+the captured methods for canonical validation, cross-checks the captured static epoch, and denies equal as well as
+reversed run boundaries. A hostile regression changes both Date methods, requires invalid/equal/reversed operations to
+fail closed, restores them, and re-verifies the stable authenticated plan and report. A fourth different reviewer must
+accept the exact third-remediation commit.
+
+**Third-remediation re-review amendment:** A fourth different reviewer closed the prior three findings but rejected exact
+remediation `941b6d624bd06dab2a17ab490f33dcd5ac4c6fc2`, tree
+`748d90175e3d64d7352e362df97fb6fda63e276c`, in immutable report SHA-256
+`4d9517bdb99b93258b23edfac37320ced6c023c13687f815e8e07d4c1840e695`. Current
+`String.prototype.slice` semantics controlled the digest-derived report ID, allowing an authenticated artifact to change
+validity after helper restoration. Negative production authority stayed intact. The fourth remediation captures the
+string prototype and slice intrinsic, verifies their exact descriptor before artifact work, and uses the captured
+intrinsic for both report-ID construction and re-derivation. A hostile regression substitutes slice, requires
+construction and parsing to fail closed, restores it, and proves exact replay and parsing stability. A fifth different
+reviewer must accept the exact fourth-remediation commit.
+
+**Fourth-remediation re-review amendment:** A fifth different reviewer closed the prior four concrete reproductions but
+rejected exact remediation `ccdc13e37179674891793de978ae6c32409d646f`, tree
+`40415e8b47bc779fddf06b7fe9419fe385fa4e47`, in immutable report SHA-256
+`8e65da402e9e4ea045ced9387294e5caa6ba8ecaf84f9ede73471ab6fcc61db0`. Current array-iterator semantics controlled the
+safe projection's blocker copy, allowing one valid blocker to be duplicated while another was omitted and the changed
+projection was authenticated. Production authority stayed false, but exact blocker truth was rejected. The fifth
+remediation captures and checks `Array.prototype[Symbol.iterator]` before artifact work, removes iterable spread from all
+trusted fixed-list construction, and copies the nine authenticated report blockers through explicit indexed array
+literals. A hostile regression substitutes the iterator, requires plan and projection work to fail closed before it can
+touch the blocker list, restores it, and proves exact projection replay. A sixth different reviewer must accept the exact
+fifth-remediation commit.
+
+**Fifth-remediation re-review amendment:** A sixth different reviewer closed the prior five concrete reproductions but
+rejected exact remediation `bf1a66325b9bbb7cf107b9e4857bd5d4b6874a38`, tree
+`83c885c270aa095ebb39534944636658d33e1297`, in immutable report SHA-256
+`69cff1f40382323fdb5edfa4d962b353bbdf7edec258d8e898083c9a3f238dcf`. Current plural-descriptor reflection could erase
+an explicit identity-alias fault from the exact input snapshot, leading to an authenticated eight-pass report. Production
+authority remained false, but qualification truth was rejected. The sixth remediation captures prototype, own-key,
+descriptor, property-definition, array-shape, and bounded-copy operations throughout the shared exact-data path and
+checks the complete reflection surface at every AUTO-070 entry. Hostile regressions substitute descriptors, omit keys,
+and suppress definition, then restore the runtime and prove exact alias-failure and artifact stability. A seventh
+different reviewer must accept the exact sixth-remediation commit.
+
+**Sixth-remediation acceptance amendment:** A seventh different independent reviewer accepted exact implementation
+`20eeb148ce7ecf59a777f060eacd9245d9948cc8`, tree `e21fbfe7e2ec6169fccc76c76296722d870f336c`, in immutable report
+SHA-256 `07033f542a7e3b7167a95d3fa301b90ff3806ec49232cddc878e8fa84353f681`. The review closed every prior finding, verified
+the complete captured runtime/reflection boundary and exact seven-pass/one-failure restoration truth, reran the 18-case
+focused and 137-case combined CR11B gates, and confirmed that the implementation contains no live effect path. AUTO-070
+is complete only for that exact effect-free implementation. Its fake output retains all nine production blockers and zero
+qualified proofs; any disposable hosted qualification remains a new, exactly owner-authorized controlled effect.
+
+## ADR-114 — AUTO-080 separates a disposable qualification request from live authority
+
+**Decision:** CR11B-AUTO-080 re-verifies the independently accepted AUTO-070 successful no-fault plan/report and produces
+one authenticated request for a later owner-authorized disposable hosted PostgreSQL qualification. The request fixes two
+new non-production databases, three isolated processes, seven ordered operations, ten blocking requirements, a 40-call
+provider ceiling, a 1,800-second live ceiling, a 1,048,576-byte sanitized-evidence ceiling, and mandatory separately
+authorized cleanup with a receipt. It embeds no provider or resource identity, protected reference, credential, raw
+evidence, production data, or public endpoint. Every provider, network, process, database, cleanup, qualification,
+production activation, dispatch, execution, and effect capability is false, and no function can authorize or run it.
+
+**Why:** An accepted fake qualification defines what must be tested but cannot justify contact with real infrastructure.
+Separating the bounded request from the later owner signature makes the intended work reviewable without turning a
+repository HMAC, test result, general chat approval, or fixture into effect authority. Fixing cleanup and evidence ceilings
+before provider selection prevents the live packet from quietly expanding its operational or privacy scope.
+
+**Alternatives rejected:** Build a live runner before review; let a provider adapter choose resources; accept a connection
+string or provider identifier in the repository request; use one database for both original and restore testing; inherit
+general owner authorization; treat the request HMAC as an owner signature; retain raw database/process evidence; make
+cleanup implicit after expiry; allow wildcard SQL, process commands, provider calls, retry, or public endpoints.
+
+**Trade-off:** AUTO-080 preparation cannot qualify any AUTO-050 production proof or show that a provider, clock,
+revocation feed, checkpoint, backup, restore, process boundary, or cleanup works. It creates one more review gate before a
+live attempt. That delay is intentional because the next step crosses a credential, network, process, and resource-effect
+boundary.
+
+**Reevaluate:** The exact effect-free candidate is independently accepted. The owner may now be asked for a new exact
+authorization naming the disposable provider/resources, protected access path, call and duration ceilings, retained
+evidence, and cleanup. Any change to provider, resources, operations, ceilings, evidence, or cleanup requires a new
+packet and signature. Production resources, consumer activation, and public deployment remain outside AUTO-080.
+
+**First-review amendment:** Independent review rejected exact candidate
+`85199ab146c8362a216dc9b2cdd3285efc3008b7`, tree `99bc9a386b234c7bb937a53d5074f2315d0b2b15`, in immutable report
+SHA-256 `343da8c163bda9d437d3b850186a4a6b3623b9c255b9b9ab3eec5deaaf532f8c`. Both request-key cleanup paths called ambient
+`Uint8Array.prototype.fill`, so post-load replacement could execute caller behavior, retain the private copied HMAC key,
+and prevent erasure. The first remediation verifies the captured fill descriptor before any exported AUTO-080 work and
+wipes complete copied backing stores through the host-value boundary's captured native intrinsic. A hostile regression
+requires method drift to fail closed before the substitute executes, proves the captured primitive zeros a complete
+buffer, restores the runtime, and re-verifies request replay, projection, and negative authority. A different independent
+reviewer was required to assess the exact remediation; no rejection, fix, or test granted live qualification or effect
+authority.
+
+**First-remediation re-review amendment:** A different reviewer rejected exact commit
+`10eb807c8edd859261aa8dae09bcd5e116f42420`, tree `a7b764ea434ff9fd93db5e16cc4d162da7bf1092`, in immutable report
+SHA-256 `bbe1a02b1f442c74f4f7e1e07ba038dcf620a2e3d43595c399a20f0427ec4421`. The fill-specific reproduction was closed,
+but shared HMAC validation still exposed the private copied key to mutable global `Uint8Array` identity and inherited
+`byteLength` behavior before cleanup. The second remediation moves HMAC length validation behind captured host
+operations, erases full backing stores through verified indexed writes without typed-array method dispatch, and checks
+the relevant post-load binary runtime identities before any AUTO-080 key copy. Clean module initialization is an
+explicit trust assumption; the boundary does not claim native provenance can be recovered inside an already compromised
+process. Another different independent review was required to close `AUTO080-IR-001` and `AUTO080-RR1-001`; all live
+and effect authority remained false.
+
+**Second-remediation re-review amendment:** A third different reviewer rejected exact commit
+`b8287d75dca597196723e7705ba864ae153e48ac`, tree `b4abfd8f941f9b6f1f62e66a99529d26b362a387`, in immutable report
+SHA-256 `c105ed8ef640ca4cd4aeb0c5f548d57e4ec5f9f3a9b3144c800dfb3f0c92f239`. Both recorded raw-key exposures were closed,
+but ambient HMAC update/digest dispatch could retain an unfinalized keyed native signing context after byte-array erasure.
+The third remediation canonicalizes before creating that context, captures and verifies the clean-start HMAC prototype
+methods, invokes both only through captured host application, and makes AUTO-080 reject method drift before request-key
+copying. A fourth different independent reviewer was required to close `AUTO080-IR-001`, `AUTO080-RR1-001`, and
+`AUTO080-RR2-001`; no repository evidence granted live qualification or effect authority.
+
+**Third-remediation acceptance amendment:** A fourth different reviewer accepted exact implementation
+`091ff116c8735aa980608c9c5c0b468436537cae`, tree `0153f5d2b794eaa05d30c88add8398d2c5ec2898`, in immutable report
+SHA-256 `10d7e0e32d59dadb5d435c8fda01e767e7234327105120fff95fec3fb034b118`. It closed `AUTO080-IR-001`,
+`AUTO080-RR1-001`, and `AUTO080-RR2-001`, reran the full deterministic gate set, and confirmed that the exact source has
+no live-effect path. AUTO-080 is complete only for that effect-free request boundary. Any provider selection, protected
+access, process or database contact, backup/restore, evidence collection, cleanup, or live result remains a new exact
+owner-authorized and independently reviewed controlled effect.
+
+## ADR-115 — Production database target is one private self-managed PostgreSQL primary on the selected VPS provider
+
+**Decision:** Control Room production targets one self-managed PostgreSQL primary on the selected VPS provider's VPS. It is the
+sole global write authority and may be reached only through a host-local socket/loopback or a private network. It has no
+public inbound database endpoint. AWS RDS is not part of the initial production architecture. PGlite remains limited to local
+development and tests. R2 remains limited to artifacts, immutable manifests, encrypted backups, and optional audit
+anchors; it is not coordination, transactional state, a lock, a lease store, or a command bus.
+
+**Why:** The modular monolith and PostgreSQL authority already belong on the initial always-on VPS. Co-locating one
+private primary is the smallest topology that preserves atomic leases, approvals, idempotency, and audit truth without
+adding a public database dependency or distributed consensus. The owner does not currently need an AWS account or RDS
+control plane for this architecture.
+
+**Alternatives rejected:** AWS RDS as the initial primary; PGlite in production; R2, Git, object manifests, or worker
+votes as transactional coordination; a publicly reachable PostgreSQL listener; multi-primary worker databases; treating
+installed client tools as proof that a database service exists or is production-ready.
+
+**Trade-off:** A self-managed primary makes Control Room responsible for PostgreSQL patching, least-privilege roles,
+private networking, disk and resource monitoring, WAL/archive health, tested backups, restore drills, and recovery. The
+initial availability model remains recovery-based rather than automatic failover. Managed PostgreSQL can be reconsidered
+later only through a new ADR and migration plan if measured uptime, restore time, scale, or operational capacity requires
+it; that does not silently reopen AWS RDS now.
+
+**Live boundary:** The relayed VPS observation reports PostgreSQL client tools but no running PostgreSQL service or
+container, and no configured AWS CLI, AWS configuration, or AWS/RDS environment. This is unverified context, not host
+qualification. ADR-115 does not provision, install, configure, start, connect to, migrate, back up, restore, expose, or
+deploy PostgreSQL. Those operations require a later exact owner-authorized packet, complete prerequisite evidence,
+rollback and cleanup rules, and independent review.
+
+ADR-115 supersedes the disposable hosted-provider path as the current next step. AUTO-080 remains accepted historical
+evidence for its exact inert request boundary, but it is not a mandate to select or contact a hosted database provider.
+
+## ADR-116 — Readiness composition preserves every source gate and cannot infer live evidence
+
+**Decision:** CR11B-AUTO-100 composes the twelve AUTO-090 production-database prerequisites, eighteen CR10A deployment
+gates, and nine CR11B automatic-work production proofs into one ordered 39-gate packet. Gates retain their source lane
+even when their subjects overlap. Only the three repository contracts already marked present by CR10A are recorded as
+present, and they remain repository evidence only. The other 36 gates block readiness. The packet and its
+disabled-before-host-contact disposition bind the exact selected VPS provider target, CR10A topology/release/plan/assessment/
+disposition chain, and accepted AUTO-040/AUTO-070 identities. They grant no approval, owner-window eligibility,
+deployment authority, execution authority, or external effects.
+
+**Why:** Database-target prerequisites, deployment operations, and automatic-work safety proofs answer different
+questions. De-duplicating similar names or allowing one repository contract to satisfy a live proof could incorrectly
+turn partial design evidence into production authority. A source-preserving packet gives the later owner-controlled phase
+one honest checklist without expanding its authority.
+
+**Alternatives rejected:** Collapse overlapping gates; count a written contract as native host evidence; accept the
+owner-relayed host report as qualification; let a safe projection omit blockers; embed production connection values;
+construct a host/database runner in the readiness phase; treat a valid digest, producer test, or general chat approval as
+permission to contact the VPS.
+
+**Trade-off:** The same operational subject may appear more than once and must be satisfied independently in its proper
+lane. The 39-gate count is intentionally conservative. It produces a larger checklist, but it keeps architecture,
+operations, production proof, independent review, and owner effect authority distinct.
+
+**Reevaluate:** Only after a different independent reviewer accepts the exact AUTO-100 candidate may a later phase
+prepare an exact owner-authorized native rehearsal. Evidence changes require a new packet. No live work begins from this
+ADR or its repository artifacts.
+
+**Pre-review hardening amendment:** Two report-only review runs were interrupted before producing an immutable verdict.
+The first run nevertheless identified four plausible candidate seams. The remediation binds every cross-object ID and
+time in addition to exact canonical current-source identities; captures, verifies, and freezes all gate registries used
+after module initialization; withholds the AUTO-100 Zod schemas from public mutation; and requires projection parsing to
+re-verify the exact packet and disposition digests. New regressions cover a completely re-digested identity fork, source
+registry mutation, private schema custody, and cross-packet projection substitution. This amendment is producer
+remediation evidence only and still requires a fresh different reviewer.
+
+**Independent rejection and first-review remediation:** A different reviewer rejected exact commit
+`0b5f67c8eb2e2d0ac304b26ab26eba767af8cc3a` in immutable report SHA-256
+`998dee3f114217e1ccb76aa88e80739f1fbac6becab76e5113b83aea8a4ea8da`. A caller could change and re-digest the AUTO-090
+decision ID because the expected target was rebuilt from the supplied identity. A caller could also mutate the public
+Project Workspace time schema after module load, execute changed behavior, admit an invalid time, and make relational
+chronology comparisons fail open on `NaN`. The remediation captures the complete exact AUTO-090 target and CR10A source
+snapshots at clean initialization, compares later inputs to those identities without re-entering public source schemas,
+uses private ID/digest/time schemas, captures trusted date parsing, and rejects every non-finite time before comparison.
+New regressions cover re-digested decision-ID/time forks and the reviewer's public-schema mutation with zero hostile
+calls.
+
+**Independent acceptance amendment:** A different independent reviewer accepted exact remediation commit
+`34750ed8ec5cf34134d166505f3df50897afe3f7`, tree `59da1931c4df41fc903e73bfc68c756438dbf5fe`, in unchanged report
+SHA-256 `aa2116b832ed6e5587c72705dcf6dc826f8ef0e7201c5b284c7876b93f53c0a9`. The reviewer independently rejected changed
+and re-digested AUTO-090 decision IDs and times in both build and parse paths, rejected invalid packet and disposition
+times with zero hostile public-schema callbacks, confirmed exact 39-gate and three-present/36-blocked truth, and found no
+new reproducible correctness defect. AUTO-100 is accepted only for that exact effect-free implementation snapshot.
+All 36 live blockers and the later fresh owner-authorization requirement remain in force.
+
+**Integration amendment:** PRs #159 through #173 were retargeted and merged into `main` in dependency order with
+history-preserving merge commits. Every retarget retained identical incremental additions, deletions, and changed-file
+counts; every exact head remained unchanged; and every PR passed the ordinary complete main-targeting Control Room CI
+gate before merge. AUTO-090 target commit `fd29af5580f77d2ad5fa1f17027ca3e759b3ad82` merged through PR #172 at
+`b51de2909f09b5040d2c7b7a212fdc1e58758ba4`. AUTO-100 accepted implementation `34750ed8ec5cf34134d166505f3df50897afe3f7`
+and its immutable review evidence merged through PR #173 at `883a3ca6f02c5d779ba8263acb531f8e8469428f`.
+Post-merge `main` CI run `33409911669` passed the complete test lifecycle, production build, rendered routes, and database
+verification. Integration grants no live authority and does not satisfy any of the 36 production blockers.
+
+## ADR-117 — AUTO-110 separates owner phase direction from live PostgreSQL effect authority
+
+**Decision:** CR11B-AUTO-110 records the owner's direction to begin packet preparation, binds it to the exact accepted
+AUTO-100 implementation and review, and carries all 36 live blockers into one bounded native-rehearsal request. The
+request fixes one attempt, one host session, four database sessions, a 30-minute duration, a 1 MiB sanitized-evidence
+ceiling, mandatory rollback, separately authorized cleanup, and no automatic retry. Phase preparation is explicitly
+true; strong-factor live authorization, protected access, independent acceptance, host/database contact, migration,
+backup/restore, cleanup, deployment, and every external-effect permission remain false.
+
+**Why:** The owner's instruction is sufficient to resume repository design, implementation, verification, and review,
+but it does not itself supply protected host identity, a safe access path, current evidence for the 36 blockers, an
+effect-scoped claim, rollback material, a cleanup authority, or an expiring strong-factor operation window. Keeping those
+facts separate prevents a conversational direction or its digest from becoming a credential or executable capability.
+
+**Alternatives rejected:** Treat general chat approval as a live host credential; omit the unresolved AUTO-100 gates;
+contact the VPS merely to discover whether prerequisites exist; permit service installation or control inside the
+rehearsal; retain raw evidence; write to an existing production schema; retry after uncertainty; let cleanup inherit the
+original effect authority; or allow the request/projection to become a runner.
+
+**Trade-off:** AUTO-110 can finish its effect-free packet and independent review without owner relay, but a real attempt
+cannot begin until protected prerequisites are assembled out of band and the owner approves the final exact effect
+window. This intentionally adds a last human security stop before touching the production host.
+
+**Reevaluate:** After a different independent reviewer accepts the exact candidate, rebuild the readiness packet from
+fresh evidence. If any of the 36 blockers remains, retain the disabled disposition. If every blocker is accepted, prepare
+a new strong-factor owner packet bound to exact protected references, operations, start/expiry, rollback, cleanup, and
+evidence limits. This ADR never authorizes host contact by itself.
+
+**First independent rejection and remediation:** A different reviewer rejected exact candidate
+`7750c9b179d9f07ac05041ff4ac0dd19dd7766e7`, tree `86ff495485cb649c9cb458c63aeaca443f5016fa`, in immutable report
+SHA-256 `a71a54a8a2dc8af6243e5c9a2b36da77b1c59bde968b1b139e7ccb742f5ac626`. `AUTO110-IR-001` reproduced that two
+unrelated caller-selected bare direction digests and times could each mint a valid request claiming owner-directed phase
+preparation. Live authority remained false, but repository provenance was untrustworthy. The remediation removes all
+owner-direction fields from public request input, captures one complete repository-accepted owner-direction snapshot at
+module initialization, embeds and re-verifies its exact ID, scope, accepted time, digest, and false live-authority facts,
+and adds regressions for caller extras and fully re-digested ID/time forks. A different independent reviewer must close
+the finding before AUTO-110 can be accepted.
+
+**First-remediation independent acceptance:** A different reviewer independently reproduced `AUTO110-IR-001` on the
+original implementation, then accepted exact remediation commit `f3b64498c2313c86d50f63e4c62cf7c7eba5fcd6`, tree
+`d2ab467adf2032504f31a0b6d1c852f77a3ddf58`, in unchanged report SHA-256
+`6a6186d27c9ca262598c13af36d17e84e6896d9ad68b4b9cd0a453aabaa8e1a3`. Four caller-direction input families, nine
+fully re-digested direction forks, 53 authority forks, six lineage forks, and nested accessor and Proxy probes all fail
+closed. `AUTO110-IR-001` is closed with no new finding. Acceptance is limited to the exact effect-free repository
+snapshot; all 36 live gates and the fresh strong-factor owner effect-window requirement remain blocking.
+
+**Integration amendment:** PR #175 merged the accepted AUTO-110 history into `main` at
+`16c368983790e5a8fd6a24e3c31441d4d23efdf3`. Post-merge CI run `33422467720` passed the complete repository gate in
+8m12s. Integration does not qualify any live gate or authorize the native rehearsal.
+
+## ADR-118 — Project Workspace navigation is a real read-only routing boundary
+
+**Decision:** Every registered project uses one shared Project Workspace shell and the nine exact core sections defined
+by the accepted v1 contract are real deep-linkable routes. Project extensions are composed inside that shell instead of
+replacing it. Every route filters synthetic records to the selected project, exposes source and freshness truth, and
+retains a visible negative-authority statement. Missing authenticated data produces an explicit unavailable state.
+
+**Why:** A project view is useful only when an owner can move predictably between the project inbox, work, agents,
+automations, evidence, reviews, activity, settings, and specialist tools. Keeping those routes behind one strict snapshot
+also prevents each project adapter from inventing a different navigation or authority model.
+
+**Alternatives rejected:** Keep a single long project page; render dead navigation labels; let ABS News or Wayfarer own
+the common project structure; show cross-project fixture records; invent an artifact list; or let a route transition imply
+approval, dispatch, command, lease, execution, or network authority.
+
+**Trade-off:** The first pilot still uses clearly labeled synthetic fixtures, so the navigation can be evaluated before
+an authenticated read composition exists. Some sections honestly show an empty or unavailable state. The next block must
+replace fixture-only summaries through existing protected read ports without turning the page into a new write surface.
+
+**Reevaluate:** After CR12A-PILOT-010 proves tenant/workspace/project isolation and stale/unavailable behavior, run one
+owner-attended non-production local pilot. Production data, hosting, writes, and effects remain separate later decisions.
+
+**Integration amendment:** PR #176 merged PILOT-000 into `main` at
+`062c0a7d9bbec52acc180d957d74a4c4daa8b8e5`. Post-merge CI run `33427691048` passed the complete repository gate in
+7m40s. Integration creates no live project read, write, or effect authority.
+
+## ADR-119 — protected Project Workspace reads compose the existing operator surface
+
+**Decision:** Project Workspace protected data is one project-only composition over the existing authenticated,
+tenant-scoped operator read service. A server-owned registry binds tenant, workspace, and project before the source is
+called. The browser submits only the project path and independently verifies the strict response schema, exact project,
+relations, and canonical digest. Protected data is current, stale, missing, or unavailable; none of those states may
+silently become development-fixture data.
+
+**Why:** Reusing the accepted operator port preserves one database read boundary and its canonical validation while the
+project composition adds the missing workspace/project isolation and relationship checks. Separating the protected panel
+from the fixture view makes the pilot useful without falsely claiming that fixture progress, agents, artifacts, or
+extensions came from authenticated storage.
+
+**Alternatives rejected:** Add direct page queries; accept tenant or workspace in a URL/query/body; fetch the full tenant
+snapshot and filter only in the browser; treat source failure as an empty project; discard stale truth; join incidents to
+foreign services; expose private bodies or locators; silently fall back to fixtures; or make the read panel a command
+surface.
+
+**Trade-off:** The current application project registry is still synthetic and therefore cannot serve as deployment
+identity for an owner-attended data pilot. The read path is real and protected, but unconfigured local runs correctly show
+authentication or source unavailable. A separate protected catalog/session block is required before pilot activation.
+
+**Reevaluate:** After PILOT-015 accepts catalog provenance, high-water/revocation behavior, and owner-session scope
+derivation, prepare one owner-attended non-production pilot packet. This ADR never authorizes a live login, catalog
+configuration, production database contact, write, approval, dispatch, or effect.
+
+**Integration amendment:** PR #177 merged PILOT-010 into `main` at
+`cb0ac3901aaf1c32a74237ffba91a933ee738961`. Post-merge CI run `33432880966` passed the complete repository gate in
+6m39s. Integration creates no configured identity, catalog, database, write, or effect authority.
+
+## ADR-120 — protected project identity requires session, catalog, high-water, and owner policy agreement
+
+**Decision:** A protected Project Workspace read scope is derived server-side only when four independent checks agree:
+a trusted session adapter supplies one exact, short-lived, read-only owner-session proof; a protected HMAC catalog binds
+the selected project to one tenant, workspace, and project type; an independently supplied high-water in a distinct HMAC
+key domain matches that catalog's exact revision and every project identity; and the existing security store resolves the
+proof to an active human identity with an active owner grant for the exact low-risk, effect-free read. The resulting
+internal scope binds the session and catalog evidence and expires after at most sixty seconds. It is never returned as a
+browser credential.
+
+**Why:** A URL, ordinary header, fixture registry, or application environment variable is caller-mintable or too weak to
+serve as project identity. Requiring exact agreement prevents a valid session from being redirected to another tenant or
+workspace, prevents a catalog rollback from restoring removed authority, and makes project and whole-catalog revocation
+terminal. Reusing the existing policy engine preserves one owner-role authority source without creating a policy write
+for every page read.
+
+**Alternatives rejected:** Trust an identity header; accept tenant or workspace from the browser; use the synthetic
+application registry as protected identity; trust a signed catalog without a separate high-water; allow revision gaps,
+project removal, identity remapping, or revocation reversal; let an operator grant satisfy the owner pilot; persist a
+policy decision for every page read; expose the derived scope to the browser; or configure a live adapter implicitly.
+
+**Trade-off:** The repository now contains the strict contracts and composition boundary but deliberately contains no
+real session adapter, protected catalog, durable high-water adapter, or runtime configuration. Owner grant revocation is
+rechecked for each request before its internal read scope is created; this block does not claim instantaneous revocation
+across the small transaction boundary. The disabled default is less convenient but prevents an unfinished pilot from
+silently falling back to spoofable identity or fixture truth.
+
+**Reevaluate:** CR12A-PILOT-020 may install one explicitly selected local non-production composition during an
+owner-attended read-only pilot. It must retain server-only catalog key custody, durable independent high-water storage,
+sanitized evidence, and the disabled production boundary. This ADR does not authorize credential access, live login,
+production data or host contact, project writes, approval, dispatch, execution, deployment, DNS, or any external effect.
+
+## ADR-125 — Idea Lab advice is diverse and bounded; project creation remains an explicit owner act
+
+**Decision:** Business-idea deliberation uses three to six distinct identities and perspectives, including a mandatory
+skeptic, under fixed round, message, time, and cost ceilings. Retained contributions are safe injected summaries bound to
+the exact session and participant. Control Room derives the score and recommendation only after every panel member has
+contributed. The synthesis is advisory. Only a separate exact owner decision may atomically create a project and its
+initial append-only lifecycle event. Every promoted project receives the shared Project Workspace and reversible
+active/paused/completed/archived lifecycle.
+
+**Why:** Multiple agents are useful only if they provide genuinely different lenses and cannot manufacture consensus,
+spend without bounds, or turn a recommendation into an effect. Owner promotion separates exploration from commitment.
+One durable project registry prevents each new business idea from becoming a special-case page with lost history.
+
+**Alternatives rejected:** Let one agent impersonate a panel; omit dissent; trust a caller-supplied score; retain raw
+provider transcripts; create projects automatically above a threshold; hard-code every project route; delete completed
+projects; allow arbitrary state jumps; use PGlite as production authority; or claim live Bot Mode from injected fixtures.
+
+**Trade-off:** The first interface is useful for evaluating the flow but remains a clearly labeled fixture. Live Bot Mode
+requires a later authenticated coordinator and a filtered Hermes read path. That adds a deliberate integration gate while
+keeping the owner, provider, and project-write authorities separate.
+
+**Reevaluate:** CR12B-IDEA-030 may add provider-backed panels and an owner-promotion API only after exact compatibility,
+identity, filtered-read, budget, cancellation, persistence, and terminal-ambiguity gates pass. This ADR grants no provider
+contact, credential use, project write, deployment, or production effect by itself.
+
+## ADR-126 — Provider evidence cannot authorize itself; owner promotion uses a pre-existing immutable permit
+
+**Decision:** The Idea Lab coordinator accepts exact per-participant provider-session evidence but treats every live
+authorization field inside that evidence as a claim. A separate server-held verifier must authenticate it before the
+coordinator may invoke a live driver. The shipped composition provides no verifier and therefore rejects live execution.
+Each turn is serialized and durably marked before invocation; any unknown post-marker outcome is terminally ambiguous
+and is never automatically retried. Project promotion is a separate path: verified authentication must resolve to an
+active human owner grant, a policy decision and immutable owner permit are persisted first, and only then may the bound
+idea decision create the project. Tenant and owner identity are derived on the server.
+
+**Why:** A signed-looking document, caller-supplied digest, or adapter claim is not authority. Separating evidence,
+verification, advice, owner intent, and the project write prevents a compromised browser, worker, or provider adapter
+from turning panel output into a Control Room effect. Pre-effect persistence also makes a crash safe: it may leave unused
+authorization, but cannot leave an unauthorized project.
+
+**Alternatives rejected:** Trust `liveProviderAuthorized` in a request; retry an uncertain Bot Mode call; retain raw
+provider content; run panel members concurrently without a bounded ledger; let an operator or agent impersonate the
+owner; accept tenant or identity headers; write the project before its authorization evidence; or silently configure a
+live runtime from environment variables.
+
+**Trade-off:** The repository proves the orchestration and owner boundary with an injected fake while the real path stays
+closed. A later composition must supply an authenticated provider-evidence verifier and protected owner-session adapter.
+
+**Reevaluate:** CR12B-IDEA-040 may add protected session creation, deterministic synthesis, and operator controls. Any
+native Hermes contact remains a separate owner-attended authorization and qualification gate.
+
+## ADR-127 — The Idea Lab operator workflow is owner-authenticated, server-scoped, and fake-only by default
+
+**Decision:** Creating an idea session, starting its panel, cancelling before provider evidence, synthesizing completed
+contributions, and making the owner decision are separate protected commands. Every command is authenticated through the
+owner-session boundary and authorized against an active human owner grant. The server derives tenant, workspace, creator,
+session/run identities, panel membership, provider evidence, and policy identifiers. The browser supplies only the exact
+bounded intent for the current step. The shipped operator service accepts only the zero-network repository fake and the
+default runtime remains absent, so the UI renders its controls disabled. A project still requires the separate immutable
+owner permit from ADR-126.
+
+**Why:** A useful Idea Lab needs a real operator flow, but joining browser input, agent advice, and project creation into
+one request would let a compromised client select authority or turn a recommendation into an effect. Separate commands
+make progress and failure explicit, enable exact replay, preserve the provider marker/no-retry boundary, and leave the
+owner in control of project creation.
+
+**Alternatives rejected:** Accept tenant, workspace, identity, panel, provider mode, or authorization evidence from the
+browser; enable a live adapter from environment variables; combine run, synthesis, and promotion into one action; let an
+agent or operator grant satisfy the owner boundary; automatically create a project above a score; trust content-length
+without counting streamed bytes; retry after a provider marker; or present enabled controls when composition is absent.
+
+**Trade-off:** The protected flow can be fully exercised only with the repository fake. The shipped page visibly exposes
+the intended workflow but cannot execute it until an explicit protected local composition is installed. Cancellation is
+safe before provider evidence; after a marker, terminal ambiguity and no automatic retry take precedence.
+
+**Reevaluate:** CR12B-IDEA-050 may add authenticated session catalog/detail reads, reload-safe resume, and owner-protected
+project lifecycle transitions. Live Hermes/provider contact, native credentials, production composition, and deployment
+remain separately authorized work.
+
+## ADR-128 — Session reload is an effect-free owner read; project lifecycle is a separate versioned owner command
+
+**Decision:** Idea Lab session catalog and detail retrieval use the existing low-risk, effect-free human-owner read
+authorization and create no policy-decision write. Each projection is rebuilt from verified durable evidence and uses its
+latest persisted event time, making reload identity stable. Project pause, resume, complete, archive, and reopen are
+separate protected commands. Project and action come from the route; tenant, owner identity, target state, policy ID, and
+safe reason are server-derived. The client supplies an exact command ID, expected version, and current time. Exact replay
+must match the command-derived event identity; optimistic versioning and a transaction admit at most one competing
+transition.
+
+**Why:** A browser reload should recover work without manufacturing a write or changing evidence identity. Project state
+does change authoritative history and therefore needs a distinct owner command, durable policy decision, explicit legal
+transition, and concurrency guard. Keeping these paths separate prevents harmless monitoring from consuming authority
+and prevents two open tabs from silently skipping states.
+
+**Alternatives rejected:** Write a policy row on every reload; derive projection time from the current request; return
+sessions across tenants or workspaces; trust project state cached in the browser; accept tenant, owner, target state, or
+reason from the client; treat any same-version request as replay; allow last-write-wins; delete archived projects; expose
+all lifecycle buttons regardless of state; or enable the UI without a protected runtime.
+
+**Trade-off:** Reload recovery is useful and stable, but the default application still cannot execute it because no real
+owner-session and protected local composition is installed. Lifecycle replay is bounded by the same fresh-command window
+as other protected operations. Archived projects remain retained and may be reopened.
+
+**Reevaluate:** CR12B-IDEA-060 may install one explicit local non-production composition and perform one owner-attended
+repository-fake pilot. Live Hermes/provider contact, production data, deployment, and hosting remain separate gates.
+
+## ADR-129 — The first enabled Idea Lab composition is loopback, owner-attended, durable, and repository-fake only
+
+**Decision:** The first enabled Idea Lab runtime is an explicit development-only composition. It binds a foreground
+Vinext process to `127.0.0.1`, rejects forwarding, retrieves one random master key through an owner-run macOS Keychain
+launcher, derives separate session, Idea-record, catalog, and catalog-high-water integrity keys, and accepts one separate
+one-time code for a maximum-15-minute owner browser session. Persistent PGlite lives outside the repository and is valid
+only for this local pilot. The panel driver is fixed to the deterministic repository fake. Owner-promoted projects enter
+an authenticated append-only catalog and separately keyed high-water before protected reads resolve them. The default and
+production compositions remain absent. The exact switch also selects Vinext's Node development runtime because PGlite
+cannot execute in the Cloudflare worker simulator. Ordinary development previews and all production builds retain the
+Cloudflare plugin; the switch is ignored outside development mode.
+
+**Why:** A visible end-to-end pilot is now more valuable than another disconnected contract, but enabling the browser
+must not silently enable a provider, public listener, production database, or caller-selected identity. A foreground
+loopback process gives the owner a clear start and stop boundary. Separate session and catalog integrity domains make
+restart proof meaningful without turning local PGlite into the production authority.
+
+**Alternatives rejected:** Enable controls whenever any environment variable exists; bind to all interfaces; expose the
+pilot master through Vite client environment variables; copy it into a repository-local `.dev.vars`; run PGlite inside
+the Cloudflare worker simulator; reuse an
+identity header or browser storage token; commit a pilot key; store the raw owner code; keep catalog high-water only in
+memory; place PGlite in the repository; treat PGlite as a production database; select Hermes or another provider from
+browser input; run a background daemon; or claim the automated restart test is owner-attended acceptance.
+
+**Trade-off:** The owner must prepare and start the pilot personally, may need to approve Keychain access, and has only a
+15-minute session. The local Keychain item and pilot data remain after foreground teardown so restart can be proven;
+cleanup is a separate destructive action. This composition provides no live agent opinions and no production readiness.
+
+**Reevaluate:** After the owner-attended packet produces sanitized acceptance, a later block may plan a separately
+authorized provider adapter. It must not reuse this repository-fake acceptance as live-provider evidence.
+
+## ADR-130 — Live Idea Lab contact requires a separate exact admission, not provider claims
+
+**Decision:** A live Idea Lab driver may run only when one server-held authority accepts the exact provider evidence and
+another atomically consumes a single-use live-panel admission. The admission binds one exact run and session, every
+participant/runtime identity, the
+provider build and native qualification, protected-value custody, exact session ceilings, filtered retained fields, and
+one fresh owner-attended strong-factor effect window. Every call remains serialized and durably marked first. Unknown
+post-marker outcomes are terminal ambiguity and are never resubmitted. Cancellation occurs only between calls; panel
+steering is disabled; resume may reconcile but never resubmit. The admission grants neither project creation nor general
+execution authority.
+
+**Why:** Provider evidence, a runtime manifest, or a caller-computed digest can describe a capability but cannot safely
+grant permission to spend money or contact an external service. Joining exact identity, compatibility, custody, budget,
+owner intent, and persistent call lineage closes the gap between a qualified adapter and one bounded authorized use.
+
+**Alternatives rejected:** Trust `liveProviderAuthorized`; treat source compatibility as native qualification; let the
+browser select a runtime or participant profile; store provider values in Control Room; retain raw conversation; retry a
+timeout; steer a deliberation after it begins; reuse the repository-fake owner session; let panel advice create a project;
+or enable a provider through environment variables.
+
+**Trade-off:** The repository can now prove the complete admission logic with an injected synthetic driver, but a real
+panel stays blocked until a filtered driver, exact native qualification, protected-value custody receipt, pinned
+admission, and fresh owner window all exist. Hermes 0.21 source compatibility remains separate evidence, not live
+eligibility.
+
+**Reevaluate:** IDEA-080 may build the default-disabled filtered driver and disposable qualification harness. A native
+attempt remains separately owner-controlled and may not begin from this ADR alone.
+
+## ADR-131 — The Hermes panel driver translates and cleans; it never owns admission or native authority
+
+**Decision:** The Hermes 0.21 Idea Lab driver receives only a coordinator-verified, atomically consumed admission and an
+injected node-local gateway port. It rechecks exact build and participant/runtime bindings before contact, discards
+streaming content before parsing, requires one contiguous filtered completion sequence, and derives its receipt from
+both gateway and cleanup evidence. A bounded timeout aborts the port. Any unknown call or cleanup outcome becomes
+terminal ambiguity through the existing durable marker and is never retried. The repository ships no native port.
+
+**Why:** Translation, admission, protected-value custody, and process launch are different authorities. Keeping the
+driver behind an absent port lets the repository prove filtering, limits, and failure behavior without providing an
+accidental native execution path. Cleanup must be part of the retained receipt because a completed provider response is
+not proof that disposable native state was removed.
+
+**Alternatives rejected:** Let the driver verify its own admission; parse streaming text into Control Room; retain raw
+native IDs; accept partial/out-of-order events; treat timeout as definite failure; retry after timeout; return a result
+before cleanup; allow a fixture simulation to set native qualification; or include a process/network implementation in
+the default repository composition.
+
+**Trade-off:** The translator and qualification plan are complete, but the remaining live gate is intentionally explicit:
+the atomically consumed admission and accepted native receipt still need durable authenticated storage before an owner
+can authorize one native attempt.
+
+**Reevaluate:** IDEA-090 may add the durable single-use admission and receipt registry. Native contact remains blocked
+until that store and a fresh exact owner packet are accepted.
+
+## ADR-132 — Live authority is an authenticated append-only history with an external high-water
+
+**Decision:** Native qualification acceptance, live-admission sealing, and admission consumption are separate event
+types in one PostgreSQL-compatible append-only authority history. Native receipt decisions require an architect-held
+key and bind exact runtime, compatibility, custody, independent-review, and strong-factor evidence. Admission decisions
+use a separate key and bind the exact receipt, session, run, owner window, and strong-factor decision. Consumption is
+atomic and unique across admission, window, and run. Exact replay is inert. Receipt and admission revocation are
+terminal. An independently keyed compare-and-swap checkpoint outside the database authenticates the complete high-water.
+
+**Why:** A valid digest is evidence identity, not authority. Database uniqueness alone cannot detect a privileged restore
+to an older internally consistent snapshot. Separate decision keys prevent the database writer or ordinary caller from
+minting architect acceptance or an owner window, while the external high-water makes rollback fail closed.
+
+**Alternatives rejected:** Treat a native receipt digest as accepted; let the driver accept its own receipt; store only a
+mutable current row; reuse one key for every trust role; permit a revoked receipt or admission to reactivate; consume an
+owner window once per participant; accept an exact database snapshot without an external checkpoint; update the
+checkpoint after database commit; or configure the authority store in the local pilot before a native packet exists.
+
+**Trade-off:** A checkpoint advance followed by database commit failure intentionally leaves authority unavailable until
+an architect reconciles it; safety is preferred to silent replay. Production still needs a vetted external checkpoint
+implementation and protected keys. The repository contains neither and accepts no receipt by default.
+
+**Reevaluate:** IDEA-100 may freeze the exact owner-ready native qualification and live-panel rehearsal packet. This ADR
+does not authorize a native attempt, provider call, key installation, production database contact, or live composition.
+
+## ADR-133 — Native qualification, receipt acceptance, and a live panel are three different authorities
+
+**Decision:** The first Hermes 0.21 path is ordered into three non-collapsible stages. A fresh owner authorization covers
+only one disposable native qualification. Its sanitized output is always an unaccepted, non-authorizing candidate. A
+different reviewer and architect-key registry decision may later accept the exact receipt. A live panel then requires a
+different fresh owner window bound to one exact session, participant set, budget, admission, and run. The qualification
+window is never reusable for provider work, and project creation remains a separate owner decision.
+
+**Why:** A successful compatibility or native result proves capability, not consent to spend money or contact a provider
+for a real idea. Separating evidence production, evidence acceptance, and live use prevents the qualification runner,
+reviewer, browser, or driver from promoting its own result into authority.
+
+**Alternatives rejected:** Qualify and immediately run a panel; reuse the qualification authorization; let a candidate
+set `architectAccepted`; allow the same reviewer to produce and accept evidence; bind a panel before its exact session
+exists; retain raw native content or identifiers; retry an ambiguous attempt; or let a successful panel create a project.
+
+**Trade-off:** The owner must perform two distinct approvals and a different reviewer must inspect the candidate. This is
+slower than one click but confines the first provider-capable path to explicit, inspectable boundaries.
+
+**Reevaluate:** After the owner authorizes IDEA-110, one attached-Terminal qualification may run. This ADR alone grants no
+native, provider, receipt-acceptance, live-panel, project-creation, production, or deployment authority.
+
+## ADR-134 — Idea Lab native qualification pins the reviewed installed runtime, not only its release ancestor
+
+**Decision:** The Hermes `0.21.0` release revision and the exact installed runtime revision are distinct evidence. Idea
+Lab binds the reviewed installed revision, its exact 60-commit ancestry from the release, the accepted compatibility
+implementation commit, twelve trusted source hashes, and one strict sanitized no-effect preflight digest. The preflight
+may establish readiness for a later owner-attended attempt but cannot become native evidence or execution authority.
+Changing any runtime, source, compatibility, packet, plan, or preflight binding invalidates earlier owner authorization.
+
+**Why:** A package version and old release commit do not identify the code that would actually execute. Treating an
+ancestor as the current runtime could qualify unreviewed behavior, while silently carrying the newer pin into an older
+authorization would violate the owner's exact scope. Separate lineage and source evidence make drift visible before any
+provider boundary is crossed.
+
+**Alternatives rejected:** Pretend the installed checkout equals the release commit; update only test fixtures; accept a
+version string without revision evidence; hash only changed files; ignore trusted worktree dirt; expose unrelated local
+paths; treat source compatibility as native qualification; reuse the old authorization; or start the native attempt
+before the compatibility and packet commits are integrated.
+
+**Trade-off:** The owner must provide a new exact authorization and the compatibility PR becomes an explicit dependency
+of Idea Lab. This adds an integration stop but prevents the wrong executable or stale packet from consuming the single
+native attempt.
+
+**Reevaluate:** After both refreshed commits are integrated, one no-effect readiness check may prepare the owner command.
+Only the owner can run the attached-Terminal command and handle Keychain. Receipt acceptance and a live panel remain
+separate later authorities.
+
+## ADR-135 — No owner command exists while disposable isolation and existing Hermes authentication conflict
+
+**Decision:** Control Room will not translate an owner packet into an executable command unless Hermes can combine the
+packet's disposable empty profile with existing native authentication without importing bot context. The reviewed
+Hermes source shows fresh no-skills profiles have empty protected-value storage, clone also copies SOUL, skills, and
+memory, and no-skills is mutually exclusive with clone. The readiness gate therefore fixes command emission and all
+authority to false.
+
+**Why:** A command that cannot authenticate would waste the single attempt. A command that silently clones private bot
+identity and memory would exceed the owner's scope and could alter provider behavior before Control Room can prove the
+zero-context boundary. Discovering that contradiction before process launch is the purpose of readiness review.
+
+**Alternatives rejected:** Run anyway; use the default profile; call an empty profile and let authentication fail; clone
+the full profile and delete context after gateway start; have Control Room read and copy protected values; weaken
+"empty" without owner consent; or emit a command that depends on an unreviewed manual cleanup sequence.
+
+**Trade-off:** IDEA-110 stays blocked even though lifecycle source compatibility passed. The safe next step is either an
+upstream Hermes protected-value-only profile operation or an exact clone-and-sanitize design whose deletion ordering and
+negative context proof are reviewed before provider contact.
+
+**Reevaluate:** After one remediation is implemented and independently reviewed, refresh every affected source, runtime,
+packet, plan, and readiness digest. Only then request another exact owner authorization.
+
+## ADR-136 — Disposable qualification authentication stays inside Hermes behind a one-use preparation permit
+
+**Decision:** The preferred isolation remediation is a Hermes-native method named
+`profiles.prepare_control_room_qualification`. It transfers existing authentication internally into one temporary
+qualification profile while copying zero SOUL, memory, skills, plugins, MCP configuration, rules, or sessions. It returns
+no protected material or path and starts neither gateway nor provider. Hermes retains an opaque one-use launch permit;
+Control Room receives only signed digests, negative counts, expiry, and device attestation. Cleanup is a separate exact
+native method. Until an implementation is reviewed, the accepted-runtime list is empty.
+
+**Why:** Authentication bytes and native profile paths do not need to cross the Control Room boundary. A native-held
+permit lets a later qualified launcher refer to prepared state without making that state inspectable or reusable by the
+browser, coordinator, or generic worker. Zero copied context keeps the qualification prompt independent of a bot's
+persona and memory.
+
+**Alternatives rejected:** Control Room copies protected values; return a raw profile path or name; reuse the source
+profile; copy then delete context after gateway start; issue a reusable launch handle; let preparation contact the
+provider; infer success from directory shape; accept unsigned counts; or accept the current runtime before the method
+exists.
+
+**Trade-off:** This requires a small upstream Hermes change and exact device attestation/cleanup integration before the
+owner attempt. It avoids weakening the approved isolation boundary or coupling Control Room to private Hermes storage.
+
+**Reevaluate:** After an exact Hermes implementation exists, review its source and tests, extend the compatibility
+manifest, implement signed attestation plus atomic one-use consumption/cleanup verification, and refresh the owner packet.
+
+## ADR-137 — Profile preparation evidence is device-signed, request-bound, short-lived, and still non-authorizing
+
+**Decision:** A future Hermes profile-preparation response is accepted for inspection only when a separately trusted
+canonical Ed25519 device key signs the complete digest-bound body. The body binds one exact request/runtime and a maximum
+60-second chronology, reports zero private-context counts, returns only profile/permit/custody digests, and proves no
+material, path, gateway, or provider activity plus cleanup-method presence. The sanitized Control Room result discards
+key/signature material and remains unaccepted for launch until an exact runtime implementation is reviewed.
+
+**Why:** A caller-computed digest or well-shaped JSON can falsely claim isolation. Device signature proves origin, while
+request and time binding prevent substitution and stale replay. Keeping acceptance false prevents the verifier or a test
+fixture from becoming its own runtime authority.
+
+**Alternatives rejected:** Trust unsigned counts; accept a caller digest; retain raw native handles; let the profile
+method start a gateway; omit request or expiry binding; reuse one attestation across preparations; infer zero context
+from absent fields; or enable launch immediately after signature verification.
+
+**Trade-off:** Production needs device-key enrollment and a durable one-use permit/cleanup registry in addition to the
+upstream method. The repository can fully test cryptographic and sanitation behavior without a native effect.
+
+**Reevaluate:** After the one-use registry and exact Hermes method exist, independently review their integration and
+refresh every runtime/source/packet/owner binding before an attached-Terminal attempt.
+
+## ADR-138 — Hermes stays unmodified; Control Room uses signed local or SSH gateway enrollment
+
+**Decision:** IDEA-109B supersedes ADR-135's conclusion that a fresh profile cannot use existing Hermes authentication
+and removes ADR-136/137 from the critical path without deleting their proposal evidence. Exact review of installed
+revision `a2907a8bcdd8e5cdfbd9d6f7ec8b064ce7e40b5b` proves that a fresh no-skills profile with no local provider entry
+reads the global-root protected-value pool as a per-provider read-only fallback; writes remain profile-local. The fresh
+path copies no SOUL, memory, skills, plugins, MCP configuration, rules, or sessions. Existing Hermes SSH support is the
+transport. A trusted node signs the exact tenant/node/connection/runtime/profile/route evidence; protected Control Room
+enrollment separately pins the expected opaque route and, for SSH, the owner-verified host-key fingerprint. The gateway
+stays connector-private and loopback-bound, SSH is public-key-only and non-interactive, host-key changes fail closed, and
+only the fixed Hermes lifecycle/event-replay method set may cross the adapter. Control Room retains no host, username,
+port, key path, session value, protected value, native locator, profile path, or generic shell.
+
+**Why:** The prior review correctly rejected cloning private Bot context but stopped at the profile creation code and
+missed the installed authentication fallback. Using the runtime's existing reference behavior preserves Hermes custody
+without an upstream fork. SSH connects machines while an explicit Control Room bridge preserves project, admission,
+budget, audit, and cross-gateway authority.
+
+**Alternatives rejected:** Modify Hermes before using an existing built-in boundary; copy `.env` or `auth.json`; clone
+then erase Bot context; expose a public Hermes gateway; accept an arbitrary browser-supplied SSH host; use password SSH;
+trust first use without an owner-verified host-key pin; expose generic remote shell; treat a Hermes multi-machine roster
+as cross-gateway execution permission; or let signed enrollment self-qualify a native runtime or live panel.
+
+**Trade-off:** Control Room needs a small node-local connector and owner enrollment workflow. SSH reachability does not
+itself create cross-gateway delegation, native qualification, provider authority, or automatic updates. The connector
+must be independently qualified and operated through the existing node/admission/ambiguity boundaries.
+
+**Reevaluate:** IDEA-110 may run only after one exact signed enrollment and repository native port are reviewed, every
+affected packet/pin is refreshed, and the owner gives new exact authorization. A future Hermes-native preparation method
+may still be adopted as optional hardening, but it is not a prerequisite.
+
+## ADR-139 — Spend an exact owner window before entering the enrolled Hermes bridge
+
+**Decision:** The repository-owned Hermes gateway policy port requires both an accepted node-signed connection
+enrollment and a separate canonical Ed25519 owner window. The owner window binds one tenant, node, connection,
+enrollment result, opaque route, profile, conversation, participant, marker, runtime revision, and fixed Hermes method
+set for at most one native attempt and one provider call over five minutes. A PostgreSQL append-only authenticated event
+chain must claim the permit before bridge entry and separately record native return or terminal ambiguity and cleanup
+completion or uncertainty. Unique attempt and marker indexes stop alternate-permit replay; a rollback checkpoint outside
+the database detects row loss and older database restoration.
+
+**Why:** SSH transport solves reachability, not authority or ambiguity. A signed enrollment says which machine and route
+may be considered; it does not authorize a call. A separately signed, durably spent owner window gives the native bridge
+one exact purpose while preserving safe restart behavior and the existing no-retry rule.
+
+**Alternatives rejected:** Treat SSH reachability as permission; let the browser supply a route; keep spending only in
+memory; mutate one status row; retry after an uncertain native return; expose arbitrary SSH commands; reuse a
+qualification window for a live panel; store a hostname, key path, credential, protected value, or raw model content in
+the spend ledger; or use PGlite as production authority.
+
+**Trade-off:** A platform-specific local/SSH bridge and durable external checkpoint adapter are still required at
+deployment. This block provides their exact safe interface and PostgreSQL transaction boundary but intentionally does
+not contain the process, SSH, gateway, credential, or provider client.
+
+**Reevaluate:** After the fixed native bridge is implemented and independently reviewed, refresh every affected source,
+implementation, packet, enrollment, and owner-window digest before any attended qualification.
+
+## ADR-140 — Reuse Hermes Desktop routing; keep native and SSH locators outside Control Room
+
+**Decision:** The IDEA-110B bridge does not modify Hermes, launch SSH, or connect directly to a Hermes gateway. It sends
+one closed lifecycle sequence through an injected connector for an already enrolled Hermes Desktop local or SSH route.
+The connector alone maps the signed opaque route and attempt digests to connection/profile/native session state. Control
+Room may receive only exact safe receipts and digests; it cannot receive a hostname, username, port, key path, gateway
+value, protected value, profile path, or native session identifier. A gateway epoch change, replay truncation or gap,
+malformed terminal result, usage mismatch, extra field, or uncertain call is terminal and non-retriable. Attempt-bound
+cleanup must reconcile even an uncertain route open and must prove close, lease release, temporary-state removal, and
+zero retained native references. `session.close` is part of the signed operation set, and the owner permit signs both
+participant and runtime identity.
+
+**Why:** Hermes Desktop already owns system-SSH connection establishment, connection pooling, session routing, replay,
+and reconnect. Duplicating that machinery inside Control Room would expand credential and locator custody and would make
+updates harder. A narrow connector boundary lets Hermes update independently while Control Room retains authority,
+budget, ambiguity, sanitation, and audit rules.
+
+**Alternatives rejected:** Fork Hermes; copy credentials; have Control Room invoke `ssh`; expose the Hermes gateway on a
+public interface; return native session IDs; accept arbitrary JSON-RPC methods; infer success from prompt acknowledgement;
+ignore gateway epoch changes; retry after an unknown result; or leave cleanup outside the signed method set.
+
+**Trade-off:** A small platform connector implementation is still required to bind the abstract port to Hermes Desktop's
+registered connection. Until that connector is configured, reviewed, and enrolled, every default remains disabled and
+the bridge makes zero native or provider calls.
+
+**Reevaluate:** Re-pin the six Hermes lifecycle/routing source files on every Hermes upgrade. Any connector protocol or
+native event-shape change requires a new review, enrollment, owner packet, and authorization before native use.
+
+## ADR-141 — A review packet or provider-disabled bridge cannot self-authorize enrollment
+
+**Decision:** Real Hermes connection enrollment is controlled by a separate canonical readiness record. The record binds
+the exact fixed-bridge implementation commit, review packet SHA-256, installed runtime revision, connection-source
+candidate, fixed RPC source manifest, and gateway operation-set digest. It remains blocked until a different independent
+review is accepted, a concrete platform connector implementation is separately accepted, a trusted node signer is
+enrolled, one signed connection enrollment verifies, an effect-free preflight passes, every packet/pin is refreshed, a
+fresh owner window exists, and native qualification is later accepted. Missing gates are explicit and cannot be changed
+by recomputing the outer digest. No readiness snapshot emits a command or treats prior owner text as reusable.
+
+**Why:** A safe abstract port and a READY review jobber are plans, not observations. Treating either as proof would let a
+producer appoint its own reviewer, invent the platform binding that retains locators, or skip the exact signer and packet
+refresh needed after protocol changes.
+
+**Alternatives rejected:** Count an open pull request or passing producer tests as independent acceptance; let the
+connector self-register; trust an arbitrary injected signer; emit a command while review is pending; reuse IDEA-100 or
+IDEA-105 owner text; infer a real route from source compatibility; or let an unsigned readiness flag authorize enrollment.
+
+**Trade-off:** The first real enrollment waits for the independent report and a concrete platform binding. In exchange,
+Control Room has one auditable stop point that remains honest across restarts, reviews, connector changes, and packet
+refreshes.
+
+**Reevaluate:** Replace each missing gate only with its exact accepted evidence. Any negative review, connector drift,
+signer change, runtime update, source change, or preflight uncertainty keeps enrollment blocked and requires new evidence.
+
+## ADR-142 — Serialize Hermes execution and cleanup under one least-authority operation set
+
+**Decision:** Every captured driver, spend-store, and native-bridge method is invoked with its validated original receiver.
+The enrolled gateway and fixed bridge each expose a one-use execution-settlement barrier. Cleanup marks cancellation and
+cannot return completed evidence until the in-flight execution path has settled; execution checks cancellation before and
+after every connector await. Enrollment and permit digesting share the fixed bridge's exact seven-operation set and omit
+compatible but unused methods. Trusted time is sampled again after durable claim and immediately before bridge entry;
+expiry, rollback, cancellation, or abort consumes the claim into terminal ambiguity and dispatches nothing.
+
+**Why:** JavaScript method extraction can invalidate concrete classes that use private fields. Separately, cleanup and
+permit expiry are security state transitions, not convenience callbacks: racing either boundary can turn uncertainty or
+expired authority into later provider work. Signing compatible methods that the bridge never uses is unnecessary ambient
+authority.
+
+**Alternatives rejected:** Rely on receiver-independent fakes; require every collaborator to avoid private fields; let
+cleanup run concurrently and trust abort timing; report cleanup complete before execution settles; authorize every Hermes
+method known to be compatible; check expiry only before the database claim; retry after any ambiguous race.
+
+**Trade-off:** Cleanup can wait until an abort-aware connector settles and may remain uncertain if the connector ignores
+abort. That is deliberately safer than false completion. Any operation-set change invalidates earlier enrollment and owner
+window digests and therefore requires fresh signed evidence.
+
+**Reevaluate:** After a different independent reviewer closes all four REV-003 findings against the exact remediation
+commit. Connector implementations must preserve the same cancellation, receiver, operation-set, and post-claim expiry
+invariants.
+
+## ADR-143 — Capture the gateway wrapper before behavior and terminally consume clock failure
+
+**Decision:** The enrolled gateway constructor accepts only one exact ordinary-data wrapper captured through host-level
+property descriptors. It rejects accessors, inherited or unknown state, symbols, non-ordinary prototypes, and Proxies
+before any wrapper property or collaborator can execute. After a successful durable claim, a trusted-clock exception is
+treated as a consumed non-execution: the gateway records `terminal_ambiguity` at the last valid claimed time, dispatches
+nothing, and remains non-retriable.
+
+**Why:** Signed evidence and effect-capable collaborators cross the same composition wrapper. Direct JavaScript property
+reads can execute getters before validation. Separately, a durable claim without a terminal outcome cannot distinguish a
+known local pre-dispatch failure from an interrupted claimed interval. Both gaps weaken audit truth even when native
+dispatch remains zero.
+
+**Alternatives rejected:** Trust ordinary-looking wrappers; check only nested collaborator methods; clone with spread or
+destructuring; treat a thrown trusted clock as an ordinary exception; leave claim-only state for later inference; retry
+because bridge dispatch was zero; or claim terminal durability without an accepted settlement.
+
+**Trade-off:** Callers must supply a plain exact wrapper, and an unavailable trusted clock consumes the one-use permit.
+That is intentionally stricter than executing wrapper behavior or leaving ambiguous claim-only state. A failed durable
+settlement remains honestly uncertain rather than being converted to success.
+
+**Reevaluate:** After a reviewer different from both earlier reviewers and all remediation contributors closes all six
+recorded findings against exact IDEA-110E commit `2bc80a2`. The later platform connector must preserve this exact
+descriptor, receiver, settlement, cancellation, and no-retry boundary.
+
+## ADR-144 — Put the Mac connector guard in Control Room and native locators behind a private port
+
+**Decision:** The macOS connector is a one-attempt protocol guard inside Control Room, while an injected Mac-resident
+private port remains the sole owner of Hermes Desktop registration, local/SSH locators, keys, protected values, gateway
+endpoints, profiles, and native session identifiers. The guard exact-captures only opaque signed inputs and safe receipts,
+enforces the fixed ordinary and cleanup sequences, preserves the private port receiver, serializes abort and close, and
+converts uncertain open or operation outcomes into close-only or cleanup-only state without retry. It is unconfigured and
+non-authorizing until separately reviewed, signer-enrolled, route-enrolled, and preflighted.
+
+**Why:** Reusing Hermes Desktop routing avoids a Hermes fork and avoids duplicating SSH credential custody in Control
+Room, but an unguarded injected port would leave lifecycle ordering, binding, cancellation, and retry policy to every
+platform adapter. One repository-owned guard makes those invariants testable without learning any native locator.
+
+**Alternatives rejected:** Modify Hermes; let Control Room launch `ssh`; place host/key/gateway/profile values in the web
+app or database; pass arbitrary JSON-RPC; trust adapter call order; retry an uncertain open; close a known created session
+without attempting native cleanup; configure a port because producer tests pass; or treat connector acceptance as signer,
+route, packet, authorization, or qualification acceptance.
+
+**Trade-off:** A small Mac-resident private-port implementation and trusted signer enrollment are still required before
+real enrollment. Connector review adds a gate, but Hermes and SSH can update independently while Control Room retains a
+stable least-authority protocol.
+
+**Reevaluate:** After independent review of the exact IDEA-110F candidate. Any changed connector protocol, Hermes source
+manifest, runtime revision, private-port implementation, signer, or route invalidates later evidence and keeps native use
+blocked.
+
+## ADR-145 — Cancellation cannot erase possible native state or expose private diagnostics
+
+**Decision:** The connector treats `session.create` as cleanup-requiring before private dispatch and joins any active call
+before deciding whether route close is eligible. A canceled or uncertain create is never retried; cleanup may reconcile
+it through the fixed private operation set. Caller cancellation is observed only through captured host intrinsics over a
+genuine exact AbortSignal, and known pre-abort prevents private dispatch. Private-port exceptions are discarded and
+replaced by bounded connector errors. Connection, route, permit, profile, conversation, lease, session, and epoch
+identities are domain-separated; the connector receives only a derived connection identity digest, never the signed
+human-readable connection ID or a native locator.
+
+**Why:** IDEA-110F's first independent review proved that a successful native create can return after cancellation, that
+genuine AbortSignal objects remain behaviorally mutable through own descriptors, that private errors can carry native
+diagnostics, and that syntactically valid digests do not prove distinct authority domains. Abort is a request to stop,
+not evidence that a native effect did not happen. Locator custody and safe errors must hold at the connector itself, not
+only at an outer gateway.
+
+**Alternatives rejected:** Treat abort as proof of no session; check cleanup eligibility before joining the active call;
+dispatch already-aborted requests and reject only their receipts; dynamically read caller signal properties; rethrow or
+wrap private errors; accept equal values in different authority fields; send a connection label to the Mac-private port;
+or retry an uncertain create or cleanup operation.
+
+**Trade-off:** A possible create can force cleanup even when the private call did not return a session identity, and a
+cleanup or route can remain honestly uncertain instead of closing optimistically. The Mac-private port must index its
+enrolled connection by the domain-separated identity digest and reconcile attempt-bound native state. This is stricter
+but keeps Control Room free of locators and false cleanup claims.
+
+**Reevaluate:** After a different independent reviewer closes all five IDEA-110F findings against the exact IDEA-110G
+remediation commit. Any connector, signal-observer, connection-identity derivation, private-port, operation-set, runtime,
+source-manifest, signer, or route change invalidates that report and requires new evidence before native use.
+
+## ADR-146 — Repository seams carry opaque cancellation, not native AbortSignal internals
+
+**Decision:** The filtered driver, enrolled gateway, fixed bridge, and macOS connector exchange only a repository-created
+opaque cancellation capability. Its frozen zero-own-key token is recognized through a module-private registry; abort
+state and subscriptions live in private state and use captured intrinsics. Native `AbortSignal` exists only after the
+macOS connector has accepted the opaque token, and only the Mac-private port receives that connector-owned native
+signal. Connector settlement tracks its own cancellation state and does not re-read mutable native signal internals.
+
+**Why:** IDEA-110G proved that checking a genuine native signal's outer prototype, keys, descriptors, and aborted getter
+does not make its built-in internal event containers immutable. A caller could retain the expected outer shape, replace
+the event map with a Proxy, and make native listener installation execute caller behavior. No finite outer shape check
+can safely convert a shared mutable host object into an authority-bearing component seam.
+
+**Alternatives rejected:** Add one more native internal-value type check; recursively inspect undocumented EventTarget
+state; clone or compose a caller signal through another native signal; tolerate behavior when listener installation
+fails; poll the caller signal; drop cancellation; or treat passing producer tests and incomplete review jobs as
+acceptance.
+
+**Trade-off:** Repository adapters must use the opaque capability and cannot accept arbitrary AbortSignal producers.
+The final private Mac adapter still receives a native signal because it may need the host API, but that signal is created
+inside the connector and carries no caller-owned internal state. This deliberately narrows extension points in exchange
+for deterministic cancellation, timeout, cleanup, and zero-behavior validation.
+
+**IDEA-110I amendment:** Exact opaque validation is required at the first executable boundary of gateway and bridge
+execute and cleanup, before lifecycle mutation, trusted time, durable spend, settlement, or collaborator dispatch. The
+Mac connector captures its native controller constructor, signal getter, abort method, and apply operation at module
+initialization. Connector-owned cancellation state becomes terminal before native abort; a native abort exception is
+discarded and cannot bypass the active-settlement join or mandatory cleanup sequence. This amendment follows the two
+High and one Medium findings preserved by independent PR #219.
+
+**IDEA-110J amendment:** Exact cancellation acceptance also freezes the host-operation selection boundary. Code after
+that point may not dynamically select ambient constructors, collections, time/number/JSON helpers, object-freeze,
+reflection, receiver-binding, Promise creation, or array iterator helpers. Required operations are captured at module
+initialization or replaced by direct primitive/indexed logic. This follows the Medium ambient-Set finding preserved by
+the IDEA-110I independent report.
+
+**IDEA-110K amendment:** Safety validation is part of the same frozen host-operation boundary. Secret detection,
+redaction, safe projection, and exact-parser error classification may not dynamically select object-entry, array
+identification/traversal/append/join, regex test/replace, string normalization/search, reflection, object-definition, or
+Error operations after module initialization. Recursive traversal uses direct indexed logic and captured calls. This
+follows the High `Object.entries` bypass preserved by the IDEA-110J independent report.
+
+**IDEA-110L amendment:** Capturing a public regex wrapper is insufficient when that wrapper dynamically resolves
+`RegExp.prototype.exec`. Repository pattern checks must invoke captured native execution directly; Idea Lab schemas may
+not retain Zod regex/datetime refinements that re-enter mutable regex execution; key normalization uses primitive ASCII
+filtering; and traversal rewrites preserve ordinary sparse-array topology. This follows the High regex-execution and Low
+sparse-array findings preserved by the IDEA-110K independent report.
+
+**IDEA-110M amendment:** Chronology is part of the frozen host-operation boundary. Idea Lab timestamps must pass one
+module-captured validator that checks real calendar days, leap years, wall-clock fields, timezone bounds, and finite
+parse output before any comparison. Enrollment, profile preparation, owner qualification, admission, authority,
+coordinator, lifecycle, spend, and persistence code may not dynamically select ambient date parsing, numeric finiteness,
+date construction/formatting, or array-wide chronology helpers after module initialization. This follows the two Medium
+findings preserved by the IDEA-110L independent report.
+
+**IDEA-110N amendment:** Captured time formatting must return only a string that round-trips through the exact
+four-digit-year Idea Lab contract; invalid Dates, extended years, Date-limit values, and native formatting failures
+close without leaking host errors. Connection-roster construction must exact-snapshot the complete request and bounded
+dense array before parsing, then use indexed traversal, pairwise identity comparison, and direct counts without
+dynamically selecting caller or ambient array/collection behavior. This follows the two Medium findings preserved by
+the IDEA-110M independent report.
+
+**IDEA-110O amendment:** Exact caller-data capture is insufficient if rebuilt records later enter a mutable shared
+canonicalizer. Roster identity must be computed with module-captured array identification and sorting, object-key
+enumeration, JSON and finite-number handling, reflection, and SHA-256 methods; indexed serialization must preserve the
+existing clean-runtime canonical bytes without dynamically selecting ambient traversal. This follows the Medium
+finding preserved by the IDEA-110N independent report.
+
+**IDEA-110P amendment:** Digest verification must end in an immutable evidence graph. The module captures object freezing
+before shared-state mutation; direct and reparsed connection results seal their nested blocker arrays; final roster
+parsing seals every connection and blocker array before sealing the connection array and outer roster. A retained digest
+may never describe caller-mutable identity, chronology, blocker, qualification, live, or authority fields. This follows
+the Medium finding preserved by the IDEA-110O independent report.
+
+**IDEA-110P acceptance:** A fresh different reviewer accepted exact provider-disabled product
+`e028d6b4cd5ee55c053561a880fbf65d897dc2ad`; immutable report SHA-256
+`7cbd2f982956ff418e35dfacf71ee616a763fe60e20eb0b4d40acf553581af3f`. This removes only the connector
+implementation-review blocker. It does not enroll or authorize any signer, route, port, native runtime, provider,
+credential, live panel, production database, deployment, hosting, or DNS effect.
+
+**Reevaluate:** Only if a future host supplies a non-mutable, non-behavioral cancellation primitive with a stable public
+contract. Any change to token minting, private state, subscription, driver/gateway/bridge/connector propagation, native
+conversion, captured host operations, exact snapshot behavior, or cleanup ordering invalidates IDEA-110J review evidence
+and requires a fresh report. Any change to shared secret/redaction/projection traversal or exact-parser safety
+classification also invalidates IDEA-110K review evidence.
+Any change to captured regex execution, Idea Lab schema refinements, time validation, key normalization, or sparse-array
+projection also invalidates IDEA-110L review evidence.
+Any change to the captured time helper, strict calendar rules, generated time formatting, or any downstream chronology
+consumer also invalidates IDEA-110M review evidence.
+Any change to contract-safe formatting, exact roster capture, roster identity comparison, or count construction also
+invalidates IDEA-110N review evidence.
+Any change to captured roster canonicalization, byte compatibility, or roster SHA-256 construction also invalidates
+IDEA-110O review evidence.
+Any change to connection-result freezing, nested roster immutability, or the captured freeze operation also invalidates
+IDEA-110P review evidence.
+
+## ADR-147 — Project live activity is a protected append-only projection with bounded SSE replay
+
+**Decision:** Control Room records project activity in a PostgreSQL append-only, per-project digest chain with an
+authenticated stream head. A protected read endpoint authorizes the existing owner/project scope and returns bounded
+Server-Sent Events pages. The response closes after each page; browser-native reconnect and `Last-Event-ID` resume from
+the last authenticated event. Invalid, stale, foreign, or ahead cursors reset to a bounded current snapshot. Event and
+page contracts are presentation-only and explicitly grant no approval, command, or execution authority. Source systems
+retain authoritative lifecycle truth; projection scans exact authenticated source versions after mutation and at startup,
+so a crash or interleaving cannot silently omit an earlier source event. Event time uses canonical UTC milliseconds.
+Authenticated historical source events remain projectable without an arbitrary lower wall-clock cutoff: `occurredAt`
+retains source chronology and `recordedAt` retains ingestion chronology. Future-dated events remain rejected.
+
+**Why:** Operators need one understandable live project timeline across Idea Lab, workers, reviews, artifacts,
+automations, and transports. A durable journal makes reload and reconnect behavior deterministic, while bounded replay
+avoids making an indefinite HTTP connection part of correctness. Reusing the protected project-scope authority prevents
+the stream from becoming a second identity system. Keeping activity non-authoritative prevents a convenient UI channel
+from bypassing the existing job, approval, audit, and effect contracts.
+
+**Alternatives rejected:** Browser polling against unversioned snapshots; in-memory event buses; WebSockets before a
+required bidirectional command contract exists; caller-supplied tenant/workspace headers; EventSource as a write or
+approval channel; treating an invalid cursor as an empty successful replay; keeping an unbounded server response open;
+using PGlite or object storage as production coordination authority; or copying third-party UI/runtime source.
+
+**Trade-off:** The browser reconnects after every bounded page and an idle stream periodically performs a protected
+read. Historical snapshots can be truncated before the retained page, and a privileged full-database rollback is not
+claimed to be detected by this presentation projection. These costs are preferable to hidden authority, unbounded
+connections, or a second coordination database.
+
+**Reevaluate:** Before adding bidirectional transport, browser event writes, production database composition, retention,
+or multi-node notification fan-out. Any event contract, chain/tag, replay cursor, authentication order, writer,
+migration, or negative-authority change invalidates CR13A-LIVE-000 review evidence.
+
+## ADR-148 — Connection Center projects sanitized enrollment truth without inferring host liveness
+
+**Decision:** Connection Center is a protected read-only projection over the accepted sanitized Hermes connection
+roster. Owner authentication and tenant derivation occur before source access. The server rebuilds the source roster
+through the accepted exact contract, then exposes only opaque connection/node IDs, local-versus-private-SSH transport,
+the exact reviewed runtime revision, enrollment/profile state, qualification blockers, and negative authority. The
+browser verifies one strict digest-bound projection. An empty protected roster remains empty; installed software, an
+ambient hostname, SSH capability, or earlier test evidence cannot create an implied connection.
+
+**Why:** Operators need one place to see which machines are actually enrolled and what blocks them, but connection UI is
+a dangerous place to blur configured, reachable, authenticated, qualified, and execution-authorized states. Reusing the
+accepted sanitized roster avoids a second SSH or credential boundary and keeps private locators outside the web layer.
+
+**Alternatives rejected:** Browser-direct SSH; storing or displaying hostnames and ports; treating an installed Hermes
+binary as enrollment; deriving health from an unqualified connection; presenting reviewed version compatibility as live
+provider success; adding connect or qualification buttons before an exact effect contract; or substituting fixtures when
+the protected source is empty or unavailable.
+
+**Trade-off:** The first Connection Center can show safe setup and version diagnostics but not real liveness, capacity,
+or live-panel readiness. Durable registry persistence and independently authenticated freshness remain later work. This
+is preferable to an attractive but false green connection status.
+
+**Reevaluate:** Before adding persistent enrollment storage, node heartbeat composition, connection mutation, native
+qualification, credential references, SSH control, or live-panel actions. Any authentication ordering, roster rebuild,
+redaction, digest, version wording, blocker, or negative-authority change requires fresh review.
+
+## ADR-149 — enrollment persistence and signal freshness are independent protected facts
+
+**Decision:** Persist sanitized signed Hermes enrollment results in one append-only, tenant- and canonical-node-bound
+PostgreSQL registry with a per-tenant digest chain, authenticated stream head, keyed row authentication, and protected reconstruction. Compose recency only from a server-keyed
+receipt emitted after node-protocol authentication and fleet persistence, with the telemetry contract's five-minute
+maximum lifetime. Never infer authenticated ingress from the mutable fleet-current projection. Public Connection Center output labels
+that fact `current`, `stale`, or `missing`; it never labels it online, healthy, available, qualified, or authorized.
+Enrollment, runtime compatibility, telemetry freshness, qualification, live-panel admission, and execution authority are
+separate fields and no field promotes another. Raw registry and node identifiers remain server-side and are replaced by
+ordinal presentation references.
+
+**Why:** A restart-safe roster is necessary before multiple agent machines can be managed, but durable configuration is
+not proof that a process is running. A keyed post-authentication receipt preserves the existing telemetry semantics while
+preventing a direct fleet projection row from impersonating authenticated ingress. The short expiry gives the operator
+useful recency without creating command or lease authority. Protected correlation
+preserves multi-machine usefulness without exposing SSH locations or stable machine identity to the browser.
+
+**Alternatives rejected:** In-memory enrollment; browser-written heartbeat state; SSH connect probes during reads;
+deriving liveness from enrollment time, a direct fleet-current/history row, discovery, capability, benchmark, installed software, or runtime compatibility;
+showing source IDs or route/profile digests; treating current telemetry as qualification or execution eligibility; using
+PGlite as production authority; or adding a second coordination database.
+
+**Trade-off:** A correctly enrolled node can show `missing` or `stale`, and a node with current telemetry remains blocked
+from live panels and work until separate gates pass. The registry stores protected correlation identifiers inside the
+authoritative database and therefore requires strict database access and retention controls. These costs are preferable
+to a false green status or an unreviewed second trust path.
+
+**Reevaluate:** Before adding enrollment intake or revocation, signal push/fan-out, native qualification, SSH control,
+live-panel admission, production PostgreSQL composition, retention, or deployment. Any registry schema/tag/replay rule,
+telemetry provenance/freshness rule, authentication ordering, correlation, redaction, or negative-authority change
+invalidates CR13A-LIVE-020 review evidence.
+
+## ADR-150 — Enrollment intake derives trust from the active database key and commits evidence atomically
+
+**Decision:** A server-held delivery source may supply a bounded Hermes connection-enrollment envelope, delivery ID, and
+receipt time, but the source's name or returned metadata is not authentication evidence. Inside one tenant-serialized
+PostgreSQL transaction, Control Room verifies the existing audit stream, resolves the exact current active node key,
+checks key/node state and validity, verifies the signed envelope with the accepted Hermes enrollment verifier, persists
+the connection-registry revision, and appends a separately keyed audit receipt and head. Registry and intake evidence
+commit together. Exact delivery/enrollment replay returns the original verified safe receipt even after later key
+retirement or revocation; revocation still blocks every new intake and semantic drift fails.
+
+The runtime default is a disabled source, and the application exports no enrollment write route. The safe receipt carries
+only opaque digests, revision, time, disposition, and explicit negative authority. Raw correlation identifiers remain in
+the protected database. Enrollment does not imply signal freshness, qualification, approval, network, command, lease,
+execution, live-panel, provider, or deployment authority.
+
+**Why:** The durable registry needs an actual verified write composition, but trusting a connector-produced
+`authenticated` label would create a confused-deputy path. Re-verifying the independently signed enrollment against the
+authoritative active key makes trust local and reviewable. One outer transaction prevents an accepted registry record
+without matching audit evidence or an audit receipt for a rolled-back enrollment.
+
+**Alternatives rejected:** Browser or HTTP enrollment writes; trusting delivery metadata as cryptographic proof; accepting
+the public key embedded in the envelope without database resolution; writing registry and audit in separate
+transactions; audit-only replay detection; unsigned or mutable receipts; treating a node-protocol frame as a substitute
+for the nested enrollment verifier; enabling a local/SSH/native source in the same block; or using PGlite as production
+authority.
+
+**Trade-off:** Each intake verifies the complete per-tenant audit chain and serializes on the tenant, which intentionally
+limits write throughput. Key rotation can reject a delayed envelope once its signing key is no longer active. These costs
+are acceptable for rare enrollment operations and are safer than ambiguous replay or partial evidence.
+
+**Reevaluate:** Before adding a node-protocol delivery adapter, live connector, revocation/rotation intake, retention,
+multi-primary writes, production PostgreSQL composition, or any public mutation surface. Any source-capability,
+active-key resolution, transaction ordering, registry composition, replay rule, audit-chain/tag, receipt-redaction,
+runtime-default, or negative-authority change invalidates CR13A-LIVE-030 review evidence.
+
+**CR13A-LIVE-030 acceptance:** A fresh different reviewer accepted exact product
+`0bbe4e52602f8859b78ca6516377bdbe3ee3378a` with no High, Medium, or Low findings after independently tracing the
+active-key, replay, transaction, audit, migration, redaction, and disabled-runtime boundaries and reproducing the focused
+deterministic gates. This authorizes only owner-approved repository integration. Any product change requires a new exact
+target and review.
+
+## ADR-151 — Node delivery authentication and enrollment authorization remain independent
+
+**Decision:** Add `connection.enrollment.deliver` as a node-to-server message in the versioned signed node protocol. The
+outer frame binds one opaque enrollment envelope and its digest to the exact tenant, node, active key, connection,
+sequence, nonce, message lifetime, delivery ID, and declared inner contract. Only after protocol schema, freshness, rate,
+active-key, Ed25519, and durable replay checks pass may a server-held adapter exact-parse the Hermes 0.21 envelope and
+append it to the protected delivery ledger. The existing enrollment intake must still independently resolve the active
+database key and verify the inner signature before writing the connection registry.
+
+Migration 0036 persists accepted delivery evidence as a tenant-serialized, append-only, payload-digested,
+HMAC-authenticated digest chain. Exact frame replay may repair a missing delivery append after a post-authentication
+failure; conflicting delivery/message reuse fails. The safe receipt contains derived references, digests, chronology,
+duplicate dispositions, and negative authority only. The adapter has no route or listener and the runtime remains
+disabled by default.
+
+**Why:** A real multi-machine Control Room needs a concrete path from an enrolled node channel to the durable connection
+registry. Treating the transport's `authenticated` result as enrollment authority would collapse two signatures and
+create a confused-deputy path. Preserving the nested verification lets protocol replay/recovery and enrollment
+authorization evolve independently while giving the server restart-safe evidence for the handoff between them.
+
+**Alternatives rejected:** Browser or HTTP enrollment mutation; SSH command ingestion; a connector-supplied authenticated
+boolean; accepting an unsigned envelope inside a signed frame; accepting an inner public key without authoritative
+database resolution; direct registry writes from the protocol router; one in-memory handoff; consuming a new sequence or
+nonce to repair a known exact replay; public delivery identifiers or transport identity in receipts; enabling a listener,
+connector, native runtime, or provider in the same block; PGlite or object storage as production authority.
+
+**Trade-off:** One logical enrollment carries nested Ed25519 verification and two separate durable chains. A valid outer
+frame with a semantically invalid inner contract still consumes its own protocol sequence, although it creates no
+delivery or registry record. Per-tenant full-chain verification and the 10,000-record ceiling deliberately favor
+integrity and bounded failure over write throughput. These costs are acceptable because enrollment is rare.
+
+**Reevaluate:** Before adding an actual ingress listener, connector dispatch, revocation/rotation delivery, retention,
+delivery pruning, multi-primary writes, production PostgreSQL composition, native qualification, live-panel admission,
+or deployment. Any node message schema, identity binding, key validity, replay ordering, ledger chain/tag, source
+capability, nested verification, receipt redaction, runtime default, or negative-authority change invalidates
+CR13A-LIVE-040 review evidence.
+
+**CR13A-LIVE-040 remediation amendment:** The first immutable product was rejected by independent review. The delivery
+adapter now captures every required host operation at module initialization, verifies the complete runtime selection
+boundary and digest/HMAC sentinels at public and post-await seams, and invokes captured regex, chronology, JSON,
+reflection, object-freeze, numeric, buffer, and string operations. Persistent ambient mutation closes with a safe
+integrity error before its replacement executes.
+
+The generated JSON Schema is the structural wire contract: the delivery variant is node-to-server and node-signed, uses
+the shared 3–160 character delivery-ID contract, and requires an object envelope with body identity fields plus a strict
+Ed25519 attestation. Computed digest and cross-field equality remain explicit runtime-only relational checks because
+standard JSON Schema cannot express them. A shared structural rejection corpus must pass both validators.
+
+Every authenticated delivery reads the exact replay row and uses its original durable `received_at`. The ledger protects
+the initial protocol disposition, and every later exact duplicate reconstructs the original safe receipt. A retry after
+protocol commit but before ledger commit therefore uses canonical chronology and creates one recoverable ledger record;
+changed content remains a conflict. The same delivery-ID helper is enforced by protocol runtime, generated schema,
+adapter, protected intake, and migration before replay consumption.
+
+A fresh independent reviewer reproduced the deterministic gate and added separate signed-frame, PGlite ledger,
+concurrent replay/recovery, wrong-key/tag, and 28-operation post-import mutation probes against immutable remediation
+`67c16c5c11d06d3752b434fd8e3641c1c1482e8b`. H-001, M-001, M-002, and L-001 are closed with no new High, Medium, or
+Low finding. Accepted report SHA-256 is `217dd95aca1f314038b9730183e86bbb644464fa75a5be407c2d899c7135b516`.
+This permits owner-controlled integration review only and does not enable any listener, connector, credential,
+native/provider, production-database, deployment, or network effect.
+
+## ADR-152 — Enrollment ingress composes two independent proofs and trusts no routing label
+
+**Decision:** A server-only coordinator may receive one raw signed node frame plus a transport-derived delivery-ID routing
+hint, receive time, and transport identity. It must first persist/authenticate the exact frame through the accepted
+LIVE-040 adapter, then re-read the protected delivery at the canonical replay time and prove its evidence digest equals
+the authenticated receipt before invoking the accepted LIVE-030 intake. Intake still resolves the active database key
+and verifies the nested enrollment signature independently.
+
+The database composition uses separate 32-byte HMAC keys for delivery evidence, connection-registry evidence, and intake
+audit evidence. Exact later and concurrent retries return one stable combined digest-only receipt. The local runtime
+contains only a disabled ingress port, and no application route or listener is exported.
+
+**Why:** Calling delivery and intake separately would leave the caller responsible for joining a raw frame to a protected
+delivery ID. A buggy or hostile transport could point intake at a different pending delivery. Re-reading and digest-binding
+the protected record before intake keeps correlation inside the server trust boundary without collapsing outer and inner
+signatures or exposing protected identifiers in the result.
+
+**Alternatives rejected:** Trusting the routing hint; parsing an unauthenticated body to choose intake; returning the raw
+delivery ID; letting a transport call intake directly; reusing one HMAC key for multiple ledgers; treating node-protocol
+authentication as enrollment approval; adding an HTTP/browser write route; opening a listener; composing a live
+connector; or attaching production PostgreSQL in this block.
+
+**Trade-off:** The coordinator re-reads the authenticated delivery before intake, and intake reads it again inside its
+own verification flow. Enrollment is rare, so the extra protected database work is accepted in exchange for explicit
+evidence binding and independent verification. A delivery can persist when inner enrollment is rejected; this is honest
+negative evidence and an exact retry does not create a second delivery.
+
+**Reevaluate:** Before adding a transport listener, acknowledgement, connector dispatch, public mutation surface,
+delivery retention/pruning, key rotation intake, production database composition, native qualification, live-panel
+admission, or deployment. Any correlation rule, receipt field, failure mapping, HMAC domain, runtime default, outer/inner
+verification ordering, or negative-authority change invalidates CR13A-LIVE-050 review evidence.
+
+## ADR-153 — Ingress receipt integrity is re-established across every asynchronous proof seam
+
+**Decision:** Preserve the rejected CR13A-LIVE-050 product and report. The remediation must capture and verify the exact
+canonicalization and native-hash runtime selected by final ingress receipt construction and parsing. Verification occurs
+at public entry, immediately after delivery, protected-read, and intake awaits, and once more before final construction.
+Any selected-runtime drift closes with a bounded integrity error before the changed operation executes.
+
+The selected boundary includes global object/constructor identity, property inspection, object keys/freezing, array
+classification/mapping/sorting/joining, numeric checks, JSON encoding, chronology, string slicing, regex execution,
+reflection, typed-array cleanup, and native hash update/digest methods. Receipt reference slicing and temporary-key wiping
+use captured operations. Definite response loss after successful intake remains recoverable through exact replay after
+the runtime is restored.
+
+**Why:** A digest cannot prove receipt integrity when an ambient canonicalization operation can be replaced after module
+import and change only the temporary material being hashed. Awaited proof and database seams are the points where another
+same-process component can change selected runtime state. Rechecking immediately after each seam prevents that state from
+reaching result parsing or final hashing.
+
+**Alternatives rejected:** Treating the digest as self-protecting; checking only at module import; checking only at
+receive entry; relying on the accepted delivery adapter's runtime check to protect a later ingress parser; omitting native
+hash methods; accepting one replacement execution before failure; removing the receipt digest; or widening this block to
+a listener, connector, credential, provider, native, production, or deployment effect.
+
+**Trade-off:** Each enrollment performs several exact runtime-selection comparisons and a small private digest sentinel.
+Enrollment is rare, and the deterministic overhead is accepted to keep a same-process integrity boundary across awaited
+composition. The check intentionally fails closed if another component changes a selected intrinsic.
+
+**Reevaluate:** Before changing receipt canonicalization/hash implementation, adding or removing an awaited seam,
+changing any selected host operation, exporting an injectable proof coordinator, or enabling transport admission. Such a
+change invalidates CR13A-LIVE-050 remediation review evidence.
+
+## ADR-154 — Rejected values are data, not executable error identity
+
+**Decision:** Every connection-registry catch boundary treats its caught value as untrusted data. It may preserve a code
+only when Node's host predicate says the value is not a Proxy, its immediate prototype is exactly the captured local
+error prototype, and the code is an own string data property in the boundary's allowlist. The boundary then constructs a
+fresh local error. It never uses `instanceof`, walks an unknown prototype chain, invokes an accessor, logs or serializes
+the caught value, or throws it onward unchanged.
+
+**Why:** JavaScript error identity checks can consult a caller-controlled prototype chain. A rejected promise is not
+guaranteed to contain an `Error`, even when the database object and method are ordinary. Treating the rejection as data
+keeps dependency failure inside the documented safe-code contract and prevents unknown behavior from crossing the
+public ingress boundary.
+
+**Alternatives rejected:** Using `instanceof`; reading `.safeCode` directly; accepting subclasses or inherited codes;
+walking until a known prototype is found; serializing the rejected value for diagnostics; rethrowing an unknown value;
+or widening a dependency's error text into the ingress receipt.
+
+**Trade-off:** Subclassed or cross-realm errors lose their original safe code and become a conservative bounded failure.
+That diagnostic loss is accepted at this trust boundary. Genuine exact local errors retain their established mappings,
+and observability can count the bounded outcome without retaining the rejected object.
+
+**Reevaluate:** Before adding a connection-registry dependency boundary, changing local error prototypes or safe-code
+allowlists, introducing cross-realm workers, or exposing richer error diagnostics. Any change to classification or
+reconstruction invalidates the CR13A-LIVE-050 second-remediation review evidence.
+
+**Independent-review amendment:** Exact prototype and own-data checks are necessary but do not themselves validate a
+code's meaning. Every classifier must also compare the captured string with its explicit declared allowlist. Unknown
+strings become the conservative local integrity outcome; they cannot be mapped through a broad non-`undefined` check.
+The rejected second-remediation report is preserved before this narrow correction.
+
+**L-001 remediation amendment:** The node-delivery classifier enumerates every declared `ProtocolAuthenticationCode`
+literal. Recognition of the error prototype and own data property is followed by semantic allowlist validation; any
+other string becomes a fresh local integrity error. Adapter and composed-ingress cases require zero behavior execution,
+no raw escape, and no new persistent state.
+
+**Independent acceptance amendment:** A fourth different reviewer reproduced the focused and connection suites,
+migration verification, exact allowlist equality, and unchanged prior boundaries against immutable product
+`ffcdb586022ff67494cb2e404df7749b3a093b22`. M-001, M-002, and L-001 are closed with no new High, Medium, or Low finding.
+Accepted report SHA-256 is `a172987b0a73d4b82698b4ae2515a57bd773b37d2242b3a2f83000120813e95d`. This authorizes integration review only.
+
+## ADR-155 — Transport admission supplies bounded evidence, never listener or enrollment authority
+
+**Decision:** The first transport-facing enrollment contract is an effect-free server admission between one
+already-decoded frame and the accepted LIVE-050 ingress. It accepts exactly `rawFrame` plus an untrusted `deliveryId`,
+validates exact shape and UTF-8 byte length before time or ingress use, and obtains canonical chronology only from a
+synchronous server-owned clock. Transport rate-limit identity is derived from immutable admission policy and an opaque
+channel-identity digest; no frame or request identity contributes to it.
+
+Configuration accepts only `ssh_tunnel` and `private_loopback` with a bounded frame ceiling. Those literals describe the
+required future transport posture but do not prove a physical bind or grant network authority. The contract opens no
+listener and performs no network I/O. The local runtime exposes only a disabled implementation.
+
+The asynchronous ingress seam accepts only an exact intrinsic native Promise with no own string keys and unchanged
+intrinsic prototype `constructor`/`then` selection. Proxy, subclass, or foreign thenable input is rejected before Promise
+assimilation. Error classification preserves only exact local codes in an explicit allowlist and otherwise constructs a
+fresh bounded integrity failure. The strict receipt binds policy and accepted ingress evidence while denying listener,
+I/O, approval, network, command, lease, and execution authority.
+
+**Why:** A future SSH/loopback listener needs a small contract that limits frames, supplies trusted time, and gives the
+ingress a stable rate-limit identity. Letting transport input claim authentication, chronology, enrollment, or authority
+would collapse the independently reviewed outer node-frame and inner enrollment-signature proofs. Separating admission
+from the physical listener also permits adversarial review without opening a socket or using credentials.
+
+**Alternatives rejected:** Passing transport-supplied receive time or authenticated booleans; deriving identity from the
+frame, delivery ID, remote address, hostname, route, or username; accepting arbitrary transport/listener strings;
+implicitly trusting `private_loopback` as runtime evidence; unbounded strings; Promise/thenable duck typing; preserving
+unknown rejections; exposing an HTTP/browser mutation; opening SSH or a listener in the same block; enabling the local
+pilot by default.
+
+**Trade-off:** Exact Promise custody rejects cross-realm/subclassed Promises and any own string instrumentation, while
+allowing inert own symbol metadata used by Node's test runner. The adapter must be composed with a synchronous trusted
+clock and frozen channel digest, and a later real listener still needs separate bind/tunnel verification. These costs are
+accepted because enrollment is rare and this seam is security-sensitive.
+
+**Reevaluate:** Before implementing a listener, accepting stream or binary frames, changing the byte ceiling, transport
+identity or clock source, adding rate-limit state, allowing another transport, crossing a worker/realm boundary, changing
+Promise instrumentation, altering safe-code mapping or receipt fields, enabling local runtime composition, or running a
+native/provider/production/deployment effect. Any such change invalidates CR13A-LIVE-060 review evidence.
+
+**Independent-review amendment:** Preserve rejected product `cee64a8197a011a91c06e6085d5f4d11e978ddbc` and its
+negative report. Exact Promise shape rejection is not sufficient if the rejected Promise remains unobserved. A malformed
+intrinsic Promise with an own string decoration can carry a raw rejection into Node's process-wide unhandled-rejection
+channel, where it may be logged or terminate the process. Remediation must safely observe only the class of intrinsic
+Promises that can be handled through captured native operations without consulting foreign thenables, Proxies,
+subclasses, accessors, or caller-controlled `then`; return only bounded local failure; and add strict regression evidence.
+The acceptance record must also report the independently observed 51/51 connection-suite total. Rejected report SHA-256
+is `d53bd172753ee77feb445bedaa0616080a8a74cf302ea12df1058de8454c7342`.
+
+**M-001/L-001 remediation amendment:** Safely observing a malformed result is limited to an exact non-Proxy same-realm
+intrinsic Promise while the captured prototype constructor/then and constructor species selections remain unchanged and
+the instance has no constructor override. The boundary invokes the captured native `then` with inert handlers that both
+return `undefined`; it never reads a caller `then` or instrumentation accessor. All other malformed values remain
+untouched and fail closed. A process-event regression and a separate strict unhandled-rejection subprocess must prove
+the decorated raw rejection cannot escape, while foreign thenables, Proxies, subclasses, accessors, and runtime
+replacement execute no behavior. The corrected evidence totals are 24/24 focused, 53/53 connection, and 304/304
+posttests. Exact remediation `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9` requires a different independent
+zero-repair re-review before integration. Closure-packet SHA-256 is
+`07012b512f220f2972f038dcd01b32d29baefc3f7ad0d47ce505b8d21ae6e6b0`.
+
+**Independent acceptance amendment:** A different reviewer reproduced stage zero, type/lint gates, 24/24 focused tests,
+53/53 connection tests, all 36 migrations with 119 PostgreSQL tables, whitespace validation, and private Promise
+cleanup cases against immutable remediation `45b4a67477fb39811d02ba1b1a67e8c78cf98ee9`. Strict crash mode, process-event
+containment, accessor inertness, foreign thenable/Proxy rejection, exact constructor/then/species custody, inert observer
+settlement, and accepted replay remain correct. M-001 and L-001 are closed with no new High, Medium, or Low finding. This
+permits owner-controlled integration review only and grants no listener, connection, credential, provider, native,
+production, or deployment authority. Accepted report SHA-256 is
+`a835b28501c90797295066cbbe99ad7c1cd357035997b8a96bbb301fb67df4f6`.
+
+## ADR-156 — One bounded byte frame precedes transport admission and grants no trust
+
+**Decision:** The first future private-loopback transport seam uses exactly one four-byte unsigned big-endian payload
+length followed by one fatal UTF-8 JSON payload. Configuration fixes the proposed transport to an SSH tunnel, IPv4,
+literal `127.0.0.1`, private-loopback visibility, the v1 framing literal, a protocol-bounded byte ceiling, and a bounded
+chunk count. The decoder accepts only exact full ordinary backing-store `Uint8Array` views, synchronously copies and
+retains no caller buffer, rejects incomplete, trailing, multiple, behavioral, partial, shared, or malformed input, wipes
+its internal bytes, and becomes terminal after any outcome.
+
+The framing layer parses only the exact outer JSON key set, declared enrollment-delivery message type, and syntactically
+valid delivery-ID routing hint. It does not trust or validate the claimed identity, signature, chronology, enrollment
+envelope, or authority. A digest-bound protected internal record carries the exact raw frame and byte count to the
+existing transport admission, which still delegates outer authentication to LIVE-050 and independent inner enrollment
+authorization to LIVE-030. The local pilot exposes only a disabled listener port.
+
+**Why:** A physical listener cannot safely pass arbitrary stream fragments directly into the authenticated protocol.
+The framing seam must bound allocation and work, define end-of-message semantics, eliminate multi-frame ambiguity, and
+retain exact bytes without accidentally turning transport parsing into authentication or enrollment authority.
+
+**Alternatives rejected:** Newline-delimited JSON; JSON streaming; multiple frames per connection; caller-supplied
+buffers or partial views; unbounded chunks; accepting trailing bytes; replacing fatal UTF-8; parsing a delivery ID as
+authenticated identity; trusting a loopback configuration literal as physical bind evidence; HTTP/browser enrollment;
+opening a socket or SSH connection in the same block.
+
+**Trade-off:** One frame per session creates more connection churn and full-backing-store chunks require the eventual
+listener to copy partial network buffers before this boundary. Enrollment is rare, and those costs are accepted for
+bounded allocation, simple recovery, and an inspectable trust transition. The raw frame remains protected internal data
+until authentication.
+
+**Reevaluate:** Before implementing the physical listener, supporting multiple frames, changing framing or size/chunk
+limits, accepting another address family or bind address, adding stream abstractions, changing protected handoff fields,
+or altering the split between framing, transport admission, outer authentication, and inner enrollment verification.
+Any such change invalidates CR13A-LIVE-070 review evidence and requires a new effect/readiness decision.
+
+**Independent-review amendment:** Preserve rejected product `ff00d3ffdcc5afd59bc0cc31d8a29e685fb6d587` and its
+negative report. A publicly recomputable digest proves only record consistency, not provenance from the decoder; an
+ephemeral protected handoff must also carry module-private unforgeable origin and re-prove the routing hint from the raw
+frame. Exact object validation after native JSON parsing cannot observe duplicate lexical members, so a bounded
+duplicate-aware preflight must reject them before extraction. Ordinary JavaScript cannot prove that no second full view
+exists for an `ArrayBuffer`; the enforceable rule is exact full ordinary backing storage, synchronous copy into private
+decoder memory, and no caller-buffer retention. Review evidence must state that rule and prove later caller mutation is
+irrelevant. Negative report SHA-256: `91f9e00c41d7b3a47efab3619d6ac33dee5236c34f6c151c6ca94d42a9487ae6`.
+
+**M-001/M-002/L-001/L-002 remediation amendment:** Protected frames are now ephemeral in-process capabilities recorded
+in a module-private WeakSet and frozen before release. Neither an exact clone nor a record with a caller-recomputed SHA
+can pass the provenance check. Protected parsing re-runs bounded duplicate-aware routing extraction over the raw frame
+and requires the extracted delivery ID to equal the record before reduction. The iterative JSON preflight uses the
+accepted native parser for grammar, then tracks decoded key identity independently in every object without recursion;
+direct and escape-equivalent duplicate members fail before routing. Input assurance is corrected to full ordinary
+backing-store coverage, synchronous private copy, and no retention rather than unprovable exclusive ownership. The
+rejected product's whitespace failure remains preserved in its report; the remediation diff must be clean.
+
+The immutable remediation is `8e4c20da7166d48cb22c06fd38dfe87ee0016a02`. Its different-reviewer zero-repair
+packet SHA-256 is `5bf992f81c136b0e4f32e4095dd5eaa16a86bb29cbfda8f42cdf14215928c9dd`; neither the
+product nor packet grants listener, SSH, credential, provider, native, production, or deployment authority.
+
+The different reviewer accepted the exact remediation with no new High, Medium, or Low defect after reproducing all
+deterministic gates and eight hostile-probe groups. Accepted report SHA-256:
+`7ac1a5fa117b70556e2d73da80e729ebb0703161e747db6d2ce58ea12fe2a0c0`. This permits ordinary integration review only;
+physical listener and external-effect authority remain separate.
+
+## ADR-157 — Listener lifecycle policy is rehearsed before any physical bind
+
+**Decision:** Define and independently review an effect-free private-loopback listener lifecycle before implementing a
+socket or SSH adapter. The plan fixes an SSH-tunnel transport, IPv4 literal `127.0.0.1`, accepted LIVE-070 single-frame
+framing, digest-only endpoint/owner/tunnel-peer/host-key/channel identities, one active connection, zero queued
+connections, total/idle/shutdown ceilings, one frame per connection, and no automatic restart. Its digest provides
+public consistency, not authenticity or authority.
+
+The repository-fake state machine requires exactly six ordered observations: bind, open, decoded frame, connection
+close, drain, and listener close. It accepts only the module-private LIVE-070 protected frame bound to the same listener.
+Every observation states that it is repository fake and that no native evidence is accepted. Chunk count and elapsed
+connection, idle, drain, and close times are bounded; successive ages cannot move backward. Invalid ordering, identity,
+capacity, lifetime, provenance, cleanup, incomplete finish, or reuse is terminal.
+
+A passing receipt is safe, strict, and digest-bound but explicitly states that no actual bind, exclusive port ownership,
+tunnel-peer authentication, host-key custody, or native cleanup was proven. It also denies listener enablement, network
+I/O, approval, network, command, lease, and execution authority. These are exact literals, so recomputing the unkeyed
+digest cannot turn fake rehearsal evidence into native proof.
+
+Plan and receipt digest boundaries must first re-establish the accepted canonicalization and hash runtime custody. A
+selected post-import runtime replacement fails closed before replacement behavior can execute.
+
+**Why:** The physical-listener block will combine untrusted stream behavior, operating-system port state, tunnel
+identity, protected bytes, timeouts, backpressure, and shutdown. Freezing its lifecycle and truth vocabulary first makes
+the later effectful adapter smaller and prevents a convenient fake or configuration literal from being mistaken for
+real host evidence.
+
+**Alternatives rejected:** Open a loopback socket while designing the lifecycle; let the listener infer tunnel identity;
+permit multiple or queued enrollment connections; retry automatically after ambiguous shutdown; accept caller-made
+protected frames; place raw enrollment frames in receipts; treat a public SHA digest as native attestation; modify
+Hermes; expose browser/HTTP enrollment; or claim physical readiness from repository-fake observations.
+
+**Trade-off:** This block does not make a remote Hermes agent connect yet and repeats lifecycle facts that a future
+native adapter must independently prove. That deliberate separation costs one implementation/review stage but keeps
+network, credential, and native authority outside repository-only work.
+
+**Reevaluate:** Before opening a listener, starting an SSH tunnel, reading a credential, accepting more than one frame or
+connection, changing time/capacity limits, permitting restart, changing identity binding, using the receipt as native
+evidence, or composing the listener into LIVE-060. Any such step requires a new exact contract, explicit effect
+authority, deterministic tests, immutable review evidence, and owner-controlled integration.
+
+**Independent-review amendment:** Preserve rejected target `4ecc453f9ac0f6d6edb30455620d0b8fa0a90c3e`. Terminal
+means both behavioral rejection and data release: after protected-frame validation, retain only the reduced digest and
+byte-count facts needed for a successful receipt, and clear those facts on every failure path. Receipt parsing must
+apply the same 27–160 listener-ID bound as the plan and must rederive `rehearsalReference` from `planDigest`; a public
+digest alone cannot establish either semantic relationship. Exact remediation
+`884ff423914ab4e442500bd194970b0713da72ca` implements those requirements and adds regressions; the three findings
+remain unaccepted until a different zero-repair reviewer independently confirms closure. Negative report SHA-256:
+`0f43e735ce30fe418dd93a4d5221497dde25b9f3c50d95c501f1322064bc7688`.
+Remediation re-review packet SHA-256: `a65f0be8d60cc5bcfdbc2f60ecea3e6c2e055594b79a738419245817f0d72271`.
+
+**Remediation acceptance:** A different zero-repair reviewer independently reproduced the complete deterministic gates
+and private hostile probes, closed M-001, L-001, and L-002, and found no new High, Medium, or Low defect. Accepted report
+SHA-256: `3e5ea006098cf51222e62296e5cb80b924b4da5dab0d319e188e4073a3d5b6f1`. This permits ordinary
+owner-controlled integration only; every physical listener and external-effect boundary remains separate.
+
+## ADR-158 — One session owns decoding, admission serialization, and cleanup correlation
+
+**Decision:** Place a repository-only single-session coordinator between the accepted LIVE-070 decoder, remediated
+LIVE-080 lifecycle, and LIVE-060 transport admission. It constructs the protected-frame observation internally, counts
+actual chunk pushes, reduces the protected frame to the exact admission input, invokes admission exactly once, prevents
+in-flight interruption or reentry, matches returned channel/transport/frame policy, and permits a receipt only after
+connection close, drain, and cleanup complete.
+
+The session retains no protected frame or raw admission input as object state. It keeps only reduced digests, counts, and
+a parsed safe admission receipt, clearing them on failure and before final receipt construction. The final public digest
+is consistency-only. All native-listener and effect claims remain fixed false.
+
+**Why:** A native socket callback must not independently choose parsing, admission, replay, or cleanup behavior. This
+composition makes that future adapter a narrow byte/event source and ensures exactly one decoded enrollment reaches the
+already authenticated and idempotent admission boundary.
+
+**Alternatives rejected:** Let a socket callback call ingress directly; accept caller-supplied protected frames or chunk
+counts; permit overlapping admission; abort an already dispatched admission and pretend it did not settle; retry after
+uncertainty; retain raw frames for later receipts; treat a public digest as authenticated evidence; or add application
+wiring before native review.
+
+**Trade-off:** The coordinator awaits its downstream admission and does not itself own a wall-clock timer. That is
+honest for this repository-fake block but means the future native adapter must provide separately reviewed deadline,
+backpressure, cancellation, process-kill, and recovery evidence before activation.
+
+**Reevaluate:** Before adding a `node:net` import, listener factory, address/port, timer, socket callback, SSH operation,
+credential reference, application composition, or native qualification. Each remains separately authority-gated and
+must not be inferred from a passing repository session receipt.
+
+**Independent-review freeze:** Review exact target `dbdb297aa04ea7465ab636c94ccf1084003cdf27`, containing frozen
+implementation `5ff9d9bf8ce3096c50c0fab646f60cfb36a410fe`, under the zero-repair packet with SHA-256
+`88dc35513f595fc08b75b0136bb20c7addb46bbcc8f837a265cd5df25c81d97f`. A passing report permits ordinary
+integration review only and grants no listener or external-effect authority.
+
+**Independent-review amendment:** Preserve rejected target `dbdb297aa04ea7465ab636c94ccf1084003cdf27` and its
+negative report with SHA-256 `0f3db267c28605f0687d18f831c303c9c1055a6b4e9f64be65b9b50dd3e716bd`.
+M-001 proves `finish()` was destructive while admission was in flight: it cleared the only session before a downstream
+settlement could be correlated with ordered cleanup and a terminal receipt. Exact remediation
+`28a1c0833e8e2b2b3368644536b7442c96bbadcb` makes that call a non-mutating state conflict and adds async-pending and
+synchronous-reentrant regressions proving exactly one admission and recoverable completion. A different zero-repair
+reviewer must independently close M-001 and find no new High, Medium, or Low defect. This amendment grants no listener,
+SSH, credential, native, provider, production, deployment, or network authority. Review immutable remediation target
+`89be9d7fb486a3fb5855402073466108a19a75ec` under the packet with SHA-256
+`5be8352094f95217c35ff171181d5a3494ed5fff67d4cf11e9dc82d67dbdcc36`.
+
+**Second independent-review amendment:** The different reviewer closed M-001 but rejected remediation target
+`89be9d7fb486a3fb5855402073466108a19a75ec`. M-002 proves an invalid, already-rejected same-realm Promise with an inert
+own constructor data property selecting the captured native Promise constructor could remain unobserved and terminate
+strict Node rejection handling. Preserve the negative report with SHA-256
+`ca1b7ef365cd6a9b4fe79e22eade3d48667a8ccc1d8befc2f09bcb6f469803f2`. Exact second remediation
+`de840c9aef259db18da3c45e1d4e0549bc0f0d85` observes only safely selected captured/default native construction while
+keeping behavioral/accessor and foreign selections unexecuted and every decorated Promise invalid. It hardens the
+duplicated LIVE-060 boundary and adds strict-process regressions at both layers. A third zero-repair reviewer must close
+M-002, reconfirm M-001, and find no new High, Medium, or Low defect. Review immutable target
+`f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3` under packet SHA-256
+`32e552933c8b3f6f7b65b0642bd45352b53f16bee00cdf7311804da67830e15b`. No external authority is granted.
+
+**Third independent-review amendment:** The third reviewer reconfirmed M-001 and closed M-002 but rejected target
+`f0a64ae4fab6b0a7d926fca573c9ce324c6b9ee3`. M-003 proves full Promise-runtime drift must invalidate a result without
+unnecessarily disabling safe rejection cleanup through already captured intrinsics. Preserve the negative report with
+SHA-256 `7870ea50f7c84edcd41adffa00191df8f504e3d85099c1d7dae50c37bb78ccfe`. Exact third
+remediation `77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e` independently proves an inert effective constructor/species selection,
+uses only the captured observer, and observes before returning integrity failure at both listener and transport seams.
+Ambient replacement code remains uncalled. A fourth zero-repair reviewer was required to close M-003, reconfirm M-001/M-002, and
+find no new High, Medium, or Low defect. Review immutable target
+`a94241fb4578af7ff8ba2b85afa4d18f2fdd4066` under packet SHA-256
+`82991aed6c64442addd44e7b4c317888264ed2524f2f3f8e0fab5a818d3f5423`. No external authority is granted.
+
+**Third-remediation acceptance amendment:** A fourth different zero-repair reviewer accepted exact review target
+`a94241fb4578af7ff8ba2b85afa4d18f2fdd4066`, containing implementation
+`77ef10c2ec9d0912e4d59ca71c95b1886c9ae60e`. It reproduced the complete deterministic gate and a 29/29 bounded
+hostile matrix, closed M-003, reconfirmed M-001/M-002, and found no new High, Medium, or Low defect. Preserve the
+unchanged accepted report at `docs/reviews/CR13A_LIVE_090_THIRD_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`cd02d7638fa50157db73c54758484dde3f633d2b3814973b577a49679793c4cf`. Ordinary owner-controlled integration is now
+permitted. No listener, SSH, credential, native, provider, production database, deployment, DNS, hosting, network, or
+other external-effect authority is granted.
+
+**Integration amendment:** The owner approved PR #238. Accepted branch head
+`ecb5ea373ccb0cdbee1ef036b80ee29730a3ec0b` merged to `main` as
+`65ea851c123993d7760d6492966845f74ca1d665`; PR CI run `33784095714` and post-merge run `33785601437` passed.
+No listener or external-effect authority was added by integration.
+
+## ADR-159 — Native-listener activation starts from an unconditionally disabled contract
+
+**Decision:** Before introducing `node:net` or any physical bind, freeze a plan-bound native-listener readiness record
+and adapter that cannot activate. The readiness record carries only safe plan identity plus literal loopback,
+private-unpublished-port, single-connection, zero-queue, one-frame, and no-restart policy. It fixes twelve independent
+driver, owner, platform, port, tunnel, host-key, deadline, backpressure, cleanup, and recovery gates as missing. Every
+native, effect, retry, approval, network, command, lease, and execution claim remains false.
+
+The default adapter owns no driver, accepts no activation input, always rejects `start()` as disabled, and treats
+repeated close as a no-op. It is exported for later composition but is not wired into the local pilot or an application
+route. Its readiness digest is public consistency evidence only. Even a correctly recomputed digest cannot convert any
+false gate to true because this version of the parser accepts only the exact disabled shape and ordered blockers.
+
+**Why:** The future listener will cross an operating-system and network boundary. Defining its complete gate vocabulary
+first prevents configuration presence, a fake lifecycle receipt, a caller-controlled boolean, or a public digest from
+becoming accidental authority. It also gives later code and operator surfaces one exact list of what remains unproven.
+
+**Alternatives rejected:** Add a `node:net` driver and activation token in the same block; let local configuration enable
+the listener; accept caller-reported gate booleans; treat loopback text as physical bind evidence; publish an address or
+port in readiness; reuse LIVE-080 repository-fake evidence as native proof; wire the local pilot before review; or make
+the disabled adapter attempt-and-close a socket merely to demonstrate failure.
+
+**Trade-off:** This block does not connect a Hermes node and does not exercise operating-system socket behavior. It adds
+one deliberate review stage, but makes the subsequent native driver smaller and reviewable against an exact checklist.
+
+**Independent-review amendment:** The first zero-repair review rejected immutable target
+`5582d57247f38498efe3c587762257bababa7658`. M-001 showed that callers could alter the adapter instance, prototype,
+or subclass behavior. L-001 showed that an ordinary re-digested readiness lookalike could substitute the listener/plan
+pair. L-002 showed that a locator-shaped listener ID could be retained in a record described as public-safe. The exact
+negative report is preserved at `docs/reviews/CR13A_LIVE_100_INDEPENDENT_REVIEW.md`; SHA-256:
+`8cf72b4cad7abe66705612421b642e56a7d1d5af3aebc7ab21ab5e7866fb3f6c`.
+
+Remediation `915a5ed20bafe76367e0ae8ab06252dd05e54dac` exact-brands and freezes the adapter, rejects subclasses
+and wrong receivers, freezes its prototype, and gives future composition a frozen binder over captured base methods.
+Readiness parsing now requires module-private provenance, and the public record replaces the raw listener ID with a
+derived non-locator reference. This closes the three known findings in producer tests but does not constitute
+acceptance; a different independent zero-repair re-review remains mandatory.
+
+**First remediation re-review amendment:** The different reviewer closed L-001 and L-002 but rejected immutable target
+`ea81bf82ef4726aa230841420beaca6e96f162cc`. M-001 remained because the binder record was frozen while its three
+function values were still extensible. New L-003 recorded that both exact-range `git diff --check` commands rejected
+the intentionally preserved Markdown hard-break spaces in the original negative report. The second negative report is
+preserved at `docs/reviews/CR13A_LIVE_100_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`bcf4a8aa173c4c898205adc7b6cb4c1431f6105a8cae7719e43e5d5202db708e`.
+
+Second remediation `fbfdda99c8063f043bee6166ab664ba494382c85` freezes each captured bound function before inserting
+it into the frozen binder and adds direct own-`call`, property, and prototype-chain mutation tests. A three-path
+`.gitattributes` rule preserves the exact bytes and hashes of the two negative reports and first remediation packet
+while disabling only trailing-space classification for those exact evidence paths. All three required diff checks now
+pass. This remains producer evidence; a third independent zero-repair reviewer must close M-001 and L-003, reconfirm
+L-001/L-002, and find no new High, Medium, or Low defect.
+
+**Second remediation acceptance amendment:** The third different zero-repair reviewer reproduced the full repository
+gates, exact evidence hashes, all three immutable diff checks, narrow whitespace behavior, and a 15/15 hostile matrix.
+M-001 and L-003 are closed; L-001 and L-002 remain closed; no new High, Medium, or Low defect remains. Preserve the
+accepted report at `docs/reviews/CR13A_LIVE_100_SECOND_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`8a9ac5c6191303e75d8957fa776844639e6ecb4f4a56aab9b0c687d4f2fdc465`. Immutable target
+`2efc17abf0f04325e0f462420f0bccc319c07d43` is ready for ordinary owner-controlled integration. This grants no
+listener, connection, SSH, credential, native, provider, production database, deployment, DNS, hosting, publication,
+or network authority.
+
+**Reevaluate:** Before importing `node:net`, accepting any driver or activation evidence, wiring a runtime, opening or
+closing a physical listener, selecting a port, starting SSH, reading a credential, accepting native evidence, running a
+platform qualification, or making the record activation-eligible. Each requires a new contract, immutable review, and
+separate owner authority; a real bind additionally requires an exact owner-attended effect packet.
+
+**Integration amendment:** The owner approved PR #239. Accepted branch head
+`7a11d6b132b7016a63a4e160ce049b29dcff21db` merged to `main` as
+`d1d2b8723797cd2d09efc70384fa98403223a8ec`; PR CI run `33793948835` and post-merge run `33796044403` passed.
+No listener or external-effect authority was added by integration.
+
+## ADR-160 — Rehearsing the native-driver contract cannot create activation truth
+
+**Decision:** Define the physical listener's driver and activation-evidence vocabulary before adding a physical
+implementation. The repository creates one plan/readiness-bound driver contract with fixed operations, limits, and
+required proofs. The only executable object in this block is an exact-branded repository fake with no callback or
+behavioral input. Its fixed rehearsal may prove contract coherence but always records zero native/listener/network
+attempts and cannot satisfy any LIVE-100 activation blocker.
+
+Activation evidence in this block accepts only exact module-created disabled readiness, driver contract, and fake
+rehearsal records. It binds their digests and identities, explicitly labels the evidence `repository_fake`, retains all
+twelve blockers, and fixes eligibility, activation, native truth, retry, effects, and authority false. Copies,
+re-digests, cross-plan or cross-driver combinations, lookalikes, subclasses, changed receivers, and mutable operations
+are not accepted.
+
+**Why:** A native-driver interface and a passing fake can otherwise become an accidental authorization seam. Keeping
+contract rehearsal separate from native qualification makes it impossible for configuration presence, test success,
+a public digest, or an injected callback to open a listener. The future physical implementation has an exact small
+target while every operating-system and network fact remains independently unproven.
+
+**Alternatives rejected:** Add `node:net` with the contract; accept a generic injected driver or callback; let a fake
+receipt clear the native-driver blocker; treat a digest as approval; accept serialized or caller-created evidence;
+expose the listener ID, address, or port; wire the fake into the local pilot; infer real deadlines, cleanup, or recovery
+from repository simulation; or combine contract definition, native implementation, owner activation, and physical bind
+in one review block.
+
+**Trade-off:** This block does not open a listener or establish that a native implementation works. It adds a separate
+review step, but the later native implementation and live qualification can be measured against a fixed contract
+without granting the repository fake any effect authority.
+
+**Producer evidence:** Exact implementation `8d0e7aebf379b0898a0fbbedb11cafc94159d2ab` passes macOS stage zero,
+TypeScript, full lint, 65/65 focused tests,
+107/107 connection tests, 123/123 CR13A tests, 769/769 pretests, 419/421 core tests with two established platform skips,
+358/358 posttests, production build with 4/4 rendered routes, all 36 migrations/119 tables through the listener-free
+verifier, and whitespace. The ordinary database wrapper preserved its known sandbox-only `tsx` IPC denial before
+migration work. No native, listener, network, SSH, credential, provider, production, or deployment effect occurred.
+
+**Independent-review freeze:** Review exact target `3c756154744a1b933093771a878ab6b64f243f2e`, containing
+implementation `8d0e7aebf379b0898a0fbbedb11cafc94159d2ab`, under the zero-repair packet with SHA-256
+`6704782075dcb61738aeba22a122aebe82ecdef35d0ed2e373f3eed5e54d7ec7`. A passing report permits ordinary
+integration review only and grants no listener or external-effect authority.
+
+**Independent-review rejection:** The different zero-repair reviewer rejected the immutable target with 0 High,
+2 Medium, and 0 Low findings. M-001 showed that matching public digests did not prove exact-object provenance across
+the plan/readiness, contract, and rehearsal boundaries. M-002 showed that freezing the driver prototype did not freeze
+the three method function objects stored on it. Preserve the negative report at
+`docs/reviews/CR13A_LIVE_110_INDEPENDENT_REVIEW.md`; SHA-256:
+`4b2365d97aed3d7eae357c8f49499702d9e81c1552c86550554b17e433ddbc48`. Remediation and a different independent
+zero-repair re-review are mandatory before integration.
+
+**Remediation amendment:** Exact remediation `565bc250d3735b2821e28fdd8c7217afdcd2990d` makes exact-object
+provenance a private relationship rather than a public-digest inference. Readiness is bound to its exact input plan;
+contracts are bound to their exact plan/readiness pair; rehearsals are bound to their exact contract/driver pair; and
+drivers are bound to their exact contract. Evidence composition revalidates those relationships. The exported fake
+driver class and each captured prototype method function are frozen. Hostile regressions reject all reported
+equal-identity substitutions and method-function changes with zero replacement executions. A different zero-repair
+re-review remains mandatory, and the change grants no native or external-effect authority.
+
+**Remediation acceptance amendment:** A different zero-repair reviewer accepted immutable target
+`8643513a5ff807c9fdfa74874053b9098ac447a9` with 0 High, 0 Medium, and 0 Low findings. M-001 and M-002 are
+closed. All deterministic gates, original reproductions, exact-object crossings, callable-surface attacks, truth and
+array mutations, bounds, ambient changes, concurrency, whitespace behavior, sanitation, and runtime non-wiring
+passed with zero replacement executions and zero effects. Preserve the accepted report at
+`docs/reviews/CR13A_LIVE_110_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`d5a3f3adc45c2651c2592ed8cf9d390c87fa330c676b24fb55e0dc91a5c54ff0`. Ordinary owner-controlled integration is
+permitted; physical driver, listener, SSH, credential, native qualification, production, and deployment authority
+remain absent.
+
+**Reevaluate:** Before admitting any physical-driver object, signed native evidence, owner activation, actual port,
+socket or listener operation, SSH/tunnel contact, credential access, native qualification, runtime wiring, production
+contact, deployment, or external effect. Each requires a separately reviewed contract and exact owner authority; a
+physical bind requires a fresh owner-attended one-attempt packet.
+
+**Integration amendment:** The owner approved PR #240 at exact branch head
+`2978c84a07aee8566d8d3de5d02689d5d9eff609`. It merged to `main` as
+`1ee5409c0b66afbd802582459af864ec0d198f5c`; pre-merge CI run `33803032198` and post-merge run `33804402020`
+passed. Integration changes no effect or authority boundary.
+
+## ADR-161 — Design the physical listener boundary before importing a native driver
+
+**Decision:** CR13A-LIVE-120 is an effect-free design block. It must freeze the physical driver's exact input,
+operation, lifetime, backpressure, cleanup, recovery, tunnel-authentication, host-key, evidence, ambiguity, and retry
+semantics before any native implementation or operating-system listener code is admitted. Implementation, activation
+evidence, owner authorization, platform qualification, and the single physical attempt remain separate stages.
+
+**Why:** LIVE-110 proves a fake can satisfy the abstract operation contract without gaining authority. The next risk is
+that socket construction, port ownership, asynchronous callbacks, shutdown races, or restart behavior silently widen
+that contract. Freezing the boundary first makes those behaviors independently reviewable and keeps repository success
+from being mistaken for a live bind.
+
+**Alternatives rejected:** Add `node:net` while discovering the contract; wire a driver into the local pilot before
+review; choose or expose a port in repository data; infer tunnel identity or host-key custody from configuration; allow
+automatic retry after ambiguous bind/start/close outcomes; combine implementation with an owner-attended physical
+attempt; or let repository-fake evidence clear a native blocker.
+
+**Reevaluate:** Before adding any native/socket implementation, runtime consumer, live listener, port selection, SSH
+operation, credential access, signed native evidence, qualification attempt, production contact, or deployment. Those
+steps require a separately frozen contract, independent review, and the exact authority appropriate to the effect.
+
+**Design-contract amendment:** `docs/CR13A_LIVE_120_PHYSICAL_NATIVE_DRIVER_DESIGN.md` fixes the exact staged
+authority split, private input custody, lifecycle, loopback bind, admission, capacity, framing, deadlines,
+backpressure, shutdown, cleanup, restart, ambiguity, no-retry, evidence, qualification, and independent-review
+requirements. It authorizes no native import, physical driver, listener, port, connection, SSH, credential, provider,
+runtime activation, production contact, or deployment. The unwired implementation and the later physical attempt each
+require separate exact owner authority.
+
+## ADR-162 — Keep the first physical driver present but structurally unreachable
+
+**Decision:** Under the owner's exact LIVE-120 implementation authorization, admit one isolated `node:net` server
+module at product target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38`. The module may contain the bounded physical
+loopback lifecycle, but it must export no physical factory or bind-capability issuer, receive no package-barrel or
+runtime import, and expose only a non-authorizing implementation description plus the repository fake used to test
+the shared five-operation controller. The physical capability registry remains unable to accept entries.
+
+**Why:** This lets the security-sensitive lifecycle be reviewed as concrete code without making it constructible or
+mistaking fake success for native evidence. The implementation can be attacked for state, race, deadline,
+backpressure, cleanup, recovery, provenance, and leakage defects before a private locator broker, signer, owner-spend
+composition, or operating-system attempt exists.
+
+**Alternatives rejected:** Export a native factory for convenience; publish the private port; add the driver to the
+connection-registry barrel; wire it into the local pilot; let tests mint a production-shaped bind capability; replace
+the repository fake with a real loopback self-test; treat a clean build as platform qualification; or combine
+implementation review with the owner-attended physical attempt.
+
+**Evidence:** The immutable product passes 32/32 dedicated tests, 137/137 CR13A tests, 769/769 pretests, 372/372 core
+tests, 372/372 posttests, TypeScript, full lint, macOS stage zero, production build with 4/4 rendered routes, 36
+migrations/119 PostgreSQL tables through the no-IPC verifier, and whitespace. Listener attempts, network observations,
+and external effects are all zero. Independent review packet SHA-256:
+`e42cde8b401117e8bb71971315fff0219a5e8f17827e7df7a480a42ca967c9b5`.
+
+**Reevaluate:** After a different zero-repair reviewer accepts the exact target with no findings, and again before any
+capability issuer, locator broker, signer, runtime consumer, socket/listener attempt, SSH or credential use, physical
+qualification, production contact, or deployment. Each remains a separate reviewed and owner-controlled stage.
+
+## ADR-163 — Fail closed on every unproved physical identity and cleanup fact
+
+**Decision:** Preserve the rejected LIVE-120 target and remediate all nine independent findings without adding an
+issuer, runtime consumer, or physical attempt. A socket must carry a private exact one-use admission bound to the
+attempt, ordinal, deadline, tunnel-peer proof, and host-key proof before any data handler or decoder can run. Decoder
+and exported callable dispatch is captured and frozen. Native contract, implementation, capability, and admission
+relationships use exact private identity, never public digest equality alone. Backpressure uses observed pending bytes,
+and every post-marker path converges on one cleanup operation with decoder wiping, callback/timer clearing, socket
+destruction, separate drain and final-shutdown bounds, and capability release.
+
+**Why:** Loopback origin does not authenticate the SSH tunnel, mutable same-process callables can bypass validation,
+and a graceful server callback does not prove bytes, handles, timers, capabilities, durable markers, or high-water
+truth are clean. The safe repository boundary must remain unusable until every required private proof is supplied and
+must refuse to translate local volatile observations into physical success.
+
+**Alternatives rejected:** Admit the first connection and authenticate its frame later; represent peer, host-key,
+marker, owner-spend, or signer truth as booleans; call decoder methods dynamically; immediately resume after a pause;
+use public digest equality as provenance; share one timeout between drain and final cleanup; treat local socket destroy
+or server close as signed durable cleanup; or weaken findings because the module is currently unwired.
+
+**Evidence:** First target `959b8cbf5a5ede689fe4b8b6b3a4fc7f289efd38` is rejected by the preserved report with
+four High and five Medium findings; report SHA-256
+`baefddebe2af5bcf3f2132d2a8ef2b9bce9c84f02477fff8e95de9319b8b8e66`. Remediation target
+`5a579342b7a03bb013de21663c69a3a6118e11c6` passes 34/34 focused, 123/123 connection, 139/139 CR13A,
+769/769 pretests, 372/372 core tests, 374/374 posttests, build/render, and migration verification. No native,
+listener, socket, port, network, SSH, credential, provider, production, or deployment action occurred.
+
+**Remediation acceptance:** A different independent zero-repair reviewer reproduced all nine original defects,
+closed every one against exact remediation `5a579342b7a03bb013de21663c69a3a6118e11c6`, and found no new High, Medium,
+or Low defect. The current runner passed 34/34 focused, 123/123 connection, 139/139 CR13A, 769/769 pretests, 419/421
+core tests with two established Windows-only skips, 374/374 posttests, build/render, migrations, and the independent
+hostile probe. Preserve the accepted report at
+`docs/reviews/CR13A_LIVE_120_REMEDIATION_INDEPENDENT_REREVIEW.md`; SHA-256:
+`420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. This permits ordinary owner-controlled
+integration only and grants no physical or external-effect authority.
+
+**Reevaluate:** Before adding any private proof issuer, signer, durable attempt ledger, high-water checkpoint, resource
+observer, locator broker, runtime consumer, physical attempt, SSH/credential operation, production contact, or
+deployment. Until those boundaries are separately implemented and accepted, native cleanup cannot become
+`closed_verified`.
+
+## ADR-164 — Record accepted source separately from physical qualification readiness
+
+**Decision:** CR13A-LIVE-130 adds one effect-free, exact-branded qualification-prerequisite readiness record. It binds
+the owner-approved LIVE-120 integration, accepted remediation, rejected target, and both preserved review hashes while
+keeping twelve private prerequisites explicitly missing. The record may truthfully say that source implementation and
+independent source review are accepted, but candidate assembly, owner authorization, physical qualification, runtime
+activation, every native/effect count, and every authority grant remain false.
+
+**Why:** A reviewed `node:net` source file is not a runnable candidate and cannot prove host identity, private locator
+custody, tunnel peer, host key, owner presence, durable spend, cleanup, or restart truth. Recording the accepted source
+and missing physical prerequisites separately prevents UI, automation, CI, or a future worker from collapsing source
+review into permission to open a socket.
+
+**Alternatives rejected:** Mark the LIVE-120 implementation object physically accepted; let a caller submit prerequisite
+booleans; mint repository-fake production proofs; import the native driver merely to display readiness; assemble a
+candidate before the private providers exist; reuse the LIVE-120 merge approval as an owner attempt window; or let a
+successful repository test clear a native blocker.
+
+**Evidence:** The controlling design is `docs/CR13A_LIVE_130_QUALIFICATION_PREREQUISITE_BOUNDARY.md`. Exact product
+`339c2e8a61e7c2ac0a40fc6f51711a512badbf6c` implements the effect-free singleton and passes 24/24 focused readiness,
+131/131 connection, 148/148 CR13A, complete lifecycle, build/render, and migration verification. The integration base
+is owner-approved LIVE-120 merge `19a87163c9210730140ec0d769c2effa6bbb5e1b`; accepted remediation is
+`5a579342b7a03bb013de21663c69a3a6118e11c6`; accepted independent-report SHA-256 is
+`420e0d3313915d9a0b71cc6fa537f3742e64359186ba569021b4d3ece95e3f7c`. The LIVE-130 implementation adds no native
+driver import, runtime consumer, capability issuer, listener/network action, or external effect. The first independent
+run is rejected/invalid and preserved at `docs/reviews/CR13A_LIVE_130_INDEPENDENT_REVIEW.md`: one reviewer-side
+`tsx --version` IPC-listener attempt was denied before bind, and the packet's no-driver-import rule contradicted its
+broader driver-importing test list. The corrected second review ran under
+`docs/reviews/CR13A_LIVE_130_REVIEW_PROTOCOL_REMEDIATION_PACKET.md`; the exact product remained unchanged. The second
+different reviewer accepted the corrected protocol with 0 High, 0 Medium, and 0 Low findings, all eleven commands once,
+9/9 readiness tests, 4/4 rendered pages, 119 tables, 30 hostile replacement attempts with zero executions, and zero
+physical-driver imports or listener/IPC/native/network/external effects. Preserve
+`docs/reviews/CR13A_LIVE_130_PROTOCOL_REMEDIATION_REREVIEW.md`; SHA-256
+`02fa96a370615a331d8ccfadaa5d9de1d2ed420eafbce60014d2b394b1283290`.
+
+**Reevaluate:** Before implementing a private provider, candidate assembler, owner-spend path, native harness,
+physical attempt, evidence acceptance registry, runtime consumer, SSH/credential path, production contact, or
+deployment.
+
+## ADR-165 — Define target-runtime proof without exposing target identity
+
+**Decision:** CR13A-LIVE-140 freezes a privacy-preserving target-runtime attestation contract before any host observer
+exists. The repository may expose one exact policy singleton and one explicitly non-production `repository_fake`
+result. The fake describes intended macOS/Node 22 policy and required future private claims while fixing every host
+observation, signer/clock/nonce/epoch/runtime/driver/candidate/attempt binding, real evidence, blocker clearance,
+authority grant, and native/external-effect count to false or zero.
+
+A future real attestation must privately bind platform/architecture, exact runtime and executable content, boot and
+process epochs, exact accepted harness/driver, candidate, attempt, fresh nonce, trusted time, signer, and independent
+checkpoint. Public evidence may contain no raw host/user/path/process/network/credential/native value and no unkeyed
+digest of a low-entropy identifier. Any safe acceptance reference must be fresh-attempt-derived inside the separately
+accepted signer/verifier boundary and non-correlatable across unrelated attempts.
+
+**Why:** A platform string, source commit, or repository test cannot prove which runtime will execute a physical
+qualification. Conversely, publishing a hardware UUID, serial, host name, path, PID, address, or guessable digest would
+turn qualification evidence into a tracking or secret-leak channel. Freezing the minimum private claims and maximum
+public truth before implementing a provider prevents both false qualification and identity leakage.
+
+**Alternatives rejected:** Read `process`, `node:os`, system profiler, environment, executable paths, or machine IDs in
+the repository fake; accept caller-supplied identity claims; expose stable hashed host identifiers; let the platform
+observer self-sign or self-verify; reuse an earlier nonce or boot/session proof; let a valid target attestation clear
+locator, port, peer, host-key, owner, physical-proof, or activation blockers; or treat supported policy as observed
+truth.
+
+**Evidence:** `docs/CR13A_LIVE_140_TARGET_RUNTIME_ATTESTATION_BOUNDARY.md` freezes the repository-only boundary on
+stacked base `e620b7bc24760a8f8f0034db6cda3d60e74763a8`. Exact product
+`6e716bd77c26ad7f70343ddd687dff990f5db12f` passes 9/9 focused, 140/140 connection, 157/157 CR13A, complete lifecycle,
+build/render, and migration verification. No host observation, runtime input, provider, signer, clock, nonce, native
+import, listener/network action, or external effect occurred. The first review ran under
+`docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW_PACKET.md`; its reviewer passed the eleven fixed gates but the
+out-of-tree hostile probe could not resolve bare `tsx` and stopped before product import. Preserve the protocol-
+incomplete report at `docs/reviews/CR13A_LIVE_140_INDEPENDENT_REVIEW.md`; SHA-256
+`6eb5f26004c17a10e7545da8f321e704c5e5c01da0c924fd706ca4bd64803688`. A corrected review ran under
+`docs/reviews/CR13A_LIVE_140_REVIEW_PROTOCOL_REMEDIATION_PACKET.md`; it changes only the hostile launcher to an
+architect-prevalidated explicit local loader and leaves the exact product unchanged. Later report-only reviews
+preserved a guessed-path stop, a `.ts` module-format stop, and an issuer-name false positive without product mutation.
+The final exact-helper packet passed under a fifth different reviewer: 16/16 fixed commands, all twelve hostile groups,
+63 hostile and eight replacement attempts with zero executions, 0 High/Medium/Low, and every forbidden-effect count
+zero. Preserve `docs/reviews/CR13A_LIVE_140_FINAL_INDEPENDENT_REVIEW.md`; SHA-256
+`483ab05695b5cecaa6fe02ca4cc63b2e640733ac42270e2a435364c6be0ea6d8`. Ordinary owner-controlled integration is
+accepted; no real attestation or blocker clearance occurred.
+
+**Reevaluate:** Before any platform/native observer, signer, clock, nonce, verifier, acceptance store, checkpoint,
+candidate, owner window, physical attempt, runtime consumer, SSH/credential path, production contact, or deployment.
+
+## ADR-166 — Keep private locator custody opaque and separate from port custody
+
+**Decision:** CR13A-LIVE-150 freezes an effect-free private locator-broker contract before any address or port observer
+exists. The repository may expose one exact policy singleton and one `repository_fake` result. It may describe a future
+private IPv4-loopback/TCP locator capability, its one-target/candidate/attempt/epoch/reservation scope, 30-second
+maximum lifetime, one-spend ceiling, terminal tombstone rule, and required private bindings. It may not observe,
+select, reserve, issue, spend, publish, serialize, or wire any locator or capability.
+
+The public boundary contains no literal address or port. `private_locator_broker_missing` and
+`exclusive_port_custody_missing` remain separate blockers: a future accepted broker may clear only the first, and an
+accepted reservation/custody proof cannot itself issue a broker capability or listener authority.
+
+**Why:** A locator is both sensitive operational data and a capability precursor. Returning address/port data through
+ordinary APIs, logs, evidence, job results, or UI would let unrelated authority reconstruct the physical endpoint.
+Combining locator selection, exclusive port custody, capability issuance, and driver spend would also make it
+impossible to prove single ownership, single use, or cleanup under failure and uncertainty.
+
+**Alternatives rejected:** publish loopback address/port because it is local; accept caller-selected ports; use a
+serializable UUID/digest as the capability; let repository tests mint production-shaped capabilities; combine broker
+and exclusive reservation acceptance; let a valid locator imply listener, admission, owner, qualification, command,
+or activation authority; permit automatic retry after an ambiguous spend; or let the runtime/UI/worker call the fake.
+
+**Evidence required:** exact contract and fake with module-private provenance; deterministic policy, privacy,
+substitution, ambient-intrinsic, sanitation, non-wiring, no-issuer, and zero-effect tests; full producer gates; and a
+different independent zero-repair review. No host or network effect belongs in this block.
+
+**Accepted evidence:** Exact product `f089f896073fcc5aab24616a17fac592eba5146b` passes 9/9 dedicated, 149/149
+connection, 166/166 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different reviewer passed twelve fixed commands
+and all twelve hostile groups with 0 High/Medium/Low; 16 direct hostile cases and four ambient replacements executed
+zero hostile behavior, and every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_150_INDEPENDENT_REVIEW.md`; SHA-256
+`e7047c506fad1f969563d3bb1ae31df28083761b2470bc322a91c4aa733abd67`. Acceptance is effect-free and clears no
+blocker.
+
+**Reevaluate:** Before any address/interface observation, DNS resolution, port selection/reservation, capability
+issuance/spend, ledger/checkpoint write, resource observer, driver handoff, candidate, physical attempt, SSH/credential
+operation, production contact, or deployment.
+
+## ADR-167 — Exclusive port custody requires continuous native-resource ownership
+
+**Decision:** CR13A-LIVE-160 defines exclusive port custody as continuous ownership and one-use transfer of the same
+retained operating-system listener/reservation resource. A numeric port, prior successful bind, closed probe socket,
+availability check, timestamp, or digest is never custody. Selection must be operating-system-controlled, the resource
+must remain open and exclusively held, and failure or uncertainty requires terminal close, independent zero-resource
+observation, and durable tombstoning without retry.
+
+The accepted LIVE-120 driver currently consumes a private number and creates/binds a new server. It has no accepted
+same-resource handoff port, so `driverReservationHandoffGapPresent` must remain true and the exclusive-custody blocker
+cannot clear until a separate driver-handoff block is accepted.
+
+**Why:** Selecting or probing a free port and closing the probe creates a race in which another process can acquire it
+before the driver binds. Calling the later driver bind `exclusive: true` prevents certain sharing modes at bind time but
+does not prove continuous broker custody or identity continuity from selection through handoff.
+
+**Alternatives rejected:** check availability then close; pass only a port number; treat a successful earlier bind as
+proof; enable address/port reuse; let the broker and driver independently bind; publish the locator for coordination;
+let a fake or digest clear custody; modify the accepted driver inside this boundary; or retry/rebind after uncertainty.
+
+**Evidence required:** exact frozen policy and fake recording the compatibility gap, strict private provenance,
+privacy and hostile tests, runtime non-wiring, complete producer gates, and a different independent zero-repair review.
+No native resource may be created in this block.
+
+**Accepted evidence:** Exact product `97d46c74e413d21c1f81c9704b9eb0b66447be5c` passes 8/8 dedicated, 157/157
+connection, 174/174 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different reviewer passed twelve fixed commands
+and all twelve review groups with 0 High/Medium/Low; fifteen direct hostile cases and four ambient replacements executed
+zero behavior, and every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_160_INDEPENDENT_REVIEW.md`; SHA-256
+`0a0837acbd36ba9292e8b3f37b57d4900290aa03c54c3c13c73413aebd8345a6`. Acceptance is effect-free and leaves the
+driver handoff blocker present.
+
+**Reevaluate:** Before any driver API change, native reservation provider, `node:net` import, bind/listen/port operation,
+retained handle, capability handoff, ledger/checkpoint write, resource observer, physical attempt, or runtime wiring.
+
+## ADR-168 — Retained-resource handoff is atomic, private, and single-use
+
+**Decision:** CR13A-LIVE-170 freezes a module-private, non-serializable, single-use seam for transferring the same
+already-retained operating-system listener resource from a future custody provider into the physical driver. Ownership
+changes only when the driver accepts that exact resource. The provider cannot close before acceptance; the driver cannot
+bind a replacement; and failure or uncertainty requires terminal close, independent zero-resource observation, and a
+durable spend/close/tombstone chain without retry, rebind, or reopen.
+
+**Why:** A number, digest, caller-built object, or closed reservation cannot preserve operating-system custody. Passing
+one of those values back into the existing driver recreates the selection-to-bind race that LIVE-160 was designed to
+remove. Resource identity, private provenance, continuous ownership, and terminal cleanup must travel together.
+
+**Alternatives rejected:** pass a port number; expose a server or file descriptor through a public API; serialize a
+handle; let callers mint handoff objects; close then ask the driver to bind; duplicate the resource; use a digest as
+identity proof; allow a second transfer; retry after ambiguous acceptance; let a fake clear the custody blocker; or wire
+the physical driver in this effect-free block.
+
+**Evidence required:** exact immutable policy and repository fake with module-private provenance, strict parsers,
+hostile substitution and ambient-intrinsic tests, privacy and runtime non-wiring proof, zero native/effect counts, full
+producer verification, and a different independent zero-repair review. No native resource may exist in this block.
+
+**Accepted evidence:** Exact product `7e76e1980541075f9a1fa45479d20f06a823ef29` passes 8/8 dedicated, 165/165
+connection, 182/182 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different reviewer passed all twelve commands and
+review groups with 0 High/Medium/Low; fifteen direct hostile cases and four ambient replacements executed zero behavior,
+and every forbidden-effect count remained zero. Preserve
+`docs/reviews/CR13A_LIVE_170_INDEPENDENT_REVIEW.md`; SHA-256
+`3581dcf33774e730614346d57594738236acf0932fa581214af7931af67c1381`. Acceptance is effect-free and clears no blocker.
+
+**Reevaluate:** Before changing the physical driver's native port, creating a custody provider or resource capability,
+importing a native backend, selecting/binding/listening/closing, issuing or spending a handoff, writing a live ledger or
+checkpoint, assembling a candidate, making a physical attempt, wiring runtime use, or deploying.
+
+## ADR-169 — Prove retained-resource handoff ordering with an unwired repository port first
+
+**Decision:** CR13A-LIVE-180 implements a repository-only, module-private, single-use driver-port state machine before
+any native driver seam changes. A privately branded non-production resource fake proves continuous identity, atomic
+acceptance, serialized settlement, one spend, mandatory cleanup, stable terminal replay, and no retry/rebind/reopen.
+Public results contain only fixed state and counts; the fake resource never crosses the module boundary.
+
+**Why:** The LIVE-170 contract identifies the correct ownership boundary, but a contract alone does not prove that
+concurrency, pre-acceptance rejection, post-acceptance uncertainty, cleanup failure, and recovery can be represented
+without losing identity or accidentally enabling a second handoff. Proving those rules without `node:net` keeps logic
+defects separate from a later native attempt.
+
+**Alternatives rejected:** modify the accepted LIVE-120 driver in place; pass a number or public handle; let tests inject
+caller-built resources; call a real listener for proof; combine port selection, custody, handoff, driver start, and
+qualification; retry an uncertain handoff; let close overtake settlement; recover by reopening; or let fake success clear
+the real custody blocker.
+
+**Evidence required:** exact implementation/status provenance, frozen driver and callable surfaces, hostile sequencing
+and concurrency scenarios, retained-resource identity and single-spend assertions, safe errors, public privacy,
+non-wiring and import checks, exact zero real-effect counts, full producer verification, and a different independent
+zero-repair review.
+
+**Accepted evidence:** Exact product `052afc3b4a61f1c6f1957a567f5305f3a2c5bca0` passes 10/10 dedicated, 176/176
+connection, 192/192 CR13A, the complete registered lifecycle, 5/5 build phases, 4/4 rendered pages, migrations
+0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. The first review passed every product command but
+invalidated itself with one extra wrong-commit inspection; preserve it with SHA-256
+`8e7dc95989a493bcbdec514751d5a5912da7be9794faa01d44f79253285a1568`. A second different reviewer passed all twelve
+fixed commands and groups with 0 High/Medium/Low. Twelve hostile attempts and six ambient replacements executed zero
+behavior; every forbidden effect and authority remained zero or false. Preserve
+`docs/reviews/CR13A_LIVE_180_INDEPENDENT_REREVIEW.md`; SHA-256
+`05c4d57ad9f247916102acdc090c071b22a9b7a9623d1984779caf41d8acfd76`. Acceptance is effect-free and clears no
+blocker.
+
+**Reevaluate:** Before any native backend import or call, physical-driver modification, real resource/capability issuer,
+address or port selection, bind/listen/connect/close, live persistence, resource observation, qualification candidate,
+owner-attended physical attempt, runtime wiring, provider contact, or deployment.
+
+## ADR-170 — Put retained-server acceptance behind one private native adapter
+
+**Decision:** CR13A-LIVE-190 defines a module-private, non-serializable, exact-identity, one-use adapter seam for the
+accepted physical driver to receive an already-retained native server. The repository implementation remains fake-only:
+it freezes the requirements and proves acceptance, settlement, cleanup, ambiguity, and recovery ordering without a real
+server or native issuer. A type-only server reference is allowed inside the isolated module but must erase at runtime.
+
+The future real issuer must live inside the same private module, retain the server and every candidate/attempt/epoch,
+owner, custody, locator, target-runtime, tunnel-peer, host-key, deadline, spend, and checkpoint binding, and make the
+resource available only to the one accepted driver adapter. Public code receives neither the server nor a usable handle.
+
+**Why:** The accepted LIVE-120 physical path still consumes a port number and creates a new server, which cannot
+preserve LIVE-160 custody or satisfy LIVE-170's same-resource handoff. A public interface, serializable capability, or
+cross-module caller-built wrapper would recreate the substitution and selection-to-bind races. Freezing the native
+adapter seam before adding an issuer separates state-machine and privacy defects from real resource effects.
+
+**Alternatives rejected:** pass the numeric port; export a `Server`; pass a file descriptor; use a digest as resource
+identity; accept a structural wrapper; expose an issuer callback; modify and exercise the physical backend in this
+block; let a fake clear the custody gap; install handlers during repository tests; permit retry/rebind/reopen; or combine
+issuer, adapter, qualification candidate, owner spend, physical attempt, and activation.
+
+**Evidence required:** exact accepted LIVE-180/review binding; private fake-resource and adapter provenance; frozen
+surfaces; strict state, promise, receiver, substitution, construction, ambient, privacy, non-import, non-wiring, and
+zero-effect tests; full producer verification; and a different independent zero-repair review. No real native object or
+effect belongs in this block.
+
+**Accepted evidence:** Exact remediated product `d59c02792e49a79a291e3f9109fc43f2fd22fbd8` passed 11/11 dedicated,
+26/26 focused native-boundary, 187/187 connection, 203/203 CR13A, the complete lifecycle, all five build phases, 4/4
+rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. The original Low
+formatting rejection remains preserved. A different independent rereviewer passed all twelve fixed commands and groups
+with 0 High/Medium/Low and every forbidden effect and authority at zero or false. Accepted report SHA-256:
+`29be3e4ba7075397a764d57161bbff953993e6d2d815a4cc9ac353f475ab224a`.
+
+**Reevaluate:** Before adding the native issuer, retaining or inspecting a real server, changing the physical driver's
+backend composition, selecting/binding/listening/closing, installing handlers, issuing/spending a live handoff,
+persisting native state, clearing a blocker, assembling a candidate, making an owner-attended attempt, wiring runtime
+use, contacting a provider, or deploying.
+
+## ADR-171 — Freeze the native retained-resource issuer contract before implementing it
+
+**Decision:** CR13A-LIVE-200 defines a frozen, fake-only contract for the future module-private issuer that will create,
+retain, and transfer one native IPv4 loopback listener to the accepted LIVE-190 adapter. It binds the exact candidate,
+attempt, epoch, owner window, predecessor evidence, target runtime, tunnel peer, host-key digest, locator and custody
+spends, durable markers, failure classes, cleanup, recovery, and safe evidence. The repository result remains entirely
+negative: no issuer, resource, locator, spend, driver call, effect, blocker clearance, or authority exists.
+
+**Why:** LIVE-190 proves safe acceptance after a resource exists, but it intentionally has no resource issuer. Creating
+that issuer introduces the first-effect ordering, continuous custody, durable ambiguity, and cleanup obligations that
+cannot be safely inferred from adapter behavior. Freezing those obligations as exact inert data keeps the architecture
+reviewable before native code can act.
+
+**Alternatives rejected:** implement the issuer immediately; let the caller provide a server, port, descriptor, handle,
+or callback; export a structural capability; bind before durable spend; discover identity after listen; release custody
+before exact adapter acceptance; treat timeout as definite failure; retry an uncertain listen or handoff; claim cleanup
+without independent zero-resource evidence; or combine issuer implementation, runtime wiring, and physical qualification.
+
+**Evidence required:** exact accepted LIVE-190 product/review binding; complete frozen binding, proof, state, failure,
+and marker sets; strict provenance and digest parsing; hostile input and ambient replacement non-execution; public
+privacy; no network import or runtime consumer; exact zero-effect and false-authority truth; full producer verification;
+and a different independent zero-repair review.
+
+**Accepted evidence:** Exact product `9e3cb2afdcd3008dcdac94d113db991f34e49175` passed 9/9 dedicated, 196/196
+connection, 212/212 CR13A, the complete lifecycle, all five build phases, 4/4 rendered pages, migrations 0001-0036/119
+tables, TypeScript, lint, stage zero, and whitespace. A different independent reviewer passed all twelve fixed commands
+and groups with 0 High/Medium/Low. All hostile and ambient replacement inputs executed zero behavior; every forbidden
+effect and authority remained zero or false. Accepted report SHA-256:
+`82caf0b6ffc0a66661448a9780d0557221faa179f43956d6b2f691a7a1404185`.
+
+**Reevaluate:** Before importing a runtime network module, creating or receiving a native server, selecting or consuming
+a locator/port, writing a live spend or checkpoint, calling the accepted adapter or physical driver, attempting
+bind/listen/close, clearing a blocker, assembling a candidate, performing an owner-attended attempt, wiring runtime use,
+contacting a provider, or deploying.
+
+## ADR-172 — Prove private issuer ordering with an inert state machine before native implementation
+
+**Decision:** CR13A-LIVE-210 implements a repository-only fake state machine behind the accepted LIVE-200 issuer
+contract. One module-private inert identity models retention and exact fake-adapter acceptance across five fixed
+scenarios and nine states. Claim, effect marker, settlement, transfer, close, and recovery are serialized, one-use, and
+promise-stable. Public status contains only safe simulated truth and retains every real blocker.
+
+**Why:** The static LIVE-200 contract fixes what a real issuer must prove but does not demonstrate that concurrency,
+pre-effect rejection, post-marker ambiguity, retained-resource custody, adapter rejection, cleanup failure, and recovery
+can coexist without a second attempt or ownership gap. An inert state machine exposes ordering defects without network,
+resource, persistence, credential, or provider effects.
+
+**Alternatives rejected:** proceed directly to `node:net`; use a real loopback listener as a test fake; accept a caller-
+provided resource or effect client; combine claim and effect without an uncertainty marker; permit transfer to overtake
+retention; release custody on adapter rejection; retry an ambiguous attempt; recover by reopening; expose the fake
+resource or a structural handle; or let simulated success clear a real blocker.
+
+**Evidence required:** exact accepted LIVE-200 product/review binding; all scenarios/states; one-use serialized promise
+behavior; exact issuer/resource/adapter/status provenance; hostile input, receiver, mutation, and ambient replacement
+non-execution; safe errors and public privacy; no network/native/persistence import or runtime consumer; zero actual
+effects and false authority; full producer verification; and a different independent zero-repair review.
+
+**Accepted evidence:** Exact product `c4cac41561214117161c9764604f5dc06ecd63b6` passed 11/11 dedicated, 207/207
+connection, 223/223 CR13A, the complete lifecycle, all five build phases, 4/4 rendered pages, migrations 0001-0036/119
+tables, TypeScript, lint, stage zero, and whitespace. A different independent reviewer passed all twelve fixed commands
+and review groups with 0 High/Medium/Low. All hostile and ambient replacement inputs executed zero behavior; every real
+effect and authority remained zero or false. Accepted report SHA-256:
+`c25e22dfa2c8601b23547a8a6f32b68d78da23458a696cd9461678ce084ec2c7`.
+
+**Reevaluate:** Before importing a runtime network module, adding a real issuer or resource, accepting a private locator,
+writing a live spend/checkpoint, calling LIVE-190 or the physical driver, selecting/binding/listening/closing, clearing a
+blocker, assembling a candidate, making an owner-attended physical attempt, wiring runtime use, contacting a provider,
+or deploying.
+
+## ADR-173 — Isolate the first native issuer implementation behind an unreachable boundary
+
+**Decision:** CR13A-LIVE-220 may add one isolated runtime `node:net` importer containing the future native issuer, but
+the real factory and all native objects remain private and unreachable. The only exported construction path fails closed
+before a native call. Tests inspect and fake-test the surrounding contract without monkey-patching or invoking native
+primitives. No runtime consumer, candidate, attempt, or blocker clearance exists.
+
+**Why:** LIVE-210 proves issuer ordering without native behavior. The next implementation risk is whether the required
+native primitives can be confined to one module without exposing server identity or letting callers supply address,
+port, options, callbacks, objects, or mutable ambient methods. Keeping the code unreachable separates isolation review
+from the first real resource effect.
+
+**Alternatives rejected:** call a temporary loopback listener in tests; monkey-patch `node:net`; export an injectable
+native backend; accept caller server/options/callback values; export the real issuer factory before composition; let the
+physical driver bind from a port; resolve native methods at call time; install timers or process handlers; treat timeout
+as definite failure; or combine implementation, wiring, qualification, and activation.
+
+**Evidence required:** exact accepted LIVE-210 product/review binding; one allowlisted native importer; captured native
+primitive inventory; fail-closed exported path; no caller native input; no runtime consumer or native test invocation;
+strict provenance, privacy, mutation, and ambient tests; exact zero-effect and false-authority truth; full producer
+verification; and a different independent zero-repair review.
+
+**Reevaluate:** Before making the private factory reachable, providing a real locator/custody spend, writing a live
+checkpoint, invoking any native primitive, calling LIVE-190 or the physical driver, assembling a candidate, performing
+an owner-attended attempt, wiring runtime use, contacting a provider, or deploying.
+
+**Accepted evidence:** Exact product `2e9a2cb9ed65dd13e4653fecab4b94ca707c10b9` passed 12/12 dedicated,
+15/15 inherited native-isolation, 219/219 connection, 235/235 CR13A, the complete lifecycle, five build phases, 4/4
+rendered pages, migrations 0001-0036/119 tables, TypeScript, lint, stage zero, and whitespace. A different reviewer
+passed all twelve fixed commands and review groups with 0 High/Medium/Low. The private factory is stored once, never
+retrieved or exported, and every forbidden effect and authority remains zero or false. Accepted report SHA-256:
+`4ced5f64ebe99bd63b3bc68295a821f0b391126630206335dd9cabf698072d30`.
+
+## ADR-174 — Freeze private issuer composition before factory retrieval
+
+**Decision:** CR13A-LIVE-230 defines an inert exact contract for the future private composition of accepted LIVE-200
+bindings, LIVE-210 one-use state control, the LIVE-220 quarantined factory, and LIVE-190 same-server adapter. It fixes
+durable claim/spend/uncertainty ordering, one-use ceilings, continuous custody, exact-object transfer, ambiguity,
+cleanup, no-reopen recovery, and safe evidence. It does not import or consume LIVE-220 and cannot retrieve its factory.
+
+**Why:** LIVE-220 proves that native implementation can exist without becoming reachable. Making it reachable would join
+four independent security boundaries at once: durable permission, native effects, exclusive resource custody, and
+adapter ownership. Freezing the composition first prevents an implementation from silently changing order, accepting a
+caller-supplied capability, guessing ownership after uncertainty, or inventing a retry path.
+
+**Alternatives rejected:** export the factory; add a public or structural factory getter; let the caller inject native
+methods, a server, adapter, port, locator, signer, clock, or persistence client; create before durable claim/spends;
+observe the locator before uncertainty marking; transfer by numeric port; release custody before exact adapter
+acceptance; retry on timeout/restart; recover by reopening; treat cleanup failure as success; combine composition,
+physical qualification, runtime wiring, and activation; or let repository evidence clear a live blocker.
+
+**Evidence required:** exact accepted LIVE-220 product/review binding; complete frozen bindings, markers, ordering,
+ceilings, failures, custody transitions, cleanup, recovery, and safe-evidence policy; strict provenance; hostile input and
+ambient replacement non-execution; no native/effect import, LIVE-220 source consumer, runtime wiring, or live operation;
+exact zero-effect and false-authority truth; full producer verification; and a different independent zero-repair review.
+
+**Reevaluate:** Before importing or consuming LIVE-220, retrieving or invoking its private factory, creating/retaining/
+inspecting/transferring/closing a native server, observing a locator, issuing or spending live authority, writing a live
+checkpoint, calling LIVE-190 or the physical driver, assembling a candidate, making an owner-attended attempt, wiring
+runtime use, contacting a provider, or deploying.
+
+**Accepted evidence:** Exact product `3974f165f106cb0fe616b2f0e91a18e45b1b4c2d` passed 10/10 dedicated,
+245/245 CR13A, the complete lifecycle, five build phases, 4/4 rendered pages, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A different reviewer passed all twelve fixed commands and review
+groups with 0 High/Medium/Low. All hostile and ambient behavior executions were zero; every real effect and authority
+remained zero or false. Accepted report SHA-256:
+`eb6957f2f577b77ce7c68fb2f8e92e80004a987e3fa83ba1bdee993f6f59d58a`.
+
+## ADR-175 — Implement composition ordering without connecting native effects
+
+**Decision:** CR13A-LIVE-240 may implement the accepted LIVE-230 order as a private, unreachable stateful composition
+whose only dependencies are repository-owned inert test ports and opaque fake resources. The real LIVE-220 factory,
+native modules, persistence, adapter, and runtime remain disconnected.
+
+**Why:** LIVE-230 freezes the sequence but does not yet demonstrate that concurrency, one-use ceilings, exact-object
+custody, transfer, ambiguity, cleanup ownership, and no-reopen recovery can coexist in executable code. Proving those
+properties with opaque fakes isolates state-machine defects before any native effect becomes reachable.
+
+**Alternatives rejected:** retrieve LIVE-220 now; use a real loopback server as a fake; import `node:net`; expose an
+injectable production factory; accept caller resources, locators, callbacks, clocks, signers, or persistence clients;
+wire a runtime consumer; collapse durable markers into in-memory truth; guess custody after adapter uncertainty; retry,
+rebind, substitute, or reopen after failure; or combine implementation with physical qualification or deployment.
+
+**Evidence required:** exact accepted LIVE-230 product/review binding; complete executable ordering and one-use
+ceilings; opaque exact-resource custody; atomic adapter transfer; all definite, ambiguous, rejection, uncertainty, and
+cleanup paths; serialized concurrent calls; hostile input and ambient replacement non-execution; no native/effect/
+LIVE-220/LIVE-190 import or runtime consumer; exact zero real-effect and false-authority truth; full producer
+verification; and a different independent zero-repair review.
+
+**Reevaluate:** Before importing, retrieving, or invoking LIVE-220; using native or live persistence/adapter ports;
+creating, observing, transferring, or closing a real resource; issuing or spending live authority; clearing a blocker;
+assembling a candidate; making a physical attempt; wiring runtime use; contacting a provider; or deploying.
+
+**Accepted evidence:** Exact product `71e4c737b6e681fe24d730decc3497d196cf441c` passed 10/10 dedicated,
+255/255 CR13A, the complete lifecycle, five build phases, 4/4 rendered pages, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A seventh different reviewer closed M-001 through M-006 and the
+companion constructor surface with 0 High/Medium/Low. All hostile and ambient behavior was zero; every real effect and
+authority remained zero or false. Accepted report SHA-256:
+`1d552ac7d580d6996b5192139dee85beb4f15e1058cf2c19719e9424f82f00f8`.
+
+## ADR-176 — Freeze native factory retrieval separately from native invocation
+
+**Decision:** CR13A-LIVE-250 will specify a private, same-module, one-use bridge between accepted LIVE-240 evidence and
+the quarantined LIVE-220 factory. The contract may describe retrieval but cannot implement, expose, or exercise the
+real factory or make a native effect reachable.
+
+**Why:** LIVE-240 proves the composition order with inert ports, while LIVE-220 keeps the native factory unreachable in
+a module-private WeakMap. Joining those boundaries directly would simultaneously create capability reachability and a
+physical effect path. A separate retrieval contract makes the exact prerequisite evidence, one-use consumption,
+failure/ambiguity semantics, non-export rules, and restart behavior reviewable first.
+
+**Alternatives rejected:** export the factory; add a public getter; accept a caller-supplied factory or capability;
+retrieve before durable binding, claim, spends, or uncertainty marker; return or serialize the factory; test retrieval
+by invoking it; combine retrieval, invocation, adapter transfer, runtime wiring, qualification, or deployment; or treat
+repository evidence as native authority.
+
+**Evidence required:** exact accepted LIVE-220 and LIVE-240 product/review binding; same-module privacy; one retrieval
+ceiling; prerequisite and marker order; no-return/non-serialization; definite pre-retrieval failure and terminal
+post-retrieval ambiguity; no retry after uncertainty or restart; hostile input and ambient replacement non-execution;
+no new effect import or runtime consumer; exact zero-effect and false-authority truth; full producer verification; and a
+different independent zero-repair review.
+
+**Reevaluate:** Before implementing a bridge, making the factory reachable inside composition, retrieving or invoking
+it, adding live persistence or adapter ports, creating a native resource, observing a locator, wiring runtime use,
+assembling a qualification candidate, making a physical attempt, contacting a provider, or deploying.
+
+**Architecture evidence:** Frozen from exact merged base `bd1acec22c9b1e7bfa06f302ec665a854bc3048b` in
+`docs/CR13A_LIVE_250_PRIVATE_NATIVE_FACTORY_RETRIEVAL_BRIDGE_CONTRACT.md`. The contract-only implementation may publish
+immutable safe evidence and hostile zero-execution tests; it may not implement or exercise the bridge.
+
+**Accepted evidence:** Exact product `9b855d4193837fdf6d0d0fce1dcfd65a94cce49f` passed the full producer gate. A
+different report-only reviewer ran all twelve fixed commands exactly once with 0 High/Medium/Low, 8/8 focused tests,
+five build phases, 4/4 rendered pages, migrations 0001-0036/119 tables, zero hostile or ambient execution, zero real
+effects, and false authority. Accepted report SHA-256:
+`2dcb825f522345c214064ded31134e00fecbfee9aa2121a65d507398081eaca6`.
+
+## ADR-177 — Co-locate future native composition with private factory custody
+
+**Decision:** CR13A-LIVE-260 will freeze a repository-only contract for a future native-composition shell in the same
+source module that owns LIVE-220's private factory WeakMap. The contract cannot implement the shell or bridge, modify
+LIVE-220/LIVE-240, retrieve or invoke the factory, or make a native effect reachable.
+
+**Why:** LIVE-250 correctly forbids exporting or returning the factory. A future consumer in a separate module would
+require either an exported capability or a caller-supplied callback, both of which break that boundary. Co-location
+keeps lookup, direct handoff, native composition, and custody inside one private lexical scope while allowing their
+order and failure truth to be reviewed before implementation.
+
+**Alternatives rejected:** export a getter or factory; return a capability; accept a caller callback, implementation,
+composition, permit, adapter, or persistence client; dynamically import the native module; move the private factory to
+public state; let the fake LIVE-240 implementation consume native authority; combine contract, bridge implementation,
+invocation, runtime wiring, qualification, or deployment in one block; or test the shell by retrieving the real factory.
+
+**Evidence required:** exact accepted LIVE-250 product/review binding; same-source-module call graph; no-input and
+non-export rules; bridge consumption separated from factory invocation; one-use ceilings; exact-object custody;
+definite pre-lookup failure and post-lookup ambiguity; restart reconciliation without retrieval; no new effect import or
+runtime consumer; safe immutable evidence; hostile and ambient zero execution; exact zero-effect/false-authority truth;
+full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before modifying LIVE-220/LIVE-240; implementing the shell or bridge; retrieving or invoking the
+factory; creating, observing, transferring, or closing a resource; wiring runtime use; making a physical attempt;
+contacting a provider; clearing a blocker; or deploying.
+
+**Architecture evidence:** Frozen in `docs/CR13A_LIVE_260_PRIVATE_NATIVE_COMPOSITION_SHELL_CONTRACT.md` on the accepted
+LIVE-250 integration tip. The contract-only implementation may publish immutable safe evidence and hostile
+zero-execution tests; it may not implement or exercise the shell, bridge, factory, or native path.
+
+**Accepted evidence:** Exact product `01bfa6540cc83dc6099564e4fc9043be4cafddc6` passed 8/8 dedicated,
+271/271 CR13A, the complete 769/769 pretest, 392/392 core, and 392/392 posttest lifecycle, five build phases, 4/4
+rendered routes, migrations 0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A different
+report-only reviewer ran all twelve fixed commands once with 0 High/Medium/Low. All hostile and ambient executions,
+twenty actual effect totals, and eight authority grants remained zero or false. Accepted report SHA-256:
+`41c55ae9437f8951e18f919ec1569bbebe1f795cafeaade51a41826fc3d0f9f1`.
+
+## ADR-178 — Implement private reachability before permitting native invocation
+
+**Decision:** CR13A-LIVE-270 may implement the LIVE-260 shell and one-use retrieval bridge only inside the LIVE-220
+source module that owns the quarantined factory. Both remain non-exported, no-input, unreachable from runtime and tests,
+and uninvoked. This block may prove private lexical reachability, but every public actual retrieval, invocation,
+resource, listener, locator, persistence, and network count remains zero.
+
+**Why:** LIVE-260 proves the intended boundary but not that the bridge and shell can be co-located without exporting a
+factory or accepting a caller capability. Establishing unreachable source custody before any invocation keeps private
+reachability review separate from the first native resource effect.
+
+**Alternatives rejected:** export the factory, getter, bridge, shell, callback, token, or resource; accept a caller
+dependency; place composition in another module; import LIVE-240 fake ports into the native module; invoke the factory
+in a test; monkey-patch `node:net`; dynamically import a cache-bypass copy; wire a runtime consumer; or combine source
+reachability, physical qualification, activation, and deployment.
+
+**Evidence required:** exact accepted LIVE-220/LIVE-240/LIVE-250/LIVE-260 product and review bindings; same-module
+private source custody; a non-exported no-input one-use bridge and shell; no invocation or behavioral native test; no
+new native importer or runtime consumer; strict safe provenance; hostile and ambient zero execution; exact zero-effect
+and false-authority truth; full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before invoking the factory or any native primitive; creating, observing, retaining, transferring, or
+closing a server; observing a locator; issuing or spending live authority; writing persistence; calling an adapter or
+driver; assembling a candidate; performing an owner-attended attempt; wiring runtime use; contacting a provider; or
+deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_270_UNREACHABLE_NATIVE_COMPOSITION_SHELL_IMPLEMENTATION.md`. Repository implementation is authorized
+by the current owner build instruction; native invocation and physical qualification are not.
+
+**Accepted evidence:** Exact product `5e5384b1c7b3806a62672018843aa318b0e75728` passed 33/33 dedicated
+review tests, 276/276 CR13A tests, the complete registered lifecycle, five build phases, 4/4 rendered routes, migrations
+0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. A different report-only reviewer ran all
+twelve fixed commands once with 0 High/Medium/Low. All shell retrieval, native, listener, locator, persistence, network,
+and protected-value totals remained zero. Accepted report SHA-256:
+`96edcc2c9c65ea38b3da1adec7c092fdf056e544f02856705e93ce0f19d79609`.
+
+## ADR-179 — Freeze the whole physical candidate before implementing any real prerequisite
+
+**Decision:** CR13A-LIVE-280 will compile the accepted native source chain, every required real private component,
+fourteen remaining blockers, the later physical call ceilings, and the authority boundary into one exact inert
+repository contract. It will not create a provider, assembler, candidate, owner window, shell retrieval path, native
+effect, runtime consumer, or blocker clearance.
+
+**Why:** LIVE-270 completes private source reachability, but the project still lacks real target attestation, locator and
+port custody, signer, durable ledger, independent checkpoint and observer, tunnel-peer and host-key proof, and a private
+assembler. Freezing their complete relationship now prevents a future physical packet from quietly substituting a fake,
+omitting a prerequisite, widening authority, or collapsing owner authorization, execution, review, and activation.
+
+**Alternatives rejected:** invoke the dormant shell as the next test; treat repository fakes as real providers; expose a
+public assembler or shell capability; let a caller assert readiness; clear blockers from public hashes; combine provider
+implementation, candidate assembly, owner spend, physical qualification, and activation; or permit retry after an
+uncertain native marker.
+
+**Evidence required:** exact accepted LIVE-270 product and review binding; fixed component, blocker, stage, and ceiling
+sets; strict exact provenance; safe immutable records and errors; hostile and ambient zero execution; no native import
+or runtime consumer; all effect totals zero; all authority grants false; full producer verification; and a different
+independent report-only zero-repair review.
+
+**Reevaluate:** Before implementing a real private provider or durable store; importing the native issuer; retrieving
+the private shell; creating a candidate assembler or owner window; invoking a native primitive; opening or observing a
+resource; writing persistence; performing a physical attempt; accepting qualification evidence; wiring runtime use;
+contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_280_PRIVATE_PHYSICAL_QUALIFICATION_CANDIDATE_CONTRACT.md`. The current owner instruction authorizes
+repository implementation and ordinary merges only; it does not authorize a physical attempt or any external effect.
+
+**Accepted evidence:** Exact product `c1743b7f7b5c8362cec3d33b149e3f51c5e5fda6` passed 10/10 dedicated,
+286/286 CR13A, the complete 769/392/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0036/119
+tables, TypeScript, lint, macOS stage zero, and whitespace. The first review's procedural rejection is preserved. A
+different fresh reviewer passed the corrected fourteen-command protocol once with 0 High/Medium/Low and zero effects.
+Accepted rereview SHA-256: `bd8281cf4e0336eba7f55de2b8cde9e39e9305860a2a8287e3dcf74af52d7853`.
+
+## ADR-180 — Add real native observation source without making observation reachable
+
+**Decision:** CR13A-LIVE-290 may implement one private no-input target-runtime observer in a dedicated native module,
+capture only the minimum OS/runtime/process operations, and store the observer once in a module-private WeakMap with no
+lookup. The safe barrel does not import the module. Public evidence remains fixed, sanitized, and zero-use.
+
+**Why:** LIVE-280 identifies real target-runtime attestation as the first missing component. A real attestation still
+requires a trusted clock, nonce, signer, candidate/attempt binding, and replay checkpoint. Adding the lowest native
+observer while it remains unreachable lets its privacy and import boundary be reviewed separately from the first host
+read and from authority-bearing attestation composition.
+
+**Alternatives rejected:** use the LIVE-140 repository fake as real evidence; invoke native observation in tests;
+export an observer/getter/callback/capability; read host values during module initialization; expose or hash raw host
+identity in public evidence; import the observer from the safe barrel or runtime; or combine observer source,
+attestation, candidate assembly, owner approval, physical attempt, and activation.
+
+**Evidence required:** exact accepted LIVE-280 product/review binding; one private frozen stored observer; no private-map
+lookup; zero initialization and test invocation; minimum captured native set; no forbidden host fields or effect module;
+no production consumer; strict safe provenance; hostile and ambient zero execution; all observation/effect totals zero;
+all grants false; full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before adding a private-map lookup or bridge; invoking the observer; reading or signing host material;
+adding nonce/clock/replay state; importing the observer from production code; assembling a candidate or owner window;
+retrieving the native shell; performing listener/native activity; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in `docs/CR13A_LIVE_290_UNREACHABLE_NATIVE_TARGET_RUNTIME_OBSERVER.md`. The owner
+instruction authorizes repository source implementation and ordinary merges only; it does not authorize an observer
+invocation, host read, physical attempt, or external effect.
+
+## ADR-181 — Freeze the target-runtime trust boundary before observer retrieval
+
+**Decision:** CR13A-LIVE-300 will define a strict inert contract that rejects ambient `globalThis.process`, caller
+objects, accessors, proxies, dynamic input-selected imports, mutable callbacks, copied status, and caller readiness as
+sources of trusted runtime evidence. It will keep trusted-binding capture, descriptor validation, observer retrieval,
+raw observation, attestation, replay commit, candidate assembly, owner authorization, and physical attempt as separate
+future stages.
+
+**Why:** LIVE-290 safely introduced unreachable source, but its direct process-field reads would become a trust boundary
+the moment lookup or invocation existed. Freezing the boundary first makes evidence forgery, hostile getter execution,
+privacy leakage, replay, and collapsed authority reviewable without reading this Mac or exposing the observer.
+
+**Alternatives rejected:** treat the unreachable observer as already trusted for invocation; trust
+`globalThis.process`; accept caller-supplied process or OS objects; validate by reading accessor-backed values; combine
+lookup, observation, signing, candidate assembly, and physical attempt; expose hashed host values as safe public data;
+or clear target-runtime readiness from contract conformance alone.
+
+**Evidence required:** exact accepted LIVE-290 product/review binding; complete frozen trust rules and stage ordering;
+strict safe parsing; zero imports of the observer or native modules; hostile copies/accessors/proxies/extras executing
+zero behavior; all actual totals zero; all grants false; full producer verification; and a different independent
+report-only zero-repair review.
+
+**Reevaluate:** Before implementing private trusted-binding capture or descriptor checks; adding an observer lookup;
+invoking the observer; reading or signing host data; issuing a nonce or replay checkpoint; assembling a candidate or
+owner window; performing native listener activity; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_300_PRIVATE_TARGET_RUNTIME_OBSERVATION_TRUST_CONTRACT.md`. Current authority covers the inert repository
+contract and ordinary integration only; it does not authorize any host read, observer use, attestation, physical
+attempt, or external effect.
+
+## ADR-182 — Capture a static native process namespace before enabling validation
+
+**Decision:** CR13A-LIVE-310 may add one private no-input validator closed over one static `node:process` module
+namespace. It may store the frozen validator once in a private WeakMap with no lookup. All descriptor inspection and
+property access remain inside the unreachable body; initialization and tests execute zero process reads.
+
+**Why:** LIVE-300 rejects ambient `globalThis.process` and caller-supplied objects but intentionally implements no real
+binding source. A statically selected builtin namespace removes caller and ambient-global substitution from the future
+validation path while preserving a clean review boundary before the first descriptor or process value is read.
+
+**Alternatives rejected:** pass a process object into the validator; resolve `globalThis.process`; choose a module by
+input or dynamic import; capture process values while the module loads; invoke validation in tests; export a validator,
+getter, callback, token, or capability; combine validation with observer invocation or attestation; or treat source
+presence as blocker clearance.
+
+**Evidence required:** exact accepted LIVE-300 product/review binding; one static `node:process` namespace import; one
+private frozen no-input validator stored once; zero lookup/invocation/descriptor/process reads; no ambient process
+access; no LIVE-290 import or composition; no production consumer; sanitized zero-use truth; hostile ambient
+replacement proof; all actual totals zero; all grants false; full verification; and a different independent report-only
+zero-repair review.
+
+**Reevaluate:** Before retrieving or invoking the validator; inspecting descriptors or process values; composing the
+validator with LIVE-290; creating a raw observation or attestation; issuing replay or candidate authority; performing
+native listener activity; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in `docs/CR13A_LIVE_310_UNREACHABLE_TRUSTED_NATIVE_BINDING_VALIDATOR.md`. Current
+authority covers unreachable repository source and ordinary integration only; it does not authorize validation,
+process reads, observer use, attestation, physical qualification, or external effects.
+
+**Accepted evidence:** Corrected integration product `d95738bf79f9f12f6986f28b8f7548b661f0587a` passed 12/12
+dedicated, 318/318 CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations
+0001-0036/119 tables, TypeScript, lint, macOS stage zero, and whitespace. The first two rejected reviews remain
+preserved. A third different reviewer closed M-001, M-002, and L-001 and ran all fourteen commands once with
+0 High/Medium/Low and zero validator, descriptor, process, observer, native, network, or external effects. Accepted
+report SHA-256: `db3c721a2ad20b9f533202bc48275df6617035d30eb27df52900d8f97dbdb20e`.
+
+## ADR-183 — Require atomic same-module validation and native observation
+
+**Decision:** CR13A-LIVE-320 will freeze an inert contract requiring a later implementation to consolidate the
+accepted LIVE-290 observation operations and LIVE-310 binding validation inside one private, no-input, synchronous
+routine. It must consume the already validated process descriptor values rather than re-read namespace properties and
+must not export or import either currently quarantined callable.
+
+**Why:** The independently accepted observer and validator are intentionally unreachable in separate modules. Joining
+them through an export, getter, callback, or capability would weaken their privacy boundary. Separating descriptor
+validation from a later property read would also leave a time-of-check/time-of-use seam. One same-module synchronous
+routine can preserve source custody and make validation plus value consumption one indivisible future operation.
+
+**Alternatives rejected:** export either private callable; add a cross-module private-map lookup; pass a process or OS
+object from a caller; accept descriptors or expected values as input; validate then read namespace properties again;
+fall back to ambient `globalThis.process`; add a callback, promise, timer, retry, or replacement binding; implement or
+invoke the routine in the contract block; combine raw observation with signing, replay, candidate assembly, owner
+authorization, physical qualification, activation, or deployment.
+
+**Evidence required:** exact accepted LIVE-290 and LIVE-310 product/review bindings; complete atomic-composition rules,
+stage order, blockers, privacy, and terminal-failure semantics; strict singleton provenance; no native import or runtime
+consumer; hostile and ambient zero execution; all actual totals zero; all grants false; full producer verification; and
+a different independent report-only zero-repair review.
+
+**Reevaluate:** Before modifying either native source; implementing, retrieving, or invoking the consolidated routine;
+inspecting a descriptor; reading process/OS/host/path data; creating a raw observation or attestation; adding clock,
+nonce, signer, replay, candidate, owner, native-listener, provider, runtime, or deployment behavior.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_320_PRIVATE_ATOMIC_NATIVE_OBSERVATION_COMPOSITION_CONTRACT.md`. Current authority covers only the inert
+repository contract and ordinary integration; it does not authorize native-source composition or any native read.
+
+**Accepted evidence:** Exact product `0c906419652adceb5e771637ae269b52fd1c77cd` passed 10/10 dedicated, 328/328
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, exact four-path scope, verified disposable cleanup, and zero native, descriptor,
+process, OS, host, network, provider, or external effects. Accepted report SHA-256:
+`da7d247d874d543877c18215ae9e8fbbba7ba838065fe6a9d410772e776799d6`.
+
+## ADR-184 — Consolidate native observation source without making it reachable
+
+**Decision:** CR13A-LIVE-330 may implement one private, frozen, no-input, synchronous function in a new dedicated
+module. It may statically capture one `node:process` namespace and the minimum `node:os` callables, validate the four
+exact own process descriptors, consume their descriptor values directly, validate the four OS results, and construct
+one private frozen raw observation in the same function body. The function is stored once in a module-private WeakMap
+with no lookup, export, invocation, or consumer.
+
+**Why:** LIVE-320 independently accepted the atomic trust boundary, while the historical observer and validator remain
+separate and intentionally unreachable. Implementing the final source in one new quarantined module avoids weakening
+either historical custody boundary and makes the full validation and time-of-check/time-of-use behavior reviewable
+before any native value is actually read.
+
+**Alternatives rejected:** export or import either historical private callable; connect their private maps; pass a
+process or OS binding from a caller; validate descriptors in one call and re-read properties later; invoke the source
+in tests; expose a lookup, getter, callback, token, or capability; return public native material; or combine source
+implementation with retrieval, invocation, attestation, replay, candidate assembly, owner authorization, physical
+qualification, activation, provider contact, or deployment.
+
+**Evidence required:** accepted LIVE-320 product/review binding; exact native import ceiling; one private frozen stored
+function; descriptor validation and direct consumption in the same synchronous body; zero private-map lookups and
+runtime consumers; zero module-load and test native reads; strict immutable safe evidence; hostile and ambient zero
+execution; all actual totals zero; all grants false; full producer verification; and a different independent
+report-only zero-repair review.
+
+**Reevaluate:** Before adding a private-map lookup, bridge, token, callback, retrieval, or invocation; reading or using
+native material; creating an attestation, signature, clock/nonce/replay record, candidate, or owner window; retrieving
+the listener shell; performing a physical attempt; wiring runtime use; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_330_UNREACHABLE_ATOMIC_NATIVE_OBSERVATION_SOURCE_CONSOLIDATION.md`. Current authority covers only
+unreachable repository source and ordinary integration; it does not authorize a descriptor or host read.
+
+**Accepted evidence:** Exact product `06be655d188c45902c015f85225673dfc31c445d` passed 11/11 dedicated, 339/339
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, exact three-path scope, verified disposable cleanup, and zero lookup/invocation,
+descriptor, process, OS, host, network, provider, or external effects. Accepted report SHA-256:
+`da2c7529b8a5e023b706df8e6ab912e2096c2742edfda0e74758991721031f85`.
+
+## ADR-185 — Spend one exact authorization before native source lookup
+
+**Decision:** CR13A-LIVE-340 will freeze an inert contract requiring a future same-module source lookup and invocation
+to be preceded by one exact authenticated authorization, fresh nonce, trusted broker time, replay validation, and
+atomic consumption. The authorization must bind the accepted source, full target/candidate/attempt lineage, and only
+`observe_target_runtime_once`. Uncertainty at or after commit is terminal and permits no lookup, invocation, or retry.
+
+**Why:** LIVE-330 contains real native-observation logic, so adding its first lookup would cross from static source into
+an actual host read. A one-use boundary must be reviewable before that happens. Consumption before lookup prevents one
+authorization from reaching the source twice; terminal ambiguity prevents a crash or uncertain commit from being
+interpreted as permission to try again.
+
+**Alternatives rejected:** export the source or map; pass a callable or native binding from a caller; retrieve before
+consumption; use caller time; omit nonce, replay, candidate, or attempt binding; retry after uncertainty; publish the
+raw observation; or combine retrieval with attestation, candidate assembly, owner authorization, physical
+qualification, activation, provider contact, or deployment.
+
+**Evidence required:** accepted LIVE-330 product/review binding; complete exact identity, time, nonce, operation,
+consumption, replay, uncertainty, custody, privacy, stage, blocker, and outcome semantics; strict immutable safe
+provenance; no LIVE-330/native import or runtime consumer; hostile and ambient zero execution; all actual totals zero;
+all grants false; full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before importing or modifying LIVE-330; creating an authorization store, key, token, nonce, clock,
+checkpoint, spend, bridge, lookup, or invocation; reading or using native material; creating an attestation or
+candidate; authorizing/performing a physical attempt; wiring runtime use; contacting a provider; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_340_PRIVATE_ONE_USE_NATIVE_OBSERVATION_INVOCATION_CONTRACT.md`. Current authority covers only the inert
+contract and ordinary integration; it does not authorize retrieval, invocation, or a host read.
+
+**Accepted evidence:** Exact product `3108a8759863c4692ade2d5532e88cd28f259779` passed 11/11 dedicated, 350/350
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0036/119 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, exact four-path scope, verified disposable cleanup, and zero authorization,
+replay, spend, lookup, invocation, native read, persistence, network, provider, or external effects. Accepted report
+SHA-256: `bbe5b2bc027ad0d71838ab1784ed1081750ffb96eba9ae1b26fd162b6a9234af`.
+
+## ADR-186 — Register authorization and nonce without making the source reachable
+
+**Decision:** CR13A-LIVE-350 will implement one PostgreSQL-compatible append-only store that verifies an already sealed
+exact invocation-authorization body and atomically records it with a separate tenant-scoped digest-only nonce replay
+reservation. A separately protected HMAC key authenticates the body and persisted record but is never generated,
+persisted, or exposed by the store. Exact replay is inert; changed reuse fails closed. The store cannot issue, consume,
+revoke, list, or turn registration evidence into invocation authority.
+
+**Why:** LIVE-340 requires authenticated identity and independent replay state before atomic consumption and source
+lookup. Persisting the exact authorization and nonce reservation first makes replay and PostgreSQL concurrency
+reviewable without crossing the native-read boundary or prematurely coupling source custody to database behavior.
+
+**Alternatives rejected:** keep authorizations only in process memory; persist a raw nonce or key; combine registration
+with consumption or source lookup; let a receipt serve as a callable capability; accept caller-selected operations or
+callables; use SQLite/PGlite as production authority; connect to production PostgreSQL during repository proof; or add
+an API, listener, provider, physical attempt, runtime activation, or deployment in the same block.
+
+**Evidence required:** exact LIVE-340 product/review binding; authenticated immutable exact body; defensive key custody;
+atomic authorization and digest-only nonce insertion; inert exact replay; conflict, tamper, rollback, foreign-scope,
+restart, and local-concurrency rejection; append-only schema; sanitized receipts; no downstream consumer/native import;
+negative production and authority truth; full producer verification; and a different independent report-only
+zero-repair review.
+
+**Reevaluate:** Before implementing an issuer, production key or database configuration, current-time authority,
+consumption, revocation, source lookup/invocation, native read, attestation, candidate, owner authorization, listener,
+physical qualification, runtime wiring, provider contact, or deployment.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_350_AUTHENTICATED_INVOCATION_AUTHORIZATION_STORE.md`. Current authority covers repository implementation,
+local PGlite proof, and ordinary integration only; it does not authorize production database contact or invocation.
+
+**Accepted evidence:** Corrected product `053c4d02003e0223438e26aecea851253d05a60b` passed 14/14 dedicated, 364/364
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0037/122 tables,
+TypeScript, lint, macOS stage zero, and whitespace. The original report preserved one Medium key-separation finding. A
+bounded two-path repair rejects byte-identical authorization/state keys through captured host byte readers before any
+database work. A second different reviewer passed all ten groups and fourteen commands once with 0 residual
+High/Medium/Low, verified cleanup, and zero consumption/source/native/network/provider/external effects. Accepted
+re-review SHA-256: `ffea24f4ed6e7d62ffb7a06caf2446471582eff6780351af88136b9aba3c3324`.
+
+## ADR-187 — Validate stored lineage and database time without spending authority
+
+**Decision:** CR13A-LIVE-360 will add one exact read-only pre-consumption validator to the authenticated authorization
+store. It reauthenticates the sealed envelope, full stream/head, and digest-only nonce reservation in one database
+transaction, then reads `clock_timestamp()` from that same session. It passes only when every stored lineage value
+matches and database time is at or after not-before and strictly before expiry. The sanitized receipt remains
+`validated_unconsumed` and cannot substitute for a later atomic spend.
+
+**Why:** LIVE-350 now establishes durable authenticated identity and replay reservation, but an authorization must not
+be spendable merely because it exists. The final exact lineage and current-window decision must be independently
+reviewable before the consumption write and native-source boundary are introduced. Database-session time avoids caller
+clock authority and aligns the future decision with the single PostgreSQL write authority.
+
+**Alternatives rejected:** trust caller timestamps, `Date.now`, headers, receipt time, or a generic callback; validate
+without authenticating the complete stored stream and nonce; accept an inclusive expiry; turn validation into
+consumption; return a bearer capability; add source lookup/invocation or protected native reads; contact production
+PostgreSQL; or combine this boundary with attestation, candidate, physical qualification, provider, or deployment.
+
+**Evidence required:** exact accepted LIVE-350 product/re-review binding; complete stored identity/nonce/lineage
+authentication; same-session database time after state verification; exact time-window edges; immutable sanitized
+non-authorizing receipt; missing/conflict/tamper/deletion/time/database-failure rejection; hostile-input safety; no
+migration or downstream/native consumer; full producer verification; and a different independent report-only
+zero-repair review.
+
+**Reevaluate:** Before adding consumption, durable spent state, post-transaction recheck, source lookup/invocation,
+protected native read, raw observation handoff, attestation, candidate assembly, owner authorization, physical attempt,
+runtime activation, provider contact, production database configuration, or deployment.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_360_TRUSTED_DATABASE_TIME_AND_LINEAGE_VALIDATION.md`. Current authority covers read-only repository
+validation and local PGlite proof only; it does not authorize consumption, invocation, protected native reads, or
+production database contact.
+
+**Accepted evidence:** Corrected product `6028badb6db6b0455e9bed02c45751ea81517fa4` passed 23/23 dedicated, 373/373
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0037/122 tables,
+TypeScript, lint, macOS stage zero, and whitespace. The original report preserved one Medium hostile-row coercion
+finding. A bounded two-path repair proves all authorization/head/nonce scalars are exact primitives before conversion,
+hashing, regex evaluation, length access, or comparison. A second different reviewer passed all ten groups and fourteen
+commands once with 0 residual High/Medium/Low, verified cleanup, and zero consumption/source/native/network/provider/
+external effects. Accepted re-review SHA-256:
+`2dbf2c395ba8a95c41898cba05309551ca4e7be8e2b04e706f1fed1b7828cd47`.
+
+## ADR-188 — Spend authorization atomically without reaching the source
+
+**Decision:** CR13A-LIVE-370 will add an authenticated append-only consumption ledger/head and one exact atomic spend
+method. The transaction repeats complete registration/nonce/lineage authentication and same-session database-time
+validation immediately before inserting one unique consumption. A third key, byte-distinct from authorization and
+registration keys, authenticates consumption state. Success remains `consumed_pending_post_transaction_time_recheck`;
+it cannot look up or invoke the native source.
+
+**Why:** LIVE-360 proves current validity but does not prevent two callers from passing preflight. PostgreSQL uniqueness
+and one transaction are required to serialize the one-use decision before any future private lookup exists. Keeping the
+post-transaction time check and native boundary separate prevents a successful spend or ambiguous commit from being
+mistaken for permission to read host state.
+
+**Alternatives rejected:** update the authorization row in place; keep spend state only in process memory; reuse either
+existing key; consume before full state/time validation; retry after commit uncertainty; treat exact replay as fresh
+authority; look up/invoke the source in the spend method; contact production PostgreSQL; or combine consumption with
+attestation, physical qualification, provider, or deployment.
+
+**Evidence required:** exact accepted LIVE-360 product/re-review binding; migration 0038 authenticated append-only state;
+three byte-distinct keys; complete pre-insert registration/nonce/consumption-chain verification; exact database-time
+edges; atomic one-use concurrency; restart, replay, tamper, partial failure, and terminal-ambiguity handling; hostile
+input/row safety; sanitized non-authorizing evidence; no source/native/runtime consumer; full producer verification;
+and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before adding post-transaction time recheck, source bridge/lookup/invocation, protected native read,
+observation handoff, attestation, candidate assembly, owner authorization, physical attempt, runtime activation,
+provider contact, production database configuration, or deployment.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_370_ATOMIC_INVOCATION_AUTHORIZATION_CONSUMPTION.md`. Current authority covers repository consumption
+state and local PGlite proof only; it does not authorize source lookup/invocation, protected native reads, or production
+database contact.
+
+**Accepted evidence:** Product `6f908ccd1f65f48a5d874fa0da96afe301d8decf` passed 34/34 dedicated, 384/384
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0038/124 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, verified cleanup, and zero source/native/listener/production-database/network/
+provider/external effects. Accepted review SHA-256:
+`c1b22f9b8012328f4709c608c4a53292be279f47070aec6136ab40293618f490`.
+
+## ADR-189 — Recheck trusted database time after the atomic spend
+
+**Decision:** CR13A-LIVE-380 will add one exact read-only post-consumption recheck. It accepts the original sealed
+authorization and exact fresh LIVE-370 receipt, opens a new transaction after the spend returned, reauthenticates the
+complete registration/nonce/consumption state, requires the exact stored consumption, then reads same-session
+`clock_timestamp()` again. The clock cannot precede consumed-at and must remain strictly before expiry. Success is
+sanitized `consumed_and_post_transaction_time_rechecked` evidence and grants no source authority.
+
+**Why:** An in-transaction time decision cannot prove the authorization remains current after commit. A separately
+reviewed second database-time boundary makes expiry between spend and future lookup explicit. Reauthenticating durable
+state prevents a caller receipt or process memory from becoming authority, while preserving the spent fact when the
+recheck fails.
+
+**Alternatives rejected:** reuse the pre-commit clock; trust caller, process, header, timer, or receipt time; accept an
+already-consumed terminal receipt as fresh; skip registration or consumption-chain authentication; refund or replace an
+expired spend; return a bearer capability; look up/invoke the source during recheck; contact production PostgreSQL; or
+combine this read with protected native observation, provider, physical qualification, or deployment.
+
+**Evidence required:** exact accepted LIVE-370 product/review binding; hostile-safe fresh-receipt parsing; complete
+registration/nonce/consumption reauthentication in a new transaction; exact stored-spend binding; monotonic consumed-at
+and inclusive not-before/exclusive expiry decisions; malformed/regressed/expired/database-failure rejection; restart,
+replay, tamper, deletion, and ordering evidence; immutable sanitized non-authorizing receipt; no migration or source/
+native/runtime consumer; full producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before adding private spend/recheck composition, source bridge/lookup/invocation, protected native read,
+observation handoff, attestation, candidate assembly, owner authorization, physical attempt, runtime activation,
+provider contact, production database configuration, or deployment.
+
+**Architecture evidence:** Frozen in `docs/CR13A_LIVE_380_POST_TRANSACTION_DATABASE_TIME_RECHECK.md`. Current authority
+covers repository-only read validation and local PGlite proof; it does not authorize a source lookup, protected native
+read, or production database contact.
+
+**Accepted evidence:** Product `1b79bbc75dfe74ce0777bcc33cbcc801054113f0` passed 42/42 dedicated, 392/392
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, migrations 0001-0038/124 tables,
+TypeScript, lint, macOS stage zero, and whitespace. A fresh different reviewer passed all twelve groups and fourteen
+commands once with 0 High/Medium/Low, verified cleanup, and zero new-spend/source/native/listener/production-database/
+network/provider/external effects. Accepted review SHA-256:
+`4a5f60f8ca2ad08ee04f1603773279aef97558edfa27acda1604592f8ae610bd`.
+
+## ADR-190 — Keep fresh spend and post-transaction recheck in one private flow
+
+**Decision:** CR13A-LIVE-390 will freeze an inert contract requiring a future non-exported control flow to obtain its
+own fresh LIVE-370 spend, immediately perform LIVE-380's recheck with the same sealed authorization and that exact
+receipt, keep both receipts private, and stop before the first source lookup. The composition cannot accept caller
+receipts, replay, retry, replacement authorization, or fallback. Uncertainty at or after spend is terminal.
+
+**Why:** LIVE-370 and LIVE-380 are separately reviewable primitives, but their public sanitized receipts are evidence,
+not bearer capabilities. The native source must never become reachable through a later caller-supplied, reconstructed,
+or replayed receipt. Private same-flow custody makes freshness structural and keeps the next native boundary explicit.
+
+**Alternatives rejected:** accept a spend or recheck receipt from a caller; expose either receipt from the private
+flow; infer freshness from object identity; perform recheck later in a different call; retry or replace an authorization
+after commit uncertainty or recheck failure; look up the source before the recheck; or combine the contract with source
+lookup/invocation, protected native reads, attestation, qualification, provider contact, or deployment.
+
+**Evidence required:** exact accepted LIVE-370 and LIVE-380 product/review binding; exact same-flow and immediate-order
+rules; terminal failure and no-retry semantics; private receipt custody; a mandatory stop before source lookup; strict
+immutable singleton provenance; hostile and ambient zero execution; all actual totals zero; all grants false; full
+producer verification; and a different independent report-only zero-repair review.
+
+**Reevaluate:** Before importing or instantiating the authorization store; adding executable composition; calling spend
+or recheck; importing, retrieving, or looking up the private source; invoking it; reading protected native material;
+creating an observation, attestation, checkpoint, candidate, or owner window; performing a physical attempt; wiring
+runtime use; contacting a provider or production database; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_390_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_CONTRACT.md`. Current authority covers only an inert
+repository contract and deterministic tests; it does not authorize a spend, database call, source lookup, protected
+native read, or external effect.
+
+**Producer evidence:** Exact product `34640c7c6a3c63b781aa848f687ae1c23e7c2dee` passed 11/11 focused, 403/403 CR13A,
+the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, 38 migrations/124 tables, TypeScript, lint,
+macOS stage zero, whitespace, and clean status. It publishes 28 zero actuals and eight false grants with no executable
+composition or downstream consumer. This producer evidence was kept separate from the later independent reruns.
+
+**Accepted evidence:** A fresh different reviewer passed all twelve inspection groups and fourteen fixed commands once
+with 0 High/Medium/Low; 11/11 focused tests; 403/403 CR13A tests; 5/5 build phases; 4/4 rendered routes; and migrations
+0001-0038/124 tables. All 28 product actuals remained zero, all eight grants remained false, and exact disposable
+cleanup was verified. Preserve `docs/reviews/CR13A_LIVE_390_INDEPENDENT_REVIEW.md`; SHA-256
+`c41370441890e64ef53c76c65a8990119520f550cea093e59aa71d7a4926e586`.
+
+### ADR-191: keep the first executable spend/recheck composition private, receiptless, and stopped before source lookup
+
+**Decision:** CR13A-LIVE-400 may construct the accepted invocation-authorization store inside one repository-owned,
+non-barrel-exported factory. Its frozen runner accepts only a sealed authorization. A nested lexical flow performs at
+most one LIVE-370 spend and, only for its own fresh result, one immediate LIVE-380 recheck using the same sealed value
+and exact receipt object. Neither receipt is accepted from or returned to the caller. Every branch returns a coarse,
+frozen, non-authorizing terminal result and stops before source lookup.
+
+**Reason:** public composition of receipts would allow replay or substitution at the final authorization boundary.
+Private lexical custody binds the two accepted database operations while preserving a separately reviewable stop
+before any native source becomes reachable. Treating unknown commit state, already-spent evidence, and all post-spend
+failure as terminal prevents retry from manufacturing authority.
+
+**Consequence:** repository and local PGlite execution may spend and recheck synthetic authorizations, but the module
+has no barrel/runtime consumer and cannot reach LIVE-330 or any source/native/provider/production path. A later block
+must separately freeze and review the source lookup boundary. See
+`docs/CR13A_LIVE_400_PRIVATE_FRESH_SPEND_RECHECK_COMPOSITION_IMPLEMENTATION.md`.
+
+**Producer evidence:** Exact product `ccce7c84ebfbf955f05fb7b150c1ccf9b80535b3` passed 12/12 focused, 415/415 CR13A,
+the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, 38 migrations/124 tables, TypeScript, lint,
+macOS stage zero, whitespace, and clean status. Replay, concurrency, recheck expiry, commit-return uncertainty,
+database failure, mid-flight mutation, and hostile inputs all stop before lookup. Both receipts remain lexical and
+unreturned; the module is absent from the barrel and has no source/native/runtime consumer. This producer evidence is
+kept separate from the later independent reruns.
+
+**Accepted evidence:** A fresh different reviewer passed all twelve inspection groups and fourteen fixed commands once
+with 0 High/Medium/Low; 12/12 focused tests; 415/415 CR13A tests; 5/5 build phases; 4/4 rendered routes; and migrations
+0001-0038/124 tables. The reviewer verified exact private receipt custody, terminal replay/ambiguity/failure handling,
+23 zero static actuals, eight false grants, no source/native/runtime consumer or receipt exposure, and exact disposable
+cleanup. Preserve `docs/reviews/CR13A_LIVE_400_INDEPENDENT_REVIEW.md`; SHA-256
+`fab7088cf3bcfbcd8a9a14de6af9d58e8ca3471057230ea8cc73acb6660f86ce`.
+
+## ADR-192 — Source lookup requires private control-flow provenance, not a public success object
+
+**Decision:** CR13A-LIVE-410 will freeze an inert contract for the first future lookup of the accepted LIVE-330 atomic
+source. The lookup may occur at most once only as the immediate next private stage after the future consolidated flow's
+own exact LIVE-400 fresh spend and successful post-transaction recheck. The source storage and final success branch
+must share one private module boundary. No source, map, key, getter, callback, exported bridge, receipt, token, or
+success value may cross a module export to connect them.
+
+**Why:** LIVE-400's public `completed_and_stopped_before_lookup` value is deliberately sanitized evidence. Treating it,
+its identity, or a receipt as lookup authority would create a replayable bearer capability and undo the lexical
+custody established by LIVE-390 and LIVE-400. LIVE-330's private `WeakMap` is similarly safe because it has no lookup;
+exporting a retrieval seam would undo that boundary. The authority must therefore be the unbroken private call path,
+not data a caller can retain, copy, reconstruct, or replay.
+
+**Alternatives rejected:** call LIVE-400 publicly and branch on its result; accept or parse a success result; accept a
+spend/recheck receipt; export a LIVE-330 lookup/getter/map/key/source; export a LIVE-400 continuation or callback;
+authorize by boolean, object identity, digest, nonce, database row, or implementation identifier; retry, replace,
+refund, unconsume, fall back, or perform a second lookup after uncertainty/failure; or combine the inert contract with
+source modification/lookup/invocation, protected native reads, provider contact, physical qualification, or deployment.
+
+**Evidence required:** exact accepted LIVE-330 and LIVE-400 product/review binding; fixed same-module and unbroken
+private-flow rules; explicit public-result non-authority; at-most-one future lookup and direct private invocation
+handoff; terminal failure/no-retry semantics; strict immutable singleton provenance; hostile and ambient zero
+execution; all actual totals zero; all grants false; full producer verification; and a different independent
+report-only zero-repair review.
+
+**Reevaluate:** Before importing or modifying LIVE-330 or LIVE-400; consolidating their private internals; constructing
+the authorization store; adding a private success state, lookup, retrieval, or invocation; reading protected native
+material; creating an observation, attestation, checkpoint, candidate, or owner window; performing a physical attempt;
+wiring runtime use; contacting a provider or production database; or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_410_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_CONTRACT.md`. Current authority covers only inert repository
+contract work and deterministic tests; it does not authorize a database call, source lookup, native read, or external
+effect.
+
+**Producer evidence:** Exact product `e4d58ff35a44e66454cae8e778b31362902dab6b` passed 11/11 focused, 426/426
+CR13A, the complete 769/421/392 lifecycle, five build phases, 4/4 rendered routes, 38 migrations/124 tables,
+TypeScript, lint, macOS stage zero, whitespace, and clean status. It publishes 32 zero actuals and eight false grants,
+has only the safe barrel as a source consumer, and adds no accepted-implementation/database/native/runtime/effect
+import. This producer evidence remains separate from the pending independent reruns.
+
+**Accepted evidence:** A fresh different reviewer passed all twelve inspection groups and fourteen fixed commands once
+with 0 High/Medium/Low; 11/11 focused, 426/426 CR13A, 5/5 build, 4/4 render, 38 migrations/124 tables, exact cleanup,
+32 zero actuals, eight false grants, and zero source/native/listener/network/provider/production/external effects.
+Preserve `docs/reviews/CR13A_LIVE_410_INDEPENDENT_REVIEW.md`; SHA-256
+`c3f79f0ad2634a2bcbb0abd39eeb21c1b54154e1389a020b0839343f3ffb0bbf`.
+
+## ADR-193 — Consolidate the first source lookup into the source-owning module
+
+**Decision:** CR13A-LIVE-420 may modify the LIVE-330 source-owning module to add one non-barrel private composition.
+It constructs the exact accepted authorization store, re-expresses LIVE-400's accepted one-spend/one-recheck algorithm
+inside that module, and performs one captured `WeakMap.get` with the existing module-owned implementation key only
+after its own exact fresh spend and immediate successful recheck. It verifies the exact module-minted frozen source,
+keeps it lexical, and stops before invocation. LIVE-330's prior unreachable public truth must be superseded honestly.
+
+**Why:** JavaScript lexical module privacy provides no way to join LIVE-400's final private branch with LIVE-330's
+private `WeakMap` from a third module without exporting either a success capability or retrieval seam. Both are
+forbidden by accepted LIVE-410. Re-expressing the accepted database ordering inside the source-owning module preserves
+the unbroken control flow while keeping the source/map/key private and making the first lookup separately reviewable
+from the first native read.
+
+**Alternatives rejected:** call the public LIVE-400 runner and branch on its result; export a private LIVE-400 success
+record or continuation; export a LIVE-330 map/key/source/getter/lookup; pass a callback between modules; copy the
+source into a second module and call it the accepted source; infer authority from result identity, digest, receipt,
+database row, or implementation ID; invoke the source in the lookup block; or add a runtime/provider/production path.
+
+**Evidence required:** exact LIVE-410 product/review binding; truthful LIVE-330 reachability supersession; exact store
+construction and spend/recheck parity; one private exact-source lookup and zero invocations/native reads; terminal
+failure/no-retry semantics; frozen sanitized records; hostile, replay, concurrency, expiry, mutation, database-failure,
+and ambient tests; no barrel/runtime consumer; full producer verification; and a different independent report-only
+zero-repair review.
+
+**Reevaluate:** Before source invocation, descriptor/process/OS/host/path read, raw observation handoff, attestation,
+replay checkpoint, candidate, owner authorization, physical attempt, runtime wiring, provider contact, production
+database use, or deployment.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_420_PRIVATE_ATOMIC_SOURCE_LOOKUP_BRIDGE_IMPLEMENTATION.md`. Current authority covers repository and
+local synthetic PGlite lookup proof only; it does not authorize source invocation or a protected native read.
+
+**Accepted evidence:** Exact LIVE-420 product `c1287817079e6951ab5d1fbe24829cccc517687d` passed producer and
+independent gates. The different reviewer passed all twelve inspection groups and fourteen commands once with 0
+High/Medium/Low; 13/13 focused, 439/439 CR13A, 5/5 build, 4/4 render, 38 migrations/124 local PGlite tables, exact
+cleanup, one guarded lookup, and zero source invocation/native reads/listener/network/provider/production/external
+effects. Preserve `docs/reviews/CR13A_LIVE_420_INDEPENDENT_REVIEW.md`; SHA-256
+`6b472475d1e8d8bb9193b1b1df133316b8a939fbdec8c52e1e5b63bfd2308119`.
+
+## ADR-194 — Keep the first source invocation synchronous, single-use, and raw-output private
+
+**Decision:** CR13A-LIVE-430 will freeze an inert contract for the future first call of the exact source retrieved by
+LIVE-420. The call may occur at most once, synchronously, with no receiver or arguments, only as the immediate next
+stage in the same source-owning module and unbroken lexical flow. The raw record must be exact frozen own data, remain
+lexical, and move only by direct same-module handoff to a separately gated trusted attestation binding before any
+sanitized result is created.
+
+**Why:** LIVE-420's public success result deliberately carries no invocation authority. Exporting the retrieved source,
+a continuation, callback, or raw observation would create a replayable capability or leak host identity. An
+asynchronous boundary would also break the proof that one committed authorization permits only one source call. The
+raw record must therefore remain private input to the next trust stage, not become public evidence or a digest.
+
+**Alternatives rejected:** invoke from a caller or third module; branch on LIVE-420's public result; export or accept a
+source, raw record, callback, getter, continuation, output collector, process/OS binding, descriptor, readiness flag,
+receipt, digest, or boolean; retry after a throw or uncertainty; use a fallback source or replacement authorization;
+hash/log/persist/cache the raw observation; cross a Promise, timer, event, queue, or worker boundary; combine the inert
+contract with the first native read, attestation implementation, runtime wiring, provider contact, or deployment.
+
+**Evidence required:** exact accepted LIVE-340/LIVE-420 product/review binding; fixed one-invocation and same-module
+raw-custody rules; terminal spent/no-retry behavior; direct private attestation handoff; strict immutable singleton
+provenance; hostile and ambient zero execution; all current invocation/native/observation/effect totals zero; all
+grants false; no source import or runtime consumer; full producer verification; and a different independent report-
+only zero-repair review.
+
+**Reevaluate:** Before modifying the source-owning module, invoking the source, reading or handling native material,
+implementing raw validation or attestation/signing/replay persistence, assembling a candidate, spending owner
+authorization, performing a physical attempt, wiring runtime use, contacting a provider or production database, or
+deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_430_PRIVATE_SINGLE_SOURCE_INVOCATION_HANDOFF_CONTRACT.md`. Current authority covers only inert
+repository contract work and deterministic tests; it does not authorize source invocation or a protected native read.
+
+**Accepted evidence:** Exact product `a1c3230d4589ce72248038e722ccd4fd8600e9ee` passed producer verification and
+a fresh different report-only zero-repair review. All twelve inspection groups and fourteen fixed commands passed once
+with 0 High/Medium/Low; 11/11 focused, 450/450 CR13A, 769/421/392 producer lifecycle, 5/5 build, 4/4 render, 38
+migrations/124 local PGlite tables, 44 zero actuals, eight false grants, zero source calls/native reads/raw
+observations/private handoffs/effects, and exact cleanup. Accepted review SHA-256:
+`354e84ee68e1c1a202b738e0879070d6d449a268bbf001104eda4bdb246d0d0b`.
+
+## ADR-195 — Require a private attestation intake before the first native source invocation
+
+**Decision:** Freeze LIVE-440 as architecture only. The eventual invocation must be inserted at the single exact seam
+inside LIVE-420's source-owning lexical flow and may run only after independently accepted private context, synchronous
+intake, signature, durable checkpoint, and independent high-water stages exist. Ordinary tests and independent review
+remain non-native and exercise post-call logic only through a module-minted synthetic state-machine seam. Dormant code
+may be integrated without native qualification; a later fresh owner packet controls the one real source attempt.
+
+**Why:** Invoking the accepted source creates sensitive host material immediately. Calling it before a trusted private
+destination exists would either discard ambiguous raw data, expose it to a test or caller, or force a retryable gap
+between read and custody. Injecting a fake source into the production runner would no longer prove the exact private
+identity path, while omitting a module-owned synthetic state machine would leave terminal post-call branches untested.
+Separating dormant implementation review from one later authenticated owner run preserves repeatable CI and prevents
+routine host identity reads.
+
+**Alternatives rejected:** invoke and discard; return raw data to a caller; export a callback or continuation; inject
+a fake or caller-supplied source; leave post-call negative branches static-only; gate invocation with an environment
+flag; let every unit/CI run read its host; persist or hash raw state before a destination exists; accept an unsigned or
+digest-only owner report; collapse signature, checkpoint, or high-water stages; treat a public LIVE-420 result as
+authority; combine source invocation with runtime wiring, provider contact, deployment, or activation; retry after
+uncertainty.
+
+**Evidence required:** exact LIVE-420/LIVE-430 binding; exact insertion seam; fixed one-call, descriptor/value
+validation, synchronous transfer, distinct signer/checkpoint/high-water, application-reference release, terminal
+failure, no-retry, module-minted deterministic seam, authenticated owner envelope, cleanup, and independent-review
+rules; raw/source release before the first post-call `await`; an exact non-accepting public mapping for protected-
+pipeline failure or uncertainty; explicit accepted-pipeline prerequisite; and zero source-owner modification, source
+invocation, native read, raw observation, database activity, runtime wiring, or external effect in the design block.
+
+**Reevaluate:** After the complete private attestation pipeline is independently accepted and before writing dormant
+source-owner code. Reevaluate again under a fresh exact-product owner packet before executing any source call,
+performing qualification, handling real raw native material, wiring runtime use, contacting a provider or production
+database, or deploying.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_440_SAME_MODULE_SOURCE_INVOCATION_IMPLEMENTATION_DESIGN.md`. Current authority covers documentation
+only and grants no native execution or production authority.
+
+## ADR-196 — Build a complete private attestation pipeline before any native source call
+
+**Decision:** LIVE-450 freezes a separate owner-native authorization, exact-product one-attempt ceiling,
+production-only module capsule, five ordered supplementary-provider lanes, and 36 attestation stages from exact
+product/policy pins through private context, both one-use spends, one source call, exact raw validation, synchronous
+domain-separated keyed transformations, immediate reference release, complete canonical signature, authoritative
+PostgreSQL pending/final appends, non-authoritative independent high-water CAS, exact split-commit recovery, after-exit
+cleanup, final acceptance, and report-only review. Candidate assembly, physical qualification, and activation remain
+separate successors. The eight-value source cannot prove running executable content, exact boot session, high-entropy
+attestor process session, running harness, or running driver identity; five distinct private providers are mandatory.
+
+**Why:** Creating raw host state before trusted custody, signing, replay protection, and recovery exist would leave an
+unreviewable gap. Treating platform strings, PIDs, paths, uptime arithmetic, a checkout, or a public digest as the
+missing claims would turn weak or attacker-controlled hints into identity. PostgreSQL must remain the one global write
+authority, while a narrow protected high-water digest anchor prevents whole-database rollback without becoming a
+second coordinator.
+
+**Alternatives rejected:** call and discard; use one native authorization for repository and execution; reuse an exact
+product pair after a diagnostic; let callers inject source/provider/key/database/checkpoint dependencies; store raw
+values; use unkeyed or stable host digests; reuse the signature
+key as privacy, owner, TLS, node-channel, or cleanup key; infer boot identity from uptime alone; infer executable
+identity from a path; infer process epoch from PID; infer harness/driver build from a working tree; collapse signature,
+ledger, high-water, verifier, or cleanup observer; let PGlite qualify production; let high-water schedule or coordinate;
+retry after split commit or uncertainty; accept a report/file digest as authenticated native evidence.
+
+**Evidence required:** exact predecessor binding; separate owner-native authority; exact-product attempt ceiling;
+production capsule; five provider lanes; 36 attestation stages and separate successors; complete canonical envelope;
+pairwise-distinct pre-resolved keys and exact privacy domains; trusted time/nonce; append-only PostgreSQL states and
+writer ceilings; independent non-authoritative high-water with exact pending/CAS recovery; terminal mapping; pre-
+reserved after-exit cleanup observer; direct-module fake-only deterministic verification; zero current effects; and a
+different independent report-only architecture review.
+
+**Reevaluate:** Before inert contract implementation, supplementary provider work, protected key or signer access,
+persistence, source-owner modification, real source invocation, native evidence, runtime wiring, provider/production
+contact, or deployment.
+
+**Architecture evidence:** Independently accepted after remediation from 3 High/6 Medium/0 Low to 0/0/0 and frozen in
+`docs/CR13A_LIVE_450_PRIVATE_OBSERVATION_ATTESTATION_PIPELINE_DESIGN.md`. Current authority covers documentation only.
+
+## ADR-197 — Represent the private attestation pipeline first as an exact inert contract
+
+**Decision:** LIVE-460 implements only frozen public contract and status records for the accepted LIVE-450
+architecture. The singleton enumerates 14 claims, five providers, 36 attestation stages, nine durable states, 11
+outcomes, six cleanup facts, ten recovery cases, six later successors, 30 rules, exact ceilings, implementation flags,
+58 zero actuals, and eight false grants. It is exported only from the safe connection-registry barrel.
+
+**Why:** Before source-owner, provider, signer, persistence, high-water, or cleanup code exists, the repository needs
+one machine-checked vocabulary that makes stage collapse, missing claims, authority widening, retry, weak recovery, or
+premature acceptance visible to ordinary tests. An exact singleton prevents caller-built records from masquerading as
+accepted policy.
+
+**Alternatives rejected:** implement the production capsule while defining the contract; accept caller-created or
+structurally equivalent records; export generic builders; combine provider or successor stages; omit recovery cases;
+claim PGlite as production durability; import the native source/provider or database merely for type reuse; expose a
+callable that could reach protected behavior; report nonzero implementation/use before it exists.
+
+**Evidence required:** exact LIVE-450 product/design/review binding; frozen exact arrays and records; hostile parser and
+ambient-intrinsic tests; single safe barrel consumer; static absence of native source/provider, capsule, key, database,
+checkpoint, timer, listener, network, and runtime paths; 58 zero actuals/eight false grants; full non-native producer
+matrix; and a different independent zero-repair review.
+
+**Reevaluate:** Before production-capsule construction, provider implementation, source-owner modification, signer or
+key access, PostgreSQL/high-water/cleanup implementation, native qualification, runtime wiring, production contact, or
+deployment.
+
+**Implementation:** `src/connection-registry/v1/private-loopback-observation-attestation-pipeline-contract.ts` with
+focused tests in `tests/connection-enrollment-private-loopback-observation-attestation-pipeline-contract.test.ts`.
+Exact product `2cab7dff3a2ca277f4b4d766a2cd02779e0f505d`, tree
+`676cc414327a2acf714b96a149aea43348d48049`, is independently accepted with 0 High/Medium/Low for ordinary inert
+integration only.
+
+## ADR-198 — Make owner spend and exact-product attempt closure one atomic prerequisite
+
+**Decision:** Before any native source/provider work, one same-module lexical production capsule must authenticate an
+owner-root-pinned and independently anchored trust registry/manifest, resolve every dependency internally, preflight
+all five providers/cleanup, materialize signed reservation intents, and atomically consume a separate owner-native
+authorization together with the exact source-owner/runner product-pair attempt. An independently protected composite
+owner-attempt anchor covers every owner-store head. The product-pair key excludes candidate, attempt, and authorization
+relabels.
+
+**Why:** A broker invocation authorization does not prove owner consent to native host reads. A product-attempt row
+written separately from owner consumption could fail between commits and leave the same binary pair reusable.
+Caller-supplied dependencies or a generic service locator could substitute a source, provider, key, signer, database,
+or checkpoint after review. PostgreSQL-only attempt state could be rolled back as a whole. One closed lexical capsule,
+one atomic transaction, and one independent monotonic composite anchor remove those authority gaps.
+
+**Alternatives rejected:** treat repository acceptance or broker authorization as owner-native authority; let a
+diagnostic product run again under a new attempt ID; accept dependency injection into the production root; use a
+dynamic provider registry; allow owner-consumption and product-attempt rows to commit separately; resume after commit
+uncertainty; reconstruct a private receipt during recovery; let reconciliation write or call protected behavior; make
+a signed but rolled-back manifest current; use PGlite as production evidence.
+
+**Evidence required:** exact LIVE-440/450/460 binding; same-module source/capsule topology; out-of-band trust root;
+independently anchored registry, manifest, and all-owner-head composite; complete owner body/operation ceilings;
+pairwise-distinct key lifecycle; exact append-only PostgreSQL schema/grants; atomic consumption/product closure;
+post-transaction recheck; non-resuming uncertainty matrix; fixed parent/child/cleanup/finalizer IPC ownership; closed
+public schema; transitive import inertia; fake/production separation; zero current effects; and a different independent
+report-only architecture review.
+
+**Reevaluate:** Before every owner contract/store, capsule, provider, key, database, source-owner, native, runtime, or
+deployment implementation.
+
+**Architecture evidence:** Frozen in
+`docs/CR13A_LIVE_470_PRODUCTION_CAPSULE_OWNER_NATIVE_AUTHORIZATION_DESIGN.md`. Current authority covers documentation
+only. The first audit's 5 High and 4 Medium findings were remediated; a different report-only re-review accepted the
+final architecture with 0 High, 0 Medium, and 0 Low. Review and acceptance are preserved in
+`docs/reviews/CR13A_LIVE_470_ARCHITECTURE_REVIEW.md` and `docs/CR13A_LIVE_470_ARCHITECTURE_ACCEPTANCE.md`.
+
+## ADR-199 — Make owner-native authorization vocabulary inert before any issuer or store
+
+**Decision:** Implement LIVE-470's owner-native body, envelope, reservation-intent, provider-scope, cleanup/effect,
+closed-public-field, operation-budget, state/outcome, key-role, time, and authority vocabulary as one exact frozen
+repository singleton with an exact zero-use status. Each of 42 ordered component roles requires an explicit product
+commit, product tree, and independent-review digest; each of 28 ordered key roles requires a complete closed key
+binding. Provider reservation and invocation budgets carry both aggregate-five and per-ordered-lane-one ceilings.
+Parsers accept only module-created canonical singleton identities and reject behavioral substitutes.
+
+**Why:** Later issuer, registration, anchor, capsule, and native blocks need one reviewable vocabulary, but a body
+schema must not accidentally become an authorization issuer, validator, capability carrier, or dependency-injection
+surface. Freezing only names, ceilings, rules, and honest absence makes contract drift detectable without adding a
+protected execution path.
+
+**Alternatives rejected:** parse caller-created owner envelopes now; include sample credentials or signed bodies;
+create an issuer or key adapter with the contract; accept arbitrary dictionaries, callbacks, reservation objects, or
+generic dependencies; report future ceilings as current use; expose a runtime/API/UI consumer; clear the target-
+runtime blocker from repository evidence.
+
+**Evidence required:** exact LIVE-470 commit/tree/design/review/acceptance binding; complete immutable vocabulary and
+independently repeated expected fixtures; exact nested product/key binding shapes and cardinalities; aggregate and
+per-provider ceilings; uniqueness/deep-freeze assertions; singleton-only parsers; hostile accessor/proxy/symbol
+non-execution; captured intrinsic resistance; one safe barrel consumer; exact transitive leaf-import graph plus
+AST alias/effect rejection; no issuer/store/key/database/anchor/capsule/provider/source/IPC/process/native/runtime
+operation; 59 zero actuals; eight false grants; relevant tests/check/lint; and a different independent zero-repair
+review.
+
+**First independent review:** The initial candidate was rejected with 2 High, 2 Medium, and 0 Low. H-001 found that
+digest-only component names did not prove product/tree/review binding for every component and issuer. H-002 found that
+aggregate provider budgets did not enforce one operation per exact provider lane. M-001 found count-only assertions
+for most vocabularies. M-002 found that the source-only string scan neither followed transitive imports nor caught
+internal aliases. The remediation replaces every ambiguous shape, adds exact ordered fixtures and uniqueness/deep-
+freeze checks, splits the reusable canonical digest into an import-inert leaf, and audits the full transitive graph.
+
+**Accepted evidence:** Different independent re-review accepted exact product
+`6d510d6f1b80a98c00c16fcf2b55837afc1cea87`, tree `ac8655e1240d25bea9150ae9678f6ad5df56593c`,
+with 0 High, 0 Medium, and 0 Low. Focused tests pass 12/12, CR13A passes 473/473, the complete lifecycle exits 0, all
+five build phases and 4/4 rendered routes pass, and migrations 0001-0038 verify 124 tables. TypeScript, full lint,
+macOS stage zero, and whitespace validation pass. All 59 actuals remain zero and all eight grants remain false. See
+`docs/reviews/CR13A_LIVE_480_INDEPENDENT_REVIEW.md` and `docs/CR13A_LIVE_480_ACCEPTANCE.md`.
+
+**Reevaluate:** Before any owner-present issuer, sealed body parser, registration/nonce store, key/trust/manifest,
+independent anchor, reservation, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.
+
+## ADR-200 — Freeze rooted trust and independent rollback anchors before protected implementation
+
+**Decision:** Represent LIVE-470's production trust boundary first as one inert exact singleton. Pin one owner root
+out of band, keep its signing material offline, and restrict it to trust-registry genesis/revision and dual-signed
+normal root rotation. Reuse LIVE-480's exact 42 component-product and 28 key-role binding schemas. Permit two active
+revisions for one role only during an explicit overlap no longer than 300 seconds and one otherwise. Make the trust
+registry and deployment manifest canonical signed chains. Protect their heads plus composite owner-attempt,
+attestation, and cleanup heads with five distinct authenticated monotonic CAS anchors and distinct writer roles.
+
+**Why:** A valid signature alone does not prove that a registry, manifest, database, or attempt head is current.
+Whole-database rollback, key substitution, role reuse, and ambiguous split commits require an independent monotonic
+fact outside PostgreSQL. Freezing the closed identities and recovery matrix before adding keys or stores makes later
+authority auditable without accidentally manufacturing current authority.
+
+**Alternatives rejected:** let PostgreSQL pin its own owner root; accept a root from environment or runtime; use one
+shared anchor or writer key; allow an anchor to store business state; infer key overlap; automatically recover a
+compromised root; reconstruct or resign a CAS request after uncertainty; treat a still-valid old signature as current
+after an authenticated anchor advance.
+
+**Evidence required:** exact LIVE-480 commit/tree/review/acceptance binding; complete independently repeated ordered
+fixtures; the inherited exact product/key schemas; explicit root recovery and overlap rules; five distinct anchors;
+closed split-commit recovery; singleton-only hostile parsing; captured-intrinsic resistance; exact transitive import
+graph with AST effect rejection; safe consumer audit; 44 zero actuals and eight false grants; full producer gates;
+and a different independent zero-repair review.
+
+**Accepted evidence:** The inert product and 15-test focused suite are implemented. Focused tests, 473 existing CR13A
+tests, the complete 769/421/392 lifecycle, TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations
+0001-0038 with 124 tables, macOS stage zero, and whitespace validation pass. No key, signer, verifier, registry,
+manifest, anchor, store, production database, native, runtime, or deployment effect occurred. Independent review and
+final producer gates pass. The first independent review rejected the original revision with 3 High and
+2 Medium findings: circular/ambiguous signing, undeclared overlap and key rollback, unbound anchor custody, open CAS
+settlements, and an incomplete graph/export audit. All five were remediated without adding a protected
+implementation. A different independent reviewer accepted exact product
+`dc313b1f2ff5982fe0ffa3b505db36025036601f`, tree
+`de7b73195fdbc4eb08097e2da7eb7cd97e4f48a3`, with 0 High, 0 Medium, and 0 Low. Review SHA-256 is
+`56b03b7941971c50867553dc26c65a74cb9e4e291ba1a2543f5a9ac2708b2eb7`; acceptance SHA-256 is
+`2307475e02a176465c158cbe93b4a8c8a2b39ec6f3bb74cfba2281441a484f9d`.
+
+**Reevaluate:** Before any owner-present issuer, key creation/access, registry or manifest parser/resolver, anchor or
+PostgreSQL store, recovery effect, capsule, provider/source, IPC/process, native, runtime, or deployment implementation.
+
+## ADR-201 — Freeze owner-presence and strong-factor issuance before any credential or signing effect
+
+**Decision:** Represent the future owner-present issuer first as one inert exact singleton bound to the independently
+accepted LIVE-480 owner-authorization and LIVE-490 rooted-trust products, trees, reviews, and acceptance evidence. A
+future issuer may accept only a module-minted exact request after current trust preflight, present that exact scope on
+the target host, and observe separate owner-presence and strong-factor evidence bound to one challenge. The policy may
+select exactly one of platform phishing-resistant user verification, roaming-hardware phishing-resistant user
+verification, or password-manager TOTP with separate owner presence. TOTP is explicitly non-phishing-resistant; login
+state, a UI click, or conversational approval is never strong-factor evidence and no factor fallback is allowed.
+
+Before any owner display or factor work, the future issuer must durably reserve and burn one exact request/attempt
+tuple, complete rooted preflight, mint and reserve one domain-separated challenge with at least 256 bits of entropy,
+and bind its pairwise-distinct challenge-minter, factor-verifier, and replay-guard products and keys through a current
+signed manifest and trust registry. Those dependency roles require a separately accepted manifest/registry extension
+before protected implementation.
+
+After at most one factor verification for that tuple, the future issuer must recheck the owner root, registry,
+manifest, both anchors, every dependency product and key, exact evidence, scope, and policy. The ceremony follows one
+closed chronology using fresh private PostgreSQL time at challenge creation, factor acceptance, final recheck,
+nonce/body construction, and immediately before sealing; future-dated, expired, reordered, rolled-back, skewed, or
+uncertain time is terminal. Only then may it obtain a fresh nonce with at least 256 bits of
+entropy and private PostgreSQL transaction time, construct the exact LIVE-480 body internally, seal it once, and
+return one private sealed-but-unregistered envelope. The owner ceremony and authorization each last at most 300
+seconds. Separate authenticated registration and nonce reservation remain mandatory. Any uncertainty after factor
+verification or sealing is terminal and cannot retry or resume. Challenge reservation, success, or post-marker
+uncertainty permanently burns the request/attempt tuple; even a proven pre-challenge refusal requires a new request,
+attempt, ceremony, challenge, and nonce.
+
+**Why:** A login session, owner-facing button, conversational instruction, or signed-looking envelope does not prove
+that the owner was present for the exact native scope or that current rooted trust authorized the issuer and sealing
+key. Freezing the evidence, ordering, lifetime, downgrade, privacy, and uncertainty boundaries before a prompt,
+credential read, nonce, clock, body, key, or signature operation makes the future implementation reviewable without
+creating an authorization path now.
+
+**Alternatives rejected:** accept caller-constructed requests or bodies; treat the Control Room login or chat approval
+as the strong factor; silently downgrade a phishing-resistant policy to TOTP; call TOTP phishing-resistant; retain a
+raw TOTP code, credential, biometric, assertion, or owner identity; generate the authorization nonce before factor
+verification; trust local wall-clock time; skip the final manifest/anchor recheck; return an unsigned body or key;
+treat issuance as registration or native authority; retry after an uncertain verifier or sealing outcome; expose a
+dependency-taking issuer factory with the contract.
+
+**Evidence required:** exact LIVE-480 and LIVE-490 product/tree/review/acceptance binding; independently repeated
+ordered request, ceremony, factor, trust-preflight, time/nonce, stage, state, decision, refusal, output, prohibited-
+effect, and rule fixtures; explicit TOTP assurance truth; singleton-only hostile parsing; captured-intrinsic
+resistance; exact transitive import graph and effect rejection; safe consumer audit; 42 zero actuals and eight false
+grants; full producer gates; and a different independent zero-repair review.
+
+**Current evidence:** The inert product and 14-test focused suite are implemented. The combined LIVE-490/LIVE-500
+preflight passes 29/29, the existing CR13A suite passes 473/473, the complete 769/421/392 lifecycle passes, and
+TypeScript, full lint, 5/5 build phases, 4/4 rendered routes, migrations 0001-0038 with 124 tables, macOS stage zero,
+and whitespace validation pass. No prompt, credential, biometric, Keychain, factor call, time, nonce, body, seal,
+signature, trust read, database, registration, process, network, native, runtime, or deployment effect occurred.
+The first independent review rejected 2 High and 1 Medium findings covering unrooted dependency authority, incomplete
+time chronology, and reusable attempt scope. Those findings are remediated in exact product
+`2689c10e9964b3ec936253a776ef470e01948e44`, tree
+`4c47d229b6d9fb60606eaa68ac0129cae5b62fb0`. A different independent reviewer accepted it with 0 High, 0 Medium,
+and 0 Low. Preserve `docs/reviews/CR13A_LIVE_500_INDEPENDENT_REVIEW.md` with SHA-256
+`23dbd1e6ff2bd69f1ef75168579b5b4af237680cdc248f23b98f7766534285df` and
+`docs/CR13A_LIVE_500_ACCEPTANCE.md` with SHA-256
+`288e60c896f67caf48954a36467327f64e480dff0660edd6addd50acb4d2d9f0`. No next block is started.
+
+**Reevaluate:** Before any real owner prompt or UI, credential/biometric/Keychain/authenticator access, factor verifier,
+trusted-time or nonce source, body constructor, sealer or signer, trust resolver, registration/nonce store, PostgreSQL
+operation, capsule, provider/source, process, native, runtime, or deployment implementation.
+
+## ADR-202 — Rebaseline delivery around private daily use and supported native interfaces
+
+**Date:** 2026-09-04. **Owner direction:** accepted the Astra reassessment and instructed Codex to implement it.
+
+**Decision:** `CONTROL_ROOM_COMPLETION_PROGRAM.md` is the current requirements/dependency/model program.
+Archive the former CR5D-CR10 completion sequence without changing its evidence. Distinguish designed,
+component-tested, connected-local, live-validated and daily-use-accepted results. The next complete journey is
+private login -> ordinary project -> one real admitted task -> progress/result -> review, followed by the wider
+fleet, live Idea Lab/ABS, and unattended update/recovery acceptance. Optional specialist/public packaging work
+does not gate that first useful private workflow.
+
+Select an explicit VPS Node runtime with one private self-managed PostgreSQL primary on the selected VPS provider; preserve the existing Sites
+preview as a separate build profile. Use Cloudflare Access with a configured MFA-capable identity provider and
+server-side identity/project authorization, not a new in-app password vault or unverified forwarded headers.
+Normal remembered browser sessions and consequential effect approval are separate policies. No login proves
+owner presence for a native operation. Public coming-soon and private-app origins have separate access/cookies;
+an alternate workplace address is permitted only through an approved access arrangement, never filter evasion.
+
+Prefer the supported Hermes native run/status/events/stop/idempotency interface as the next adapter boundary.
+Release source `29112bef099274229cadff79cdff7bf7b99c4b77` is interface evidence only, not a new accepted runtime pin.
+The current accepted-runtime lists, historical qualification attempts and old dormant/native-listener code remain
+unchanged. Stop extending the CR13A custom-listener sequence as the default critical path; C-ADAPTER must compare
+specific required capabilities and produce a separately reviewed replacement before any runtime wiring.
+No plaintext-network exception, unrestricted RPC, core Hermes patch or live permission is introduced here.
+
+**Retained invariants:** one global write/claim authority per job class; owner-set node ceiling intersected with
+the signed lease and typed executor; project/profile/attempt isolation; separate provider/machine/human identities;
+pre-effect claims and honest ambiguity; no automatic retry after possible external dispatch; no exactly-once promise;
+separate strong approval for approval-required effects; explicit same-UID/administrator threat exclusions; private
+database and credential custody; no public agent endpoint. GitHub remains bootstrap coordination until a deliberate
+per-job-class cutover. Local Hermes state and peer messages are not a second global scheduler.
+
+**Delivery changes:** real-task-based T0/T1 admission replaces obsolete calibration graduation text. Ordinary code
+uses bounded repairs and can proceed after another job is submitted; controlled/native operations retain their
+own attempt limits. Prepare four non-overlapping ordinary implementation packets as drafts, without claiming
+unpublished work is ready. Draft structural validation is separate from claimable validation, and the issue
+renderer must refuse non-ready capsules. Codex still owns every architecture/security/migration/integration decision.
+
+**Rehearsal correction:** B-DB-PREP must produce an explicit successor preparation/rehearsal packet distinguishing
+inputs available before preparation, preparation observations, and evidence produced by rehearsal. It must not
+require its own future success as a prerequisite. Existing AUTO-100/110 runtime contracts stay disabled/unmodified;
+no readiness blocker is cleared by this planning correction.
+
+**Reuse:** adapt focused MIT-licensed patterns/modules from Control Center, Hermes WebUI and Hermes Desktop after
+pin/license checks; use restricted-license Hermes Studio as workflow inspiration only absent separate licensing.
+Detailed source evidence and caveats are in `CR14A_UPSTREAM_REUSE.md`; no upstream implementation is copied here.
+
+**Evidence required:** source-backed requirements/current-state audit; coherent phase/dependency and owner-effect
+boundaries; non-overlapping complete draft packets; draft/ready/render/intake regression tests; no runtime/host
+effects; proportionate independent review of this architecture/coordination change. The acceptance record must
+state tests actually run and must not import an old full-suite or native result as new evidence.
+
+**Reevaluate:** in B-RUNTIME/B-AUTH/B-PROJECT-API and C-ADAPTER before selecting an installed runtime, wiring a
+transport or identity verifier, changing a contract/manifest, configuring a host, or issuing a live owner packet.
+Reference: `CR14A_INTEGRATION_DIRECTION.md`. This ADR changes direction, not the authority of dormant code.
+
+**CR14A acceptance:** Independent review accepted exact product
+`93118f9169d03c6fde68b70a5a2e53fba19fc5f4`, tree `0a6145d2a0cfca75014e40b7ad4856f654e4281c`, with no
+blocking finding. `CR14A_ACCEPTANCE.md` records the actual deterministic checks and the documentation-only
+follow-up for LANDING ownership, exact model IDs, and publication checks. Four packets remain local drafts;
+no source/runtime wiring, live qualification, deployment, GitHub publication or merge is claimed.
+
+## ADR-203 — Implement the private web foundation without enabling the preview as production
+
+**Date:** 2026-09-04. **Owner direction:** build the accepted CR14B foundation on Astra Xhigh.
+
+Use the installed Vinext Node build path, isolated output and a build-fixed all-route readiness guard until
+B-WIRE supplies the reviewed authenticated composition. Preserve the Sites preview and its hosting metadata.
+Use deployment-selected Access public keys and exact application-assertion verification, with no request-driven
+key discovery, automatic account enrollment or implicit effect approval. Persist token digests and exact-session
+revocation in PostgreSQL; public-key freshness must not shorten remembered-session records. Logout revokes only
+the caller's verified assertion and must remain possible after project authority or identity state is withdrawn.
+
+Ordinary projects use canonical projects and existing identity/grant authority. Server-selected tenant/workspace,
+per-project or workspace-wide grants, atomic command/audit persistence, idempotency and version conflicts govern
+the new HTTP/SQL service. A manual lifecycle head derives workspace ownership through its canonical project;
+there is no duplicated workspace column. Archive/reopen does not cancel or authorize work. Identity/grant locks
+and commit-time expiry bound admission without claiming instantaneous revocation of an in-flight transaction.
+
+**Evidence:** `CR14B_FOUNDATION_ACCEPTANCE.md`; original Medium logout and Low schema findings retained in
+`reviews/CR14B_FOUNDATION_INITIAL_REVIEW.md`, closed by the bounded independent re-review at exact repair
+`2de0a4760fe1d5a0f2b39894e2e19ad897486d5f`, tree `f30ed73082ed439a72f7d358c42af9b31f3cda97`.
+
+**Limits:** no production database migration/connection, listener, credentials, live agents, IdP setup, DNS or
+deployment. This is foundation acceptance, not CR14B private-pilot completion. B-WIRE must finish shared page/API/
+stream verification, browser session UX, project UI and process-owned dependencies before replacing the guard.
+Database privileges, actual Node lifecycle and private ingress/MFA remain later explicit setup/rehearsal gates.
+
+## ADR-204 — Mount a separate private project application with explicit process ownership
+
+**Date:** 2026-09-04. **Owner direction:** continue the integrated CR14B build on Astra Xhigh.
+
+Build the private Node profile from its own route tree while preserving the existing Sites/local-pilot app.
+Compile the request handler and server-only runtime composition in one graph so both share one process-owned
+Access key cache, project service and supplied SQL pool. Importing the build never reads credentials, opens
+a database or starts a listener; absent explicit composition it remains unavailable. No HTTP configuration
+endpoint or browser-accessible runtime setter is introduced.
+
+Use the reviewed verifier and current SQL session/permission checks for every project page, API and finite
+snapshot request. Key refresh is demand-driven, single-flight and bounded, with no expired-key fallback and
+a full post-failure backoff. Browser API calls request an explicit expired-edge-session response. Session
+controls disclose cross-application Access logout while preserving durable local exact-session revocation.
+Shutdown stops new admission and drains admitted handlers before closing the supplied pool; bounded real
+database query/shutdown behavior still belongs to the later deployment bootstrap and rehearsal.
+
+Reuse canonical ordinary-project storage for catalog/create/detail/lifecycle pages. Retain archive history,
+version checks and audit/idempotency. Browser reads refresh without replaying writes; uncertain saves permit
+only explicit same-command retry in the current page instance. A finite current-project snapshot is not a
+long-lived or replayable job stream. The private catalog never substitutes fixtures or imports Idea records
+as manual projects. Combined Idea discovery must preserve owner-only authority and authenticated history.
+
+The architect implemented the settled project UI before a worker claim; retire its draft rather than issuing
+duplicate work. Three other drafts remain undispatched. Enable private compiled checks for stacked architect
+PRs, but retain dependency-order integration and exact-head CI checks.
+
+**Evidence:** `CR14B_PRIVATE_APPLICATION_ACCEPTANCE.md`; initial two Medium and one Low findings retained in
+`reviews/CR14B_WIRE_INITIAL_REVIEW.md`. Independent re-review accepts correction
+`d0858a5eea7f04e600e8d80d429696c87bae394e`, tree `90be4edf28d12be0df8c2a81651b5d4250b9c9f6`,
+with no residual findings. Compiled handler and disposable SQL checks prove mounted code, not browser clicks.
+
+**Remaining:** Idea integration, pagination, protected connection presentation, production bootstrap,
+IdP/MFA/ingress, actual database roles/restore, listener/static/shutdown/browser rehearsal and private deployment.
+Full B-WIRE and private-pilot completion are not claimed. No live agent/provider, credential, host service,
+database provisioning, public endpoint, Sites deployment, or automatic rollout authority is added.
+
+## ADR-205 — Combine project discovery without combining source authority
+
+**Date:** 2026-09-04. **Owner direction:** continue CR14B repository integration on Astra Xhigh.
+
+One private project catalog may combine ordinary and Idea-promoted read views, but it must not turn an Idea
+project into a manual record or weaken its owner-only action policy and authenticated registry projection.
+Use an already authorized SQL transaction, exact tenant/workspace/adapter selection and the existing latest
+event/mirror verifier. Supply the existing integrity key only through explicit future server composition;
+missing configuration and failed integrity remain visible/unavailable, never an invented empty Idea source.
+Ordinary commands are unchanged. Idea lifecycle is explicitly read-only in this private view until its
+source-specific command integration; this is not an additional scheduler or bot execution path.
+
+Use bounded C-collated logical-ID pagination with 50 verified records and a 51st-row continuation probe.
+The cursor is only a position; each request rechecks current session and source/project grants. Pages are
+fresh reads rather than a frozen snapshot, and returning to the first page includes newer records before
+the current cursor. Keep page-local archive labels, source-origin labels and normal document navigation.
+
+Resolve a detail ID only among sources the caller is authorized to read. An unknown row and a hidden source
+must have indistinguishable public responses; no-source permission denies before lookup. Do not disclose
+hidden Idea existence through API, HTML or finite snapshot status distinctions. No timing-channel proof is claimed.
+
+**Evidence:** `CR14B_SHARED_PROJECT_CATALOG_ACCEPTANCE.md` and the initial/re-review reports. One Medium
+response-distinction finding is retained and corrected at `58f060cb71a4675d35e8adabea01ab521cab260c`, tree
+`1db68a494ffd3fa69d1bd2b171004c71c30ffde3`; independent re-review has no remaining findings. The mixed
+211-record traversal, source authority, expiry, integrity and compiled routes pass the recorded tests.
+
+**Limits/next:** private connection view and bootstrap/role/setup preparation remain B-WIRE work; actual
+IdP/MFA/ingress, credentials, database services/restore, listeners/static/browser and deployment need their
+separate gates. Existing Sites preview is preserved. Private Idea commands, real conversations and agent
+work remain later integration. This ADR does not complete B-WIRE or authorize a production effect.
+
+## ADR-206 — Share private session authority with an observation-only connection view
+
+**Date:** 2026-09-04. **Owner direction:** keep building the accepted CR14B integration on Astra Xhigh.
+
+Extract the existing project session/grant transaction and exact-session logout into `WebSessionAuthority`,
+preserving project policy and admitted-transaction/revocation ordering. Mount the existing protected connection
+registry as an owner-only tenant-wide read requiring wildcard `connections.read`. Verify the enrollment history
+and authenticated telemetry receipts in that same SQL session; never replace keyed evidence with fleet-current
+rows, caller-controlled sources, fixture fallback or a separate authorization check detached from the read.
+
+The private page and API disclose only existing privacy-safe references and observed check-time status.
+Missing registry configuration is unavailable; missing telemetry configuration is explicit and never current.
+The page identifies its all-workspaces scope, legacy Hermes source and read-only/non-live boundary. It exposes
+refresh/navigation but no native connection, credential, provider, enrollment, qualification or dispatch action.
+Future platform/harness onboarding still requires its own real source and evidence; its worker draft is not
+completed by this legacy enrollment view. The existing Sites preview remains separate.
+
+Record production bootstrap as a distinct implementation task, not as a label applied to the injectable process
+factory. `CR14B_BOOTSTRAP_DATABASE_PREPARATION.md` names finite pool/query/transaction/shutdown targets,
+the actual mounted table requirements and the PostgreSQL row-lock privilege issue. Do not provision the old
+broad application role as the private web role or claim that SELECT-only grants satisfy the current locks.
+The next repository block must implement and test a narrow role/lock solution and bounded startup; actual
+host/database/IdP/MFA/ingress/listener/browser/deployment work retains its separately scoped prerequisites.
+
+**Evidence:** `CR14B_PRIVATE_CONNECTION_ACCEPTANCE.md` and `reviews/CR14B_CONNECTION_VIEW_REVIEW.md`.
+Independent review accepted `e6fa438dbb2e71cb4435c6872051722171928d22`, tree
+`3434d4aa0f4ca966631a8e4c1eb0eda7c91d6609`, after two Low documentation/page-label corrections. No residual
+findings. Main suite 489 tests (487 passed, two Windows-only skips), focused 62/62, both builds and seven
+compiled/rendered checks passed. This accepts repository connection reads and preparation design only;
+full B-WIRE, live agents, implemented startup/roles, real PostgreSQL and private deployment are not claimed.
+
+## ADR-207 — Explicit private startup owns a bounded pool and refuses uncertain continuation
+
+**Date:** 2026-09-04. **Owner direction:** implement the next CR14B startup/database block on Astra Xhigh.
+
+Use an explicit import-inert VPS bootstrap sharing the compiled application's one installation. Configure the
+exact HTTPS/Access/scope binding and privately supplied PG17 same-VPS loopback locator/credentials; do not
+inherit an environment/URL/default identity, create a second database authority or auto-provision prerequisites.
+Before installation verify the effective restricted role, membership/ownership/permissions, connection limits,
+reviewed public-schema fingerprint and existing owner/workspace. No request can configure the process.
+
+Keep a maximum eight-operation/no-pending-queue pool, bounded checkout/query/transaction deadlines and
+64-handler admission. Database timeouts complement callback/session fences. A fast uncertain COMMIT or
+failed rollback is as terminal as a deadline: quarantine the pool, block later commands, await bounded
+termination, and never send a rollback after COMMIT is attempted or silently retry a possibly committed write.
+Disable prepared-plan retry in the installed postgres driver. Readiness drops before bounded drain/close;
+the later listener and supervisor own their physical resource/exit behavior. No physical close proof is inferred.
+
+Migration 0040's constant-false lock columns let the private web role acquire existing identity/grant/workspace/
+registry row locks without updating authority fields. A fixed-search-path invoker trigger enforces immutable
+session binding/expiry and irreversible first revocation. Use the separate fresh restricted-role and dedicated
+DB ACL profiles, never the historical broad application role. Ordinary project/audit writes remain trusted
+application behavior; table/column privileges are not per-row/per-tenant isolation against a compromised app.
+
+**Evidence:** accepted product `09db99b3925f2197f2421b14a95ccfb35c707b80`, tree
+`48602c8361d03897197f945a9a7d72f10718a9bf`; `CR14B_PRIVATE_STARTUP_ACCEPTANCE.md` and both independent
+review reports. Retain the original Medium rejection and its accepted correction. Main suite 517 tests
+(515 passed, 2 Windows-only skips), focused 90/90, both builds, five private/four Sites artifact checks and
+127-table migrations passed. PGlite's current-database TEMP ACL metadata is injected only in tests; unmodified
+production preflight rejects that simulator connection. Real database ACL/concurrency/cancellation stays gated.
+
+**Next/limits:** private Node serving and executable real-PG rehearsal tooling, with injected repository tests.
+The setup/rehearsal packet is a draft execution specification, not a ready or authorized native run. Listener,
+host/database/credential/IdP/MFA/ingress/restore/deployment effects still need their scoped prerequisites.
+Existing Sites preview, generic DB adapter and disabled legacy native qualification paths are preserved.
+
+## ADR-208 — Private HTTP serving is a distinct, bounded application authority
+
+**Date:** 2026-09-05. **Owner direction:** overnight repository implementation under the accepted completion
+program, preserving merge and live-effect gates. Lead: Astra Xhigh.
+
+Use one explicit import-inert Node HTTP service behind the separately configured same-host private ingress.
+Pin its runtime HTTP import authority to `src/web/v1/private-serving.ts`; retain the old custom `node:net`
+authority inventory and disabled native qualification paths unchanged. This is application serving, not an
+agent gateway or a permission to activate either listener. No ambient startup, environment/credential loader,
+service installer, arbitrary reverse proxy, public bind or runtime consumer is introduced.
+
+Successful service construction owns application cleanup, even before start. Exact loopback/HTTPS Host,
+strict framing, bounded headers/body/concurrency/response time/bytes and response backpressure precede the
+existing app authentication/SQL boundary. A disconnect cancels delivery, not a possibly committed command;
+reconcile its existing receipt and never automatically replay. Drop readiness before bounded all-settled
+network/application cleanup and retain uncertain outcomes. Physical absence remains real rehearsal evidence.
+
+Load a bounded immutable snapshot of approved browser files from `dist-vps/client`, never request-selected
+files or server intermediates. Assets contain no records/credentials. Private response policy applies to
+owned responses; Node-generated pre-handler timeout failures are explicitly not claimed covered or observed.
+The actual reverse proxy, TLS/Access/MFA, real database and browser remain later scoped integrations.
+
+**Evidence:** accepted product `070a1405a0441ca1225271d6a1d74773df29c3e0`, tree
+`4aacfed5b2372589202de4cfb1740fd42cc722c3`; `CR14B_PRIVATE_SERVING_ACCEPTANCE.md` and both review reports.
+The initial one Medium/three Low rejection is retained. Final 115 focused, 769 pretests, 540 main tests
+(two Windows-only skips), 392 posttests, seven private/four Sites artifact checks, both builds, TypeScript,
+full lint and 127-table migrations passed. Re-review found no remaining issues. No live service was run.
+
+**Next:** disposable PostgreSQL rehearsal tooling under the existing separate setup/rehearsal permission
+packet. This accepted code does not itself make that packet ready, authorize a live effect, complete B-WIRE
+or the private pilot, or authorize a merge/deployment.
+
+## ADR-209 — Rehearsal tooling reports observations, not self-issued acceptance
+
+**Date:** 2026-09-05. **Owner direction:** continue the accepted overnight repository build on Astra Xhigh,
+with independent review and private PR publication while preserving merge and live-effect gates.
+
+Introduce one fixed, single-use SQL/application rehearsal under a separately reviewed operator packet.
+Production startup/role/schema verification is reused without a simulator override. The runner has no
+provisioning, migration, credential loading, web-route, listener or automatic retry authority. Its separate
+VPS build entry remains inert until an explicitly scoped operator invocation.
+
+The workload exercises synthetic project saves, replay receipts, current views, session revocation, restricted
+columns, database limits, admission/drain and one planned pool reopen. Native probe error handling preserves
+specific observed SQLSTATEs without raw diagnostics. A potentially committed command is never automatically
+replayed. Setup, fixture creation and exact database/role cleanup remain operator-owned prerequisites/actions,
+not evidence the workload assumes it already produced.
+
+Keep the evidence boundaries explicit: checklist digests are not signed owner approval or artifact/host
+attestation; owned client counts are not physical connection attempts or complete server-session absence;
+idle-session disappearance is not exact timeout-cause evidence; pool reopen is not process restart or restore.
+Injected tests remain labeled as such, and every run returns false for real-PostgreSQL/private-beta acceptance.
+Independent review and required live/operator evidence, not the runner itself, determine later acceptance.
+
+**Evidence:** accepted product `7c52ad3ea88255a9ec6faccadea69eb9af66162d`, tree
+`7de613ba8be83ffea3292012bdda8e1e2fce3710`; `CR14B_DATABASE_REHEARSAL_ACCEPTANCE.md`, retained initial
+one Medium/two Low rejection and accepted re-review. Final 133 focused, 769 pretests, 558 main passes/two
+existing skips, 392 posttests, eight private/four Sites artifact checks, both builds, type/lint/whitespace and
+127-table migrations passed. No real database, listener, credential, provider, deployment or merge occurred.
+
+**Next:** repository-only synthetic fixture/preparation handoff, then unblocked native adapter/task integration.
+The accepted code does not authorize a real run, database provisioning, live agent connection or deployment.
+
+## ADR-210 — Disposable fixture setup is one checked transaction with a private one-use handoff
+
+**Date:** 2026-09-05. **Owner direction:** continue the authorized overnight repository build on Astra Xhigh.
+
+Complete the rehearsal's fixture prerequisite with a separate inert operator entry, not an application seed
+route or startup migration. The owner still prepares and approves the exact dedicated PG17 database, distinct
+migrator/web logins, migrations/ACLs and cleanup. Before fixture writes, require the reviewed schema, correct
+restricted table-owning migrator and every public table empty under bounded locks. Existing accepted stores
+join one transaction; no nested store can commit independently.
+
+Fresh synthetic assertion and integrity keys remain private in memory and become retrievable once only after
+acknowledged commit plus successful owned-client shutdown. Ordinary failure rolls back; uncertainty never
+automatically retries or hands over material. A lost acknowledgement can leave committed rows for operator
+reconciliation. Counts are acknowledged observations, not proof of absence; client close is not server absence.
+No provisioning, migrations, role changes, credential reads, production owner enrollment, listener or real bot
+is introduced. A synthetic enrollment keeps all execution grants false. Exact cleanup remains operator-owned.
+
+**Evidence:** accepted runtime `fd8b2736a806735dc07ada577df31967c573a96b`, tree
+`a6cf590e7c4ff73b57409a700414a55177091c86`; `CR14B_FIXTURE_PREPARATION_ACCEPTANCE.md` and independent
+review with zero findings. Final 152 focused, 769 pretests, 577 main passes/two existing skips, 392 posttests,
+nine private/four Sites artifact checks, both builds, type/lint/whitespace and 127-table migrations passed.
+
+**Next:** unblocked CR14C native-run adapter/task integration. Real setup/rehearsal, browser/IdP/deployment,
+backup/restore and private-pilot exits remain separate owner gates; none is inferred from fixture tests.
+
+## ADR-211 — Thin native Hermes run recovery keeps canonical authority and truthful outcomes
+
+**Date:** 2026-09-05. **Owner direction:** continue authorized overnight repository implementation on Astra Xhigh.
+
+Implement the ADR-202 supported native-run subset against the pinned candidate source, initially unwired.
+One reviewed enrollment/profile, fresh derived task session and exact request digest bind each attempt.
+The existing node controller still owns admission, current ceilings, profile qualification and the durable
+pre-effect marker. The new SQLite journal is node-private execution recovery, not global task coordination;
+PostgreSQL remains the sole global write authority. A request/operation digest is never itself permission.
+
+Unknown dispatch/save outcome cannot automatically resubmit. Reconnection reads the exact recorded run.
+Native SSE has no replay guarantee, so use one bounded stream plus status resnapshot. Cancellation interrupts
+the owned observation before handing off to exact-ID stop; concurrent durable updates preserve acknowledged
+stop or a completed result. Only known rolled-back local observation conflicts can retry bounded CAS saves.
+Native requests and uncertain commits are never retried. Native cancellation is reported state, not OS absence.
+
+The HTTPS module keeps the existing destination, connect-time address and certificate requirements. It is
+not wired or activated. No private-DNS/plaintext exception, public Hermes exposure, installation, credential
+discovery, core fork, inherited personal profile or runtime-list enablement is introduced. Hard dollar limits
+remain unsupported; absent usage stays unknown. Dedicated profile/host isolation and hard deadlines still
+need real qualification rather than a capabilities assertion.
+
+**Evidence:** accepted product `4b5fb69d8386cdf859ba22079aef3e7771f45f18`, tree
+`1fa5287e551e418015e61d8e38911f5213c04eca`; `CR14C_NATIVE_RUN_ADAPTER_ACCEPTANCE.md`. Two initial Medium
+timing findings were corrected and independently re-reviewed with no remaining findings. Final 47 focused,
+152 private-app regressions, 769 pretests, 624 main passes/two existing skips, 392 posttests, both builds,
+nine private/four Sites artifact checks, type/lint/whitespace passed. Unchanged 127-table migrations verified.
+
+**Next:** C-WORK canonical task/progress/result/review integration, including explicit native lifecycle/usage
+mapping. Host setup, private transport topology and live useful-task acceptance remain separate scoped gates.
+This acceptance does not merge a PR, activate a native consumer or establish a usable fleet.
+
+## ADR-212 — Native progress is durable authenticated evidence, not task-completion authority
+
+**Date:** 2026-09-05. **Owner direction:** continue the authorized overnight repository build on Astra Xhigh.
+
+Project native snapshots into one bounded content-free observation contract, not synthetic lifecycle events.
+Bind registration to the existing canonical attempt/input/lease/epoch/node and permit one native run per
+attempt. Reuse the current signed node protocol and existing integrity-protected harness history. The native
+journal and bridge outbox are local recovery state; PostgreSQL remains the sole global write authority.
+
+Persist node evidence before transport; permit one unacknowledged snapshot per run. A durable central ACK
+drains subsequent evidence. Lost-ACK expiry enters existing reconnect/backoff and re-envelopes the same body
+on a fresh connection; it never resubmits native work. Exact duplicates recover an uncertain SQL response.
+Do not evict evidence at capacity. Production retention and longer-running capacity proof remain outstanding.
+
+Preserve unknown execution start, nullable usage and reported cancellation. Result hashes are producer claims,
+not artifact verification or owner acceptance. Late evidence for an exact historical lease does not revive
+authority. Observation ingestion cannot complete canonical jobs/attempts, approve reviews or confirm effects.
+No runtime consumer, listener, credential read, provider call or native profile activation is introduced.
+
+**Evidence:** accepted product `f7d0c1115e0b3a321b3c9c9b6ee6efced83122eb`, tree
+`ef934336fddc50f190092fa60712efcf9dcde2ab`; `CR14C_CANONICAL_NATIVE_PROGRESS_ACCEPTANCE.md` and retained
+initial two Medium/two Low rejection plus accepted re-review. Final 74 focused, 769 pretests, 651 main
+passes/two existing skips, 392 posttests, both builds, nine private/four Sites artifact checks and type/lint/
+whitespace passed. Unchanged migrations verified 127 tables. Independent re-review ran 51 checks.
+
+**Next:** private project task/result pages and remaining canonical draft/admission/dispatch/artifact/review
+composition. Full C-WORK, real host qualification and private-beta activation remain incomplete and separately gated.
+
+## ADR-213 — Private task pages save proposals and distinguish recorded progress from work authority
+
+**Date:** 2026-09-05. **Owner direction:** continue authorized overnight repository building on Astra Xhigh.
+
+Use the existing shared Access/session/project services and canonical request/workflow/job tables for private
+project Tasks pages. A proposal, its audit record and append-only receipt commit together under current
+membership/grants. Exact retries recover a lost response, not a second job. Once a save is uncertain, later
+permission/session denial cannot discard its identity or release the changed-submission hold. Reconnect and
+refresh are reads only; browser state is not global task authority.
+
+New proposals are unassigned and effect-free. SQL permits the private web role to insert only initial
+proposed records, without canonical transitions, attempts, leases, dispatch, approvals or harness writes.
+Later planning must materialize properly bounded executable work with lineage; it cannot expand the proposal's
+immutable envelope. Schema/role checks advance explicitly to migration 0041 and 128 tables, never auto-migrate.
+
+Read canonical task status separately from verified harness history. An unavailable or stale observation
+shows its last reported state, not current activity. Native completion is not canonical job completion;
+hash/size claims are not delivered or independently verified files; cancellation is not OS-cessation proof.
+Unknown timestamps/tokens/cost stay unknown. Missing dispatch/artifact-content/review commands remain visibly
+not connected. Stable project/task URLs and bounded read refresh provide useful pages without fake outcomes.
+
+**Evidence:** accepted product `a8021de5d6744c796f4a31eb48b60000e27bd986`, tree
+`fb75541d35e830a007bc2662e5af2eb5f8dcf777`; `CR14C_PRIVATE_TASK_WORKSPACE_ACCEPTANCE.md`, retained two Medium
+initial findings and accepted re-review. Final 102 focused, 769 pretests, 679 main passes/two existing skips,
+392 posttests, both builds, nine private/four Sites artifact checks, type/lint/whitespace and 128-table
+migrations passed. Independent re-review ran 60 tests. No live database, listener, credentials, browser,
+agent/provider, deployment or merge occurred.
+
+**Next:** remaining artifact/result, existing Completion Gate review/revision and canonical admission/dispatch
+composition. Full C-WORK and the private-beta exit still require separately scoped real acceptance.
+
+## ADR-214 — Exact native result artifacts and checkpoint-verified private review reads
+
+**Date:** 2026-09-05. **Owner direction:** continue authorized overnight repository building on Astra Xhigh.
+
+Reuse signed native observations, canonical harness lineage and artifact manifests. Accept separately
+supplied bounded UTF-8 result bytes only after exact storage readback; append an authenticated receipt and
+audit with the manifest in PostgreSQL. One deterministic artifact identity permits exact reconciliation,
+not repeated native work. I/O timeouts quarantine the instance without claiming actual effect cessation;
+unreferenced files remain for scoped reconciliation/retention, never automatic broad cleanup.
+
+The private task page reads result bytes only under its additional content grant and current shared
+session/project authority. Capture read-only artifact/checkpoint capabilities for the web service. Preserve
+Completion Gate HMAC/external rollback verification and complete-history status calculation. Reads never
+initialize/advance checkpoints or create approvals. An open file has visible identity/hash, and every
+review's open-file match requires both. Bound serialized projection to 524,288 bytes with explicit omission
+of oldest target views; no quality calculation is based on truncated history.
+
+Migration 0042 explicitly advances the restricted-role/schema preparation pin to 129 tables. No automatic
+migration or real database preparation is introduced. Runtime upload/dispatch, owner review/revision commands
+and production storage/host acceptance remain distinct future work, not implied by component acceptance.
+
+**Evidence:** accepted product `e5db1f436c7c3f9cf809fe5f2e3fbcf6122ae1a0`, tree
+`bd248c36f9c32a349d82553a52ed4f7062923d7c`; `CR14C_PRIVATE_TASK_RESULTS_ACCEPTANCE.md` and retained initial/
+corrective independent reviews. Final 129 focused, 769 pretests, 706 main passes/two existing skips,
+392 posttests, both builds, ten private/four Sites artifact checks, type/lint/whitespace and 129-table
+migrations passed. Independent re-review ran 67 tests. No live effects or merge occurred.
+
+## ADR-215 — Owner quality decisions bind exact results and survive read failures
+
+**Date:** 2026-09-05. **Owner direction:** continue repository building on Astra Xhigh.
+
+Connect explicit owner acceptance/change requests to the existing Completion Gate, under current private
+session/project/result-read/owner review grants and the conservative profile/job risk. Bind an existing
+artifact's verified bytes, document target and profile; derive the human actor server-side. Do not create
+profiles, targets, verification passes, execution permissions or native revision attempts from this command.
+Changed owner decisions cannot overwrite immutable actor/target reviews. Negative decisions add an actual
+finding and at most 4,096 UTF-8 bytes of private SQL feedback; audit records carry digests only.
+
+Stage checkpoint changes inside the serialized SQL transaction. Flush only after final authority checks
+and before commit; pre-flush denial/SQL failure cannot advance the external anchor. Post-flush uncertainty
+still fails closed. Never roll back or silently repair the external checkpoint to turn uncertainty into success.
+Migration 0043 adds append-only command receipts and explicit guarded quality-only SQL writes, advancing
+startup/preparation pins to 130 tables. No production database was changed.
+
+Keep browser recovery state in the stable route-keyed task-page owner, above both task-detail and result
+read gates. Denied content is cleared without losing uncertain command identity; detached saves finish in
+page memory. Only explicit owner checks resend the same command. Leaving/reloading the page still loses
+unsaved memory, not the canonical receipt, and the UI states this limit. Capacity must not silently evict
+unfinished reviews. Quality acceptance is not a claim that other checks passed or another agent started.
+
+**Evidence:** accepted product `b0b419e9edb148748510e39e481183ae19b4be9b`, tree
+`d3a0c489dd33b7deb8b86d788572676fbb54bf46`; `CR14C_OWNER_RESULT_REVIEW_ACCEPTANCE.md`. Initial Medium
+state-ownership rejection and first corrective rejection are retained. Second re-review accepted with
+72 passing tests and no remaining findings. Root final 159 focused, 769 pretests, 736 main passes/two existing
+skips, 392 posttests, both builds, eleven private/four Sites artifact checks, type/lint/whitespace and
+130-table migrations passed. No live effects or merge occurred.
+
+**Next:** trusted executable planning/profile binding, canonical admission/dispatch and checked result/
+revision submission. Existing UI/result components do not complete the live C-WORK journey. The retired
+undispatched review-UI capsule must not be published as duplicate work.
+
+## ADR-216 — Bind initial native result review before recorded progress
+
+**Date:** 2026-09-05. **Status:** accepted for repository integration; no runtime activation.
+
+The trusted planner registers an immutable HMAC-bound native review plan against a canonical run/job
+and existing document acceptance profile before recorded observations. One plan per canonical job/run
+prevents an execution retry from creating a new initial review root. This internal capability is not a
+browser or node authorization endpoint and cannot provision profiles or checkpoints.
+
+Explicitly configured result ingestion re-reads the checked artifact and submits one exact document
+target into the existing Completion Gate. Receipt time and deterministic identity make reconciliation
+stable. Target/audit share a SQL transaction and checkpoint advancement is staged until precommit.
+Capture may precede submission failure; retained files are not falsely described as rolled back, and
+reconciliation does not rerun execution. Missing plans cannot be backfilled after progress.
+
+Migration 0044 adds immutable plans with no new private-web grants. This submits evidence for review;
+it grants no quality acceptance, verification, execution approval, completion or revision.
+
+**Evidence:** product `dbd5885bf362803f8cc049817367c9c2134c6c17`, tree
+`8fa4438feb3cf2b9db19e22d86efa39bb88d8014`; independent review accepted with no findings and 36 passes.
+Root: 166 focused, 769 pretests, 743 main passes/two existing skips, 392 posttests, both builds,
+eleven private/four Sites artifact tests, type/lint/whitespace and 131-table disposable migrations passed.
+See `CR14C_PLANNED_RESULT_SUBMISSION_ACCEPTANCE.md` for scope and remaining work.
+
+**Next:** executable proposal lineage, canonical admission/dispatch and bounded revision submission;
+physical transport/private-pilot gates remain separate. Continue on Astra Medium, escalating only for
+a specific unresolved decision rather than categorically requiring Xhigh for integration.
+
+## ADR-217 — Preserve proposals while materializing owner-authorized execution plans
+
+**Date:** 2026-09-05. **Status:** independently accepted repository integration; unmounted.
+
+Use a separate proposed canonical child bundle for a saved task's execution plan. Do not mutate the
+source proposal's inert authority or infer execution approval from its prose. Owner-only `tasks.plan`
+permission and existing project/session checks authorize this internal planning write, not a native effect.
+A server-owned bounded approval-required template fixes executor/operation/destination/reference/time
+and existing review-profile bindings; real enrollment, node ceilings and admission remain separate.
+
+One authenticated append-only plan per source preserves immutable source/template/input/profile lineage
+and exact reconciliation. Source locking, child/plan/audit atomicity and final session/grant plus current
+template-duration checks prevent duplicate or stale new plans. Historical replay does not renew authority.
+Migration 0045 adds no private-web privileges. Trusted planner composition cannot be mounted by replacing
+the web connection with an unrestricted database login.
+
+After separately registered canonical runs, the stored profile binds to existing planned result submission.
+Pure shared identifiers keep application planning separate from the unwired native adapter subtree.
+
+**Evidence:** product `48c30f7feb3aeadcc7b252ce67e0f3a4bb357583`, tree
+`05152ac602715cac63b7a716233e38d25b01c0e4`; independent re-review accepted 58 tests/no remaining findings.
+Root verified 183 focused, 769 pretests, 760 main passes/two existing skips, 392 posttests, both builds,
+eleven private/four Sites artifact checks, type/lint/whitespace and 132-table disposable migrations.
+Initial timing rejection and isolation-test failure/correction remain recorded. Synthetic claim/run
+transitions in the end-to-end test are not live admission or execution evidence.
+
+**Next:** planner mounting, actual admission/approval/dispatch and bounded revisions on Astra Medium.
+No real database, native/provider call, credential access, service, listener, deployment or merge occurred.
+
+## ADR-218 — Expose task preparation through a narrow scoped coordinator operation
+
+**Date:** 2026-09-05. **Status:** independently accepted repository integration; production unconfigured.
+
+Connect private task pages to planning through a scope-labelled operation, not a privileged web SQL
+login. Protected GET reads availability; POST accepts only the immutable source input digest and uses
+the existing owner-authorized planner. The coordinator-supplied operation owns its transaction and
+resource lifecycle; the web process does not construct another pool or expose planner keys/read methods.
+The existing single-pool production bootstrap explicitly refuses this new dependency until a separately
+implemented coordinator composition can own its bounded lifecycle.
+
+Preparation remains distinct from assignment, execution approval, admission, dispatch and quality review.
+Exact source uniqueness reconciles lost replies without new jobs. Browser pending and confirmed state
+is source/input-bound, never authorization; current protected reads gate every display and action.
+
+**Evidence:** product `f1d1856a6a295f4dd6f9a5d70bffe0b21f396afe`; independent re-review accepted with
+32 passes/no remaining findings after the refresh-link correction. Root passed full registered test
+lifecycle, 191 focused tests, both builds, 12 private/four Sites artifact tests, type/lint/whitespace
+and unchanged 132-table migration verification. See `CR14C_TASK_PLANNING_INTERFACE_ACCEPTANCE.md`.
+
+**Next:** coordinator ownership, executable admission/approval/dispatch and bounded revisions on Astra
+Medium. No physical service, provider, native credential access, deployment or merge is authorized here.
+
+## ADR-219 — Assign one prepared task without granting native execution authority
+
+**Date:** 2026-09-05. **Status:** independently accepted repository integration; production unconfigured.
+
+A scoped trusted coordinator joins immutable planning validation to existing canonical ready/claim
+transitions in one owner-authorized transaction. Fixed server routes select executor/probe/capacity
+and a bounded lease; current canonical node/key and fresh fleet reports inform allocation only.
+Reports never substitute for native qualification, signed leases, owner approval or local admission.
+
+Deterministic IDs and one-attempt reconciliation prevent repeat clicks, lost replies or expiry from
+allocating a second attempt. Explicit canonical expiry frees the reservation but is not native stop
+evidence. The browser preserves known reservation/expiry state across racing replies, while current
+protected reads gate display/actions. The ordinary web role gains no canonical write privilege.
+
+**Evidence:** product `daf656633e2bbaafb1669080359f0ea76be778b0`, tree
+`42d76aa2a6e5703471a96826a21a3c6c7f14c3b0`; independent re-review accepted with 37 passing tests
+and no remaining findings. Root's full lifecycle, both builds and artifact checks passed. Initial
+refresh and compiled logout failures/corrections are retained in `CR14C_TASK_ASSIGNMENT_ACCEPTANCE.md`.
+
+**Next:** coordinator resource ownership, signed approval/local admission/dispatch and bounded revisions
+on Astra Medium. No production pool, physical service, native/provider effect, deployment or merge.
+
+## ADR-220 — Own supplied coordinator resources without widening the web role
+
+**Date:** 2026-09-05. **Status:** independently accepted supplied-resource integration; production unconfigured.
+
+Planning and assignment share one coordinator lifecycle with at most eight active operations, no
+admission queue, a 30-second drain and a separate five-second pool-close ceiling. The lifecycle owns
+the supplied preverified bounded control-plane resource after successful construction. It exposes
+only scoped work operations, readiness and close; private database resources and keys stay internal.
+
+Guard queries and precommit after forced drain, retain exact-command uncertainty after a lost commit
+reply, and never retry automatically. Separate the forced-drain flag from normal close; cancel the
+drain timer before pool cleanup so a healthy shutdown cannot become falsely uncertain.
+
+The combined private task application owns a distinct restricted web resource and this coordinator,
+cleans both after transferred-resource construction failure and awaits both shutdown outcomes.
+Object inequality is not physical-pool attestation. The inert compiled factory cannot substitute for
+production coordinator role/schema verification or mount itself into the deployment bootstrap.
+
+**Evidence:** product `3a8274f00228653e0f67a883e7e088897aae627c`, tree
+`fbfa2c0ffe0d141a700ffce89a1e3984d47c17f9`; independent final review: 45 passing tests, both
+reproduced P2 shutdown findings fixed, no remaining findings. See
+`CR14C_TASK_COORDINATOR_LIFECYCLE_ACCEPTANCE.md` and its review record.
+
+**Next:** coordinator role/schema verification and startup mounting, signed approval/local admission/
+dispatch and bounded revisions on Astra Medium. No live pool, listener, provider, deployment or merge.
+
+## ADR-221 — Verify a narrow coordinator SQL role separately from the private web role
+
+**Date:** 2026-09-05. **Status:** independently accepted repository/disposable integration.
+
+Use a dedicated NOLOGIN task-coordinator role and a separately provisioned login with exactly that
+membership. It can write canonical plans/attempts/leases/transitions and audit/session records, not
+identities, grants, node public-key validity, enrollment, fleet signals, approvals, effects or native
+runs. Existing canonical write rights are trusted application authority, not a tenant SQL sandbox.
+
+Migration 0046 adds constant-false coordinator lock columns where locking SELECTs need UPDATE
+privilege without authority-bearing changes. Its invoker-security outbox guard restricts coordinator
+inserts to pending domain transitions for supported canonical aggregates, not dispatch commands.
+The private web role's write privileges remain unchanged.
+
+The two public preflight wrappers select fixed internal profiles, sharing existing PG17/primary,
+membership/effective-permission, schema, deadline and active owner/workspace checks. No caller may
+supply a role or permission allowlist. The schema fingerprint now covers 0001–0046; preparation
+manifests require that range. Neither gate opens a database, migrates or repairs failed permissions.
+
+**Evidence:** `9e4c370353e513857f69dbe93aaa13f6983ff126`, tree
+`b941da0612941418f6762e373cc6f081008f9b69`; independent review accepted with 50 passing tests
+and no actionable findings. Real restricted-role operations and negative privileges are exercised
+in disposable PGlite, with only its existing TEMP metadata caveat. See `CR14C_COORDINATOR_DATABASE_ACCEPTANCE.md`.
+
+**Next:** verified two-pool startup/shared-page mounting, signed approval/local admission/dispatch
+and bounded revisions on Astra Medium. No live database, credentials, provider, deployment or merge.
+
+## ADR-222 — verify both fixed database roles before shared task startup
+
+**Date:** 2026-09-05. **Status:** independently accepted repository/disposable integration.
+
+Use one explicit inert-import task bootstrap to open and independently verify the restricted web and
+coordinator logins against the same loopback PG17 primary, then install their combined application in
+the existing compiled runtime slot. Preserve separate SQL resources and unchanged grants. The original
+web-only startup remains an alternative, not an in-process upgrade or coordinator bypass.
+
+Validate/copy templates, keys and routes before opening. Own acquired resources through memoized,
+five-second bounded close, preserve cleanup uncertainty and never retry an attempted startup. Readiness
+requires both pools. A trusted supervisor receives only readiness and close, not planners or signing keys.
+
+**Evidence:** product `147dfc5fb0e93cb4c230c59161ebd0919371a776`, tree
+`79af63730e9b3204f623e53e4fc331a60a407023`. Independent review: no findings, 44 tests passed.
+Compiled proposal/planning/assignment/page/logout and restricted-role SQL tests remain disposable
+PGlite/in-process evidence, not physical connection isolation, native execution or production setup.
+See `CR14C_VERIFIED_TASK_STARTUP_ACCEPTANCE.md` for all verification and its TEMP metadata caveat.
+
+**Next:** signed owner approval/local admission/dispatch and bounded revisions, Astra Medium.
+No live database, credentials, provider, listener, deployment or merge is authorized by this decision.
+
+## ADR-223 — commit native task payload into owner approval and effect identity
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired component.
+
+Extend normalized request/pre-effect operation material with optional SHA-256 `payloadDigest`, mandatory
+for native start. Include it in operation identity so an owner approval and durable claim cannot be
+reused after changing exact input, enrollment/model/profile, lease/epoch, authority or absolute deadline.
+Keep old operation digest material unchanged when the field is absent. Older peers must refuse, not
+strip, a native payload commitment. No new permission or schema migration is implied.
+
+The native builder validates the existing one-attempt, leased, approval-required task class and derives
+stable effect/run/session identity without circular hashes. Plain canonical records still need trusted
+provenance. The independent node verifier checks exact binding, not execution permission. Ceiling,
+signed lease, separate approval trust, current qualification/keys/pause, deadline and durable marker
+remain required before effects. Both marker boundaries independently require native payload binding.
+
+**Evidence:** accepted head `7dd9a013863be76d976cb4d0b7b9b513869b149a`, tree
+`2498fadb1fe11183add42fc56b28a9f4f53576d7`; independent review accepted after 30 passing tests and
+inspection of the final test-only narrowing correction. See `CR14C_NATIVE_TASK_APPROVAL_BINDING_ACCEPTANCE.md`
+for full checks and preserved failed test expectations. No runtime or production qualification claim.
+
+**Next:** node-side authority composition, owner signing/intake and signed dispatch, then revisions.
+Continue Astra Medium. Live credentials, native/provider operations, deployment and merge remain gated.
+
+## ADR-224 — durable native start authority with atomic local capacity
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired start/live-read component.
+
+Compose payload-bound owner approval with the existing local evaluator, admission/execution journals and
+pre-effect marker before native submission. Recheck current permission before transport bytes. Trusted
+current ceiling/lease/profile/key resolvers remain mandatory upstream seams, not claimed host evidence.
+Do not reuse an existing execution for a new start or resurrect expired authority for live reads.
+
+Check node effect capacity inside the existing SQLite claim transaction, counting integrity-checked
+unsettled effects. All node controllers share this local enforcement ledger; PostgreSQL remains global
+authority. Retain resolver slots through actual settlement, not just caller timeout. Separate typed
+stop/post-deadline authority is required and is not inherited from start permission.
+
+**Evidence:** accepted `9bcaac9631b14f6625281bbf5ac5f8feb8ae9510`, tree
+`aa9b697115a0dbb6d1b710bb5868d1a4ab9bcc61`; independent re-review passed 37 tests and closed M-001's
+unbounded timed-out resolver finding. See `CR14C_NATIVE_START_AUTHORITY_ACCEPTANCE.md` for preserved
+negative evidence and full verification. No runtime activation, real qualification, provider or merge.
+
+**Next:** exact-run stop/recovery, real current authority sources, owner approval/intake, signed dispatch
+and revisions. Continue Astra Medium; no production effects are authorized by this decision.
+
+## ADR-225 — sign bounded exact-run recovery separately from work permission
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired component.
+
+Use a domain-separated owner-signed recovery permission for status and stop only, binding the complete
+native run identity and enrollment. Require signed issuance no later than durable execution/claim
+creation. Bound its expiry by enrollment and five minutes past the work deadline. Validate current
+trusted key, credential, explicit cleanup policy/revocation and exact profile evidence before bytes.
+This is not lease renewal or permission to create new work, and does not settle an effect.
+
+Read existing native/effect/execution journals for exact known-run evidence. Preserve the adapter's
+durable one-attempt stop intent and honest ambiguity. Route status/stop only to recovery; never fall
+back to start permission after a failure. Retain unresolved-check slots until actual settlement.
+
+**Evidence:** `271eff68a2235d28e4bd98f47a017564b916b0ca`, tree
+`4d49001d89f2cc24e2633d72e6221f3c479c6726`. Independent review accepted with 56 passing tests and
+no blocking findings. See `CR14C_NATIVE_RECOVERY_AUTHORITY_ACCEPTANCE.md`. Synthetic signing/current
+evidence and fake transport do not establish live owner custody, qualification or physical stop.
+
+**Next:** real trusted sources, owner signing/intake, signed dispatch and revisions, Astra Medium.
+No provider, credential operation, deployment or merge is authorized by this decision.
+
+## ADR-226 — resolve native lease authority from accepted signed command evidence
+
+**Date:** 2026-09-05. **Status:** independently accepted inert reader.
+
+Resolve an initial grant through exact command/replay receipt matching, current owner-pinned server
+key verification and the current exact local attempt. A durable record alone does not prove a valid
+signature or continuing trust. Receipt must have been within envelope validity; continued use is then
+bounded by the actual lease/authority, without renewal or payload deadline edits. A terminal/superseded
+attempt, mismatched receipt or current signed key revocation denies further use.
+
+Reuse the existing bridge and anti-rollback trust stores. Do not create a new lease database or mount a
+handler implicitly. The trusted receiver must retain its command and attempt before using this reader;
+the normal policy evaluator still owns all remaining intersections and approval checks.
+
+**Evidence:** `bdc4d3fdc120ed16c1439698a79758335fd0f255`, tree
+`dc7252a9f82beec8a9b7c526b21d8e0242dc85dc`; independent review accepted with 56 passing tests and
+no findings. Real disposable owner-pinned trust and signed countersigned revocation are covered;
+native transport and owner keys remain synthetic. See `CR14C_NATIVE_LEASE_EVIDENCE_ACCEPTANCE.md`.
+
+**Next:** remaining current policy/owner approval sources, signing/intake, signed dispatch and revisions
+on Astra Medium. No live integration, credentials, provisioning, deployment or merge is authorized.
+
+## ADR-227 — keep owner approval pins outside online server trust
+
+**Date:** 2026-09-05. **Status:** independently accepted immutable public trust component.
+
+Implement ApprovalTrustStore with explicit owner-provisioned tenant/node/class public pin configuration,
+not online server key adoption. Require canonical Ed25519 bytes/fingerprints and recheck all configured
+approval identities/material against the current protected server trust bundle, including retained
+retired/revoked history. Newly introduced role collisions fail closed. Scope-check adaptation to native
+start/recovery policy; never supply a signer or remotely replaceable owner root through this store.
+
+Pin configuration is immutable for the instance. Validity and per-instance clock high-water are checked;
+bounded unresolved reads retain their slots, and timeout/close disables the instance. Trusted supervisor
+replacement and owner-installed configuration provenance remain required, without implied hot rotation,
+persistent approval epoch or deployment rollback protection.
+
+**Evidence:** `f75878a8b36f841210a120c7078e7164bbfa6aa8`, tree
+`9b217fdda86bf7266f2390854a9edf167c5579a5`; independent review accepted with 47 passing tests and
+no findings. See `CR14C_OWNER_APPROVAL_TRUST_ACCEPTANCE.md`. Generated keys and fake transport do not
+prove owner custody, human attendance or production installation.
+The reviewed test-only follow-up `27aae81180f7bc7a549e7b6b2948407db81bfa68` freezes the shutdown
+test's timer while asserting ordering; nine serving tests passed and product acceptance carries forward.
+
+**Next:** current policy/profile composition, owner signing/intake, signed dispatch and revisions,
+Astra Medium. No production effects, merge or runtime activation are authorized by this decision.
+
+## ADR-228 — fence composed native permission across asynchronous checks
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired component.
+
+Compose current signed ceiling, accepted lease, separate owner pins, explicit key availability,
+executor contract, node control, local pause and effect count from caller-owned resources. A verified
+synchronous state stamp invalidates the entire result if mutable authority changes during awaited
+source or profile checks. Recheck that stamp before the controller admits or authorizes work. Approval
+pin lifetime/disposal is part of the fence. Missing or partially committed security state fails closed.
+
+**Evidence:** accepted `70a3fef23baf1ef680646f03ea52e47c148f81f1`, tree
+`087be3d5fdf1e2938c30a63a1874213ba97eb263`; independent re-review passed 56 tests with no blocking
+findings. Initial review rejected a stale-permission window despite passing tests; the negative record
+is preserved in `CR14C_NATIVE_CURRENT_POLICY_ACCEPTANCE.md`.
+
+This is not a distributed transaction, physical stop guarantee, production profile resolver or runtime
+activation. The abstract legacy trusted-policy seam remains available; verified compositions must
+preserve the supplied fence. Owner signing/intake, profile/recovery source composition, signed dispatch
+and revisions remain next on Astra Medium. No live effects or merge authority are added.
+
+## ADR-229 — separate current recovery trust from expired work authority
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired component.
+
+Resolve the exact configured cleanup approval key through the scoped owner-public-pin store, with an
+explicit synchronous local credential/cleanup state source. Check exact credential reference, explicit
+booleans, monotonic per-instance revision and same-revision content consistency. No defaults or worker
+self-reports supply cleanup authority. Runtime must provide the trusted state service and preserve the
+freshness callback.
+
+Separate the protected repository's verified committed server-trust revision from its combined work
+ceiling/trust revision. Cleanup under separately signed bounded recovery permission must not require an
+unexpired work lease or ceiling. Fence current trust/local state after approval and profile awaits,
+then recheck freshness and durable exact-run evidence after the controller's Promise.race settles.
+Recovery remains status/stop only; no restart, renewal, settlement or automatic stop retry is added.
+
+**Evidence:** product `7a169755b2e4f9b29d38dda255ba3acf3d4c57a4`, tree
+`7320e00c5ceea2e22b71c312db98ff476a803049`; independent review accepted all six changed paths with
+46 passing tests and no actionable findings. See `CR14C_CURRENT_RECOVERY_POLICY_ACCEPTANCE.md`.
+
+**Remaining:** real local cleanup service, accepted current profile/credential qualification, owner
+signing/intake, signed dispatch and revisions on Astra Medium. No live connections, deployment or merge.
+
+## ADR-230 — bind native profile qualification acceptance to exact enrollment
+
+**Date:** 2026-09-05. **Status:** independently accepted corrected evidence consumer.
+
+The native profile-check port consumes a domain-separated owner-signed acceptance, not capability JSON
+or worker-certified flags. Bind every enrollment field except the acceptance's own digest; hash the full
+signed artifact into that digest. Require explicitly accepted isolation/deadline guarantees and an evidence
+reference. Resolve the signer using existing scoped owner public pins and current server-key separation.
+
+Current state comes from an explicit trusted synchronous supervisor service. Validate complete enrollment,
+profile-policy/qualification digests, active state, credential availability, observation/expiry and revision.
+Record structurally valid matching newer revisions even when freshness/state denies, so older live state
+cannot restore permission. Propagate synchronous freshness proof through both start/recovery controllers.
+
+**Evidence:** accepted `a61150325112af2736408245a9a163f8ee112a12`, tree
+`f4afd599e95fb500be80e2238befcd13449d93ea`; independent re-review passed 77 tests with no remaining
+findings. The initial expired-snapshot rollback finding is preserved in the acceptance record.
+
+An owner's signature establishes acceptance, not independently observed physical isolation. This module
+does not qualify a host, sign evidence, install profiles or implement the supervisor. These gates, owner
+signing/intake, local-state persistence, signed dispatch and revisions remain next on Astra Medium.
+
+## ADR-231 — require paired exact-task start and cleanup approvals at intake
+
+**Date:** 2026-09-05. **Status:** independently accepted unwired verifier.
+
+Validate a strict packet containing existing owner-signed start and separate native recovery permissions
+against one trusted prepared enrollment/request/start. Require exact-node task/risk/operation binding,
+start approval through the unchanged prepared deadline and cleanup permission after work within the
+existing enrollment/five-minute ceiling. No class-wide substitution or automatic deadline adjustment.
+
+Resolve both keys through scoped owner-public-pin trust and fence the protected trust revision across
+asynchronous verification. Copy packet inputs and return a currentness check, without signing, persisting,
+admitting or dispatching. Revalidation is not effect replay; durable admission and stop-attempt semantics
+remain owned by existing controllers and journals. Canonical provenance/current policy remain mandatory.
+
+**Evidence:** accepted `ceb7951c92c651f6fe9d320ba3d3624e76ee75ba`, tree
+`0cc921e445b5256d636d76ed59a8950f95aa0a33`; independent review passed 51 tests with no findings.
+See `CR14C_NATIVE_APPROVAL_INTAKE_ACCEPTANCE.md` for test-authoring correction and full verification.
+
+**Next:** owner signing/custody, authenticated intake and canonical persistence, durable supervisor state,
+signed dispatch and revisions on Astra Medium. No live qualification, runtime activation or merge is added.
+
+## ADR-232 — prepare unsigned native approvals from locked canonical reservations
+
+**Date:** 2026-09-05. **Status:** independently accepted corrected coordinator component.
+
+Use current owner `tasks.approve` authority and the saved execution plan, canonical assignment receipt,
+lease, attempt, active node and valid identity key in one checked transaction. Enrollment/profile settings
+are constructor configuration, never request-supplied. Preserve assignment lock order and recheck session,
+grants, clock, work deadline and key expiry before commit. Preparation proves only that snapshot; later
+approval persistence and execution must revalidate their current sources.
+
+Keep pure native contracts and payload binding in the shared harness contract layer. Native implementation
+paths re-export those definitions; application code cannot import the adapter, transport or journals. The
+unchanged isolation test detected the initial integration defect and passes after the mechanical extraction.
+
+**Evidence:** corrected product `51cdd1db63d97dd2b7bf3e98de04a4fbe1f5d98b`, tree
+`a3202ec302e46f56b7560245e8ada6472b294f30`; independent re-review passed 44 tests with no blocking
+findings. See `CR14C_CANONICAL_APPROVAL_PREPARATION_ACCEPTANCE.md` for initial failures and corrections.
+
+The trusted operation is deliberately absent from the browser-facing assignment surface and does not
+sign, store approvals or dispatch. Owner signing/custody, authenticated canonical approval persistence,
+trusted supervisor state, signed delivery and revisions remain on Astra Medium. No live effects are added.
+
+## ADR-233 — persist exact signed native approval evidence under canonical locks
+
+**Date:** 2026-09-05. **Status:** independently accepted repository implementation.
+
+The trusted assignment coordinator snapshots an owner-submitted packet, authenticates current owner
+approval access, rebuilds exact preparation from locked canonical sources and verifies both signatures
+using scoped owner pins and current protected server trust. Persist only immutable signature evidence
+and safe binding digests with an integrity tag. Same-packet replay preserves the original receipt; a
+different packet cannot replace the original for that attempt. Fence abort, trust, session, key and
+reservation expiry before commit. Future dispatch must revalidate; persistence grants no execution.
+
+Migration0047 adds `control_native_approval_packets`, making 133 tables. Only the coordinator gains
+SELECT/INSERT; private-web permissions remain unchanged. The schema fingerprint, offline role setup,
+preparation manifest and exact inventory are updated. No deployed database is modified. Shared verifier
+and signature contracts stay outside the native adapter implementation, with compatibility re-exports.
+
+**Evidence:** accepted `5fac6177782b5e0743d2a921219fbd29e1879355`, tree
+`44889457c38fbd0c6a656454583876a6f2d8a83d`; independent review passed 48 storage/authority/database tests
+plus 19 final-head preparation tests, with no actionable findings. Acceptance records full verification
+chronology, including initial TypeScript narrowing correction and final table-count follow-up.
+
+**Remaining:** bounded lifecycle/owner intake interface, signer custody, signed dispatch and node receipt
+consumption, persistent supervisor state, revisions and live qualification. Astra Medium remains the
+current repository implementation setting. No route, runtime activation, native call or merge is implied.
+
+## ADR-234 — share coordinator lifecycle for approval operations and separate historical readback
+
+**Date:** 2026-09-05. **Status:** independently accepted repository integration.
+
+Optional trusted prepare/store/read operations share the existing coordinator's finite active limit,
+graceful drain, forced invalidation and uncertain-save handling. Snapshot packet data before scheduling.
+Do not open a new pool, introduce a second queue, retry on ambiguity or transfer ownership of independently
+supplied trust stores. Existing planning/assignment-only configurations remain unchanged.
+
+Readback checks current owner/session permission, the integrity-checked canonical plan/input and exact
+attempt's HMAC-protected evidence. Return only receipt digests/time/identifiers. Historical evidence may
+be read after work expiry, project completion or owner pin closure, but never substitutes for current
+execution permission. This gives a lost acknowledgement a read-only reconciliation path.
+
+**Evidence:** accepted `47621299473802a593ecb85c4befddf59e3c02f9`, tree
+`c3425e258862892ab85ed3bd020f3061465f946c`; independent review passed32 tests with no blocking findings.
+See `CR14C_APPROVAL_LIFECYCLE_ACCEPTANCE.md` for observed verification. No HTTP/bootstrap mounting,
+signer, live database, provider or runtime activation is claimed. Owner interface/startup composition,
+signed dispatch, supervisor persistence and revisions remain on Astra Medium.
+
+## ADR-235 — private signed-file intake without online owner signing
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Mount bounded unsigned review, paired signed-file intake and historical readback through the existing
+authenticated task HTTP route and verified two-pool bootstrap. Preserve owner/session checks and the
+restricted web SQL profile. Project/task/input/packet digests must match before the UI confirms a save;
+uncertainty requires exact readback, not automatic resubmission. Browser data excludes native enrollment
+and trust configuration. Approval evidence is not dispatch, admission or proof of running work.
+
+The page explicitly says integrated owner signing is not connected. File import is interim functionality,
+not a substitute for a separately protected owner signer. A web login never supplies owner-presence or
+owner-signature authority. Do not add owner private keys to the online application or browser bundle.
+
+Reviewed product `b094a1e8083ae8b8af88b4fb3a8a12fde6246ef0`, tree
+`18525f618ec0016ea6fb38953e391f112287ea2f`, passed independent review with no blocking findings,
+29 focused checks and two compiled checks. See `CR14C_PRIVATE_APPROVAL_INTERFACE_ACCEPTANCE.md` for
+verification chronology and remaining UI race-test coverage. Current saved-packet revalidation toward
+dispatch, integrated signing/custody, supervisor persistence and revisions remain. No live effects added.
+
+## ADR-236 — revalidate saved signatures against locked current preparation
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Read the actual HMAC-protected paired packet under the existing owner/session, project and canonical
+reservation transaction. Match exact input/packet/lease/enrollment/operation/binding digests, then verify
+both signatures against current pinned owner keys and server trust. Preserve commit-time cancellation,
+trust-revision and deadline checks. Historical receipt output is never accepted as authority.
+
+Internal preparation returns a private non-authority snapshot, not a web operation, a deferred permission
+callback, a signed delivery command or queue entry. Future queue insertion must occur inside the same
+transaction as revalidation; a sender cannot authorize effects from this returned snapshot alone.
+Node-local current policy/admission and durable claim/marker checks remain mandatory at execution.
+
+Product `07285197290ba24823ccd0faa26639a76353d5b2`, tree
+`29412703f93db7ddcf2ac5145e6023c105d95db1`, passed independent review with38 tests and no actionable
+findings. See `CR14C_SAVED_APPROVAL_REVALIDATION_ACCEPTANCE.md` for verification and remaining work.
+No schema/privilege change, actual signing service, listener, provider call or deployment is introduced.
+
+## ADR-237 — atomic immutable native delivery intent
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Revalidate the actual saved signatures, insert one HMAC-protected intent per canonical attempt and
+append its audit event within the same checked owner/canonical transaction. Cancellation, trust changes,
+expiry and audit failure roll back the intent. Replay verifies original committed material; historical
+readback reconciles uncertain acknowledgement under current owner permission without enqueue retry.
+
+Migration0048 adds an immutable queue table bound to the job/project and saved approval attempt.
+Coordinator SELECT/INSERT alone is extended; no web access or update/delete/truncate privilege is added.
+Current catalog fingerprint is `66f6a11270506a3fc3deadcd4c9d3759b771e6b760725c13bcd85bbf0750d128`;
+disposable preparation now requires134 tables and migrations0001–0048.
+
+An intent is not live eligibility, a server signature, node receipt or execution authority. No sender is
+invoked inside the transaction. Future delivery processing must resolve current canonical/trust state,
+sign a bounded message and durably reconcile delivery; nodes retain current local admission/claim checks.
+
+Reviewed product `7ede9e0677db04d78d9dddefcf71d1d431b1c62f`, tree
+`c7d96dd6e54e894a034ce28db7fa508e6fe36916`, passed69 independent checks without findings.
+See `CR14C_APPROVED_TASK_QUEUE_ACCEPTANCE.md`. No live effects or runtime activation added.
+
+## ADR-238 — exact native dispatch and evidence-only node receipt messages
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository protocol extension.
+
+Use dedicated server-to-node native dispatch and node-to-server receipt message types under the existing
+signed protocol. Bind queue, exact prompt/instructions input digest, request/start/owner-packet identity,
+deadline and receipt causation. The node resolves enrollment locally, recomputes the binding and passes
+the paired packet through separate owner-signature intake before current local admission. A server
+signature authenticates delivery, not owner permission. Receipt matches exact dispatch content and is
+not evidence of running, completion or stopping.
+
+Regenerate committed structural JSON schema; relational, size and cryptographic checks remain additional
+runtime requirements. Reserve the native-delivery feature for verified mutual negotiation before runtime
+activation, with no down-conversion or unsupported-node fallback. This extension does not advertise the
+feature, install a sender/handler or persist receipts; those integrations remain next.
+
+Corrected product `a3dcb5a546f122d02ecead18f89a21bece92af21`, tree
+`a63a39f1d87960dc510c1e3146e59c80a7e8cbee`, passed35 independent re-review checks. The initial
+input-digest inconsistency finding is retained in `CR14C_NATIVE_DELIVERY_PROTOCOL_ACCEPTANCE.md`.
+No runtime activation, live credentials, provider calls, listener or deployment is introduced.
+
+## ADR-239 — persist exact unsigned native delivery bodies separately from send evidence
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository persistence integration.
+
+Current canonical and owner-signature revalidation must match the original HMAC-verified queue intent
+before an exact dispatch body and audit are stored in one checked transaction. Persisting a body is not
+signing, negotiating a connection, sending, receiving or running. Current-owner historical reads return
+receipt metadata only and support uncertain-commit reconciliation without re-preparation.
+
+Canonical revalidation updates request occurredAt. Replay compares every other field and retains the
+original exact body/digest; its occurrence must remain between queue insertion and current time. This
+does not renew authority or record an execution timestamp. All commit-time expiry/trust/cancel fences
+remain required. Migration0049 adds one immutable coordinator SELECT/INSERT table and no web access.
+The checked135-table fingerprint is `a2633202d45bdf6a6e287ca25ea0e92d68802c659afd9164957683d50ad319c1`.
+
+Product `9101304739f18cb17b976b56cec098a414dcd5e0`, tree
+`2a277d80bae6b89b837b639d97e0f0c3b8913dc0`, passed74 independent checks with no actionable findings.
+See `CR14C_DURABLE_DELIVERY_PREPARATION_ACCEPTANCE.md` for initial replay failure and verification.
+Current connection/feature/key checks, server signing, durable send/receipt tracking and node admission
+remain next. No runtime activation, credentials, provider calls, listener or deployment was added.
+
+## ADR-240 — derive native channel evidence from the actual reconciled bridge
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository component integration.
+
+Use the real bridge's authenticated negotiated feature/frame-size state and private reconciliation
+provenance, never a caller-supplied feature array or saved connection inventory. Snapshot identity and
+return immutable non-executing evidence with a current-generation assertion. Applied resume cannot
+replace reconciliation; authentication, node-control completions, queued sends and signing must not
+carry old connection state into a replacement transport. Owner authority remains separately verified.
+
+Accepted product `03d1e66f7deaac00e8cfc8fac050f31541025c96`, tree
+`94254e56bf66d2dce26c72d17e2086fd247811a6`, passed41 independent checks. Two review findings and
+their corrections are retained in `CR14C_NATIVE_CHANNEL_ACCEPTANCE.md`. This does not prove liveness,
+activate delivery, or finish server-side session management and receipt persistence.
+
+## ADR-241 — authenticated bounded server session negotiation
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+The server's explicit supplied-resource session authenticates the exact configured node/key, negotiates
+features/frame size and sends verified server-signed acceptance/reconciliation. Ready channel evidence
+requires a genuine authenticated report covering that handshake, not a caller assertion. A bounded
+single-process registry replaces only an explicitly selected node session; old releases cannot remove
+the replacement. Untrusted peers must not select registry replacements before host authorization.
+
+Sessions expire with the original hello, capped at five minutes, and close on clock rollback, timeout,
+failure or uncertainty. Post-await state transitions must recheck closure so a late continuation cannot
+resurrect a disconnected session. This is connection evidence, not key/lease/owner execution authority.
+It does not mount a listener, load credentials, route ongoing traffic or dispatch work.
+
+Product `6e7124336416d9f7c3ec63cdd9ec79f33ce55e05`, tree
+`c0ee4930ff9684e9b493b488c4aad0bebecbe3c1`, passed39 independent review checks after a shutdown-race
+correction. See `CR14C_SERVER_NODE_SESSION_ACCEPTANCE.md`. Durable delivery and receipts remain next.
+
+## ADR-242 — persist exact signed native envelope before any transmission
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Stage the exact HMAC-verified saved delivery body through the actual negotiated server session and
+canonical approval transaction. Match the session node/key to the currently locked canonical identity;
+bound frame expiry by task, session and node-key validity. Persist immutable envelope, actor/time and
+audit together, preserving owner trust/cancel/current-channel fences through commit.
+
+One attempt has one envelope: an existing row rejects re-signing even on a replacement connection.
+Historical receipt readback reconciles commit uncertainty without exposing the packet or frame to web
+callers. A prepared session cannot skip or reuse its reserved sequence. The block has no transmit API;
+later durable send-attempt and authenticated receipt integration must preserve exact-frame identity.
+
+Migration0050 adds the136th table and coordinator SELECT/INSERT, no web permission. The verified schema
+fingerprint is `797e11e174de3dbac425f714d2f2c4a405b24b4fce8c39982b4d15a72250b758`.
+Product `3e34d71e95f2ea86cda26a7227af3a0a51223f6a`, tree
+`47de7084fb4834d3ad16984412a50e1b67b7a7ec`, passed52 independent checks with no findings. See
+`CR14C_DURABLE_ENVELOPE_ACCEPTANCE.md`. No native effect, credential use, listener or deployment.
+
+## ADR-243 — commit transmission intent before one exact send
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+The canonical coordinator commits one immutable transmission intent and audit against the exact saved
+envelope. Only after confirmed commit does its session consume the prepared slot and enter the supplied
+transport once. Current trust/cancellation/channel/deadline and locked owner authorization time windows
+are checked through that boundary. This is not a post-commit database revocation poll.
+
+Intent means intention, not physical send or delivery. Returned transport status remains unconfirmed;
+timeout, lost acknowledgement and rejection never permit automatic retransmission. Authenticated node
+receipt persistence and admission remain separate. Product `6ad15ff023c35a7ef2293a95ea0e6e7fa4eee97e`
+passed50 independent checks after the authorization expiry finding was corrected. Migration0051 adds
+the137th table with coordinator SELECT/INSERT only. See `CR14C_NATIVE_TRANSMISSION_ACCEPTANCE.md`.
+
+## ADR-244 — retain authenticated node receipts as evidence, not execution authority
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+The current reconciled session accepts a dedicated authenticated native receipt only for its exact sent
+dispatch. Match all task/body/packet identities against both the retained session frame and HMAC-verified
+durable envelope/intent. Recheck the node signature under current locked node/key records and persist
+immutable receipt plus chained audit together. Preserve time/cancel/session fences across commit.
+
+A receipt reports recorded or rejected intake; it does not grant permission, prove execution or renew
+an expired task. Current owners can read metadata history after expiry. Lost acknowledgement may leave
+history without a successful response. Replay consumption before persistence means rollback is not a
+retry permission. No automatic replay or cross-connection recovery is added. The trusted router must
+serialize early replies after send settles; this block does not mount that router or emit receipt acks.
+
+Product `dd38e24dcccb1df31557dd66334768d989a53035`, tree
+`f36e4b51c845d6c359a9211d2500f32495b30341`, passed 59 independent checks without findings.
+Migration0052 adds the 138th table and coordinator SELECT/INSERT, no web permission. See
+`CR14C_NATIVE_RECEIPT_ACCEPTANCE.md`. Native node intake/admission and live activation remain separate.
+
+## ADR-245 — durable owner-verified node intake before execution handoff
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Use the existing bridge journal for bounded append-only exact native deliveries and intake receipts.
+The optional bridge handler requires current negotiated/reconciled channel evidence, local configured
+enrollment and verified separate owner start/recovery signatures. Its synchronous transaction retains
+current fences. Stored input is not admission or permission to start: later execution must apply the
+existing current local policy and durable marker controllers. Live host storage must be private because
+input is project data; local hash checks are not protection against privileged file modification.
+
+Return a dedicated signed receipt after storage, not a generic acknowledgement. A receipt-send failure
+does not permit intake replay. Skip automatic cross-connection receipt replay pending explicit recovery.
+Scope delayed failure mutation and reconciliation counters to their actual connection so old requests
+cannot invalidate a fully negotiated replacement.
+
+Product `6c1fe4aec56b20b62f0af71e8e80c532b6b28c47`, tree
+`196498fe564fed608582b0e00cd7e405e85d0d55`, passed 64 independent checks after correcting the reconnect
+race. No PostgreSQL migration, native adapter call, live connection, credentials or deployment is added.
+See `CR14C_NODE_NATIVE_INTAKE_ACCEPTANCE.md`.
+
+## ADR-246 — reverify stored delivery before existing native execution controls
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+A node-private supplied-resource factory re-verifies the exact saved server dispatch and separate
+owner approvals before exposing explicit start/poll/observe through existing native controllers.
+Preparation is bounded and neither reserves nor starts a run. Retain record, trust revision, owner,
+cancellation and monotonic time fences across local policy reads and wire authorization. Record valid
+clock observations before expiry rejection so rollback cannot revive the handle. Existing durable
+no-restart and ambiguity rules remain authoritative. Historical snapshots are not permission; closing
+is not physical stop and recovery remains separately authorized.
+
+Corrected product `34bfeff0d3c3954999ed53a4edf921570af3b342`, tree
+`9742d11534f3fa27083d69f33b01d5657408ae24`, passed 51 independent checks after M001 clock correction.
+No schema change or live effect. See `CR14C_NATIVE_EXECUTION_HANDOFF_ACCEPTANCE.md`.
+
+## ADR-247 — acknowledge exact delivered-task progress after canonical persistence
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+The existing reconciled server session can receive authenticated native snapshots after a recorded
+delivery when snapshot support was negotiated. Bind progress to the exact delivered task and16KiB
+maximum, and preserve session/frame validity through the database-owned precommit check. Sign the
+acknowledgement only after successful persistence. A lost reply may leave durable evidence without
+success confirmation; it never permits another execution. Existing canonical registration/lease/input
+and monotonic history checks remain authoritative. This is not session renewal or a live router.
+
+Root authored the protocol/store integration; separate internal subagents implemented settled ABS
+selection, host guides and lifecycle regressions. Independent review accepted the corrected product
+`673380625f537de0d893c0f736f3eeab6ea37ef8` with31 scoped tests. The precommit finding, later legacy
+test-fixture correction and remaining pending Completion Gate are recorded in
+`CR14_PARALLEL_DELIVERY_BATCH.md`. No live task completion, installation or deployment is inferred.
+
+## ADR-248 — explicitly configured human verification is evidence, not job authority
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Provide an optional protected owner interface for acceptance scenarios explicitly designated by trusted
+composition as human-verifiable, pinned to the exact existing profile ID/digest. Do not configure a
+default or convert automated checks into human assertions. Derive identity and scope server-side;
+re-read actual artifact bytes and exact target/profile under current session/project/grant checks.
+Store a deterministic immutable owner/target/scenario verification and hashed observation evidence.
+The browser explicitly reconciles uncertain exact writes; there is no background save/retry.
+
+Migration0053 retains the restricted web role and narrowly extends its existing quality trigger to
+human verification with false approval/execution flags. No job update permission is granted. Successful
+quality evidence may satisfy an explicitly configured profile but cannot complete a canonical job or
+authorize an external effect. Automated verification, coordinated native completion and revisions remain
+separate integrations. Product `3e25462d729982b4c5f38cf80773630304eb1b3c` passed independent67-check
+review; corrected row-lock/Unicode-size findings and actual restricted SQL tests are recorded in
+`CR14C_RESULT_VERIFICATION_ACCEPTANCE.md`.
+
+## ADR-249 — finish native work from verified result evidence, not legacy event fabrication
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Native completion is one trusted coordinated SQL operation over the original authenticated run/plan,
+re-read result bytes, ready Completion Gate and exact current canonical job/attempt/lease lineage.
+Record legal observed-running and success transitions and release the active lease atomically, with
+transition/outbox/audit evidence and an authenticated replay receipt. Do not synthesize legacy signed
+events, insert a second artifact manifest or grant generic job mutation authority. Expired/replaced or
+otherwise terminal unsuccessful attempts cannot be resurrected. A review arriving later may release
+an active unreplaced lease for execution observed before its original deadline, without extending it.
+
+An explicit deterministic structure verifier can contribute profile-pinned evidence, never semantic
+acceptance or independent review. The supported Markdown subset fails unsupported markup; rules do
+not execute code. Multi-scenario checkpoint staging is bounded explicitly while old callers retain
+their default. Time high-water/current-operation fences prevent stale evidence and ambiguous writes
+from becoming automatic retries. Product `194aa08c8617ca6f43dae5fbeec767e307d56ce9` is independently
+reviewed; see `CR14C_NATIVE_QUALITY_COMPLETION_ACCEPTANCE.md` for corrected findings and full641-check
+integration evidence. Exact deployment coordinator resources/privileges and revisions remain separate;
+no new SQL grants, production database or live native run is authorized by this decision.
+
+## ADR-250 — mount exact quality completion under the bounded coordinator role
+
+**Date:** 2026-09-05. **Status:** independently reviewed repository integration.
+
+Expose an optional scope-bound quality reconciliation command through trusted coordinator/application
+startup, not a new HTTP route or worker mutation endpoint. Recheck and lock current project scope in
+every constituent transaction, preserve existing authenticated run/result/profile/target checks, and
+complete only a ready gate through the accepted atomic native completion service. Earlier verification
+may persist after a later failure; uncertainty must never imply a rollback or repeated execution.
+
+Snapshot keys/rules/capabilities before asynchronous startup and requests before admission. Require
+quality/planner/private-view integrity keys to agree before pools open. Use the existing bounded drain,
+precommit cancellation and invalidation semantics. No configuration means no quality capability.
+
+Migration0054 narrowly extends the coordinator role with authenticated-evidence reads, inert locking,
+fixed service-verification INSERT and integrity CAS fields; a role-specific guard denies human/agent
+reviews and all other completion-record kinds. Private web permissions do not change. Exact catalog
+and privilege preflight precede mounting. Production `274d2738872959c4d4766379159940824312f786` passed
+independent63-check review; see `CR14C_QUALITY_COORDINATOR_ACCEPTANCE.md` for actual evidence and limits.
+The compiled-application follow-up adds two independent checks (65 total), without production changes.
+Event routing, revisions, upstream workflow completion and live provisioning remain separate work.
+
+## ADR-251 — explicit approval-bound server delivery, separate from browser sessions
+
+2026-09-06. Accepted for local opt-in implementation; not production or independent-review acceptance.
+
+Background queue delivery must not reconstruct VerifiedWebIdentity, serialize browser
+credentials or manufacture a web session. Explicit server stage/transmit methods use
+an authenticated canonical queue intent to identify its original queuedBy actor, lock
+that active human identity and current owner grants, and restrict policy evaluation to
+the exact project and original intent deadline. Queue locators themselves confer no rights.
+
+These methods reuse the complete canonical project/job/attempt/lease/node/key checks,
+current owner signature trust and exact signed packet revalidation before staging or
+transmission. Neither queue pickup nor browser logout extends, revokes or replaces the
+signed operation authority. For this explicit server path, browser logout revokes web
+access, not an already queued, still-approved bounded task. Owner/grant revocation,
+project/node changes, packet expiry and cancellation still stop delivery. A factor
+requirement cannot be satisfied by inventing an authentication assertion.
+
+Keep legacy browser delivery methods session-bound. Server entry points require explicit
+prepared submission composition and are not HTTP endpoints. Do not backfill old intents,
+auto-retry uncertain transmission, change recipients or extend approval duration. Preserve
+the original initiating actor in audit while machine frames remain separately authenticated.
+
+Use pg-boss for operational pickup and existing signed-session transport; custom code is
+limited to Control Room's current-approval policy and canonical transaction composition.
+E19 records local tests and limits. Current-session routing, lifecycle mounting, independent
+review and real PostgreSQL/live owner acceptance remain required before activation.
+
+## ADR-252 — bounded recovery of never-staged queue work
+
+2026-09-06. Accepted for local opt-in implementation only; not deployment, independent
+review or permission to expand database grants.
+
+Recover the same operational job only under the original canonical queue authority,
+signed approval and tenant/project/job/attempt/lease/node locks. Require no delivery
+envelope, transmission intent, delivery receipt or native run evidence for the attempt.
+Even staged-but-unsent work is excluded from this path. Missing receipt alone is never
+proof that nothing started. Preserve recipient, attempt, lease, approval and deadline.
+
+The coordinator calls an optional trusted transaction-scoped recovery port only after
+these checks. Successful recovery and its canonical audit commit together; cancellation,
+expiry, audit failure or ambiguous transaction failure cannot be converted into success.
+Allow at most three audited recoveries per canonical queue identity. A no-op does not
+consume another recovery. No pruned operational row is recreated.
+
+Reuse public pg-boss retry plus update(retryLimit:0) in that exact transaction, including
+cold metadata access. Lock and verify the existing exact failed operational reference,
+policy and recovery count before mutation. Preserve payload and retention; no internal
+restore, custom reset SQL, new attempt or general automatic retry allowance.
+
+The adapter is explicitly opt-in and current producer grants do not authorize recovery
+UPDATE. Production worker metadata admission, exact permissions, authenticated reconnect
+triggering and end-to-end acceptance must be completed together before activation.
+Default workers still reject retryCount greater than zero. E26 adds explicit opt-in
+admission only through the current canonical recovery verifier, exact audit sequence
+and repeated never-staged/approval checks. This is not a claim that an authenticated
+reconnect automatically triggers recovery; that startup/event integration remains open.
+
+E28 local continuation: explicit recovery-enabled composition may request bounded
+candidate recovery once after a signed reconciliation reaches ready state. Scope it to
+the assigned node/optional attempt and retain generation checks through canonical commit.
+No trigger on raw hello or duplicate ACK. Timeout/replacement aborts the hook; per-task
+ineligibility does not close a healthy connection. Preserve held/truncated/uncertain
+outcomes. This is local simulated acceptance, not production or live-provider authority.
+
+## ADR-253 — one Control Room with local and multi-computer installation profiles
+
+**Date:** 2026-09-19. **Status:** repository architecture decision; no live
+installation, service, credential, database, deployment, or enrollment is authorized.
+
+Agent Control Room is one installation architecture with two setup profiles:
+**This computer** and **Several computers**. Each installation has exactly one
+authoritative private PostgreSQL primary and the same application services,
+canonical project/task/attempt/result/review/correction records, scheduler, and
+permission model. The controller may run on an owner-selected desktop or private
+server. Placement changes neither worker authority nor the evidence required for
+acceptance.
+
+This narrowly supersedes the placement-specific parts of ADR-202 /
+`CR14A_INTEGRATION_DIRECTION.md` and `SECURITY_AND_AUTHORITY.md`: the selected VPS provider remains
+the selected private-server profile, not a requirement for every installation;
+the Node runtime supports separately qualified controller-host profiles; and
+Cloudflare Access remains the private-server login profile. Permanent local owner
+authentication and recovery need their own explicit accepted contract. No fallback
+or shared browser session is created by this decision.
+
+Preserve CR5C without relaxation. Network location, loopback, LAN, Tailscale or a
+shared OS account never establishes identity or authority. Owner-signed local
+ceilings, independent provisioning pins, monotonic trust state, full signed lease
+authority, typed executor admission, separate effect approval, durable effect claims,
+and ambiguity-on-uncertain-dispatch remain required. Untrusted harnesses stay outside
+the trusted controller process. Review acceptance is evidence disposition, not
+execution permission. PGlite remains development/test-only; relay files remain
+transport state; browser clients never receive node/provider keys; and database
+listeners remain private.
+
+The controller-to-worker lifecycle is shared and versioned. Local and remote delivery
+must carry the same task, scope, authority, evidence and result bindings. Unknown
+versions, missing capabilities, dropped authority fields, or unsupported commitments
+refuse admission. Reconnection observes and reconciles an existing run; it never
+silently renews authority or starts a replacement effect. Passing local/remote test
+doubles proves lifecycle behavior only, not physical OS isolation, TLS, database
+concurrency, a permanent installer, or a live multi-computer deployment.
+
+The existing local relay is an effect-free development transport only. This decision
+does not create a plaintext-HTTP, generic TCP, or local-trust exception to CR5C.
+Any live local IPC boundary requires a separately reviewed typed contract for peer
+identity, isolation, access control, framing and replay handling.
+
+There is no synchronization mode or second writable authority. A migration pauses new
+admissions, reconciles active work, verifies a database/artifact/checkpoint backup,
+fences the old writer, restores and verifies the new writer, then reconnects workers.
+If the old writer cannot be fenced, the new writer remains closed. Restores may not
+silently roll back node trust high-water marks, effect claims, or replay protection.
+GitHub retains bootstrap claim authority for existing job classes until a separate,
+deliberate per-job-class cutover; PostgreSQL authority does not silently take over
+those claims.
+
+**Progress:** U1 now defines the shared controller-to-worker delivery contract
+and uses effect-free local and remote test doubles to carry an original task and
+separately approved correction through the existing signed synthetic transport.
+The remote double reconciles a deliberately lost caller receipt from the
+canonical store without repeating delivery. This remains synthetic evidence,
+not a live IPC, worker enrollment, service, or installation.
+
+**Next:** Local foundation and remote-worker enrollment tracks may progress in
+parallel against this frozen contract. A fully mounted controller proof and a
+controlled two-node enrollment proof remain separate requirements.
+
+## ADR-254 — versioned Mac-local owner-review profile upgrade
+
+2026-09-27. Migration 0092 admits the stricter Phase 2B owner-review profile
+under a new `profile:mac-local-owner-review:v2:` identity. Completion-gate
+records are immutable, so an existing project's old profile row is neither
+updated nor deleted. At startup the live-project provisioner registers the v2
+profile beside the old row; an exact restart replays the v2 row. New templates
+and new review targets use the v2 id and digest, including both automatic text
+and human-verification scenarios plus the configured reviewer-separation rule.
+Existing targets remain bound to the old id, digest, and old profile semantics.
+
+New projects follow the same provisioner path and receive only the v2 profile.
+Registration must finish before the task application becomes ready. A conflict
+or guard refusal therefore fails startup instead of silently falling back to
+the old profile. Migration 0092 changes the insert guard only and adds no grant;
+the private web role still cannot insert review targets through this path.
+
+## ADR-255 — explicit owner acceptance may carry the configured plain-text observation
+
+2026-09-27. The Mac-local v2 profile keeps both of its conservative checks: the
+automatic bounded-text structure scenario and the human observation scenario.
+The default owner interface no longer asks the same owner to accept quality and
+then repeat that semantic judgment in a second form. Accept is disabled until
+the owner explicitly checks “I read it and it’s correct.” The resulting one
+idempotent command records both the completion-gate review and the configured
+human verification in the same database and staged-checkpoint transaction.
+Requesting changes records no verification pass.
+
+This is an explicit owner-review composition setting, not a generic inference
+from the manual-verification registry. The public Mac-local default passes only
+its human read descriptor to that setting. A review service only offers the
+combined attestation when it is given exactly one matching configured scenario
+that is still missing from the target. Profiles may retain a
+separate verification action by omitting that review-service configuration.
+The recorded verification still grants neither approval nor execution authority,
+and the ordinary quality coordinator remains the only path that can complete the
+canonical job after every required scenario passes.
+
+Startup and newly discovered Mac-local projects now use the same registration
+path for their immutable profile, three task templates, automatic text scenario,
+and human descriptor. A project is not marked known until all four registrations
+succeed. This closes the prior startup-only gap that left the automatic text
+scenario unavailable. Task-result deep links treat `result` as an untrusted
+browser hint and still render when that hint is stale, empty, duplicate, or
+malformed; the existing authorized result list gates every content read.

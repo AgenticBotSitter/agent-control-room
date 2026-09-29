@@ -4,7 +4,7 @@ import { newsResearchTaskDraft } from "./news-research-draft";
 import { readBrowserJson as json } from "./browser-json";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskCommandSchema, taskDetailSchema, taskDraftSchema, taskPageSchema, type TaskReceipt } from "./task-wire";
-import { taskResultsPageSchema, taskResultContentSchema } from "./task-result-wire";
+import { taskResultsPageSchema, taskResultContentSchema, type TaskResultMetadata } from "./task-result-wire";
 import { syntheticResultSchemaV1 } from "../../local-pilot/v1/synthetic-result-wire";
 
 export const taskErrorMessage: Record<BrowserFailureCode, string> = {
@@ -13,7 +13,7 @@ export const taskErrorMessage: Record<BrowserFailureCode, string> = {
   invalid_request: "Check the title and instructions. Do not include passwords, access tokens or other secrets.",
   conflict: "The project or save changed. Refresh saved work before making a new proposal.",
   not_found: "This task or project is not available.",
-  unavailable: "Task information is unavailable. No sample progress has been substituted.",
+  unavailable: "Control Room could not read the saved task database or service. No task was started or changed, and no sample progress was substituted. Check saved tasks again when the service is ready.",
   uncertain: "This save may have completed. Check this exact save again, or look in saved tasks before creating another.",
 };
 
@@ -72,10 +72,10 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
         return page;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async detail(projectId: string, jobId: string) {
+    async detail(projectId: string, jobId: string, signal?: AbortSignal) {
       try {
         checkId(projectId); checkId(jobId);
-        const detail = taskDetailSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}`));
+        const detail = taskDetailSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}`, signal));
         if (detail.project.projectId !== projectId || detail.task.projectId !== projectId || detail.task.jobId !== jobId) throw new Error();
         return detail;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
@@ -126,12 +126,27 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
         return page;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async resultContent(projectId: string, jobId: string, artifactId: string, signal?: AbortSignal) {
+    async resultContent(projectId: string, jobId: string, artifact: TaskResultMetadata | string, signal?: AbortSignal) {
       try {
+        const artifactId = typeof artifact === "string" ? artifact : artifact.artifactId;
         checkId(projectId); checkId(jobId); checkId(artifactId);
-        const content = taskResultContentSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}/results/${encodeURIComponent(artifactId)}`, signal));
+        if (typeof artifact === "string" || !artifact.fileAccess) throw new Error();
+        const preview = new URL(artifact.fileAccess.previewHref, "http://control-room.invalid");
+        const expectedPath = `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/files/${encodeURIComponent(artifactId)}`;
+        if (preview.origin !== "http://control-room.invalid" || preview.pathname !== expectedPath
+          || preview.searchParams.get("disposition") !== "preview" || preview.searchParams.getAll("token").length !== 1
+          || [...preview.searchParams.keys()].some(key => !["disposition", "token"].includes(key))) throw new Error();
+        const response = await call(artifact.fileAccess.previewHref, undefined, signal); signal?.throwIfAborted();
+        if (!response.ok) throw new BrowserRequestError(failure(response.status));
+        if (response.headers.get("content-type")?.split(";")[0].trim() !== "text/plain" || !response.body) throw new Error();
+        const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
+        try { for (;;) { const next = await reader.read(); if (next.done) break; size += next.value.byteLength;
+          if (size > 65_536) throw new Error(); chunks.push(next.value); } } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+        const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+        const text = new TextDecoder("utf8", { fatal: true }).decode(bytes);
+        const content = taskResultContentSchema.parse({ projectId, jobId, artifact, text,
+          contentVerifiedAt: new Date().toISOString(), untrustedContent: true });
         if (content.projectId !== projectId || content.jobId !== jobId || content.artifact.artifactId !== artifactId) throw new Error();
-        const bytes = new TextEncoder().encode(content.text);
         const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
         if (bytes.byteLength !== content.artifact.sizeBytes || `sha256:${hash}` !== content.artifact.contentHash) throw new Error();
         return content;

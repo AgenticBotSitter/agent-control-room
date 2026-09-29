@@ -8,6 +8,7 @@ import { createContributorDemoBrowserClient } from "../src/contributor-demo/brow
 import { loadContributorHistory, unrecordedContributorFeedback } from "../src/contributor-demo/history-view";
 import { createTaskBrowserClient } from "../src/web/v1/task-browser-client";
 import { createLocalPilotBrowserTransportV1 } from "../src/local-pilot/v1/browser-transport";
+import { createLocalPilotControlRoomClientV1 } from "../src/local-pilot/v1/control-room-browser-client";
 import { createContributorDemoNodeHandler, createPrivateNodeHandler } from "../src/web/v1/private-node-handler";
 import { nodeExchange } from "./helpers/web-node";
 
@@ -285,4 +286,39 @@ test("demo HTTP composes protected login and project routes without operational 
   assert.equal((await handle(new Request("http://localhost:3000/api/v1/local-pilot/session"))).status, 403);
   await demo.close();
   assert.equal((await handle(new Request(session, { headers: { cookie } }))).status, 503);
+});
+
+test("local Control Room reads canonical saved projections and has no operational route", async t => {
+  const demo = await createContributorDemoRuntime(process.cwd());
+  t.after(() => demo.close());
+  const handle = createContributorDemoHttp(demo.runtime);
+  const session = `${demo.origin}/api/v1/local-pilot/session`;
+  const workspace = `${demo.origin}/api/v1/local-pilot/workspace`;
+  const loggedIn = await handle(new Request(session, { method: "POST", headers: { origin: demo.origin, "content-type": "application/json" },
+    body: JSON.stringify({ ownerCode: demo.ownerCode }) }));
+  const cookie = loggedIn.headers.get("set-cookie")!.split(";")[0]!;
+  const request = (method: string, resource: string, extra: Record<string, string> = {}) => new Request(`${demo.origin}/api/v1/local-pilot/workspace?${new URLSearchParams({ resource, ...extra })}`, {
+    method, headers: { cookie, ...(method === "POST" ? { origin: demo.origin, "content-type": "application/json", "idempotency-key": "read-only-test" } : {}) },
+    ...(method === "POST" ? { body: JSON.stringify({ operation: "start_task" }) } : {}),
+  });
+  const created = await demo.runtime.projectTasks.createProject(new Request(`${demo.origin}/local-preview`, { method: "POST", headers: { cookie, origin: demo.origin } }),
+    { title: "Workboard", summary: "Read-only board" }, "workboard-project");
+  const projectId = created.project.projectId;
+  await demo.runtime.projectTasks.proposeTask(new Request(`${demo.origin}/local-preview`, { method: "POST", headers: { cookie, origin: demo.origin } }), projectId,
+    { title: "Saved work", instructions: "Do not start this work." }, "workboard-task");
+  for (const [resource, extra] of [["home", {}], ["overview", { projectId }], ["agents", { projectId }],
+    ["attention", { projectId, mode: "inbox" }], ["attention", { projectId, mode: "reviews" }]] as const) {
+    assert.equal((await handle(request("GET", resource, extra))).status, 200);
+  }
+  assert.equal((await handle(new Request(workspace, { method: "POST", headers: { cookie, origin: demo.origin,
+    "content-type": "application/json", "idempotency-key": "unsafe-operation-test" },
+  body: JSON.stringify({ operation: "start_task", projectId, approval: true, retry: true }) }))).status, 400);
+  const methods: string[] = [];
+  const client = createLocalPilotControlRoomClientV1(async (input, init) => {
+    methods.push(init?.method ?? "GET"); const headers = new Headers(init?.headers); headers.set("cookie", cookie);
+    return handle(new Request(`${demo.origin}${String(input)}`, { ...init, headers }));
+  });
+  assert.equal((await client.overview(projectId)).startsWork, false);
+  assert.equal((await client.agents(projectId)).grantsExecutionAuthority, false);
+  assert.deepEqual(methods, ["GET", "GET"]);
 });

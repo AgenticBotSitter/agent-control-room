@@ -3,11 +3,11 @@
  *
  * The harness-neutral publisher (`durable-result-publication.ts`) persists
  * reservation rows through this interface instead of touching a concrete
- * table. The PostgreSQL adapter for the dedicated neutral sibling table is
- * lead-owned and pending (it arrives with the lead's narrowly scoped
- * migration after #63); until then, tests and local runs inject the
- * in-memory implementation below. No neutral record is ever stored under a
- * native schema literal, and the native-only constraint is never widened.
+ * table. The PostgreSQL adapter targets the dedicated neutral sibling table
+ * from migration 0077. Tests may inject the in-memory implementation below,
+ * but it is not installation-ready because it does not survive a restart.
+ * No neutral record is ever stored under a native schema literal, and the
+ * native-only constraint is never widened.
  *
  * Record shape mirrors the reservation row columns (snake_case) so the
  * publisher's parse/verify logic is identical for every implementation.

@@ -6,9 +6,10 @@ import { taskSubmissionDraftSchema, taskSubmissionReadSchema, taskSubmissionRece
 export function createTaskSubmissionBrowserClient(transport: typeof fetch = fetch) {
   let busy = false;
   let pending: { projectId: string; jobId: string; inputDigest: string; packetDigest: string } | undefined;
-  async function call(projectId: string, jobId: string, inputDigest: string, packetDigest: string, write: boolean) {
+  async function call(projectId: string, jobId: string, inputDigest: string, packetDigest: string | undefined, write: boolean) {
     if (![projectId, jobId].every(id => catalogProjectIdSchema.safeParse(id).success)
-      || !taskSubmissionDraftSchema.safeParse({ expectedInputDigest: inputDigest, expectedPacketDigest: packetDigest }).success)
+      || !taskSubmissionDraftSchema.shape.expectedInputDigest.safeParse(inputDigest).success
+      || (write || packetDigest !== undefined) && !taskSubmissionDraftSchema.shape.expectedPacketDigest.safeParse(packetDigest).success)
       throw new BrowserRequestError("invalid_request");
     const path = `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/submission`;
     const response = await transport(path + (write ? "" : `?inputDigest=${encodeURIComponent(inputDigest)}`), {
@@ -38,11 +39,13 @@ export function createTaskSubmissionBrowserClient(transport: typeof fetch = fetc
   }
   return {
     hasPending: () => !!pending,
-    async read(projectId: string, jobId: string, inputDigest: string, packetDigest: string) {
+    async read(projectId: string, jobId: string, inputDigest: string, packetDigest?: string) {
       try {
         const result = taskSubmissionReadSchema.parse(await call(projectId, jobId, inputDigest, packetDigest, false));
         if (result.projectId !== projectId || result.jobId !== jobId || result.inputDigest !== inputDigest
-          || result.receipt && (result.receipt.projectId !== projectId || result.receipt.jobId !== jobId || result.receipt.packetDigest !== packetDigest)) throw new Error();
+          || result.receipt && (result.receipt.projectId !== projectId || result.receipt.jobId !== jobId
+            || packetDigest !== undefined && result.receipt.packetDigest !== packetDigest)
+          || result.preview && packetDigest !== undefined && result.preview.packetDigest !== packetDigest) throw new Error();
         if (result.receipt && pending?.projectId === projectId && pending.jobId === jobId
           && pending.inputDigest === inputDigest && pending.packetDigest === packetDigest) pending = undefined;
         return result;

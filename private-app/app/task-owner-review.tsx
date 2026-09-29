@@ -16,8 +16,9 @@ const availability: Record<TaskReviewOptions["availability"], string> = {
 };
 export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback, onRecord }: {
   options: TaskReviewOptions; feedback: string; pending: boolean; held: boolean;
-  onFeedback: (value: string) => void; onRecord: (decision: TaskReviewDraft["decision"]) => void;
+  onFeedback: (value: string) => void; onRecord: (decision: TaskReviewDraft["decision"], attested?: boolean) => void;
 }) {
+  const [attested, setAttested] = useState(false);
   return <section className="private-owner-review" aria-label="Owner quality decision"><h4>{availability[options.availability]}</h4>
     {options.ownReview && <div><p>Saved {options.ownReview.decision === "accepted" ? "quality acceptance" : "request for changes"}
       {" · "}<ConfiguredTimestamp value={options.ownReview.recordedAt} /></p>
@@ -28,7 +29,11 @@ export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback,
       <textarea aria-label="Changes you want" maxLength={4096} value={feedback} disabled={pending || held}
         onChange={event => onFeedback(event.target.value)} /></label>
       <p className="private-note">Use this field when requesting changes. No passwords or secrets. Maximum 4,096 UTF-8 bytes.</p>
-      <div className="private-actions"><button type="button" disabled={pending || held} onClick={() => onRecord("accepted")}>Accept quality</button>
+      {options.acceptanceAttestation && <label><input type="checkbox" checked={attested} disabled={pending || held}
+        onChange={event => setAttested(event.target.checked)} /> I read it and it’s correct</label>}
+      {options.acceptanceAttestation && <p className="private-note">{options.acceptanceAttestation.instructions}</p>}
+      <div className="private-actions"><button type="button" disabled={pending || held || !!options.acceptanceAttestation && !attested}
+        onClick={() => onRecord("accepted", attested)}>Accept</button>
         <button type="button" disabled={pending || held || !feedback.trim()} onClick={() => onRecord("changes_requested")}>Request changes</button></div></>}
     <p className="private-note">A quality decision does not authorize external actions or start another agent run. Other required checks still apply.</p>
   </section>;
@@ -70,9 +75,13 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
     const focus = () => { void load(); }; window.addEventListener("focus", focus);
     return () => { live = false; clearInterval(timer); window.removeEventListener("focus", focus); };
   }, [client, projectId, jobId, artifactId, targetId, targetDigest, contentHash, refresh]);
-  const save = async (decision?: TaskReviewDraft["decision"]) => {
+  const save = async (decision?: TaskReviewDraft["decision"], attested = false) => {
     setError(undefined);
-    if (await session.save(decision)) { setRefresh(value => value + 1); onSaved(); }
+    const acceptanceAttestation = decision === "accepted" && options?.acceptanceAttestation && attested
+      ? { scenarioId: options.acceptanceAttestation.scenarioId,
+        instructionsDigest: options.acceptanceAttestation.instructionsDigest, confirmed: true as const }
+      : undefined;
+    if (await session.save(decision, acceptanceAttestation)) { setRefresh(value => value + 1); onSaved(); }
   };
   const revisionRequest = options ? revisionRequestFromReview(runId, options) : undefined;
   const revisionReceipt = revisionRequest ? session.revisionClient.savedReceipt(projectId, jobId, revisionRequest) : undefined;
@@ -83,7 +92,7 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
   return <>
     {!options && !error && <p role="status">Loading owner review…</p>}
     {options && <OwnerReviewPanel options={options} feedback={feedback} pending={pending} held={client.hasPending() || !!receipt}
-      onFeedback={session.setFeedback} onRecord={decision => { void save(decision); }} />}
+      onFeedback={session.setFeedback} onRecord={(decision, attested) => { void save(decision, attested); }} />}
     {pending && <p role="status">Saving your quality decision…</p>}
     {options && receipt && <p role="status">Saved: {receipt.decision === "accepted" ? "quality acceptance" : "changes requested"}. No new work has been started.</p>}
     {error && <p role="alert">{reviewErrorMessage[error.code]}</p>}

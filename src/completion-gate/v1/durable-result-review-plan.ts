@@ -21,6 +21,7 @@ export const durableResultReviewPlanSchemaV1 = z.object({
   schema: z.literal("control-room.durable-result-review-plan/v1"),
   tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, runId: localId, nodeId: localId,
   harness: z.string().min(1).max(64),
+  workerId: localId.optional(), agentProfileId: localId.optional(), adapterId: localId.optional(), modelFamily: localId.optional(),
   receiptDigest: digestSchema,
   snapshotDigest: digestSchema.optional(),
   publicationContractDigest: digestSchema.optional(),
@@ -89,6 +90,10 @@ export function durableReviewTargetV1(plan: DurableResultReviewPlanV1, receipt: 
   return { schemaVersion: "control-room-completion-gate/v1", id: plan.targetId, tenantId: plan.tenantId,
     projectId: plan.projectId, kind: "document", subjectId: plan.jobId,
     subjectDigest: receipt.contentHash, acceptanceProfileId: plan.acceptanceProfileId,
-    acceptanceProfileDigest: plan.acceptanceProfileDigest, producer: { actorId: plan.nodeId, actorType: "agent" },
+    acceptanceProfileDigest: plan.acceptanceProfileDigest, producer: { actorId: plan.nodeId, actorType: "agent",
+      ...(plan.workerId ? { workerId: plan.workerId } : {}),
+      ...(plan.agentProfileId ? { agentProfileId: plan.agentProfileId } : {}), harness: plan.harness,
+      ...(plan.adapterId ? { adapterId: plan.adapterId } : {}),
+      ...(plan.modelFamily ? { modelFamily: plan.modelFamily } : {}) },
     rootTargetId: plan.targetId, revisionNumber: 0, submittedAt: receipt.receivedAt };
 }

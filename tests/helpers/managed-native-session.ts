@@ -6,7 +6,8 @@ import { nativeStartAuthorityFixture } from "./native-start-authority";
 import { qualityText } from "./native-quality-completion";
 import { PortableNodeBridge, SqliteBridgeJournal } from "../../src/node-bridge";
 import { NativeDispatchIntakeHandler } from "../../src/node-bridge/native-dispatch-handler";
-import { FixedWindowProtocolRateLimiter, NodeProtocolAuthenticator, signNodeFrame, type SignedNodeFrame } from "../../src/node-protocol/v1";
+import { FixedWindowProtocolRateLimiter, NodeEnrollmentStore, NodeProtocolAuthenticator, NODE_PROTOCOL_V1,
+  signEnrollmentProof, signNodeFrame, type SignedNodeFrame } from "../../src/node-protocol/v1";
 import { ManagedNativeSessions, type ManagedNativeSessionSettings, type NativeSessionTransport } from "../../src/web/v1/managed-native-sessions";
 import { NativeEvidenceReceiver } from "../../src/web/v1/native-evidence-receiver";
 import { TaskResultCoordinator } from "../../src/web/v1/task-result-coordinator";
@@ -34,7 +35,7 @@ export type ManagedNativePreparedContext = { f: Base; local: Local; providerRunI
  * Canonical assignment/approval/dispatch and producer policy reads remain labelled privileged setup.
  * Never constructs a server session or supplies f.auth to the managed server. */
 export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext, options: { reporting?: boolean; queue?: boolean; stopHandshakeAtDispatch?: boolean; leaseDelivery?: boolean;
-  receiptTimeoutMs?: number;
+  receiptTimeoutMs?: number; twoNodes?: boolean;
   onQueueReady?: import("../../src/web/v1/task-assignment-coordinator").TaskAssignmentCoordinator["recoverForReadyNode"] } = {}) {
   const f = context?.f ?? await canonicalApprovalStorageFixture();
   const cleanup: (() => void | Promise<void>)[] = [f.close];
@@ -103,9 +104,37 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
     const receiver = new NativeEvidenceReceiver(evidenceDb, receiverConfig);
     const serverKeys = generateKeyPairSync("ed25519"), spki = serverKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
     const features = [NATIVE_DELIVERY_FEATURE, "harness.native.snapshot.v1", ...(options.leaseDelivery ? [NATIVE_LEASE_DELIVERY_FEATURE] : [])];
-    const settings: ManagedNativeSessionSettings = { nodes: [{ tenantId: f.scope.tenantId, nodeId: f.prepared.request.nodeId,
+    const primaryNode = { nodeId: f.prepared.request.nodeId, nodeKeyId: "key:test", privateKey: f.keys.privateKey };
+    let secondaryNode: { nodeId: string; nodeKeyId: string; privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"] } | undefined;
+    if (options.twoNodes) {
+      const keys = generateKeyPairSync("ed25519"), nodeId = "node:managed-secondary", nodeKeyId = "key:managed-secondary";
+      const nodeSpki = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+      await admin(async () => {
+        const enrollment = new NodeEnrollmentStore(f.db, [{ keyId: "key:managed-server", algorithm: "ed25519", spki }]);
+        const issuedAt = new Date(f.clock()).toISOString();
+        const issued = await enrollment.issueToken({ tenantId: f.scope.tenantId, nodeClass: "personal-compute",
+          createdBy: f.identity.subject, createdAt: issuedAt, tokenId: "enrollment:managed-secondary" });
+        const challenge = await enrollment.createChallenge({ tokenId: issued.tokenId, token: issued.token,
+          nodeClass: "personal-compute", supportedProtocols: [NODE_PROTOCOL_V1] }, issuedAt, "challenge:managed-secondary");
+        const proof = signEnrollmentProof({ challengeId: challenge.challengeId, challengeNonce: challenge.challengeNonce,
+          nodeId, displayName: "Managed secondary synthetic worker", nodeClass: "personal-compute",
+          publicKey: { keyId: nodeKeyId, algorithm: "ed25519", spki: nodeSpki },
+          platformFacts: { platform: "linux", architecture: "x64", hardwareFingerprint: sha256Digest("managed-secondary-hardware"),
+            softwareFingerprint: sha256Digest("managed-secondary-software"), bridgeVersion: "synthetic-1", attestation: { source: "fixture" } },
+          supportedProtocols: [NODE_PROTOCOL_V1] }, keys.privateKey);
+        const result = await enrollment.complete(proof, { now: issuedAt, policyVersion: "policy:managed-secondary",
+          initialGrant: { nodeClass: "personal-compute", allowedRisk: ["low"] } });
+        assert.equal(result.accepted, true);
+      });
+      secondaryNode = { nodeId, nodeKeyId, privateKey: keys.privateKey };
+    }
+    const nodes: Array<ManagedNativeSessionSettings["nodes"][number]> = [{ tenantId: f.scope.tenantId, nodeId: primaryNode.nodeId,
       nodeKeyId: "key:test", serverId: "server:managed", serverKeyId: "key:managed-server", serverPublicKeySpki: spki,
-      transportIdentity: "transport:managed", features, maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }],
+      transportIdentity: "transport:managed", features, maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }];
+    if (secondaryNode) nodes.push({ tenantId: f.scope.tenantId, nodeId: secondaryNode.nodeId, nodeKeyId: secondaryNode.nodeKeyId,
+        serverId: "server:managed", serverKeyId: "key:managed-server", serverPublicKeySpki: spki,
+        transportIdentity: "transport:managed-secondary", features, maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 });
+    const settings: ManagedNativeSessionSettings = { nodes,
       async sign(frame) { return signNodeFrame(frame, serverKeys.privateKey); } };
     const canonicalSetupDb: DatabaseClient = { query: (sql, params) => admin(() => f.db.query(sql, params)),
       transaction: work => admin(() => f.db.transaction(work)),
@@ -141,13 +170,16 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       options.receiptTimeoutMs);
     cleanup.push(() => manager.close());
     const timestamp = () => new Date(f.clock()).toISOString();
-    function makePeer() {
+    function makePeer(nodeId = primaryNode.nodeId) {
+      const node = nodeId === primaryNode.nodeId ? primaryNode : secondaryNode?.nodeId === nodeId ? secondaryNode : undefined;
+      if (!node) throw new Error("synthetic peer node is unavailable");
       const journal = new SqliteBridgeJournal(":memory:"); cleanup.push(() => journal.close());
-      const handler = new NativeDispatchIntakeHandler(f.prepared.enrollment, journal,
-        { approvals: f.approvals, security: f.native.trust }, f.clock); cleanup.push(() => handler.close());
+      const handler = node === primaryNode ? new NativeDispatchIntakeHandler(f.prepared.enrollment, journal,
+        { approvals: f.approvals, security: f.native.trust }, f.clock) : undefined;
+      if (handler) cleanup.push(() => handler.close());
       // The fake node trusts only the synthetic server key. This is not server authentication.
-      const bridge = new PortableNodeBridge({ tenantId: f.scope.tenantId, nodeId: f.prepared.request.nodeId, keyId: "key:test", features }, journal,
-        { async sign(frame) { return signNodeFrame(frame, f.keys.privateKey); } },
+      const bridge = new PortableNodeBridge({ tenantId: f.scope.tenantId, nodeId: node.nodeId, keyId: node.nodeKeyId, features }, journal,
+        { async sign(frame) { return signNodeFrame(frame, node.privateKey); } },
         new NodeProtocolAuthenticator({ async resolve(value) { return { ...value, algorithm: "ed25519", publicKeySpki: spki,
           state: "active", principalState: "active", validFrom: new Date(f.clock() - 60_000).toISOString() }; } }, journal,
         new FixedWindowProtocolRateLimiter(120, 60)), undefined, undefined, handler);
@@ -166,10 +198,11 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       const acknowledge = () => admin(async () => {
         const raw = outgoing.shift(); assert.ok(raw); await bridge.receive(raw, timestamp());
       });
-      return { journal, bridge, incoming, outgoing, sent, state, transport, open, acknowledge };
+      return { nodeId: node.nodeId, nodeKeyId: node.nodeKeyId, privateKey: node.privateKey,
+        journal, bridge, incoming, outgoing, sent, state, transport, open, acknowledge };
     }
-    const attach = async () => {
-      const peer = makePeer(), handle = await manager.attach(f.prepared.request.nodeId, peer.transport), hello = await peer.open();
+    const attach = async (nodeId = primaryNode.nodeId) => {
+      const peer = makePeer(nodeId), handle = await manager.attach(nodeId, peer.transport), hello = await peer.open();
       return { peer, handle, hello };
     };
     const attachQueue = async () => {
@@ -260,7 +293,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       artifacts: (await f.db.query("SELECT * FROM control_artifact_manifests WHERE job_id=$1", [task.jobId])).rows,
       receipts: (await f.db.query("SELECT * FROM control_native_artifact_receipts WHERE run_id=$1", [registration.id])).rows,
     }));
-    return { f, local, admin, authDb, evidenceDb, resultDb, observed, hooks, settings, manager, receiver,
+    return { f, local, admin, authDb, evidenceDb, resultDb, observed, hooks, settings, manager, receiver, secondaryNode: secondaryNode && { nodeId: secondaryNode.nodeId, nodeKeyId: secondaryNode.nodeKeyId },
       verify, verifyAuth, checkedScope, makePeer, attach, attachQueue, handshake, handshakeQueue, dispatch, prepareNode, task, registration, request, states, protocol, counts,
       inputRegistrations: () => inputRegistrations,
       admitted: () => admitted, setHealthy: (value: boolean) => { healthy = value; },

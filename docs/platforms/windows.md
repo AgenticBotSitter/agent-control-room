@@ -150,7 +150,7 @@ without spawning a child. CLI exit codes come from the same canonical table
 
 ## 8. Cleanup ledger (Windows-specific)
 
-Per `ziggy-machine-profile` §6, every disposable Windows artifact must be
+Per the PC worker machine profile, every disposable Windows artifact must be
 individually removed and listed. On Windows this means:
 
 - File deletion: `unlinkSync` after `lstat` check for symlink, never a

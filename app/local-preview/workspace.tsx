@@ -11,6 +11,7 @@ import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm } from "../../priva
 import { TaskResultsPanel } from "../../private-app/app/task-results";
 import type { TaskResultsPage, TaskResultContent } from "../../src/web/v1/task-result-wire";
 import { ContributorSimulation } from "../components/contributor-simulation";
+import { LocalControlRoomWorkboard } from "./control-room-workboard";
 
 export function localPreviewHref(projectId?: string, jobId?: string, after?: string) {
   const query = new URLSearchParams();
@@ -104,7 +105,13 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
   const held = pending || uncertain || reading;
   return <div className="private-shell"><main id="private-main" tabIndex={-1}>
     <div className="private-heading"><h1>{project?.title ?? "Local project preview"}</h1>
-      <p>Projects and proposals are saved locally. This preview cannot assign or start agents.</p></div>
+      <p>Local Control Room workboard. Projects and proposals are saved locally; it cannot assign or start agents.</p></div>
+    <section className="private-notice" aria-labelledby="local-preview-reality-title">
+      <h2 id="local-preview-reality-title">Reality check</h2>
+      <p><strong>Saved here:</strong> this preview's local project and task records.</p>
+      <p><strong>Not connected:</strong> agents, providers, the production database, the scheduler, and public network access.</p>
+      <p><strong>Still required:</strong> the separate owner setup and qualification before a real Control Room worker can receive a task.</p>
+    </section>
     {error && <p role="alert">{error}</p>}
     {uncertain && <section className="private-notice"><p>A save is unconfirmed. Keep this tab open and retry the original save before making another change.</p>
       <button disabled={pending} onClick={() => { void save(async () => {
@@ -121,6 +128,7 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
       {catalog.canCreate && <ProjectCreateForm pending={held} result="idle" onCreate={value => {
         if (!held) void save(() => clients.projects.create(value), result => localPreviewHref((result as WebProject).projectId));
       }} />}</>}
+    <LocalControlRoomWorkboard projectId={projectId} />
     {project && <section className="private-panel"><h2>Project purpose</h2><p>{project.summary || "No summary added."}</p>
       <p>Status: {project.lifecycle}. Changing status preserves history and does not stop running work.</p>
       {project.lifecycleEditable && project.origin === "ordinary" && <div className="private-actions">

@@ -8,13 +8,8 @@ const excerpt = (text: string) => text.length <= 64 ? text : `${text.slice(0, 63
 /** Extracts final-turn text; does not call an LLM or claim semantic agreement.
  * Existing v1 score fields remain legacy confidence proxies, not business measurements. */
 export class DeterministicIdeaLabSynthesisEngineV1 {
-  build(session: unknown, values: IdeaLabContributionV1[], synthesizedAt: string): IdeaLabSynthesisV1 {
-    const parsed = parseIdeaLabSessionV1(session);
-    const contributions = values.map(value => parseIdeaLabContributionV1(value, parsed));
-    const tuples = new Set(contributions.map(c => `${c.participantId}:${c.round}`));
-    if (contributions.length !== parsed.maxMessages || tuples.size !== parsed.maxMessages
-      || parsed.participants.some(p => Array.from({ length: parsed.maxRounds }, (_, i) => i + 1)
-        .some(round => !tuples.has(`${p.participantId}:${round}`)))) throw new IdeaLabErrorV1("panel_incomplete");
+  #buildFromCompleteRounds(session: unknown, values: IdeaLabContributionV1[], synthesizedAt: string): IdeaLabSynthesisV1 {
+    const parsed = parseIdeaLabSessionV1(session), contributions = values.map(value => parseIdeaLabContributionV1(value, parsed));
     const latest = parsed.participants.map(p => contributions.find(c => c.participantId === p.participantId && c.round === parsed.maxRounds)!);
     const fallback = mean(latest.map(c => c.confidencePercent));
     const score = (names: string[]) => { const matches = latest.filter(c => names.includes(c.perspective));
@@ -34,5 +29,31 @@ export class DeterministicIdeaLabSynthesisEngineV1 {
       dissentingPerspectiveCodes: [...new Set(latest.filter(c => ["skeptic", "risk"].includes(c.perspective)).map(c => c.primaryRiskCode))].sort(),
       synthesizedAt,
     });
+  }
+
+  /** Legacy panel recap. Retained separately so canonical ordinary-task results
+   * never need to pretend that a provider panel was run. */
+  build(session: unknown, values: IdeaLabContributionV1[], synthesizedAt: string): IdeaLabSynthesisV1 {
+    const parsed = parseIdeaLabSessionV1(session);
+    const contributions = values.map(value => parseIdeaLabContributionV1(value, parsed));
+    const tuples = new Set(contributions.map(c => `${c.participantId}:${c.round}`));
+    if (contributions.length !== parsed.maxMessages || tuples.size !== parsed.maxMessages
+      || parsed.participants.some(p => Array.from({ length: parsed.maxRounds }, (_, i) => i + 1)
+        .some(round => !tuples.has(`${p.participantId}:${round}`)))) throw new IdeaLabErrorV1("panel_incomplete");
+    return this.#buildFromCompleteRounds(parsed, contributions, synthesizedAt);
+  }
+
+  /** Extractive recap of ordinary reviewed task results. It accepts the same
+   * complete-round shape as the legacy recap, but refuses provider or injected
+   * provenance so the two histories remain distinct. */
+  buildCanonicalReviewedTasks(session: unknown, values: IdeaLabContributionV1[], synthesizedAt: string): IdeaLabSynthesisV1 {
+    const parsed = parseIdeaLabSessionV1(session);
+    const contributions = values.map(value => parseIdeaLabContributionV1(value, parsed));
+    const tuples = new Set(contributions.map(c => `${c.participantId}:${c.round}`));
+    if (contributions.length !== parsed.maxMessages || tuples.size !== parsed.maxMessages
+      || contributions.some(c => c.sourceMode !== "canonical_task_result" || !c.canonicalTaskEvidence)
+      || parsed.participants.some(p => Array.from({ length: parsed.maxRounds }, (_, i) => i + 1)
+        .some(round => !tuples.has(`${p.participantId}:${round}`)))) throw new IdeaLabErrorV1("panel_incomplete");
+    return this.#buildFromCompleteRounds(parsed, contributions, synthesizedAt);
   }
 }
