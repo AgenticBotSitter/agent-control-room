@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { deliverOwnerPushV1, ownerPushPayloadIsMinimalV1, ownerPushPayloadV1, parseWebPushSubscriptionV1,
   type OwnerNotificationChannelV1, type OwnerPushStoreV1 } from "../src/web-push/v1";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
+import { OwnerWebPushSettings } from "../private-app/app/owner-web-push";
 
 const subscription = Object.freeze({ id: "push:a", tenantId: "tenant:test", endpoint: "https://push.example.invalid/subscription",
   p256dh: "A".repeat(87), auth: "B".repeat(22), expiresAt: null });
@@ -41,4 +44,10 @@ test("dedupe reserves one notification and a permanent failure cleans the subscr
   assert.deepEqual(first, { delivered: 0, deduplicated: 0, removed: 1 });
   assert.deepEqual(second, { delivered: 0, deduplicated: 1, removed: 0 });
   assert.equal(calls, 1); assert.deepEqual(memory.removed, [subscription.endpoint]);
+});
+
+test("phone notification controls are owner-facing labelled buttons", () => {
+  const html = renderToStaticMarkup(createElement(OwnerWebPushSettings));
+  assert.match(html, /Phone notifications/); assert.match(html, /Subscribe this browser/);
+  assert.match(html, /Unsubscribe this browser/); assert.match(html, /Send test/);
 });
