@@ -1,6 +1,9 @@
 -- Proposal-only agent work intake. These records cannot create a canonical task,
 -- queue delivery, assignment, approval, effect, or execution authority.
 
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
 CREATE TABLE work_batches (
   id text NOT NULL,
   tenant_id text NOT NULL,
@@ -13,7 +16,7 @@ CREATE TABLE work_batches (
   approved_at timestamptz,
   decision_reason_code text,
   proposal jsonb NOT NULL CHECK (jsonb_typeof(proposal)='object'),
-  queue_depth_limit integer NOT NULL CHECK (queue_depth_limit BETWEEN 1 AND 20),
+  queue_depth_limit bigint NOT NULL CHECK (queue_depth_limit BETWEEN 1 AND 20),
   batch_digest text NOT NULL CHECK (batch_digest ~ '^sha256:[a-f0-9]{64}$'),
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
   version bigint NOT NULL CHECK (version >= 1),
