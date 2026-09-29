@@ -29,8 +29,8 @@ import { AuditStore } from "../src/audit/audit-store.ts";
 import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
 import { WorkBatchOwnerServiceV1 } from "../src/work-intake/v1/owner-service.ts";
 import { workBatchProposalDigestV1 } from "../src/work-intake/v1/digest.ts";
-import { sha256Digest, canonicalJson } from "../src/security/canonical-digest.ts";
-import { hmacSha256Tag, computeAuthorityDigest } from "../src/security/digest.ts";
+import { sha256Digest } from "../src/security/canonical-digest.ts";
+import { hmacSha256Tag } from "../src/security/digest.ts";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery.ts";
 import { derivePipelineBuildPublicationEvidenceKeyV1 } from "../src/pipelines/v1/build-publication-authority.ts";
 import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/rollback-checkpoint.ts";
@@ -38,10 +38,6 @@ import { SecurityStore } from "../src/security/security-store.ts";
 import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
   ProductionPipelineAdvanceCapabilityV1 } from "../src/pipelines/v1/index.ts";
 import { AgentReviewServiceV1, CompletionGateStoreV1 } from "../src/completion-gate/v1/index.ts";
-import { nativeReviewPlanTag, nativeReviewTarget } from "../src/completion-gate/v1/native-review-plan.ts";
-import { buildTaskResultManifestV1 } from "../src/artifacts/v1/durable-result-publication.ts";
-import { resultBytesHash } from "../src/artifacts/v1/native-results.ts";
-import { createTaskCoordinatorLifecycle } from "../src/web/v1/task-coordinator-lifecycle.ts";
 import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { WebTaskService } from "../src/web/v1/task-service.ts";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
@@ -1100,6 +1096,7 @@ test("S7 unattended consent, advance, sweep and history run on the Mac-local pro
     const history=await owner.historyForOwner(identity,projectId,runId);
     assert.ok(history.events.some(event=>event.action==="pipelines.unattended.enabled"));
     assert.ok(history.events.some(event=>event.action==="pipelines.stage.advanced"));
+  }));
 
 // A minimal valid native planning template authority, exactly the shape
 // captureNativeTaskTemplates accepts. The proof path never plans, so the
