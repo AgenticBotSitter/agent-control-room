@@ -110,6 +110,20 @@
 .private-task-list h3 { margin: 0; }
 .private-task-list .private-state { justify-self: start; }
 .private-task-list .private-note, .private-create .private-note { margin: 0; }
+.private-pipeline-list, .private-pipeline-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.private-pipeline-list li, .private-pipeline-items > li { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); overflow-wrap: anywhere; }
+.private-pipeline-list a { display: grid; gap: .35rem; min-height: 44px; padding: 1rem; }
+.private-pipeline-list span { color: var(--muted); }
+.private-pipeline-items > li { padding: 1rem; }
+.private-pipeline-items header, .private-pipeline-heading { display: flex; gap: 1rem; align-items: start; justify-content: space-between; }
+.private-pipeline-items h4, .private-pipeline-heading h2 { margin-top: 0; }
+.private-pipeline-items h5 { margin-bottom: .35rem; }
+.private-pipeline-decisions { display: grid; gap: .75rem; margin-block: 1rem; }
+.private-pipeline-decisions fieldset { display: grid; gap: .75rem; border: 1px solid var(--border); border-radius: .6rem; padding: 1rem; }
+.private-pipeline-decisions label, .private-panel details > label { display: grid; gap: .4rem; margin-block: .75rem; font-weight: 650; }
+.private-pipeline-decisions select, .private-pipeline-decisions input, .private-panel details input, .private-panel details textarea { width: 100%; padding: .65rem; border: 1px solid var(--border-strong); border-radius: .5rem; color: var(--text); background: var(--surface); font: inherit; }
+.private-panel > details { border-top: 1px solid var(--border); padding-block: 1rem; }
+.private-panel > details summary { min-height: 44px; cursor: pointer; font-weight: 700; }
 .private-session-watch-list { list-style: none; padding: 0; display: grid; gap: 1rem; }
 .private-session-watch-list > li { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 1.25rem; overflow-wrap: anywhere; }
 .private-session-watch-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-bottom: 1rem; }
@@ -215,4 +229,5 @@
   .private-navigation.is-open { display: grid; }
   .private-header nav a { justify-content: space-between; }
   .private-home-grid { grid-template-columns: 1fr; }
+  .private-pipeline-items header, .private-pipeline-heading { display: grid; gap: .35rem; }
 }

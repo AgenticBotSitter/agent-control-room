@@ -2,13 +2,14 @@ import { z } from "zod";
 import { jobStates, attemptStates } from "../../domain/v1/types";
 import { harnessRunStates } from "../../harness/v1/types";
 import { projectViewSchema, catalogProjectIdSchema } from "./project-wire";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 const id = catalogProjectIdSchema;
 const text = (max: number) => z.string().trim().min(1).max(max).refine(value => ![...value].some(char =>
   (char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) && !["\n", "\r", "\t"].includes(char)));
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/);
+const model = z.string().regex(MODEL_IDENTIFIER_PATTERN_V1);
 const effort = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);
 const usageUnknownReason = z.enum(["usage_not_reported", "model_not_recorded", "price_table_not_recorded",
   "price_entry_not_recorded", "partial_token_usage", "cache_pricing_not_recorded"]);
