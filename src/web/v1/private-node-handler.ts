@@ -380,7 +380,7 @@ function createNodeHandler(options: NodeHandlerOptions, mode: NodeHandlerMode) {
         const work = Promise.resolve().then(async () => {
           const gated = await bootstrap?.route(request);
           if (gated) return gated;
-          const staticPath = head.url.pathname.startsWith("/_next/") || head.url.pathname === "/favicon.svg";
+          const staticPath = head.url.pathname.startsWith("/_next/") || ["/favicon.svg", "/service-worker.js", "/manifest.webmanifest"].includes(head.url.pathname);
           if (!staticPath) return options.handler(request);
           if (head.url.search || head.method === "POST") throw new RequestFailure(404);
           return options.assets.respond(head.url.pathname, head.method) ?? new Response(null, { status: 404 });

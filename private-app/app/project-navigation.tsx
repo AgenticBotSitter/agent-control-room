@@ -5,6 +5,12 @@ import type { EffectiveProjectPresentation } from "../../src/web/v1/project-wire
 
 type ProjectPage = "overview" | "inbox" | "work" | "pipelines" | "improvements" | "agents" | "automations" | "files" | "reviews" | "activity" | "news" | "coordination" | "settings";
 
+/** Purely presentation-level gate shared by the project tabs and their tests.
+ * The server independently refuses disabled-module routes and commands. */
+export function projectModuleVisible(module: "news", globallyEnabled: boolean, presentation?: EffectiveProjectPresentation) {
+  return globallyEnabled && (presentation === undefined || presentation.availableModules.includes(module));
+}
+
 export function ProjectNavigation({ projectId, current, presentation }: {
   projectId: string; current: ProjectPage; presentation?: EffectiveProjectPresentation;
 }) {
@@ -12,8 +18,7 @@ export function ProjectNavigation({ projectId, current, presentation }: {
   const newsModuleGlobal = useProductModule("news");
   // Legacy projects (no presentation) keep the global module decision. Saved presentations
   // additionally constrain news to templates that include it.
-  const newsSaved = presentation === undefined || presentation.availableModules.includes("news");
-  const news = newsModuleGlobal && newsSaved;
+  const news = projectModuleVisible("news", newsModuleGlobal, presentation);
   const base = `/projects/${encodeURIComponent(projectId)}`;
   const link = (href: string, label: string, page: ProjectPage) =>
     <a href={href} aria-current={current === page ? "page" : undefined}>{label}</a>;

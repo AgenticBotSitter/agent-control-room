@@ -4,7 +4,7 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { adaptPglite, type DatabaseSession } from "../src/persistence/database";
 import { buildProjectEventV1, encodeProjectEventCursorV1, formatProjectEventSseV1, PROJECT_EVENT_INPUT_V1,
-  ProjectEventStoreV1, type ProjectEventInputV1 } from "../src/project-events/v1";
+  ProjectEventStoreV1, TaskProjectEventWriterV1, taskProjectEventActionsV1, type ProjectEventInputV1 } from "../src/project-events/v1";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { mergeProjectActivityEventsV1 } from "../src/web/v1/project-activity-browser-client";
 
@@ -47,7 +47,8 @@ async function setup() {
     normalized_state,domain_state,health,authority_mode,observed_at,payload)
     VALUES($1,$2,$3,'adapter:timeline-foreign',$1,'fixture-v1',$1,'running','active','healthy','control_room_native',$4,'{}')`,
   [foreignTenantProjectId, foreignTenantId, foreignWorkspaceId, now]);
-  return { raw, store: new ProjectEventStoreV1(adaptPglite(raw), key, () => now) };
+  const db = adaptPglite(raw);
+  return { raw, db, store: new ProjectEventStoreV1(db, key, () => now) };
 }
 
 function input(index: number, projectId = scope.projectId): ProjectEventInputV1 {
@@ -176,4 +177,116 @@ test("B-093 anchors an empty stream so a bounded first replay cannot skip a burs
     assert.deepEqual(second.events.map(event => event.sequence), [101]); assert.equal(second.hasMore, false);
     assert.equal(mergeProjectActivityEventsV1(first.events, second.events, scope.projectId).length, 101);
   } finally { await raw.close(); }
+});
+
+test("B-093 refuses a lifecycle event whose workspace is not the project's own", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const writer = new TaskProjectEventWriterV1(store);
+    // OWN_PROJECT really lives in scope.workspaceId. The event names
+    // siblingWorkspaceId, which is a real workspace OF THE SAME TENANT, so the
+    // project-exists half of the guard passes and only the workspace half can
+    // refuse. Dropping that half makes this append succeed.
+    await assert.rejects(db.transaction(tx => writer.appendInSession(tx, {
+      ...scope, workspaceId: siblingWorkspaceId, projectId: scope.projectId,
+      subjectId: "job:cross-workspace", action: "task_created",
+      sourceId: "source:cross-workspace", sourceVersion: "cross-workspace-v1", occurredAt: now,
+    })), (error: unknown) => {
+      assert.equal((error as { safeCode?: unknown })?.safeCode, "project_not_found",
+        "an event naming a workspace the project does not belong to must be refused");
+      return true;
+    });
+    // The refusal is the guard's, and it happens before the write path: the
+    // event table and the head table are both still empty for this project.
+    assert.equal((await raw.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM control_project_events WHERE project_id=$1",
+      [scope.projectId])).rows[0]?.count, "0");
+    assert.equal((await raw.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM control_project_event_stream_heads WHERE project_id=$1",
+      [scope.projectId])).rows[0]?.count, "0",
+    "a refused cross-workspace append must not even anchor a stream head");
+    // The same writer still files the event under the workspace the project
+    // really belongs to, so the guard is a scope check and not a blanket
+    // refusal, and the same project accepts an event one moment later.
+    const accepted = await db.transaction(tx => writer.appendInSession(tx, {
+      ...scope, projectId: scope.projectId, subjectId: "job:own-workspace", action: "task_created",
+      sourceId: "source:own-workspace", sourceVersion: "own-workspace-v1", occurredAt: now,
+    }));
+    assert.equal(accepted.event.workspaceId, scope.workspaceId);
+    assert.equal(accepted.replayed, false);
+  } finally { await raw.close(); }
+});
+
+test("task and project lifecycle actions append exactly once, roll back atomically, and resume in order", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const writer = new TaskProjectEventWriterV1(store);
+    const privateSentinel = "PRIVATE-PROMPT-MUST-NOT-APPEAR";
+    for (const [index, action] of taskProjectEventActionsV1.entries()) {
+      const lifecycle = { ...scope, subjectId: action.startsWith("project_")
+        ? scope.projectId : `job:lifecycle:${index}`, action, sourceId: `source:lifecycle:${index}`,
+        sourceVersion: `action-${index}`, occurredAt: now,
+        ...(index === 0 ? { privateText: privateSentinel } : {}) };
+      await db.transaction(tx => writer.appendInSession(tx, lifecycle));
+    }
+    const snapshot = await store.read({ ...scope, limit: 6 });
+    assert.deepEqual(snapshot.events.map(event => event.sequence), [6, 7, 8, 9, 10, 11]);
+    assert.equal(snapshot.events.length, 6);
+    const older = await store.read({ ...scope, beforeCursor: encodeProjectEventCursorV1(snapshot.events[0]!), limit: 10 });
+    assert.deepEqual(older.events.map(event => event.sequence), [1, 2, 3, 4, 5]);
+    assert.doesNotMatch(JSON.stringify([...older.events, ...snapshot.events]), new RegExp(privateSentinel));
+    assert.ok([...older.events, ...snapshot.events].every(event => event.presentationOnly
+      && !event.grantsApproval && !event.grantsCommandAuthority && !event.grantsExecutionAuthority));
+    const cursor = encodeProjectEventCursorV1(snapshot.events.at(-1)!);
+
+    await assert.rejects(db.transaction(async tx => {
+      await writer.appendInSession(tx, { ...scope, subjectId: "job:rolled-back", action: "task_failed",
+        sourceId: "source:rolled-back", sourceVersion: "rollback-v1", occurredAt: now });
+      throw new Error("force rollback");
+    }), /force rollback/);
+    const replay = await store.read({ ...scope, afterCursor: cursor, limit: 10 });
+    assert.deepEqual(replay.events, []);
+    assert.equal((await raw.query<{ count: string }>("SELECT count(*)::text AS count FROM control_project_events WHERE tenant_id=$1 AND project_id=$2",
+      [scope.tenantId, scope.projectId])).rows[0]?.count, String(taskProjectEventActionsV1.length));
+  } finally { await raw.close(); }
+});
+
+
+// The main-state staging in project-activity-lifecycle-postgres.test.ts drops the
+// GRANT statements a staged migration prefix cannot run. That filter is the only
+// thing standing between a real previous-release grant set and a baseline that
+// is quietly missing privileges, so it is asserted here without a database: a
+// filter that under-grants would make the down-migration equality pass for the
+// wrong reason, and one that over-grants would raise 42P01 on the server.
+test("B-093 keeps only the grants a staged migration prefix can actually run", async () => {
+  const { applicableStatements } = await import("./project-activity-lifecycle-postgres.test.ts");
+  const absent = new Set(["later_table", "later_column"]);
+  const statements = [
+    // Kept verbatim: nothing absent is named.
+    "GRANT SELECT ON projects, control_jobs TO control_room_private_web",
+    "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_application",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_reader",
+    // Trimmed to the names that exist: the privileges that do exist must survive,
+    // or the baseline silently under-grants and the equality below it is a lie.
+    "GRANT SELECT ON projects, later_table, control_jobs TO control_room_private_web",
+    "GRANT UPDATE (state, later_column, version) ON pipeline_runs TO control_room_task_coordinator",
+    // Dropped entirely: an emptied list is a syntax error, not a no-op, and a
+    // statement still naming an absent object would raise 42P01/42703.
+    "GRANT SELECT ON later_table TO control_room_private_web",
+    "GRANT UPDATE (later_column) ON pipeline_runs TO control_room_task_coordinator",
+  ];
+  const kept = applicableStatements(statements, absent);
+  assert.deepEqual(kept, [
+    "GRANT SELECT ON projects, control_jobs TO control_room_private_web",
+    "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_application",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_reader",
+    "GRANT SELECT ON projects, control_jobs TO control_room_private_web",
+    "GRANT UPDATE (state, version) ON pipeline_runs TO control_room_task_coordinator",
+  ]);
+  // An empty absent set is a pass-through: a fresh install has every table, so
+  // nothing there is ever filtered.
+  assert.deepEqual(applicableStatements(statements, new Set()), statements);
+  // Nothing kept may still name an absent object, or the server refuses it.
+  for (const statement of kept)
+    for (const name of absent) assert.doesNotMatch(statement, new RegExp(`\\b${name}\\b`, "u"));
 });

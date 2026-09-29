@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, readFile, writeFile, stat, rm } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readdir, readFile, writeFile, stat, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { captureProvisionedMacLocalConfigurationV1,
   prepareMacLocalDatabaseUpgradeV1, finishMacLocalDatabaseUpgradeV1,
   prepareProvisionedWorkIntakeConfigurationV1,
@@ -18,7 +19,10 @@ import { applyMacGrantDiffV1, desiredMacGrantsV1, diffMacGrantsV1, macGrantCatal
   "../scripts/mac-local/database-upgrade-grants.mjs";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
   "../src/web/v1/mac-local-database-roles.ts";
-import { captureWorkIntakeServerConfigurationV1, workIntakeClientFileNameV1 } from "../src/work-intake/v1/installed-configuration.ts";
+import { sha256Digest } from "../src/security/canonical-digest";
+import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
+  workIntakeClientFileNameV1 } from "../src/work-intake/v1/installed-configuration.ts";
+import { createMappedWorkIntakeCredentialVerifierV1 } from "../src/work-intake/v1/machine-auth.ts";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { parseMacDatabaseLoginCodesV1, planMacDatabaseUpgradeSnapshotV1, sanitizedMacDatabaseUpgradeFailureV1 } from
   "../scripts/mac-local/database-upgrade-remote.mjs";
@@ -344,9 +348,9 @@ test("queue fingerprint ignores which UTC days have queue_stats partitions but n
   assert.equal(normalizeQueueCatalogV1({ namespace: [{ nspname: "control_room_queue" }] }).namespace[0].nspname, "control_room_queue");
 });
 
-test("the role manifest names every role the schema files create or grant to, with no dangerous attribute", async () => {
-  const { databaseRoleManifestV1: manifest, databaseRoleAttributesV1 } =
-    await import("../scripts/mac-local/database-role-manifest.mjs");
+test("the role manifest names every role the migrations, down files and schema files touch, with no dangerous attribute", async t => {
+  const { databaseRoleManifestV1: manifest, databaseRoleAttributesV1, databaseRoleNamesInSqlV1,
+    unknownDatabaseRoleNamesV1 } = await import("../scripts/mac-local/database-role-manifest.mjs");
   const logins = Object.keys(manifest.logins), known = new Set([...manifest.groups, ...logins]);
   assert.equal(known.size, manifest.groups.length + logins.length, "a name is either a group or a login");
   for (const [login, { group }] of Object.entries(manifest.logins)) assert.ok(manifest.groups.includes(group), login);
@@ -362,6 +366,99 @@ test("the role manifest names every role the schema files create or grant to, wi
   for (const match of (await readFile(new URL("../deploy/postgres/apply-migrations.mjs", import.meta.url), "utf8"))
     .matchAll(/CREATE ROLE (control_room_[a-z_]+)/gu)) named.add(match[1]);
   assert.deepEqual([...named].filter(role => !known.has(role)).sort(), []);
+
+  // The migrations and down files are applied to the same database the upgrade
+  // repairs, and they name roles in the statements that run against it. Every
+  // name in every file has to be one the upgrade itself creates, checks or
+  // revokes, or the owner has a live role the tool never reasons about.
+  const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+  const onDisk = [];
+  for (const directory of ["db/migrations", "db/down"])
+    for (const name of (await readdir(join(repositoryRoot, directory))).sort())
+      if (name.endsWith(".sql")) onDisk.push(`${directory}/${name}`);
+  const touched = new Map();
+  for (const file of onDisk) {
+    for (const [name, forms] of databaseRoleNamesInSqlV1(await readFile(join(repositoryRoot, file), "utf8"))) {
+      const existing = touched.get(name);
+      if (existing) for (const form of forms) existing.add(form);
+      else touched.set(name, new Set(forms));
+    }
+  }
+  // Every file on disk is scanned, not only the ledger's entries, so a migration
+  // added without regenerating the ledger is still checked here.
+  const ledger = JSON.parse(await readFile(join(repositoryRoot, "deploy/postgres/migration-ledger.json"), "utf8"));
+  const ledgerMigrations = new Set(ledger.entries.map(entry => entry.file));
+  for (const file of onDisk) {
+    const down = file.startsWith("db/down/");
+    const up = `db/migrations/${file.slice("db/down/".length)}`;
+    assert.ok(down ? ledgerMigrations.has(up) : ledgerMigrations.has(file), `${file} is in the migration ledger`);
+  }
+  assert.ok(onDisk.length > 100, "the scan sees the whole migration and down set");
+  assert.deepEqual([...touched.keys()].filter(role => !known.has(role)).sort(), [], "no role is named outside the manifest");
+  assert.deepEqual([...touched.keys()].sort(),
+    ["control_room_agent_reviewer", "control_room_native_results", "control_room_private_web",
+      "control_room_task_coordinator", "control_room_work_intake"],
+  "the migrations name these manifest roles and no others");
+
+  // The scanner reads what SQL actually means, so prove it on a temp copy of
+  // the tree with a role the manifest has never heard of planted in each
+  // statement form a migration can use. A green scan over the real files alone
+  // would be just as green over a scanner that never matches anything.
+  const planted = "control_room_planted_unknown";
+  const copy = await mkdtemp(join(tmpdir(), "mac-db-role-manifest-"));
+  t.after(() => rm(copy, { recursive: true, force: true }));
+  await cp(join(repositoryRoot, "db"), join(copy, "db"), { recursive: true });
+  const statements = {
+    "create": `CREATE ROLE ${planted} NOLOGIN;`,
+    "alter": `ALTER ROLE ${planted} NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;`,
+    "drop": `DROP ROLE ${planted};`,
+    "member": `GRANT control_room_reader TO ${planted} IN ROLE control_room_backup;`,
+    "admin": `GRANT control_room_backup TO ${planted} WITH ADMIN OPTION;`,
+    "grant": `GRANT SELECT ON control_nodes TO ${planted};`,
+    "revoke": `REVOKE ALL ON control_nodes FROM ${planted};`,
+    "owner": `ALTER VIEW control_nodes OWNER TO ${planted};`,
+    "owned": `DROP OWNED BY ${planted} CASCADE;`,
+    "session": `SET ROLE ${planted};`,
+    "grantor": `GRANT SELECT ON control_nodes TO control_room_reader GRANTED BY ${planted};`,
+    "catalog": `IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${planted}') THEN END IF;`,
+  };
+  const probe = join(copy, "db/migrations/0110_planted_probe.sql"), probeDown = join(copy, "db/down/0110_planted_probe.sql");
+  for (const [form, statement] of Object.entries(statements)) {
+    await writeFile(probe, statement);
+    await writeFile(probeDown, statement);
+    assert.deepEqual(unknownDatabaseRoleNamesV1([await readFile(probe, "utf8")]), [planted],
+      `a ${form} statement in a migration names a role outside the manifest`);
+    assert.deepEqual(unknownDatabaseRoleNamesV1([await readFile(probeDown, "utf8")]), [planted],
+      `a ${form} statement in a down file names a role outside the manifest`);
+    // A commented-out statement is not a role the database ever sees and must
+    // not fail the manifest.
+    assert.deepEqual(unknownDatabaseRoleNamesV1([`-- ${statement}\n/* ${statement} */\n`]), [],
+      `a commented-out ${form} statement is not a live role`);
+  }
+  // The planted copy fails the same check the real files pass, in both places.
+  const copyFiles = [];
+  for (const directory of ["db/migrations", "db/down"])
+    for (const name of (await readdir(join(copy, directory))).sort())
+      if (name.endsWith(".sql")) copyFiles.push(join(copy, directory, name));
+  assert.deepEqual([...unknownDatabaseRoleNamesV1(await Promise.all(
+    copyFiles.map(file => readFile(file, "utf8"))))], [planted],
+  "the whole copied tree, with the probe still in it, fails the manifest check");
+
+  assert.deepEqual(unknownDatabaseRoleNamesV1(["GRANT SELECT ON control_nodes TO PUBLIC;\n"
+    + "ALTER TABLE control_nodes OWNER TO CURRENT_USER;\n"
+    + "REVOKE EXECUTE ON FUNCTION f() FROM PUBLIC;\n"
+    + "REVOKE TEMPORARY ON DATABASE control_room FROM PUBLIC;\n"
+    + "GRANT control_room_backup TO control_room_web;\n"
+    + "EXECUTE format('REVOKE SELECT ON control_nodes FROM %I', 'control_room_private_web');\n"
+    + "GRANT SELECT ON control_nodes TO \"control_room_reader\";"]), [], "pseudo-roles are not manifest roles");
+  assert.deepEqual(unknownDatabaseRoleNamesV1(["GRANT SELECT ON control_nodes TO control_room_private_web;\n"
+    + "REVOKE ALL ON control_nodes FROM control_room_work_intake;\n"
+    + "CREATE ROLE control_room_backup NOLOGIN;\n"]), [], "every known role still passes");
+  assert.deepEqual(unknownDatabaseRoleNamesV1([
+    `GRANT SELECT ON control_nodes TO ${planted}, control_room_private_web;`,
+    `REVOKE ALL ON control_nodes FROM control_room_work_intake, ${planted};`,
+  ]), [planted], "one unknown name in a list fails, and the known ones do not");
+
   for (const role of known) {
     const attributes = databaseRoleAttributesV1(role);
     assert.match(attributes, /^(?:NO)?LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS$/u);
@@ -458,22 +555,7 @@ test("a finished upgrade leaves the Mac host startable: the real roster check ac
   // The real config loader and the real roster check run unmodified; only the
   // effectful release modules (host composition, postgres, serving, renderer,
   // intake service) are stubbed so no listener or database actually opens.
-  const load = async path => {
-    const name = path.split("/").at(-1);
-    if (name === "macLocalProtectedLoader.js") return macLocalProtectedLoader;
-    if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() {
-      return { async start() { return { async close() {} }; } };
-    } };
-    if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {
-      return { async start() {}, async close() {} };
-    } };
-    if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
-    if (name === "serving.js") return { async loadPrivateClientAssets() { return {}; } };
-    if (name === "index.js") return { default() {} };
-    throw new Error(`unexpected ${name}`);
-  };
-  const active = await startMacLocalWebHost({ protectedRoot: root }, { load });
-  await active.close();
+  await startWebHostOnRoster(t, root);
 });
 
 test("repoint updates the intake record's endpoint too, so a later upgrade converges instead of refusing", async t => {
@@ -614,3 +696,176 @@ test("an installation that already has the publisher and intake login gets a cod
   assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1({ ...options, mainCommit: "e".repeat(40) }),
     { mainCommit: "e".repeat(40), nothingToPrepare: true });
 });
+
+test("a finish that cannot write the intake record still leaves every client file on disk", async t => {
+  // The order the finish must keep: a worker's client file is on disk before
+  // the intake record that carries only its digest. `verifyLogin` runs after
+  // the installer has read every existing file and before it writes any, so
+  // replacing the record with a directory fails the last write of the run and
+  // nothing else. The clients are already on disk by then.
+  const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-write-order-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "config"), clientRoot = join(config, "work-intake-clients");
+  const intakeFile = join(config, "work-intake-server.json");
+  const workerIds = ["worker:codex:mac-1", "worker:claude:mac-1", "worker:hermes:mac-1"];
+  const clientPath = workerId => join(clientRoot, workIntakeClientFileNameV1(workerId));
+  const options = { protectedRoot: root, mainCommit: "e".repeat(40) };
+  await baseUpgradeFixture(root);
+  await prepareMacLocalDatabaseUpgradeV1(options);
+  // Sabotage once, on the first login checked: the run then verifies the rest,
+  // writes the role record and every client file, and fails on the last write
+  // of the run, the rename onto the intake record. The error has to be the
+  // rename's own, not the sabotage's, or this proves nothing about the order.
+  await assert.rejects(finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async (_configuration, role) => {
+    if (role === "control_room_publisher") { await rm(intakeFile, { force: true }); await mkdir(intakeFile); }
+  } }), { code: "EISDIR" });
+  for (const workerId of workerIds) {
+    const client = captureWorkIntakeClientConfigurationV1(JSON.parse(await readFile(clientPath(workerId), "utf8")));
+    assert.equal((await stat(clientPath(workerId))).mode & 0o777, 0o600, workerId);
+    assert.match(client.bearerSecret, /^[A-Za-z0-9_-]{43}$/u, workerId);
+  }
+
+  // The next run owns the repair: with the record gone, the login is missing
+  // again, so it is recreated from the client files already on disk.
+  await rm(intakeFile, { recursive: true, force: true });
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} });
+  const intake = captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8")));
+  const digests = new Map(intake.credentials.map(entry => [entry.workerId, entry.credentialDigest]));
+  assert.deepEqual([...digests.keys()].sort(), [...workerIds].sort());
+  for (const workerId of workerIds)
+    assert.equal(digests.get(workerId), sha256Digest(JSON.parse(await readFile(clientPath(workerId), "utf8")).bearerSecret),
+      `${workerId} signs in with the file the server accepts`);
+  await startWebHostOnRoster(t, root);
+});
+
+test("a finish killed between the client files and the intake record ends in a good state on the next run", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-interrupted-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "config"), clientRoot = join(config, "work-intake-clients");
+  const intakeFile = join(config, "work-intake-server.json");
+  const workerIds = ["worker:codex:mac-1", "worker:claude:mac-1", "worker:hermes:mac-1"];
+  const clientPath = workerId => join(clientRoot, workIntakeClientFileNameV1(workerId));
+  const options = { protectedRoot: root, mainCommit: "e".repeat(40) };
+  await baseUpgradeFixture(root);
+  await prepareMacLocalDatabaseUpgradeV1(options);
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} });
+
+  // The state a kill right after the record landed used to leave behind: the
+  // record present, so the intake login reads as finished, and no client file.
+  // Before the fix the next finish answered nothingToFinish, wrote nothing,
+  // and every worker stayed unable to sign in until someone re-provisioned the
+  // whole database.
+  const readIntake = async () => captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8")));
+  for (const workerId of workerIds) await rm(clientPath(workerId), { force: true });
+  const stranded = await readIntake();
+  const repaired = await finishMacLocalDatabaseUpgradeV1({ ...options,
+    verifyLogin: async () => { throw new Error("a repair re-authenticates no login"); } });
+  assert.deepEqual(repaired, { finished: true, mainCommit: options.mainCommit, repairedIntakeClients: [...workerIds].sort() });
+
+  const after = await readIntake();
+  const digests = new Map(after.credentials.map(entry => [entry.workerId, entry.credentialDigest]));
+  assert.deepEqual(after.credentials.map(entry => entry.workerId).sort(), [...workerIds].sort());
+  assert.equal(after.database.password, stranded.database.password, "the repair changes no login");
+  assert.equal(after.integrityKey, stranded.integrityKey);
+  for (const workerId of workerIds) {
+    const client = captureWorkIntakeClientConfigurationV1(JSON.parse(await readFile(clientPath(workerId), "utf8")));
+    assert.equal((await stat(clientPath(workerId))).mode & 0o777, 0o600);
+    assert.equal((await stat(clientRoot)).mode & 0o777, 0o700);
+    // The file the worker signs in with is the one the server now accepts.
+    assert.equal(digests.get(workerId), sha256Digest(client.bearerSecret), workerId);
+  }
+  // The real credential verifier the intake service builds from the record
+  // accepts each worker's bearer and nothing else.
+  const verifier = createMappedWorkIntakeCredentialVerifierV1(after.credentials);
+  for (const workerId of workerIds) {
+    const client = JSON.parse(await readFile(clientPath(workerId), "utf8"));
+    assert.equal((await verifier.verify(client.bearerSecret)).identityId,
+      after.credentials.find(entry => entry.workerId === workerId).principal.identityId);
+  }
+  await assert.rejects(verifier.verify("z".repeat(43)), /work_intake_credential_refused/u);
+  await startWebHostOnRoster(t, root);
+
+  // A further run is the ordinary no-op again, and changes nothing.
+  const before = await readFile(intakeFile);
+  assert.deepEqual(await finishMacLocalDatabaseUpgradeV1({ ...options,
+    verifyLogin: async () => { throw new Error("nothing new to verify"); } }),
+  { finished: true, mainCommit: options.mainCommit, nothingToFinish: true });
+  assert.deepEqual(await readFile(intakeFile), before);
+  for (const workerId of workerIds) assert.ok(await readFile(clientPath(workerId), "utf8"), workerId);
+});
+
+test("a repair keeps every client that survived, and leaves a record that is not this Mac's alone", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-partial-repair-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "config"), clientRoot = join(config, "work-intake-clients");
+  const intakeFile = join(config, "work-intake-server.json");
+  const options = { protectedRoot: root, mainCommit: "f".repeat(40) };
+  await baseUpgradeFixture(root);
+  await prepareMacLocalDatabaseUpgradeV1(options);
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} });
+  const intakeBefore = captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8")));
+  const keep = "worker:codex:mac-1", lost = "worker:claude:mac-1";
+  const keptSecret = JSON.parse(await readFile(join(clientRoot, workIntakeClientFileNameV1(keep)), "utf8")).bearerSecret;
+  await rm(join(clientRoot, workIntakeClientFileNameV1(lost)), { force: true });
+
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} });
+  assert.equal(JSON.parse(await readFile(join(clientRoot, workIntakeClientFileNameV1(keep)), "utf8")).bearerSecret,
+    keptSecret, "a client that survived keeps the exact secret its owner installed");
+  const after = captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8")));
+  assert.equal(after.credentials.find(entry => entry.workerId === keep).credentialDigest,
+    intakeBefore.credentials.find(entry => entry.workerId === keep).credentialDigest,
+    "the surviving worker's server-side digest is unchanged");
+  assert.equal(after.credentials.find(entry => entry.workerId === lost).credentialDigest,
+    sha256Digest(JSON.parse(await readFile(join(clientRoot, workIntakeClientFileNameV1(lost)), "utf8")).bearerSecret));
+  await startWebHostOnRoster(t, root);
+
+  // A record that names a worker this Mac has not enabled is not one a finish
+  // wrote, and the host would refuse to start on it, so the repair leaves it
+  // byte for byte: rewriting credentials the owner never asked about would be
+  // a worse outcome than the state the owner can already see and fix.
+  await rm(join(clientRoot, workIntakeClientFileNameV1(lost)), { force: true });
+  const stranger = { workerId: "worker:unknown:mac-1", workerKind: "codex",
+    credentialDigest: sha256Digest("q".repeat(43)),
+    principal: { ...intakeBefore.credentials[0].principal, identityId: "identity:work-intake:unknown" } };
+  const foreign = { ...intakeBefore, credentials: [...intakeBefore.credentials, stranger] };
+  await writeFile(intakeFile, JSON.stringify(foreign), { mode: 0o600 });
+  const before = await readFile(intakeFile);
+  assert.deepEqual(await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} }),
+    { finished: true, mainCommit: options.mainCommit, nothingToFinish: true });
+  assert.deepEqual(await readFile(intakeFile), before, "a record outside the roster is never rewritten");
+  assert.deepEqual(captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8"))).credentials
+    .map(entry => entry.workerId).sort(), ["worker:claude:mac-1", "worker:codex:mac-1", "worker:hermes:mac-1",
+    "worker:unknown:mac-1"]);
+
+  // The same holds for a record with no roster at all, which is what the
+  // pre-upgrade installer wrote: still a no-op, still nothing written.
+  await writeFile(intakeFile, JSON.stringify(prepareProvisionedWorkIntakeConfigurationV1({
+    database: intakeBefore.database, integrityKey: "k".repeat(43), credentials: [] })), { mode: 0o600 });
+  const empty = await readFile(intakeFile);
+  assert.deepEqual(await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} }),
+    { finished: true, mainCommit: options.mainCommit, nothingToFinish: true });
+  assert.deepEqual(await readFile(intakeFile), empty);
+});
+
+/** Runs the real host composition over a protected root with every effectful
+ * module stubbed, so the roster check the owner hits at start-up is the one
+ * under test without a listener or a database. */
+async function startWebHostOnRoster(t, protectedRoot) {
+  const load = async path => {
+    const name = path.split("/").at(-1);
+    if (name === "macLocalProtectedLoader.js") return macLocalProtectedLoader;
+    if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() {
+      return { async start() { return { async close() {} }; } };
+    } };
+    if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {
+      return { async start() {}, async close() {} };
+    } };
+    if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
+    if (name === "serving.js") return { async loadPrivateClientAssets() { return {}; } };
+    if (name === "index.js") return { default() {} };
+    throw new Error(`unexpected ${name}`);
+  };
+  const active = await startMacLocalWebHost({ protectedRoot }, { load });
+  await active.close();
+  t.diagnostic("the real roster check accepted the intake record");
+}

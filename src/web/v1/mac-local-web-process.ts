@@ -31,6 +31,7 @@ import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
+import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -75,6 +76,8 @@ export interface MacLocalWebProcessOptionsV1 {
   actionInboxSource?: Readonly<{ read(input: { tenantId: string; actorId: string; grantedAt: string; now: string }): Promise<{
     observedAt: string; items: ActionInboxItemV1[]; truncated: boolean;
   }> }>;
+  /** Optional private VAPID credentials. Omission leaves push unavailable. */
+  ownerWebPush?: OwnerWebPushConfigV1;
   clock?: () => number;
 }
 
@@ -107,7 +110,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     limits: { maxProjects: 24, maxTasksPerProject: 200, maxResultsPerTask: 20, maxArticleSources: 0, maxIdeaParticipants: 0 },
     projectTemplates: [{ id: "control-room", displayName: "Control Room", enabledModules: [] }] });
   const projects = new WebProjectService(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined, productConfiguration);
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined, productConfiguration,
+    options.taskReadKeys?.harnessIntegrityKey);
   const tasks = new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
   const projectActivity = new ProjectActivityServiceV1(options.database.client,
@@ -138,6 +142,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
   const improvementHttp = improvementDesk ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: improvementDesk, clock }) : undefined;
+  const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
+    channel: createWebPushChannelV1(options.ownerWebPush) } : undefined;
   let closed: Promise<void> | undefined;
 
   function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
@@ -291,6 +297,32 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         await projects.authorizeCatalog(identity);
         return Response.json(productConfiguration, { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/owner-web-push") {
+        if (!ownerPush) throw new WebAccessError("not_found");
+        if (request.method === "GET" && !url.search) {
+          return Response.json({ enabled: true, publicKey: options.ownerWebPush!.publicKey, subscribed: false,
+            message: "This browser can subscribe to phone notifications." }, { headers: privateResponseHeaders });
+        }
+        if (request.method === "POST" && !url.search && request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() === "application/json") {
+          const subscription = parseWebPushSubscriptionV1(await request.json());
+          await ownerPush.store.subscribe({ id: "", tenantId: profile.tenantId, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh,
+            auth: subscription.keys.auth, expiresAt: subscription.expirationTime === null ? null : new Date(subscription.expirationTime).toISOString() });
+          return new Response(null, { status: 204, headers: privateResponseHeaders });
+        }
+        if (request.method === "DELETE" && !url.search && request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() === "application/json") {
+          const body = await request.json(); if (!body || typeof body !== "object" || typeof (body as { endpoint?: unknown }).endpoint !== "string") throw new WebAccessError("invalid_request");
+          await ownerPush.store.unsubscribe(profile.tenantId, (body as { endpoint: string }).endpoint);
+          return new Response(null, { status: 204, headers: privateResponseHeaders });
+        }
+        throw new WebAccessError("invalid_request");
+      }
+      if (url.pathname === "/api/v1/owner-web-push/test") {
+        if (!ownerPush || request.method !== "POST" || url.search || request.body) throw new WebAccessError("invalid_request");
+        const now = new Date(clock()).toISOString();
+        await deliverOwnerPushV1({ tenantId: profile.tenantId, kind: "test", link: "/settings", dedupeKey: `test:${clock().toString(36)}`,
+          now, store: ownerPush.store, channel: ownerPush.channel });
+        return new Response(null, { status: 204, headers: privateResponseHeaders });
       }
       const activity = /^\/api\/v1\/projects\/([^/]+)\/(activity|events)$/.exec(url.pathname);
       if (activity) {

@@ -15,6 +15,7 @@ import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../deploy/postgres/evidence.mjs";
 import { inspectMacDatabaseUpgradeV1 } from "../scripts/mac-local/database-upgrade-remote.mjs";
 import { postgresScramVerifierV1 } from "../scripts/mac-local/database-upgrade-scram.mjs";
+import { databaseRoleManifestV1 } from "../scripts/mac-local/database-role-manifest.mjs";
 import { macDatabaseUpgradePlanIsEmptyV1, plainMacDatabaseUpgradePlanWordsV1 } from
   "../scripts/mac-local/database-upgrade-vps-step.mjs";
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
@@ -27,8 +28,26 @@ const skip = needsPg || (hasPython ? false : "needs python3 for a real terminal"
 const legacyMacLogins = ["control_room_web", "control_room_coordinator", "control_room_results",
   "control_room_queue_worker"];
 const password = login => `p${login.replaceAll("_", "")}`.padEnd(40, "x");
-const publisherPassword = "q".repeat(40), intakePassword = "w".repeat(40);
-const codes = {};
+
+// The new logins this suite's ledger-90-shaped database is missing are read from
+// the role manifest rather than written out. A slice that adds a login (S5's
+// agent reviewer did) otherwise turns every hard-coded count here red without
+// anything about this suite being wrong, and the count is the one thing a reader
+// checks first when a plan says it will create roles.
+const newLoginPassword = login => `${login.slice("control_room_".length)}pw`.padEnd(40, "x");
+const newLoginEntries = Object.entries(databaseRoleManifestV1.logins).filter(([, entry]) => entry.newLogin);
+const newLoginPasswords = Object.fromEntries(newLoginEntries.map(([login]) => [login, newLoginPassword(login)]));
+const expectedNewLogins = newLoginEntries.map(([login]) => login).sort();
+const newLoginCodes = Object.fromEntries(Object.entries(newLoginPasswords)
+  .map(([login, secret]) => [login, postgresScramVerifierV1(secret)]));
+assert.ok(expectedNewLogins.length > 0, "a ledger-90 database must be missing at least one new login");
+const codes = {
+  ...Object.fromEntries(expectedNewLogins.map(login => [login, newLoginCodes[login]])),
+  get all() { return JSON.stringify(newLoginCodes); },
+  get one() { return newLoginCodes[expectedNewLogins[0]]; },
+};
+/** What the plan line must read for the new logins this database is missing. */
+const expectedLoginWords = `new logins: ${expectedNewLogins.length} (${expectedNewLogins.join(", ")})`;
 const state = {};
 const operator = () => `host=${state.socket} port=${state.port} dbname=control_room user=postgres`;
 const tcp = (user, secret) => `host=127.0.0.1 port=${state.port} dbname=control_room user=${user} password=${secret}`;
@@ -121,8 +140,8 @@ async function refused(run, code, stage, baseline) {
   return output;
 }
 function assertNoSecret(output) {
-  for (const secret of [publisherPassword, intakePassword, ...legacyMacLogins.map(password),
-    codes.publisher, codes.intake, codes.both, "SCRAM-SHA-256"]) assert.equal(output.includes(secret), false);
+  for (const secret of [...Object.values(newLoginPasswords), ...Object.values(newLoginCodes), codes.all, codes.one,
+    ...legacyMacLogins.map(password), "SCRAM-SHA-256"]) assert.equal(output.includes(secret), false);
 }
 
 before(async () => {
@@ -163,9 +182,6 @@ before(async () => {
       PASSWORD ${state.client.escapeLiteral(password(login))}`);
     await sql(`GRANT control_room_application TO ${login}`);
   }
-  codes.publisher = postgresScramVerifierV1(publisherPassword);
-  codes.intake = postgresScramVerifierV1(intakePassword);
-  codes.both = JSON.stringify({ control_room_publisher: codes.publisher, control_room_work_intake_agent: codes.intake });
   // GitHub stands in as `upstream`; the VPS's own clone of it is `source`.
   state.upstream = join(state.root, "upstream");
   execFileSync("git", ["clone", "--quiet", "--depth", "1", "--no-local", `file://${repoRoot}`, state.upstream]);
@@ -194,12 +210,17 @@ after(async () => {
 });
 
 test("the plan reads in plain words and an empty plan is nothing to do", () => {
+  // The createRoles list is the manifest's new logins plus one group, so the
+  // wording this asserts is the real one for the roles a ledger-90 database is
+  // missing. Naming a count here instead would make the test red every time a
+  // slice adds a login, and it would stop checking the function at all.
+  const groups = 1;
   const plan = { pendingMigrations: ["db/migrations/0091_a.sql", "db/migrations/0092_b.sql", "db/migrations/0104_c.sql"],
     installQueueSchema: true, createRoles: [{ role: "control_room_work_intake" },
-      { role: "control_room_publisher" }, { role: "control_room_work_intake_agent" }],
+      ...expectedNewLogins.map(role => ({ role }))],
     membership: { grant: [{}, {}], revoke: [{}] }, grants: { extra: [{}], missing: [{}, {}, {}] } };
   assert.equal(plainMacDatabaseUpgradePlanWordsV1(plan), "3 migrations: 0091…0104 · queue tables: install"
-    + " · new groups: 1 · new logins: 2 (control_room_publisher, control_room_work_intake_agent)"
+    + ` · new groups: ${groups} · ${expectedLoginWords}`
     + " · membership changes: 3 · permission changes: 4");
   assert.equal(macDatabaseUpgradePlanIsEmptyV1(plan), false);
   assert.equal(macDatabaseUpgradePlanIsEmptyV1({ pendingMigrations: [], installQueueSchema: false, createRoles: [],
@@ -314,8 +335,8 @@ test("refuses unexpected role attributes, memberships and default grants", { ski
 test("refuses a planned new login with no code, or with the wrong code, before any backup", { skip }, async () => {
   const output = await refused(() => upgrade([head().slice(0, 7)], { answers: [[codePrompt, "\n"]] }),
     "upgrade_new_login_needs_verifier", "approve");
-  assert.match(output, /new logins: 2 \(control_room_publisher, control_room_work_intake_agent\)/u);
-  const partial = await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.publisher) }),
+  assert.match(output, new RegExp(expectedLoginWords.replaceAll("(", "\\(").replaceAll(")", "\\)"), "u"));
+  const partial = await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.one) }),
     "upgrade_new_login_needs_verifier", "plan");
   assert.match(partial, /does not cover every new login/u);
   await refused(() => upgrade([head().slice(0, 7)], { answers: approve("not-a-login-code") }),
@@ -323,18 +344,18 @@ test("refuses a planned new login with no code, or with the wrong code, before a
 });
 
 test("a no at the prompt, a dirty stage, or a plan that changed after approval changes nothing", { skip }, async () => {
-  await refused(() => upgrade([head().slice(0, 7)], { answers: [[codePrompt, `${codes.both}\n`], [applyPrompt, "n\n"]] }),
+  await refused(() => upgrade([head().slice(0, 7)], { answers: [[codePrompt, `${codes.all}\n`], [applyPrompt, "n\n"]] }),
     "upgrade_not_approved", "approve");
   const dirty = async () => {
     const [stage] = (await stages()).filter(name => name !== "cr-upgrade.keep");
     await writeFile(join(state.vps, "stages", stage, "src", "package.json"), "{}\n");
   };
-  await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.both, dirty) }),
+  await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.all, dirty) }),
     "upgrade_stage_dirty", "apply");
   let changed;
   const inject = async () => { await sql("GRANT SELECT ON control_jobs TO control_room_web"); changed = await catalog(); };
   try {
-    await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.both, inject) }),
+    await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.all, inject) }),
       "upgrade_plan_changed_refused", "plan", () => changed);
   } finally { await sql("REVOKE SELECT ON control_jobs FROM control_room_web"); }
 });
@@ -342,7 +363,7 @@ test("a no at the prompt, a dirty stage, or a plan that changed after approval c
 test("refuses when the backup fails, and writes nothing", { skip }, async () => {
   const noTools = await mkdtemp(join(state.root, "no-pg-dump-"));
   const output = await refused(() => upgrade([head().slice(0, 7)], { env: { CR_UPGRADE_TEST_PG_BIN: noTools },
-    answers: approve(codes.both) }), "upgrade_backup_failed", "backup");
+    answers: approve(codes.all) }), "upgrade_backup_failed", "backup");
   assert.match(output, /Nothing was changed/u);
 });
 
@@ -389,7 +410,7 @@ test("a pnpm workspace or pnpmfile planted above the stage never runs, and the m
     git(state.upstream, "commit", "--quiet", "-am", "name another pnpm");
     const beforeCatalog = await catalog(), beforeBackups = await backups();
     try {
-      const declined = await upgrade([head().slice(0, 7)], { answers: [[codePrompt, `${codes.both}\n`],
+      const declined = await upgrade([head().slice(0, 7)], { answers: [[codePrompt, `${codes.all}\n`],
         [applyPrompt, "n\n"]] });
       assert.equal(existsSync(marker), false, "the planted pnpmfile ran during the install");
       assert.match(declined.output, /upgrade_error:upgrade_not_approved stage=approve/u, declined.output);
@@ -411,9 +432,10 @@ test("upgrades an older ledger to HEAD with one code, a backup first and an empt
   const kept = ["control_room_migrator", "control_room_app", "control_room_scheduler", ...legacyMacLogins];
   const verifiers = () => sql("SELECT rolname,rolpassword FROM pg_authid WHERE rolname=ANY($1) ORDER BY 1", [kept]);
   const oldVerifiers = await verifiers();
-  const { code, output } = await upgrade([head().slice(0, 7)], { answers: approve(codes.both) });
+  const { code, output } = await upgrade([head().slice(0, 7)], { answers: approve(codes.all) });
   assert.equal(code, 0, output);
-  assert.match(output, /\d+ migrations: 0091…\d{4} · queue tables: install · new groups: \d+ · new logins: 2/u);
+  assert.match(output, new RegExp(`\\d+ migrations: 0091…\\d{4} · queue tables: install · new groups: \\d+ · `
+    + `${expectedLoginWords.replaceAll("(", "\\(").replaceAll(")", "\\)")}`, "u"));
   assert.match(output, /Plan digest: sha256:[0-9a-f]{64}/u);
   const done = new RegExp(`DONE ${head().slice(0, 7)}·(\\d{4})`, "u").exec(output);
   assert.ok(done, output);
@@ -423,8 +445,7 @@ test("upgrades an older ledger to HEAD with one code, a backup first and an empt
     .slice("db/migrations/".length, "db/migrations/".length + 4), done[1]);
   assert.equal(macDatabaseUpgradePlanIsEmptyV1(await inspectMacDatabaseUpgradeV1({ client: state.client })), true);
   assert.deepEqual(await verifiers(), oldVerifiers, "existing passwords are byte-identical");
-  for (const [login, secret] of [["control_room_publisher", publisherPassword],
-    ["control_room_work_intake_agent", intakePassword]]) {
+  for (const [login, secret] of Object.entries(newLoginPasswords)) {
     const session = connectTarget(tcp(login, secret));
     await session.connect();
     await session.end();

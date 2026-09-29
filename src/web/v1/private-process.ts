@@ -108,6 +108,8 @@ export interface PrivateWebProcessOptions {
   operatorSurface?: { read: (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string;
   }) => Promise<OperatorSurfaceSnapshotV1> };
+  /** Bounded per-node task and terminal-result attribution from canonical records. */
+  workerBoard?: { read: (input: { tenantId: string; now: string }) => Promise<unknown> };
   /** Owner-only canonical attention reader supplied by trusted composition.
    * It is intentionally separate from the full operator snapshot so the
    * coordinator role needs access only to the inbox table for this route. */
@@ -254,6 +256,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const operatorSurface = options.operatorSurface ? Object.freeze({
     read: options.operatorSurface.read.bind(options.operatorSurface),
   }) : undefined;
+  if (options.workerBoard && typeof options.workerBoard.read !== "function") throw new Error("invalid_private_app_config");
+  const workerBoard = options.workerBoard ? Object.freeze({ read: options.workerBoard.read.bind(options.workerBoard) }) : undefined;
   if (options.actionInboxSource && typeof options.actionInboxSource.read !== "function") throw new Error("invalid_private_app_config");
   const actionInboxSource = options.actionInboxSource ? Object.freeze({
     read: options.actionInboxSource.read.bind(options.actionInboxSource),
@@ -307,11 +311,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey,
     options.ideaProjects ? new WebIdeaProjectLifecycleOperation(options.database.client,
       { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.ideaProjects.integrityKey, clock) : undefined,
-    productConfiguration);
+    productConfiguration, options.tasks?.harnessIntegrityKey);
   const connections = new WebConnectionService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
-    { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+    { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey, newsIntegrityKey: options.news?.integrityKey,
+      productConfiguration });
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
@@ -331,7 +336,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     ? new WebIdeaRoundProposalOperation(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
       options.ideaProjects.integrityKey, tasks, clock, ideaResultProjection) : undefined;
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-    { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
+    { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey, productConfiguration }, clock);
   const herdr = new WebHerdrService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     options.herdrObservations ?? [], clock, options.ideaProjects?.integrityKey);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
@@ -482,6 +487,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read(scope));
             if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
             return Response.json({ snapshot }, { headers: privateResponseHeaders });
+          }
+          if (url.pathname === "/api/v1/workers-board") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!workerBoard) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return { tenantId: options.tenantId, now: actor.now };
+            });
+            return Response.json(await workerBoard.read(scope), { headers: privateResponseHeaders });
           }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
           if (observations) {
