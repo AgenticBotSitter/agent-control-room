@@ -41,6 +41,7 @@ import {
   securityDefinerAudit,
   securityDefinerAuditLive,
   sharedMemorySegments,
+  shutdownLadder,
   shortSocketDirectories,
   splitSqlStatements,
   staleAllowlistEntries,
@@ -1392,6 +1393,136 @@ describe("attack kit: search_path gate (real PostgreSQL)", () => {
         await bare.end();
       }
     }, { port, allowedPorts: PORTS, database: "control_room" });
+  });
+});
+
+describe("attack kit: the teardown ladder (shared-memory safety)", () => {
+  // ATTACK SCENARIO: a full kit suite must leave no new SysV shared-memory
+  // segment. The suite-level assertion is at the end of this file; these tests
+  // pin the thing that assertion depends on -- the ORDER of the ladder, which is
+  // the actual fix and the part a future edit would get wrong.
+  //
+  // Measured against PostgreSQL 17.11: `pg_ctl -m fast`, `SIGQUIT`, and
+  // `SIGQUIT` with a prepared transaction pending all release the postmaster's
+  // 56-byte segment; `SIGKILL` leaks it, 6/6 including during startup, and
+  // `shared_memory_type=mmap` does not prevent that. So a ladder that reaches
+  // `SIGKILL` has leaked a segment, and a ladder that reaches it when a
+  // cooperative stop would have worked has leaked one needlessly.
+
+  /**
+   * A postmaster whose liveness the test controls, and which stops only on the
+   * steps the test chooses. `stopsAt` is the step that kills it; anything later
+   * in the ladder is never reached, which is how "a cooperative stop was enough"
+   * is expressed.
+   */
+  const fakePostmaster = (stopsAt: number) => {
+    const calls: string[] = [];
+    let alive = true;
+    const stop = () => { alive = false; };
+    return {
+      calls,
+      options: {
+        alive: () => alive,
+        cooperativeStop: async (mode: "fast" | "immediate") => {
+          calls.push(`pg_ctl:${mode}`);
+          if (calls.length === stopsAt) stop();
+        },
+        signal: (signal: "SIGQUIT" | "SIGKILL") => {
+          calls.push(signal);
+          if (calls.length === stopsAt) stop();
+        },
+        // No real waiting: the grace is exercised by `alive`, not by the clock.
+        graceMs: 5, tickMs: 1, sleep: async () => {},
+      },
+    };
+  };
+
+  test("a cooperative stop that works never reaches a signal", async () => {
+    const postmaster = fakePostmaster(1);
+    const result = await shutdownLadder(postmaster.options);
+    assert.deepEqual(postmaster.calls, ["pg_ctl:fast"],
+      "the first step is a cooperative fast shutdown, and nothing else is attempted");
+    assert.deepEqual(result.steps, [{ action: "cooperative", mode: "fast", stopped: true, failed: false }]);
+    assert.equal(result.forced, false, "a cooperative teardown leaks nothing");
+  });
+
+  test("the ladder tries immediate before it signals, and SIGQUIT before SIGKILL", async () => {
+    // This is the ordering that fixes the leak. Reordering it to the old
+    // SIGQUIT-then-SIGKILL shape leaks a segment for any postmaster that needed
+    // more than a few seconds, which is the common case on a loaded Mac.
+    const all = fakePostmaster(99);
+    const result = await shutdownLadder(all.options);
+    assert.deepEqual(all.calls, ["pg_ctl:fast", "pg_ctl:immediate", "SIGQUIT", "SIGKILL"]);
+    assert.deepEqual(result.steps.map(step => step.action === "cooperative" ? `cooperative:${step.mode}` : step.signal), [
+      "cooperative:fast", "cooperative:immediate", "SIGQUIT", "SIGKILL",
+    ]);
+
+    // Each earlier step, taken in turn, is enough to stop without the next one.
+    const atImmediate = fakePostmaster(2);
+    const second = await shutdownLadder(atImmediate.options);
+    assert.deepEqual(atImmediate.calls, ["pg_ctl:fast", "pg_ctl:immediate"]);
+    assert.equal(second.forced, false, "a postmaster that takes an immediate stop never gets SIGKILLed");
+
+    const atQuit = fakePostmaster(3);
+    const third = await shutdownLadder(atQuit.options);
+    assert.deepEqual(atQuit.calls, ["pg_ctl:fast", "pg_ctl:immediate", "SIGQUIT"]);
+    assert.equal(third.forced, false, "and one that answers SIGQUIT never gets SIGKILLed either");
+  });
+
+  test("only a postmaster that refuses every cooperative shutdown is SIGKILLed, and that is reported", async () => {
+    // SIGKILL is the only signal that leaks the segment, so reaching it must be
+    // visible: `forced` is what makes the caller report a forced teardown as a
+    // failure instead of a clean one.
+    const wedged = fakePostmaster(4);
+    const result = await shutdownLadder(wedged.options);
+    assert.deepEqual(wedged.calls, ["pg_ctl:fast", "pg_ctl:immediate", "SIGQUIT", "SIGKILL"],
+      "it refused a fast stop, an immediate stop, and SIGQUIT");
+    assert.equal(result.forced, true, "reaching SIGKILL is reported, not absorbed");
+    assert.equal(result.steps.find(step => step.signal === "SIGKILL")?.stopped, true);
+    assert.equal(result.steps.every(step => step.action === "cooperative" || step.action === "signal"), true);
+
+    // And a postmaster that somehow outlives even SIGKILL is reported as not
+    // stopped, rather than as a success. The caller refuses to delete the
+    // evidence when `stopped` is false, which is the other half of the contract.
+    const immortal = fakePostmaster(99);
+    const still = await shutdownLadder(immortal.options);
+    assert.equal(still.stopped, false, "a postmaster that will not die is not reported as stopped");
+    assert.equal(still.forced, true);
+  });
+
+  test("a cooperative stop that throws does not skip the rest of the ladder", async () => {
+    // `pg_ctl` exits non-zero when the postmaster never came up, or is already
+    // gone. Swallowing that and declaring success would report a clean teardown
+    // for a cluster that is still running.
+    const calls: string[] = [];
+    let alive = true;
+    const result = await shutdownLadder({
+      alive: () => alive,
+      cooperativeStop: async (mode) => {
+        calls.push(`pg_ctl:${mode}`);
+        if (mode === "fast") throw new Error("pg_ctl: server does not exist");
+        if (mode === "immediate") { alive = false; }
+      },
+      signal: (signal) => { calls.push(signal); },
+      graceMs: 5, tickMs: 1, sleep: async () => {},
+    });
+    assert.deepEqual(calls, ["pg_ctl:fast", "pg_ctl:immediate"],
+      "a failed fast stop is followed by immediate, not by a signal");
+    assert.equal(result.steps[0]?.failed, true, "and the failure is recorded");
+    assert.equal(result.forced, false);
+  });
+
+  test("a postmaster that is already gone performs no step at all", async () => {
+    const calls: string[] = [];
+    const result = await shutdownLadder({
+      alive: () => false,
+      cooperativeStop: async mode => { calls.push(`pg_ctl:${mode}`); },
+      signal: signal => { calls.push(signal); },
+    });
+    assert.deepEqual(calls, [], "there is nothing to stop");
+    assert.deepEqual(result.steps, []);
+    assert.equal(result.stopped, true);
+    assert.equal(result.forced, false);
   });
 });
 

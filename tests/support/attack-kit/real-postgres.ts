@@ -210,6 +210,127 @@ export class AttackKitPortError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The teardown ladder.
+//
+// A postmaster creates one 56-byte SysV shared-memory segment and releases it on
+// any shutdown that runs its exit path. SIGKILL cannot run an exit path, so a
+// killed postmaster leaves the segment behind with a dead creator and `nattch 0`.
+// MEASURED against PostgreSQL 17.11, snapshotting `ipcs -m` around each shape:
+//
+//   pg_ctl -m fast stop .............. released  (3/3)
+//   SIGQUIT, idle ..................... released, ~4 ms  (3/3)
+//   SIGQUIT, prepared xact pending ... released  (1/1)
+//   SIGKILL ........................... LEAKED  (6/6)
+//   SIGKILL during startup ........... LEAKED  (6/6)
+//   shared_memory_type=mmap + SIGKILL  LEAKED  (5/5)
+//
+// `shared_memory_type=mmap` is NOT the fix, despite being PostgreSQL's answer to
+// this class of leak: that GUC governs the `shared_buffers` region, and the
+// 56-byte segment is created unconditionally beside it, so it leaks on every
+// SIGKILL regardless. It was measured rather than assumed, and it does not work.
+//
+// So the ladder is ordered by what RELEASES the segment, not by what ends the
+// process soonest. The order is the whole point, and it is the part a future
+// edit would get wrong, so it lives in one exported function that takes its
+// side effects as parameters: a test can then assert the order directly instead
+// of inferring it from a leak that may never happen.
+// ---------------------------------------------------------------------------
+
+export type ShutdownAction = "cooperative" | "signal";
+
+export interface ShutdownStep {
+  /** A cooperative `pg_ctl` stop, or a signal sent to the postmaster. */
+  readonly action: ShutdownAction;
+  /** `fast` or `immediate`, for a cooperative step. */
+  readonly mode?: "fast" | "immediate";
+  /** The signal, for a signal step. */
+  readonly signal?: "SIGQUIT" | "SIGKILL";
+  /** True when the postmaster was gone after this step. */
+  readonly stopped: boolean;
+  /** The cooperative attempt failed, or the wait expired. */
+  readonly failed: boolean;
+}
+
+export interface ShutdownLadderOptions {
+  /** Is the postmaster still running? Asked before every step. */
+  readonly alive: () => boolean;
+  /**
+   * Run one cooperative `pg_ctl` stop. The caller owns the error, so a refusal
+   * to stop is recorded rather than thrown.
+   */
+  readonly cooperativeStop: (mode: "fast" | "immediate") => Promise<void>;
+  /** Send a signal to the postmaster. Errors are the caller's to absorb. */
+  readonly signal: (signal: "SIGQUIT" | "SIGKILL") => void;
+  /** Wait up to this long for the postmaster to exit after a signal. */
+  readonly graceMs?: number;
+  /** Poll interval while waiting. */
+  readonly tickMs?: number;
+  /** Sleep, injected so a test does not spend real time waiting. */
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+export interface ShutdownLadderResult {
+  /** Every step attempted, in order. The order is the contract. */
+  readonly steps: readonly ShutdownStep[];
+  /** True when the postmaster is gone. */
+  readonly stopped: boolean;
+  /**
+   * True when `SIGKILL` was needed, which is the one path that leaks a SysV
+   * shared-memory segment. A caller reports this as a failure: a teardown that
+   * had to be forced is not a clean teardown, and it cost the machine a segment.
+   */
+  readonly forced: boolean;
+}
+
+/**
+ * Stop a postmaster, in the order that releases its shared memory.
+ *
+ * The order is the guarantee, and it is asserted rather than described:
+ * `cooperative fast` -> `cooperative immediate` -> `SIGQUIT` -> `SIGKILL`. The
+ * first step that finds the postmaster gone ends the ladder, so the common case
+ * performs exactly one `pg_ctl -m fast` and never reaches a signal. `SIGKILL` is
+ * reachable only by a postmaster that refused every cooperative shutdown, and
+ * reaching it sets `forced`.
+ */
+export async function shutdownLadder(options: ShutdownLadderOptions): Promise<ShutdownLadderResult> {
+  const graceMs = options.graceMs ?? 30_000;
+  const tickMs = options.tickMs ?? 100;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>(done => { setTimeout(done, ms); }));
+  const steps: ShutdownStep[] = [];
+
+  const waitForExit = async (): Promise<boolean> => {
+    const deadline = Date.now() + graceMs;
+    while (Date.now() < deadline && options.alive()) await sleep(tickMs);
+    return !options.alive();
+  };
+
+  for (const mode of ["fast", "immediate"] as const) {
+    if (!options.alive()) break;
+    let failed = false;
+    try {
+      await options.cooperativeStop(mode);
+    } catch {
+      // Expected when the postmaster never came up, or is already gone. Whether
+      // that is a failure is decided by asking whether it is still running.
+      failed = true;
+    }
+    const stopped = !options.alive();
+    steps.push({ action: "cooperative", mode, stopped, failed: failed && !stopped });
+    if (stopped) return { steps, stopped: true, forced: false };
+  }
+
+  for (const signal of ["SIGQUIT", "SIGKILL"] as const) {
+    if (!options.alive()) break;
+    try { options.signal(signal); } catch { /* already gone */ }
+    const stopped = await waitForExit();
+    steps.push({ action: "signal", signal, stopped, failed: !stopped });
+    if (stopped) return { steps, stopped: true, forced: signal === "SIGKILL" };
+  }
+
+  return { steps, stopped: !options.alive(), forced: steps.some(step => step.signal === "SIGKILL") };
+}
+
 /** The first bin directory that actually holds a PostgreSQL 17 server. */
 export function resolvePgBin(explicit?: string): string | null {
   const candidates = explicit ? [explicit] : [...PG_CANDIDATE_BINS];
@@ -577,66 +698,38 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     }
     if (pid !== undefined) {
       if (pidAlive(pid)) {
-        // A cooperative shutdown is tried BEFORE any SIGKILL, and it is tried
-        // twice, because the choice of signal is the difference between
-        // releasing PostgreSQL's SysV shared-memory segment and leaking it.
-        //
-        // MEASURED against PostgreSQL 17.11 on this machine, snapshotting
-        // `ipcs -m` before and after every shape:
-        //
-        //   pg_ctl -m fast stop ......... segment released   (3/3)
-        //   SIGQUIT, idle ............... released, 4 ms      (3/3)
-        //   SIGQUIT, prepared xact ...... released             (1/1)
-        //   SIGKILL ..................... LEAKED               (6/6)
-        //   SIGKILL during startup ...... LEAKED               (6/6)
-        //   shared_memory_type=mmap + SIGKILL ... LEAKED       (5/5)
-        //
-        // `SIGKILL` cannot run PostgreSQL's exit path, so the 56-byte segment is
-        // left with a dead creator and `nattch 0`. `shared_memory_type=mmap` does
-        // NOT help: that segment is created unconditionally and is not the
-        // `shared_buffers` region, so it leaks on every SIGKILL regardless. This
-        // machine has 32 SysV segments in total, so each orphan is a resource
-        // every other job needs.
-        //
-        // So the ladder is ordered by what RELEASES the segment, not by what
-        // ends the process soonest. The previous order sent SIGQUIT, waited
-        // 10 s, then SIGKILL — so any postmaster slower than 10 s to exit (the
-        // suite runs concurrent-writer and pool-exhaustion tests against it, and
-        // this Mac is loaded) got SIGKILL and leaked a segment. Two cooperative
-        // `pg_ctl` attempts come first, each given its own generous bound, and
-        // `SIGQUIT` follows them; only a postmaster that survives ALL of that is
-        // signalled `SIGKILL`, and that case is reported as a leak rather than
-        // reported as a clean teardown.
-        for (const attempt of [
-          { signal: null, mode: "fast" as const },
-          { signal: null, mode: "immediate" as const },
-        ]) {
-          if (!pidAlive(pid)) break;
-          try {
-            await native(pgBin, run, "pg_ctl",
-              ["-D", dataDirectory, "-m", attempt.mode, "-w", "-t", "60", "stop"]);
-          } catch (error) {
-            failures.push(`pg_ctl_stop_${attempt.mode}_failed:${firstLineOf(error)}`);
+        // The ladder's order is the whole fix, and it is asserted in
+        // tests/attack-kit.test.ts; see `shutdownLadder` for the measurements
+        // behind it. In short: every cooperative shutdown releases the
+        // postmaster's SysV shared-memory segment and SIGKILL never does, so the
+        // ladder is ordered by what RELEASES the segment rather than by what
+        // ends the process soonest.
+        const ladder = await shutdownLadder({
+          alive: () => pidAlive(pid!),
+          cooperativeStop: async (mode) => {
+            if (options.stopAttemptFault === "no_op" && mode === "fast") {
+              // Report success without stopping anything, as a `pg_ctl` does when
+              // a postmaster will not take the shutdown request. The ladder's own
+              // liveness check is what must notice.
+              return;
+            }
+            await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", mode, "-w", "-t", "60", "stop"]);
+          },
+          signal: (signal) => { process.kill(pid!, signal); },
+        });
+        for (const step of ladder.steps) {
+          if (step.failed) {
+            failures.push(step.action === "cooperative"
+              ? `pg_ctl_stop_${step.mode}_failed`
+              : `${step.signal ?? "signal"}_did_not_stop_the_postmaster`);
           }
         }
-        if (pidAlive(pid)) {
-          try { process.kill(pid, "SIGQUIT"); } catch { /* already gone */ }
-          const deadline = Date.now() + 30_000;
-          while (Date.now() < deadline && pidAlive(pid)) {
-            await new Promise(resolve => { setTimeout(resolve, 100); });
-          }
-        }
-        if (pidAlive(pid)) {
-          // Every cooperative path is exhausted. This is the ONLY path that
-          // leaks a SysV segment, so it is a last resort and the fact that it was
-          // reached is recorded as a failure: the caller learns that teardown had
-          // to be forced rather than that the cluster stopped cleanly.
+        if (ladder.forced) {
+          // Recorded as a failure, because it is one: a postmaster that refused
+          // every cooperative shutdown had to be SIGKILLed, and that SIGKILL is
+          // the only path that leaves its 56-byte SysV segment behind with a dead
+          // creator. Reporting a clean teardown here would hide both.
           failures.push("postmaster_required_sigkill_which_leaks_its_shared_memory_segment");
-          try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
-          const deadline = Date.now() + 10_000;
-          while (Date.now() < deadline && pidAlive(pid)) {
-            await new Promise(resolve => { setTimeout(resolve, 100); });
-          }
         }
       }
       if (pidAlive(pid)) {
