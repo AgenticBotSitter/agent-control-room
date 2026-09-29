@@ -133,7 +133,7 @@
     "mac:prepare-task-runtime": "node --import tsx scripts/mac-local/prepare-task-runtime.ts",
     "db:ledger": "node scripts/generate-migration-ledger.mjs",
     "test:postgres-production": "node scripts/run-tests-with-quarantine.mjs --test tests/postgres-production-ledger.test.mjs && PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/postgres-production-lifecycle.test.mjs tests/postgres-production-coordination.test.mjs && node scripts/run-tests-with-quarantine.mjs --test --test-concurrency=1 tests/postgres-shared-memory-teardown.test.mjs",
-    "test:attack-kit": "PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node --import tsx --test --test-concurrency=1 --test-timeout=180000 tests/attack-kit.test.ts tests/ownership-lease-postgres.test.ts tests/project-coordination-web-grants-postgres.test.ts tests/linear-pipeline-postgres.test.ts",
+    "test:attack-kit": "PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node --import tsx --test --test-concurrency=1 --test-timeout=180000 tests/attack-kit.test.ts tests/ownership-lease-postgres.test.ts tests/project-coordination-web-grants-postgres.test.ts tests/linear-pipeline-postgres.test.ts tests/postgres-pipeline-caps.test.mjs",
     "test:windows-preparation": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-preparation.test.mjs",
     "test:windows-line-endings": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-line-endings.test.mjs",
     "test:windows-launcher-modes": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-launcher-modes.test.mjs",

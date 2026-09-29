@@ -20,7 +20,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // including generic external-content migrations 0025/0026, read from a live
 // PostgreSQL 17 cluster installed the production way. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "7f075905df06d9505f545382af6a50c45f5141b3e08666b046a55a7d47d922a5";
+export const privateWebSchemaDigest = "c02e27454e36845cd5b127051dd1ba595145e9d6d92308c1b314c3cc33a9421c";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",

@@ -17,11 +17,12 @@ export type PipelineLoopCountRowV1 = { pipeline_run_id: string; stage_ordinal: n
  * so a count row cannot outlive or rename the receipt that justified it. */
 export function pipelineLoopCountMaterialV1(input: { tenantId: string; projectId: string; runId: string;
   stageOrdinal: number; workerId: string; loopIndex: number; maxLoops: number; maxTotalLoops: number;
-  runTotalLoops: number; receiptId: string; receiptDigest: string; requestDigest: string; recordedAt: string }) {
+  runTotalLoops: number; reasonCode: "stage_advanced" | "stage_loop_limit_reached" | "run_loop_limit_reached";
+  receiptId: string; receiptDigest: string; requestDigest: string; recordedAt: string }) {
   return { schema: "control-room.pipeline-stage-loop-count/v1" as const, tenantId: input.tenantId,
     projectId: input.projectId, pipelineRunId: input.runId, stageOrdinal: input.stageOrdinal,
     workerId: input.workerId, loopIndex: input.loopIndex, maxLoops: input.maxLoops,
-    maxTotalLoops: input.maxTotalLoops, runTotalLoops: input.runTotalLoops, reasonCode: "stage_advanced" as const,
+    maxTotalLoops: input.maxTotalLoops, runTotalLoops: input.runTotalLoops, reasonCode: input.reasonCode,
     receiptId: input.receiptId, receiptDigest: input.receiptDigest, requestDigest: input.requestDigest,
     recordedAt: input.recordedAt };
 }

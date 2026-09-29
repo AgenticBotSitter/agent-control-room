@@ -1,7 +1,8 @@
 BEGIN;
--- 0151 alone: the counted fix rounds. A populated counter is this
--- installation's only record of how many rounds it has spent, so a
--- non-empty table refuses the down path.
+-- 0151 alone: the counted fix rounds. A populated counter is this installation's
+-- only record of how many rounds it has spent, so the down path refuses while one
+-- exists rather than silently discarding it. It grants nothing and touches no
+-- other table; the per-round receipt key belongs to 0154 and is not revoked here.
 LOCK TABLE pipeline_stage_loop_counts IN ACCESS EXCLUSIVE MODE;
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pipeline_stage_loop_counts) THEN

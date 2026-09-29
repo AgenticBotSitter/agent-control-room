@@ -26,12 +26,13 @@ const templateDefinition={name:"Pipeline",description:"Bounded pipeline.",stages
     provider:"provider:test",profile:"profile:test",maxLoops:0}],maxTotalLoops:2,maxDurationSeconds:3600} as const;
 
 function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentOrdinal?:number|null;
-  startedAt?:number|null;updatedAt?:number}={}){
+  startedAt?:number|null;updatedAt?:number;maxTotalLoops?:number}={}){
   const template:any={id:"pipeline-template:test",project_id:"project:test",name:templateDefinition.name,
-    description:templateDefinition.description,stages:templateDefinition.stages,max_stages:3,max_total_loops:2,
+    description:templateDefinition.description,stages:templateDefinition.stages,max_stages:3,
+    max_total_loops:overrides.maxTotalLoops??2,
     may_advance_unattended:overrides.unattended??true,max_duration_seconds:3600,version:2,created_at:iso(),updated_at:iso()};
   const templateMaterial={id:template.id,tenantId:"tenant:test",projectId:template.project_id,name:template.name,
-    description:template.description,stages:template.stages,maxStages:3,maxTotalLoops:2,
+    description:template.description,stages:template.stages,maxStages:3,maxTotalLoops:template.max_total_loops,
     mayAdvanceUnattended:template.may_advance_unattended,maxDurationSeconds:3600,version:2,createdAt:iso(),updatedAt:iso()};
   template.record_digest=sha256Digest(templateMaterial);template.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-template/v1",record:templateMaterial});
   const startedAt=Object.prototype.hasOwnProperty.call(overrides,"startedAt")?overrides.startedAt:0;
@@ -45,6 +46,8 @@ function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentO
     templateVersion:2,templateDigest:run.template_digest,workflowId:run.workflow_id,title:run.title,state:run.state,
     startedAt:startedAt===null?null:iso(startedAt),updatedAt:iso(updatedAt),completedAt:null,
     currentStageOrdinal:run.current_stage_ordinal,unattended:run.unattended,version:2};
+  run.template_digest=template.record_digest;
+  runMaterial.templateDigest=template.record_digest;
   run.record_digest=sha256Digest(runMaterial);run.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-run/v1",record:runMaterial});
   const stages=templateDefinition.stages.map(stage=>{const row:any={project_id:"project:test",pipeline_run_id:run.id,
     stage_ordinal:stage.ordinal,stage_kind:stage.stageKind,role:stage.role,current_job_id:`job:source:${stage.ordinal}`,
@@ -83,7 +86,8 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     machine_max_db_clusters:number;dollar_cap_microusd:number|null};
   tamperAllowance?:boolean;noAllowance?:boolean;dbClusters?:number|null;clusterObservedAt?:number;
   activeProcesses?:number;spentMicroUsd?:number;agentRunsToday?:number;runsThisHour?:number;
-  nextCostKind?:"known"|"unknown";priorLoops?:Array<{stageOrdinal:number;workerId?:string}>;attentions?:any[]}={}){
+  nextCostKind?:"known"|"unknown";maxTotalLoops?:number;priorLoops?:Array<{stageOrdinal:number;workerId?:string}>;
+  attentions?:any[]}={}){
   const rows=signedRows(overrides),policy={id:"policy:test",project_id:"project:test",coordinator_identity_id:"agent:lead",
     coordinator_version:1,owner_identity_id:"identity:owner",state:"active",version:1,policy_digest:digest("p"),allowed_actions:["tasks.assign"],
     eligible_routes:["route:one","route:two","route:three"],risk_ceiling:"low",max_total_tasks:3,max_total_cost_microusd:1000,max_concurrent_tasks:2,
@@ -103,7 +107,12 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     auth_tag:overrides.tamperAllowance?`hmac-sha256:${"0".repeat(64)}`
       :hmacSha256Tag(key,{purpose:"pipeline-installation-allowance/v1",record:allowanceMaterial})};
   const clusters=overrides.dbClusters===undefined?0:overrides.dbClusters;
-  const receipts=new Map<number,any>(),loops:any[]=[];let enabled=true,effects=0,chain=Promise.resolve();
+  const receipts=new Map<string,any>(),loops:any[]=[];
+  // The job chain is the loop count: one row per job a stage has run, including
+  // the job the current advance is about to run (the planner created it first).
+  // The current stage therefore starts with one row, and every re-entry adds one.
+  const loopJobs:any[]=[{stage_ordinal:0}];
+  let enabled=true,effects=0,chain=Promise.resolve();
   const consentMaterial={id:"transition:test",tenantId:"tenant:test",projectId:"project:test",pipelineRunId:"pipeline-run:test",
     pipelineTemplateId:rows.template.id,templateVersion:Number(rows.template.version),templateDigest:rows.template.record_digest,
     runVersion:Number(rows.run.version),runDigest:rows.run.record_digest,policyId:"policy:test",policyVersion:1,
@@ -123,6 +132,16 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       const replacement={...consentMaterial,id:"transition:replacement"};Object.assign(consent,{id:replacement.id,
         transition_digest:sha256Digest(replacement),auth_tag:hmacSha256Tag(key,{purpose:"pipeline-unattended-transition/v1",record:replacement})});}
       return result([selected] as T[]);}
+    // The loop pre-check's own reads, matched before the broad run rules below.
+    if(sql.includes("r.state='active'")&&sql.includes("pipeline_unattended_transitions"))
+      return result([{eligible:true}] as T[]);
+    if(sql.includes("FROM pipeline_runs r JOIN pipeline_templates t")){
+      const ordinal=overrides.currentOrdinal===undefined?0:Number(overrides.currentOrdinal);
+      const stage=rows.stages[ordinal]!;
+      return result([{stage_ordinal:ordinal,worker_id:stage.worker_id,max_loops:stage.max_loops,
+        current_job_id:stage.current_job_id,stage_kind:stage.stage_kind,
+        max_total_loops:rows.template.max_total_loops,run_version:rows.run.version,
+        run_digest:rows.run.record_digest}] as unknown as T[]);}
     if(sql.startsWith("SELECT project_id FROM pipeline_runs"))return result([{project_id:"project:test"}] as T[]);
     if(sql.includes("FROM pipeline_runs")&&sql.includes("FOR UPDATE"))return result([rows.run] as T[]);
     if(sql.includes("FROM pipeline_templates"))return result([rows.template] as T[]);
@@ -135,32 +154,59 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       active_agent_processes:String(overrides.activeProcesses??0),spent_microusd:String(overrides.spentMicroUsd??0)}] as T[]);
     // The exact-receipt replay read, identified by its own predicate. The usage
     // and history reads name the same tables and are matched above or below.
-    if(sql.includes("FROM pipeline_advance_receipts")&&sql.includes("AND stage_ordinal=$3"))
-      return result((receipts.has(Number(params[2]))?[receipts.get(Number(params[2]))]:[]) as T[]);
+    if(sql.includes("FROM pipeline_advance_receipts")&&sql.includes("AND stage_ordinal=$3")){
+      const key=`${Number(params[2])}:${Number(params[3])}`;
+      return result((receipts.has(key)?[receipts.get(key)]:[]) as T[]);}
     if(sql.includes("FROM pipeline_advance_receipts")&&sql.startsWith("SELECT id FROM"))
       return result([] as T[]);
     if(sql.includes("FROM pipeline_stage_loop_counts"))return result(loops as T[]);
+    // The loop count is the distinct pipeline jobs carrying each stage ordinal.
+      if(sql.includes("FROM control_jobs")&&sql.includes("stage_ordinal IS NOT NULL")){
+      return result(loopJobs as T[]);}
+    // The round a stage is on, as a count: the same chain, counted.
+    if(sql.includes("COUNT(*)::text count FROM control_jobs")&&sql.includes("stage_ordinal=$3")){
+      const ordinal=Number(params[2]);
+      return result([{count:String(loopJobs.filter(job=>job.stage_ordinal===ordinal).length||1)}] as T[]);}
     if(sql.includes("FROM pipeline_machine_capacity_observations"))
       return result((clusters===null?[]:[{db_clusters:clusters,observed_at:iso(overrides.clusterObservedAt??0)}]) as T[]);
     if(sql.includes("FROM pipeline_installation_allowances"))
       return result((overrides.noAllowance?[]:[allowanceRow]) as T[]);
     if(sql.includes("FROM pipeline_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE"))return result([] as T[]);
-    if(sql.includes("FROM control_action_inbox")){
+    if(sql.startsWith("INSERT INTO control_action_inbox")){
+      const item=JSON.parse(String(params[5]));
       const attn=overrides.attentions??[];
-      if(sql.startsWith("INSERT INTO control_action_inbox")){attn.push(JSON.parse(String(params[5])));return result([] as T[]);}
+      // A second item under one id would violate the primary key, so the service
+      // must never attempt it: the fixture fails loudly if it does.
+      if (attn.some(existing=>existing.id===item.id))
+        throw new Error(`duplicate attention item: ${item.id}`);
+      attn.push(item);return result([] as T[]);}
+    if(sql.includes("FROM control_action_inbox")){
       const id=String(params[1]);
-      const found=attn.find(item=>item.id===id);
+      const found=(overrides.attentions??[]).find(item=>item.id===id);
       return result((found?[{payload:found}]:[]) as T[]);}
+    if(sql.includes("SELECT id FROM pipeline_advance_receipts"))return result([] as T[]);
+    if(sql.startsWith("INSERT INTO pipeline_advance_receipts")){
+      // A newly planned stage's job joins the chain the next ceiling check reads.
+      const stage=Number(params[4]);
+      if (!loopJobs.some(job=>job.stage_ordinal===stage)) loopJobs.push({stage_ordinal:stage});
+    }
     if(sql.startsWith("INSERT INTO pipeline_stage_loop_counts")){
+      // Column order: id,tenant,project,run,stage,worker,loop_index,max_loops,
+      // max_total_loops,run_total_loops,reason_code,receipt_id,receipt_digest,
+      // request_digest,auth_tag,recorded_at.
       const material={schema:"control-room.pipeline-stage-loop-count/v1",tenantId:"tenant:test",projectId:"project:test",
         pipelineRunId:"pipeline-run:test",stageOrdinal:Number(params[4]),workerId:String(params[5]),
         loopIndex:Number(params[6]),maxLoops:Number(params[7]),maxTotalLoops:Number(params[8]),
-        runTotalLoops:Number(params[9]),reasonCode:"stage_advanced",receiptId:String(params[10]),
-        receiptDigest:String(params[11]),requestDigest:String(params[12]),recordedAt:String(params[14])};
+        runTotalLoops:Number(params[9]),
+        reasonCode:params[10]==="stage_advanced"?"stage_advanced"
+          :params[10]==="stage_loop_limit_reached"?"stage_loop_limit_reached":"run_loop_limit_reached",
+        receiptId:String(params[11]),receiptDigest:String(params[12]),requestDigest:String(params[13]),
+        recordedAt:String(params[15])};
+      if (loops.some(existing=>existing.id===params[0])) return result([] as T[]);
       loops.push({id:params[0],pipeline_run_id:"pipeline-run:test",stage_ordinal:params[4],worker_id:params[5],
         loop_index:params[6],max_loops:params[7],max_total_loops:params[8],run_total_loops:params[9],
-        reason_code:"stage_advanced",receipt_id:params[10],receipt_digest:params[11],request_digest:params[12],
-        auth_tag:hmacSha256Tag(key,{purpose:"pipeline-stage-loop-count/v1",record:material}),recorded_at:params[14]});
+        reason_code:params[10],receipt_id:params[11],receipt_digest:params[12],request_digest:params[13],
+        auth_tag:hmacSha256Tag(key,{purpose:"pipeline-stage-loop-count/v1",record:material}),recorded_at:params[15]});
       return result([] as T[]);}
     if(sql.includes("FROM control_jobs")){const id=String(params[2]),ordinal=Number(id.split(":").at(-1)),stage=rows.stages[ordinal]!;
       const value=job(id);value.authority.allowedExecutor=stage.worker_id;value.authority.digest=computeAuthorityDigest(value.authority);
@@ -179,13 +225,13 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       rows.run.auth_tag=String(params[3]);return result([{version:rows.run.version,record_digest:rows.run.record_digest,
         auth_tag:rows.run.auth_tag}] as T[]);}
     if(sql.startsWith("INSERT INTO pipeline_advance_receipts")){const receipt={id:params[0],project_id:params[2],pipeline_run_id:params[3],
-      stage_ordinal:params[4],source_job_id:params[5],execution_job_id:params[6],attempt_id:params[7],queue_id:params[8],
-      selection_digest:params[9],template_version:params[10],template_digest:params[11],run_version:params[12],run_digest:params[13],
-      policy_id:params[14],policy_version:params[15],policy_digest:params[16],delegation_receipt_id:params[17],
-      delegation_receipt_digest:params[18],delegation_task_units:params[19],delegation_cost_state:params[20],
-      delegation_cost_microusd:params[21],delegation_cost_evidence_digest:params[22],request_digest:params[23],
-      receipt_digest:params[24],auth_tag:params[25],advanced_at:params[26]};
-      receipts.set(Number(params[4]),receipt);
+      stage_ordinal:params[4],loop_index:params[5],source_job_id:params[6],execution_job_id:params[7],attempt_id:params[8],
+      queue_id:params[9],selection_digest:params[10],template_version:params[11],template_digest:params[12],run_version:params[13],
+      run_digest:params[14],policy_id:params[15],policy_version:params[16],policy_digest:params[17],delegation_receipt_id:params[18],
+      delegation_receipt_digest:params[19],delegation_task_units:params[20],delegation_cost_state:params[21],
+      delegation_cost_microusd:params[22],delegation_cost_evidence_digest:params[23],request_digest:params[24],
+      receipt_digest:params[25],auth_tag:params[26],advanced_at:params[27]};
+      receipts.set(`${Number(params[4])}:${Number(params[5])}`,receipt);
       return result([] as T[]);}
     if(sql.includes("SELECT event_digest,event_hash FROM audit_events"))return result([] as T[]);
     if(sql.includes("INSERT INTO control_audit_chain_heads")||sql.includes("INSERT INTO audit_events"))return result([] as T[]);
@@ -214,7 +260,15 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     {unattendedEnabled:()=>enabled,capability},()=>clock);
   return{service,setStates(value:PipelineStageResolutionV1["state"][]){states=value;},get currentOrdinal(){return rows.run.current_stage_ordinal;},
     get runVersion(){return rows.run.version;},get effects(){return effects;},get receipts(){return receipts;},
-    get loops(){return loops;},get attentions(){return overrides.attentions??[];}};
+    get loops(){return loops;},get attentions(){return overrides.attentions??[];},
+    /** One more job on a stage: the planner's shape for a fix round. The
+     * previous round's receipt belongs to the job that already ran, so it is
+     * replaced rather than replayed. */
+    reenterStage(ordinal:number){loopJobs.push({stage_ordinal:ordinal});
+      for(const key of [...receipts.keys()]) if(key.startsWith(`${ordinal}:`)) receipts.delete(key);},
+    /** The planner materialises a not-yet-started stage's job. */
+    planStage(ordinal:number){if(!loopJobs.some(job=>job.stage_ordinal===ordinal))
+      loopJobs.push({stage_ordinal:ordinal});}};
 }
 
 test("durable advance replays with a stable timestamp after a lost response or restart",async()=>{const f=fixture();
@@ -337,7 +391,7 @@ test("an unknown cost advances and the receipt records it as unknown with no inv
   const outcome=await f.service.advance("pipeline-run:test","policy:test");
   assert.equal(outcome.startsWork,true);
   assert.equal(f.effects,1);
-  const receipt=f.receipts.get(0);
+  const receipt=f.receipts.get("0:0");
   assert.equal(receipt.delegation_cost_state,"unknown");
   assert.equal(receipt.delegation_cost_microusd,null);
   assert.equal(receipt.delegation_cost_evidence_digest,null);
@@ -348,21 +402,71 @@ test("an unknown cost advances and the receipt records it as unknown with no inv
   // A known cost is stored with its number and its evidence digest.
   const known=fixture();
   await known.service.advance("pipeline-run:test","policy:test");
-  assert.equal(known.receipts.get(0).delegation_cost_state,"known");
-  assert.equal(known.receipts.get(0).delegation_cost_microusd,10);
-  assert.equal(known.receipts.get(0).delegation_cost_evidence_digest,digest("e"));});
+  assert.equal(known.receipts.get("0:0").delegation_cost_state,"known");
+  assert.equal(known.receipts.get("0:0").delegation_cost_microusd,10);
+  assert.equal(known.receipts.get("0:0").delegation_cost_evidence_digest,digest("e"));});
 test("the loop limit stops advancing that run and raises exactly one Needs Attention item",async()=>{
-  // max_loops 1 for stage 0 in the fixture template: round 0 runs, round 1 is
-  // the last allowed, and round 2 is refused with the owner's attention item.
+  // The fixture template gives stage 0 maxLoops 1: round 0 runs, and the stage may
+  // be entered once more. A third entry is past the ceiling.
   const attentions:any[]=[];
-  const f=fixture({attentions});
+  const f=fixture({attentions,maxTotalLoops:6});
+  assert.equal((await f.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+  assert.equal(f.loops.length,1);
+  assert.equal(f.loops[0].loop_index,0);
+  assert.equal(f.loops[0].worker_id,"worker:one");
+  assert.equal(f.loops[0].reason_code,"stage_advanced");
+  // A lost response replays the same receipt and never opens a second round.
+  await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal(f.loops.length,1);
+  // One fix round: the planner adds a job to the same stage, so the next advance
+  // is round 1, which max_loops 1 still admits.
+  f.reenterStage(0);
+  assert.equal((await f.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+  assert.deepEqual(f.loops.map(row=>[row.stage_ordinal,row.loop_index,row.reason_code]),[[0,0,"stage_advanced"],[0,1,"stage_advanced"]]);
+  // A second fix round is round 2, past max_loops 1: the run stops, and the owner
+  // is told once.
+  f.reenterStage(0);
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="stage_loop_limit_reached");
+  assert.equal(attentions.length,1);
+  assert.equal(attentions[0].reasonCode,"pipeline_stage_loop_limit_reached");
+  assert.equal(attentions[0].maxLoops,1);
+  assert.equal(attentions[0].kind,"question");
+  assert.equal(attentions[0].state,"open");
+  // The stop is recorded as its own signed receipt of the ceiling decision.
+  const stops=f.loops.filter(row=>row.reason_code!=="stage_advanced");
+  assert.equal(stops.length,1);
+  assert.equal(stops[0].loop_index,2);
+  assert.equal(stops[0].reason_code,"stage_loop_limit_reached");
+  // Repeating the refusal raises no second item and claims no new round.
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="stage_loop_limit_reached");
+  assert.equal(attentions.length,1);
+  assert.equal(f.loops.filter(row=>row.reason_code!=="stage_advanced").length,1);
+});
+test("the run-wide loop ceiling stops a run whose stages are each under their own",async()=>{
+  // max_total_loops 2 admits round indices 0 and 1 for the whole run. Stage 0
+  // runs round 0, stage 1 runs round 1, and neither stage is near its own
+  // max_loops of 1. A second round on stage 0 would be round 2 of the run, so it
+  // is the RUN ceiling that stops it, not the stage ceiling.
+  const attentions:any[]=[];
+  const f=fixture({attentions,maxTotalLoops:2});
   assert.equal((await f.service.advance("pipeline-run:test","policy:test")).startsWork,true);
   f.setStates(["accepted","eligible","terminal_failure"]);
-  const second=await f.service.advance("pipeline-run:test","policy:test");
-  assert.equal(second.startsWork,true);
-  assert.equal((second as {stageOrdinal:number}).stageOrdinal,1);
-  assert.equal(f.loops.length,2);
-  assert.equal(attentions.length,0);
+  assert.equal((await f.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+  // The run is on stage 1 with two rounds spent. A fix round back on stage 0
+  // would be the run's third round.
+  f.setStates(["accepted","eligible","terminal_failure"]);
+  f.reenterStage(0);
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="run_loop_limit_reached");
+  assert.equal(attentions.length,1);
+  assert.equal(attentions[0].reasonCode,"pipeline_run_loop_limit_reached");
+  assert.equal(attentions[0].maxTotalLoops,2);
+  // Neither stage hit its own ceiling: no round row carries a stage refusal.
+  assert.ok(f.loops.every(row=>row.reason_code!=="stage_loop_limit_reached"));
+  // Nothing was queued for the refused round.
+  assert.equal(f.effects,2);
 });
 test("the counted loop rounds are appended with the receipt that opened them",async()=>{
   const f=fixture();
@@ -444,7 +548,7 @@ test("accepted current stage advances exactly one ordinal while in-flight lost r
   if(!first.startsWork||!next.startsWork)assert.fail("expected queued stage receipts");
   assert.equal(first.stageOrdinal,0);assert.equal(next.stageOrdinal,1);assert.equal(next.replayed,false);assert.equal(f.effects,2);
   assert.equal(f.currentOrdinal,1);assert.equal(f.runVersion,3);
-  assert.equal(Number(f.receipts.get(1)?.run_version),3);
+  assert.equal(Number(f.receipts.get("1:0")?.run_version),3);
 });
 test("accepted final stage terminalizes the authenticated run without another queue effect",async()=>{
   const f=fixture({currentOrdinal:2,states:["accepted","accepted","accepted"]});

@@ -14,6 +14,7 @@ import { linearPipelineTemplateInputSchemaV1, pipelineAdvanceReceiptSchemaV1, pi
 import { PIPELINE_ALLOWANCE_DEFAULTS_V1, PIPELINE_MACHINE_CEILING_V1, allowanceReceiptV1,
   latestClusterObservationV1, parseAllowanceInputV1, pipelineAllowanceDigestV1, pipelineAllowanceMaterialV1,
   pipelineAllowanceTagV1, type PipelineAllowanceReasonCodeV1, type PipelineAllowanceRowV1 } from "./installation-allowance";
+import { pipelineStageMaterialV1 } from "./stage-material";
 import { pipelineEffectiveMaxLoopsV1, pipelineEffectiveMaxTotalLoopsV1, pipelineLoopAttentionItemV1,
   pipelineLoopCountDigestV1, pipelineLoopCountMaterialV1, pipelineLoopCountTagV1 } from "./loop-counts";
 
@@ -95,6 +96,7 @@ type PolicyRow = { id: string; project_id: string; coordinator_identity_id: stri
   risk_ceiling: keyof typeof RISK; max_total_tasks: number|string; max_total_cost_microusd: number|string;
   max_concurrent_tasks: number|string; valid_from: string|Date; valid_until: string|Date };
 type AdvanceReceiptRow = { id: string; project_id: string; pipeline_run_id: string; stage_ordinal: number;
+  loop_index: number | string;
   source_job_id: string; execution_job_id: string; attempt_id: string; queue_id: string; selection_digest: string;
   template_version: number; template_digest: string; run_version: number; run_digest: string; policy_id: string;
   policy_version: number|string; policy_digest: string; delegation_receipt_id: string; delegation_receipt_digest: string;
@@ -127,23 +129,8 @@ function runMaterial(scope: { tenantId: string }, row: RunRow) { return { id: ro
   completedAt: row.completed_at ? iso(row.completed_at) : null,
   currentStageOrdinal: row.current_stage_ordinal === null ? null : Number(row.current_stage_ordinal),
   unattended: row.unattended, version: Number(row.version) }; }
-function stageMaterial(scope: { tenantId: string }, row: StageRow) {
-  const policy = row.stage_kind === "build" && row.allowed_paths !== null
-    // The bound columns are bigint, which the production driver returns as text.
-    ? pipelineBuildWritePolicySchemaV1.parse({ allowedPaths: row.allowed_paths,
-      maximumChangedFiles: row.maximum_changed_files === null ? null : Number(row.maximum_changed_files),
-      maximumChangedBytes: row.maximum_changed_bytes === null ? null : Number(row.maximum_changed_bytes) }) : null;
-  return { id: `${row.pipeline_run_id}:stage:${Number(row.stage_ordinal)}`,
-  tenantId: scope.tenantId, projectId: row.project_id, pipelineRunId: row.pipeline_run_id,
-  stageOrdinal: Number(row.stage_ordinal), stageKind: row.stage_kind, role: row.role, workerId: row.worker_id,
-  workerKind: row.worker_kind, nodeId: row.node_id, selectionKey: row.selection_key, model: row.model, effort: row.effort,
-  provider: row.provider, profile: row.profile, currentJobId: row.current_job_id, currentAttemptId: row.current_attempt_id,
-  currentLeaseId: row.current_lease_id, state: row.state, maxLoops: Number(row.max_loops),
-  handoffFromResultDigest: row.handoff_from_result_digest, signoffReviewId: row.signoff_review_id,
-  allowedPaths: policy ? [...policy.allowedPaths] : null, maximumChangedFiles: policy?.maximumChangedFiles ?? null,
-  maximumChangedBytes: policy?.maximumChangedBytes ?? null,
-  startedAt: row.started_at ? iso(row.started_at) : null, finishedAt: row.finished_at ? iso(row.finished_at) : null,
-  version: Number(row.version) }; }
+const stageMaterial = (scope: { tenantId: string }, row: StageRow) =>
+  pipelineStageMaterialV1(scope, row as Parameters<typeof pipelineStageMaterialV1>[1]);
 function verify(key: Uint8Array, purpose: string, material: unknown, digest: string, tag: string) {
   if (sha256Digest(material) !== digest || !same(hmacSha256Tag(key, { purpose, record: material }), tag))
     refuse("pipeline_integrity_failed");
@@ -268,7 +255,8 @@ export class PipelineAdvanceServiceV1 {
         targetType:"pipeline_run",targetId:run.id,idempotencyKey,occurredAt:now,
         safeMetadata:{transitionId,policyId:policy.id,enabled:parsed.data.enabled} });
       return pipelineUnattendedTransitionReceiptSchemaV1.parse({ transitionId,runId:run.id,templateId:template.id,
-        policyId:policy.id,enabled:parsed.data.enabled,runVersion:nextRun.version,templateVersion:nextTemplate.version,
+        policyId:policy.id,enabled:parsed.data.enabled,runVersion:Number(nextRun.version),
+        templateVersion:Number(nextTemplate.version),
         occurredAt:now,replayed:false,startsWork:false,grantsExecutionAuthority:false });
     });
   }
@@ -276,6 +264,11 @@ export class PipelineAdvanceServiceV1 {
   async advance(runId: string, policyId: string, expectedConsent?:Readonly<{id:string;digest:string}>): Promise<PipelineAdvanceReceiptV1|PipelineTerminalReceiptV1> {
     const capability = this.#capability;
     if (!this.#enabled() || capability === undefined) throw new PipelineAdvanceErrorV1("unattended_disabled");
+    // A loop stop and the owner's Needs Attention item are recorded in their own
+    // committed transaction BEFORE the advance transaction opens, so the stop
+    // survives the refusal. The count is the immutable job chain; the advance
+    // transaction re-reads it under the run lock and refuses again if it moved.
+    await this.#precheckLoopStop(runId);
     let precommit: () => void|Promise<void> = () => this.#assertInstall();
     return this.db.transactionWithPreCommitCheck(async tx => {
       this.#assertInstall();
@@ -321,7 +314,14 @@ export class PipelineAdvanceServiceV1 {
         if (resolved.state==="uncertain" || candidate.state==="uncertain") refuse("stage_uncertain");
         if (resolved.state==="waiting_approval") refuse("waiting_approval");
         const selected = {...base,executionJobId:resolved.executionJobId};
-        const prior = await this.#receipt(tx,run.id,candidate.stage_ordinal);
+        // A receipt replays only while it still describes THIS stage's current
+        // job. A fix round re-enters the stage with a new planned job, so the old
+        // receipt is history: replaying it would refuse a legitimate round, and
+        // treating it as a new receipt would collide with the per-stage key.
+        // The round is the job chain's own count for this stage, so a replay of
+        // the same job always lands on the same receipt.
+        const round = await this.#stageRound(tx,run.id,Number(candidate.stage_ordinal));
+        const prior = await this.#receipt(tx,run.id,candidate.stage_ordinal,round);
         if (prior) return this.#replayReceipt(prior,selected,policyId);
         if (resolved.state!=="eligible") refuse("stage_not_eligible");
         stage=candidate;selection=selected;expectedInputDigest=resolved.expectedInputDigest;break;
@@ -412,19 +412,23 @@ export class PipelineAdvanceServiceV1 {
       precommit=authenticate;await authenticate();
       const effect=await capability.assignAndQueueInSession(tx,{...selected,expectedInputDigest,policyId,
         approvingOwnerIdentityId:delegation.ownerIdentityId,
-        idempotencyKey:`pipeline-advance:${run.id}:${selected.stageOrdinal}`,commitDeadline:deadline},
+        idempotencyKey:`pipeline-advance:${run.id}:${selected.stageOrdinal}:${loop.loopIndex}`,
+        commitDeadline:deadline},
       {actorId:SERVICE_ACTOR,assertCurrent:authenticate,commitDeadline:value=>{
         if(!Number.isSafeInteger(value)||value<0)refuse("deadline_reached");deadline=Math.min(deadline,value);
       }}).catch((error:unknown)=>{if(error instanceof PipelineAdvanceErrorV1)throw error;
         return refuse("execution_authority_missing");});
       await authenticate();
-      const advancedAt=new Date(this.#now()).toISOString(),receiptId=`pipeline-advance:${run.id}:${selected.stageOrdinal}`;
+      // The receipt is per fix round, so a re-entered stage has its own durable
+      // record and a replay of the same job lands on the same row.
+      const advancedAt=new Date(this.#now()).toISOString(),roundIndex=await this.#stageRound(tx,run.id,selected.stageOrdinal),
+        receiptId=`pipeline-advance:${run.id}:${selected.stageOrdinal}:${roundIndex}`;
       // "Count runs, never dollars": an unknown cost is recorded as unknown, with
       // no invented number and no refusal. The pairing check in 0152 refuses any
       // other combination of the three cost columns.
       const costKnown=nextCost.kind==="known";
       const material={id:receiptId,tenantId:this.scope.tenantId,projectId:run.project_id,pipelineRunId:run.id,
-        stageOrdinal:selected.stageOrdinal,sourceJobId:source.id,executionJobId:execution.id,attemptId:effect.attemptId,
+        stageOrdinal:selected.stageOrdinal,loopIndex:roundIndex,sourceJobId:source.id,executionJobId:execution.id,attemptId:effect.attemptId,
         queueId:effect.queueId,selectionDigest,templateVersion:Number(template.version),templateDigest:template.record_digest,
         runVersion:Number(effectiveRun.version),runDigest:effectiveRun.record_digest,policyId:policy.id,policyVersion:Number(policy.version),
         policyDigest:policy.policy_digest,delegationReceiptId:delegation.receiptId,
@@ -434,18 +438,18 @@ export class PipelineAdvanceServiceV1 {
         delegationCostEvidenceDigest:costKnown?nextCost.evidenceDigest:null,
         requestDigest,advancedAt};
       const receiptDigest=sha256Digest(material),authTag=hmacSha256Tag(this.#key,{purpose:"pipeline-advance-receipt/v1",record:material});
-      await tx.query(`INSERT INTO pipeline_advance_receipts(id,tenant_id,project_id,pipeline_run_id,stage_ordinal,source_job_id,
-        execution_job_id,attempt_id,queue_id,selection_digest,template_version,template_digest,run_version,run_digest,policy_id,
-        policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,delegation_task_units,
+      await tx.query(`INSERT INTO pipeline_advance_receipts(id,tenant_id,project_id,pipeline_run_id,stage_ordinal,loop_index,
+        source_job_id,execution_job_id,attempt_id,queue_id,selection_digest,template_version,template_digest,run_version,run_digest,
+        policy_id,policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,delegation_task_units,
         delegation_cost_state,delegation_cost_microusd,delegation_cost_evidence_digest,request_digest,receipt_digest,auth_tag,advanced_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
-      [receiptId,this.scope.tenantId,run.project_id,run.id,selected.stageOrdinal,source.id,execution.id,effect.attemptId,effect.queueId,
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+      [receiptId,this.scope.tenantId,run.project_id,run.id,selected.stageOrdinal,roundIndex,source.id,execution.id,effect.attemptId,effect.queueId,
         selectionDigest,template.version,template.record_digest,effectiveRun.version,effectiveRun.record_digest,policy.id,Number(policy.version),
         policy.policy_digest,delegation.receiptId,delegation.receiptDigest,1,material.delegationCostState,
         material.delegationCostMicroUsd,material.delegationCostEvidenceDigest,requestDigest,receiptDigest,authTag,advancedAt]);
       // The counted round is appended against the receipt that opened it, in the
       // same transaction, so the loop count can never disagree with the run.
-      await this.#appendLoopCount(tx,run,stage,template,loop,requestDigest,receiptId,receiptDigest,advancedAt);
+      await this.#appendLoopCount(tx,run,loop,requestDigest,receiptId,receiptDigest,advancedAt);
       await appendAuditWith(tx,{id:`audit:${receiptId}`,...this.scope,projectId:run.project_id,actorId:SERVICE_ACTOR,actorType:"service",
         action:"pipelines.stage.advanced",targetType:"pipeline_run",targetId:run.id,correlationId:execution.id,
         idempotencyKey:receiptId,occurredAt:advancedAt,safeMetadata:{stageOrdinal:selected.stageOrdinal,sourceJobId:source.id,
@@ -513,7 +517,9 @@ export class PipelineAdvanceServiceV1 {
       [`machine-capacity:${sha256Digest({ tenantId:this.scope.tenantId, workspaceId:this.scope.workspaceId, now })}`,
         this.scope.tenantId, this.scope.workspaceId, input.observedDbClusters, now]);
       const observed = await this.#clusterObservation(tx);
-      await appendAuditWith(tx, { id: `audit:pipeline-allowance:${version}`, ...this.scope,
+      // The audit id is globally unique, so it carries the installation: two
+      // installations each setting version 1 must not collide.
+      await appendAuditWith(tx, { id: `audit:pipeline-allowance:${this.scope.tenantId}:${version}`, ...this.scope,
         projectId: undefined, actorId: actor.id, actorType: "human", action: "pipelines.allowance.set",
         targetType: "workspace", targetId: this.scope.workspaceId, idempotencyKey: `pipeline-allowance:${version}`,
         occurredAt: now, safeMetadata: { allowanceVersion: version, runsPerHour: input.runsPerHour,
@@ -651,10 +657,12 @@ export class PipelineAdvanceServiceV1 {
     this.#verifyAllowance(row);
     const now = this.#now();
     const usage = (await tx.query<UsageRow>(`SELECT
-      (SELECT COUNT(*) FROM pipeline_stage_loop_counts WHERE tenant_id=$1
-        AND recorded_at > $2::timestamptz - interval '1 hour')::text AS runs_this_hour,
-      (SELECT COUNT(*) FROM pipeline_stage_loop_counts WHERE tenant_id=$1 AND worker_id=$3
-        AND recorded_at > $2::timestamptz - interval '1 day')::text AS agent_runs_today,
+      (SELECT COUNT(*) FROM pipeline_advance_receipts WHERE tenant_id=$1
+        AND advanced_at > $2::timestamptz - interval '1 hour')::text AS runs_this_hour,
+      (SELECT COUNT(*) FROM pipeline_advance_receipts r JOIN pipeline_stage_runs s
+        ON s.tenant_id=r.tenant_id AND s.pipeline_run_id=r.pipeline_run_id AND s.stage_ordinal=r.stage_ordinal
+        WHERE r.tenant_id=$1 AND s.worker_id=$3
+        AND r.advanced_at > $2::timestamptz - interval '1 day')::text AS agent_runs_today,
       (SELECT COUNT(DISTINCT id) FROM control_harness_runs WHERE tenant_id=$1
         AND state IN('discovered','starting','running','waiting_input','waiting_approval','cancelling'))::text
         AS active_agent_processes,
@@ -687,69 +695,186 @@ export class PipelineAdvanceServiceV1 {
       runsPerHour, runsPerAgentPerDay, agentCeiling, clusterCeiling, dbClusters };
   }
 
+  /** The round count that already exists: the distinct pipeline jobs carrying
+   * each stage's ordinal. One stage spans N jobs and N attempts as the loop
+   * runs, so there is no second stored counter that could disagree with the job
+   * chain. */
+  async #loopRounds(runId: string, projectId?: string) {
+    return (await this.db.query<{ stage_ordinal: number | string }>(`SELECT stage_ordinal FROM control_jobs
+      WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal IS NOT NULL ORDER BY stage_ordinal,id`,
+    [this.scope.tenantId, runId])).rows;
+  }
+
+  /** The stage this run is on, its effective ceilings and the current count.
+   * Read from the run's own row and the job chain, never from a counter this
+   * service keeps. */
+  async #loopCeilings(runId: string) {
+    const locator = (await this.db.query<{ project_id: string }>(`SELECT project_id FROM pipeline_runs
+      WHERE tenant_id=$1 AND id=$2`, [this.scope.tenantId, runId])).rows[0];
+    if (!locator) return undefined;
+    const rows = (await this.db.query<{ stage_ordinal: number | string; worker_id: string; max_loops: number | string;
+      current_job_id: string; stage_kind: string; max_total_loops: number | string; run_version: number | string;
+      run_digest: string }>(`SELECT s.stage_ordinal,s.worker_id,s.max_loops,s.current_job_id,s.stage_kind,
+      t.max_total_loops,r.version run_version,r.record_digest run_digest
+      FROM pipeline_runs r JOIN pipeline_templates t ON t.tenant_id=r.tenant_id AND t.id=r.template_id
+      JOIN pipeline_stage_runs s ON s.tenant_id=r.tenant_id AND s.pipeline_run_id=r.id
+        AND s.stage_ordinal=coalesce(r.current_stage_ordinal,0)
+      WHERE r.tenant_id=$1 AND r.id=$2`, [this.scope.tenantId, runId])).rows;
+    const stage = rows[0];
+    if (!stage) return undefined;
+    const rounds = await this.#loopRounds(runId, locator.project_id);
+    const stageOrdinal = Number(stage.stage_ordinal);
+    return { projectId: locator.project_id, stage, stageOrdinal,
+      maxLoops: pipelineEffectiveMaxLoopsV1(Number(stage.max_loops)),
+      maxTotalLoops: pipelineEffectiveMaxTotalLoopsV1(Number(stage.max_total_loops)),
+      stageRounds: Math.max(0, rounds.filter(row => Number(row.stage_ordinal) === stageOrdinal).length - 1),
+      runTotal: Math.max(0, rounds.length - 1) };
+  }
+
+  /** A run that is already at a loop ceiling stops advancing, and the owner is
+   * told once, in a committed transaction that is independent of the refusal it
+   * causes. Repeating it is recognised by the item's id, so no copies pile up. */
+  async #precheckLoopStop(runId: string) {
+    const active = (await this.db.query<{ eligible: boolean }>(`SELECT EXISTS(SELECT 1 FROM pipeline_runs r
+      WHERE r.tenant_id=$1 AND r.id=$2 AND r.state='active' AND r.unattended
+        AND EXISTS(SELECT 1 FROM pipeline_unattended_transitions t WHERE t.tenant_id=r.tenant_id
+          AND t.pipeline_run_id=r.id AND t.enabled)) AS eligible`,
+    [this.scope.tenantId, runId])).rows[0];
+    if (active?.eligible !== true) return;
+    const current = await this.#loopCeilings(runId);
+    if (!current) return;
+    // `runTotal` is the number of rounds the run has already started; this
+    // advance would start one more. A run may start `maxTotalLoops` rounds.
+    const nextRunTotal = current.runTotal;
+    const reasonCode = current.stageRounds > current.maxLoops
+      ? "pipeline_stage_loop_limit_reached" as const
+      : nextRunTotal >= current.maxTotalLoops ? "pipeline_run_loop_limit_reached" as const : undefined;
+    if (!reasonCode) return;
+    const stage = { stage_ordinal: current.stageOrdinal, stage_kind: current.stage.stage_kind,
+      worker_id: current.stage.worker_id } as unknown as StageRow;
+    // The run ceiling is about the run, so it is checked against the run's own
+    // round count whichever stage the run is on.
+    const run = { id: runId, project_id: current.projectId, version: current.stage.run_version,
+      record_digest: current.stage.run_digest } as unknown as RunRow;
+    // The record is the LAST round this installation really ran, clamped inside
+    // the ceiling it reached. It never claims a round that was refused and never
+    // taken, which is exactly what the table's CHECK constraints assert: a stop
+    // can sit at max_loops, never above it. The two numbers describe one
+    // moment, and which moment depends on which ceiling was reached.
+    //
+    // A STAGE stop is about this stage's rounds, so it records this stage's
+    // last started round and the run total that round started at. A RUN stop is
+    // about the whole run, so it records the run's own real total, clamped
+    // inside the run ceiling, and the stage round that run was on.
+    const stageStopped = reasonCode === "pipeline_stage_loop_limit_reached";
+    const lastStartedRound = Math.min(current.stageRounds, current.maxLoops);
+    const lastRunTotal = stageStopped
+      ? lastStartedRound + 1
+      : Math.max(lastStartedRound + 1, Math.min(current.runTotal, current.maxTotalLoops));
+    // The attention item and the signed record of the ceiling decision commit
+    // together, before the refusal, so "the run stopped and the owner was told"
+    // is a fact rather than an attempt.
+    await this.#recordLoopStop(run, stage, reasonCode, lastStartedRound, current.maxLoops,
+      current.maxTotalLoops, lastRunTotal,
+      sha256Digest({ schema: "control-room.pipeline-loop-decision/v1", runId, stageOrdinal: current.stageOrdinal,
+        loopIndex: lastStartedRound, reasonCode }));
+    refuse(reasonCode === "pipeline_stage_loop_limit_reached" ? "stage_loop_limit_reached" : "run_loop_limit_reached");
+  }
+
   /** The counted fix round this advance is about to start, or the refusal that
    * stops it. `max_loops` and `max_total_loops` are compared here for the first
-   * time in the product's life. At the ceiling the run stops advancing and the
-   * owner gets one Needs Attention item instead of an endless retry. */
+   * time in the product's life, against the job chain's own count. */
   async #claimLoopRound(tx: DatabaseSession, run: RunRow, stage: StageRow, template: TemplateRow) {
     const stageOrdinal = Number(stage.stage_ordinal);
     const maxLoops = pipelineEffectiveMaxLoopsV1(safeInteger(stage.max_loops));
     const maxTotalLoops = pipelineEffectiveMaxTotalLoopsV1(safeInteger(template.max_total_loops));
-    const rounds = (await tx.query<LoopCountRow>(`SELECT id,pipeline_run_id,stage_ordinal,worker_id,loop_index,
-      max_loops,max_total_loops,run_total_loops,reason_code,receipt_id,receipt_digest,request_digest,auth_tag,recorded_at
-      FROM pipeline_stage_loop_counts WHERE tenant_id=$1 AND pipeline_run_id=$2 ORDER BY stage_ordinal,loop_index`,
-    [this.scope.tenantId,run.id])).rows;
-    const stageRounds = rounds.filter(row=>safeInteger(row.stage_ordinal)===stageOrdinal
-      && row.worker_id===stage.worker_id);
-    const runTotal = rounds.length;
-    for (const row of stageRounds) {
-      // The row is signed over material that includes the receipt digest it
-      // counted, so a rewritten count or a repointed receipt fails the tag. The
-      // receipt's own digest and tag are verified by its replay path.
-      const material = pipelineLoopCountMaterialV1({ tenantId:this.scope.tenantId, projectId:run.project_id,
-        runId:row.pipeline_run_id, stageOrdinal:safeInteger(row.stage_ordinal), workerId:row.worker_id,
-        loopIndex:safeInteger(row.loop_index), maxLoops:safeInteger(row.max_loops),
-        maxTotalLoops:safeInteger(row.max_total_loops), runTotalLoops:safeInteger(row.run_total_loops),
-        receiptId:row.receipt_id, receiptDigest:row.receipt_digest, requestDigest:row.request_digest,
-        recordedAt:iso(row.recorded_at) });
-      if (!same(hmacSha256Tag(this.#key,{purpose:"pipeline-stage-loop-count/v1",record:material}),row.auth_tag))
-        refuse("pipeline_integrity_failed");
+    const rounds = (await tx.query<{ stage_ordinal: number | string }>(`SELECT stage_ordinal FROM control_jobs
+      WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 AND stage_ordinal IS NOT NULL
+      ORDER BY stage_ordinal,id`, [this.scope.tenantId, run.project_id, run.id])).rows;
+    // The chain holds every job the run has planned, including the one this
+    // advance is about to run. A stage's first job is round 0, so the round this
+    // advance starts is the count minus that one.
+    const loopIndex = Math.max(0, rounds.filter(row => Number(row.stage_ordinal) === stageOrdinal).length - 1);
+    const nextRunTotal = Math.max(0, rounds.length - 1);
+    // The pre-check already recorded the stop and told the owner, in a
+    // transaction that committed before this one opened. Re-reading the chain
+    // here, under the run row lock, is what makes the decision honest: a chain
+    // that moved after the pre-check stops here too. This path only refuses,
+    // because the refusal aborts this transaction and a write inside it would
+    // roll the owner's attention item straight back out. A stop first seen here
+    // is recorded by the next attempt's pre-check, which runs before any
+    // transaction opens.
+    if (loopIndex > maxLoops || nextRunTotal > maxTotalLoops) {
+      const reasonCode = loopIndex > maxLoops
+        ? "pipeline_stage_loop_limit_reached" as const : "pipeline_run_loop_limit_reached" as const;
+      refuse(reasonCode === "pipeline_stage_loop_limit_reached" ? "stage_loop_limit_reached" : "run_loop_limit_reached");
     }
-    const loopIndex = stageRounds.length;
-    const nextRunTotal = runTotal+1;
-    if (loopIndex>maxLoops) {
-      await this.#raiseLoopAttention(tx,run,stage,template,"pipeline_stage_loop_limit_reached",
-        loopIndex,maxLoops,maxTotalLoops,nextRunTotal);
-      refuse("stage_loop_limit_reached");
-    }
-    if (nextRunTotal>maxTotalLoops) {
-      await this.#raiseLoopAttention(tx,run,stage,template,"pipeline_run_loop_limit_reached",
-        loopIndex,maxLoops,maxTotalLoops,nextRunTotal);
-      refuse("run_loop_limit_reached");
-    }
-    return { stageOrdinal, workerId:stage.worker_id, loopIndex, maxLoops, maxTotalLoops, runTotalLoops:nextRunTotal };
+    return { stageOrdinal, workerId: stage.worker_id, loopIndex, maxLoops, maxTotalLoops, runTotalLoops: nextRunTotal };
   }
-  async #appendLoopCount(tx: DatabaseSession, run: RunRow, stage: StageRow, template: TemplateRow,
-    loop: { stageOrdinal: number; workerId: string; loopIndex: number; maxLoops: number; maxTotalLoops: number;
-      runTotalLoops: number }, requestDigest: string, receiptId: string, receiptDigest: string, recordedAt: string) {
+
+  /** The ceiling decision, its count row and the owner's Needs Attention item,
+   * committed together. The count row is the signed receipt of what the ceiling
+   * was compared against; it never becomes a second authority.
+   *
+   * `reachedLoopIndex` is the round the run wanted and was refused, so it can be
+   * one past the ceiling. The row records the LAST ROUND THE RUN ACTUALLY
+   * STARTED, which is the ceiling it reached, so the table's CHECK constraints
+   * (`loop_index <= max_loops`, `run_total_loops <= max_total_loops`,
+   * `run_total_loops >= loop_index + 1`) all hold and the count can never
+   * describe a round the run did not run. The refusal is named by its
+   * `reason_code`. */
+  async #recordLoopStop(run: RunRow, stage: StageRow, reasonCode: "pipeline_stage_loop_limit_reached"
+    | "pipeline_run_loop_limit_reached", reachedLoopIndex: number, maxLoops: number, maxTotalLoops: number,
+    reachedRunTotal: number, requestDigest: string) {
+    // The last round inside each ceiling that the run really started.
+    const loopIndex = Math.min(reachedLoopIndex, maxLoops);
+    const runTotalLoops = Math.min(reachedRunTotal, maxTotalLoops);
+    await this.db.transaction(async tx => {
+      await this.#raiseLoopAttention(tx, run, stage, reasonCode, reachedLoopIndex, maxLoops, maxTotalLoops, reachedRunTotal);
+      const at = new Date(this.#now()).toISOString();
+      const stageOrdinal = Number(stage.stage_ordinal);
+      const id = `pipeline-loop-stop:${run.id}:${stageOrdinal}:${reachedLoopIndex}`;
+      const material = pipelineLoopCountMaterialV1({ tenantId:this.scope.tenantId, projectId:run.project_id,
+        runId:run.id, stageOrdinal, workerId:stage.worker_id, loopIndex, maxLoops, maxTotalLoops,
+        runTotalLoops, reasonCode: reasonCode === "pipeline_stage_loop_limit_reached"
+          ? "stage_loop_limit_reached" : "run_loop_limit_reached",
+        receiptId:id, receiptDigest:sha256Digest({ runId:run.id, stageOrdinal, loopIndex, reasonCode }),
+        requestDigest, recordedAt:at });
+      await tx.query(`INSERT INTO pipeline_stage_loop_counts(id,tenant_id,project_id,pipeline_run_id,stage_ordinal,
+        worker_id,loop_index,max_loops,max_total_loops,run_total_loops,reason_code,receipt_id,receipt_digest,
+        request_digest,auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+        ON CONFLICT DO NOTHING`,
+      [id,this.scope.tenantId,run.project_id,run.id,stageOrdinal,
+        stage.worker_id,loopIndex,maxLoops,maxTotalLoops,runTotalLoops,
+        reasonCode === "pipeline_stage_loop_limit_reached" ? "stage_loop_limit_reached" : "run_loop_limit_reached",
+        material.receiptId,material.receiptDigest,requestDigest,
+        pipelineLoopCountTagV1(this.#key,material),at]);
+    });
+  }
+
+  async #appendLoopCount(tx: DatabaseSession, run: RunRow, loop: { stageOrdinal: number; workerId: string;
+    loopIndex: number; maxLoops: number; maxTotalLoops: number; runTotalLoops: number }, requestDigest: string,
+    receiptId: string, receiptDigest: string, recordedAt: string) {
     const id = `pipeline-loop:${run.id}:${loop.stageOrdinal}:${loop.loopIndex}`;
     const material = pipelineLoopCountMaterialV1({ tenantId:this.scope.tenantId, projectId:run.project_id,
       runId:run.id, stageOrdinal:loop.stageOrdinal, workerId:loop.workerId, loopIndex:loop.loopIndex,
       maxLoops:loop.maxLoops, maxTotalLoops:loop.maxTotalLoops, runTotalLoops:loop.runTotalLoops,
+      reasonCode:"stage_advanced",
       receiptId, receiptDigest, requestDigest, recordedAt });
     const digest = pipelineLoopCountDigestV1(material), tag = pipelineLoopCountTagV1(this.#key,material);
     await tx.query(`INSERT INTO pipeline_stage_loop_counts(id,tenant_id,project_id,pipeline_run_id,stage_ordinal,
       worker_id,loop_index,max_loops,max_total_loops,run_total_loops,reason_code,receipt_id,receipt_digest,request_digest,
-      auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'stage_advanced',$11,$12,$13,$14,$15)`,
+      auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      ON CONFLICT DO NOTHING`,
     [id,this.scope.tenantId,run.project_id,run.id,loop.stageOrdinal,loop.workerId,loop.loopIndex,loop.maxLoops,
-      loop.maxTotalLoops,loop.runTotalLoops,receiptId,receiptDigest,requestDigest,tag,recordedAt]);
-    // The row lock on the run is already held, so no two advances can open the
-    // same round; the unique key is the database's own second opinion.
+      loop.maxTotalLoops,loop.runTotalLoops,"stage_advanced",receiptId,receiptDigest,requestDigest,tag,recordedAt]);
+    // The run row lock is already held, so no two advances can open the same
+    // round; the unique key is the database's own second opinion.
   }
   /** One Needs Attention item per run, written in the transaction that refuses.
    * An exact replay is recognised by its payload, so a repeated refusal at the
    * same ceiling does not pile up copies. */
-  async #raiseLoopAttention(tx: DatabaseSession, run: RunRow, stage: StageRow, template: TemplateRow,
+  async #raiseLoopAttention(tx: DatabaseSession, run: RunRow, stage: StageRow,
     reasonCode: "pipeline_stage_loop_limit_reached"|"pipeline_run_loop_limit_reached", loopIndex: number,
     maxLoops: number, maxTotalLoops: number, runTotalLoops: number) {
     const at = new Date(this.#now()).toISOString();
@@ -809,14 +934,22 @@ export class PipelineAdvanceServiceV1 {
     if(job.id!==id||job.projectId!==run.project_id||job.workflowId!==run.workflow_id||row.project_id!==run.project_id
       ||row.pipeline_run_id!==run.id||row.stage_kind!==stage.stage_kind||Number(row.stage_ordinal)!==Number(stage.stage_ordinal))refuse("advance_conflict");
     if(source&&id!==stage.current_job_id)refuse("advance_conflict");return job;}
-  async #receipt(tx:DatabaseSession,runId:string,ordinal:number){return(await tx.query<AdvanceReceiptRow>(`SELECT id,project_id,pipeline_run_id,
+  async #receipt(tx:DatabaseSession,runId:string,ordinal:number,round:number){return(await tx.query<AdvanceReceiptRow>(`SELECT id,project_id,pipeline_run_id,loop_index,
     stage_ordinal,source_job_id,execution_job_id,attempt_id,queue_id,selection_digest,template_version,template_digest,run_version,
     run_digest,policy_id,policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,delegation_task_units,
-    delegation_cost_microusd,delegation_cost_evidence_digest,request_digest,receipt_digest,
-    auth_tag,advanced_at FROM pipeline_advance_receipts WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
-    [this.scope.tenantId,runId,ordinal])).rows[0];}
+    delegation_cost_state,delegation_cost_microusd,delegation_cost_evidence_digest,request_digest,receipt_digest,
+    auth_tag,advanced_at FROM pipeline_advance_receipts WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3
+    AND loop_index=$4`,[this.scope.tenantId,runId,ordinal,round])).rows[0];}
+  /** The round this stage is on: the number of jobs it has planned, minus the
+   * one about to run. Derived from the immutable job chain, never from a counter
+   * this service keeps. */
+  async #stageRound(tx:DatabaseSession,runId:string,ordinal:number){const row=(await tx.query<{count:string|number}>(
+    `SELECT COUNT(*)::text count FROM control_jobs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
+    [this.scope.tenantId,runId,ordinal])).rows[0];
+    return Math.max(0,Number(row?.count??1)-1);}
   #replayReceipt(row:AdvanceReceiptRow,selection:PipelineAdvanceSelectionV1,policyId:string){const material={id:row.id,
     tenantId:this.scope.tenantId,projectId:row.project_id,pipelineRunId:row.pipeline_run_id,stageOrdinal:Number(row.stage_ordinal),
+    loopIndex:safeInteger(row.loop_index),
     sourceJobId:row.source_job_id,executionJobId:row.execution_job_id,attemptId:row.attempt_id,queueId:row.queue_id,
     selectionDigest:row.selection_digest,templateVersion:Number(row.template_version),templateDigest:row.template_digest,
     runVersion:Number(row.run_version),runDigest:row.run_digest,policyId:row.policy_id,policyVersion:Number(row.policy_version),

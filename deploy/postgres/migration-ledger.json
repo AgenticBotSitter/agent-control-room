@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "ce48e80731c3e434f192beaf1252daa623409c64aee8f54097ce4563c5120380",
+  "digest": "89526e4ad0f8d004975559732c25f7dea64d866a3513596eda7202354c46c4d3",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -617,7 +617,7 @@
     {
       "file": "db/migrations/0151_pipeline_stage_loop_counts.sql",
       "order": 103,
-      "sha256": "a456701ebcabaa95420867699b03257a4e671d70d95fc5bf32e579e79ef911b1",
+      "sha256": "3511c5aa69e383ee4b5f100ad8ce14fc245bb4a3553d23584fed0d165ead7d24",
       "kind": "migrate"
     },
     {
@@ -633,9 +633,9 @@
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0154_pipeline_loop_attention.sql",
+      "file": "db/migrations/0154_pipeline_advance_round_receipts.sql",
       "order": 106,
-      "sha256": "61902bc74aa611d5df8f6c6e60343c6f2b3e5798b64d206c7dd2754f48ffb1e1",
+      "sha256": "cfc55f35b64d7a3566512ee4a81cbc85c759dc1a4f051a750b010393483217a9",
       "kind": "migrate"
     },
     {

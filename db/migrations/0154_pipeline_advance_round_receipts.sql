@@ -1,15 +1,36 @@
--- S7b: the loop-limit Needs Attention item. When a stage or a run reaches its
--- loop ceiling, unattended advance stops for that run and the owner is told
--- once, in the same transaction. The coordinator login already holds INSERT
--- on control_action_inbox (0102) for the existing owner-attention paths, so
--- this trigger confines the new pipeline-loop shape to exactly what the
--- advance service builds and refuses every other use of that id prefix, for
--- any role. Every pre-existing attention path is untouched.
+-- S7b: one advance receipt per fix round, and the guard on the loop-limit
+-- Needs Attention item.
+--
+-- 0109 made `pipeline_advance_receipts` unique per (run, stage), which was
+-- correct while a stage could only ever be entered once. Enforcing the loop
+-- ceilings means a stage is re-entered with a new planned job, and that round
+-- needs its own durable receipt: the stage's first receipt is history, and
+-- reusing its key would make a legitimate fix round unrecordable.
+--
+-- The key becomes (run, stage, round). The existing one-receipt-per-stage rows
+-- are round 0, and the table's append-only triggers, foreign keys and every
+-- other invariant are untouched.
+--
+-- When a stage or a run reaches its loop ceiling, unattended advance stops for
+-- that run and the owner is told once. The coordinator login already holds
+-- INSERT on control_action_inbox (0102) for the existing owner-attention paths,
+-- so the guard below confines the new pipeline-loop shape to exactly what the
+-- advance service builds and refuses every other use of that id prefix, for any
+-- role. Every pre-existing attention path is untouched.
+--
 -- No new table, grant, scheduler, provider invocation, merge or external
 -- effect is added.
 
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
+
+ALTER TABLE pipeline_advance_receipts ADD COLUMN loop_index bigint NOT NULL DEFAULT 0
+  CHECK (loop_index >= 0);
+-- One durable receipt per fix round. A replayed advance still lands on the same
+-- key, because the round is derived from the immutable job chain.
+ALTER TABLE pipeline_advance_receipts DROP CONSTRAINT pipeline_advance_receipts_tenant_id_pipeline_run_id_stage_o_key;
+ALTER TABLE pipeline_advance_receipts ADD CONSTRAINT pipeline_advance_receipts_round_key
+  UNIQUE (tenant_id, pipeline_run_id, stage_ordinal, loop_index);
 
 CREATE FUNCTION guard_pipeline_loop_attention_item() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$

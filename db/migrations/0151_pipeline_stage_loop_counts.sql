@@ -1,14 +1,21 @@
--- S7b: the counted fix rounds. `max_loops` (per stage) and `max_total_loops`
--- (per run) were already stored, signed and surfaced, and never compared to
--- anything. This table is the counter they were always meant to be read
--- against, and the only writer is the advance transaction that already holds
--- the run row lock. No trigger, scheduler, provider invocation or external
--- effect is added.
+-- S7b: the loop ceilings, enforced against the round count that already exists.
+-- `max_loops` (per stage) and `max_total_loops` (per run) were already stored,
+-- signed and surfaced, and never compared to anything.
 --
--- A stage's first attempt is round 0, so a stage with `max_loops = 0` still
--- runs once and can never loop back. The service clamps each stored limit to
--- the product ceiling of 2 fix rounds per stage and 6 per run, so a template
--- can lower those limits and never raise them.
+-- The count is NOT stored a second time. One build stage spans N jobs and N
+-- attempts as the loop runs (MULTI_AGENT_PIPELINES_DESIGN.md §"The loop lives
+-- in the attempt chain"), so the rounds a stage has run are exactly the distinct
+-- pipeline jobs that carry its stage_ordinal. This table is therefore a signed
+-- RECEIPT of that count at the moment the advance refused or admitted it — an
+-- append-only record of what the ceiling was compared against, not a second
+-- authority that could disagree with the job chain.
+--
+-- And because a fix round is a new planned job, the advance receipt is keyed per
+-- round, so each round has its own durable receipt. A stage's first receipt stays
+-- history rather than being reused, and a replayed advance still lands on the same
+-- key, because the round is derived from the immutable job chain.
+--
+-- No trigger, scheduler, provider invocation, merge or external effect is added.
 
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
@@ -22,14 +29,17 @@ CREATE TABLE pipeline_stage_loop_counts (
   -- The worker this stage runs on. The per-agent daily allowance is counted
   -- against exactly this id, so it can never be widened by a plan shape change.
   worker_id text NOT NULL CHECK (length(worker_id) BETWEEN 1 AND 180),
-  -- The round this row opens, zero for a stage's first attempt, and the
-  -- effective ceilings that round was admitted under.
+  -- The round this row records, zero for a stage's first attempt, and the
+  -- effective ceilings it was admitted under.
   loop_index bigint NOT NULL CHECK (loop_index >= 0),
   max_loops bigint NOT NULL CHECK (max_loops >= 0),
   max_total_loops bigint NOT NULL CHECK (max_total_loops >= 0),
   -- Every round this run has started, including this one.
   run_total_loops bigint NOT NULL CHECK (run_total_loops >= 0),
-  reason_code text NOT NULL CHECK (reason_code = 'stage_advanced'),
+  reason_code text NOT NULL CHECK (reason_code IN
+    ('stage_advanced','stage_loop_limit_reached','run_loop_limit_reached')),
+  -- The receipt that admitted or refused this round, so a recorded count is
+  -- always traceable to the exact decision it justified.
   receipt_id text NOT NULL,
   receipt_digest text NOT NULL CHECK (receipt_digest ~ '^sha256:[a-f0-9]{64}$'),
   request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[a-f0-9]{64}$'),
@@ -37,19 +47,16 @@ CREATE TABLE pipeline_stage_loop_counts (
   recorded_at timestamptz NOT NULL,
   coordinator_lock boolean NOT NULL DEFAULT false CHECK (coordinator_lock IS FALSE),
   PRIMARY KEY (tenant_id, id),
-  -- One counted round per stage per run. A second receipt for the same round
-  -- cannot be appended, so a replayed advance can never inflate a count.
-  UNIQUE (tenant_id, pipeline_run_id, stage_ordinal, loop_index),
+  -- One record per stage per run per round. A replayed advance cannot append a
+  -- second one, and a refusal at the same round is recognised by its reason.
+  UNIQUE (tenant_id, pipeline_run_id, stage_ordinal, loop_index, reason_code),
   FOREIGN KEY (tenant_id, pipeline_run_id, project_id)
     REFERENCES pipeline_runs(tenant_id, id, project_id) ON DELETE RESTRICT,
   FOREIGN KEY (tenant_id, pipeline_run_id, stage_ordinal)
     REFERENCES pipeline_stage_runs(tenant_id, pipeline_run_id, stage_ordinal) ON DELETE RESTRICT,
-  FOREIGN KEY (tenant_id, receipt_id)
-    REFERENCES pipeline_advance_receipts(tenant_id, id) ON DELETE RESTRICT,
-  -- The round this row opens is inside the per-stage ceiling, whatever wrote it.
+  -- A recorded round is inside the per-stage ceiling it was compared against.
   CHECK (loop_index <= max_loops),
-  -- The run total this row reaches is inside the run-wide ceiling: two stages
-  -- each under their own limit still cannot pass the run ceiling together.
+  -- Two stages each under their own limit still cannot pass the run ceiling.
   CHECK (run_total_loops <= max_total_loops),
   -- The run total is at least this stage's rounds up to and including this one.
   CHECK (run_total_loops >= loop_index + 1)
@@ -83,9 +90,7 @@ CREATE POLICY pipeline_stage_loop_counts_work_intake_scope ON pipeline_stage_loo
     pipeline_stage_loop_counts.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b));
 
 -- Existing installations already have these NOLOGIN roles. Keep the upgrade
--- grant as narrow as the fresh-install role files: the coordinator counts
--- rounds and appends them, and its only updatable column is the false-valued
--- lock it needs for the row lock.
+-- grant as narrow as the fresh-install role files.
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_task_coordinator') THEN
     EXECUTE 'GRANT SELECT, INSERT ON pipeline_stage_loop_counts TO control_room_task_coordinator';
