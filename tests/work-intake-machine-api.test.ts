@@ -120,6 +120,18 @@ test("production privilege preflight admits only the dedicated role on intake ta
     "{control_room_schema_owner=arwdDxtm/control_room_schema_owner,control_room_backup=r/control_room_schema_owner,control_room_work_intake=ar/control_room_schema_owner}"), true);
   assert.equal(matchesPostgresProductionAclV1("public.work_batches",
     "{control_room_schema_owner=arwdDxtm/control_room_schema_owner,control_room_private_web=ar/control_room_schema_owner,control_room_work_intake=ar/control_room_schema_owner}"), false);
+  assert.equal(matchesPostgresProductionAclV1("public.work_intake_role_anchor",
+    "{control_room_schema_owner=arwdDxtm/control_room_schema_owner,control_room_work_intake=r/control_room_schema_owner}"), true);
+  const binding = (grants: string) => matchesPostgresProductionAclV1("public.work_intake_tenant_binding",
+    `{control_room_schema_owner=arwdDxtm/control_room_schema_owner,${grants}}`);
+  assert.equal(binding(["application","reader","backup","work_intake"]
+    .map(role => `control_room_${role}=r/control_room_schema_owner`).join(",")), true);
+  assert.equal(binding(["application=arw","reader=r","backup=r","work_intake=r"]
+    .map(grant => `control_room_${grant}/control_room_schema_owner`).join(",")), false,
+  "the application role must not be able to re-bind the intake tenant");
+  assert.equal(binding(["application=r","reader=r","backup=r","work_intake=ar"]
+    .map(grant => `control_room_${grant}/control_room_schema_owner`).join(",")), false,
+  "the intake login must not be able to write its own binding");
 });
 
 test("role creation and least-privilege grants travel through reviewed production provisioning", async () => {
@@ -139,6 +151,9 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.match(migration, /pg_has_role\(s\.oid,a\.grantee,'member'\)/u);
   assert.doesNotMatch(migration, /r\.rolname='control_room_work_intake'/u);
   assert.match(grants, /GRANT SELECT ON work_intake_role_anchor TO control_room_work_intake/u);
+  assert.match(migration, /CREATE TABLE work_intake_tenant_binding \(\s+singleton boolean PRIMARY KEY CHECK \(singleton\),\s+tenant_id text NOT NULL REFERENCES tenants\(id\)/u);
+  assert.match(grants, /GRANT SELECT ON work_intake_tenant_binding TO control_room_application, control_room_reader,\s+control_room_backup, control_room_work_intake;/u);
+  assert.doesNotMatch(grants, /GRANT (?:INSERT|UPDATE|DELETE|ALL)[^;]*work_intake_tenant_binding/u);
   assert.doesNotMatch(grants, /GRANT EXECUTE ON FUNCTION is_work_intake_session\(\) TO PUBLIC/u);
   assert.match(migration, /NOT s\.rolsuper/u);
   assert.match(migration, /CREATE POLICY control_idempotency_work_intake_scope/u);

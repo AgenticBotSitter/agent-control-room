@@ -75,4 +75,5 @@ GRANT INSERT ON control_node_fleet_current TO control_room_task_coordinator;
 GRANT UPDATE (signal_sequence, fingerprint, trust, observed_at, expires_at, payload)
   ON control_node_fleet_current TO control_room_task_coordinator;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_task_coordinator;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_task_coordinator;
 COMMIT;

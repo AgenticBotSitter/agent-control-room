@@ -318,6 +318,7 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_intake_guard"),
     migrateTarget:migrateTarget("cr_prod_intake_guard"), rootDir:ROOT, env:{...process.env,...passwords} });
   await query(db,"INSERT INTO tenants(id,display_name) VALUES('tenant:intake-guard','intake guard')");
+  await query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:intake-guard')");
   await query(db,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:intake-guard','tenant:intake-guard','workspace')");
   await query(db,`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
     redaction_policy_version,cursor_retention_days) VALUES('adapter:intake-guard','tenant:intake-guard','manual','1',
@@ -478,7 +479,8 @@ const seededBatches = [
   ["tenant:batch-other", "identity:work-intake:other", "work-intake", "batch:other", true],
   ["tenant:batch-other", "identity:work-intake:other", "work-intake", "batch:other-open", false],
 ];
-const otherIntakeScope = "work-batches.propose/v1:identity:work-intake:other";
+const intakeScope = identityId => `work-batches.propose/v1:${identityId}`;
+const intakeLedgerTables = ["work_batches", "work_batch_revisions", "control_idempotency", "audit_events"];
 const seededProject = tenantId => `project:${tenantId.slice("tenant:".length)}`;
 const insertSeededBatch = `INSERT INTO work_batches(id,tenant_id,project_id,proposed_by_identity_id,
   proposed_by_actor_type,proposed_at,state,proposal,queue_depth_limit,batch_digest,auth_tag,version,created_at,updated_at)
@@ -519,13 +521,17 @@ async function seedWorkBatchTenants(db) {
     if (hasRevision) await query(db, insertSeededRevision, [`${batchId}:revision:1`, tenantId, batchId, identityId,
       seededBatchAt, seededBatchProposal, seededBatchDigest, seededBatchTag]);
   }
-  // The other tenant's intake ledgers, in the namespace the intake login may use.
-  await query(db, `INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status,result,completed_at)
-    VALUES('tenant:batch-other',$1,'other-intake-key-0001',$2,'completed','{"batchId":"batch:other"}'::jsonb,$3)`,
-  [otherIntakeScope, `sha256:${"d".repeat(64)}`, seededBatchAt]);
-  await query(db, `INSERT INTO audit_events(id,tenant_id,project_id,actor_id,actor_type,action,target_type,target_id,
-    safe_metadata,occurred_at) VALUES('audit:work-intake:other-1','tenant:batch-other','project:batch-other',
-    'identity:work-intake:other','agent','work_batches.propose','work_batch','batch:other','{}'::jsonb,$1)`, [seededBatchAt]);
+  // Each tenant's intake ledger rows, in the namespace the intake login may use.
+  for (const [tenantId, identityId, batchId] of [["tenant:batch-own","identity:work-intake:own","batch:own"],
+    ["tenant:batch-other","identity:work-intake:other","batch:other"]]) {
+    const suffix = tenantId.slice("tenant:batch-".length);
+    await query(db, `INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status,
+      result,completed_at) VALUES($1,$2,$3,$4,'completed',$5::jsonb,$6)`, [tenantId, intakeScope(identityId),
+      `${suffix}-intake-key-0001`, `sha256:${"d".repeat(64)}`, JSON.stringify({ batchId }), seededBatchAt]);
+    await query(db, `INSERT INTO audit_events(id,tenant_id,project_id,actor_id,actor_type,action,target_type,target_id,
+      safe_metadata,occurred_at) VALUES($1,$2,$3,$4,'agent','work_batches.propose','work_batch',$5,'{}'::jsonb,$6)`,
+    [`audit:work-intake:${suffix}-1`, tenantId, seededProject(tenantId), identityId, batchId, seededBatchAt]);
+  }
 }
 
 test("work-intake login reads and writes only its bound tenant's registered work batches", needsPg, async () => {
@@ -536,6 +542,27 @@ test("work-intake login reads and writes only its bound tenant's registered work
   await seedWorkBatchTenants(db);
   const intake={...target("cr_prod_intake_batches","control_room_work_intake_agent"),
     password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+  const intakeRows=async()=>Object.fromEntries(await Promise.all(intakeLedgerTables.map(async table=>
+    [table,(await query(intake,`SELECT tenant_id FROM ${table} ORDER BY tenant_id`)).rows.map(row=>row.tenant_id)])));
+  const nothing=Object.fromEntries(intakeLedgerTables.map(table=>[table,[]]));
+
+  // Fail closed: with no binding row the intake login sees and writes nothing,
+  // not even its own tenant's proposals.
+  assert.deepEqual(await intakeRows(),nothing);
+  await assert.rejects(query(intake,insertSeededBatch,["batch:unbound","tenant:batch-own",seededProject("tenant:batch-own"),
+    "identity:work-intake:own",seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),/row-level security/u);
+  await query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:batch-own')");
+  // One binding per cluster database, readable but never writable by the intake login.
+  await assert.rejects(query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:batch-other')"),
+    /duplicate key/u);
+  await assert.rejects(query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(false,'tenant:batch-other')"),
+    /check constraint/u);
+  await assert.rejects(query(intake,"UPDATE work_intake_tenant_binding SET tenant_id='tenant:batch-other'"),/permission denied/u);
+  await assert.rejects(query(intake,"DELETE FROM work_intake_tenant_binding"),/permission denied/u);
+  await assert.rejects(query(intake,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:batch-other')"),
+    /permission denied/u);
+  assert.deepEqual(await intakeRows(),{work_batches:["tenant:batch-own"],work_batch_revisions:["tenant:batch-own"],
+    control_idempotency:["tenant:batch-own"],audit_events:["tenant:batch-own"]});
 
   assert.deepEqual((await query(intake,"SELECT tenant_id,id FROM work_batches ORDER BY tenant_id,id")).rows,
     [{tenant_id:"tenant:batch-own",id:"batch:own"}]);
@@ -567,7 +594,7 @@ test("work-intake login reads and writes only its bound tenant's registered work
   await assert.rejects(query(intake,`INSERT INTO control_idempotency
     (tenant_id,operation_scope,idempotency_key,request_digest,status)
     VALUES('tenant:batch-other',$1,'forged-other-key-0001',$2,'processing')`,
-  [otherIntakeScope,`sha256:${"e".repeat(64)}`]),/row-level security/u);
+  [intakeScope("identity:work-intake:other"),`sha256:${"e".repeat(64)}`]),/row-level security/u);
   await assert.rejects(query(intake,
     "UPDATE work_batches SET proposal='{}'::jsonb WHERE tenant_id='tenant:batch-other'"),/permission denied/u);
   await assert.rejects(query(intake,
@@ -591,6 +618,12 @@ test("work-intake login reads and writes only its bound tenant's registered work
   assert.equal(status.batchId,receipt.batchId);
   assert.deepEqual((await query(intake,"SELECT id FROM work_batches ORDER BY id")).rows.map(row=>row.id).sort(),
     ["batch:own",receipt.batchId].sort());
+
+  // Removing the binding closes the login again, including its own new rows.
+  await query(db,"DELETE FROM work_intake_tenant_binding");
+  assert.deepEqual(await intakeRows(),nothing);
+  await assert.rejects(store.status(principal,"project:batch-own",receipt.batchId,"2026-09-27T12:12:00.000Z"),
+    {safeCode:"batch_not_found"});
 });
 
 test("non-intake roles keep exactly their work-batch access", needsPg, async () => {
