@@ -1,0 +1,18 @@
+/** Safe, fixed refusal codes. Messages never carry request content. */
+export type FleetErrorCodeV1 = "unauthenticated" | "forbidden" | "not_found" | "conflict" | "invalid"
+  | "too_large" | "expired" | "unavailable";
+
+const statuses: Readonly<Record<FleetErrorCodeV1, number>> = Object.freeze({ unauthenticated: 401, forbidden: 403,
+  not_found: 404, conflict: 409, invalid: 400, too_large: 413, expired: 410, unavailable: 503 });
+
+export class FleetErrorV1 extends Error {
+  constructor(readonly code: FleetErrorCodeV1) {
+    super(`fleet_${code}`);
+    this.name = "FleetErrorV1";
+  }
+  get status() { return statuses[this.code]; }
+}
+
+export function fleetFail(code: FleetErrorCodeV1): never {
+  throw new FleetErrorV1(code);
+}
