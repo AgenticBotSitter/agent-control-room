@@ -22,6 +22,7 @@ import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.m
 import { computeDatabaseRestoreIdentity, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
+import { applyMacGrantDiffV1, diffMacGrantsV1, readDesiredMacGrantsV1, readMacGrantCatalogV1 } from "../scripts/mac-local/database-upgrade-grants.mjs";
 import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
 import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
@@ -279,22 +280,53 @@ const QUEUE_GRANTS = ", work_batch_queue_admissions,\n  work_batch_effective_que
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
 
-// Stages an older release's root: every migration except the pending suffix,
-// and this head's grants file without the pending objects' grants.
-async function stageAppliedPrefix({ pending, withoutGrants }) {
+// The S-slice tests below each name ONE migration by its filename suffix and
+// stage every migration that is not that one or anything after it. `sliceOrder`
+// says which ledger order that suffix sits at, and it is DERIVED, never a
+// literal: adding a later migration leaves every S-slice's own suffix where it
+// was.
+//
+// `pendingFromLedger` returns every migration from that ledger order onwards —
+// the real pending suffix the applier will actually apply. The assertions
+// compare against that whole list, so a migration added later is part of the
+// expected apply set instead of breaking the test.
+const sliceOrders = await collectLedgerEntries(ROOT)
+  .then(entries => new Map(entries.filter(entry => (entry.kind ?? "migrate") === "migrate")
+    .map(entry => [entry.file.replace("db/migrations/", ""), entry.order])));
+/** The ledger order of the one migration whose filename ends with `ending`. */
+const sliceOrder = (ending) => {
+  const found = [...sliceOrders].filter(([file]) => file.endsWith(ending));
+  assert.equal(found.length, 1, ending);
+  return found[0][1];
+};
+/** Every migration the named one and all later ledger orders: the real suffix. */
+const pendingFromLedger = async (head) => (await readdir(join(ROOT, "db/migrations")))
+  .filter(name => name.endsWith(".sql")).sort().slice(head - 1);
+
+// Stages an older release's root: every migration except the withheld ones,
+// and this head's grants file without the withheld objects' grants.
+//
+// `withheld` names the migrations the staged release does NOT have. Every
+// other migration the ledger orders — including any added after this test was
+// written — is staged, so both sides of a down-migration comparison carry the
+// same newer work and the comparison is still exactly about what the withheld
+// migrations' down files revoke.
+async function stageAppliedPrefix({ withheld, withoutGrants }) {
   const stage = await mkdtemp(join(tmpdir(), "cr-pg63prefix-"));
   try {
     for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
       await mkdir(join(stage, dir), { recursive: true });
     const migrations = (await readdir(join(ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
-    const suffix = pending.map(ending => {
+    const held = withheld.map(ending => {
       const found = migrations.filter(name => name.endsWith(ending));
       assert.equal(found.length, 1, ending);
       return found[0];
     });
-    // The pending migrations are the newest files, in filename order.
-    assert.deepEqual(migrations.slice(-suffix.length), suffix);
-    const applied = migrations.slice(0, -suffix.length);
+    // A withheld migration may not be staged twice, and the staged set must be
+    // the real ledger order with exactly those files removed.
+    assert.equal(new Set(held).size, held.length);
+    const applied = migrations.filter(file => !held.includes(file));
+    assert.deepEqual([...applied, ...migrations.filter(file => held.includes(file))].sort(), migrations);
     for (const shipped of ["0100_ownership_lease_collision_guard.sql", "0101_owner_review_job_lock.sql",
       "0102_work_batch_owner_approval.sql"]) assert.ok(applied.includes(shipped), shipped);
     for (const file of applied)
@@ -314,15 +346,21 @@ async function stageAppliedPrefix({ pending, withoutGrants }) {
     const entries = await collectLedgerEntries(stage);
     const ledgerPath = join(stage, "deploy/postgres/migration-ledger.json");
     await writeFile(ledgerPath, JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
-    return { stage, ledgerPath, applied, suffix };
+    // `suffix` is the withheld set in ledger order: for an upgrade test that is
+    // exactly the pending migrations the next apply must append.
+    return { stage, ledgerPath, applied, suffix: held };
   } catch (error) {
     await rm(stage, { recursive: true, force: true });
     throw error;
   }
 }
 
+// `pending` is the migration this slice's upgrade must apply: its own
+// migration plus everything the ledger orders after it, derived by
+// `pendingFromLedger` so a migration added later is part of the real apply set
+// rather than a hard-coded count that goes stale.
 async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newObjects }) {
-  const { stage, ledgerPath, applied, suffix } = await stageAppliedPrefix({ pending, withoutGrants });
+  const { stage, ledgerPath, applied, suffix } = await stageAppliedPrefix({ withheld: pending, withoutGrants });
   try {
     await freshDatabase(database);
     const db = target(database);
@@ -365,46 +403,47 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
 }
 
 // A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes
-// S3's queue migration, S4's pipeline migration, S5's agent-review migration,
-// S6's build-publication migration and S7's unattended-advance migration, in
-// that order.
-test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, () =>
+// everything the ledger orders from S3's queue migration onwards, in that
+// order. Each test names the migration its slice STARTS at; the rest of the
+// pending suffix is derived from the ledger, so a migration added later is
+// part of the expected apply set rather than a failure.
+test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s2",
-    pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql", "_agent_review_plans.sql",
-      "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    pending: await pendingFromLedger(sliceOrder("_work_batch_agent_queue.sql")),
     withoutGrants: [QUEUE_GRANTS, UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["work_batch_queue_admissions", "work_batch_agent_queue_heads", "work_batch_effective_queue_admissions",
       "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans",
       "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, S6's 0108, then S7's 0109.
-test("upgrade from main's applied ledger appends only the pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, () =>
+// A database at main (S3's 0104 applied) takes S4's pipeline migration onwards.
+test("upgrade from main's applied ledger appends only the pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
-    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_pipeline_build_publications.sql",
-      "_pipeline_unattended_advance.sql"],
+    pending: await pendingFromLedger(sliceOrder("_linear_pipeline_runs.sql")),
     withoutGrants: [UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
       "control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 (0105 applied) takes S5's 0106, S6's 0108, then S7's 0109.
-test("upgrade from main plus S4's applied ledger appends only the agent-review, build-publication and unattended-advance migrations", needsPg, () =>
+// A database at main plus S4 (0105 applied) takes S5's agent-review migration onwards.
+test("upgrade from main plus S4's applied ledger appends only the agent-review, build-publication and unattended-advance migrations", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s4",
-    pending: ["_agent_review_plans.sql", "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    pending: await pendingFromLedger(sliceOrder("_agent_review_plans.sql")),
     withoutGrants: [UNATTENDED_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 and S5 (0106 applied) takes S6's 0108, then S7's 0109.
-test("upgrade from main plus S4 and S5's applied ledger appends only the build-publication and unattended-advance migrations", needsPg, () =>
+// A database at main plus S4 and S5 (0106 applied) takes S6's build-publication migration onwards.
+test("upgrade from main plus S4 and S5's applied ledger appends only the build-publication and unattended-advance migrations", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s5",
-    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    pending: await pendingFromLedger(sliceOrder("_pipeline_build_publications.sql")),
     withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4, S5 and S6 (0108 applied) takes only S7's 0109:
-// no duplicate ledger_order, and a second run is a clean no-op.
-test("upgrade from main plus S4, S5 and S6's applied ledger appends only the unattended-advance migration", needsPg, () =>
+// A database at main plus S4, S5 and S6 (0108 applied) takes S7's 0109 and
+// whatever the ledger orders after it: no duplicate ledger_order, and a second
+// run is a clean no-op.
+test("upgrade from main plus S4, S5 and S6's applied ledger appends only the unattended-advance migration", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s6",
-    pending: ["_pipeline_unattended_advance.sql"], withoutGrants: [UNATTENDED_GRANTS],
+    pending: await pendingFromLedger(sliceOrder("_pipeline_unattended_advance.sql")),
+    withoutGrants: [UNATTENDED_GRANTS],
     newObjects: UNATTENDED_OBJECTS }));
 
 test("tampered history fails closed: altered, deleted-row and forged-digest states", needsPg, async () => {
@@ -1489,6 +1528,17 @@ test("agent-review down migration removes every surviving direct privilege", nee
 
 // Everything 0108 could touch, including privileges on every public object,
 // so a down file that revokes more than its up migration granted is caught.
+//
+// An ACL's own text order is not part of what it means: PostgreSQL stores the
+// grantee entries in whatever order they were granted, and applying a
+// REVOKE/GRANT pair in a different order on two otherwise identical databases
+// yields the same privileges written differently. Comparing the raw text
+// therefore failed for a reason that is not a privilege difference, so each ACL
+// is canonicalised to a sorted array of its entries. Every entry still has to
+// match exactly, so a grant present on one side and absent (or differently
+// scoped) on the other still fails here.
+const aclEntries = (acl) => acl === null ? null : acl.slice(1, -1).split(",").sort();
+
 async function catalogState(db){
   const client=postgresDatabase(db);
   const acl=(await client.query(`SELECT jsonb_build_object(
@@ -1503,14 +1553,23 @@ async function catalogState(db){
       JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'),
     'policies',(SELECT jsonb_agg(jsonb_build_array(tablename,policyname,permissive,roles::text,cmd,qual,with_check)
       ORDER BY tablename,policyname) FROM pg_policies WHERE schemaname='public')) AS state`)).rows[0].state;
+  // Sort each ACL's entries, wherever one appears in a relation, column or
+  // function row, so the comparison is over privileges rather than grant order.
+  for (const rows of Object.values(acl)) {
+    for (const row of rows ?? []) for (const [index, value] of row.entries())
+      if (typeof value === "string" && value.startsWith("{") && value.endsWith("}")) row[index] = aclEntries(value);
+  }
   return {schema:await readSchemaDigest(client),acl};
 }
 
 // 0109's then 0108's down files return a head database to exactly the main + S4 + S5
-// state: the same objects and function bodies, and the same privileges.
+// state: the same objects and function bodies, and the same privileges. The
+// baseline withholds only 0108 and 0109, so a migration added after this test
+// was written is applied to BOTH sides and the comparison stays the one that
+// matters: what those two down files revoke, nothing more and nothing less.
 test("0109 then 0108 down return a head database to exactly the main plus S4 and S5 state", needsPg, async () => {
   const { stage, ledgerPath } = await stageAppliedPrefix({
-    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    withheld: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
     withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS] });
   try {
     await freshDatabase("cr_prod_s6_baseline");
@@ -1528,28 +1587,189 @@ test("0109 then 0108 down return a head database to exactly the main plus S4 and
   }
 });
 
-// S7's additions to the Mac-local role files. Removing them rebuilds the S6
-// role state; each must be present verbatim, so a changed grant fails here.
-const S7_ROLE_EDITS = {
-  "private_web_roles.sql": [
-    "  pipeline_ordered_stage_runs, pipeline_unattended_transitions,\n  control_pipeline_build_publications",
-    "  pipeline_ordered_stage_runs, control_pipeline_build_publications",
-    "GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web;\n"
-      + "GRANT UPDATE (may_advance_unattended, version, updated_at, record_digest, auth_tag)\n"
-      + "  ON pipeline_templates TO control_room_private_web;\n"
-      + "GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest,\n"
-      + "  record_digest, auth_tag) ON pipeline_runs TO control_room_private_web;\n", ""],
-  "task_coordinator_roles.sql": [
-    "control_pipeline_build_publications, pipeline_unattended_transitions, pipeline_advance_receipts,",
-    "control_pipeline_build_publications,",
-    "GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator;\n"
-      + "GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at)\n"
-      + "  ON pipeline_runs TO control_room_task_coordinator;\n", ""],
-};
 const MAC_ROLE_FILES = ["private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql", "agent_reviewer_roles.sql"];
 const MAC_ROLE_GROUPS = ["control_room_private_web", "control_room_task_coordinator", "control_room_native_results",
   "control_room_local_result_publisher", "control_room_agent_reviewer", "control_room_native_queue_worker"];
+
+// The grants each withheld migration's DOWN file revokes from a role that
+// already exists. Read from the down file's own `EXECUTE 'REVOKE ...'`
+// statements, because that is exactly the set the pre-migration release did not
+// have: its role files did not carry them, and the down file takes them away
+// again. A migration that revokes a grant its up file never issues is a real
+// asymmetry, and this baseline removes it — so the comparison proves what the
+// down file actually does rather than what it ought to do.
+//
+// Derived, so a revoke added later is picked up without editing this test.
+async function withheldRevocations(root, withheld) {
+  const tuples = new Set();
+  for (const name of await withheldFilenames(root, withheld)) {
+    const sql = await readFile(join(root, "db/down", name), "utf8");
+    for (const [, statement] of sql.matchAll(/EXECUTE '(REVOKE [^']*)'/gu)) {
+      const match = /^REVOKE\s+([A-Z]+)(?:\s*\(([^)]+)\))?\s+ON\s+([a-z_][a-z0-9_]*)\s+FROM\s+(control_room_[a-z_]+)$/u
+        .exec(statement.trim());
+      assert.ok(match, `unreadable withheld revoke: ${statement}`);
+      const [, privilege, columns, object, role] = match;
+      for (const column of columns ? columns.split(",").map(value => value.trim()) : [""]) {
+        tuples.add([role, "table", `public.${object}`, column, privilege, "plain"].join("|"));
+      }
+    }
+  }
+  assert.ok(tuples.size > 0, "the withheld migration's down file must revoke a grant");
+  return tuples;
+}
+
+/** The one migration file each `withheld` suffix names. */
+async function withheldFilenames(root, withheld) {
+  const migrations = (await readdir(join(root, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
+  const names = [];
+  for (const ending of withheld) {
+    const found = migrations.filter(name => name.endsWith(ending));
+    assert.equal(found.length, 1, ending);
+    names.push(found[0]);
+  }
+  return names;
+}
+
+// The schema objects the withheld migrations create: their relations, and the
+// columns they ADD to a relation that outlives them. A staged release without
+// those migrations has neither, so a role file naming one cannot be installed
+// verbatim there — and naming a column is how a role file would break.
+async function withheldObjects(root, withheld) {
+  const objects = new Set(), columns = new Set();
+  for (const name of await withheldFilenames(root, withheld)) {
+    const sql = await readFile(join(root, "db/migrations", name), "utf8");
+    for (const [, object] of sql.matchAll(
+      /CREATE (?:UNLOGGED )?(?:TABLE|VIEW|MATERIALIZED VIEW)\s+(?:IF NOT EXISTS\s+)?([a-z_][a-z0-9_]*)/giu))
+      objects.add(object);
+    for (const [, table, column] of sql.matchAll(
+      /ALTER TABLE\s+([a-z_][a-z0-9_]*)\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?([a-z_][a-z0-9_]*)/giu))
+      if (!objects.has(table)) columns.add(`${table}.${column}`);
+  }
+  assert.ok(objects.size + columns.size > 0, "the withheld migration must add something the role files name");
+  return { objects, columns };
+}
+
+/** Splits on commas that are not inside parentheses, the way the Mac installer
+ * splits a GRANT's object and privilege lists. */
+function splitTopLevel(source) {
+  const parts = [];
+  let part = "", level = 0;
+  for (const char of source) {
+    if (char === "(") level += 1;
+    if (char === ")") level -= 1;
+    assert.ok(level >= 0, "unbalanced role-file grant");
+    if (char === "," && level === 0) { parts.push(part); part = ""; continue; }
+    part += char;
+  }
+  assert.equal(level, 0, "unbalanced role-file grant");
+  parts.push(part);
+  return parts;
+}
+
+// Rebuilds a Mac-local role file for a staged release that lacks what the
+// withheld migrations changed. Three cases, all derived from those migrations:
+//   - a GRANT naming a relation they created loses that name, or goes if the
+//     list was only theirs;
+//   - a column-scoped GRANT naming a column they added loses that column;
+//   - a GRANT asserting nothing but grants their DOWN file revokes goes
+//     entirely, because the pre-migration release's role files did not carry it.
+//
+// The grant is taken apart with a top-level comma walk, so
+// `INSERT (a,b), UPDATE (c)` and the plain `SELECT, INSERT` forms are both read
+// the way the Mac installer reads them. Every `old` is matched VERBATIM against
+// the real file text, so a role file that changes shape fails here instead of
+// quietly dropping an edit and making the comparison prove less than it did.
+function roleEditsWithoutObjects(sql, withheld, revocations) {
+  const { objects, columns } = withheld;
+  const statements = [...sql.replace(/--[^\n]*/gu, "").matchAll(/(?:^|\n)\s*(GRANT\s+[\s\S]*?;)/gmu)]
+    .map(match => match[1]);
+  const pairs = [];
+  const tuple = (role, privilege, object, column) =>
+    [role, "table", `public.${object}`, column, privilege, "plain"].join("|");
+  for (const statement of statements) {
+    const [, privileges, listedText, grantee] = /^GRANT\s+([\s\S]*?)\s+ON\s+([\s\S]*?)\s+TO\s+(control_room_[a-z_]+)$/u
+      .exec(statement.trim().replace(/;$/u, "")) ?? [];
+    assert.ok(privileges !== undefined, `unreadable role-file grant: ${statement}`);
+    const listed = splitTopLevel(listedText).map(value => value.trim());
+    // Each privilege may carry its own column list, so split those separately.
+    // A privilege with NO column list is table-wide, which is distinct from a
+    // privilege whose column list is empty because every column was withheld.
+    const rights = splitTopLevel(privileges).map(value => {
+      const [, privilege, list] = /^([A-Z]+)\s*(?:\(([^)]*)\))?$/u.exec(value.trim()) ?? [];
+      assert.ok(privilege, `unreadable role-file privilege: ${value}`);
+      return { privilege, scoped: list !== undefined,
+        names: list === undefined ? [] : splitTopLevel(list).map(column => column.trim()),
+        tupleFor: object => (list === undefined ? [""] : splitTopLevel(list).map(column => column.trim()))
+          .map(column => tuple(grantee, privilege, object, column)) };
+    });
+    const asserted = rights.flatMap(right => listed.flatMap(object => right.tupleFor(object)));
+    // Asserts nothing but what the withheld down files take away: the release
+    // being reconstructed did not have it, so neither does this database.
+    if (asserted.every(item => revocations.has(item))) { pairs.push([statement, ""]); continue; }
+    const survivors = listed.filter(object => !objects.has(object));
+    const held = rights.some(right => right.names.some(column =>
+      listed.some(object => columns.has(`${object}.${column}`))));
+    // Nothing withheld touches this grant: leave its text exactly as it is. The
+    // test's business is the withheld migrations, and reformatting an untouched
+    // grant (a schema-qualified object, a differently spaced column list) would
+    // make a failure here mean nothing.
+    if (survivors.length === listed.length && !held) continue;
+    const kept = rights.flatMap(right => {
+      // A table-wide privilege keeps its name, whether or not columns were
+      // withheld elsewhere in the statement.
+      if (!right.scoped) return [right.privilege];
+      if (!right.names.some(column => listed.some(object => columns.has(`${object}.${column}`))))
+        return [`${right.privilege} (${right.names.join(",")})`];
+      const surviving = right.names.filter(column =>
+        !listed.some(object => columns.has(`${object}.${column}`)));
+      // Every column this privilege named was withheld: it cannot be granted.
+      return surviving.length === 0 ? [] : [`${right.privilege} (${surviving.join(",")})`];
+    });
+    pairs.push([statement, kept.length === 0 || survivors.length === 0 ? ""
+      : `GRANT ${kept.join(", ")} ON ${survivors.join(", ")} TO ${grantee};`]);
+  }
+  for (const [verbatim] of pairs) assert.ok(sql.includes(verbatim),
+    `role file no longer contains this grant verbatim: ${verbatim}`);
+  return pairs;
+}
+
+// Installs the real Mac-local role files against a staged release that lacks
+// the withheld migrations, so this database carries exactly the role state
+// those migrations had not yet produced — including the column grants they add
+// to pre-existing tables, which no role-file edit can express.
+async function installMacRoleFilesWithout(database, withheld) {
+  const schema = await withheldObjects(ROOT, withheld);
+  const revocations = await withheldRevocations(ROOT, withheld);
+  const edits = {};
+  for (const file of MAC_ROLE_FILES) {
+    // `installMacRoleFiles` walks each file's pairs two at a time.
+    const pairs = roleEditsWithoutObjects(await readFile(join(ROOT, "db/roles", file), "utf8"),
+      schema, revocations).flat();
+    if (pairs.length > 0) edits[file] = pairs;
+  }
+  const client = new Client(target(database, "postgres"));
+  await client.connect();
+  try {
+    await installMacRoleFiles(database, edits);
+    const actual = await readMacGrantCatalogV1(client);
+    // Converge the live catalog on the head's desired grants MINUS everything
+    // the withheld migrations produced: the relations they created, the
+    // columns they added, and the grants their down files revoke. Driven
+    // through the installer's own grant diff, so this stays correct as either
+    // side changes. `missing` is emptied first, so a grant the role files make
+    // on a relation this database does not have is not silently demanded.
+    const without = (item) => {
+      const [, , object, column] = item.split("|");
+      const name = object.replace(/^public\./, "");
+      return revocations.has(item) || schema.objects.has(name) || (column && schema.columns.has(`${name}.${column}`));
+    };
+    const desired = new Set([...await readDesiredMacGrantsV1()].filter(item => !without(item)));
+    const diff = diffMacGrantsV1(actual, desired);
+    assert.deepEqual(diff.missing, [], "the withheld work is the only role difference to remove");
+    await applyMacGrantDiffV1(client, { extra: diff.extra, missing: [] });
+  } finally { await client.end(); }
+}
 
 // The narrow-role installer's database steps, from the real role files with
 // `edits` applied, as the cluster superuser the fixed queue expects. Roles are
@@ -1577,9 +1797,11 @@ async function installMacRoleFiles(database, edits = {}) {
 // 0109's down file returns a Mac-local head database to exactly the S6 state:
 // the same objects, and the same privileges for every role, including the web
 // and coordinator column grants that exist only in the Mac-local role files.
+// Only 0109 is withheld, so every later migration the ledger orders is staged
+// on BOTH sides and the comparison is still exactly about 0109's down file.
 test("0109 down returns a Mac-local head database to exactly the main plus S4, S5 and S6 state", needsPg, async () => {
-  const { stage, ledgerPath } = await stageAppliedPrefix({ pending: ["_pipeline_unattended_advance.sql"],
-    withoutGrants: [UNATTENDED_GRANTS] });
+  const withheld = ["_pipeline_unattended_advance.sql"];
+  const { stage, ledgerPath } = await stageAppliedPrefix({ withheld, withoutGrants: [UNATTENDED_GRANTS] });
   const admin = adminDb();
   const createdPostgres = !(await query(admin, "SELECT 1 FROM pg_roles WHERE rolname='postgres'")).rows.length;
   if (createdPostgres) await query(admin, "CREATE ROLE postgres SUPERUSER LOGIN");
@@ -1588,7 +1810,7 @@ test("0109 down returns a Mac-local head database to exactly the main plus S4, S
     await freshDatabase("cr_prod_s7_baseline");
     await applyMigrations({ target: target("cr_prod_s7_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s7_baseline"),
       migrateTarget: migrateTarget("cr_prod_s7_baseline"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
-    await installMacRoleFiles("cr_prod_s7_baseline", S7_ROLE_EDITS);
+    await installMacRoleFilesWithout("cr_prod_s7_baseline", withheld);
     await freshDatabase("cr_prod_s7_down");
     await applyMigrations({ target: target("cr_prod_s7_down"), bootstrapTarget: bootstrapTarget("cr_prod_s7_down"),
       migrateTarget: migrateTarget("cr_prod_s7_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
