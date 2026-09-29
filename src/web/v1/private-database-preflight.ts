@@ -16,9 +16,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 }
 
 // Generated from public migrations through 0190 (filename order, including assigned gaps),
-// including generic external-content migrations 0025/0026, by the controlled
-// PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "cde16aa8f96b155e78d462d3900d7d0a5fb610c66a237d24d81e6de78a644ef1";
+// including generic external-content migrations 0025/0026, read from a live
+// PostgreSQL 17 cluster installed the production way. Catalog query below;
+// not a mutable database marker.
+export const privateWebSchemaDigest = "1b18d0c5eb19e01100966a446144f029fe27a9976dbecc4bc03b538849307695";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
