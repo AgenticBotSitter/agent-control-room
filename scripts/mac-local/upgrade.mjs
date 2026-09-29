@@ -10,6 +10,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
+import { readPrivateWebSchemaDigest } from "../../src/web/v1/private-database-preflight";
 import { loadMacLocalDatabaseRolesFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
 import { finishMacLocalDatabaseUpgradeV1, prepareMacLocalDatabaseUpgradeV1 } from "./provision-database.mjs";
 import { protectedRootFromArguments, repoRoot, runtimePaths } from "./stack.mjs";
@@ -18,6 +19,7 @@ const exec = promisify(execFile);
 const RECORD_SCHEMA = "control-room.mac-upgrade-recovery/v1";
 const commitPattern = /^[a-f0-9]{40}$/u;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
+const migrationLedgerPath = fileURLToPath(new URL("../../deploy/postgres/migration-ledger.json", import.meta.url));
 
 const failure = code => { throw new Error(code); };
 const privateDirectory = async path => {
@@ -81,17 +83,34 @@ async function waitForOwner() {
   await new Promise(resolve => process.stdin.once("data", () => resolve()));
 }
 
-/** Reads only the non-secret migration identity with the already-configured web login. */
+/** This build's own executable ledger head. No database call: it is the
+ * migration ledger for whatever commit is checked out right now, read the
+ * same source-integrity way `database-upgrade-remote.mjs` does. */
+async function localTargetLedgerHeadV1() {
+  const ledger = JSON.parse(await readFile(migrationLedgerPath, "utf8"));
+  const last = ledger.entries.filter(entry => (entry.kind ?? "migrate") === "migrate").at(-1);
+  if (!last || typeof last.file !== "string" || typeof last.sha256 !== "string" || !Number.isSafeInteger(last.order))
+    failure("upgrade_ledger_head_refused");
+  return { file: last.file, order: last.order, digest: `sha256:${last.sha256}` };
+}
+
+/** Reads the non-secret migration identity with the already-configured web
+ * login: this build's own ledger head (above, no database access) paired with
+ * the live schema's structural digest. The migration ledger table itself
+ * grants the web login no row access at all — `db/roles/production_table_grants.sql`
+ * revokes it as a least-privilege denial proof, and real-PostgreSQL tests pin
+ * that denial — so this never selects from that table directly. The catalog
+ * digest is read the same permission-free way `mac:up`'s own hard schema
+ * check already does, and changes whenever the VPS actually migrates. */
 export async function readMacUpgradeLedgerHeadV1(protectedRoot) {
+  const target = await localTargetLedgerHeadV1();
   const roles = await loadMacLocalDatabaseRolesFromRootV1(protectedRoot);
   const database = createPrivatePostgresDatabase(roles.web);
   try {
-    const row = (await database.client.query(`SELECT filename, digest, ledger_order FROM control_room_schema_migrations
-      ORDER BY ledger_order DESC LIMIT 1`)).rows[0];
-    if (!row || typeof row.filename !== "string" || typeof row.digest !== "string" || !Number.isSafeInteger(Number(row.ledger_order)))
-      failure("upgrade_ledger_head_refused");
+    const schemaDigest = await readPrivateWebSchemaDigest(database.client);
+    if (typeof schemaDigest !== "string" || !/^[a-f0-9]{64}$/u.test(schemaDigest)) failure("upgrade_ledger_head_refused");
     return captureRecord({ schema: RECORD_SCHEMA, previousCommit: "0".repeat(40), targetCommit: "0".repeat(40),
-      ledgerHead: { file: row.filename, digest: row.digest, order: Number(row.ledger_order) } }).ledgerHead;
+      ledgerHead: { file: target.file, order: target.order, digest: `sha256:${schemaDigest}` } }).ledgerHead;
   } catch (error) {
     if (error instanceof Error && error.message === "upgrade_ledger_head_refused") throw error;
     failure("upgrade_ledger_head_refused");

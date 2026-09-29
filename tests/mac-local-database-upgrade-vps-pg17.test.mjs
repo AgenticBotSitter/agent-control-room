@@ -27,7 +27,7 @@ const skip = needsPg || (hasPython ? false : "needs python3 for a real terminal"
 const legacyMacLogins = ["control_room_web", "control_room_coordinator", "control_room_results",
   "control_room_queue_worker"];
 const password = login => `p${login.replaceAll("_", "")}`.padEnd(40, "x");
-const publisherPassword = "q".repeat(40), intakePassword = "w".repeat(40);
+const publisherPassword = "q".repeat(40), intakePassword = "w".repeat(40), reviewerPassword = "r".repeat(40);
 const codes = {};
 const state = {};
 const operator = () => `host=${state.socket} port=${state.port} dbname=control_room user=postgres`;
@@ -121,8 +121,8 @@ async function refused(run, code, stage, baseline) {
   return output;
 }
 function assertNoSecret(output) {
-  for (const secret of [publisherPassword, intakePassword, ...legacyMacLogins.map(password),
-    codes.publisher, codes.intake, codes.both, "SCRAM-SHA-256"]) assert.equal(output.includes(secret), false);
+  for (const secret of [publisherPassword, intakePassword, reviewerPassword, ...legacyMacLogins.map(password),
+    codes.publisher, codes.intake, codes.reviewer, codes.all, "SCRAM-SHA-256"]) assert.equal(output.includes(secret), false);
 }
 
 before(async () => {
@@ -165,7 +165,9 @@ before(async () => {
   }
   codes.publisher = postgresScramVerifierV1(publisherPassword);
   codes.intake = postgresScramVerifierV1(intakePassword);
-  codes.both = JSON.stringify({ control_room_publisher: codes.publisher, control_room_work_intake_agent: codes.intake });
+  codes.reviewer = postgresScramVerifierV1(reviewerPassword);
+  codes.all = JSON.stringify({ control_room_publisher: codes.publisher, control_room_work_intake_agent: codes.intake,
+    control_room_agent_reviewer_login: codes.reviewer });
   // GitHub stands in as `upstream`; the VPS's own clone of it is `source`.
   state.upstream = join(state.root, "upstream");
   execFileSync("git", ["clone", "--quiet", "--depth", "1", "--no-local", `file://${repoRoot}`, state.upstream]);
@@ -314,7 +316,8 @@ test("refuses unexpected role attributes, memberships and default grants", { ski
 test("refuses a planned new login with no code, or with the wrong code, before any backup", { skip }, async () => {
   const output = await refused(() => upgrade([head().slice(0, 7)], { answers: [[codePrompt, "\n"]] }),
     "upgrade_new_login_needs_verifier", "approve");
-  assert.match(output, /new logins: 2 \(control_room_publisher, control_room_work_intake_agent\)/u);
+  assert.match(output,
+    /new logins: 3 \(control_room_agent_reviewer_login, control_room_publisher, control_room_work_intake_agent\)/u);
   const partial = await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.publisher) }),
     "upgrade_new_login_needs_verifier", "plan");
   assert.match(partial, /does not cover every new login/u);
@@ -323,18 +326,18 @@ test("refuses a planned new login with no code, or with the wrong code, before a
 });
 
 test("a no at the prompt, a dirty stage, or a plan that changed after approval changes nothing", { skip }, async () => {
-  await refused(() => upgrade([head().slice(0, 7)], { answers: [[codePrompt, `${codes.both}\n`], [applyPrompt, "n\n"]] }),
+  await refused(() => upgrade([head().slice(0, 7)], { answers: [[codePrompt, `${codes.all}\n`], [applyPrompt, "n\n"]] }),
     "upgrade_not_approved", "approve");
   const dirty = async () => {
     const [stage] = (await stages()).filter(name => name !== "cr-upgrade.keep");
     await writeFile(join(state.vps, "stages", stage, "src", "package.json"), "{}\n");
   };
-  await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.both, dirty) }),
+  await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.all, dirty) }),
     "upgrade_stage_dirty", "apply");
   let changed;
   const inject = async () => { await sql("GRANT SELECT ON control_jobs TO control_room_web"); changed = await catalog(); };
   try {
-    await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.both, inject) }),
+    await refused(() => upgrade([head().slice(0, 7)], { answers: approve(codes.all, inject) }),
       "upgrade_plan_changed_refused", "plan", () => changed);
   } finally { await sql("REVOKE SELECT ON control_jobs FROM control_room_web"); }
 });
@@ -342,7 +345,7 @@ test("a no at the prompt, a dirty stage, or a plan that changed after approval c
 test("refuses when the backup fails, and writes nothing", { skip }, async () => {
   const noTools = await mkdtemp(join(state.root, "no-pg-dump-"));
   const output = await refused(() => upgrade([head().slice(0, 7)], { env: { CR_UPGRADE_TEST_PG_BIN: noTools },
-    answers: approve(codes.both) }), "upgrade_backup_failed", "backup");
+    answers: approve(codes.all) }), "upgrade_backup_failed", "backup");
   assert.match(output, /Nothing was changed/u);
 });
 
@@ -389,7 +392,7 @@ test("a pnpm workspace or pnpmfile planted above the stage never runs, and the m
     git(state.upstream, "commit", "--quiet", "-am", "name another pnpm");
     const beforeCatalog = await catalog(), beforeBackups = await backups();
     try {
-      const declined = await upgrade([head().slice(0, 7)], { answers: [[codePrompt, `${codes.both}\n`],
+      const declined = await upgrade([head().slice(0, 7)], { answers: [[codePrompt, `${codes.all}\n`],
         [applyPrompt, "n\n"]] });
       assert.equal(existsSync(marker), false, "the planted pnpmfile ran during the install");
       assert.match(declined.output, /upgrade_error:upgrade_not_approved stage=approve/u, declined.output);
@@ -411,9 +414,9 @@ test("upgrades an older ledger to HEAD with one code, a backup first and an empt
   const kept = ["control_room_migrator", "control_room_app", "control_room_scheduler", ...legacyMacLogins];
   const verifiers = () => sql("SELECT rolname,rolpassword FROM pg_authid WHERE rolname=ANY($1) ORDER BY 1", [kept]);
   const oldVerifiers = await verifiers();
-  const { code, output } = await upgrade([head().slice(0, 7)], { answers: approve(codes.both) });
+  const { code, output } = await upgrade([head().slice(0, 7)], { answers: approve(codes.all) });
   assert.equal(code, 0, output);
-  assert.match(output, /\d+ migrations: 0091…\d{4} · queue tables: install · new groups: \d+ · new logins: 2/u);
+  assert.match(output, /\d+ migrations: 0091…\d{4} · queue tables: install · new groups: \d+ · new logins: 3/u);
   assert.match(output, /Plan digest: sha256:[0-9a-f]{64}/u);
   const done = new RegExp(`DONE ${head().slice(0, 7)}·(\\d{4})`, "u").exec(output);
   assert.ok(done, output);
@@ -424,7 +427,7 @@ test("upgrades an older ledger to HEAD with one code, a backup first and an empt
   assert.equal(macDatabaseUpgradePlanIsEmptyV1(await inspectMacDatabaseUpgradeV1({ client: state.client })), true);
   assert.deepEqual(await verifiers(), oldVerifiers, "existing passwords are byte-identical");
   for (const [login, secret] of [["control_room_publisher", publisherPassword],
-    ["control_room_work_intake_agent", intakePassword]]) {
+    ["control_room_work_intake_agent", intakePassword], ["control_room_agent_reviewer_login", reviewerPassword]]) {
     const session = connectTarget(tcp(login, secret));
     await session.connect();
     await session.end();

@@ -42,9 +42,14 @@ const skip = needsPg;
 const legacyMacLogins = ["control_room_web", "control_room_coordinator", "control_room_results",
   "control_room_queue_worker"];
 const legacyPassword = login => `p${login.replaceAll("_", "")}`.padEnd(40, "x");
-const publisherPassword = "q".repeat(40), intakePassword = "w".repeat(40);
+const publisherPassword = "q".repeat(40), intakePassword = "w".repeat(40), reviewerPassword = "r".repeat(40);
 const bothLoginCodes = JSON.stringify({ control_room_publisher: postgresScramVerifierV1(publisherPassword),
-  control_room_work_intake_agent: postgresScramVerifierV1(intakePassword) });
+  control_room_work_intake_agent: postgresScramVerifierV1(intakePassword),
+  control_room_agent_reviewer_login: postgresScramVerifierV1(reviewerPassword) });
+// Every migration this branch adds beyond ledger 90 — derived, not pinned, so
+// this suite does not go stale each time another migration lands on main.
+const pendingSinceLedger90 = JSON.parse(await readFile(join(repoRoot, "deploy/postgres/migration-ledger.json"), "utf8"))
+  .entries.filter(entry => (entry.kind ?? "migrate") === "migrate" && entry.file >= "db/migrations/0091").length;
 const pgExec = (file, args) => execFileSync(join(PG_BIN ?? "", file), args, { encoding: "utf8", timeout: 120_000,
   env: { ...process.env, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } });
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 30_000,
@@ -266,7 +271,7 @@ test("a wrong code, then the real login code: the upgraded ledger-90 database eq
     const target = socketTarget(shared.cluster);
     const before1 = await inspectMacDatabaseUpgradeV1({ client: shared.client });
     assert.equal(before1.installQueueSchema, true);
-    assert.equal(before1.pendingMigrations.length, 7);
+    assert.equal(before1.pendingMigrations.length, pendingSinceLedger90);
     assert.ok(before1.createRoles.some(item => item.role === "control_room_publisher"));
     const digest = macDatabaseUpgradePlanDigestV1(before1);
 
@@ -291,7 +296,7 @@ test("a wrong code, then the real login code: the upgraded ledger-90 database eq
     assert.deepEqual(await passwordsOf(), beforePasswords, "the migrator, app, scheduler and four Mac logins keep byte-identical verifiers");
 
     for (const [login, password] of [["control_room_publisher", publisherPassword],
-      ["control_room_work_intake_agent", intakePassword]]) {
+      ["control_room_work_intake_agent", intakePassword], ["control_room_agent_reviewer_login", reviewerPassword]]) {
       const session = connectTarget(tcp(shared.cluster, login, password));
       await session.connect();
       await session.end();
@@ -371,13 +376,14 @@ test("a real kill between migrations leaves the ledger at the last committed fil
     client = await ledger90Fixture(cluster);
     const target = socketTarget(cluster), root = await backupRoot(cluster);
     const before1 = await inspectMacDatabaseUpgradeV1({ client });
-    assert.equal(before1.pendingMigrations.length, 7);
+    assert.equal(before1.pendingMigrations.length, pendingSinceLedger90);
+    const realMigrationsCommitted = 90 + pendingSinceLedger90;
 
     const upstream = await buildUpstream(cluster.root);
-    // A fixture migration appended after the 7 real ones, whose only statement
-    // blocks on a transaction-scoped advisory lock this test controls. The 7
-    // real files are untouched, so they commit normally; only the 8th (this
-    // one) ever waits.
+    // A fixture migration appended after the real ones, whose only statement
+    // blocks on a transaction-scoped advisory lock this test controls. The
+    // real files are untouched, so they commit normally; only the extra one
+    // (this fixture) ever waits.
     const lockKey = 918_273_645;
     await commitFixtureMigration(upstream, `SELECT pg_advisory_xact_lock(${lockKey});\n`);
     const dest = await mkdtemp(join(cluster.root, "co-"));
@@ -386,7 +392,7 @@ test("a real kill between migrations leaves the ledger at the last committed fil
     const plan = await step.runMacDatabaseUpgradeVpsStepV1({ args: ["plan", staged.commit, target, root, PG_BIN, "2"],
       write: () => {} });
     assert.deepEqual(plan.plan.pendingMigrations.slice(-1), ["db/migrations/0105_test_fixture.sql"]);
-    assert.equal(plan.plan.pendingMigrations.length, 8);
+    assert.equal(plan.plan.pendingMigrations.length, pendingSinceLedger90 + 1);
 
     const blocker = connectTarget(target);
     await blocker.connect();
@@ -402,20 +408,20 @@ test("a real kill between migrations leaves the ledger at the last committed fil
     let committed = 0;
     while (Date.now() < deadline) {
       committed = (await blocker.query("SELECT count(*)::int AS n FROM control_room_schema_migrations")).rows[0].n;
-      if (committed >= 97) break;
+      if (committed >= realMigrationsCommitted) break;
       await sleep(20);
     }
-    assert.equal(committed, 97, "all 7 real migrations must commit before the 8th blocks on the advisory lock");
+    assert.equal(committed, realMigrationsCommitted, "all real migrations must commit before the fixture one blocks on the advisory lock");
     child.kill("SIGKILL");
     await exited;
     await blocker.query(`SELECT pg_advisory_unlock(${lockKey})`);
     await blocker.end();
 
-    assert.equal((await client.query("SELECT count(*)::int AS n FROM control_room_schema_migrations")).rows[0].n, 97,
+    assert.equal((await client.query("SELECT count(*)::int AS n FROM control_room_schema_migrations")).rows[0].n, realMigrationsCommitted,
       "the fixture migration never committed: the connection dropped mid-transaction and PostgreSQL rolled it back");
     // From the real ledger's point of view — the one every other test and the
-    // actual upgrade tooling reads — all 7 real migrations are done and
-    // nothing about the killed 8th file is visible.
+    // actual upgrade tooling reads — all real migrations are done and nothing
+    // about the killed fixture file is visible.
     const resumed = await inspectMacDatabaseUpgradeV1({ client });
     assert.deepEqual(resumed.pendingMigrations, [], "ledger is at the last real file, with a clean, resumable state");
     assert.deepEqual(resumed.createRoles, [], "the roles transaction, which ran first, was unaffected by the kill");
