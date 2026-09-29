@@ -73,15 +73,6 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
    * already built, so the endpoint and the supervisor's health port are two
    * callers of one service rather than two services over one state. */
   operationsMode?: WebOperationsModeServiceV1;
-  /** The task provider's supervisor wiring, connected to the server-owned mode.
-   * Omission leaves the supervisor without a way to pause, which the watchdog
-   * already treats as an `operations_pause_unavailable` incident.
-   *
-   * This is the option the task provider actually reads, so its name is not
-   * free: it must stay `supervisor`, because a differently-named field with the
-   * same shape type-checks and then silently never arrives. */
-  supervisor?: { operations: { pauseNewStarts(input: { reasonCode: "machine_health_failed";
-    observedAt: string }): Promise<{ state: "paused" | "already_paused"; receiptId: string }> }; supervisorId: string };
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
@@ -218,6 +209,11 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             // operations mode, never to a private copy of it. The port is only
             // offered once the mode exists, because a supervisor that could not
             // pause would silently protect nothing.
+            //
+            // The option name must stay `supervisor`: it is the one the task
+            // provider reads. A differently-named field with the same shape
+            // type-checks and then silently never arrives, which is exactly how
+            // this wiring stayed invisible for a whole stream.
             ...(service ? { supervisor: { operations: createOperationsModeSupervisorPortV1(
               { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason) } }),
               supervisorId: input.supervisorId ?? MAC_LOCAL_SUPERVISOR_ID_V1 } } : {}) }) : undefined;
