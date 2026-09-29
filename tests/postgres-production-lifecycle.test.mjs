@@ -29,8 +29,8 @@ import { AuditStore } from "../src/audit/audit-store.ts";
 import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
 import { WorkBatchOwnerServiceV1 } from "../src/work-intake/v1/owner-service.ts";
 import { workBatchProposalDigestV1 } from "../src/work-intake/v1/digest.ts";
-import { sha256Digest } from "../src/security/canonical-digest.ts";
-import { hmacSha256Tag } from "../src/security/digest.ts";
+import { sha256Digest, canonicalJson } from "../src/security/canonical-digest.ts";
+import { hmacSha256Tag, computeAuthorityDigest } from "../src/security/digest.ts";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery.ts";
 import { derivePipelineBuildPublicationEvidenceKeyV1 } from "../src/pipelines/v1/build-publication-authority.ts";
 import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/rollback-checkpoint.ts";
@@ -38,6 +38,10 @@ import { SecurityStore } from "../src/security/security-store.ts";
 import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
   ProductionPipelineAdvanceCapabilityV1 } from "../src/pipelines/v1/index.ts";
 import { AgentReviewServiceV1, CompletionGateStoreV1 } from "../src/completion-gate/v1/index.ts";
+import { nativeReviewPlanTag, nativeReviewTarget } from "../src/completion-gate/v1/native-review-plan.ts";
+import { buildTaskResultManifestV1 } from "../src/artifacts/v1/durable-result-publication.ts";
+import { resultBytesHash } from "../src/artifacts/v1/native-results.ts";
+import { createTaskCoordinatorLifecycle } from "../src/web/v1/task-coordinator-lifecycle.ts";
 import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { WebTaskService } from "../src/web/v1/task-service.ts";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
@@ -808,7 +812,10 @@ test("S5 agent-review reads and writes run on the Mac-local production logins", 
 
 // The build stage's retained execution: the attempt, harness run, verified
 // artifact and canonical Codex result that the Completion Gate accepted.
-async function seedBuildExecution(client,own,suffix,at){
+// `deferResultRows` omits the artifact manifest and receipt, for the caller that
+// writes a receipt the real result store can verify. Both relations are
+// append-only, so such a row cannot be corrected after the fact.
+async function seedBuildExecution(client,own,suffix,at,{deferResultRows=false}={}){
   const tenantId=own.tenantId, projectId=own.project.projectId, jobId=own.pipeline.jobIds[0];
   const nodeId=`node:build:${suffix}`, workerId=`worker:build:${suffix}`, attemptId=`attempt:build-${suffix}`;
   const runId=`run:build-${suffix}`, artifactId=`artifact:build-${suffix}`, contentHash=own.targetRecord.subjectDigest;
@@ -824,13 +831,15 @@ async function seedBuildExecution(client,own,suffix,at){
     VALUES($1,$2,$3,$4,$5,$6,'connector:codex-owner-trusted-local-v1','codex',$7,NULL,NULL,'succeeded',1,$8,$9,'{}'::jsonb,$10,$10,$10)`,
   [runId,tenantId,projectId,jobId,attemptId,nodeId,`sha256:${"4".repeat(64)}`,`sha256:${"5".repeat(64)}`,
     `hmac-sha256:${"6".repeat(64)}`,at]);
-  await client.query(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,content_hash,
-    state,version,payload,created_at,updated_at) VALUES($1,$2,$3,NULL,$4,$5,$6,'verified',1,$7::jsonb,$8,$8)`,
-  [artifactId,tenantId,projectId,jobId,attemptId,contentHash,JSON.stringify({id:artifactId,tenantId,state:"verified",
-    version:1,projectId,jobId,attemptId,contentHash}),at]);
-  await client.query(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,
-    receipt,auth_tag) VALUES($1,$2,$3,$4,$5,$6,'{}'::jsonb,$7)`,
-  [tenantId,projectId,jobId,attemptId,runId,artifactId,`hmac-sha256:${"7".repeat(64)}`]);
+  if(!deferResultRows){
+    await client.query(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,content_hash,
+      state,version,payload,created_at,updated_at) VALUES($1,$2,$3,NULL,$4,$5,$6,'verified',1,$7::jsonb,$8,$8)`,
+    [artifactId,tenantId,projectId,jobId,attemptId,contentHash,JSON.stringify({id:artifactId,tenantId,state:"verified",
+      version:1,projectId,jobId,attemptId,contentHash}),at]);
+    await client.query(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,
+      receipt,auth_tag) VALUES($1,$2,$3,$4,$5,$6,'{}'::jsonb,$7)`,
+    [tenantId,projectId,jobId,attemptId,runId,artifactId,`hmac-sha256:${"7".repeat(64)}`]);
+  }
   const publicationId=`publication:build-${suffix}`, recordDigest=sha256Digest(`canonical ${suffix}`);
   await client.query(`INSERT INTO control_codex_result_publications(tenant_id,project_id,job_id,attempt_id,run_id,publication_id,
     record_digest,record,auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`,
@@ -1091,6 +1100,219 @@ test("S7 unattended consent, advance, sweep and history run on the Mac-local pro
     const history=await owner.historyForOwner(identity,projectId,runId);
     assert.ok(history.events.some(event=>event.action==="pipelines.unattended.enabled"));
     assert.ok(history.events.some(event=>event.action==="pipelines.stage.advanced"));
+
+// A minimal valid native planning template authority, exactly the shape
+// captureNativeTaskTemplates accepts. The proof path never plans, so the
+// envelope only has to be well formed.
+async function nativeTemplateAuthority(projectId) {
+  const authority = { projectId, allowedExecutor: "executor:hermes-native",
+    allowedOperations: ["harness.hermes.native.start"], credentialRefs: ["credential:test"], filesystemRoots: [],
+    networkPolicy: "allowlist", allowedNetworkDestinations: ["https://agent.example.test:443"],
+    effectPolicy: "approval_required", maxRisk: "low", maxDurationSeconds: 60, maxConcurrentEffects: 1,
+    expiresAt: new Date(webNow + 300_000).toISOString(), digest: "" };
+  authority.digest = computeAuthorityDigest(authority);
+  return authority;
+}
+
+// A genuinely accepted build stage on the real Mac-local logins.
+//
+// The S5 review found that the pipeline run view called the real
+// acceptedResultProof on the WEB transaction, and that proof reads
+// control_transition_events, which control_room_web may not read. The view
+// therefore aborted with database_unavailable on the production login.
+//
+// The review target is DERIVED from the review plan and the retained receipt by
+// nativeReviewTarget, exactly as the real publisher registers it. This
+// reconstructs the seeded review target (own.targetRecord) from a real plan and
+// receipt, so the plan, receipt, target and transition event all agree on the
+// same subject. If the derivation ever stopped reproducing the registered
+// target, the real verifyTaskReviewTargetV1 would refuse the proof — so this
+// asserts the equality rather than trusting it.
+function acceptedResultRecords(own, build, profile, reviewKey, at) {
+  const tenantId = own.tenantId, projectId = own.project.projectId, artifactId = build.artifactId;
+  // The seeded target's subject digest is sha256Digest("retained result"), which
+  // is the digest of the canonical JSON encoding of that string, so the retained
+  // bytes are those bytes, quotes included.
+  const bytes = new TextEncoder().encode(JSON.stringify("retained result"));
+  const contentHash = resultBytesHash(bytes);
+  const manifest = buildTaskResultManifestV1({ artifactId, tenantId, projectId, jobId: build.jobId,
+    attemptId: build.attemptId, workflowId: own.pipeline.workflowId, nodeId: build.nodeId,
+    contentHash, sizeBytes: bytes.byteLength, storageClass: "local", opaqueLocator: `local:${artifactId}`, createdAt: at });
+  const receipt = { schema: "control-room.native-result-receipt/v1", artifactId, tenantId, projectId,
+    jobId: build.jobId, attemptId: build.attemptId, runId: build.runId, nodeId: build.nodeId,
+    snapshotDigest: sha256Digest("snapshot"), snapshotVersion: 1, contentHash, sizeBytes: bytes.byteLength,
+    manifestDigest: sha256Digest(manifest), receivedAt: at, byteCheck: "matched_recorded_claim", qualityAccepted: false };
+  const plan = nativeReviewPlanRowV1(reviewKey, { tenantId, projectId, jobId: build.jobId,
+    runId: build.runId, attemptId: build.attemptId, nodeId: build.nodeId,
+    targetId: own.targetRecord.id, profile, producer: own.targetRecord.producer, at });
+  const target = nativeReviewTarget(plan.plan, receipt);
+  if (canonicalJson(target) !== canonicalJson(own.targetRecord)) throw new Error("accepted target does not match the registered target");
+  return { targetId: target.id, target, targetDigest: sha256Digest(target), plan, receipt, manifest, bytes, contentHash };
+}
+
+// Writes the chain the real proof path reads. The succeeded job state and the
+// appended transition event come first: the proof query joins on them, and the
+// event's idempotency_key must match 'native-completion:%:job'. The canonical
+// payload mirror trigger requires payload.state and payload.version to track the
+// columns, and jsonb_set needs to_jsonb for the number.
+async function writeAcceptedBuildStage(client, own, build, resultKey, records, at) {
+  const tenantId = own.tenantId, projectId = own.project.projectId, { receipt, manifest, plan } = records;
+  const key = sha256Digest(`native completion ${build.artifactId}`).slice(7);
+  await client.query("UPDATE control_jobs SET state='succeeded',version=2,updated_at=$1,payload=jsonb_set(jsonb_set(payload,'{state}',to_jsonb('succeeded'::text)),'{version}',to_jsonb(2)) WHERE tenant_id=$2 AND id=$3",
+    [at, tenantId, build.jobId]);
+  await client.query(`INSERT INTO control_transition_events(id,tenant_id,entity_kind,entity_id,from_state,to_state,
+      from_version,to_version,actor_id,actor_type,idempotency_key,safe_metadata,occurred_at)
+    VALUES($1,$2,'job',$3,'running','succeeded',1,2,'service:native-task-completion','service',$4,$5::jsonb,$6)`,
+    [`transition:native-completion:${key}:job`, tenantId, build.jobId, `native-completion:${key}:job`,
+      JSON.stringify({ receipt: { targetDigest: records.targetDigest } }), at]);
+  // The manifest must precede the receipt: the receipt's foreign key names it.
+  await client.query(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,content_hash,
+      state,version,payload,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'uploaded',$8,$9::jsonb,$10,$10)`,
+    [build.artifactId, tenantId, projectId, manifest.workflowId, build.jobId, build.attemptId, records.contentHash,
+      manifest.version, JSON.stringify(manifest), at]);
+  await client.query(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,
+      receipt,auth_tag) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`,
+    [tenantId, projectId, build.jobId, build.attemptId, build.runId, build.artifactId, JSON.stringify(receipt),
+      hmacSha256Tag(resultKey, { purpose: "native-result-receipt/v1", receipt })]);
+  await client.query(`INSERT INTO control_native_review_plans(tenant_id,project_id,job_id,run_id,plan,auth_tag)
+    VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [tenantId, projectId, build.jobId, build.runId,
+    JSON.stringify(plan.plan), plan.auth_tag]);
+}
+
+// The authenticated review plan the proof path selects before reading bytes.
+// A native-review-plan/v1 is the matching pair for a native result receipt, and
+// the review target is derived from it by nativeReviewTarget, exactly as the
+// real publisher registers it. The seeded review tenant's target is a fixture
+// for the agent-review tests; the run-view test derives the production target
+// instead, so the plan, receipt, target and transition event all agree.
+function nativeReviewPlanRowV1(reviewKey, { tenantId, projectId, jobId, runId, attemptId, nodeId, targetId,
+  profile, producer, at }) {
+  const material = { schema: "control-room.native-review-plan/v1", tenantId, runId,
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile), plannedAt: at,
+    projectId, jobId, attemptId, nodeId, inputDigest: sha256Digest("input"), authorityDigest: sha256Digest("authority"),
+    bindingDigest: sha256Digest("binding"), targetId, producer };
+  return { plan: material, auth_tag: nativeReviewPlanTag(reviewKey, material) };
+}
+
+// The S5 defect, proved on the real logins with the REAL ownerAuthority.
+//
+// The pipeline run view runs on the private-web login. Its accepted-result
+// proof reads control_transition_events through the task coordinator, and
+// control_room_web holds no SELECT on that table. Running that read on the
+// caller's transaction aborted it, so the page failed with
+// database_unavailable even though the JavaScript error was caught. The fix
+// routes the proof through the coordinator's own pool. This test builds a real
+// accepted result, composes the real createTaskCoordinatorLifecycle, renders the
+// view AS control_room_web, and asserts both the working proof and the
+// unchanged narrow web privilege.
+test("the pipeline run view renders on the production web login through the real accepted-result authority", needsPg, () =>
+  withMacLocalLogins("cr_run_view_authority", async ({ client, login }) => {
+    const coordinator = login("control_room_coordinator"), web = login("control_room_web");
+    const at = new Date(webNow).toISOString(), reviewKey = new Uint8Array(32).fill(63);
+    const harnessKey = new Uint8Array(32).fill(64), resultKey = new Uint8Array(32).fill(65);
+    const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
+    const own = await seedAgentReviewTenant(client, "view", reviewKey, checkpoints, at);
+    const build = await seedBuildExecution(client, own, "view", at, { deferResultRows: true });
+    const scope = { tenantId: own.tenantId, workspaceId: own.workspaceId };
+    const accepted = acceptedResultRecords(own, build, own.profile, reviewKey, at);
+    await writeAcceptedBuildStage(client, own, build, resultKey, accepted, at);
+    // Completion Gate acceptance: an independent reviewer's accepted decision
+    // and the profile's one required verification scenario, both committed
+    // through the real store so its tenant state digest advances. The target is
+    // already registered by seedAgentReviewTenant, and acceptedResultRecords
+    // proved the plan and receipt derive exactly that record.
+    const gate = new CompletionGateStoreV1(client, reviewKey, checkpoints, () => at);
+    const { targetId, targetDigest } = accepted;
+    // The reviewer is the check stage's protected agent principal, which the
+    // seeded tenant already proved independent of the build producer: different
+    // worker, agent profile, harness and model family.
+    await gate.recordReview({ ...own.reviewPayload(), id: `review:${targetId}`, targetId, targetDigest });
+    await gate.recordVerification({ schemaVersion: "control-room-completion-gate/v1",
+      id: `verification:${targetId}`, tenantId: own.tenantId, projectId: own.project.projectId,
+      targetId, targetDigest, acceptanceProfileId: own.profile.id,
+      acceptanceProfileDigest: sha256Digest(own.profile),
+      scenarioId: own.profile.requiredVerificationScenarioIds[0], outcome: "passed",
+      verifier: { actorId: "identity:web-view", actorType: "human" },
+      evidenceDigests: [sha256Digest("view verification")], verifiedAt: at,
+      grantsApproval: false, grantsExecutionAuthority: false });
+
+    // The real lifecycle on the real coordinator pool, with the real work-batch
+    // authority. Only the host-generation selection check is supplied, exactly as
+    // mac-local-host.ts composes it. The retained bytes are served by the local
+    // result store's own read port, keyed by artifact id.
+    const storage = { read: async artifactId => artifactId === build.artifactId ? accepted.bytes : undefined };
+    const lifecycle = createTaskCoordinatorLifecycle({
+      scope, database: { client: coordinator.db, close: async () => {}, isAvailable: () => true },
+      planning: { template: { id: "template:view", adapter: "hermes-native-runs/v1",
+        instructions: "Use only the supplied information.", acceptanceProfileId: own.profile.id,
+        acceptanceProfileDigest: sha256Digest(own.profile),
+        authority: await nativeTemplateAuthority(own.project.projectId) },
+        integrityKey: new Uint8Array(32).fill(66), reviewIntegrityKey: reviewKey, checkpoints },
+      routes: own.routes,
+      workBatches: { integrityKey: reviewKey, selectionAuthority: { assertCurrent: () => true } },
+      quality: { integrityKey: reviewKey, harnessIntegrityKey: harnessKey, scenarios: [],
+        results: { integrityKey: resultKey, storageClass: "local", storage }, checkpoints },
+      clock: () => webNow });
+    const authority = lifecycle.workBatchAuthority;
+    assert.equal(typeof authority?.acceptedResultProof, "function");
+
+    const selection = { sourceJobId: build.jobId, workerId: build.workerId, nodeId: build.nodeId };
+    // The caller's session is handed to the authority and must be ignored: the
+    // web login cannot read the lifecycle table the proof joins on. This session
+    // throws on any statement, exactly as the real web transaction does once
+    // PostgreSQL has aborted it.
+    const unreadableSession = { query: async () => { throw new Error("permission denied for table control_transition_events"); } };
+    assert.deepEqual(await authority.acceptedResultProof(unreadableSession, selection),
+      { executionJobId: build.jobId, attemptId: build.attemptId, harnessRunId: build.runId,
+        artifactId: build.artifactId, contentHash: accepted.contentHash, revision: 0 });
+    assert.equal(await authority.isAcceptedResultCurrent(unreadableSession, selection), true);
+    assert.equal(await authority.acceptedResultRevision(unreadableSession, selection), 0);
+    // An unbound selection resolves to no proof, never to another stage's.
+    assert.equal(await authority.acceptedResultProof(unreadableSession, { ...selection, nodeId: "node:build:other" }), null);
+
+    // The reason the proof cannot run on the caller, and the exact symptom the
+    // review reported: on the production web login this statement fails the
+    // request with database_unavailable, because the private driver withholds
+    // the server's refusal text. Catching the JavaScript error does not repair
+    // the aborted transaction, so the view died here. The authority avoids it
+    // by issuing the identical statement on its own pool, never on the caller.
+    const proofStatement = `SELECT j.id FROM control_task_execution_plans p JOIN control_jobs j
+      ON j.tenant_id=p.tenant_id AND j.id=p.job_id
+      JOIN control_transition_events e ON e.tenant_id=j.tenant_id AND e.entity_kind='job' AND e.entity_id=j.id
+      WHERE p.tenant_id=$1 AND p.source_job_id=$2`;
+    await assert.rejects(web.db.transaction(tx => tx.query(proofStatement, [own.tenantId, build.jobId])),
+      /database_unavailable/u, "the web login cannot run the proof's own statement");
+    await assert.rejects(web.direct.query(proofStatement, [own.tenantId, build.jobId]), /permission denied/u,
+      "the web login's plain client names the missing grant");
+    assert.equal((await coordinator.db.query(proofStatement, [own.tenantId, build.jobId])).rows.length, 1,
+      "the coordinator login runs the identical statement");
+
+    // The view, rendered AS control_room_web, on the web transaction.
+    const identity = createAccessVerifier(webTrust)(webRequest(), webNow);
+    const view = await new LinearPipelineServiceV1(web.db, scope, reviewKey, authority, () => webNow)
+      .view(identity, own.project.projectId, own.pipeline.runId);
+    assert.equal(view.stages[0].state, "completed",
+      "the accepted build stage must read as completed, not uncertain");
+    assert.equal(view.stages[0].round, 0);
+    assert.equal(view.stages[0].predecessorResultDigest, null);
+    assert.equal(view.stages[1].predecessorResultDigest, accepted.contentHash,
+      "the next stage must show the accepted predecessor result digest");
+    // The same view through the same real authority on the coordinator login.
+    const coordinatorView = await new LinearPipelineServiceV1(coordinator.db, scope, reviewKey, authority, () => webNow)
+      .view(identity, own.project.projectId, own.pipeline.runId);
+    assert.deepEqual(coordinatorView.stages, view.stages,
+      "the proof must not depend on which pool the caller presents from");
+
+    // Least privilege is unchanged: the web login still cannot read the
+    // lifecycle table the proof reads, which is the whole reason the proof runs
+    // on the coordinator pool.
+    const catalog = target("cr_run_view_authority");
+    assert.equal((await query(catalog, `SELECT has_table_privilege('control_room_web',
+      'control_transition_events','SELECT') AS allowed`)).rows[0].allowed, false);
+    assert.equal((await query(catalog, `SELECT has_table_privilege('control_room_task_coordinator',
+      'control_transition_events','SELECT') AS allowed`)).rows[0].allowed, true);
+    await assert.rejects(web.direct.query("SELECT id FROM control_transition_events"), /permission denied/u);
+    await lifecycle.close();
   }));
 
 // The commit boundary stores the payloads it is given, and the Completion Gate
