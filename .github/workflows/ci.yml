@@ -156,22 +156,27 @@ jobs:
         run: node --test tests/check-pr-claims.test.mjs
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
+      - name: Reject stale or incomplete test quarantines
+        run: node scripts/check-test-quarantine.mjs
+      # Refuse two migrations with the same 4-digit number, before the private-name
+      # step. Migrations are applied in filename order, so two files sharing a number
+      # have an order but no intent, and two pull requests can each be correct against
+      # main and wrong together. It reads the directory the applier reads and needs no
+      # PostgreSQL, so it belongs in the job that reports in seconds. It runs before
+      # the private-name step because that step fails closed while the denylist secret
+      # is unset, and a failing step skips the rest of the job: putting this one first
+      # means its verdict is always reported rather than hidden behind that failure.
+      - name: Refuse two migrations with the same 4-digit number
+        run: node scripts/ci/check-migration-numbers.mjs
       - name: Reject configured private names
-        # The guard fails closed when this repository's run has no list, and skips
-        # only for a fork pull request or a local run, so an unconfigured secret
-        # cannot pass as a clean scan. It needs no privileges beyond the secret it
-        # already had, and reading the event payload costs no budget.
+        # The guard fails closed when this repository's run has no list, and skips only
+        # for a fork pull request or a local run, so an unconfigured secret cannot pass
+        # as a clean scan. It needs no privileges beyond the secret it already had, and
+        # reading the event payload costs no budget. While the secret is unset this step
+        # fails, which is the guard working: the denylist must be set for this to go green.
         env:
           CONTROL_ROOM_PRIVATE_NAMES: ${{ secrets.CONTROL_ROOM_PRIVATE_NAMES }}
         run: node scripts/check-private-names.mjs
-      - name: Refuse two migrations with the same 4-digit number
-        # Migrations are applied in filename order, so two files sharing a number
-        # have an order but no intent, and two pull requests can each be correct
-        # against main and wrong together. It reads the directory the applier reads
-        # and needs no PostgreSQL, so it belongs in the job that reports in seconds.
-        run: node scripts/ci/check-migration-numbers.mjs
-      - name: Reject stale or incomplete test quarantines
-        run: node scripts/check-test-quarantine.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
       # The privileged-routine search_path gate does NOT run here. It used to:
       # it read migration files as text, needed no PostgreSQL, and every
