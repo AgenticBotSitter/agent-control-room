@@ -54,7 +54,7 @@
     "test:access": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/access-library.test.ts",
     "test:offline-auth-conformance": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/private-owner-bootstrap-conformance.test.ts tests/private-ingress-conformance.test.ts",
     "test:owner-bootstrap": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/owner-bootstrap-ceremony-core.test.ts tests/owner-bootstrap-ceremony-request-faults.test.ts tests/owner-bootstrap-ceremony-recovery.test.ts tests/owner-bootstrap-ceremony-control-faults.test.ts tests/owner-bootstrap-ceremony-preflight-faults.test.ts tests/owner-bootstrap-ceremony-lifecycle-faults.test.ts tests/owner-bootstrap-ceremony-close-races.test.ts tests/owner-bootstrap-ceremony-close-bootstrap.test.ts tests/owner-bootstrap-ceremony-routing.test.ts",
-    "test:database": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/private-pg-driver.test.ts tests/private-pg-options.test.ts",
+    "test:database": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/private-pg-driver.test.ts tests/private-pg-options.test.ts tests/completion-gate-lock-order-postgres.test.ts",
     "check:demo": "tsc --noEmit --incremental false",
     "build:demo": "vite build --config vite.contributor.config.ts",
     "demo": "pnpm run build:demo && node --import tsx scripts/contributor-demo.mjs",
