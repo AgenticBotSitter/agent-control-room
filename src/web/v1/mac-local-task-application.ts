@@ -28,6 +28,7 @@ export type MacLocalTaskApplicationV1 = Readonly<{
   queueRecovery?: ReturnType<typeof createTaskCoordinatorLifecycle>["queueRecovery"];
   results?: ReturnType<typeof createTaskCoordinatorLifecycle>["results"];
   quality?: ReturnType<typeof createTaskCoordinatorLifecycle>["quality"];
+  workBatchAuthority?: NonNullable<ReturnType<typeof createTaskCoordinatorLifecycle>["workBatchAuthority"]>;
   actionInboxSource?: NonNullable<import("./mac-local-web-process").MacLocalWebProcessOptionsV1["actionInboxSource"]>;
 }>;
 
@@ -110,6 +111,7 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
       ...(lifecycle.queueRecovery ? { queueRecovery: lifecycle.queueRecovery } : {}),
       ...(lifecycle.results ? { results: lifecycle.results } : {}),
       ...(lifecycle.quality ? { quality: lifecycle.quality } : {}),
+      ...(lifecycle.workBatchAuthority ? { workBatchAuthority: lifecycle.workBatchAuthority } : {}),
     });
   } catch (error) {
     if (lifecycle) {
