@@ -11,6 +11,7 @@ import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/w
 import { createTaskVerificationWorkspace, type TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
 import { PrivateTaskPlanning } from "./task-planning";
 import { PrivateTaskAssignment } from "./task-assignment";
+import { FleetOfferControl } from "./workers/fleet-offer";
 import { PrivateTaskApproval } from "./task-approval";
 import { TaskWorkflowGuide } from "./task-workflow-guide";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
@@ -58,10 +59,11 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
   }, []);
   const preparedFromSource = preparedContinuation?.sourceJobId === detail.task.jobId ? preparedContinuation.task : undefined;
   if (mode === "checking") return <p className="private-note">Checking this installation’s task workflow…</p>;
+  const fleet = <FleetOfferControl projectId={detail.task.projectId} jobId={detail.task.jobId} state={detail.task.state} />;
   if (mode === "hosted") return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
     <PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
-    <PrivateTaskApproval detail={detail} workspace={workspace} /></>;
-  if (!detail.preparedFor) return <><PrivateTaskPlanning detail={detail} client={workspace.planning} onPreparedTask={recordPreparedTask} />
+    <PrivateTaskApproval detail={detail} workspace={workspace} />{fleet}</>;
+  if (!detail.preparedFor) return <>{fleet}<PrivateTaskPlanning detail={detail} client={workspace.planning} onPreparedTask={recordPreparedTask} />
     {preparedFromSource ? null : <>
     <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
       <p>Prepare this saved proposal before choosing a configured machine. Assignment will reserve capacity without starting work.</p>
@@ -70,7 +72,7 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
       <p>Execution approval follows preparation and assignment. No permission has been granted and no agent starts from this page automatically.</p>
       <button type="button" disabled>Approve after assignment</button></section></>}</>;
   return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} runOnAssign />
-    <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
+    <PrivateTaskApproval detail={detail} workspace={workspace} local />{fleet}</>;
 }
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
