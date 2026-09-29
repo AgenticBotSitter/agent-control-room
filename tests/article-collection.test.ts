@@ -5,6 +5,9 @@ import { createAccessVerifier } from "../src/web/v1/access-verifier";
 import { PostgresNewsSourceSettings } from "../src/project-adapters/news/v1/source-settings";
 import { createControlCenterCollection } from "../src/project-adapters/news/v1/control-center-collection";
 import { PostgresArticleDetails } from "../src/project-adapters/news/v1/article-store";
+import { decodeNewsFeed, NewsFeedDecodeError } from "../src/project-adapters/news/v1/feed-decoder";
+import { NewsFeedIngestionService } from "../src/project-adapters/news/v1/feed-ingestion";
+import { PostgresNewsStoreV1 } from "../src/project-adapters/news/v1/postgres-store";
 import { WebNewsService } from "../src/web/v1/news-service";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { createTaskHttpHandler } from "../src/web/v1/task-http";
@@ -82,4 +85,106 @@ test("approved collection reuses bounded reader and saves articles only when opt
   try { await assert.rejects(revoked.collect(new AbortController().signal), /news_configured_source_changed/); }
   finally { await revoked.close(); }
   assert.equal((await f.client.query<{ count: string }>("SELECT count(*)::text AS count FROM control_news_article_details")).rows[0].count, "1");
+});
+
+const feedSource = (projectId: string) => ({
+  tenantId: "tenant:web", workspaceId: "workspace:web", projectId,
+  source: { sourceId: "source:feed-fixture", sourceLabel: "Fixture feed", sourceKind: "rss" as const,
+    endpointUrl: "https://example.invalid/feed" },
+  maxBytes: 1_048_576, maxItems: 100,
+});
+const feedXml = `<rss version="2.0"><channel><title>Fixture feed</title><link>https://example.invalid/</link>` +
+  `<description>Fixture</description>` +
+  `<item><title>First synthetic story</title><link>https://example.invalid/article-one</link>` +
+  `<description>First story summary</description><pubDate>${new Date(now - 3600000).toUTCString()}</pubDate></item>` +
+  `<item><title>Second synthetic story</title><link>https://example.invalid/article-two</link>` +
+  `<description>Second story summary</description><pubDate>${new Date(now - 7200000).toUTCString()}</pubDate></item>` +
+  `</channel></rss>`;
+
+test("feed decoder returns populated story records for a well-formed RSS feed", async () => {
+  const decoded = await decodeNewsFeed({ ...feedSource("project:feed-decode"),
+    observedAt: new Date(now).toISOString(), xml: feedXml });
+  assert.equal(decoded.stories.length, 2);
+  assert.equal(decoded.state, "available");
+  assert.equal(decoded.rejectedCount, 0);
+  assert.equal(decoded.duplicateCount, 0);
+  const byUrl = new Map(decoded.stories.map(story => [story.canonicalUrl, story]));
+  const first = byUrl.get("https://example.invalid/article-one");
+  const second = byUrl.get("https://example.invalid/article-two");
+  assert.ok(first); assert.ok(second);
+  assert.equal(first.title, "First synthetic story");
+  assert.equal(first.summary, "First story summary");
+  assert.equal(second.title, "Second synthetic story");
+  assert.equal(second.summary, "Second story summary");
+});
+
+test("feed ingestion persists decoded stories readable from the news store", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const identity = createAccessVerifier(trust)(request(), now);
+  const { project } = await f.service.create(identity, { title: "Feed ingest fixture", summary: "Synthetic" }, "feed-ingest-fixture-key");
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: project.projectId };
+  const key = new Uint8Array(32).fill(6);
+  const observedAt = new Date(now).toISOString();
+  const expected = await decodeNewsFeed({ ...feedSource(project.projectId), observedAt, xml: feedXml });
+  assert.equal(expected.stories.length, 2);
+  const service = new NewsFeedIngestionService(f.client, feedSource(project.projectId), key);
+  const result = await service.ingest(feedXml, observedAt);
+  assert.equal(result.inserted, 2);
+  const store = new PostgresNewsStoreV1(f.client, scope, key);
+  for (const story of expected.stories) {
+    const stored = await store.getStory(story.storyId);
+    assert.ok(stored, `expected story ${story.storyId} to be persisted`);
+    assert.equal(stored.title, story.title);
+    assert.equal(stored.summary, story.summary);
+    assert.equal(stored.canonicalUrl, story.canonicalUrl);
+  }
+});
+
+test("feed decoder rejects XML larger than maxBytes before parsing", async () => {
+  await assert.rejects(
+    decodeNewsFeed({ ...feedSource("project:feed-limit"), observedAt: new Date(now).toISOString(),
+      xml: feedXml, maxBytes: 16 }),
+    (error: unknown) => {
+      assert.ok(error instanceof NewsFeedDecodeError);
+      assert.equal(error.code, "feed_limit_exceeded");
+      return true;
+    });
+});
+
+test("feed ingestion records a source-health failure instead of throwing on invalid XML", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const identity = createAccessVerifier(trust)(request(), now);
+  const { project } = await f.service.create(identity, { title: "Feed failure fixture", summary: "Synthetic" }, "feed-failure-fixture-key");
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: project.projectId };
+  const key = new Uint8Array(32).fill(6);
+  const observedAt = new Date(now).toISOString();
+  const config = feedSource(project.projectId);
+  await assert.rejects(
+    decodeNewsFeed({ ...config, observedAt, xml: "<rss><channel><unclosed>" }),
+    (error: unknown) => {
+      assert.ok(error instanceof NewsFeedDecodeError);
+      assert.equal(error.code, "invalid_feed");
+      return true;
+    });
+  const service = new NewsFeedIngestionService(f.client, config, key);
+  await service.ingest("<rss><channel><unclosed>", observedAt); // records the failure; must not throw
+  const status = await new PostgresNewsStoreV1(f.client, scope, key).getSourceStatus("source:feed-fixture");
+  assert.ok(status);
+  assert.equal(status.state, "unavailable");
+  assert.equal(status.safeStatusCode, "invalid_feed");
+});
+
+test("recordReadFailure rejects a check older than the last recorded observation", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const identity = createAccessVerifier(trust)(request(), now);
+  const { project } = await f.service.create(identity, { title: "Feed staleness fixture", summary: "Synthetic" }, "feed-staleness-fixture-key");
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: project.projectId };
+  const key = new Uint8Array(32).fill(6);
+  const service = new NewsFeedIngestionService(f.client, feedSource(project.projectId), key);
+  const newer = new Date(now).toISOString();
+  const older = new Date(now - 3600000).toISOString();
+  await service.recordReadFailure({ checkedAt: newer, reason: "read_failed" });
+  await assert.rejects(service.recordReadFailure({ checkedAt: older, reason: "read_timed_out" }), /news_observation_stale/);
+  const status = await new PostgresNewsStoreV1(f.client, scope, key).getSourceStatus("source:feed-fixture");
+  assert.equal(status?.checkedAt, newer);
 });
