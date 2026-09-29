@@ -24,17 +24,30 @@ import { buildIdeaLabSessionV1 } from "../src/idea-lab/v1/contracts";
 import { IdeaLabProjectRegistryStoreV1 } from "../src/idea-lab/v1/store";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../src/idea-lab/v1/canonical-task-link-store";
 import { IdeaLabCanonicalTaskProposalServiceV1 } from "../src/idea-lab/v1/canonical-task-proposal";
+import { buildIdeaLabCanonicalTaskPlanV1 } from "../src/idea-lab/v1/canonical-task-plan";
+import { buildIdeaLabOwnerPromptV1 } from "../src/idea-lab/v1/discussion-prompt";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { WebProjectService } from "../src/web/v1/project-service";
 import { sha256Digest } from "../src/security";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 
 // Reserved disposable-cluster lane for the Idea Lab link module: 59100-59109.
-const PORT = Number(process.env.IDEA_LINK_PG_PORT ?? 59100);
+// The two tests use distinct ports and each allows only its own, so they can
+// run in either order and can never claim a port the other is using.
+const PORT = Number(process.env.IDEA_LINK_PG_PORT ?? 59107);
+const FENCE_PORT = Number(process.env.IDEA_LINK_FENCE_PG_PORT ?? 59109);
 const PG = requiresRealPostgres();
 const NOW = "2026-09-29T15:00:00.000Z";
 const LATER = "2026-09-29T16:00:00.000Z";
 const KEY = new Uint8Array(32).fill(0x4c);
+const hmac = (character: string) => `hmac-sha256:${character.repeat(64)}`;
+/** The store's own binding digest, recomputed here so the forged row is
+ * genuine in every column except the auth tag - otherwise the wrong-key tag
+ * would be rejected for the wrong reason. */
+const bindingDigestFor = (plan: { tenantId: string; workspaceId: string; projectId: string; sessionId: string;
+  sessionDigest: string }) => sha256Digest({ contractVersion: "control-room-idea-lab-canonical-task-session-binding/v1",
+  tenantId: plan.tenantId, workspaceId: plan.workspaceId, projectId: plan.projectId,
+  sessionId: plan.sessionId, sessionDigest: plan.sessionDigest });
 const scope = { tenantId: "tenant:idea-link", workspaceId: "workspace:idea-link" };
 const IDENTITY_ID = "identity:idea-link";
 const identity: VerifiedWebIdentity = { provider: "test", subject: "idea-link-owner",
@@ -151,6 +164,79 @@ test("Idea Lab canonical task links record and replay through the production web
         // A second, different project must not be able to claim the discussion.
         const { project: other } = await new WebProjectService(web, scope, () => Date.parse(NOW))
           .create(identity, { title: "Other project", summary: "Must not receive this discussion's tasks." }, "idea-link-project-002");
+
+        // A CHANGED plan for an already linked turn is refused, and a second
+        // session cannot be bound to a different project once this one owns the
+        // discussion. Both guards are the reason the dropped lock is safe: they
+        // are the invariants a lock was standing in for, and they must survive
+        // its removal. Each is asserted through the store's own public surface.
+        const originalPlan = first.plans[0]!;
+        const changedPlan = buildIdeaLabCanonicalTaskPlanV1({ session, projectId: project.projectId,
+          participantId: originalPlan.participantId, round: 1,
+          ownerPrompt: `${buildIdeaLabOwnerPromptV1(session)}\nA different but still valid scope.`,
+          contributions: [] });
+        await assert.rejects(links.assertPlanAvailable(changedPlan),
+          /scope_mismatch/u, "a changed plan for a linked participant turn is refused");
+        // The original plan is still the one on record, so nothing was rewritten.
+        await links.assertPlanAvailable(originalPlan);
+        // A different project for the SAME session is refused by bindSession.
+        await assert.rejects(links.bindSession(buildIdeaLabCanonicalTaskPlanV1({ session,
+          projectId: other.projectId, participantId: originalPlan.participantId, round: 1,
+          ownerPrompt: buildIdeaLabOwnerPromptV1(session), contributions: [] })),
+        /scope_mismatch/u, "one discussion cannot be re-bound to a different project");
+        // ...and a link forged under a different integrity key is refused on read.
+        const wrongKeyLinks = new IdeaLabCanonicalTaskLinkStoreV1(web, new Uint8Array(32).fill(0x9c));
+        await assert.rejects(wrongKeyLinks.list(session.tenantId, session.sessionId),
+          /integrity_failed/u, "a link whose auth tag verifies under another key is not trusted");
+        await assert.rejects(wrongKeyLinks.assertPlanAvailable(originalPlan),
+          /integrity_failed/u, "a stored link forged under another key is refused before reuse");
+
+        // A binding row forged under ANOTHER integrity key is refused on the way
+        // in, not trusted. Seeded through the admin connection because that is
+        // the only way to write what a least-privilege role cannot. The web
+        // role holds no INSERT on control_idea_sessions either, which is a
+        // separate least-privilege boundary from the provenance tables.
+        const forgedSession = buildIdeaLabSessionV1({ sessionId: "idea:link-forged", tenantId: scope.tenantId,
+          workspaceId: scope.workspaceId, title: session.title, ideaSummary: session.ideaSummary,
+          targetCustomer: session.targetCustomer, participants: session.participants,
+          maxRounds: session.maxRounds, maxDurationSeconds: session.maxDurationSeconds,
+          maxCostUsd: session.maxCostUsd, createdByIdentityDigest: session.createdByIdentityDigest,
+          createdAt: NOW });
+        await adminClient.query(`INSERT INTO control_idea_sessions(session_id,tenant_id,workspace_id,session_digest,
+          session_auth_tag,participant_count,max_rounds,payload,created_at)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)`, [forgedSession.sessionId, scope.tenantId, scope.workspaceId,
+          forgedSession.sessionDigest, hmac("a"), forgedSession.participants.length, forgedSession.maxRounds,
+          JSON.stringify(forgedSession), NOW]);
+        const forgedPlan = buildIdeaLabCanonicalTaskPlanV1({ session: forgedSession, projectId: project.projectId,
+          participantId: forgedSession.participants[0]!.participantId, round: 1,
+          ownerPrompt: buildIdeaLabOwnerPromptV1(forgedSession), contributions: [] });
+        // Write the binding row itself with a tag produced under a key this
+        // store does not hold, so the auth-tag check is the only thing that can
+        // reject it: the columns and the binding digest are all genuine.
+        const forgedBinding = bindingDigestFor(forgedPlan);
+        await adminClient.query(`INSERT INTO control_idea_canonical_task_sessions(tenant_id,session_id,session_digest,
+          workspace_id,project_id,binding_digest,binding_auth_tag,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [scope.tenantId, forgedSession.sessionId, forgedSession.sessionDigest, scope.workspaceId,
+          forgedPlan.projectId, forgedBinding, hmac("b"), NOW]);
+        await assert.rejects(links.bindSession(forgedPlan), /integrity_failed/u,
+          "a session binding forged under another key is refused, not trusted");
+        // assertPlanAvailable() reads only the LINK table, which holds no row for
+        // this turn, so it legitimately returns rather than refusing: the binding
+        // is what refuses, and bindSession is where a discussion is bound. What
+        // matters is that the forged binding bought no link.
+        await links.assertPlanAvailable(forgedPlan);
+        assert.equal((await links.list(scope.tenantId, forgedSession.sessionId)).length, 0,
+          "a forged binding never yields a usable provenance link");
+
+        // A changed record for the same task key is refused, and the stored
+        // provenance is left untouched.
+        const storedBefore = (await links.list(session.tenantId, session.sessionId)).length;
+        await assert.rejects(links.record(changedPlan, first.receipts[0]!.receipt),
+          /scope_mismatch|duplicate_record|integrity_failed/u,
+          "a different link for an already linked task key is refused");
+        assert.equal((await links.list(session.tenantId, session.sessionId)).length, storedBefore,
+          "a refused record leaves the provenance table unchanged");
+
         await assert.rejects(new IdeaLabCanonicalTaskProposalServiceV1(tasks, { projectId: other.projectId }, links)
           .proposeRound(identity, { session, round: 1, contributions: [] }));
         assert.equal((await web.query<{ count: string }>(
@@ -169,5 +255,37 @@ test("Idea Lab canonical task links record and replay through the production web
       } finally { await webClient.end(); await adminClient.end(); }
       return postgres.appliedMigrations;
     }, { port: PORT, allowedPorts: [PORT], boundMs: 240_000 });
+    assert.equal(result.cleanedUp, true); assert.deepEqual(result.leftovers, []); assert.ok(result.value >= 1);
+  });
+
+// A second, narrower guard for the sibling fix in the assignment coordinator.
+// `control_assignment_lease_scopes` is the only remaining table the audit found
+// that NO production login can row-lock, and the execution freshness fence used
+// to read it FOR SHARE. It is coordinator-executed, not web-executed, so it is
+// asserted as a privilege fact rather than driven through the web path.
+test("the execution freshness fence's scope table stays un-lockable, so no lock is used there",
+  async t => {
+    if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+    const result = await withRealPostgres(async postgres => {
+      // Every role that can read the table is refused a row lock on it, read
+      // from the server rather than from the grant text.
+      for (const role of ["web", "coordinator"] as const) {
+        const client = new Client(postgres.connection(role));
+        client.on("error", () => {});
+        await client.connect();
+        try {
+          await assert.rejects(client.query("SELECT 1 FROM control_assignment_lease_scopes LIMIT 1 FOR UPDATE"),
+            /permission denied/u, `the ${role} login must not be able to row-lock control_assignment_lease_scopes`);
+        } finally { await client.end().catch(() => {}); }
+      }
+      // The lease table the fence does lock, and the scope table it reads, are
+      // both reachable for the coordinator: this is why the fix drops the scope
+      // lock rather than adding a grant.
+      const adminClient = new Client(postgres.admin()); await adminClient.connect();
+      const rows = (await adminClient.query("SELECT has_any_column_privilege('control_room_task_coordinator', t, 'UPDATE') AS lockable FROM unnest(ARRAY['control_leases','control_assignment_lease_scopes']) AS t")).rows as { lockable: boolean }[];
+      await adminClient.end();
+      assert.deepEqual(rows, [{ lockable: true }, { lockable: false }]);
+      return postgres.appliedMigrations;
+    }, { port: FENCE_PORT, allowedPorts: [FENCE_PORT], boundMs: 240_000 });
     assert.equal(result.cleanedUp, true); assert.deepEqual(result.leftovers, []); assert.ok(result.value >= 1);
   });
