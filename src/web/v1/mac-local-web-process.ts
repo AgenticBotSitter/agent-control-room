@@ -59,8 +59,14 @@ export interface MacLocalWebProcessOptionsV1 {
    * the Pipelines owner module absent. */
   workBatchIntegrityKey?: Uint8Array;
   /** Installation-wide Pause / Drain / Stop. The mode is a separate concern
-   * from the batch modules, so it has its own key and its own absence. */
+   * from the batch modules, so it has its own key and its own absence.
+   *
+   * Supply either `operationsModeIntegrityKey`, which builds one here, or
+   * `operationsMode`, which is the instance the host already built. Two
+   * instances would be two answers to "what mode is this installation in", and
+   * the supervisor's health port and the owner endpoint could then disagree. */
   operationsModeIntegrityKey?: Uint8Array;
+  operationsMode?: WebOperationsModeServiceV1;
   /** Coordinator-side stop requests, so `stopped` reaches running work. Omission
    * records the mode and still refuses every new claim and start, but the
    * receipt says no stop request was sent rather than implying one. */
@@ -141,9 +147,15 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     localOwnerSession: sessions, service: pipelines, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
     channel: createWebPushChannelV1(options.ownerWebPush) } : undefined;
-  const operationsMode = options.operationsModeIntegrityKey ? new WebOperationsModeServiceV1(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.operationsModeIntegrityKey, clock,
-    options.operationsModeStop) : undefined;
+  // One service, never two: a supplied instance and a key together are refused
+  // rather than silently preferring one, because two instances would each hold
+  // their own view of the same installation-wide state.
+  if (options.operationsMode && options.operationsModeIntegrityKey)
+    throw new Error("mac_local_web_process_config_invalid");
+  const operationsMode = options.operationsMode ?? (options.operationsModeIntegrityKey
+    ? new WebOperationsModeServiceV1(options.database.client,
+      { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.operationsModeIntegrityKey, clock,
+      options.operationsModeStop) : undefined);
   const operationsModeHttp = operationsMode ? createOperationsModeHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: operationsMode, clock }) : undefined;
   let closed: Promise<void> | undefined;

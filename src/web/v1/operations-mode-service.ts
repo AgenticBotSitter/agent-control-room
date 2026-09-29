@@ -177,13 +177,11 @@ export class WebOperationsModeServiceV1 {
       // owner pressing the button at the same moment.
       await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
       const owner = await this.#liveOwnerInSession(tx, now);
-      // Only pause a running installation. A health check runs on a timer, and
-      // without this an unhealthy machine would append a new revision every
-      // cycle and bury the owner's own decisions in the history.
-      //
-      // An installation that has never recorded a decision is `running` by the
-      // same rule every gate uses, so it takes the pause below and produces
-      // revision 1 rather than this branch.
+      // Only pause a running installation, so a health check on a timer does
+      // not append a revision every cycle and bury the owner's own decisions in
+      // the history. An installation that has never recorded a decision is
+      // `running` by the same rule every gate uses, so it takes the pause below
+      // and produces revision 1.
       if (owner.modes.current !== "running" && owner.modes.record) {
         return { record: owner.modes.record, replayed: true };
       }

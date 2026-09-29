@@ -63,11 +63,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
   ownerWebPush?: OwnerWebPushConfigV1;
-  /** Installation-wide Pause / Drain / Stop. The coordinator, when one is
-   * composed, also supplies the `stopped` stop authority, so a Stop actually
-   * reaches running work instead of only recording the intent. */
-  operationsModeIntegrityKey?: Uint8Array;
-  operationsModeStop?: { listRunning?: unknown; revokeRunning?: unknown };
+  /** Installation-wide Pause / Drain / Stop. Supply the instance the host
+   * already built, so the endpoint and the supervisor's health port are two
+   * callers of one service rather than two services over one state. */
+  operationsMode?: WebOperationsModeServiceV1;
   /** The supervisor's machine-health port, connected to the server-owned mode.
    * Omission leaves the supervisor without a way to pause, which the watchdog
    * already treats as an `operations_pause_unavailable` incident. */
@@ -102,6 +101,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
       ?? createMacLocalWorkBatchQueueCatalogV1(configuration) } : {}),
     ...(input.workBatchQueueAdmissionAuthority ? { workBatchQueueAdmissionAuthority: input.workBatchQueueAdmissionAuthority } : {}),
     ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+    // The installation-wide mode. This forwarding is the whole fix: without it
+    // the endpoint exists in the web process but is never mounted, and it 404s
+    // on a real installation while every service-level test passes.
+    ...(input.operationsMode ? { operationsMode: input.operationsMode } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -177,10 +180,15 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           return Object.freeze({ integrityKey: Uint8Array.from(input.workBatchIntegrityKey), queueCatalog,
             selectionAuthority: createWorkBatchQueueSelectionAuthorityV1(queueCatalog, workerReadiness) });
         })() : undefined;
-        // One server-side operations mode for this installation. It is built
-        // before the web process so the supervisor port and the HTTP endpoint
-        // are the same object: a machine-health pause and an owner press are
-        // one recorded decision, not two facts that can disagree.
+        // The server-side operations mode for this installation. It exists
+        // before the web process so the supervisor's machine-health port and
+        // the owner-facing endpoint are two callers of ONE recorded decision
+        // rather than two facts that could disagree.
+        //
+        // It is built before the task application, so the coordinator's stop
+        // authority is not available yet and is attached below. That is the
+        // only ordering that works: `stopped` revokes on the coordinator's own
+        // login, and before that login exists there is nothing to revoke on.
         let service: WebOperationsModeServiceV1 | undefined;
         if (input.workBatchIntegrityKey) {
           const key = input.workBatchIntegrityKey;
@@ -188,8 +196,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             throw new Error("mac_local_host_configuration_invalid");
           service = new WebOperationsModeServiceV1(database.client,
             { tenantId: configuration.localOwnerSession.tenantId, workspaceId: configuration.workspaceId },
-            key, Date.now, operationsModeStopAuthorityV1(taskApplication as unknown as
-              { listRunning?: unknown; revokeRunning?: unknown }));
+            key, Date.now);
         }
         taskApplication = input.createTaskApplication
           ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles!,
@@ -228,8 +235,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
           ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
-          ...(service ? { operationsModeIntegrityKey: input.workBatchIntegrityKey,
-            operationsModeStop: taskApplication as unknown as { listRunning?: unknown; revokeRunning?: unknown } } : {}),
+          ...(service ? { operationsMode: service } : {}),
         });
         if (!input.startQueueWorker) return web;
         if (!taskApplication?.queueDelivery || !databaseRoles) throw new Error("mac_local_host_configuration_invalid");
