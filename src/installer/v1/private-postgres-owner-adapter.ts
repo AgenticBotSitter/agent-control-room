@@ -56,6 +56,7 @@ export type PrivatePostgresOwnerConfigurationV1 = Readonly<{
   migratorPassword: string;
   applicationPassword: string;
   schedulerPassword: string;
+  workIntakePassword: string;
   requiredTables: readonly string[];
 }>;
 
@@ -114,6 +115,7 @@ export type PrivatePostgresMigrationRequestV1 = CommonToolRequest & Readonly<{
     CONTROL_ROOM_MIGRATOR_PASSWORD: string;
     CONTROL_ROOM_APP_PASSWORD: string;
     CONTROL_ROOM_SCHEDULER_PASSWORD?: string;
+    CONTROL_ROOM_WORK_INTAKE_PASSWORD: string;
   }>;
 }>;
 
@@ -193,7 +195,7 @@ function secret(value: unknown): string {
 
 function configuration(value: unknown): PrivatePostgresOwnerConfigurationV1 {
   const input = exactRecord(value, ["schema", "majorVersion", "host", "port", "database", "maintenanceDatabase",
-    "operator", "migratorPassword", "applicationPassword", "schedulerPassword", "requiredTables"]);
+    "operator", "migratorPassword", "applicationPassword", "schedulerPassword", "workIntakePassword", "requiredTables"]);
   if (input.schema !== PRIVATE_POSTGRES_CONFIGURATION_V1 || input.majorVersion !== 17 || input.host !== "127.0.0.1"
     || !Number.isInteger(input.port) || (input.port as number) < 1 || (input.port as number) > 65535) return refused();
   const operator = exactRecord(input.operator, ["username", "password"]);
@@ -202,10 +204,12 @@ function configuration(value: unknown): PrivatePostgresOwnerConfigurationV1 {
   const requiredTables = required.map(identifier);
   if (new Set(requiredTables).size !== requiredTables.length) return refused();
   const schedulerPassword = secret(input.schedulerPassword);
+  const workIntakePassword = secret(input.workIntakePassword);
   return Object.freeze({ schema: PRIVATE_POSTGRES_CONFIGURATION_V1, majorVersion: 17, host: "127.0.0.1",
     port: input.port as number, database: identifier(input.database), maintenanceDatabase: identifier(input.maintenanceDatabase),
     operator: Object.freeze({ username: identifier(operator.username), password: secret(operator.password) }),
     migratorPassword: secret(input.migratorPassword), applicationPassword: secret(input.applicationPassword), schedulerPassword,
+    workIntakePassword,
     requiredTables: Object.freeze(requiredTables) });
 }
 
@@ -411,7 +415,8 @@ export function createPrivatePostgresOwnerAdapterV1(input: unknown): PrivatePost
           ledgerPath: fixedPaths.ledger,
           env: Object.freeze({ CONTROL_ROOM_MIGRATOR_PASSWORD: config.migratorPassword,
             CONTROL_ROOM_APP_PASSWORD: config.applicationPassword,
-            CONTROL_ROOM_SCHEDULER_PASSWORD: config.schedulerPassword }) });
+            CONTROL_ROOM_SCHEDULER_PASSWORD: config.schedulerPassword,
+            CONTROL_ROOM_WORK_INTAKE_PASSWORD: config.workIntakePassword }) });
         try {
           if (closed || signal.aborted) return uncertain();
           const result = await tools.applyMigrations(request, signal);

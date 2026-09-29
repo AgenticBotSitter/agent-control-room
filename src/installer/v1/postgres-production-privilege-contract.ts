@@ -8,6 +8,7 @@ export const POSTGRES_PRODUCTION_MEMBERSHIPS_V1 = Object.freeze([
   Object.freeze({ member: "control_room_app", role: "control_room_application", admin_option: false as const }),
   Object.freeze({ member: "control_room_migrator", role: "control_room_schema_owner", admin_option: false as const }),
   Object.freeze({ member: "control_room_scheduler", role: "control_room_schedule_admissions", admin_option: false as const }),
+  Object.freeze({ member: "control_room_work_intake_agent", role: "control_room_work_intake", admin_option: false as const }),
 ]);
 
 const owner = "control_room_schema_owner";
@@ -24,6 +25,10 @@ const schedulerReadTables = new Set([
   "control_workflows", "control_jobs",
 ]);
 const brokerTables = new Set(["control_github_webhook_replays", "control_github_worker_wake_hints"]);
+const workIntakeReadTables = new Set(["control_identities", "control_role_grants", "projects"]);
+const workIntakeWriteTables = new Set(["work_batches", "work_batch_revisions", "audit_events",
+  "control_audit_chain_heads"]);
+const workIntakeExclusiveTables = new Set(["work_batches", "work_batch_revisions"]);
 
 function parseAcl(value: string): ReadonlyMap<string, string> | undefined {
   if (!value.startsWith("{") || !value.endsWith("}")) return undefined;
@@ -44,6 +49,20 @@ function parseAcl(value: string): ReadonlyMap<string, string> | undefined {
 function expectedTablePrivileges(table: string): ReadonlyMap<string, string> {
   const result = new Map<string, string>([[owner, "arwdDxtm"]]);
   if (table === "control_room_schema_migrations") return result;
+  if (table === "work_intake_role_anchor") {
+    result.set("control_room_work_intake", "r");
+    return result;
+  }
+  if (table === "work_intake_tenant_binding") {
+    for (const role of ["control_room_application", "control_room_reader", "control_room_backup",
+      "control_room_work_intake"]) result.set(role, "r");
+    return result;
+  }
+  if (workIntakeExclusiveTables.has(table)) {
+    result.set("control_room_backup", "r");
+    result.set("control_room_work_intake", "ar");
+    return result;
+  }
   if (brokerTables.has(table)) {
     result.set("control_room_github_broker", "ard");
     return result;
@@ -55,6 +74,9 @@ function expectedTablePrivileges(table: string): ReadonlyMap<string, string> {
   result.set("control_room_backup", "r");
   if (table === "control_scheduled_task_admissions") result.set("control_room_schedule_admissions", "ar");
   else if (schedulerReadTables.has(table)) result.set("control_room_schedule_admissions", "r");
+  if (workIntakeReadTables.has(table)) result.set("control_room_work_intake", "r");
+  else if (workIntakeWriteTables.has(table)) result.set("control_room_work_intake", "ar");
+  else if (table === "control_idempotency") result.set("control_room_work_intake", "r");
   return result;
 }
 

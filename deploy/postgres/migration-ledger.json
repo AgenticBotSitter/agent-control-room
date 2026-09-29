@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "8d71ae7a8d40d31deee62e721eaf7a5192487c28293fc8f36d17a2f89ec839a6",
+  "digest": "95f47449a44a9cae3c9272f215b7f17b651652f4a0fb1dec5e6d02c4d9f11afe",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -555,27 +555,33 @@
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0100_ownership_lease_collision_guard.sql",
+      "file": "db/migrations/0093_work_batch_intake.sql",
       "order": 93,
+      "sha256": "30d958f97287b3590dda8fd66789964fe7f04f8342336a27a0da70e1ecb7f191",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0100_ownership_lease_collision_guard.sql",
+      "order": 94,
       "sha256": "a91e629f09bec5f2e2d31bda5ff81a82693b4126c5ae9e5a9ccfa96435cfa9a1",
       "kind": "migrate"
     },
     {
       "file": "db/roles/production_roles.sql",
-      "order": 94,
-      "sha256": "21960d034062d3a86810e966748187ce2bb4aff550753a33136781d1a92c9f39",
+      "order": 95,
+      "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 95,
-      "sha256": "be541f3041e798cfb8540cfc94b3853b978ca5d85d3f27dbeae78ba1e3ee1c83",
+      "order": 96,
+      "sha256": "9c2b5a8190b6b16ecfcae667e6d7837dec8d69e082bab22d7fe1a37caedac6e1",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 96,
-      "sha256": "06b83bf15223e1e9540fc409ec7699fc2b8ad7617545a97ea06f802b70dc9887",
+      "order": 97,
+      "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }
   ]
