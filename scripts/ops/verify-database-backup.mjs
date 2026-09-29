@@ -2,13 +2,16 @@
 // cluster. The cluster is stopped and removed on every success or failure path.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { restoreDatabase } from "../../deploy/postgres/restore-database.mjs";
 import { DISPOSABLE_POSTGRES_MARKER } from "../dev/cleanup-test-postgres.mjs";
+// The shared disposable-cluster teardown, imported with bare `node` — which is
+// why it is `.mjs` and not `.ts`.
+import { createClusterTeardown } from "../dev/postgres-cluster-lifecycle.mjs";
 import { diffMacGrantsV1, readDesiredMacGrantsV1, readMacGrantCatalogV1 } from "../mac-local/database-upgrade-grants.mjs";
 import { MAC_BACKUP_REQUIRED_TABLES_V1, VERIFIED_BACKUP_MANIFEST_V1 } from "./backup-database.mjs";
 
@@ -115,29 +118,58 @@ export async function normalizeMacApplicationOwnershipV1(client) {
   }
 }
 
-export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin" }) {
+export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin", teardown: teardownOptions = {} }) {
+  if (teardownOptions === null || typeof teardownOptions !== "object" || Array.isArray(teardownOptions))
+    throw new Error("database_backup_verification_arguments_refused");
   if (!Number.isInteger(port) || port < 15620 || port > 15649 || typeof pgBin !== "string" || !isAbsolute(pgBin))
     throw new Error("database_backup_verification_arguments_refused");
   const bound = await readBoundBackup(backup);
   const root = await mkdtemp(databaseBackupVerificationRootPrefixV1());
   const data = join(root, "pg"), socket = join(root, "socket"), log = join(root, "postgres.log");
-  let started = false;
-  const stop = () => {
-    if (!started) return;
-    try { native(pgBin, "pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]); } catch {}
-    started = false;
-  };
-  const onSignal = () => { stop(); process.exitCode = 1; };
-  process.once("SIGINT", onSignal); process.once("SIGTERM", onSignal);
+  // The shared teardown owns the signal handlers, the exit hook, the ordered
+  // stop, and the directory removal.
+  //
+  // The previous version was the worst path in the repository for this class of
+  // leak: its own `SIGINT`/`SIGTERM` handlers set `exitCode` WITHOUT stopping
+  // the postmaster, its `stop()` swallowed every `pg_ctl` failure, and its
+  // `finally` removed the data directory unconditionally — so a postmaster that
+  // refused to stop survived with its 56-byte SysV shared-memory segment held
+  // and nothing left to stop it with. This machine has 32 of those in total.
+  //
+  // `teardownOptions` is forwarded to the shared teardown, and ONLY the two
+  // observation seams the tests need: `pgCtl`, which replaces the COMMAND while
+  // the ladder and every liveness check still run, and `degradedLogger`, which
+  // changes where the degraded line is written. It exists for one reason: a
+  // `pg_ctl` stop that does not confirm inside its window is reachable only when
+  // a real postmaster is slow, so a test that has to observe what this function
+  // does with a degraded teardown has no other way in.
+  //
+  // An ALLOWLIST, not a spread, and deliberately so. Spreading the caller's
+  // object would let `dataDirectory`, `runDirectory`, `socketDirectory`, `port`,
+  // `pgBin` or `removeDirectories` be overridden — a caller could point the
+  // teardown at an empty directory and the verifier would report `verified: true`
+  // for a cluster it never stopped, leaving a live postmaster holding its SysV
+  // segment. That is precisely the leak this function exists to prevent, so every
+  // option that decides WHICH cluster is stopped is set here and cannot be
+  // replaced. A test that needs another one gets a new explicit entry, not a
+  // spread. The CLI below passes nothing at all.
+  const { pgCtl: pgCtlSeam, degradedLogger } = teardownOptions;
+  const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: root,
+    socketDirectory: socket, port, pgBin,
+    ...(pgCtlSeam === undefined ? {} : { pgCtl: pgCtlSeam }),
+    ...(degradedLogger === undefined ? {} : { degradedLogger }) });
+  let bodyFailure;
   try {
-    await mkdir(socket, { mode: 0o700 });
+    await mkdir(socket, { mode: 0o700, recursive: true });
     native(pgBin, "initdb", ["-D", data, "-U", "postgres", "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
     await writeFile(join(data, DISPOSABLE_POSTGRES_MARKER), `${JSON.stringify({
       schema: "control-room.disposable-postgres/v1", createdBy: "mac-local-rehearsal",
     })}\n`, { mode: 0o600, flag: "wx" });
     native(pgBin, "pg_ctl", ["-D", data, "-l", log, "-w", "-t", "30", "-o",
       `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
-    started = true;
+    // Registered as soon as there is a running postmaster, and BEFORE anything
+    // that can throw, so a failure after this point still has a teardown.
+    await teardown.capturePostmasterPid();
     const admin = new Client({ host: socket, port, database: "postgres", user: "postgres" });
     await admin.connect();
     try {
@@ -160,10 +192,40 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
     } finally { await client.end(); }
     return Object.freeze({ verified: true, identityDigest: restored.identityDigest,
       ledgerHead: Object.freeze({ ...bound.manifest.ledger.head }) });
+  } catch (error) {
+    // The body's failure is kept, not replaced. A `throw` from a `finally`
+    // REPLACES whatever was already propagating, so a teardown failure raised
+    // bare would hide `database_backup_identity_refused` — the actual reason the
+    // backup was rejected — behind a cleanup message.
+    bodyFailure = error;
+    throw error;
   } finally {
-    process.removeListener("SIGINT", onSignal); process.removeListener("SIGTERM", onSignal);
-    stop();
-    await rm(root, { recursive: true, force: true });
+    // The teardown refuses to report success when the postmaster survives, and
+    // keeps the data directory in that case so an operator can stop it by hand.
+    // Its own failure is attached to the body's as a `cause` rather than raised
+    // over the top of it, so a caller still has both.
+    //
+    // `stop()` throws for exactly two things: the postmaster SURVIVED, or the
+    // ladder reached `SIGKILL` and leaked its segment. A teardown that ended
+    // with the postmaster gone without reaching SIGKILL does not throw — it
+    // reports through `degraded()` and stderr — and that distinction is the
+    // point. It used to throw here for any non-first ladder step, so a `fast`
+    // stop that missed its window after the restore and an `immediate` that did
+    // not, printed `database backup verification FAIL` and set exit code 1 for
+    // a backup whose digests, ledger, ownership and grants had all matched.
+    // docs/BACKUP_AND_RESTORE.md:41-44 reserves `FAIL` for a mismatch and tells
+    // the operator to investigate a recovery incident, so a slow shutdown must
+    // not be able to produce that verdict.
+    let teardownFailure;
+    try { await teardown.stop(); } catch (stopError) { teardownFailure = stopError; }
+    if (teardown.degraded().length > 0)
+      console.error(`database backup verification: teardown degraded on port ${port}:`
+        + ` ${teardown.degraded().join(",")}`);
+    if (teardownFailure !== undefined) {
+      if (bodyFailure === undefined) throw teardownFailure;
+      throw new AggregateError([bodyFailure, teardownFailure],
+        `${bodyFailure?.message ?? String(bodyFailure)}; teardown: ${teardownFailure?.message ?? String(teardownFailure)}`);
+    }
   }
 }
 

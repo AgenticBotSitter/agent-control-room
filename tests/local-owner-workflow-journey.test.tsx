@@ -56,6 +56,7 @@ test("owner can follow the saved local workflow without a false live-worker clai
   assert.match(taskProposal, /New task/);
   assert.match(taskProposal, /Saving does not assign or start an agent/);
   assert.match(taskProposal, /does not claim that any worker is currently available/);
+  assert.match(taskProposal, /Model and effort are not configurable for this installation/);
 
   const detail = renderToStaticMarkup(createElement(TaskDetailPanel, { detail: savedDetail() }));
   assert.match(detail, /prepared for Codex/);
@@ -108,6 +109,42 @@ test("owner can follow the saved local workflow without a false live-worker clai
   assert.match(setup, /Refreshing never repeats a setup action/);
 
   noAgentControl(`${projectProposal}${taskProposal}${detail}${guidance}${review}${attention}${workers}${setup}`);
+});
+
+test("task creation shows protected defaults and names unsupported harnesses honestly", () => {
+  const taskProposal = renderToStaticMarkup(createElement(TaskProposalForm, {
+    draft: { title: "", instructions: "" }, setDraft: () => {}, pending: false, uncertain: false, onSave: () => {},
+    modelOptions: [{ workerKind: "codex", choices: [{ key: "gpt-build", label: "gpt-build", model: "gpt-build",
+      efforts: ["medium", "high"], limited: false }], defaultModel: "gpt-build", defaultEffort: "medium" }],
+  }));
+  assert.match(taskProposal, /Configured worker, model and effort defaults/);
+  assert.match(taskProposal, /Codex:<\/strong> gpt-build · effort medium/);
+  assert.match(taskProposal, /Claude Code:<\/strong> not configurable/);
+  assert.match(taskProposal, /Hermes Agent:<\/strong> not configurable/);
+});
+
+test("prepared task shows its exact chosen model before assignment", () => {
+  const detail = renderToStaticMarkup(createElement(TaskDetailPanel, { detail: {
+    ...savedDetail("ready"), preparedFor: "codex", modelSelection: { workerKind: "codex", selectionKey: "gpt-build",
+      model: "gpt-build", effort: "high", provider: null, profile: null, inheritedFromJobId: null },
+  } }));
+  assert.match(detail, /Chosen for this prepared task:<\/strong> Codex · gpt-build · effort high/);
+});
+
+test("shared model keys appear once and offer only efforts supported by every matching worker", () => {
+  const html = renderToStaticMarkup(createElement(TaskProposalForm, {
+    draft: { title: "", instructions: "", model: "shared-model", effort: "high" }, setDraft: () => {}, pending: false,
+    uncertain: false, onSave: () => {}, modelOptions: [
+      { workerKind: "codex", choices: [{ key: "shared-model", label: "shared-model", model: "shared-model",
+        efforts: ["low", "high"], limited: false }], defaultModel: "shared-model", defaultEffort: "low" },
+      { workerKind: "claude-code", choices: [{ key: "shared-model", label: "shared-model", model: "shared-model",
+        efforts: ["high"], limited: false }], defaultModel: "shared-model", defaultEffort: "high" },
+    ],
+  }));
+  assert.equal((html.match(/<option value="shared-model"/g) ?? []).length, 1);
+  assert.match(html, /Codex \/ Claude Code: shared-model/);
+  assert.doesNotMatch(html, /<option value="low"/);
+  assert.match(html, /<option value="high" selected=""/);
 });
 
 test("direct attention reloads are GET-only, and a lost proposal reply holds one exact request", async () => {
