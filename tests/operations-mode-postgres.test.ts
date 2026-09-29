@@ -45,6 +45,7 @@ const WORKSPACE = "workspace:operations-mode";
 const PROJECT = "project:operations-mode";
 const ADAPTER = "adapter:operations-mode";
 const NODE = "node:operations-mode";
+const NODE_KEY = "node-key:operations-mode";
 const OWNER = "identity:operations-mode-owner";
 const OPERATOR = "identity:operations-mode-operator";
 const AGENT = "identity:operations-mode-worker";
@@ -96,12 +97,17 @@ async function seedTenant(admin: Client) {
   [PROJECT, TENANT, WORKSPACE, ADAPTER, now]);
   await admin.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
     VALUES($1,$2,'active',1,$3,$3)`, [TENANT, PROJECT, now]);
-  // The node the claimed attempts name. A claim cannot name a node that does
-  // not exist, so the refusal being measured is the mode's and not a foreign key.
+  // The node the work is leased to. The domain schema is complete — the
+  // canonical store re-validates the whole lineage, node included, on every
+  // transition, and a record that satisfies only the mirror trigger is refused
+  // there.
   await admin.query(`INSERT INTO control_nodes(id,tenant_id,state,identity_key_id,version,payload,created_at,updated_at)
-    VALUES($1,$2,'active','node-key:operations-mode',1,$3::jsonb,$4,$4)`,
-  [NODE, TENANT, JSON.stringify({ kind: "node", id: NODE, tenantId: TENANT, state: "active", version: 1,
-    identityKeyId: "node-key:operations-mode", createdAt: now, updatedAt: now }), now]);
+    VALUES($1,$2,'active',$3,1,$4::jsonb,$5,$5)`, [NODE, TENANT, NODE_KEY, JSON.stringify({
+      contractVersion: "control-room-domain/v1", kind: "node", id: NODE, tenantId: TENANT, displayName: "Local worker",
+      state: "active", platform: "macos", architecture: "arm64", identityKeyId: NODE_KEY,
+      hardwareFingerprint: `sha256:${"3".repeat(64)}`, softwareFingerprint: `sha256:${"4".repeat(64)}`,
+      policyVersion: "mac-local/v1", minimumProtocolVersion: "local-only", version: 1, createdAt: now, updatedAt: now,
+    }), now]);
   // The owner holds a wildcard grant, which is what a real owner has. The
   // operator also holds a wildcard, as an operator: it must not reach this
   // control, which is the whole point of requiring an owner-only action.
@@ -142,7 +148,7 @@ async function seedReadyJob(admin: Client, jobId: string) {
     VALUES($1,$2,$3,$4,$5,'active',1,$6::jsonb,$7,$7)`,
   [workflow.id, TENANT, PROJECT, request.id, workflow.definitionDigest, JSON.stringify(workflow), now]);
   const authority = { projectId: PROJECT, allowedExecutor: "executor:test", allowedOperations: ["operation:test"],
-    credentialRefs: [], filesystemRoots: [], networkPolicy: "deny", allowedNetworkDestinations: [],
+    credentialRefs: [], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [],
     effectPolicy: "approval_required", maxRisk: "low", maxDurationSeconds: 60, maxConcurrentEffects: 1,
     expiresAt: new Date(Date.now() + 600_000).toISOString(), digest: "" };
   // The production digest function, so the seeded job is one the real planner
