@@ -36,8 +36,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
-    "find": "|| typeof input.toolName !== \"string\" || !mcpToolNames.includes(input.toolName as never)",
-    "replace": "|| typeof input.toolName !== \"string\"",
+    "find": "  async recordMcpCall(principal: FleetWorkerPrincipalV1, input: Readonly<{ callId: unknown; toolName: unknown }>) {\n    if (typeof input.callId !== \"string\" || !mcpCallPattern.test(input.callId)\n      || typeof input.toolName !== \"string\" || !mcpToolNames.includes(input.toolName as never)) return fleetFail(\"invalid\");",
+    "replace": "  async recordMcpCall(principal: FleetWorkerPrincipalV1, input: Readonly<{ callId: unknown; toolName: unknown }>) {\n    if (typeof input.callId !== \"string\" || !mcpCallPattern.test(input.callId)\n      || typeof input.toolName !== \"string\") return fleetFail(\"invalid\");",
     "test": "node --import tsx --test --test-name-pattern \"MCP server: exposes\" tests/fleet-connector.test.ts",
     "why": "MCP audit metadata contains only a bounded allowlisted tool label"
   },
