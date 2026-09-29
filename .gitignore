@@ -23,6 +23,20 @@ node_modules/
 # Job reports live outside the repo.
 /reports/
 
+# Playwright scratch output from a local owner-journey run: traces, screencasts
+# and per-test artifacts. Nothing here belongs in the repository, and it is large
+# enough that committing it by accident is a nuisance. CI writes its own copy to
+# this same path and uploads it as an artifact, which is unaffected.
+#
+# Each producer is named rather than ignoring `test-results/` wholesale, so a
+# source directory that happens to be called test-results is not silently
+# ignored, and so a third scratch producer has to be added deliberately instead
+# of inheriting this rule:
+#   playwright.config.ts                 -> /test-results/playwright
+#   scripts/owner-page-screenshots.mjs    -> /test-results/owner-screenshots
+/test-results/playwright/
+/test-results/owner-screenshots/
+
 # Do not add automation without an explicit budget/security review.
 # The CI workflow is reviewed in docs/ci-budget-security-review.md. Anything
 # further needs its own review; this line no longer blocks the directory, so the

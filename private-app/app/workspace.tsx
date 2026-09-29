@@ -17,6 +17,7 @@ import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
 import { ProjectAgentWorkspace } from "./project-agent-workspace";
 import { useLocalRuntime } from "./local-runtime";
+import { StateChip } from "./owner-ui";
 
 /** Browser-side canonical JSON: stable across equivalent object key ordering. Mirrors the
  * server's canonical-digest implementation so the template-selection key the browser sends
@@ -277,7 +278,11 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
         <a href="/projects" className="private-back">← All projects</a>
         {(state === "loading" || state === "ready" && !project) && <p role="status">Loading project…</p>}
         {state === "ready" && project && <>
-          <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
+          {/* The lifecycle chip is followed by the origin text, because the owner
+              journey asserts on the exact string /^paused ·/ and the middle dot
+              and suffix are part of that match. */}
+          <div className="private-heading"><span className="private-state"><StateChip state={project.lifecycle} />{" · "}
+            {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
           <ProjectIdeaOrigin project={project} />
           <ProjectNavigation projectId={projectId} current={section} presentation={project.presentation} />
           {section === "overview" && <section className="private-panel"><h2>Purpose</h2>
