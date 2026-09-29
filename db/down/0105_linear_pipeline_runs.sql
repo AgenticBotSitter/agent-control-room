@@ -11,6 +11,8 @@ DROP VIEW pipeline_ordered_stage_runs;
 DROP TRIGGER pipeline_stage_runs_guard ON pipeline_stage_runs;
 DROP FUNCTION guard_pipeline_stage_run_write();
 DROP TABLE pipeline_stage_runs;
+DROP TRIGGER control_jobs_pipeline_lineage_write_once ON control_jobs;
+DROP FUNCTION guard_control_job_pipeline_lineage();
 ALTER TABLE control_jobs DROP CONSTRAINT fk_control_jobs_pipeline_run;
 ALTER TABLE control_jobs DROP CONSTRAINT ck_control_jobs_pipeline_columns_all_or_none;
 ALTER TABLE control_jobs DROP COLUMN pipeline_run_id;

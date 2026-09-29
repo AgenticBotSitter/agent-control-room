@@ -75,6 +75,27 @@ ALTER TABLE control_jobs ADD CONSTRAINT fk_control_jobs_pipeline_run
 -- Validating in this same transaction would hold ACCESS EXCLUSIVE on
 -- control_jobs for a full-table scan.
 
+-- Lineage is write-once. The web and coordinator logins hold column UPDATE on
+-- these three columns so instantiate and the planner can label a job once
+-- (both write only where all three are NULL). Clearing or relabelling a
+-- labelled job would take it out of pipeline admission and let a later stage
+-- run before its predecessor. The first write from all-NULL passes here; the
+-- all-or-none CHECK above refuses a partial one.
+CREATE FUNCTION guard_control_job_pipeline_lineage() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF (OLD.stage_kind IS NOT NULL OR OLD.stage_ordinal IS NOT NULL OR OLD.pipeline_run_id IS NOT NULL)
+    AND (NEW.stage_kind IS DISTINCT FROM OLD.stage_kind OR NEW.stage_ordinal IS DISTINCT FROM OLD.stage_ordinal
+      OR NEW.pipeline_run_id IS DISTINCT FROM OLD.pipeline_run_id) THEN
+    RAISE EXCEPTION 'pipeline lineage is write-once';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_control_job_pipeline_lineage() FROM PUBLIC;
+CREATE TRIGGER control_jobs_pipeline_lineage_write_once
+  BEFORE UPDATE OF stage_kind, stage_ordinal, pipeline_run_id ON public.control_jobs
+  FOR EACH ROW EXECUTE FUNCTION public.guard_control_job_pipeline_lineage();
+
 CREATE TABLE pipeline_stage_runs (
   id text NOT NULL,
   tenant_id text NOT NULL,

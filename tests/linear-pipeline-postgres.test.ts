@@ -222,6 +222,54 @@ test("the production web and coordinator logins run every S4 pipeline read and w
         assert.equal((error as { code?: string }).code, "conflict", permissionFailure(error, coordinator.refused));
         return true;
       });
+
+      // ---- Lineage is write-once for both shared logins, in every tenant. ----
+      // Both logins hold column UPDATE on the three lineage columns so the
+      // planner and instantiate can write them once. Clearing or relabelling
+      // them would take a stage out of pipeline admission.
+      const lineageOf = async (jobId: string) => {
+        const catalog = new Client(postgres.admin({ database: postgres.database }));
+        await catalog.connect();
+        try {
+          return (await catalog.query<{ stage_kind: string | null; stage_ordinal: string | null; pipeline_run_id: string | null }>(
+            "SELECT stage_kind,stage_ordinal::text,pipeline_run_id FROM control_jobs WHERE id=$1", [jobId])).rows[0];
+        } finally { await catalog.end(); }
+      };
+      const stage1 = `${runA.jobIds[1]}:execution`;
+      const before = await lineageOf(stage1), beforeOther = await lineageOf(runB.jobIds[1]!);
+      assert.deepEqual(before, { stage_kind: "check", stage_ordinal: "1", pipeline_run_id: runA.runId });
+      for (const role of ["web", "coordinator"] as const) {
+        const direct = new Client(postgres.connection(role));
+        await direct.connect();
+        try {
+          for (const [target, assignment] of [
+            [stage1, "stage_kind=NULL,stage_ordinal=NULL,pipeline_run_id=NULL"],
+            [stage1, "stage_kind='signoff'"], [stage1, "stage_ordinal=0"],
+            // Another tenant's row through the same shared login.
+            [runB.jobIds[1]!, "stage_kind=NULL,stage_ordinal=NULL,pipeline_run_id=NULL"],
+          ] as const) await assert.rejects(direct.query(`UPDATE control_jobs SET ${assignment} WHERE id=$1`, [target]),
+            /pipeline lineage is write-once/, `${role}: ${target} ${assignment}`);
+        } finally { await direct.end(); }
+      }
+      assert.deepEqual(await lineageOf(stage1), before);
+      assert.deepEqual(await lineageOf(runB.jobIds[1]!), beforeOther);
+      await assert.rejects(admit(1), (error: unknown) => (error as { code?: string }).code === "conflict");
+
+      // Defence in depth: with the trigger bypassed (a superuser in replica
+      // mode), the gate still derives membership from the execution plan and
+      // the stage row, neither of which any app login can change.
+      const bypass = new Client(postgres.admin({ database: postgres.database }));
+      await bypass.connect();
+      try {
+        await bypass.query("BEGIN");
+        await bypass.query("SET LOCAL session_replication_role = replica");
+        await bypass.query("UPDATE control_jobs SET stage_kind=NULL,stage_ordinal=NULL,pipeline_run_id=NULL WHERE id=$1", [stage1]);
+        await bypass.query("COMMIT");
+      } finally { await bypass.end(); }
+      await assert.rejects(admit(1), (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "conflict", permissionFailure(error, coordinator.refused));
+        return true;
+      });
     } finally { await coordinator.pool.close(); }
 
     // ---- Least privilege on the new objects, as the real logins. ----

@@ -227,7 +227,18 @@ export class TaskAssignmentCoordinator {
     const link = (await tx.query<{ pipeline_run_id: string | null; stage_kind: string | null; stage_ordinal: number | null }>(
       `SELECT pipeline_run_id,stage_kind,stage_ordinal FROM control_jobs WHERE tenant_id=$1 AND id=$2`,
     [this.scope.tenantId, job.id])).rows[0];
-    if (!link?.pipeline_run_id) return false;
+    if (!link?.pipeline_run_id) {
+      // Lineage is write-once in the database, but membership is also derived
+      // from rows no app login can update or delete: the job's execution plan
+      // and the stage row naming its source job. A stage job with cleared
+      // lineage must not fall through to ordinary admission. When the lineage
+      // is set, the plan binding below is the disagreement check.
+      const member = (await tx.query(`SELECT 1 FROM pipeline_stage_runs s WHERE s.tenant_id=$1
+        AND (s.current_job_id=$2 OR s.current_job_id IN (SELECT p.source_job_id FROM control_task_execution_plans p
+          WHERE p.tenant_id=$1 AND p.job_id=$2)) LIMIT 1`, [this.scope.tenantId, job.id])).rows.length;
+      if (member) conflict();
+      return false;
+    }
     if (link.stage_kind === null || link.stage_ordinal === null || !this.workBatchAdmission) conflict();
     const stage = (await tx.query<{ project_id: string; current_job_id: string; stage_kind: string; stage_ordinal: number;
       role: string; worker_id: string; worker_kind: "codex" | "claude-code" | "hermes"; node_id: string; selection_key: string; model: string;
