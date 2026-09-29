@@ -139,14 +139,14 @@ test('durable ownership scopes narrow the real workspace change-audit policy', a
   const narrowed = fixture(), startBinding = binding(packet);
   narrowed.preparation.bindDelivery(packet);
   await narrowed.preparation.prepare(startBinding, narrowed.assertCurrent);
-  assert.deepEqual(narrowed.counts(), { creates: 1, removes: 0, inspections: 2 },
+  assert.deepEqual(narrowed.counts(), { creates: 1, removes: 0, inspections: 2, opens: 0 },
     'the production holder accepts the exact lease intersection');
 
   const disjoint = fixture({ allowedPaths: ['docs/**'] });
   disjoint.preparation.bindDelivery(packet);
   await assert.rejects(disjoint.preparation.prepare(startBinding, disjoint.assertCurrent), /unavailable/,
     'the production preparation cannot fall back to the wider host ceiling');
-  assert.deepEqual(disjoint.counts(), { creates: 0, removes: 0, inspections: 0 });
+  assert.deepEqual(disjoint.counts(), { creates: 0, removes: 0, inspections: 0, opens: 0 });
 });
 
 test('absent, changed, or mismatched shared delivery refuses before workspace effects', async () => {

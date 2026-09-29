@@ -682,8 +682,10 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     (SELECT count(*)::int FROM pg_policies WHERE policyname='audit_events_work_intake_scope') AS policy_count`)).rows[0];
   assert.deepEqual(retained,{column_update:true,guard_count:1,policy_count:1});
   await query(db,"DROP POLICY test_dependent_policy ON audit_events");
-  // The owner-approval slice depends on the intake tables. Exercise the
-  // reviewed recovery order before removing the proposal-only base slice.
+  // The owner-approval slice depends on the intake tables, and the queue and
+  // build-publication tenant policies read the intake binding. Exercise the
+  // reviewed recovery order, newest first, before removing the base slice.
+  await query(db,await readFile(join(ROOT,"db/down/0108_pipeline_build_publications.sql"),"utf8"));
   await query(db,queueDown);
   await query(db,ownerDown);
   const restoredSearchPath=(await query(db,`SELECT proconfig FROM pg_proc
