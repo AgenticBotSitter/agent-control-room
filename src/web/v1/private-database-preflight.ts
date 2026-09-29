@@ -153,9 +153,23 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions", "pipeline_advance_receipts",
   "control_agent_review_plans", "control_pipeline_build_publications");
+// The supervisor reconciler, the loop watchdog and the provider-wait tracker all
+// run on the coordinator login's own pool (see mac-local-default-task-provider's
+// `readPool`), so the grants db/roles/task_coordinator_roles.sql confers on them
+// are part of this login's reviewed profile. Settings stay read-only: assignment
+// enforces them, only an owner-gated web action writes them.
+coordinatorReads.push("control_project_settings", "control_service_incident_heads", "control_service_incidents",
+  "control_supervisor_task_heads", "control_supervisor_reconciliation_events", "control_supervisor_agent_health",
+  "control_supervisor_loop_heads", "control_supervisor_health_observations", "control_provider_waits");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
+coordinatorInserts.add("control_supervisor_task_heads");
+coordinatorInserts.add("control_supervisor_reconciliation_events");
+coordinatorInserts.add("control_supervisor_agent_health");
+coordinatorInserts.add("control_supervisor_loop_heads");
+coordinatorInserts.add("control_supervisor_health_observations");
+coordinatorInserts.add("control_provider_waits");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
@@ -178,6 +192,26 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag",
     "unattended_last_swept_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
+  // The supervisor's own mutable fields: a lapsed task head, an agent's health
+  // verdict, the loop's last run, and a provider wait's release. Everything
+  // else on those tables stays append-only history.
+  control_supervisor_task_heads: ["lapse_count", "last_attempt_id", "state", "updated_at"],
+  control_supervisor_agent_health: ["node_id", "state", "safe_reason_code", "last_heartbeat_at", "observed_at"],
+  control_supervisor_loop_heads: ["version", "last_started_at", "last_completed_at", "state"],
+  control_provider_waits: ["state", "released_at"],
+  // An incident is opened with a bounded column set and then corrected in
+  // place; the head's generation counter is the only service-registry write.
+  control_service_incident_heads: ["next_generation"],
+  control_service_incidents: ["severity", "safe_reason_code", "safe_remedy_code", "state", "last_observed_at", "resolved_at"],
+};
+/** Column-scoped INSERT grants the coordinator login holds, as
+ * db/roles/task_coordinator_roles.sql confers them. A table listed here must
+ * NOT be in `coordinatorInserts`: the grant covers only the named columns, and
+ * a table-wide entry would demand INSERT on every column. */
+const coordinatorInsertColumns: Record<string, readonly string[]> = {
+  control_service_incident_heads: ["tenant_id", "correlation_key"],
+  control_service_incidents: ["id", "tenant_id", "correlation_key", "generation", "service_id", "severity",
+    "safe_reason_code", "safe_remedy_code", "state", "opened_at", "last_observed_at"],
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
@@ -485,9 +519,11 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
       const reads: ReadonlySet<string> = new Set(allowedReads);
-      // Column-scoped INSERT grants (currently the web role's idempotency
-      // ledger): listed columns must carry INSERT, unlisted must not.
-      const scopedInserts = kind === "web" ? privateWebInsertColumns : {};
+      // Column-scoped INSERT grants (the web role's idempotency ledger and the
+      // coordinator's incident appends): listed columns must carry INSERT,
+      // unlisted must not.
+      const scopedInserts = kind === "web" ? privateWebInsertColumns
+        : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
       if (!columns.length || columns.some(c => c.extra
         || c.read !== (reads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))
