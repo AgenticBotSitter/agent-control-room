@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createProjectBrowserClient } from "../../src/web/v1/browser-client";
 import { readPrivateConnections, type PrivateConnectionSnapshot } from "../../src/web/v1/connection-browser-client";
 import { readTaskAttention } from "../../src/web/v1/queue-attention-browser-client";
@@ -17,6 +17,8 @@ import { InstallationTopologySummary } from "./installation-topology-summary";
 import { LocalWorkerRouteStatus, type TaskWorkerReadState } from "./local-worker-route-status";
 import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
 import { localWorkerStateLabel, useLocalRuntime, type LocalStatus } from "./local-runtime";
+import { useVisiblePolling } from "./use-visible-polling";
+import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount, workerChipToneV1 } from "./owner-ui";
 
 type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
 function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
@@ -62,53 +64,68 @@ export function createHomeReadTransport(parentSignal: AbortSignal, transport: ty
 }
 
 function Unavailable({ children }: { children: React.ReactNode }) {
-  return <p className="private-note" role="status">{children} No zero count or all-clear is inferred.</p>;
+  // The trailing sentence is kept verbatim: it is the app's standing refusal to
+  // let an unreadable read look like an empty one. Only the presentation moves
+  // to the shared component so Home and the other pages cannot drift apart.
+  return <UnavailableState>{children} No zero count or all-clear is inferred.</UnavailableState>;
 }
 
 export function HomeDashboard({ data }: { data: HomeDashboardState }) {
   return <><a className="private-action-link" href="/projects">New task</a><div className="private-dashboard-grid">
-    <section className="private-panel" aria-labelledby="home-active"><h2 id="home-active">Running work</h2>
-      {data.activity.state === "loading" ? <p role="status">Loading saved work…</p>
+    <section className="private-panel" aria-labelledby="home-active"><PanelHeading id="home-active">Running work
+      {data.activity.state === "ready" ? <PrivateCount value={data.activity.value.active.length} /> : null}</PanelHeading>
+      {data.activity.state === "loading" ? <LoadingState>Loading saved work…</LoadingState>
         : data.activity.state === "unavailable" ? <Unavailable>Running work is unavailable.</Unavailable>
           : data.activity.value.active.length ? <ul className="private-dashboard-list">{data.activity.value.active.map(task => <li key={task.jobId}>
-            <a href={taskHref(task.projectId, task.jobId)}>{task.title}</a><span>{task.state.replaceAll("_", " ")}</span></li>)}</ul>
-            : <p>No running or approval-waiting work is recorded.</p>}
+            <a href={taskHref(task.projectId, task.jobId)}>{task.title}</a><StateChip state={task.state} /></li>)}</ul>
+            : <EmptyState>No running or approval-waiting work is recorded.</EmptyState>}
       {data.activity.state === "ready" && data.activity.value.additionalActiveOmitted
         ? <p className="private-note">More running work may exist. Open Projects to inspect it.</p> : null}
       <a className="private-action-link" href="/projects">Open projects</a>
     </section>
 
-    <section className="private-panel" aria-labelledby="home-attention"><h2 id="home-attention">Needs attention</h2>
-      {data.attention.state === "loading" ? <p role="status">Loading saved attention items…</p>
+    <section className="private-panel" aria-labelledby="home-attention"><PanelHeading id="home-attention">Needs attention
+      {data.attention.state === "ready" ? <PrivateCount value={data.attention.value.items.length} /> : null}</PanelHeading>
+      {data.attention.state === "loading" ? <LoadingState>Loading saved attention items…</LoadingState>
         : data.attention.state === "unavailable" ? <Unavailable>Attention items are unavailable.</Unavailable>
           : data.attention.value.items.length ? <ul className="private-dashboard-list">{data.attention.value.items.slice(0, 5).map(item => <li key={item.task.jobId}>
             <a href={taskHref(item.task.projectId, item.task.jobId)}>{item.task.title}</a>
-            <span>{item.reasons.join(" · ").replaceAll("_", " ")}</span></li>)}</ul>
-            : <p>No matching task attention items were found in this checked page. This is not a fleet-wide all-clear.</p>}
+            <StateChip label={item.reasons.join(" · ").replaceAll("_", " ")} tone="warn" state="attention" /></li>)}</ul>
+            : <EmptyState>No matching task attention items were found in this checked page. This is not a fleet-wide all-clear.</EmptyState>}
       {data.attention.state === "ready" && (data.attention.value.items.length > 5 || data.attention.value.nextCursor)
         ? <p className="private-note">More attention items may be available.</p> : null}
       <a className="private-action-link" href="/needs-me">Open needs attention</a>
     </section>
 
-    <section className="private-panel" aria-labelledby="home-results"><h2 id="home-results">Recent results</h2>
-      {data.activity.state === "loading" ? <p role="status">Loading verified result records…</p>
+    <section className="private-panel" aria-labelledby="home-results"><PanelHeading id="home-results">Recent results
+      {data.activity.state === "ready" && data.activity.value.resultSource === "configured"
+        ? <PrivateCount value={data.activity.value.recentResults.length} /> : null}</PanelHeading>
+      {data.activity.state === "loading" ? <LoadingState>Loading verified result records…</LoadingState>
         : data.activity.state === "unavailable" || data.activity.value.resultSource !== "configured"
           ? <Unavailable>Verified result records are unavailable.</Unavailable>
           : data.activity.value.recentResults.length ? <ul className="private-dashboard-list">{data.activity.value.recentResults.slice(0, 5).map(({ task, artifact }) =>
             <li key={artifact.artifactId}><a href={taskResultHrefV1(task.projectId, task.jobId, artifact.artifactId)}>{task.title}</a>
               <span>{task.state === "succeeded" ? `Completed${task.qualityStatus === "accepted" ? " · Accepted" : ""} · ` : ""}{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></span></li>)}</ul>
-            : <p>No verified result records are available yet.</p>}
+            : <EmptyState>No verified result records are available yet.</EmptyState>}
       {data.activity.state === "ready" && data.activity.value.additionalResultsOmitted
         ? <p className="private-note">More recent results exist. Open the affected projects to inspect them.</p> : null}
     </section>
 
-    <section className="private-panel" aria-labelledby="home-workers"><h2 id="home-workers">Worker status</h2>
-      {data.connections.state === "loading" ? <p role="status">Loading saved worker signals…</p>
+    <section className="private-panel" aria-labelledby="home-workers"><PanelHeading id="home-workers">Worker status</PanelHeading>
+      {data.connections.state === "loading" ? <LoadingState>Loading saved worker signals…</LoadingState>
         : data.connections.state === "unavailable" ? <Unavailable>Worker status is unavailable.</Unavailable>
           : isLocalWorkerRead(data.connections.value)
             ? <><p>{data.connections.value.value.workers.length} configured local worker route{data.connections.value.value.workers.length === 1 ? "" : "s"}.</p>
               <ul className="private-dashboard-list">{data.connections.value.value.workers.map(worker => <li key={worker.kind}>
-                <span>{worker.kind}</span><span>{localWorkerStateLabel(worker)}</span></li>)}</ul>
+                {/* The chip carries only the raw state. An earlier version also
+                    appended "readiness <proof>", which produced the string
+                    "readiness not proven" — wording the adversarial owner test
+                    explicitly forbids on the dashboard, and worse copy than
+                    main's own localWorkerStateLabel sentence right beside it.
+                    Main's label is the canonical phrasing, so it is not restated
+                    in the chip. */}
+                <span>{worker.kind}</span><StateChip state={worker.state} tone={workerChipToneV1(worker)} />
+                <span>{localWorkerStateLabel(worker)}</span></li>)}</ul>
               <p className="private-note">Current assignment, capacity and resource usage are unknown here. Open Workers and the exact task before assigning work.</p></>
             : <><p>{data.connections.value.projection.summary.connectionCount} enrolled workers · {data.connections.value.projection.summary.currentSignalCount} current signals.</p>
               <p>{data.connections.value.projection.summary.staleSignalCount} stale · {data.connections.value.projection.summary.missingSignalCount} missing · {data.connections.value.projection.summary.attentionCount} need setup or review.</p>
@@ -116,12 +133,13 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
       <a className="private-action-link" href="/workers">Open workers</a>
     </section>
 
-    <section className="private-panel private-dashboard-projects" aria-labelledby="home-projects"><h2 id="home-projects">Projects</h2>
-      {data.projects.state === "loading" ? <p role="status">Loading saved projects…</p>
+    <section className="private-panel private-dashboard-projects" aria-labelledby="home-projects"><PanelHeading id="home-projects">Projects
+      {data.projects.state === "ready" ? <PrivateCount value={data.projects.value.projects.length} /> : null}</PanelHeading>
+      {data.projects.state === "loading" ? <LoadingState>Loading saved projects…</LoadingState>
         : data.projects.state === "unavailable" ? <Unavailable>Projects are unavailable.</Unavailable>
           : data.projects.value.projects.length ? <ul className="private-dashboard-list">{data.projects.value.projects.slice(0, 6).map(project => <li key={project.projectId}>
-            <span><a href={`/projects/${encodeURIComponent(project.projectId)}`}>{project.title}</a>{project.lifecycle === "active" && <> · <a href={`/projects/${encodeURIComponent(project.projectId)}/tasks#new-task`}>New task</a></>}</span><span>{project.lifecycle.replaceAll("_", " ")}</span></li>)}</ul>
-            : <p>No saved projects are visible with this access.</p>}
+            <span><a href={`/projects/${encodeURIComponent(project.projectId)}`}>{project.title}</a>{project.lifecycle === "active" && <> · <a href={`/projects/${encodeURIComponent(project.projectId)}/tasks#new-task`}>New task</a></>}</span><StateChip state={project.lifecycle} /></li>)}</ul>
+            : <EmptyState>No saved projects are visible with this access.</EmptyState>}
       {data.projects.state === "ready" && (data.projects.value.projects.length > 6 || data.projects.value.nextCursor)
         ? <p className="private-note">More projects are available in the full catalog.</p> : null}
       <a className="private-action-link" href="/projects">Open all projects</a>
@@ -157,68 +175,35 @@ export function PrivateHome() {
   const installationTopology = useInstallationTopology();
   const [data, setData] = useState<HomeDashboardState>(loadingState);
   const [runtimeDetectionTimedOut, setRuntimeDetectionTimedOut] = useState(false);
-  const refresh = useRef<() => void>(() => {});
   useEffect(() => {
     if (runtime.mode !== "checking") { setRuntimeDetectionTimedOut(false); return; }
     const timeout = setTimeout(() => setRuntimeDetectionTimedOut(true), 5_000);
     return () => clearTimeout(timeout);
   }, [runtime.mode]);
+  const pollingEnabled = runtime.mode !== "checking" || runtimeDetectionTimedOut;
   useEffect(() => {
-    refresh.current = () => {};
     setData(loadingState);
-    if (runtime.mode === "checking" && !runtimeDetectionTimedOut) return;
-    let live = true, inFlight = false;
-    let poll: ReturnType<typeof setTimeout> | undefined;
-    let request: AbortController | undefined;
+    if (!pollingEnabled) return;
     setData(runtime.mode === "local" ? { ...loadingState,
       connections: runtime.status ? { state: "ready", value: { source: "local", value: runtime.status } } : { state: "unavailable" } }
       : loadingState);
-    // This dashboard only reads already-saved records.  Keep an open local
-    // Control Room view useful without inventing browser-side scheduling or
-    // treating an old page load as a current worker status.  Hidden tabs do
-    // not poll; they refresh once when the owner returns to the tab. Schedule
-    // the next poll only after this one settles, and coalesce every other
-    // trigger while it is in flight.
-    const schedulePoll = () => { if (live) poll = setTimeout(refreshWhenVisible, 30_000); };
-    const load = async () => {
-      if (!live || inFlight) return;
-      inFlight = true;
-      clearTimeout(poll);
-      request = new AbortController();
-      const transport = createHomeReadTransport(request.signal);
-      const settle = <T,>(promise: Promise<T>, key: keyof HomeDashboardState) => promise.then(value => {
-        if (live) setData(current => ({ ...current, [key]: { state: "ready", value } }));
-      }, () => { if (live) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
-      const reads = [settle(createProjectBrowserClient(transport).list(), "projects"),
-        settle(readTaskHomeActivity(transport), "activity"), settle(readTaskAttention(undefined, transport), "attention")];
-      if (runtime.mode === "hosted") reads.push(settle(readPrivateConnections(transport), "connections"));
-      try { await Promise.all(reads); }
-      finally { request = undefined; inFlight = false; schedulePoll(); }
-    };
-    const refreshWhenVisible = () => {
-      if (!document.hidden) void load();
-    };
-    refresh.current = refreshWhenVisible;
-    // Deferring the first read lets React's development StrictMode clean up
-    // its probe effect before any network request begins.
-    const initial = setTimeout(refreshWhenVisible, 0);
-    window.addEventListener("focus", refreshWhenVisible);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      live = false;
-      refresh.current = () => {};
-      clearTimeout(initial);
-      clearTimeout(poll);
-      request?.abort();
-      window.removeEventListener("focus", refreshWhenVisible);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [runtime.mode, runtime.status, runtimeDetectionTimedOut]);
+  }, [pollingEnabled, runtime.mode, runtime.status]);
+  const load = useCallback(async (signal: AbortSignal) => {
+    const transport = createHomeReadTransport(signal);
+    const settle = <T,>(promise: Promise<T>, key: keyof HomeDashboardState) => promise.then(value => {
+      if (!signal.aborted) setData(current => ({ ...current, [key]: { state: "ready", value } }));
+    }, () => { if (!signal.aborted) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
+    const reads = [settle(createProjectBrowserClient(transport).list(), "projects"),
+      settle(readTaskHomeActivity(transport), "activity"), settle(readTaskAttention(undefined, transport), "attention")];
+    if (runtime.mode === "hosted") reads.push(settle(readPrivateConnections(transport), "connections"));
+    await Promise.all(reads);
+  }, [runtime.mode]);
+  const refresh = useVisiblePolling(load, pollingEnabled);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
-      <button type="button" onClick={() => refresh.current()}>Check saved dashboard again</button></section>
+      <button type="button" onClick={refresh}>Check saved dashboard again</button></section>
     {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />
       : <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />}
     <HomeDashboard data={data} />

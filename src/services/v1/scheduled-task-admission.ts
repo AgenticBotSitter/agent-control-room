@@ -185,6 +185,8 @@ function requireClockInstant(now: () => number): string {
   return new Date(value).toISOString();
 }
 
+export interface ScheduledTaskAdmissionClockV1 { now(): number; }
+
 function fail(code: ScheduledTaskAdmissionError["safeCode"]): never {
   throw new ScheduledTaskAdmissionError(code);
 }
@@ -378,9 +380,11 @@ async function verifyDestination(tx: DatabaseSession, receipt: ScheduledTaskAdmi
  */
 export class ScheduledTaskAdmissionServiceV1 {
   readonly #occurrences: ScheduleOccurrenceStore;
+  readonly #now: () => number;
 
-  constructor(private readonly db: DatabaseClient, private readonly now: () => number) {
+  constructor(private readonly db: DatabaseClient, clock: ScheduledTaskAdmissionClockV1 | (() => number)) {
     this.#occurrences = new ScheduleOccurrenceStore(db);
+    this.#now = typeof clock === "function" ? clock : clock.now.bind(clock);
   }
 
   async admit(value: unknown): Promise<{ receipt: ScheduledTaskAdmissionReceiptV1; replayed: boolean }> {
@@ -393,7 +397,7 @@ export class ScheduledTaskAdmissionServiceV1 {
         reusableContexts: input.contextBinding.reusableContexts }) !== input.contextBinding.bindingDigest) {
       fail("context_binding_conflict");
     }
-    const admittedAt = requireClockInstant(this.now);
+    const admittedAt = requireClockInstant(this.#now);
     let recoveryEndsAtForCommit: number | undefined;
     const result = await this.db.transactionWithPreCommitCheck(async (tx) => {
       const scheduleRow = (await tx.query<{ project_id: string; state: string; payload: unknown }>(
@@ -498,7 +502,7 @@ export class ScheduledTaskAdmissionServiceV1 {
         receipt.destination.workflowId, receipt.destination.jobId, receipt.receiptDigest, JSON.stringify(receipt), receipt.admittedAt]);
       return { receipt, replayed: false };
     }, () => {
-      if (recoveryEndsAtForCommit !== undefined && Date.parse(requireClockInstant(this.now)) >= recoveryEndsAtForCommit) {
+      if (recoveryEndsAtForCommit !== undefined && Date.parse(requireClockInstant(this.#now)) >= recoveryEndsAtForCommit) {
         fail("recovery_window_expired");
       }
     });

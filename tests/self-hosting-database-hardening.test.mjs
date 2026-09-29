@@ -30,9 +30,51 @@ test("production restricted roles cannot create temporary database objects", asy
   for (const source of [provision, roles, databaseAcl]) {
     assert.match(source, /REVOKE\s+(?:CREATE,\s*)?TEMPORARY\s+ON\s+DATABASE\s+%I\s+FROM\s+PUBLIC/iu);
   }
-  for (const role of ["control_room_application", "control_room_app", "control_room_schedule_admissions",
-    "control_room_scheduler", "control_room_github_broker", "control_room_work_intake",
-    "control_room_work_intake_agent"]) {
-    assert.match(provision, new RegExp(`REVOKE\\s+TEMPORARY\\s+ON\\s+DATABASE\\s+%I\\s+FROM\\s+${role}\\b`, "u"));
+  const expectedRoles = new Map([
+    [roles, ["control_room_application", "control_room_reader", "control_room_backup",
+      "control_room_schedule_admissions", "control_room_github_broker", "control_room_work_intake"]],
+    [provision, ["control_room_application", "control_room_app", "control_room_schedule_admissions",
+      "control_room_scheduler", "control_room_github_broker", "control_room_work_intake",
+      "control_room_work_intake_agent"]],
+  ]);
+  for (const [source, roleNames] of expectedRoles) {
+    for (const role of roleNames) {
+      assert.match(source,
+        new RegExp(`REVOKE\\s+TEMPORARY\\s+ON\\s+DATABASE\\s+%I\\s+FROM\\s+${role}\\b`, "u"));
+    }
   }
+});
+
+test("work-intake shared-ledger policies remain restrictive and session-scoped", async () => {
+  const migration = await readFile("db/migrations/0093_work_batch_intake.sql", "utf8");
+  const policy = name => migration.match(new RegExp(`CREATE POLICY\\s+${name}\\b[\\s\\S]*?;`, "u"))?.[0] ?? "";
+  const normalize = source => source.replace(/\s+/gu, " ").trim();
+  const idempotency = policy("control_idempotency_work_intake_scope");
+  const audit = policy("audit_events_work_intake_scope");
+  assert.equal(normalize(idempotency), normalize(`
+    CREATE POLICY control_idempotency_work_intake_scope ON control_idempotency
+      AS RESTRICTIVE FOR ALL
+      USING (NOT public.is_work_intake_session()
+        OR operation_scope ~ '^work-batches\\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$')
+      WITH CHECK (NOT public.is_work_intake_session()
+        OR operation_scope ~ '^work-batches\\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$');`));
+  assert.equal(normalize(audit), normalize(`
+    CREATE POLICY audit_events_work_intake_scope ON audit_events
+      AS RESTRICTIVE FOR ALL
+      USING (NOT public.is_work_intake_session()
+        OR (id ~ '^audit:work-intake[-:]' AND action IN (
+          'work_batches.propose','work_batches.propose.replayed',
+          'work_batches.propose.refused','work_batches.action.refused')))
+      WITH CHECK (NOT public.is_work_intake_session()
+        OR (id ~ '^audit:work-intake[-:]' AND action IN (
+          'work_batches.propose','work_batches.propose.replayed',
+          'work_batches.propose.refused','work_batches.action.refused')));`));
+});
+
+test("the real-Postgres harness supplies the required work-intake bootstrap credential", async () => {
+  const harness = await readFile("tests/support/attack-kit/real-postgres.ts", "utf8");
+  assert.match(harness,
+    /control_room_work_intake_agent:\s*randomBytes\(24\)\.toString\("base64url"\)/u);
+  assert.match(harness,
+    /CONTROL_ROOM_WORK_INTAKE_PASSWORD:\s*ROLE_PASSWORDS\.control_room_work_intake_agent/u);
 });
