@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 
-const reviewOptionsPath = /\/reviews\/[^/?#]+$/;
+const reviewOptionsPath = /^\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+\/results\/[^/]+\/reviews\/[^/]+\/?$/;
+const disposeTimeoutMs = 5_000;
 
 type DeferredReviewLoad = Readonly<{
   waitUntilHeld: () => Promise<void>;
@@ -33,7 +34,15 @@ export async function deferNextOwnerReviewLoad(page: Page): Promise<DeferredRevi
   return Object.freeze({
     waitUntilHeld: () => heldOnce,
     release,
-    dispose: async () => { release(); await finished; await page.unroute("**/reviews/**", handler); },
+    dispose: async () => {
+      release();
+      await page.unroute("**/reviews/**", handler);
+      if (!held) markFinished();
+      let timeout!: ReturnType<typeof setTimeout>;
+      try {
+        await Promise.race([finished, new Promise<void>(resolve => { timeout = setTimeout(resolve, disposeTimeoutMs); })]);
+      } finally { clearTimeout(timeout); }
+    },
   });
 }
 
