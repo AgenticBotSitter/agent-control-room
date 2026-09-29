@@ -11,9 +11,25 @@ const documentationPath = /^docs\//;
 const documentationReadPattern = /["'](docs\/[^"'\\]+)["']/g;
 const postgresTestMarker = /(?:requiresRealPostgres|\bPG_BIN\b|\binitdb\b|\bpg_ctl\b|CONTROL_ROOM_PG17_UPGRADE_REHEARSAL|CONTROL_ROOM_PG_CONCURRENCY_GATE|CONTROL_ROOM_TEST_PG_URL_)/;
 const squawkTestMarker = /\bsquawk\b/iu;
-// This list is deliberately small. Each entry is an owner-attended Mac-only
-// rehearsal that cannot execute in GitHub Actions; its skip is logged below.
+// This list is deliberately small and each entry has an execution reason.
+// Exemptions run separately and their allowed skips are logged below.
 const skippedTestExemptions = new Map([
+  ["tests/automatic-claim-controller.test.mjs", "requires ACR_MAIN_CHECKOUT pointing at a current main checkout"],
+  // These suites require a non-root macOS host and its native toolchain.
+  ["tests/claude-code-macos-process-host-ports.test.ts", "requires a non-root macOS host and native toolchain"],
+  ["tests/claude-code-native-process.test.mjs", "requires a non-root macOS host and native toolchain"],
+  ["tests/hermes-021-macos-pinned-executable-image.test.mjs", "requires a non-root macOS host and native toolchain"],
+  ["tests/macos-claude-code-process-native-sidecar.test.mjs", "requires a non-root macOS host and native toolchain"],
+  ["tests/macos-hermes-native-launch-custodian.test.ts", "requires a non-root macOS host and native toolchain"],
+  ["tests/macos-installation-journal-native-sidecar.test.mjs", "requires a non-root macOS host and native toolchain"],
+  ["tests/macos-installed-configuration-native-sidecar.test.mjs", "requires a non-root macOS host and native toolchain"],
+  ["tests/macos-service-native-sidecar.test.mjs", "requires a non-root macOS host and native toolchain"],
+  ["tests/private-installation-journal-native-session.test.ts", "requires a non-root macOS host and native toolchain"],
+  ["tests/private-installed-configuration-native-host.test.ts", "requires a non-root macOS host and native toolchain"],
+  ["tests/private-macos-claude-code-qualification-route.test.ts", "requires a non-root macOS host and native toolchain"],
+  ["tests/private-macos-service-native-host.test.ts", "requires a non-root macOS host and native toolchain"],
+  ["tests/private-protected-root-native-directory.test.ts", "requires a non-root macOS host and native toolchain"],
+  // This database privilege rehearsal requires an owner-attended Mac.
   ["tests/mac-local-pg17-rehearsal.test.mjs", "requires an owner-attended Mac"],
 ]);
 
@@ -204,7 +220,10 @@ export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) 
 }
 
 function hasSkippedTests(output) {
-  return /^#\s+(?:skipped|skip)\s+[1-9]\d*\b/mu.test(output);
+  // A test can intentionally spawn a child TAP process to exercise this
+  // detector. Only this command's final summary describes the lane result.
+  const summaries = [...output.matchAll(/^#\s+(?:skipped|skip)\s+(\d+)\b/gmu)];
+  return Number(summaries.at(-1)?.[1] ?? 0) > 0;
 }
 
 export function runAffectedTests(result, tests, repositoryRoot, execute = executeCommand,

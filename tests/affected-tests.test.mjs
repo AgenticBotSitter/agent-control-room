@@ -188,6 +188,14 @@ test("a zero skip count remains green", () => {
   } finally { rmSync(root, { recursive: true }); }
 });
 
+test("a child TAP skip does not override the selected command's zero-skip summary", () => {
+  const root = fixture({ "tests/runner.test.mjs": "import test from 'node:test'; test('runs', () => {});" });
+  try {
+    assert.equal(runAffectedTests(["tests/runner.test.mjs"], ["tests/runner.test.mjs"], root,
+      () => 0, () => true, () => ({ status: 0, output: "# skipped 1\n# skipped 0\n" })), 0);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
 test("PostgreSQL settings are scoped to the selected PostgreSQL subprocess", () => {
   const root = fixture({
     "tests/normal.test.mjs": "",
