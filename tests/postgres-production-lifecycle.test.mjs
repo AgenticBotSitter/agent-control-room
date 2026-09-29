@@ -234,6 +234,8 @@ test("ordered upgrade applies a pending suffix in two phases", needsPg, async ()
 const PIPELINE_GRANTS = "REVOKE ALL ON pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs\n"
   + "  FROM control_room_application, control_room_reader, control_room_schedule_admissions,\n"
   + "  control_room_github_broker, control_room_work_intake;\n";
+const AGENT_REVIEW_GRANTS = "REVOKE ALL ON control_agent_review_plans FROM control_room_application, control_room_reader,\n"
+  + "  control_room_schedule_admissions, control_room_github_broker, control_room_work_intake;\n";
 const QUEUE_GRANTS = ", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads";
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
@@ -256,7 +258,9 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
       "0102_work_batch_owner_approval.sql"]) assert.ok(applied.includes(shipped), shipped);
     for (const file of applied)
       await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
-    for (const file of ["production_roles.sql", "production_provision.sql"])
+    // The reviewer role file is a grants entry the production applier verifies
+    // but never executes, so the older ledger can carry this head's copy.
+    for (const file of ["production_roles.sql", "production_provision.sql", "agent_reviewer_roles.sql"])
       await cp(join(ROOT, "db/roles", file), join(stage, "db/roles", file));
     // The older grants: this head's file without the pending objects' grants.
     let grants = await readFile(join(ROOT, "db/roles/production_table_grants.sql"), "utf8");
@@ -310,20 +314,28 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
   }
 }
 
-// A database already at main (S1 0093, 0100, 0101 and S2 0102 applied) takes
-// S3's queue migration and then S4's pipeline migration, in that order.
-test("upgrade from main's applied ledger appends only the agent-queue and pipeline migrations", needsPg, () =>
-  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
-    pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql"],
-    withoutGrants: [QUEUE_GRANTS, PIPELINE_GRANTS],
+// A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes
+// S3's queue migration, S4's pipeline migration and S5's agent-review
+// migration, in that order.
+test("upgrade from S2's applied ledger appends only the agent-queue, pipeline and agent-review migrations", needsPg, () =>
+  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s2",
+    pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql", "_agent_review_plans.sql"],
+    withoutGrants: [QUEUE_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS],
     newObjects: ["work_batch_queue_admissions", "work_batch_agent_queue_heads", "work_batch_effective_queue_admissions",
-      "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs"] }));
+      "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans"] }));
 
-// A database at main plus S3 (0104 applied) takes only S4's 0105.
-test("upgrade from main plus S3's applied ledger appends only the pipeline migration", needsPg, () =>
-  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s3",
-    pending: ["_linear_pipeline_runs.sql"], withoutGrants: [PIPELINE_GRANTS],
-    newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs"] }));
+// A database at main (S3's 0104 applied) takes S4's 0105, then S5's 0106.
+test("upgrade from main's applied ledger appends only the pipeline and agent-review migrations", needsPg, () =>
+  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
+    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql"], withoutGrants: [PIPELINE_GRANTS, AGENT_REVIEW_GRANTS],
+    newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+      "control_agent_review_plans"] }));
+
+// A database at main plus S4 (0105 applied) takes only S5's 0106.
+test("upgrade from main plus S4's applied ledger appends only the agent-review migration", needsPg, () =>
+  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s4",
+    pending: ["_agent_review_plans.sql"], withoutGrants: [AGENT_REVIEW_GRANTS],
+    newObjects: ["control_agent_review_plans"] }));
 
 test("tampered history fails closed: altered, deleted-row and forged-digest states", needsPg, async () => {
   await freshDatabase("cr_prod_tamper");
@@ -670,9 +682,10 @@ test("agent-review down migration removes every surviving direct privilege", nee
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_records','web_lock','UPDATE') AS gate_update,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_integrity','revision','UPDATE') AS integrity_update,
     coalesce(has_function_privilege('control_room_agent_reviewer',to_regprocedure('commit_agent_review(text,jsonb,jsonb,bytea)'),'EXECUTE'),false) AS commit_execute,
+    coalesce(has_function_privilege('control_room_agent_reviewer',to_regprocedure('read_agent_review_plan(text)'),'EXECUTE'),false) AS read_execute,
     has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
-  assert.deepEqual(before,{schema_usage:true,direct_schema_usage:true,gate_select:true,gate_insert:false,gate_update:true,
-    integrity_update:false,commit_execute:true,run_select:true});
+  assert.deepEqual(before,{schema_usage:true,direct_schema_usage:true,gate_select:false,gate_insert:false,gate_update:false,
+    integrity_update:false,commit_execute:true,read_execute:true,run_select:false});
   await query(db,await readFile(join(ROOT,"db/down/0106_agent_review_plans.sql"),"utf8"));
   const afterDown=(await query(db,`SELECT
     has_schema_privilege('control_room_agent_reviewer','public','USAGE') AS schema_usage,
@@ -684,76 +697,102 @@ test("agent-review down migration removes every surviving direct privilege", nee
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_records','web_lock','UPDATE') AS gate_update,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_integrity','revision','UPDATE') AS integrity_update,
     coalesce(has_function_privilege('control_room_agent_reviewer',to_regprocedure('commit_agent_review(text,jsonb,jsonb,bytea)'),'EXECUTE'),false) AS commit_execute,
+    coalesce(has_function_privilege('control_room_agent_reviewer',to_regprocedure('read_agent_review_plan(text)'),'EXECUTE'),false) AS read_execute,
     has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
   assert.deepEqual(afterDown,{schema_usage:true,direct_schema_usage:false,gate_select:false,gate_insert:false,gate_update:false,
-    integrity_update:false,commit_execute:false,run_select:false});
+    integrity_update:false,commit_execute:false,read_execute:false,run_select:false});
 });
 
-test("real reviewer login cannot replay the three raw authority attacks", needsPg, async () => {
-  const database="cr_agent_review_attacks", login="agent_reviewer_attack_probe", password="reviewer-probe-password-389";
+// One installation tenant with a server-created agent review plan: the build
+// stage's target, the check stage's succeeded run, and the plan binding them.
+// Every id carries the suffix, so a second tenant can live in the same database.
+async function seedAgentReviewTenant(client,suffix,reviewKey,checkpoints,at){
+  const tenantId=`tenant:review-${suffix}`, workspaceId=`workspace:review-${suffix}`;
+  await client.query("INSERT INTO tenants(id,display_name) VALUES($1,'Review probe')",[tenantId]);
+  await client.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Review probe')",[workspaceId,tenantId]);
+  const identityId=suffix==="probe"?"identity:web":`identity:web-${suffix}`;
+  await new SecurityStore(client).bootstrapOwner({tenantId,provider:webTrust.issuer,subject:"test-owner",
+    identityId,grantId:suffix==="probe"?"grant:web":`grant:web-${suffix}`,displayName:"Test owner",
+    verifiedAt:new Date(webNow-60_000).toISOString(),expiresAt:new Date(webNow+300_000).toISOString(),now:at});
+  const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
+  const project=(await new WebProjectService(client,{tenantId,workspaceId},()=>webNow)
+    .create(identity,{title:"Reviewer authority probe",summary:"Exercise the bounded reviewer role."},`review-${suffix}-project-0001`)).project;
+  const template={name:"Reviewer authority probe",description:"Build and check one result.",stages:[
+    {ordinal:0,stageKind:"build",role:"builder",description:"Build.",requiredCapability:"code.change",workerId:`worker:build:${suffix}`,
+      workerKind:"codex",nodeId:`node:build:${suffix}`,selectionKey:"build.standard",model:"build-test",effort:"medium",maxLoops:3},
+    {ordinal:1,stageKind:"check",role:"checker",description:"Check.",requiredCapability:"code.review",workerId:`worker:check:${suffix}`,
+      workerKind:"claude-code",nodeId:`node:check:${suffix}`,selectionKey:"check.standard",model:"check-test",effort:"high",maxLoops:3},
+    {ordinal:2,stageKind:"signoff",role:"validator",description:"Validate.",requiredCapability:"code.validate",workerId:`worker:validate:${suffix}`,
+      workerKind:"hermes",nodeId:`node:validate:${suffix}`,selectionKey:"validate.standard",model:"validate-test",effort:"default",
+      provider:"openai",profile:"profile:openai",maxLoops:0}],maxTotalLoops:6,maxDurationSeconds:3600};
+  const pipelines=new LinearPipelineServiceV1(client,{tenantId,workspaceId},reviewKey,
+    {assertCurrent:()=>true,isAcceptedResultCurrent:()=>false},()=>webNow);
+  const saved=await pipelines.createTemplate(identity,project.projectId,template);
+  const pipeline=await pipelines.instantiate(identity,project.projectId,{templateId:saved.templateId,title:"Review bounded result"},`review-${suffix}-pipeline-0001`);
+  for(const jobId of pipeline.jobIds.slice(0,2))await client.query(`INSERT INTO control_task_execution_plans
+    (tenant_id,project_id,source_job_id,job_id,plan,auth_tag) VALUES($1,$2,$3,$3,'{}'::jsonb,$4)`,
+  [tenantId,project.projectId,jobId,`hmac-sha256:${"9".repeat(64)}`]);
+  const gate=new CompletionGateStoreV1(client,reviewKey,checkpoints,()=>at); await gate.provisionTenant(tenantId);
+  const profile={schemaVersion:"control-room-completion-gate/v1",id:`profile:review-${suffix}`,tenantId,
+    projectId:project.projectId,name:"Reviewer probe",targetKind:"document",requiredVerificationScenarioIds:[`scenario:review-${suffix}`],
+    minimumIndependentReviews:1,reviewerSeparation:{actor:true,worker:true,agentProfile:true,harness:true,modelFamily:true},
+    verificationRequiresProducerSeparation:true,minimumRisk:"critical",maximumRevisionRounds:3,automaticLowRiskDisposition:false,
+    createdBy:{actorId:identityId,actorType:"human"},createdAt:at};
+  await gate.registerProfile(profile);
+  const targetRecord={schemaVersion:"control-room-completion-gate/v1",id:`target:review-${suffix}`,tenantId,
+    projectId:project.projectId,kind:"document",subjectId:pipeline.jobIds[0],subjectDigest:sha256Digest("retained result"),
+    acceptanceProfileId:profile.id,acceptanceProfileDigest:sha256Digest(profile),producer:{actorId:`node:build:${suffix}`,actorType:"agent",
+      workerId:`worker:build:${suffix}`,agentProfileId:"agent-profile:build.standard",harness:"codex",
+      adapterId:"connector:codex-owner-trusted-local-v1",modelFamily:"model-family:openai"},rootTargetId:`target:review-${suffix}`,
+    revisionNumber:0,submittedAt:at};
+  await gate.registerTarget(targetRecord);
+  await client.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
+    VALUES($1,$2,'active',1,'key:check',$3::jsonb,$4,$4)`,
+  [`node:check:${suffix}`,tenantId,JSON.stringify({id:`node:check:${suffix}`,tenantId,state:"active",version:1,identityKeyId:"key:check"}),at]);
+  await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at)
+    VALUES($1,$2,$3,1,'succeeded',1,$4,$5,1,$6::jsonb,$7,$7)`,
+  [`attempt:review-${suffix}`,tenantId,pipeline.jobIds[1],`worker:check:${suffix}`,`node:check:${suffix}`,
+    JSON.stringify({id:`attempt:review-${suffix}`,tenantId,state:"succeeded",version:1,jobId:pipeline.jobIds[1],attemptNumber:1,
+      workerId:`worker:check:${suffix}`,nodeId:`node:check:${suffix}`,leaseEpoch:1}),at]);
+  await client.query(`INSERT INTO control_harness_runs(id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,
+    native_session_key_digest,parent_run_id,revision_of_run_id,state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+    VALUES($1,$2,$3,$4,$5,$6,'connector:claude-code-local-v1','claude',$7,NULL,NULL,'succeeded',1,$8,$9,'{}'::jsonb,$10,$10,$10)`,
+  [`run:review-${suffix}`,tenantId,project.projectId,pipeline.jobIds[1],`attempt:review-${suffix}`,`node:check:${suffix}`,
+    `sha256:${"1".repeat(64)}`,`sha256:${"2".repeat(64)}`,`hmac-sha256:${"3".repeat(64)}`,at]);
+  const routes=[{nodeId:`node:check:${suffix}`,executorId:`worker:check:${suffix}`,capabilityProbeId:"harness.claude-code.local.v1",
+    maxConcurrentTasks:1,requiredScratchBytes:0,leaseSeconds:60}];
+  const planner=new AgentReviewServiceV1(client,tenantId,reviewKey,checkpoints,routes,()=>at);
+  const plan=await planner.createPlan({projectId:project.projectId,pipelineRunId:pipeline.runId,producerJobId:pipeline.jobIds[0],
+    reviewerJobId:pipeline.jobIds[1],reviewerRunId:`run:review-${suffix}`,targetId:targetRecord.id});
+  const state=async()=> (await client.query("SELECT revision,record_count,state_digest,state_auth_tag FROM control_completion_gate_integrity WHERE tenant_id=$1",[tenantId])).rows[0];
+  const reviewPayload=()=>({schemaVersion:"control-room-completion-gate/v1",id:plan.reviewId,tenantId,projectId:project.projectId,
+    targetId:targetRecord.id,targetDigest:sha256Digest(targetRecord),acceptanceProfileId:profile.id,acceptanceProfileDigest:sha256Digest(profile),
+    reviewer:plan.reviewer,authority:"completion_gate",decision:"accepted",assessedRisk:"low",effectiveRisk:"critical",
+    evidenceDigests:[sha256Digest("probe evidence")],findingIds:[],reviewedAt:at,grantsApproval:false,grantsExecutionAuthority:false});
+  return {tenantId,workspaceId,project,pipeline,profile,targetRecord,routes,plan,gate,state,reviewPayload};
+}
+
+// The dedicated reviewer group, one restricted login in it, and the
+// installation tenant binding the owner bootstrap writes.
+async function agentReviewDatabase(database,login,password){
   await freshDatabase(database);
-  const admin=target(database), client=postgresDatabase(admin), at=new Date(webNow).toISOString();
-  const reviewKey=new Uint8Array(32).fill(52), checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
+  const admin=target(database);
   await applyMigrations({target:admin,bootstrapTarget:bootstrapTarget(database),migrateTarget:migrateTarget(database),
     rootDir:ROOT,env:{...process.env,...passwords}});
   await query(admin,await readFile(join(ROOT,"db/roles/agent_reviewer_roles.sql"),"utf8"));
   await query(admin,`CREATE ROLE ${login} LOGIN PASSWORD '${password}' INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
   await query(admin,`GRANT control_room_agent_reviewer TO ${login}`);
-  await client.query("INSERT INTO tenants(id,display_name) VALUES('tenant:review-probe','Review probe')");
-  await client.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:review-probe','tenant:review-probe','Review probe')");
-  await new SecurityStore(client).bootstrapOwner({tenantId:"tenant:review-probe",provider:webTrust.issuer,subject:"test-owner",
-    identityId:"identity:web",grantId:"grant:web",displayName:"Test owner",verifiedAt:new Date(webNow-60_000).toISOString(),
-    expiresAt:new Date(webNow+300_000).toISOString(),now:at});
-  const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
-  const project=(await new WebProjectService(client,{tenantId:"tenant:review-probe",workspaceId:"workspace:review-probe"},()=>webNow)
-    .create(identity,{title:"Reviewer authority probe",summary:"Exercise the bounded reviewer role."},"review-probe-project-0001")).project;
-  const template={name:"Reviewer authority probe",description:"Build and check one result.",stages:[
-    {ordinal:0,stageKind:"build",role:"builder",description:"Build.",requiredCapability:"code.change",workerId:"worker:build:probe",
-      workerKind:"codex",nodeId:"node:build:probe",selectionKey:"build.standard",model:"build-test",effort:"medium",maxLoops:3},
-    {ordinal:1,stageKind:"check",role:"checker",description:"Check.",requiredCapability:"code.review",workerId:"worker:check:probe",
-      workerKind:"claude-code",nodeId:"node:check:probe",selectionKey:"check.standard",model:"check-test",effort:"high",maxLoops:3},
-    {ordinal:2,stageKind:"signoff",role:"validator",description:"Validate.",requiredCapability:"code.validate",workerId:"worker:validate:probe",
-      workerKind:"hermes",nodeId:"node:validate:probe",selectionKey:"validate.standard",model:"validate-test",effort:"default",
-      provider:"openai",profile:"profile:openai",maxLoops:0}],maxTotalLoops:6,maxDurationSeconds:3600};
-  const pipelines=new LinearPipelineServiceV1(client,{tenantId:"tenant:review-probe",workspaceId:"workspace:review-probe"},reviewKey,
-    {assertCurrent:()=>true,isAcceptedResultCurrent:()=>false},()=>webNow);
-  const saved=await pipelines.createTemplate(identity,project.projectId,template);
-  const pipeline=await pipelines.instantiate(identity,project.projectId,{templateId:saved.templateId,title:"Review bounded result"},"review-probe-pipeline-0001");
-  for(const jobId of pipeline.jobIds.slice(0,2))await client.query(`INSERT INTO control_task_execution_plans
-    (tenant_id,project_id,source_job_id,job_id,plan,auth_tag) VALUES('tenant:review-probe',$1,$2,$2,'{}'::jsonb,$3)`,
-  [project.projectId,jobId,`hmac-sha256:${"9".repeat(64)}`]);
-  const gate=new CompletionGateStoreV1(client,reviewKey,checkpoints,()=>at); await gate.provisionTenant("tenant:review-probe");
-  const profile={schemaVersion:"control-room-completion-gate/v1",id:"profile:review-probe",tenantId:"tenant:review-probe",
-    projectId:project.projectId,name:"Reviewer probe",targetKind:"document",requiredVerificationScenarioIds:["scenario:review-probe"],
-    minimumIndependentReviews:1,reviewerSeparation:{actor:true,worker:true,agentProfile:true,harness:true,modelFamily:true},
-    verificationRequiresProducerSeparation:true,minimumRisk:"critical",maximumRevisionRounds:3,automaticLowRiskDisposition:false,
-    createdBy:{actorId:"identity:web",actorType:"human"},createdAt:at};
-  await gate.registerProfile(profile);
-  const targetRecord={schemaVersion:"control-room-completion-gate/v1",id:"target:review-probe",tenantId:"tenant:review-probe",
-    projectId:project.projectId,kind:"document",subjectId:pipeline.jobIds[0],subjectDigest:sha256Digest("retained result"),
-    acceptanceProfileId:profile.id,acceptanceProfileDigest:sha256Digest(profile),producer:{actorId:"node:build:probe",actorType:"agent",
-      workerId:"worker:build:probe",agentProfileId:"agent-profile:build.standard",harness:"codex",
-      adapterId:"connector:codex-owner-trusted-local-v1",modelFamily:"model-family:openai"},rootTargetId:"target:review-probe",
-    revisionNumber:0,submittedAt:at};
-  await gate.registerTarget(targetRecord);
-  await client.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
-    VALUES('node:check:probe','tenant:review-probe','active',1,'key:check',$1::jsonb,$2,$2)`,
-  [JSON.stringify({id:"node:check:probe",tenantId:"tenant:review-probe",state:"active",version:1,identityKeyId:"key:check"}),at]);
-  await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at)
-    VALUES('attempt:review-probe','tenant:review-probe',$1,1,'succeeded',1,'worker:check:probe','node:check:probe',1,$2::jsonb,$3,$3)`,
-  [pipeline.jobIds[1],JSON.stringify({id:"attempt:review-probe",tenantId:"tenant:review-probe",state:"succeeded",version:1,
-    jobId:pipeline.jobIds[1],attemptNumber:1,workerId:"worker:check:probe",nodeId:"node:check:probe",leaseEpoch:1}),at]);
-  await client.query(`INSERT INTO control_harness_runs(id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,
-    native_session_key_digest,parent_run_id,revision_of_run_id,state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
-    VALUES('run:review-probe','tenant:review-probe',$1,$2,'attempt:review-probe','node:check:probe','connector:claude-code-local-v1',
-      'claude',$3,NULL,NULL,'succeeded',1,$4,$5,'{}'::jsonb,$6,$6,$6)`,[project.projectId,pipeline.jobIds[1],
-    `sha256:${"1".repeat(64)}`,`sha256:${"2".repeat(64)}`,`hmac-sha256:${"3".repeat(64)}`,at]);
-  const routes=[{nodeId:"node:check:probe",executorId:"worker:check:probe",capabilityProbeId:"harness.claude-code.local.v1",
-    maxConcurrentTasks:1,requiredScratchBytes:0,leaseSeconds:60}];
-  const planner=new AgentReviewServiceV1(client,"tenant:review-probe",reviewKey,checkpoints,routes,()=>at);
-  const plan=await planner.createPlan({projectId:project.projectId,pipelineRunId:pipeline.runId,producerJobId:pipeline.jobIds[0],
-    reviewerJobId:pipeline.jobIds[1],reviewerRunId:"run:review-probe",targetId:targetRecord.id});
-  const reviewerTarget={...target(database,login),password}, reviewer=postgresDatabase(reviewerTarget);
+  return {admin,client:postgresDatabase(admin),reviewer:postgresDatabase({...target(database,login),password})};
+}
+
+test("real reviewer login cannot replay the three raw authority attacks", needsPg, async () => {
+  const database="cr_agent_review_attacks", login="agent_reviewer_attack_probe", password="reviewer-probe-password-389";
+  const {admin,client,reviewer}=await agentReviewDatabase(database,login,password);
+  const at=new Date(webNow).toISOString(), reviewKey=new Uint8Array(32).fill(52);
+  const checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
+  const own=await seedAgentReviewTenant(client,"probe",reviewKey,checkpoints,at);
+  await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[own.tenantId]);
+  const {targetRecord,plan,routes,gate,state}=own;
   const role=(await reviewer.query("SELECT rolsuper,pg_has_role(current_user,'control_room_agent_reviewer','MEMBER') AS member FROM pg_roles WHERE rolname=current_user")).rows[0];
   assert.deepEqual(role,{rolsuper:false,member:true});
   const boundary=(await reviewer.query(`SELECT p.prosecdef,pg_get_userbyid(p.proowner) AS owner,p.proconfig,
@@ -766,15 +805,16 @@ test("real reviewer login cannot replay the three raw authority attacks", needsP
         WHERE acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
           AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable) AS exact_acl
     FROM pg_proc p WHERE p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure`)).rows[0];
-  assert.deepEqual(boundary,{prosecdef:true,owner:"control_room_schema_owner",proconfig:["search_path=pg_catalog"],
+  assert.deepEqual(boundary,{prosecdef:true,owner:"control_room_schema_owner",proconfig:["search_path=pg_catalog, public, pg_temp"],
     proleakproof:false,proparallel:"u",provolatile:"v",exact_acl:true});
-  const state=async()=> (await client.query("SELECT revision,record_count,state_digest,state_auth_tag FROM control_completion_gate_integrity WHERE tenant_id='tenant:review-probe'")).rows[0];
+  // No UPDATE on any column: a row lock is never a reason to grant one.
+  assert.deepEqual((await reviewer.query(`SELECT c.relname,a.attname FROM pg_class c
+    JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
+    WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped
+      AND has_column_privilege(c.oid,a.attnum,'UPDATE')`)).rows,[]);
   const before=await state();
   await assert.rejects(reviewer.query("UPDATE control_completion_gate_integrity SET record_count=record_count+99 WHERE tenant_id='tenant:review-probe'"),/permission denied/u);
-  const review={schemaVersion:"control-room-completion-gate/v1",id:plan.reviewId,tenantId:"tenant:review-probe",projectId:project.projectId,
-    targetId:targetRecord.id,targetDigest:sha256Digest(targetRecord),acceptanceProfileId:profile.id,acceptanceProfileDigest:sha256Digest(profile),
-    reviewer:plan.reviewer,authority:"completion_gate",decision:"accepted",assessedRisk:"low",effectiveRisk:"low",
-    evidenceDigests:[sha256Digest("probe evidence")],findingIds:[],reviewedAt:at,grantsApproval:false,grantsExecutionAuthority:false};
+  const review={...own.reviewPayload(),effectiveRisk:"low"};
   const rawInsert=(payload,tag)=>reviewer.query(`INSERT INTO control_completion_gate_records(id,tenant_id,project_id,kind,record_key,
     subject_id,parent_id,record_digest,record_auth_tag,payload,occurred_at) VALUES($1,$2,$3,'review',$4,$5,$5,$6,$7,$8::jsonb,$9)`,
   [payload.id,payload.tenantId,payload.projectId,sha256Digest({kind:"review",targetId:targetRecord.id,authority:"completion_gate",
@@ -782,8 +822,32 @@ test("real reviewer login cannot replay the three raw authority attacks", needsP
   await assert.rejects(rawInsert(review,`hmac-sha256:${"5".repeat(64)}`),/permission denied/u);
   const floored={...review,effectiveRisk:"critical"};
   await assert.rejects(rawInsert(floored,`hmac-sha256:${"a".repeat(64)}`),/permission denied/u);
+  // The raw-insert trigger is an independent layer: with a rogue INSERT grant
+  // on the reviewer group, the real login is still refused by the trigger.
+  await query(admin,"GRANT INSERT ON control_completion_gate_records TO control_room_agent_reviewer");
+  try {
+    await assert.rejects(rawInsert(review,`hmac-sha256:${"5".repeat(64)}`),/agent reviewer raw insert rejected/u);
+    await assert.rejects(rawInsert(floored,`hmac-sha256:${"a".repeat(64)}`),/agent reviewer raw insert rejected/u);
+  } finally {
+    await query(admin,"REVOKE INSERT ON control_completion_gate_records FROM control_room_agent_reviewer");
+  }
   await assert.rejects(reviewer.query("SELECT * FROM commit_agent_review($1,$2::jsonb,NULL,$3::bytea)",
     [plan.planId,JSON.stringify(floored),new Uint8Array(32).fill(99)]),/integrity key rejected/u);
+  // The in-function membership gate is its own layer: a restricted login outside
+  // the reviewer group is refused even when EXECUTE is granted to it directly.
+  await query(admin,`CREATE ROLE agent_review_nonmember_probe LOGIN PASSWORD '${password}' INHERIT NOSUPERUSER NOCREATEDB
+    NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+  await query(admin,"GRANT USAGE ON SCHEMA public TO agent_review_nonmember_probe");
+  await query(admin,"GRANT EXECUTE ON FUNCTION commit_agent_review(text,jsonb,jsonb,bytea) TO agent_review_nonmember_probe");
+  try {
+    await assert.rejects(postgresDatabase({...target(database,"agent_review_nonmember_probe"),password})
+      .query("SELECT * FROM commit_agent_review($1,$2::jsonb,NULL,$3::bytea)",[plan.planId,JSON.stringify(floored),reviewKey]),
+    /agent review commit caller rejected/u);
+  } finally {
+    await query(admin,"REVOKE ALL ON FUNCTION commit_agent_review(text,jsonb,jsonb,bytea) FROM agent_review_nonmember_probe");
+    await query(admin,"REVOKE USAGE ON SCHEMA public FROM agent_review_nonmember_probe");
+    await query(admin,"DROP ROLE agent_review_nonmember_probe");
+  }
   assert.deepEqual(await state(),before);
   const service=new AgentReviewServiceV1(reviewer,"tenant:review-probe",reviewKey,checkpoints,routes,()=>at);
   const committed=await service.record({planId:plan.planId,decision:"accepted",assessedRisk:"low",evidenceDigests:[sha256Digest("probe evidence")]});
@@ -802,6 +866,42 @@ test("real reviewer login cannot replay the three raw authority attacks", needsP
     evidenceDigests:[sha256Digest("probe evidence")]}),/existing record integrity rejected/u);
   assert.deepEqual(await state(),beforeDrift);
   assert.deepEqual(await checkpoints.read("completion-gate:tenant:review-probe"),checkpointBeforeDrift);
+});
+
+// The reviewer login serves one installation. A second tenant in the same
+// database (seeded the way the owner bootstrap and pipeline services seed any
+// tenant) stays invisible to it and cannot receive a review through it, even
+// with the same integrity key.
+test("real reviewer login reads and commits only in its bound installation tenant", needsPg, async () => {
+  const database="cr_agent_review_tenants", login="agent_reviewer_tenant_probe", password="reviewer-tenant-password-389";
+  const {client,reviewer}=await agentReviewDatabase(database,login,password);
+  const at=new Date(webNow).toISOString(), reviewKey=new Uint8Array(32).fill(53);
+  const checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
+  const own=await seedAgentReviewTenant(client,"own",reviewKey,checkpoints,at);
+  const other=await seedAgentReviewTenant(client,"other",reviewKey,checkpoints,at);
+  await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[own.tenantId]);
+  for (const table of ["control_agent_review_plans","control_completion_gate_records","control_completion_gate_integrity",
+    "control_harness_runs","control_attempts","control_task_execution_plans","pipeline_stage_runs"]) {
+    const seen=await reviewer.query(`SELECT count(*)::int AS rows FROM ${table} WHERE tenant_id=$1`,[other.tenantId])
+      .then(result=>result.rows[0].rows,error=>{ assert.match(error.message,/permission denied/u,table); return 0; });
+    assert.equal(seen,0,`${table} leaks the other tenant to the reviewer login`);
+  }
+  const otherBefore=await other.state(), otherCheckpoint=await checkpoints.read(`completion-gate:${other.tenantId}`);
+  await assert.rejects(reviewer.query("SELECT * FROM commit_agent_review($1,$2::jsonb,NULL,$3::bytea)",
+    [other.plan.planId,JSON.stringify(other.reviewPayload()),reviewKey]),/agent review plan unavailable/u);
+  await assert.rejects(new AgentReviewServiceV1(reviewer,other.tenantId,reviewKey,checkpoints,other.routes,()=>at)
+    .record({planId:other.plan.planId,decision:"accepted",assessedRisk:"low",evidenceDigests:[sha256Digest("probe evidence")]}),
+  /agent_review_plan_unavailable/u);
+  assert.deepEqual(await other.state(),otherBefore);
+  assert.deepEqual(await checkpoints.read(`completion-gate:${other.tenantId}`),otherCheckpoint);
+  assert.equal((await client.query("SELECT count(*)::int AS rows FROM control_completion_gate_records WHERE tenant_id=$1 AND kind='review'",
+    [other.tenantId])).rows[0].rows,0);
+  // The bound tenant still records through the same login.
+  const committed=await new AgentReviewServiceV1(reviewer,own.tenantId,reviewKey,checkpoints,own.routes,()=>at)
+    .record({planId:own.plan.planId,decision:"accepted",assessedRisk:"low",evidenceDigests:[sha256Digest("probe evidence")]});
+  assert.equal(committed.review.effectiveRisk,"critical");
+  await own.gate.verifyProvisionedTenantV1(own.tenantId);
+  await other.gate.verifyProvisionedTenantV1(other.tenantId);
 });
 
 // Two tenants, each registered for work intake exactly as the owner bootstraps

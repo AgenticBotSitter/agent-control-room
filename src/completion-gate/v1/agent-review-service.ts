@@ -138,19 +138,16 @@ export class AgentReviewServiceV1 {
   }
   async record(value: unknown) {
     const input = recordSchema.parse(value);
-    const row = (await this.db.query<PlanRow>("SELECT * FROM control_agent_review_plans WHERE tenant_id=$1 AND id=$2",
-      [this.tenantId, input.planId])).rows[0];
+    // The reviewer login has no table privilege: the database read boundary
+    // serves only its bound installation tenant's plan, run and profile.
+    const row = (await this.db.query<PlanRow & { run_state: string | null; run_job_id: string | null;
+      run_project_id: string | null; profile_payload: unknown }>("SELECT * FROM read_agent_review_plan($1)",
+    [input.planId])).rows[0];
     if (!row) throw new Error("agent_review_plan_unavailable");
     const plan = this.#verify(row);
-    const run = (await this.db.query<{ state: string; job_id: string; project_id: string }>(
-      "SELECT state,job_id,project_id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
-      [this.tenantId, plan.reviewerRunId])).rows[0];
-    if (!run || run.state !== "succeeded" || run.job_id !== plan.reviewerJobId || run.project_id !== plan.projectId)
+    if (row.run_state !== "succeeded" || row.run_job_id !== plan.reviewerJobId || row.run_project_id !== plan.projectId)
       throw new Error("agent_review_run_incomplete");
-    const profileRow = (await this.db.query<{payload:unknown}>(`SELECT payload FROM control_completion_gate_records
-      WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND kind='profile'`,
-    [this.tenantId,plan.projectId,plan.acceptanceProfileId])).rows[0];
-    const profile = completionAcceptanceProfileSchemaV1.parse(profileRow?.payload) as CompletionAcceptanceProfileV1;
+    const profile = completionAcceptanceProfileSchemaV1.parse(row.profile_payload) as CompletionAcceptanceProfileV1;
     const effectiveRisk = riskOrder[Math.max(riskOrder.indexOf(profile.minimumRisk), riskOrder.indexOf(input.assessedRisk))]!;
     const review: CompletionReviewV1 = { schemaVersion: "control-room-completion-gate/v1", id: plan.reviewId,
       tenantId: this.tenantId, projectId: plan.projectId, targetId: plan.targetId, targetDigest: plan.targetDigest,

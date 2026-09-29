@@ -12,11 +12,13 @@ DO $$ BEGIN
     EXECUTE 'REVOKE SELECT ON control_agent_review_plans, control_completion_gate_records, control_completion_gate_integrity, control_harness_runs, control_attempts, control_task_execution_plans, pipeline_stage_runs FROM control_room_agent_reviewer';
     EXECUTE 'REVOKE UPDATE (web_lock) ON control_completion_gate_records FROM control_room_agent_reviewer';
     EXECUTE 'REVOKE EXECUTE ON FUNCTION commit_agent_review(text,jsonb,jsonb,bytea) FROM control_room_agent_reviewer';
+    EXECUTE 'REVOKE EXECUTE ON FUNCTION read_agent_review_plan(text) FROM control_room_agent_reviewer';
     EXECUTE 'REVOKE USAGE ON SCHEMA public FROM control_room_agent_reviewer';
   END IF;
 END $$;
 DROP TRIGGER control_completion_gate_agent_reviewer ON control_completion_gate_records;
 DROP FUNCTION guard_agent_reviewer_gate_insert();
+DROP FUNCTION read_agent_review_plan(text);
 DROP FUNCTION commit_agent_review(text,jsonb,jsonb,bytea);
 DROP FUNCTION agent_review_principals_independent(jsonb,jsonb,jsonb);
 DROP FUNCTION agent_review_hmac_sha256(bytea,text);

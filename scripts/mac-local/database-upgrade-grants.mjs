@@ -22,10 +22,12 @@ const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "
 const workIntakeIdentityFunction = "public.is_work_intake_session()";
 const workIntakeIdentityRoles = new Set(["control_room_private_web", "control_room_task_coordinator",
   "control_room_native_results", "control_room_local_result_publisher"]);
-const agentReviewCommitFunction = "public.commit_agent_review(text, jsonb, jsonb, bytea)";
-const knownFunctionGrant = object => object === workIntakeIdentityFunction || object === agentReviewCommitFunction;
+// The reviewer's whole authority: the tenant-bound plan read and the commit.
+const agentReviewFunctions = new Set(["public.read_agent_review_plan(text)",
+  "public.commit_agent_review(text, jsonb, jsonb, bytea)"]);
+const knownFunctionGrant = object => object === workIntakeIdentityFunction || agentReviewFunctions.has(object);
 const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
-  || object === agentReviewCommitFunction && role === "control_room_agent_reviewer";
+  || agentReviewFunctions.has(object) && role === "control_room_agent_reviewer";
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");
   return value;

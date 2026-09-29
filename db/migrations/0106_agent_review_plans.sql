@@ -184,7 +184,11 @@ BEGIN
     OR (finding_payload IS NOT NULL AND pg_catalog.jsonb_typeof(finding_payload)<>'object') THEN
     RAISE EXCEPTION 'agent review commit input rejected';
   END IF;
-  SELECT * INTO plan FROM public.control_agent_review_plans p WHERE p.id=plan_id AND p.tenant_id=review_payload->>'tenantId';
+  -- The reviewer login serves the one installation tenant the owner bootstrap
+  -- bound; a plan in any other tenant is unavailable to it.
+  SELECT p.* INTO plan FROM public.control_agent_review_plans p
+    JOIN public.work_intake_tenant_binding b ON b.singleton AND b.tenant_id=p.tenant_id
+    WHERE p.id=plan_id AND p.tenant_id=review_payload->>'tenantId';
   IF NOT FOUND THEN RAISE EXCEPTION 'agent review plan unavailable'; END IF;
   SELECT * INTO integrity FROM public.control_completion_gate_integrity i WHERE i.tenant_id=plan.tenant_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'agent review integrity unavailable'; END IF;
@@ -376,3 +380,32 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION public.commit_agent_review(text,jsonb,jsonb,bytea) FROM PUBLIC;
+
+-- The reviewer login holds no table privilege at all. It reads its one plan,
+-- the reviewer run's completion and the plan's acceptance profile through this
+-- boundary, which serves only a reviewer-group caller and only the installation
+-- tenant the owner bootstrap bound.
+CREATE FUNCTION read_agent_review_plan(plan_id text)
+RETURNS TABLE(id text, tenant_id text, project_id text, pipeline_run_id text, producer_job_id text,
+  reviewer_job_id text, reviewer_run_id text, target_id text, target_digest text, acceptance_profile_id text,
+  acceptance_profile_digest text, review_id text, finding_id text, reviewer jsonb, plan_digest text,
+  auth_tag text, created_at timestamptz, run_state text, run_job_id text, run_project_id text, profile_payload jsonb)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname='control_room_agent_reviewer'
+      AND pg_catalog.pg_has_role(session_user,r.oid,'MEMBER'))
+    OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper) THEN
+    RAISE EXCEPTION 'agent review read caller rejected';
+  END IF;
+  RETURN QUERY SELECT p.id,p.tenant_id,p.project_id,p.pipeline_run_id,p.producer_job_id,p.reviewer_job_id,
+      p.reviewer_run_id,p.target_id,p.target_digest,p.acceptance_profile_id,p.acceptance_profile_digest,p.review_id,
+      p.finding_id,p.reviewer,p.plan_digest,p.auth_tag,p.created_at,run.state,run.job_id,run.project_id,profile.payload
+    FROM public.control_agent_review_plans p
+    JOIN public.work_intake_tenant_binding b ON b.singleton AND b.tenant_id=p.tenant_id
+    LEFT JOIN public.control_harness_runs run ON run.tenant_id=p.tenant_id AND run.id=p.reviewer_run_id
+    LEFT JOIN public.control_completion_gate_records profile ON profile.tenant_id=p.tenant_id
+      AND profile.project_id=p.project_id AND profile.id=p.acceptance_profile_id AND profile.kind='profile'
+    WHERE p.id=read_agent_review_plan.plan_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.read_agent_review_plan(text) FROM PUBLIC;

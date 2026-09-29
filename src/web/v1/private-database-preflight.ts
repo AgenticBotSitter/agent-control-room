@@ -222,13 +222,11 @@ const publisherUpdates: Record<string, readonly string[]> = {
   control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
-const agentReviewerReads = ["control_agent_review_plans", "control_completion_gate_records",
-  "control_completion_gate_integrity", "control_harness_runs", "control_attempts", "control_task_execution_plans",
-  "pipeline_stage_runs"];
+// The reviewer holds no table privilege: it reads and commits only through
+// read_agent_review_plan and commit_agent_review, pinned below.
+const agentReviewerReads: readonly string[] = [];
 const agentReviewerInserts = new Set<string>();
-const agentReviewerUpdates: Record<string, readonly string[]> = {
-  control_completion_gate_records: ["web_lock"],
-};
+const agentReviewerUpdates: Record<string, readonly string[]> = {};
 
 /** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.
  * Effective permissions are checked separately. Any migrated schema change needs a new reviewed digest.
@@ -423,27 +421,30 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                     'control_room_work_intake','control_room_private_web','control_room_task_coordinator',
                     'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
                     'control_room_idea_creation','control_room_news_coordinator'))))
-            OR (p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
-              AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
-              AND (($2 AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+            OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND (($2 AND p.prosecdef AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
                 AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
-                AND NOT p.proleakproof AND p.proparallel='u' AND p.provolatile='v')
+                AND NOT p.proleakproof AND p.proparallel='u'
+                AND p.provolatile=CASE WHEN p.oid='read_agent_review_plan(text)'::regprocedure THEN 's' ELSE 'v' END)
                 OR (NOT $2 AND NOT has_function_privilege(p.oid,'EXECUTE')))))))
-        OR ($2 AND NOT (has_function_privilege('commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
-          AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
-          AND NOT EXISTS (SELECT 1 FROM pg_proc function_acl
-            CROSS JOIN LATERAL aclexplode(COALESCE(function_acl.proacl,acldefault('f',function_acl.proowner))) acl
-            WHERE function_acl.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
-              AND (acl.privilege_type<>'EXECUTE'
-                OR acl.grantee NOT IN (function_acl.proowner,
-                  (SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer'))
-                OR acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
-                  AND acl.is_grantable))
-          AND 1=(SELECT count(*) FROM pg_proc function_acl
-            CROSS JOIN LATERAL aclexplode(COALESCE(function_acl.proacl,acldefault('f',function_acl.proowner))) acl
-            WHERE function_acl.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
-              AND acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
-              AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable)))
+        OR ($2 AND EXISTS (SELECT 1 FROM unnest(ARRAY['commit_agent_review(text,jsonb,jsonb,bytea)',
+            'read_agent_review_plan(text)']::regprocedure[]) boundary(oid)
+          WHERE NOT (has_function_privilege(boundary.oid,'EXECUTE')
+            AND NOT has_function_privilege('public',boundary.oid,'EXECUTE')
+            AND NOT EXISTS (SELECT 1 FROM pg_proc function_acl
+              CROSS JOIN LATERAL aclexplode(COALESCE(function_acl.proacl,acldefault('f',function_acl.proowner))) acl
+              WHERE function_acl.oid=boundary.oid
+                AND (acl.privilege_type<>'EXECUTE'
+                  OR acl.grantee NOT IN (function_acl.proowner,
+                    (SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer'))
+                  OR acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
+                    AND acl.is_grantable))
+            AND 1=(SELECT count(*) FROM pg_proc function_acl
+              CROSS JOIN LATERAL aclexplode(COALESCE(function_acl.proacl,acldefault('f',function_acl.proowner))) acl
+              WHERE function_acl.oid=boundary.oid
+                AND acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
+                AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable))))
         OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
           WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
         OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue,kind === "agentReviewer"])).rows[0];
