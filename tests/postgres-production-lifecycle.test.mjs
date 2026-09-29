@@ -447,10 +447,23 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
     VALUES('attention:ordinary','tenant:intake-guard','project:intake-guard','ordinary','question','open',
       'delivered','2026-09-27T12:04:30.000Z','{"state":"open"}'::jsonb)`);
-  await query(db,await readFile(join(ROOT,"db/roles/private_web_roles.sql"),"utf8"));
-  await assert.rejects(query(db,`SET SESSION AUTHORIZATION control_room_private_web;
-    UPDATE control_action_inbox SET state='resolved',payload='{"state":"resolved"}'::jsonb
-    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`),/work batch notification update rejected/u);
+  const privateWebClient=new Client(db);
+  await privateWebClient.connect();
+  try {
+    // Role definitions are cluster-global. Install this probe transactionally so
+    // the later role-matrix attack test observes a clean cluster.
+    await privateWebClient.query("BEGIN");
+    await privateWebClient.query((await readFile(join(ROOT,"db/roles/private_web_roles.sql"),"utf8"))
+      .replace(/^(?:BEGIN|COMMIT);$/gmu,""));
+    await privateWebClient.query("SET LOCAL ROLE control_room_private_web");
+    await assert.rejects(privateWebClient.query(`UPDATE control_action_inbox
+      SET state='resolved',payload='{"state":"resolved"}'::jsonb
+      WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`),
+    /work batch notification update rejected/u);
+  } finally {
+    await privateWebClient.query("ROLLBACK").catch(()=>{});
+    await privateWebClient.end();
+  }
   assert.equal((await query(db,`SELECT state FROM control_action_inbox
     WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`)).rows[0].state,"open");
   await query(db,"DELETE FROM control_action_inbox WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'");
@@ -632,7 +645,7 @@ test("work-intake login reads and writes only its bound tenant's registered work
     seededBatchDigest,seededBatchTag]),/row-level security|proposal-only work batch insert rejected/u);
   await assert.rejects(query(intake,insertSeededRevision,["batch:other-open:revision:1","tenant:batch-other",
     "batch:other-open","identity:work-intake:other",seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),
-  /row-level security|initial work batch revision insert rejected/u);
+  /row-level security|(?:initial )?work batch revision insert rejected/u);
   // The other tenant's agent holds a valid grant, so the ledger guard admits the
   // row and only the tenant binding refuses it.
   await assert.rejects(query(intake,`INSERT INTO control_idempotency
