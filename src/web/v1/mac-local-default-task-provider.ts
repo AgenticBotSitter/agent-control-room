@@ -6,6 +6,7 @@ import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-
 import { createDurableReservationPostgresPortV1 } from "../../artifacts/v1/neutral-reservation-postgres";
 import { DurableResultReviewSubmissionServiceV1 } from "../../completion-gate/v1/durable-result-review-submission";
 import { DurableLocalResultInspectionServiceV1 } from "../../completion-gate/v1/durable-local-result-inspection";
+import { AgentReviewServiceV1 } from "../../completion-gate/v1/agent-review-service";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { preparePgBossNativeTaskSubmission } from "../../persistence/pg-boss-native-task-submission";
 import type { DatabaseClient } from "../../persistence/database";
@@ -49,6 +50,8 @@ import { captureTaskModelCatalogV1 } from "./task-model-selection";
 import { createMacLocalSelectedTaskModelV1, macLocalWorkerModelSelectionV1 } from "./mac-local-task-model-selection";
 import { sanitizedDatabaseFailureV1 } from "./sanitized-database-failure";
 import { loadUsagePriceTableFromRootV1 } from "../../usage/v1/usage-price-table-loader";
+import { verifyAgentReviewerDatabase } from "./private-database-preflight";
+import { macLocalOwnerIdentityIdV1 } from "./mac-local-owner-bootstrap";
 
 type SelectedWorker = Readonly<{ kind: "hermes" | "claude-code" | "codex";
   worker: OwnerTrustedLocalEnablementV1["workers"][number]; route: TaskAssignmentRoute; adapterId: string }>;
@@ -112,6 +115,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   // the existing results login, which is the review authority.
   const publisherPool = createPrivatePostgresDatabase(databaseRoles.publisher);
   const resultsPool = createPrivatePostgresDatabase(databaseRoles.results);
+  const reviewerPool = createPrivatePostgresDatabase(databaseRoles.agentReviewer);
   let checkpoints: Awaited<ReturnType<typeof openMacLocalRollbackCheckpointStoreV1>> | undefined;
   let submission: Awaited<ReturnType<typeof preparePgBossNativeTaskSubmission>> | undefined;
   let application: Awaited<ReturnType<typeof createMacLocalCurrentThreeAgentTaskApplicationV1>> | undefined;
@@ -126,6 +130,9 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     const checkpointStore = await openMacLocalRollbackCheckpointStoreV1(protectedRoot);
     checkpoints = checkpointStore;
     const keys = runtime.keys;
+    await verifyAgentReviewerDatabase(reviewerPool.client, databaseRoles.agentReviewer,
+      { tenantId, workspaceId, ownerIdentityId: macLocalOwnerIdentityIdV1(tenantId),
+        issuer: configuration.localOwnerSession.provider }, Date.now(), { nativeQueue: true });
     // First-owner provisioning is an explicit one-time operator action. The
     // ordinary host must never initialize the review authority on startup.
     const existing = await readPool.client.query("SELECT revision FROM control_completion_gate_integrity WHERE tenant_id=$1", [tenantId]);
@@ -244,6 +251,13 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
           selectionAuthority: input.workBatches.selectionAuthority } } : {}) },
       hermes, claude: voidClaude, codex: voidCodex,
     });
+    const agentReviews = input.workBatches ? (() => {
+      const planService = new AgentReviewServiceV1(readPool.client, tenantId, keys.review, checkpointStore,
+        built.routes, () => new Date().toISOString(), input.workBatches!.integrityKey);
+      const recordService = new AgentReviewServiceV1(reviewerPool.client, tenantId, keys.review, checkpointStore,
+        built.routes, () => new Date().toISOString(), input.workBatches!.integrityKey);
+      return Object.freeze({ createPlan: planService.createPlan.bind(planService), record: recordService.record.bind(recordService) });
+    })() : undefined;
     // A local host tick invokes the existing canonical quality operation; it
     // creates no second review authority or scheduler.
     let qualityFailureReported = false;
@@ -281,13 +295,13 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     }, 30_000);
     refreshTimer.unref();
     const owned = application;
-    return Object.freeze({ ...owned, async close() {
+    return Object.freeze({ ...owned, ...(agentReviews ? { agentReviews } : {}), async close() {
       if (refreshTimer) clearInterval(refreshTimer);
       if (qualityTimer) clearInterval(qualityTimer);
       await refreshInFlight?.catch(() => {});
       await qualityInFlight?.catch(() => {});
       const results = await Promise.allSettled([owned.close(), readPool.close(), publisherPool.close(),
-        resultsPool.close(), checkpointStore.close()]);
+        resultsPool.close(), reviewerPool.close(), checkpointStore.close()]);
       if (results.some(result => result.status === "rejected")) throw new Error("mac_local_task_provider_cleanup_uncertain");
     } });
   } catch (error) {
@@ -295,7 +309,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     if (qualityTimer) clearInterval(qualityTimer);
     await refreshInFlight?.catch(() => {});
     await qualityInFlight?.catch(() => {});
-    const cleanup: Promise<unknown>[] = [readPool.close(), publisherPool.close(), resultsPool.close()];
+    const cleanup: Promise<unknown>[] = [readPool.close(), publisherPool.close(), resultsPool.close(), reviewerPool.close()];
     if (application) cleanup.push(application.close());
     else if (submission) cleanup.push(submission.close());
     if (checkpoints) cleanup.push(checkpoints.close());

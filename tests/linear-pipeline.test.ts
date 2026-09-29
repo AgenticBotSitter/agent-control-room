@@ -317,8 +317,10 @@ test("0105 down migration refuses retained pipeline records and removes all owne
   const populated = await fixture(); t.after(() => void populated.db.close());
   await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
   const down = await readFile("db/down/0105_linear_pipeline_runs.sql", "utf8");
+  const agentReviewDown = await readFile("db/down/0106_agent_review_plans.sql", "utf8");
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
+  await empty.db.exec(agentReviewDown);
   await empty.db.exec(down);
   assert.deepEqual((await empty.db.query<{ templates: string | null; runs: string | null; stages: string | null }>(`SELECT
     to_regclass('pipeline_templates')::text templates,to_regclass('pipeline_runs')::text runs,

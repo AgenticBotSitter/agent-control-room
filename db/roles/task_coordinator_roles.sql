@@ -27,7 +27,7 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   control_project_coordination_operation_jobs, control_work_resources,
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_items, work_batch_effective_queue_admissions,
-  pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs,
+  pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs, control_agent_review_plans,
   control_installation_transition_revisions
   TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
@@ -43,6 +43,7 @@ GRANT INSERT ON control_task_model_selections, control_task_declared_scopes,
 -- once the canonical lease is terminal or elapsed.
 GRANT DELETE ON control_assignment_lease_scopes TO control_room_task_coordinator;
 GRANT INSERT ON control_installation_transition_revisions TO control_room_task_coordinator;
+GRANT INSERT ON control_agent_review_plans TO control_room_task_coordinator;
 GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
   control_action_inbox TO control_room_task_coordinator;

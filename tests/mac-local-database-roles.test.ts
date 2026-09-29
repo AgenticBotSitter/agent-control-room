@@ -11,6 +11,7 @@ const connection = (username: string) => ({ host: "127.0.0.1", port: 5432, datab
 const roles = Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1,
   web: connection("control_room_web"), coordinator: connection("control_room_coordinator"),
   results: connection("control_room_results"), publisher: connection("control_room_publisher"),
+  agentReviewer: connection("control_room_agent_reviewer_login"),
   queueWorker: connection("control_room_queue_worker") });
 
 test("captures restricted roles for exactly one authority database", () => {

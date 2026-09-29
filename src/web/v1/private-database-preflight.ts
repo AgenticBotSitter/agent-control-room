@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0105 (filename order: ...0093,0100,0101,0102,0104,0105),
+// Generated from public migrations 0001-0106 (filename order: ...0093,0100,0101,0102,0104,0105,0106),
 // including generic external-content migrations 0025/0026. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "359bf107eaef4c38ad5604233bd468112c46bf8f0e14c6b6473328f0a326b733";
+export const privateWebSchemaDigest = "d06dd0601e5601d3ee561f22c3f5af8463438f7f27d2fe52baf8305f0ad6fcd3";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -139,7 +139,8 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
-coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs");
+coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans");
+coordinatorInserts.add("control_agent_review_plans");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
@@ -163,6 +164,7 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
+  "control_attempts", "control_task_model_selections",
   "control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_native_review_plans",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records",
   "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding", "control_idea_sessions",
@@ -220,6 +222,11 @@ const publisherUpdates: Record<string, readonly string[]> = {
   control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
+// The reviewer holds no table privilege: it reads and commits only through
+// read_agent_review_plan and commit_agent_review, pinned below.
+const agentReviewerReads: readonly string[] = [];
+const agentReviewerInserts = new Set<string>();
+const agentReviewerUpdates: Record<string, readonly string[]> = {};
 
 /** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.
  * Effective permissions are checked separately. Any migrated schema change needs a new reviewed digest.
@@ -323,6 +330,14 @@ export async function verifyLocalResultPublisherDatabase(db: DatabaseClient, con
   return verifyDatabase(db, config, scope, now, "publisher", queue);
 }
 
+/** Agent checker commit role: one authenticated plan join plus Completion Gate
+ * append/integrity writes, with no task, queue, lease or owner authority. */
+export async function verifyAgentReviewerDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number,
+  queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "agentReviewer", queue);
+}
+
 export async function verifyNativeSessionDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
   scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
   return verifyDatabase(db, config, scope, now, "sessions", queue);
@@ -368,14 +383,14 @@ async function verifySession(tx: DatabaseSession, config: PrivatePostgresConfigu
 }
 
 async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "publisher" | "sessions" | "ideas" | "ideaRuntime" | "newsIngestion" | "newsCoordinator", queue?: NativeQueueDatabaseOption | NewsQueueDatabaseOption) {
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "publisher" | "agentReviewer" | "sessions" | "ideas" | "ideaRuntime" | "newsIngestion" | "newsCoordinator", queue?: NativeQueueDatabaseOption | NewsQueueDatabaseOption) {
   const feedProducer = kind === "newsCoordinator" && !!queue && "newsQueue" in queue && queue.newsQueue === true;
   const withQueue = feedProducer || !!queue && "nativeQueue" in queue && queue.nativeQueue === true;
   const recovery = kind === "coordinator" && !!queue && "nativeQueueRecovery" in queue && queue.nativeQueueRecovery === true;
-  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", publisher: "control_room_local_result_publisher", sessions: "control_room_native_sessions", ideas: "control_room_idea_creation", ideaRuntime: "control_room_idea_runtime", newsIngestion: "control_room_news_ingestion", newsCoordinator: "control_room_news_coordinator" }[kind];
-  const allowedReads = kind === "newsCoordinator" ? newsCoordinatorReads : kind === "newsIngestion" ? newsIngestionReads : kind === "ideaRuntime" ? ideaRuntimeReads : kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "publisher" ? publisherReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
-  const allowedInserts = kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "publisher" ? publisherInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
-  const allowedUpdates = kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "publisher" ? publisherUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
+  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", publisher: "control_room_local_result_publisher", agentReviewer: "control_room_agent_reviewer", sessions: "control_room_native_sessions", ideas: "control_room_idea_creation", ideaRuntime: "control_room_idea_runtime", newsIngestion: "control_room_news_ingestion", newsCoordinator: "control_room_news_coordinator" }[kind];
+  const allowedReads = kind === "agentReviewer" ? agentReviewerReads : kind === "newsCoordinator" ? newsCoordinatorReads : kind === "newsIngestion" ? newsIngestionReads : kind === "ideaRuntime" ? ideaRuntimeReads : kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "publisher" ? publisherReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
+  const allowedInserts = kind === "agentReviewer" ? agentReviewerInserts : kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "publisher" ? publisherInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
+  const allowedUpdates = kind === "agentReviewer" ? agentReviewerUpdates : kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "publisher" ? publisherUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
   const allowedDeletes = kind === "coordinator" ? coordinatorDeletes : new Set<string>();
   try {
     await db.transaction(async tx => {
@@ -394,22 +409,45 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
             (has_sequence_privilege(c.oid,'SELECT') OR has_sequence_privilege(c.oid,'UPDATE') OR has_sequence_privilege(c.oid,'USAGE'))))
         OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
           AND (pg_has_role(p.proowner,'MEMBER') OR (has_function_privilege(p.oid,'EXECUTE') OR p.prosecdef) AND NOT (
-            p.oid='is_work_intake_session()'::regprocedure
-            AND p.prosecdef AND p.provolatile='s' AND p.prokind='f' AND p.prorettype='boolean'::regtype
-            AND p.pronargs=0 AND NOT p.proleakproof AND p.proparallel='u'
-            AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
-            AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
-            AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-            AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
-              WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
-                OR pg_get_userbyid(a.grantee) NOT IN ('control_room_application','control_room_reader','control_room_backup',
-                  'control_room_work_intake','control_room_private_web','control_room_task_coordinator',
-                  'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
-                  'control_room_idea_creation','control_room_news_coordinator')))
-          )))
+            (p.oid='is_work_intake_session()'::regprocedure
+              AND p.prosecdef AND p.provolatile='s' AND p.prokind='f' AND p.prorettype='boolean'::regtype
+              AND p.pronargs=0 AND NOT p.proleakproof AND p.proparallel='u'
+              AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee) NOT IN ('control_room_application','control_room_reader','control_room_backup',
+                    'control_room_work_intake','control_room_private_web','control_room_task_coordinator',
+                    'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
+                    'control_room_idea_creation','control_room_news_coordinator'))))
+            OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND (($2 AND p.prosecdef AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+                AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+                AND NOT p.proleakproof AND p.proparallel='u'
+                AND p.provolatile=CASE WHEN p.oid='read_agent_review_plan(text)'::regprocedure THEN 's' ELSE 'v' END)
+                OR (NOT $2 AND NOT has_function_privilege(p.oid,'EXECUTE')))))))
+        OR ($2 AND EXISTS (SELECT 1 FROM unnest(ARRAY['commit_agent_review(text,jsonb,jsonb,bytea)',
+            'read_agent_review_plan(text)']::regprocedure[]) boundary(oid)
+          WHERE NOT (has_function_privilege(boundary.oid,'EXECUTE')
+            AND NOT has_function_privilege('public',boundary.oid,'EXECUTE')
+            AND NOT EXISTS (SELECT 1 FROM pg_proc function_acl
+              CROSS JOIN LATERAL aclexplode(COALESCE(function_acl.proacl,acldefault('f',function_acl.proowner))) acl
+              WHERE function_acl.oid=boundary.oid
+                AND (acl.privilege_type<>'EXECUTE'
+                  OR acl.grantee NOT IN (function_acl.proowner,
+                    (SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer'))
+                  OR acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
+                    AND acl.is_grantable))
+            AND 1=(SELECT count(*) FROM pg_proc function_acl
+              CROSS JOIN LATERAL aclexplode(COALESCE(function_acl.proacl,acldefault('f',function_acl.proowner))) acl
+              WHERE function_acl.oid=boundary.oid
+                AND acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
+                AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable))))
         OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
           WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
-        OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue])).rows[0];
+        OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue,kind === "agentReviewer"])).rows[0];
       if (unsafe?.unsafe !== false) fail();
       if (withQueue) await verifyPgBossApplicationPermissions(tx,
         kind === "coordinator" && !(queue && "nativeQueueProducer" in queue && queue.nativeQueueProducer === false) || feedProducer, recovery);
@@ -439,6 +477,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
         || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name)
         || c.remove !== allowedDeletes.has(c.table_name))) fail();
       if (await readPrivateWebSchemaDigest(tx) !== privateWebSchemaDigest) fail();
+      if (kind === "agentReviewer") return;
       const binding = (await tx.query<{ valid: boolean }>(`SELECT EXISTS(SELECT 1 FROM workspaces w
         JOIN control_identities i ON i.tenant_id=w.tenant_id JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
         WHERE w.tenant_id=$1 AND w.id=$2 AND i.id=$3 AND i.auth_provider=$4 AND i.actor_type='human' AND i.state='active'

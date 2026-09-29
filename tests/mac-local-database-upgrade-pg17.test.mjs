@@ -27,7 +27,8 @@ import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle
 const oldRoot = process.env.CONTROL_ROOM_PG17_UPGRADE_FIXTURE_ROOT ?? "/private/tmp/acr-db-0085";
 const portBase = Number(process.env.CONTROL_ROOM_PG17_PORT_BASE ?? 15581);
 const headRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
-const oldRoles = Object.entries(macRolePlan).filter(([login]) => login !== "control_room_publisher");
+const oldRoles = Object.entries(macRolePlan).filter(([login]) =>
+  !["control_room_publisher", "control_room_agent_reviewer_login"].includes(login));
 const migrationFileCount = ledger => (ledger.match(/"file": "db\/migrations\/[^"\n]+"/gu) ?? []).length;
 const exec = (file, args) => execFileSync(file, args, { encoding: "utf8", timeout: 120_000,
   env: { ...process.env, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } });
@@ -152,9 +153,9 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   assert.deepEqual(await planMacDatabaseUpgradeSnapshotV1(readOnlySnapshot), plan);
   assert.equal(plan.installQueueSchema, true);
   assert.deepEqual(plan.createRoles, [
-    "control_room_local_result_publisher", "control_room_native_queue_worker",
-    "control_room_native_results", "control_room_publisher", "control_room_task_coordinator",
-  ].map(role => ({ role, attributes: `${role === "control_room_publisher" ? "LOGIN" : "NOLOGIN"} INHERIT `
+    "control_room_agent_reviewer", "control_room_agent_reviewer_login", "control_room_local_result_publisher",
+    "control_room_native_queue_worker", "control_room_native_results", "control_room_publisher", "control_room_task_coordinator",
+  ].map(role => ({ role, attributes: `${["control_room_publisher", "control_room_agent_reviewer_login"].includes(role) ? "LOGIN" : "NOLOGIN"} INHERIT `
     + "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" })));
   assert.deepEqual(plan.membership.revoke, oldRoles.map(([member]) => ({ member,
     parent: "control_room_application" })).sort((a, b) => a.member.localeCompare(b.member)));
@@ -194,7 +195,10 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   assert.ok(plan.grants.extra.some(item => item.includes("control_room_private_web|table|public.control_jobs||DELETE|plain")));
   assert.deepEqual(await snapshot(oldClient), prior, "dry run does not change PostgreSQL");
   const publisherPassword = "q".repeat(40);
-  const request = { client: oldClient, publisherVerifier: postgresScramVerifierV1(publisherPassword) };
+  const reviewerPassword = "w".repeat(40);
+  const loginVerifiers = { control_room_publisher: postgresScramVerifierV1(publisherPassword),
+    control_room_agent_reviewer_login: postgresScramVerifierV1(reviewerPassword) };
+  const request = { client: oldClient, loginVerifiers };
   await assert.rejects(applyMacDatabaseUpgradeV1(request), /upgrade_pending_migrations_need_peer_runner/u);
   const retainedLogins = ["control_room_migrator", "control_room_app", "control_room_scheduler",
     ...oldRoles.map(([login]) => login)];
@@ -212,12 +216,20 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   const localPeer = `host=${old.socket} port=${old.port} dbname=control_room user=postgres`;
   await assert.rejects(applyMacDatabaseUpgradeV1({ ...request,
     expectedPlanDigest: `sha256:${"0".repeat(64)}` }), /upgrade_plan_changed_refused/u);
+  // The reviewer login is a planned new LOGIN: without its own code nothing is written.
+  for (const partial of [{ control_room_publisher: loginVerifiers.control_room_publisher }, {}]) {
+    await assert.rejects(applyMacDatabaseUpgradeV1({ client: oldClient, loginVerifiers: partial,
+      expectedPlanDigest: macDatabaseUpgradePlanDigestV1(plan),
+      applyPending: async () => { throw new Error("migrations must not start without every login code"); } }),
+    /^Error: upgrade_new_login_needs_verifier:control_room_agent_reviewer_login,control_room_publisher$/u);
+    assert.deepEqual(await snapshot(oldClient), prior, "a refused upgrade changes nothing");
+  }
   let failureStage = "plan";
   const simulatedSqlError = Object.assign(new Error("private diagnostic must not print"), { code: "42501" });
   await assert.rejects(runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
       "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(plan)],
-    readVerifier: async () => `${request.publisherVerifier}\n`,
+    readVerifier: async () => `${JSON.stringify(loginVerifiers)}\n`,
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(old.port)),
     applyPending: async () => { throw simulatedSqlError; },
@@ -228,21 +240,31 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   const resumed = await inspectMacDatabaseUpgradeV1({ client: oldClient });
   assert.deepEqual(resumed, { ...plan, createRoles: [] },
     "a failure in migrations leaves the approved plan minus the roles it created");
+  assert.deepEqual((await oldClient.query(`SELECT rolname,rolcanlogin,rolinherit,rolsuper,rolcreatedb,
+    rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname LIKE 'control_room_agent_reviewer%'
+    ORDER BY rolname`)).rows, [["control_room_agent_reviewer", false], ["control_room_agent_reviewer_login", true]]
+    .map(([rolname, rolcanlogin]) => ({ rolname, rolcanlogin, rolinherit: true, rolsuper: false, rolcreatedb: false,
+      rolcreaterole: false, rolreplication: false, rolbypassrls: false })),
+  "the reviewer group and login exist before any migration refers to them");
   const cli = await runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
       "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(resumed)],
-    readVerifier: async () => `${request.publisherVerifier}\n`,
+    // The roles already exist, so the resumed upgrade must not ask for a code.
+    readVerifier: async () => { throw new Error("the resumed upgrade read a code it did not need"); },
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(old.port)),
     applyPending: () => applyPendingMacMigrationsV1(localPeer),
   });
   assert.equal(cli.upgraded, true);
+  const appliedTail = (await oldClient.query(`SELECT filename FROM control_room_schema_migrations
+    ORDER BY ledger_order DESC LIMIT 2`)).rows.map(row => row.filename).reverse();
+  assert.deepEqual(appliedTail, ["db/migrations/0105_linear_pipeline_runs.sql", "db/migrations/0106_agent_review_plans.sql"]);
   assert.deepEqual(await passwordSnapshot(), beforePasswords,
     "migrator, app, scheduler and four existing login password verifiers are byte-identical");
   assert.deepEqual(await otherMemberships(), beforeOtherMemberships,
     "no non-Mac role membership is changed by the upgrade");
   for (const [login, password] of [...oldRoles.map(([name]) => [name, "p".repeat(40) + name]),
-    ["control_room_publisher", publisherPassword]]) {
+    ["control_room_publisher", publisherPassword], ["control_room_agent_reviewer_login", reviewerPassword]]) {
     const restricted = connectTarget(`host=127.0.0.1 port=${old.port} dbname=control_room user=${login} password=${password}`);
     await restricted.connect();
     try {
@@ -290,7 +312,9 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   const before = await inspectMacDatabaseUpgradeV1({ client });
   assert.deepEqual(before.pendingMigrations, []);
   assert.equal(before.installQueueSchema, true);
-  assert.equal(before.createRoles.length, 5);
+  assert.deepEqual(before.createRoles.map(item => item.role), ["control_room_agent_reviewer",
+    "control_room_agent_reviewer_login", "control_room_local_result_publisher", "control_room_native_queue_worker",
+    "control_room_native_results", "control_room_publisher", "control_room_task_coordinator"]);
   assert.equal(before.membership.revoke.length, 4);
   const oldVerifiers = (await client.query(`SELECT rolname,rolpassword FROM pg_authid
     WHERE rolname=ANY($1::text[]) ORDER BY rolname`, [
@@ -302,7 +326,8 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   const result = await runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
       "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(before)],
-    readVerifier: async () => `${postgresScramVerifierV1("z".repeat(40))}\n`,
+    readVerifier: async () => `${JSON.stringify({ control_room_publisher: postgresScramVerifierV1("z".repeat(40)),
+      control_room_agent_reviewer_login: postgresScramVerifierV1("y".repeat(40)) })}\n`,
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(live.port)),
     applyPending: () => { pendingCalled = true; throw new Error("unexpected_migration"); },
@@ -317,7 +342,7 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
     WHERE rolname=ANY($1::text[]) ORDER BY rolname`, [oldVerifiers.map(row => row.rolname)])).rows,
   oldVerifiers);
   for (const [login, password] of [...oldRoles.map(([name]) => [name, "p".repeat(40) + name]),
-    ["control_room_publisher", "z".repeat(40)]]) {
+    ["control_room_publisher", "z".repeat(40)], ["control_room_agent_reviewer_login", "y".repeat(40)]]) {
     const restricted = connectTarget(`host=127.0.0.1 port=${live.port} dbname=control_room user=${login} password=${password}`);
     await restricted.connect();
     try {
@@ -369,7 +394,8 @@ test("a post-install queue shape mismatch removes only this empty new schema and
     escapeLiteral: value => client.escapeLiteral(value),
   };
   let stage = "plan";
-  const request = { publisherVerifier: postgresScramVerifierV1("r".repeat(40)),
+  const request = { loginVerifiers: { control_room_publisher: postgresScramVerifierV1("r".repeat(40)),
+    control_room_agent_reviewer_login: postgresScramVerifierV1("s".repeat(40)) },
     expectedPlanDigest: macDatabaseUpgradePlanDigestV1(plan), onStage: next => { stage = next; } };
   await assert.rejects(applyMacDatabaseUpgradeV1({ ...request, client: mismatchedCatalogClient }), error => {
     assert.match(error.message, /upgrade_queue_shape_refused/u);

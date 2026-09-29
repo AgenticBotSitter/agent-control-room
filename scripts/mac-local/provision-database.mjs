@@ -52,7 +52,8 @@ export function renewRetainedWorkIntakeCredentialsV1(existing, prospective, now)
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
-  results: "control_room_results", publisher: "control_room_publisher", queueWorker: "control_room_queue_worker" });
+  results: "control_room_results", publisher: "control_room_publisher",
+  agentReviewer: "control_room_agent_reviewer_login", queueWorker: "control_room_queue_worker" });
 const bootstrapRoles = Object.freeze({ migrator: "control_room_migrator", application: "control_room_app",
   scheduler: "control_room_scheduler", workIntake: "control_room_work_intake_agent" });
 const passwordPattern = /^[A-Za-z0-9_-]{32,}$/u;
@@ -215,8 +216,10 @@ async function repointOnly({ protectedRoot: suppliedRoot, route }) {
     || roles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
     || roles.web.username !== roleNames.web || roles.coordinator.username !== roleNames.coordinator
     || roles.results.username !== roleNames.results || roles.publisher.username !== roleNames.publisher
+    || roles.agentReviewer.username !== roleNames.agentReviewer
     || roles.queueWorker.username !== roleNames.queueWorker
-    || [roles.web, roles.coordinator, roles.results, roles.publisher, roles.queueWorker].some(role => role.database !== "control_room")
+    || [roles.web, roles.coordinator, roles.results, roles.publisher, roles.agentReviewer, roles.queueWorker]
+      .some(role => role.database !== "control_room")
     || (intake !== undefined && (intake.database.database !== "control_room"
       || intake.database.username !== bootstrapRoles.workIntake)))
     throw new Error("provision_existing_configuration_refused");
@@ -225,7 +228,8 @@ async function repointOnly({ protectedRoot: suppliedRoot, route }) {
     privateEndpoint: endpoint });
   const nextMacDatabase = update(mac.database);
   const nextRoleConfigurations = { web: update(roles.web), coordinator: update(roles.coordinator),
-    results: update(roles.results), publisher: update(roles.publisher), queueWorker: update(roles.queueWorker) };
+    results: update(roles.results), publisher: update(roles.publisher), agentReviewer: update(roles.agentReviewer),
+    queueWorker: update(roles.queueWorker) };
   const nextIntakeDatabase = intake === undefined ? undefined : update(intake.database);
   captureMacLocalProtectedConfigurationV1({ ...macOriginal, database: nextMacDatabase });
   captureMacLocalDatabaseRolesV1({ ...rolesOriginal, ...nextRoleConfigurations });
@@ -482,7 +486,7 @@ async function existingUpgradeConfiguration(protectedRoot) {
   const oldRoles = await readProtectedJson(roleFile);
   const existingNames = ["schema", "web", "coordinator", "results", "queueWorker"];
   if (oldRoles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
-    || Object.keys(oldRoles).some(key => ![...existingNames, "publisher"].includes(key))
+    || Object.keys(oldRoles).some(key => ![...existingNames, "publisher", "agentReviewer"].includes(key))
     || existingNames.some(key => !Object.hasOwn(oldRoles, key))) throw new Error("upgrade_role_config_refused");
   const sameEndpoint = role => role.host === mac.database.host && role.port === mac.database.port
     && role.database === mac.database.database && role.majorVersion === mac.database.majorVersion
@@ -502,8 +506,14 @@ async function existingUpgradeConfiguration(protectedRoot) {
     if (publisher.username !== roleNames.publisher || publisher.database !== "control_room" || !sameEndpoint(publisher)
       || publisher.password !== await readPrivatePassword(join(passwordRoot, `${roleNames.publisher}.txt`)))
       throw new Error("upgrade_role_config_refused");
-    captureMacLocalDatabaseRolesV1(oldRoles);
   }
+  if (oldRoles.agentReviewer) {
+    const reviewer = validatePrivatePostgresConfiguration(oldRoles.agentReviewer);
+    if (reviewer.username !== roleNames.agentReviewer || reviewer.database !== "control_room" || !sameEndpoint(reviewer)
+      || reviewer.password !== await readPrivatePassword(join(passwordRoot, `${roleNames.agentReviewer}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+  }
+  if (oldRoles.publisher && oldRoles.agentReviewer) captureMacLocalDatabaseRolesV1(oldRoles);
   let workIntake;
   try { workIntake = await readProtectedJson(join(configRoot, "work-intake-server.json")); }
   catch (error) { if ((error && typeof error === "object" && error.code) !== "ENOENT") throw error; }
@@ -545,12 +555,13 @@ function workIntakeRosterCredentialsV1(clients, now) {
 }
 
 /** A login the role manifest marks `newLogin: true` is "missing" until its own
- * local record exists: `database-roles.json`'s `publisher` entry, or a
- * `work-intake-server.json` at all. Both are checked here, in the one place
- * that decides what `--prepare`/`--finish` still have to do. */
+ * local record exists: `database-roles.json`'s `publisher` or `agentReviewer`
+ * entry, or a `work-intake-server.json` at all. All are checked here, in the
+ * one place that decides what `--prepare`/`--finish` still have to do. */
 function missingNewLoginRolesV1({ oldRoles, workIntake }) {
   const missing = [];
   if (!oldRoles.publisher) missing.push(roleNames.publisher);
+  if (!oldRoles.agentReviewer) missing.push(roleNames.agentReviewer);
   if (workIntake === undefined) missing.push(bootstrapRoles.workIntake);
   return missing;
 }
@@ -654,6 +665,12 @@ export async function finishMacLocalDatabaseUpgradeV1(options) {
     await verify(publisher, roleNames.publisher);
     nextRoles = { ...nextRoles, publisher };
   }
+  if (missing.includes(roleNames.agentReviewer)) {
+    const agentReviewer = validatePrivatePostgresConfiguration({ ...oldRoles.web,
+      username: roleNames.agentReviewer, password: passwords[roleNames.agentReviewer] });
+    await verify(agentReviewer, roleNames.agentReviewer);
+    nextRoles = { ...nextRoles, agentReviewer };
+  }
   if (missing.includes(bootstrapRoles.workIntake)) {
     const database = validatePrivatePostgresConfiguration({ ...oldRoles.web,
       username: bootstrapRoles.workIntake, password: passwords[bootstrapRoles.workIntake] });
@@ -751,7 +768,8 @@ export async function provisionMacLocalDatabaseV1(options) {
     password: allPasswords.web, majorVersion: 17, ...(endpoint ? { privateEndpoint: endpoint } : {}) });
   const role = username => Object.freeze({ ...database, username, password: allPasswords[Object.keys(roleNames).find(key => roleNames[key] === username)] });
   const roles = captureMacLocalDatabaseRolesV1({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role(roleNames.web), coordinator: role(roleNames.coordinator),
-    results: role(roleNames.results), publisher: role(roleNames.publisher), queueWorker: role(roleNames.queueWorker) });
+    results: role(roleNames.results), publisher: role(roleNames.publisher), agentReviewer: role(roleNames.agentReviewer),
+    queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
   const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers, workIntakeProjectIds });
   const clientRoot = join(configRoot, "work-intake-clients");

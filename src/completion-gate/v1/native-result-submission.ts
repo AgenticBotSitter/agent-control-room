@@ -12,6 +12,7 @@ import { stageAsyncCompletionCheckpoint } from "./async-staged-checkpoint";
 import { nativeRevisionContextSchema } from "./native-revision-context";
 import { nativeReviewRequestSchema as requestSchema, nativeReviewPlanTag, verifyNativeReviewPlan,
   nativeReviewTarget, nativeReviewRevision, type NativeReviewPlan as Plan, type NativeReviewPlanRow as Row } from "./native-review-plan";
+import { deriveAuthenticatedRunPrincipalV1 } from "./protected-agent-principal";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const revisionRequestSchema = requestSchema.extend({ revision: nativeRevisionContextSchema });
@@ -47,7 +48,12 @@ export class NativeResultSubmissionService {
     const job = jobRecordSchema.parse(row?.payload);
     if (job.tenantId !== tenantId || job.projectId !== run.projectId || job.id !== run.jobId
       || job.inputDigest !== run.nativeTask!.inputDigest || computeAuthorityDigest(job.authority) !== job.authority.digest) reject();
-    return { ...inspected, job };
+    const attempt = (await tx.query<{ job_id: string; node_id: string; worker_id: string | null }>(
+      "SELECT job_id,node_id,worker_id FROM control_attempts WHERE tenant_id=$1 AND id=$2",
+      [tenantId, run.attemptId])).rows[0];
+    const workerId = attempt?.worker_id;
+    if (!workerId || attempt.job_id !== run.jobId || attempt.node_id !== run.nodeId) reject();
+    return { ...inspected, job, workerId: id.parse(workerId) };
   }
   private async profile(gate: CompletionGateStoreV1, plan: z.infer<typeof requestSchema>, projectId: string) {
     const profile = completionAcceptanceProfileSchemaV1.parse(await gate.getRecord(plan.tenantId, plan.acceptanceProfileId, "profile"));
@@ -86,11 +92,15 @@ export class NativeResultSubmissionService {
     try {
       const request = revisionRequestSchema.parse(input); assertNoSecretMaterial(request);
       return await this.db.transaction(async tx => {
-        const { run, events, job } = await this.bound(tx, request.tenantId, request.runId);
+        const { run, events, job, workerId } = await this.bound(tx, request.tenantId, request.runId);
+        const producer = deriveAuthenticatedRunPrincipalV1(run, workerId);
         const plan: Extract<Plan, { schema: "control-room.native-review-plan/v2" }> = { ...request,
           schema: "control-room.native-review-plan/v2", projectId: run.projectId, jobId: run.jobId,
           attemptId: run.attemptId, nodeId: run.nodeId, inputDigest: job.inputDigest,
           authorityDigest: job.authority.digest, bindingDigest: run.nativeTask!.bindingDigest,
+          producer, workerId: producer.workerId, agentProfileId: producer.agentProfileId,
+          harness: producer.harness, adapterId: producer.adapterId,
+          ...(producer.modelFamily ? { modelFamily: producer.modelFamily } : {}),
           targetId: `target:native:${sha256Digest({ tenantId: run.tenantId, jobId: run.jobId }).slice(7)}` };
         const gate = new CompletionGateStoreV1(joined(tx), this.key, this.checkpoints);
         const prior = (await tx.query<Row>("SELECT * FROM control_native_review_plans WHERE tenant_id=$1 AND job_id=$2",
@@ -136,10 +146,14 @@ export class NativeResultSubmissionService {
     try {
       const request = requestSchema.parse(input); assertNoSecretMaterial(request);
       return await this.db.transaction(async tx => {
-        const { run, events, job } = await this.bound(tx, request.tenantId, request.runId);
+        const { run, events, job, workerId } = await this.bound(tx, request.tenantId, request.runId);
+        const producer = deriveAuthenticatedRunPrincipalV1(run, workerId);
         const plan: Plan = { ...request, schema: "control-room.native-review-plan/v1", projectId: run.projectId,
           jobId: run.jobId, attemptId: run.attemptId, nodeId: run.nodeId, inputDigest: job.inputDigest,
           authorityDigest: job.authority.digest, bindingDigest: run.nativeTask!.bindingDigest,
+          producer, workerId: producer.workerId, agentProfileId: producer.agentProfileId,
+          harness: producer.harness, adapterId: producer.adapterId,
+          ...(producer.modelFamily ? { modelFamily: producer.modelFamily } : {}),
           targetId: `target:native:${sha256Digest({ tenantId: run.tenantId, jobId: run.jobId }).slice(7)}` };
         const gate = new CompletionGateStoreV1(joined(tx), this.key, this.checkpoints);
         await this.profile(gate, request, run.projectId);

@@ -197,7 +197,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
                 application: { host: databaseRoles.coordinator.host, port: databaseRoles.coordinator.port,
                   database: databaseRoles.coordinator.database,
                   loginNames: [databaseRoles.web.username, databaseRoles.coordinator.username, databaseRoles.results.username,
-                    databaseRoles.publisher.username] },
+                    databaseRoles.publisher.username, databaseRoles.agentReviewer.username] },
                 concurrency: 1,
                 deliver: taskApplication!.queueDelivery!,
                 ...(taskApplication!.queueRecovery?.verify ? { verifyRecovery: taskApplication!.queueRecovery.verify } : {}),

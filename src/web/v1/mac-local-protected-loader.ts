@@ -40,7 +40,7 @@ export async function loadMacLocalProtectedConfigurationFromRootV1(protectedRoot
   } catch { throw new Error("mac_local_protected_configuration_root_invalid"); }
 }
 
-/** Reads the fixed four-role map beside mac-local.json. Every role is checked
+/** Reads the fixed six-role map beside mac-local.json. Every role is checked
  * by the existing one-authority-database validator before any pool can open. */
 export async function loadMacLocalDatabaseRolesFromRootV1(protectedRoot: string,
   runtime: Runtime = production): Promise<MacLocalDatabaseRolesV1> {
