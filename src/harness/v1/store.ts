@@ -272,6 +272,19 @@ export class HarnessRunStoreV1 {
     return output;
   }
 
+  /** Exact authenticated usage aggregation source. Presentation limits are
+   * applied elsewhere; this read deliberately includes every run in scope. */
+  async inspectUsageScope(tenantId: string, projectId: string, jobId?: string): Promise<readonly {
+    run: HarnessRunV1; events: HarnessRunEventV1[] }[]> {
+    const parameters: unknown[] = [tenantId, projectId];
+    const job = jobId === undefined ? "" : ` AND r.job_id=$${parameters.push(jobId)}`;
+    const rows = (await this.db.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()}
+      FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.project_id=$2${job}
+      ORDER BY r.attempt_id COLLATE "C",r.created_at DESC,r.id COLLATE "C" DESC`, parameters)).rows;
+    return rows.map(row => ({ run: verifyStoredHarnessRunV1(row, this.integrityKey),
+      events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) }));
+  }
+
   async events(tenantId: string, runId: string, limit = 200): Promise<HarnessRunEventV1[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("invalid harness event limit");
     const run=await this.get(tenantId,runId); if (!run) return [];

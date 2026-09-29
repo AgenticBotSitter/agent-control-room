@@ -43,6 +43,9 @@ import { readSavedTaskPlansInSessionV1, readTaskRevisionLinksV1, savedTaskPlanPr
 import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
 import { projectTaskDisplayStateV1 } from "./task-display-state";
 import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
+import { costForUsageV1, rollupUsageV1, usageMeasurementSchemaV1, usagePriceTableSchemaV1,
+  type UsagePriceTableV1 } from "../../usage/v1/usage-cost";
+import type { HarnessRunEventV1, HarnessRunV1 } from "../../harness/v1/types";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -80,6 +83,8 @@ function validated(row: TaskRow, tenantId: string, projectId: string) {
 
 export interface WebTaskKeys {
   modelCatalog?: TaskModelCatalogV1;
+  /** Owner-recorded billing facts. Absence is rendered as unknown, never estimated. */
+  usagePriceTable?: UsagePriceTableV1;
   /** Read-only authentication key for task execution-plan lineage. */
   taskPlanIntegrityKey?: Uint8Array;
   harnessIntegrityKey?: Uint8Array;
@@ -93,7 +98,9 @@ export interface WebTaskKeys {
   worktreeChangeEvidence?: { inspectMany(identities: readonly { tenantId: string; projectId: string; jobId: string;
     attemptId: string; runId: string; artifactId: string }[]):
     Promise<readonly (Readonly<{ changedFiles: number; changedBytes: number; addedFiles: number; modifiedFiles: number;
-      deletedFiles: number; evidenceDigest: string }> | undefined)[]> };
+      deletedFiles: number; evidenceDigest: string }> | undefined)[]>;
+    inspectOne?(identity: { tenantId: string; projectId: string; jobId: string; attemptId: string;
+      runId: string; artifactId: string }): Promise<unknown | undefined> };
   /** Bound installation-owned read only. The web service never receives its
    * receipt key, storage port, runner, profile, model, or workspace settings. */
   hermesDeliveryRecovery?: { inspect(scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }):
@@ -116,12 +123,14 @@ export class WebTaskService {
   private readonly worktreeChangeEvidence?: NonNullable<WebTaskKeys["worktreeChangeEvidence"]>;
   private readonly modelCatalog?: TaskModelCatalogV1;
   private readonly taskPlanIntegrityKey?: Uint8Array;
+  private readonly usagePriceTable?: UsagePriceTableV1;
   private readonly fileAccessKey?: Uint8Array;
   private readonly projectEvents?: TaskProjectEventWriterV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
     this.modelCatalog = keys?.modelCatalog;
+    this.usagePriceTable = keys?.usagePriceTable ? usagePriceTableSchemaV1.parse(keys.usagePriceTable) : undefined;
     if (keys?.taskPlanIntegrityKey !== undefined) {
       if (!(keys.taskPlanIntegrityKey instanceof Uint8Array) || keys.taskPlanIntegrityKey.length !== 32)
         throw new Error("task_key_invalid");
@@ -154,7 +163,9 @@ export class WebTaskService {
     }
     if (keys?.worktreeChangeEvidence) {
       if (typeof keys.worktreeChangeEvidence.inspectMany !== "function") throw new Error("task_key_invalid");
-      this.worktreeChangeEvidence = Object.freeze({ inspectMany: keys.worktreeChangeEvidence.inspectMany.bind(keys.worktreeChangeEvidence) });
+      this.worktreeChangeEvidence = Object.freeze({ inspectMany: keys.worktreeChangeEvidence.inspectMany.bind(keys.worktreeChangeEvidence),
+        ...(keys.worktreeChangeEvidence.inspectOne
+          ? { inspectOne: keys.worktreeChangeEvidence.inspectOne.bind(keys.worktreeChangeEvidence) } : {}) });
     }
     if (keys?.reviews) {
       if (!(keys.reviews.integrityKey instanceof Uint8Array) || keys.reviews.integrityKey.length !== 32) throw new Error("task_key_invalid");
@@ -175,6 +186,27 @@ export class WebTaskService {
     } catch { return { source: "unavailable" }; }
   }
   private id(value: string) { if (!catalogProjectIdSchema.safeParse(value).success) throw new WebAccessError("invalid_request"); }
+  private priceTableEvidence() { return this.usagePriceTable
+    ? { state: "recorded" as const, tableId: this.usagePriceTable.tableId, recordedAt: this.usagePriceTable.recordedAt }
+    : { state: "not_recorded" as const, tableId: null, recordedAt: null }; }
+  private usageEvidence(run: HarnessRunV1, events: readonly HarnessRunEventV1[]) {
+    const usageEvent = [...events].reverse().find(event => event.payload.category === "usage");
+    const native = [...events].reverse().find(event => event.payload.category === "native_snapshot")?.payload;
+    const nativeUsage = native?.category === "native_snapshot" ? native.snapshot.usage : null;
+    const wallTimeMs = run.startedAt && run.finishedAt ? Date.parse(run.finishedAt) - Date.parse(run.startedAt) : null;
+    const usage = usageEvent?.payload.category === "usage"
+      ? usageMeasurementSchemaV1.parse({ inputTokens: usageEvent.payload.inputTokens,
+        outputTokens: usageEvent.payload.outputTokens, totalTokens: usageEvent.payload.totalTokens
+          ?? (usageEvent.payload.inputTokens !== null && usageEvent.payload.outputTokens !== null
+            ? usageEvent.payload.inputTokens + usageEvent.payload.outputTokens : null),
+        cachedInputTokens: usageEvent.payload.cachedInputTokens, wallTimeMs: usageEvent.payload.wallTimeMs ?? wallTimeMs })
+      : nativeUsage ? usageMeasurementSchemaV1.parse({ inputTokens: nativeUsage.inputTokens,
+        outputTokens: nativeUsage.outputTokens, totalTokens: nativeUsage.totalTokens, wallTimeMs })
+        : wallTimeMs === null ? null : usageMeasurementSchemaV1.parse({ inputTokens: null, outputTokens: null,
+          totalTokens: null, wallTimeMs });
+    return { usage, cost: costForUsageV1({ harness: run.harness, model: run.modelSelection?.model,
+      usage, ...(this.usagePriceTable ? { priceTable: this.usagePriceTable } : {}) }) };
+  }
   private authenticatedRead<T>(identity: VerifiedWebIdentity,
     operation: (tx: DatabaseSession, actor: WebActor) => Promise<T>) {
     return this.authority.authenticated(identity, operation, { readOnly: true });
@@ -368,14 +400,17 @@ export class WebTaskService {
       [this.scope.tenantId, jobId])).rows;
       const store = this.harnessKey ? new HarnessRunStoreV1(joined(tx), this.harnessKey) : undefined;
       const boundedAttempts = attemptRows.slice(0, 10);
-      const inspectedRuns = store ? await store.inspectAttempts(this.scope.tenantId, projectId, jobId,
-        boundedAttempts.map(attempt => attempt.id)) : undefined;
+      const allInspectedRuns = store ? await store.inspectUsageScope(this.scope.tenantId, projectId, jobId) : [];
+      const inspectedRuns = new Map<string, typeof allInspectedRuns>();
+      for (const value of allInspectedRuns) inspectedRuns.set(value.run.attemptId,
+        [...(inspectedRuns.get(value.run.attemptId) ?? []), value]);
+      const allEvidence = allInspectedRuns.map(value => ({ attemptId: value.run.attemptId, ...this.usageEvidence(value.run, value.events) }));
       const attempts = [];
       for (const a of boundedAttempts) {
         const attempt = attemptRecordSchema.parse(a.payload);
         if (attempt.tenantId !== this.scope.tenantId || attempt.jobId !== jobId || attempt.id !== a.id
           || attempt.state !== a.state || attempt.attemptNumber !== Number(a.attempt_number)) throw new Error("task_attempt_unavailable");
-        const inspected = inspectedRuns?.get(attempt.id) ?? [];
+        const inspected = inspectedRuns.get(attempt.id) ?? [];
         const runs: TaskRun[] = [];
         for (const value of inspected.slice(0, 10)) {
           if (value.run.projectId !== projectId || value.run.jobId !== jobId
@@ -383,20 +418,21 @@ export class WebTaskService {
           const { run, events } = value;
           const snapshots = events.flatMap(event => event.payload.category === "native_snapshot" ? [event.payload.snapshot] : []);
           const last = snapshots.at(-1);
+          const evidence = this.usageEvidence(run, events);
           runs.push(taskRunSchema.parse({ runId: run.id, harness: run.harness, routeEvidence: routeEvidence(run.adapterId), state: run.state, lastObservedAt: run.lastObservedAt,
             ...(run.modelSelection ?? {}),
             stale: Date.parse(run.lastObservedAt) > Date.parse(actor.now) || Date.parse(actor.now) - Date.parse(run.lastObservedAt) > 120_000,
             firstObservedExecutionAt: run.startedAt ?? null, finishedObservedAt: run.finishedAt ?? null, cancellation: run.cancelState,
             source: run.nativeTask ? "native_snapshot" : "legacy", nativeState: last?.state ?? null,
             availability: run.nativeTask ? last?.availability ?? "unknown" : null,
-            usage: last?.usage ? { inputTokens: last.usage.inputTokens, outputTokens: last.usage.outputTokens,
-              totalTokens: last.usage.totalTokens, costUsd: null, hardCostLimitEnforced: false } : null,
+            usage: evidence.usage, cost: evidence.cost,
             resultClaim: last?.result ? { ...last.result, verified: false } : null,
             timeline: snapshots.slice(-50).map(item => ({ version: item.snapshotVersion, state: item.state,
               observedAt: item.observedAt, availability: item.availability })), earlierObservationsOmitted: snapshots.length > 50 }));
         }
         attempts.push({ attemptId: attempt.id, attemptNumber: attempt.attemptNumber, state: attempt.state,
-          runs, additionalRunsOmitted: inspected.length > 10 });
+          runs, additionalRunsOmitted: inspected.length > 10,
+          usageRollup: rollupUsageV1(allEvidence.filter(value => value.attemptId === attempt.id)) });
       }
       const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       const revisionLinks = this.taskPlanIntegrityKey
@@ -411,7 +447,8 @@ export class WebTaskService {
           model: modelRow.model, effort: modelRow.effort, provider: modelRow.provider, profile: modelRow.profile,
           inheritedFromJobId: modelRow.inherited_from_job_id } : null,
         ownershipLeases: [...leaseGroups.values()],
-        observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
+        observedAt: actor.now, attempts, usageRollup: rollupUsageV1(allEvidence), priceTable: this.priceTableEvidence(),
+        earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
         localRouteObservation: { state: "not_prepared", adapter: null },
         hermesDeliveryRecovery,
         revisionLinks,
@@ -442,13 +479,20 @@ export class WebTaskService {
       const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
         [this.scope.tenantId, projectId, jobId])).rows[0];
       if (!row) throw new WebAccessError("not_found");
-      validated(row, this.scope.tenantId, projectId);
+      const task = validated(row, this.scope.tenantId, projectId);
       if (artifactId !== undefined) {
         actor.require("tasks.results.read", projectId);
         if (!this.resultStore) throw new Error("task_results_not_configured");
         const content = await this.resultStore.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
         if (!content) throw new WebAccessError("not_found");
+        // Full patches are restricted to the human who requested the task.
+        // Other project owners may retain ordinary result access, but cannot
+        // use that broader grant to inspect this coding workspace evidence.
+        const worktreeChangeEvidence = actor.id === task.request.requestedBy.actorId && this.worktreeChangeEvidence?.inspectOne
+          ? await this.worktreeChangeEvidence.inspectOne({ tenantId: this.scope.tenantId, projectId, jobId,
+            attemptId: content.receipt.attemptId, runId: content.receipt.runId, artifactId }) : undefined;
         return taskResultContentSchema.parse({ projectId, jobId, artifact: resultMetadata(content.receipt), text: content.text,
+          ...(worktreeChangeEvidence ? { worktreeChangeEvidence } : {}),
           contentVerifiedAt: new Date(this.clock()).toISOString(), untrustedContent: true });
       }
       return this.resultPage(tx, actor, projectId, jobId);
@@ -964,10 +1008,14 @@ export class WebTaskService {
       const projectedReviews = this.applyDisplayEvidence(reviewSummaries, displayEvidence)
         .filter(task => task.state === "waiting_approval");
       const projectedRecent = this.applyDisplayEvidence(recentSummaries, displayEvidence);
+      const usageRuns = this.harnessKey ? await new HarnessRunStoreV1(joined(tx), this.harnessKey)
+        .inspectUsageScope(this.scope.tenantId, projectId) : [];
+      const usageRollup = rollupUsageV1(usageRuns.map(value => this.usageEvidence(value.run, value.events)));
       return taskProjectOverviewSchema.parse({ projectId, current: projectedCurrent.slice(0, 10),
         awaitingReview: projectedReviews.slice(0, 5), recent: projectedRecent,
         additionalCurrentOmitted: projectedCurrent.length > 10 || currentRows.length > 250,
-        additionalReviewsOmitted: projectedReviews.length > 5 || reviewRows.length > 250,
+        additionalReviewsOmitted: projectedReviews.length > 5 || reviewRows.length > 250, usageRollup,
+        priceTable: this.priceTableEvidence(),
         additionalRecentOmitted: recentRows.length > 10, observedAt: actor.now, startsWork: false });
     });
   }

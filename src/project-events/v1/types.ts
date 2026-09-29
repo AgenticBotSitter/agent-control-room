@@ -76,6 +76,14 @@ export interface ProjectEventReadRequestV1 {
   limit: number;
 }
 
+/** One already-open database connection. Structurally the persistence
+ * `DatabaseSession`, restated here so this contract never imports a driver. */
+export interface ProjectEventReadSessionV1 {
+  query<T = Record<string, unknown>>(statement: string, params?: unknown[]): Promise<{ rows: T[] }>;
+}
+
 export interface ProjectEventReadSourceV1 {
-  read(request: ProjectEventReadRequestV1): Promise<ProjectEventPageV1>;
+  /** `session` lets a caller that already holds a transaction compose this read
+   * on its own connection. A read must never need a second pooled connection. */
+  read(request: ProjectEventReadRequestV1, session?: ProjectEventReadSessionV1): Promise<ProjectEventPageV1>;
 }

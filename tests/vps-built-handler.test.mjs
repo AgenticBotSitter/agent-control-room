@@ -9,7 +9,8 @@ import { seedWebConnection, seedWebSignal, webConnectionKeys } from "./helpers/w
 
 test("compiled Node entry protects pages, APIs and streams before application composition", async () => {
   assert.equal(typeof handler, "function");
-  for (const path of ["/", "/ideas", "/workers", "/settings", "/connections", "/api/v1/connections", "/api/v1/projects", "/api/v1/operator-surface", "/api/v1/projects/project:test/events"]) {
+  for (const path of ["/", "/ideas", "/workers", "/session-watch", "/settings", "/connections", "/api/v1/connections",
+    "/api/v1/session-watch", "/api/v1/projects", "/api/v1/operator-surface", "/api/v1/projects/project:test/events"]) {
     const response = await handler(new Request(`https://private.example.invalid${path}`));
     assert.equal(response.status, 503, path);
     assert.deepEqual(await response.json(), { error: "private_app_not_configured" });
@@ -37,6 +38,11 @@ test("compiled private routes use the installed process, real disposable SQL, an
   const homeTasks = await (await handler(request("/api/v1/home/tasks"))).json();
   assert.deepEqual(homeTasks.active, []); assert.deepEqual(homeTasks.recentResults, []);
   assert.equal(homeTasks.resultSource, "not_configured"); assert.equal(homeTasks.startsWork, false);
+  const sessionWatch = await (await handler(request("/api/v1/session-watch"))).json();
+  assert.deepEqual(sessionWatch.sessions, []); assert.equal(sessionWatch.source, "not_configured");
+  assert.equal(sessionWatch.startsWork, false);
+  const sessionWatchPage = await handler(request("/session-watch")); assert.equal(sessionWatchPage.status, 200);
+  assert.match(await sessionWatchPage.text(), /Loading saved session evidence/);
   const created = await handler(request(undefined, "POST", { title: "Compiled project", summary: "From the actual built API" }));
   assert.equal(created.status, 201); const { project } = await created.json();
   const catalog = await handler(request("/projects")); assert.equal(catalog.status, 200);
@@ -146,7 +152,8 @@ test("compiled private routes use the installed process, real disposable SQL, an
   const session = await handler(request("/session")); assert.equal(session.status, 200);
   assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
-  for (const protectedPath of ["/projects", "/ideas", "/api/v1/ideas", "/connections", "/workers", "/settings", "/api/v1/connections", path, `/projects/${encodeURIComponent(idea.projectId)}`,
+  for (const protectedPath of ["/projects", "/ideas", "/api/v1/ideas", "/connections", "/workers", "/session-watch", "/settings",
+    "/api/v1/connections", "/api/v1/session-watch", path, `/projects/${encodeURIComponent(idea.projectId)}`,
     taskPath, attentionPath, overviewPath, filesPath, projectInboxPath, projectReviewsPath, `${path}/inbox`, `${path}/agents`, `${path}/automations`, `${path}/files`, `${path}/reviews`, `${path}/activity`, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
     `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
