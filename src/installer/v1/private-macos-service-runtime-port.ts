@@ -354,7 +354,7 @@ export function createPrivateMacosServiceRuntimePortV1(input: unknown): PrivateM
     try {
       let value: unknown;
       try { value = await bounded(captured.perform(request), deadlineUnixMs, controller.signal, mutating); }
-      catch { return uncertain(); }
+      catch { controller.abort(); return uncertain(); }
       try {
         const result = captureHostReceipt(value, request);
         if (signal.aborted || controller.signal.aborted) return uncertain();
@@ -473,7 +473,7 @@ export function createPrivateMacosServiceRuntimePortV1(input: unknown): PrivateM
     try {
       result = await bounded(captured.observeHealth(request), checkedRequest.deadlineUnixMs, controller.signal, false);
       if (checkedSignal.aborted || controller.signal.aborted || Date.now() >= checkedRequest.deadlineUnixMs) return uncertain();
-    } catch { return uncertain(); }
+    } catch { controller.abort(); return uncertain(); }
     finally {
       clearTimeout(timer);
       checkedSignal.removeEventListener("abort", abort);
@@ -509,7 +509,7 @@ export function createPrivateMacosServiceRuntimePortV1(input: unknown): PrivateM
       const result = exact(value, ["outcome"]);
       if (result.outcome !== "confirmed") return uncertain();
       return Object.freeze({ outcome: "confirmed" as const });
-    } catch { return uncertain(); }
+    } catch { controller.abort(); return uncertain(); }
     finally {
       clearTimeout(timer);
       checkedSignal.removeEventListener("abort", abort);

@@ -493,6 +493,10 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 
 **Decision:** A review evaluates quality against an immutable target and acceptance profile. Verification evaluates named scenarios and binds claims to evidence. Preference selects among acceptable alternatives. Approval authorizes one exact consequential operation. No record implicitly grants the function of another.
 
+**Phase 2B protected-file implementation:** Mac-local result lists contain only metadata plus separate 60-second HMAC tickets for preview and download. Each ticket binds project, task, run, artifact, content digest, byte count, disposition, and expiry; authenticated authorization and the current stored receipt are checked again before returning bounded `text/plain`. Raw HTML is never interpreted, remote images are omitted, and external links are visibly marked. The former direct JSON content route is closed.
+
+**Phase 2B human-verification implementation:** Every Mac-local acceptance profile names a human-owner scenario separately from its automatic text-structure scenario. The default provider supplies the existing human-only verification service and registers descriptors for both startup and live-created projects. Automated quality processing knows only the structure scenario and therefore cannot create, infer, or substitute the human record. The owner control records pass/fail/blocked/inconclusive without completing, approving, or authorizing the job.
+
 **Why:** An aesthetically approved video may still be unauthorized to publish, while a securely authorized operation may still produce unacceptable work. Artifact presence does not prove a claim.
 
 **Alternatives rejected:** One approve/reject flag for everything; artifact upload equals verification; review acceptance authorizes publication; operation approval implies quality.
@@ -504,6 +508,8 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 ## ADR-042 — Completion Gates use bounded revision lineage
 
 **Decision:** Submitted work passes deterministic checks, required independent review, bounded correction cycles, verification scenarios, and an evidence-backed decision. Review-requested changes create explicit revision lineage and immutable superseded targets. Exceeding the configured correction limit creates attention.
+
+**Phase 2B implementation:** The Mac-local revision command materializes a new proposed job with separate assignment and approval. Authenticated execution-plan lineage is read back for presentation, so the source task links to the revised task and the revised task links to its predecessor; neither page infers lineage from a URL or mutable browser state.
 
 **Why:** Technical retry is not the same as intentionally changing a result after feedback. Unlimited self-repair loops consume resources, hide repeated failure, and can let the producer silently redefine success.
 
@@ -528,6 +534,8 @@ Each record contains context, decision, alternatives, trade-offs, and reevaluati
 ## ADR-044 — Reviewer independence and deterministic risk floors are enforceable policy
 
 **Decision:** Review policies may require separation from the producer by worker, agent profile, harness, or model family. Joint authors are not independent final reviewers of their combined output. AI risk and quality scores are advisory and may raise scrutiny but never lower the deterministic risk floor.
+
+**Phase 2B implementation:** Completion principals retain worker, agent-profile, harness, adapter, and (when known) model-family provenance. Project profiles select either the minimum `different_worker` policy or the preferred `different_model_family` policy. Configured agent provenance axes fail closed when missing or equal; human-owner reviews remain allowed and distinct from agent cross-review.
 
 **Why:** Self-review and correlated model failure can make repeated review cosmetic. Model-generated risk scores are vulnerable to prompt injection and optimistic misclassification.
 
@@ -6191,3 +6199,49 @@ not a live IPC, worker enrollment, service, or installation.
 **Next:** Local foundation and remote-worker enrollment tracks may progress in
 parallel against this frozen contract. A fully mounted controller proof and a
 controlled two-node enrollment proof remain separate requirements.
+
+## ADR-254 — versioned Mac-local owner-review profile upgrade
+
+2026-09-27. Migration 0092 admits the stricter Phase 2B owner-review profile
+under a new `profile:mac-local-owner-review:v2:` identity. Completion-gate
+records are immutable, so an existing project's old profile row is neither
+updated nor deleted. At startup the live-project provisioner registers the v2
+profile beside the old row; an exact restart replays the v2 row. New templates
+and new review targets use the v2 id and digest, including both automatic text
+and human-verification scenarios plus the configured reviewer-separation rule.
+Existing targets remain bound to the old id, digest, and old profile semantics.
+
+New projects follow the same provisioner path and receive only the v2 profile.
+Registration must finish before the task application becomes ready. A conflict
+or guard refusal therefore fails startup instead of silently falling back to
+the old profile. Migration 0092 changes the insert guard only and adds no grant;
+the private web role still cannot insert review targets through this path.
+
+## ADR-255 — explicit owner acceptance may carry the configured plain-text observation
+
+2026-09-27. The Mac-local v2 profile keeps both of its conservative checks: the
+automatic bounded-text structure scenario and the human observation scenario.
+The default owner interface no longer asks the same owner to accept quality and
+then repeat that semantic judgment in a second form. Accept is disabled until
+the owner explicitly checks “I read it and it’s correct.” The resulting one
+idempotent command records both the completion-gate review and the configured
+human verification in the same database and staged-checkpoint transaction.
+Requesting changes records no verification pass.
+
+This is an explicit owner-review composition setting, not a generic inference
+from the manual-verification registry. The public Mac-local default passes only
+its human read descriptor to that setting. A review service only offers the
+combined attestation when it is given exactly one matching configured scenario
+that is still missing from the target. Profiles may retain a
+separate verification action by omitting that review-service configuration.
+The recorded verification still grants neither approval nor execution authority,
+and the ordinary quality coordinator remains the only path that can complete the
+canonical job after every required scenario passes.
+
+Startup and newly discovered Mac-local projects now use the same registration
+path for their immutable profile, three task templates, automatic text scenario,
+and human descriptor. A project is not marked known until all four registrations
+succeed. This closes the prior startup-only gap that left the automatic text
+scenario unavailable. Task-result deep links treat `result` as an untrusted
+browser hint and still render when that hint is stale, empty, duplicate, or
+malformed; the existing authorized result list gates every content read.

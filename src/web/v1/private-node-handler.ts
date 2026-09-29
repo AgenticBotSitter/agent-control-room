@@ -36,35 +36,38 @@ class RequestFailure extends Error { constructor(readonly status: number) { supe
 type NodeHandlerMode = Readonly<{
   localLoopback: boolean;
   allowPost: boolean;
+  allowDelete: boolean;
   allowCookies: boolean;
   allowSetCookie: boolean;
   rejectForwarded: boolean;
   rejectCredentialHeaders: boolean;
   validateSuppliedOrigin: boolean;
   injectSetupMarker: boolean;
+  allowSecondaryOrigin: boolean;
 }>;
 
-const productionMode: NodeHandlerMode = Object.freeze({ localLoopback: false, allowPost: true,
+const productionMode: NodeHandlerMode = Object.freeze({ localLoopback: false, allowPost: true, allowDelete: false,
   allowCookies: false, allowSetCookie: false, rejectForwarded: false, rejectCredentialHeaders: false,
-  validateSuppliedOrigin: false, injectSetupMarker: false });
-const contributorDemoMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true,
+  validateSuppliedOrigin: false, injectSetupMarker: false, allowSecondaryOrigin: true });
+const contributorDemoMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true, allowDelete: false,
   allowCookies: true, allowSetCookie: true, rejectForwarded: true, rejectCredentialHeaders: false,
-  validateSuppliedOrigin: false, injectSetupMarker: false });
+  validateSuppliedOrigin: false, injectSetupMarker: false, allowSecondaryOrigin: false });
 /** Selected by the Mac-local composition only. This accepts cookies strictly
  * on loopback; it does not select or replace application authentication. */
-const macLocalMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true,
+const macLocalMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true, allowDelete: true,
   allowCookies: true, allowSetCookie: true, rejectForwarded: true, rejectCredentialHeaders: false,
-  validateSuppliedOrigin: true, injectSetupMarker: false });
-const localSetupMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: false,
+  validateSuppliedOrigin: true, injectSetupMarker: false, allowSecondaryOrigin: true });
+const localSetupMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: false, allowDelete: false,
   allowCookies: false, allowSetCookie: false, rejectForwarded: true, rejectCredentialHeaders: true,
-  validateSuppliedOrigin: true, injectSetupMarker: true });
+  validateSuppliedOrigin: true, injectSetupMarker: true, allowSecondaryOrigin: false });
 
 function requestHead(input: IncomingMessage, origins: readonly string[], mode: NodeHandlerMode,
   forwardedHeaders: ReadonlySet<string>) {
   if (input.socket.remoteAddress !== "127.0.0.1" || input.httpVersion !== "1.1") throw new RequestFailure(403);
   const method = input.method;
   const target = input.url;
-  if (!method || !(mode.allowPost ? ["GET", "HEAD", "POST"] : ["GET", "HEAD"]).includes(method))
+  const allowedMethods = ["GET", "HEAD", ...(mode.allowPost ? ["POST"] : []), ...(mode.allowDelete ? ["DELETE"] : [])];
+  if (!method || !allowedMethods.includes(method))
     throw new RequestFailure(405);
   if (!target || Buffer.byteLength(target) > privateHttpLimits.urlBytes || !target.startsWith("/")
     || target.startsWith("//") || /[\\\s#]/u.test(target)
@@ -202,13 +205,19 @@ export function createContributorDemoNodeHandler(options: NodeHandlerOptions) {
 }
 
 /** Loopback transport for the separately composed real Mac-local application.
- * Unlike the contributor-demo transport, this factory accepts any fixed local
- * port but never an HTTPS/remote origin, a second origin, or forwarded headers. */
+ * It accepts one protected, exact HTTPS origin for a loopback reverse proxy;
+ * the socket remains loopback-only and forwarded headers remain refused. */
 export function createMacLocalNodeHandler(options: NodeHandlerOptions) {
   const origin = new URL(options.origin);
   if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port
-    || origin.origin !== options.origin || options.secondaryOrigin !== undefined)
+    || origin.origin !== options.origin)
     throw new Error("mac_local_serving_config_invalid");
+  if (options.secondaryOrigin !== undefined) {
+    const secondary = new URL(options.secondaryOrigin);
+    if (secondary.protocol !== "https:" || secondary.origin !== options.secondaryOrigin
+      || secondary.pathname !== "/" || secondary.search || secondary.hash || secondary.username || secondary.password
+      || secondary.hostname.includes("*")) throw new Error("mac_local_serving_config_invalid");
+  }
   return createNodeHandler(options, macLocalMode);
 }
 
@@ -266,7 +275,7 @@ export function createLocalSetupNodeHandler(options: LocalSetupNodeHandlerOption
 function createNodeHandler(options: NodeHandlerOptions, mode: NodeHandlerMode) {
   const origin = new URL(options.origin);
   if (origin.origin !== options.origin) throw new Error("private_serving_config_invalid");
-  if (mode.localLoopback && options.secondaryOrigin !== undefined) throw new Error("demo_serving_config_invalid");
+  if (!mode.allowSecondaryOrigin && options.secondaryOrigin !== undefined) throw new Error("demo_serving_config_invalid");
   const origins = Object.freeze([options.origin, ...(options.secondaryOrigin ? [options.secondaryOrigin] : [])]);
   const gatewayAssertionProfile = captureGatewayAssertionProviderProfileV1(
     options.gatewayAssertionProfile ?? cloudflareAccessGatewayAssertionProfileV1,

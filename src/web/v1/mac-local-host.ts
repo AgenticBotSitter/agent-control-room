@@ -9,6 +9,9 @@ import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { MacLocalTaskApplicationV1 } from "./mac-local-task-application";
 import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
 import type { NativeQueueWorkerStartupConfiguration } from "./native-queue-worker-startup";
+import { createPostgresLocalOwnerSessionStoreV1 } from "./local-owner-session-store";
+import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
+import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
@@ -23,6 +26,8 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   database: OpenedDatabase;
   assets: PrivateClientAssets;
   render(request: Request): Promise<Response> | Response;
+  localOwnerSessionStore?: LocalOwnerSessionStoreV1;
+  initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   /** The existing shared controller operations.  Supplying these makes the
    * local website use the same task/review/correction lifecycle as every
    * other topology; omitting them intentionally leaves those routes absent. */
@@ -47,6 +52,8 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     origin: configuration.localOwnerSession.origin,
     port: configuration.port,
     localOwnerSession: configuration.localOwnerSession,
+    ...(input.localOwnerSessionStore ? { localOwnerSessionStore: input.localOwnerSessionStore } : {}),
+    ...(input.initialLocalOwnerSessions ? { initialLocalOwnerSessions: input.initialLocalOwnerSessions } : {}),
     workspaceId: configuration.workspaceId,
     database: input.database,
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
@@ -77,6 +84,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
 export function createMacLocalProtectedHostV1(input: Readonly<{
   loadConfiguration(): Promise<MacLocalProtectedConfigurationV1>;
   readVersion(executablePath: string): Promise<string>;
+  verifyModelPolicy?: Parameters<typeof createMacLocalStartupV1>[0]["verifyModelPolicy"];
   openDatabase(configuration: MacLocalProtectedConfigurationV1["database"]): OpenedDatabase;
   assets: PrivateClientAssets;
   render(request: Request): Promise<Response> | Response;
@@ -110,6 +118,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
     throw new Error("mac_local_host_configuration_invalid");
   const startup = createMacLocalStartupV1({
     readVersion: input.readVersion,
+    ...(input.verifyModelPolicy ? { verifyModelPolicy: input.verifyModelPolicy } : {}),
     openDatabase: input.openDatabase,
     createService: async ({ configuration, database, workerReadiness, databaseRoles }) => {
       let taskApplication: HostedTaskApplication | undefined;
@@ -117,8 +126,15 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
         if (input.createTaskApplication && !databaseRoles) throw new Error("mac_local_host_configuration_invalid");
         taskApplication = input.createTaskApplication
           ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles! }) : undefined;
+        // Some inert composition tests intentionally supply an opaque fake
+        // client. A real opened DatabaseClient always exposes query and must
+        // use the durable store.
+        const localOwnerSessionStore = typeof database.client.query === "function"
+          ? createPostgresLocalOwnerSessionStoreV1(database.client, configuration.localOwnerSession) : undefined;
+        const initialLocalOwnerSessions = localOwnerSessionStore ? await localOwnerSessionStore.load(Date.now()) : [];
         const web = createMacLocalWebServiceFromConfigurationV1({
           configuration, database, assets: input.assets, render: input.render,
+          ...(localOwnerSessionStore ? { localOwnerSessionStore } : {}), initialLocalOwnerSessions,
           ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
           workerReadiness,
           ...(input.createServer ? { createServer: input.createServer } : {}),

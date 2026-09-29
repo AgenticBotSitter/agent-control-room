@@ -1,6 +1,8 @@
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../../harness/hermes-021-v1";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1";
+import { HERMES_LOCAL_ADAPTER_V1 } from "../../harness/hermes-local-v1/task-planning-contract";
+import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/owner-trusted-local-task-planning-contract";
 import { NativeResultSubmissionService } from "./native-result-submission";
 import type { NativeQualityConfiguration } from "./native-result-verification";
 import type { SubmittedTaskResultInspectionV1, TaskResultInspectionSourceV1 } from "./task-result-inspection";
@@ -8,7 +10,9 @@ import { DurableLocalResultInspectionServiceV1 } from "./durable-local-result-in
 
 const unavailable = (): never => { throw new Error("routed_result_inspection_unavailable"); };
 const required = <T>(value: T | undefined): T => value === undefined ? unavailable() : value;
-const localAdapters = new Set<string>([HERMES_021_MACOS_LOCAL_ADAPTER_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1]);
+const localAdapters = new Set<string>([HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_LOCAL_ADAPTER_V1,
+  CLAUDE_CODE_LOCAL_ADAPTER_V1, CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1]);
+export function isRoutedLocalResultAdapterV1(adapterId: string): boolean { return localAdapters.has(adapterId); }
 
 /**
  * One read-only selector for the existing native and admitted-local result
@@ -45,7 +49,7 @@ export class RoutedTaskResultInspectionServiceV1 implements TaskResultInspection
     const row = (await tx.query<{ adapter_id: string }>("SELECT adapter_id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
       [tenantId, runId])).rows[0];
     if (!row) unavailable();
-    if (localAdapters.has(row.adapter_id)) {
+    if (isRoutedLocalResultAdapterV1(row.adapter_id)) {
       const local = required(this.local);
       return local.inspectSubmitted(tx, tenantId, runId);
     }

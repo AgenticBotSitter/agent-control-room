@@ -13,6 +13,7 @@ import { verifyCodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos
 import { verifyClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
 import { verifyLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
 import { verifyInstallationPlanV1 } from "../../installer/v1/installation-plan";
+import type { ManualVerificationScenario } from "./task-verification-service";
 export { createAccessKeyLoader, createStaticAccessKeyLoader } from "./access-key-cache";
 export { createOwnerBootstrapCeremonyV1 } from "./owner-bootstrap-ceremony";
 
@@ -34,6 +35,8 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
     if (!Number.isSafeInteger(input.maxSessionSeconds) || input.maxSessionSeconds < 1 || input.maxSessionSeconds > 604800
       || typeof input.loadKeys !== "function") throw new Error();
     if (input.operatorSurface !== undefined && typeof input.operatorSurface.read !== "function") throw new Error();
+    const startupManualScenarios = input.tasks?.manualVerificationScenarios;
+    if (startupManualScenarios !== undefined && !Array.isArray(startupManualScenarios)) throw new Error();
     const installationTopologyPlan = input.installationTopologyPlan === undefined ? undefined
       : verifyInstallationTopologyPlanV1(input.installationTopologyPlan);
     const installationReadiness = input.installationReadiness === undefined ? undefined
@@ -85,10 +88,12 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       ...(claudeCodeLocalProcessReadiness === undefined ? {} : { claudeCodeLocalProcessReadiness }),
       ...(localSupervisorReadiness === undefined ? {} : { localSupervisorReadiness }),
       ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
+        ...(input.tasks.taskPlanIntegrityKey ? { taskPlanIntegrityKey: key(input.tasks.taskPlanIntegrityKey) } : {}),
         ...(input.tasks.results ? { results: { ...input.tasks.results, integrityKey: key(input.tasks.results.integrityKey) } } : {}),
         ...(input.tasks.reviews ? { reviews: { ...input.tasks.reviews, integrityKey: key(input.tasks.reviews.integrityKey) } } : {}),
         ...(input.tasks.ownerReviews ? { ownerReviews: { ...input.tasks.ownerReviews, integrityKey: key(input.tasks.ownerReviews.integrityKey) } } : {}),
-        ...(input.tasks.manualVerificationScenarios ? { manualVerificationScenarios: input.tasks.manualVerificationScenarios.map(value => ({ ...value })) } : {}) } } : {}),
+        ...(startupManualScenarios ? { manualVerificationScenarios: (startupManualScenarios as readonly ManualVerificationScenario[])
+          .map(value => ({ ...value })) } : {}) } } : {}),
       ...(input.connections ? { connections: { registryIntegrityKey: key(input.connections.registryIntegrityKey),
         ...(input.connections.telemetryIntegrityKey ? { telemetryIntegrityKey: key(input.connections.telemetryIntegrityKey) } : {}) } } : {}),
       ...(input.operatorSurface ? { operatorSurface: { read: input.operatorSurface.read.bind(input.operatorSurface) } } : {}),

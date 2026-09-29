@@ -24,7 +24,12 @@ export class TaskResultCoordinator {
     this.scope = Object.freeze({ tenantId: localId.parse(scope.tenantId), workspaceId: localId.parse(scope.workspaceId) });
     this.quality = captureTaskQualityConfiguration(quality);
     // The outer lifecycle validates matching review keys; this reader captures independent copies.
-    this.planning = { ...planning, ...captureNativeTaskTemplates(planning), integrityKey: Uint8Array.from(planning.integrityKey),
+    const templates = planning.templateRegistry ? { templateRegistry: planning.templateRegistry } : (() => {
+      if (!planning.template) return deny();
+      return captureNativeTaskTemplates({ template: planning.template,
+        ...(planning.additionalTemplates === undefined ? {} : { additionalTemplates: planning.additionalTemplates }) });
+    })();
+    this.planning = { ...planning, ...templates, integrityKey: Uint8Array.from(planning.integrityKey),
       reviewIntegrityKey: Uint8Array.from(planning.reviewIntegrityKey),
       checkpoints: { read: planning.checkpoints.read.bind(planning.checkpoints), initialize: deny, advance: deny },
       ...(planning.ideaIntegrityKey ? { ideaIntegrityKey: Uint8Array.from(planning.ideaIntegrityKey) } : {}) };

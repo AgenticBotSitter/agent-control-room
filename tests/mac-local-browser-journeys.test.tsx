@@ -357,6 +357,7 @@ describe("W5 journey steps that are reachable as shipped", { skip: needsPg }, ()
     const workers = await f.request("/api/v1/local-workers", { headers: f.auth });
     assert.deepEqual(await readJson(workers, 200, "worker status"),
       { taskWorkersStarted: false, instruction: "create your first project, then run mac:down && mac:up",
+        projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "settings"],
         workers: [{ kind: "hermes-021", state: "unavailable", proof: "not_proven" }] });
   });
 });
@@ -470,8 +471,12 @@ describe("no preview or fake panel is reachable through the rendered mac-local p
     const refused = ["/local-preview", "/local-preview?project=project%3Aexample", "/demo", "/contributor-demo",
       "/app/local-preview/workspace", "/local-pilot"];
     for (const path of refused) {
-      assert.deepEqual(await readJson(await f.request(path, { headers: f.auth }), 404, `preview path ${path}`),
-        { error: "not_found" }, `${path} must not render`);
+      const response = await f.request(path, { headers: f.auth });
+      assert.equal(response.status, 404, `${path} must not render`);
+      assert.match(response.headers.get("content-type") ?? "", /^text\/html/);
+      const html = await response.text();
+      assert.match(html, /Page unavailable/);
+      assert.doesNotMatch(html, /\{"error"/);
     }
     // The preview/demo transports are not mounted either: those two API paths
     // belong to the separate contributor-demo server, not to mac-local.

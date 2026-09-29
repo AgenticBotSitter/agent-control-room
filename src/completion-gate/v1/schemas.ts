@@ -14,7 +14,7 @@ const uniqueSorted=<T extends z.ZodType<string>>(schema:T,minimum:number,maximum
 });
 
 export const completionPrincipalSchemaV1=z.object({actorId:id,actorType:z.enum(["human","agent","service"]),workerId:id.optional(),
-  agentProfileId:id.optional(),harness:id.optional(),modelFamily:id.optional()}).strict();
+  agentProfileId:id.optional(),harness:id.optional(),adapterId:id.optional(),modelFamily:id.optional()}).strict();
 
 export const completionAcceptanceProfileSchemaV1=z.object({schemaVersion:z.literal(COMPLETION_GATE_SCHEMA_VERSION_V1),id,tenantId:id,projectId:id,
   name:label,targetKind,requiredVerificationScenarioIds:uniqueSorted(id,1,50),minimumIndependentReviews:z.number().int().min(1).max(5),

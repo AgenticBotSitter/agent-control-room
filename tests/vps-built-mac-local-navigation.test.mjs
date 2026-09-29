@@ -50,19 +50,21 @@ test("built Mac-local pages, owner navigation and their browser reads stay reach
   const { receipt } = await taskResponse.json();
   const taskId = encodeURIComponent(receipt.jobId);
 
-  for (const path of ["/", "/projects", "/workers", `/projects/${projectId}`,
-    `/projects/${projectId}/tasks`, `/projects/${projectId}/tasks/${taskId}`]) {
+  for (const path of ["/", "/needs-me", "/projects", "/workers", `/projects/${projectId}`,
+    `/projects/${projectId}/tasks`, `/projects/${projectId}/reviews`, `/projects/${projectId}/activity`,
+    `/projects/${projectId}/tasks/${taskId}`]) {
     const signedOut = await send(path);
     assert.equal(signedOut.status, 303, `signed-out ${path}`);
     assert.equal(new URL(signedOut.headers.get("location"), origin).href, `${origin}/session`);
   }
   const home = await get("/");
-  assert.equal(home.status, 303);
-  assert.equal(new URL(home.headers.get("location"), origin).href, `${origin}/projects`);
+  assert.equal(home.status, 200);
+  assert.match(await home.text(), /Home/);
 
-  const pages = ["/projects", ...["active", "paused", "completed", "archived"].map(lifecycle =>
+  const pages = ["/", "/needs-me", "/projects", ...["active", "paused", "completed", "archived"].map(lifecycle =>
     `/projects?lifecycle=${lifecycle}`), "/workers", `/projects/${projectId}`,
-  `/projects/${projectId}/tasks`, `/projects/${projectId}/tasks/${taskId}`];
+  `/projects/${projectId}/tasks`, `/projects/${projectId}/reviews`, `/projects/${projectId}/activity`,
+  `/projects/${projectId}/tasks/${taskId}`];
   const visited = new Set();
   const queue = [...pages];
   while (queue.length) {
@@ -82,13 +84,16 @@ test("built Mac-local pages, owner navigation and their browser reads stay reach
     }
   }
   assert.ok(visited.has("/workers"));
+  assert.ok(visited.has("/needs-me"));
   assert.ok(visited.has(`/projects/${projectId}/tasks`));
-  for (const path of ["/api/v1/local-workers", "/api/v1/projects", `/api/v1/projects/${projectId}`,
+  assert.ok(visited.has(`/projects/${projectId}/reviews`));
+  assert.ok(visited.has(`/projects/${projectId}/activity`));
+  for (const path of ["/api/v1/home/tasks", "/api/v1/needs-me/tasks", "/api/v1/local-workers", "/api/v1/projects", `/api/v1/projects/${projectId}`,
     `/api/v1/projects/${projectId}/tasks`, `/api/v1/projects/${projectId}/tasks/${taskId}`]) {
     const response = await get(path);
     assert.equal(response.status, 200, `browser fetch ${path}`);
   }
   // Mac-local pages must not advertise hosted-only navigation or call its APIs.
-  for (const path of ["/setup", "/workboard", "/needs-me", "/settings", "/ideas", "/connections"])
+  for (const path of ["/setup", "/workboard", "/settings", "/ideas", "/connections"])
     assert.equal(visited.has(path), false, `unsupported link ${path}`);
 });

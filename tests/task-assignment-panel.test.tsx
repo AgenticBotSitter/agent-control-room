@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TaskAssignmentPanel } from "../private-app/app/task-assignment";
+import { retainAssignmentNodeSelectionV1, TaskAssignmentPanel } from "../private-app/app/task-assignment";
+import { retainPreparedWorkerSelectionV1 } from "../private-app/app/task-planning";
+import { HERMES_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-local-v1/task-planning-contract";
+import { retainEquivalentTaskDetailV1 } from "../private-app/app/task-workspace";
 
 test("local Hermes assignment states its bounded text-review scope before reservation", () => {
   const html = renderToStaticMarkup(createElement(TaskAssignmentPanel, {
@@ -36,4 +39,39 @@ test("multiple configured routes remain an owner choice", () => {
   assert.match(html, /Choose a machine/);
   assert.match(html, /<option value="" selected="">Choose a machine/);
   assert.doesNotMatch(html, /<option value="node:(one|two)" selected="">/);
+});
+
+test("local assignment offers one clear assign-and-run action and keeps a valid refresh selection", () => {
+  const options = { projectId: "project:local", jobId: "job:local", inputDigest: `sha256:${"a".repeat(64)}`,
+    receipt: null, startsWork: false as const, candidateEvidence: "configured_routes_only" as const,
+    recommendation: { state: "one_configured_route" as const, nodeId: "node:local", label: "Local agent",
+      workScope: "configured_task" as const, availability: "unknown" as const, startsWork: false as const,
+      grantsExecutionAuthority: false as const },
+    candidates: [{ nodeId: "node:local", label: "Local agent", platform: "macos" as const, workScope: "configured_task" as const }] };
+  const html = renderToStaticMarkup(createElement(TaskAssignmentPanel, { options, nodeId: "node:local", setNodeId() {},
+    pending: false, uncertain: false, assignAndRun: true, onChange() {}, onRetry() {} }));
+  assert.match(html, />Assign and run</);
+  assert.match(html, /records the reservation, owner approval and queue submission separately/i);
+  assert.doesNotMatch(html, /Assign without starting/);
+  assert.equal(retainAssignmentNodeSelectionV1(options, "node:local"), "node:local");
+  assert.equal(retainAssignmentNodeSelectionV1(options, "node:gone"), "node:local");
+});
+
+test("an unchanged prepared-worker refresh preserves the owner's selection", () => {
+  const options = { projectId: "project:local", sourceJobId: "job:local", inputDigest: `sha256:${"a".repeat(64)}`,
+    availability: "available" as const, startsWork: false as const, savedPlan: null, templates: [
+      { id: "template:one", adapter: HERMES_LOCAL_ADAPTER_V1 },
+      { id: "template:two", adapter: HERMES_LOCAL_ADAPTER_V1 },
+    ] };
+  assert.equal(retainPreparedWorkerSelectionV1(options, "template:two"), "template:two");
+  assert.equal(retainPreparedWorkerSelectionV1({ ...options, templates: [options.templates[0]!] }, "template:two"), "template:one");
+  assert.equal(retainPreparedWorkerSelectionV1(options, "template:gone"), undefined);
+});
+
+test("an unchanged task poll retains identity and a changed poll replaces it", () => {
+  const previous = { task: { jobId: "job:one" }, observedAt: "2026-09-27T00:00:00.000Z" };
+  assert.equal(retainEquivalentTaskDetailV1(previous,
+    { ...structuredClone(previous), observedAt: "2026-09-27T00:00:30.000Z" }), previous);
+  const changed = { task: { jobId: "job:two" }, observedAt: "2026-09-27T00:00:30.000Z" };
+  assert.equal(retainEquivalentTaskDetailV1(previous, changed), changed);
 });

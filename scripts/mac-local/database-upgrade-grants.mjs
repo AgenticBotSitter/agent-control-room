@@ -63,8 +63,12 @@ export function desiredMacGrantsV1(sources) {
             throw new Error("upgrade_grant_source_refused");
           const columns = parsed[2] ? splitCommas(parsed[2]).map(name) : [""];
           if (parsed[2] && schema) throw new Error("upgrade_grant_source_refused");
-          for (const column of columns) desired.add(tuple({ role, kind: schema ? "schema" : "table",
-            object: qualified, column, privilege: parsed[1] }));
+          for (const column of columns) {
+            const item = tuple({ role, kind: schema ? "schema" : "table",
+              object: qualified, column, privilege: parsed[1] });
+            if (desired.has(item)) throw new Error("upgrade_grant_source_duplicate");
+            desired.add(item);
+          }
         }
       }
     }

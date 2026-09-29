@@ -13,6 +13,7 @@ import type { MacLocalTaskRuntimeV1 } from "./mac-local-task-runtime";
 
 type Project = Readonly<{ projectId: string; createdAt: string }>;
 type Kind = "hermes" | "claude" | "codex";
+export const MAC_LOCAL_MAX_PROJECTS_V1 = 50;
 const descriptors = Object.freeze({
   hermes: { adapter: HERMES_LOCAL_ADAPTER_V1, capability: HERMES_LOCAL_CAPABILITY_V1,
     operation: HERMES_LOCAL_START_OPERATION_V1, credential: "credential:owner-cli:hermes" },
@@ -26,7 +27,7 @@ const descriptors = Object.freeze({
  * the existing owner approval, active lease and worker-current checks. */
 export function buildMacLocalTaskTemplatesV1(projects: readonly Project[],
   configuration: MacLocalProtectedConfigurationV1, runtime: MacLocalTaskRuntimeV1) {
-  if (projects.length < 1 || projects.length > 5) throw new Error("mac_local_template_limit");
+  if (projects.length > MAC_LOCAL_MAX_PROJECTS_V1) throw new Error("mac_local_project_limit_50");
   const templates: NativeTaskTemplate[] = [];
   const routes: TaskAssignmentRoute[] = [];
   const profiles = projects.map(project => createMacLocalOwnerReviewProfileV1({
@@ -57,6 +58,15 @@ export function buildMacLocalTaskTemplatesV1(projects: readonly Project[],
         connectorProfileDigest, acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile) }));
       if (index === 0) routes.push({ nodeId, executorId: worker.workerId, capabilityProbeId: item.capability,
         maxConcurrentTasks: 1, requiredScratchBytes: 0, leaseSeconds: 180 });
+    }
+  }
+  if (projects.length === 0) {
+    for (const kind of ["hermes", "claude", "codex"] as const satisfies readonly Kind[]) {
+      const item = descriptors[kind];
+      const worker = configuration.enablement.workers.find(value => value.kind === (kind === "claude" ? "claude-code" : kind));
+      if (!worker) throw new Error("mac_local_worker_missing");
+      routes.push({ nodeId: `${configuration.enablement.nodeId}.${kind}`, executorId: worker.workerId,
+        capabilityProbeId: item.capability, maxConcurrentTasks: 1, requiredScratchBytes: 0, leaseSeconds: 180 });
     }
   }
   return Object.freeze({ templates: Object.freeze(templates), routes: Object.freeze(routes), profiles: Object.freeze(profiles) });

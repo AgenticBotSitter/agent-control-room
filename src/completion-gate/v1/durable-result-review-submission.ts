@@ -16,6 +16,7 @@ const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(
 const unavailable = (): never => { throw new Error("durable_result_review_submission_unavailable"); };
 
 type ReceiptLocator = { project_id: string; job_id: string; artifact_id: string };
+type RecoverableRun = { run_id: string };
 
 export type DurableResultReviewSubmissionConfigurationV1 = {
   /** Authenticates the durable receipt and manifest. */
@@ -112,5 +113,23 @@ export class DurableResultReviewSubmissionServiceV1 {
           completionVerified: false as const, releasesCapacity: false as const };
       }, () => staged.flush());
     } catch { return unavailable(); }
+  }
+
+  /** Repairs the bounded publication gap where the authenticated artifact and
+   * immutable plan committed before their separately registered review target.
+   * `submit` re-verifies every row and is replay-safe; this locator grants no
+   * review decision, execution authority, or task completion. */
+  async recoverProject(tenantIdValue: string, projectIdValue: string) {
+    const tenantId = id.parse(tenantIdValue), projectId = id.parse(projectIdValue);
+    const rows = (await this.db.query<RecoverableRun>(`SELECT p.run_id
+      FROM control_native_review_plans p
+      JOIN control_native_artifact_receipts a ON a.tenant_id=p.tenant_id AND a.project_id=p.project_id
+        AND a.job_id=p.job_id AND a.run_id=p.run_id
+      LEFT JOIN control_completion_gate_records g ON g.tenant_id=p.tenant_id AND g.project_id=p.project_id
+        AND g.kind='target' AND g.id=p.plan->>'targetId'
+      WHERE p.tenant_id=$1 AND p.project_id=$2 AND g.id IS NULL
+      ORDER BY p.run_id COLLATE "C" LIMIT 6`, [tenantId, projectId])).rows;
+    for (const row of rows) await this.submit(tenantId, id.parse(row.run_id));
+    return Object.freeze({ recovered: rows.length, hasMore: rows.length === 6 });
   }
 }

@@ -26,9 +26,6 @@ import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { IdeaCanonicalResultProjectionOperation, TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
-import { taskPlanningReceiptSchema } from "./task-planning-wire";
-import { taskAttentionPageSchema } from "./task-attention-wire";
-import { taskDeliveryStatusSchema } from "./task-delivery-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
 import { ideaCreationOptionsSchema } from "./idea-wire";
@@ -234,13 +231,20 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   }) : undefined;
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
     || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function"
+    || options.planning.readSavedMany !== undefined && typeof options.planning.readSavedMany !== "function"
+    || options.planning.readSavedContinuation !== undefined && typeof options.planning.readSavedContinuation !== "function"
+    || options.planning.ensureProject !== undefined && typeof options.planning.ensureProject !== "function"
     || options.planning.readPreparedWorker !== undefined && typeof options.planning.readPreparedWorker !== "function"
     || options.planning.readConfiguredLocalRoute !== undefined && typeof options.planning.readConfiguredLocalRoute !== "function"
     || options.planning.supportsProject !== undefined && typeof options.planning.supportsProject !== "function"
     || options.planning.templatesForProject !== undefined && typeof options.planning.templatesForProject !== "function")) throw new Error("invalid_private_app_config");
   const planning = options.planning ? Object.freeze({ plan: options.planning.plan.bind(options.planning),
+    ensureProject: options.planning.ensureProject?.bind(options.planning),
     supportsProject: options.planning.supportsProject?.bind(options.planning), templatesForProject: options.planning.templatesForProject?.bind(options.planning),
-    readSaved: options.planning.readSaved?.bind(options.planning), readPreparedWorker: options.planning.readPreparedWorker?.bind(options.planning),
+    readSaved: options.planning.readSaved?.bind(options.planning),
+    readSavedMany: options.planning.readSavedMany?.bind(options.planning),
+    readSavedContinuation: options.planning.readSavedContinuation?.bind(options.planning),
+    readPreparedWorker: options.planning.readPreparedWorker?.bind(options.planning),
     readConfiguredLocalRoute: options.planning.readConfiguredLocalRoute?.bind(options.planning) }) : undefined;
   if (options.revisions && (options.revisions.tenantId !== options.tenantId || options.revisions.workspaceId !== options.workspaceId
     || typeof options.revisions.plan !== "function")) throw new Error("invalid_private_app_config");
@@ -313,7 +317,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const coordinationInflight = new Map<string, Promise<unknown>>();
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
-      harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
+      harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!,
+      ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
   const ownerVerifications = options.tasks?.manualVerificationScenarios ? new WebTaskVerificationService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.reviews!,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey,
@@ -613,32 +618,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.pathname === "/api/v1/needs-me/tasks") {
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
               || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
-            const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
-            // Separate authenticated transactions: never call a second identity-locking pool
-            // from inside the web read transaction. Each receipt read rechecks current access.
-            if (planning?.readSaved) for (const item of page.items) {
-              if (!item.reasons.includes("proposal")) continue;
-              const saved = await planning.readSaved(identity, item.task.projectId, item.task.jobId);
-              if (saved) {
-                const receipt = taskPlanningReceiptSchema.parse(saved);
-                if (receipt.projectId !== item.task.projectId || receipt.sourceJobId !== item.task.jobId
-                  || receipt.jobId === item.task.jobId) throw new Error("planning_receipt_scope_mismatch");
-                item.reasons = item.reasons.filter(reason => reason !== "proposal");
-              }
-            }
-            if (submission?.readDelivery) for (const item of page.items) {
-              if (!item.reasons.includes("delivery_check")) continue;
-              const status = taskDeliveryStatusSchema.parse(await submission.readDelivery(identity, item.task.projectId, item.task.jobId, item.inputDigest));
-              if (status.projectId !== item.task.projectId || status.jobId !== item.task.jobId) throw new Error("delivery_status_scope_mismatch");
-              item.reasons = item.reasons.filter(reason => reason !== "delivery_check");
-              if (status.state === "not_queued") item.reasons.push("submission_needed");
-              else if (status.state === "transmission_unconfirmed") item.reasons.push("delivery_uncertain");
-              else if (status.state === "receipt_rejected") item.reasons.push("delivery_rejected");
-              else if (status.state !== "receipt_recorded") item.reasons.push("delivery_pending");
-            }
-            return Response.json(taskAttentionPageSchema.parse({ ...page, planningSource: planning?.readSaved ? "configured" : "not_configured",
-              deliverySource: submission?.readDelivery ? "configured" : "not_configured",
-              items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
+            return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
+              { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
@@ -764,8 +745,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           let id: string, jobId: string | undefined;
           try { id = decodeURIComponent(taskPage[1]); jobId = taskPage[2] ? decodeURIComponent(taskPage[2]) : undefined; }
           catch { throw new WebAccessError("invalid_request"); }
-          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
-            || jobId && url.search || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
+          const allowedKey = jobId ? "result" : "after";
+          // A result selection is only a browser hint. The protected result API
+          // re-authorizes the exact artifact before returning bytes, so stale or
+          // malformed selections must not turn an otherwise valid task page into JSON.
+          if ([...url.searchParams.keys()].some(key => key !== allowedKey)
+            || !jobId && (url.searchParams.getAll(allowedKey).length > 1
+              || url.searchParams.has(allowedKey) && !catalogProjectIdSchema.safeParse(url.searchParams.get(allowedKey)).success))
             throw new WebAccessError("invalid_request");
           if (jobId) await tasks.detail(identity, id, jobId); else await tasks.authorize(identity, id);
         } else if (newsPage) {

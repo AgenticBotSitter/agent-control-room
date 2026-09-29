@@ -23,7 +23,8 @@ export type OwnerTrustedLocalCliPublishConfigurationV1 = Readonly<{
    * supplies its own (`codexOwnerTrustedLocalRunRegistrationV1`,
    * `hermesLocalRunRegistrationV1`, ...); this module stays agnostic of
    * which harness it is publishing for. */
-  registerRun(deliveryValue: unknown, createdAt: string): HarnessRunV1;
+  registerRun(deliveryValue: unknown, createdAt: string, modelSelection?: HarnessRunV1["modelSelection"]): HarnessRunV1;
+  resolveModelSelection?(jobId: string): Promise<NonNullable<HarnessRunV1["modelSelection"]>>;
 }>;
 
 /** `ControllerWorkerDeliveryV1` carries no `workflowId` — it lives on the
@@ -58,7 +59,8 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
     const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(input.receipt);
     if (receipt.deliveryId !== delivery.deliveryId || receipt.deliveryDigest !== delivery.deliveryDigest) unavailable();
-    const run = config.registerRun(delivery, receipt.receivedAt);
+    const modelSelection = config.resolveModelSelection ? await config.resolveModelSelection(delivery.identity.jobId) : undefined;
+    const run = config.registerRun(delivery, receipt.receivedAt, modelSelection);
     if (run.id !== delivery.identity.runId || run.tenantId !== delivery.identity.tenantId
       || run.projectId !== delivery.identity.projectId || run.jobId !== delivery.identity.jobId
       || run.attemptId !== delivery.identity.attemptId || run.nodeId !== delivery.identity.nodeId) unavailable();
@@ -102,7 +104,13 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     if (input.signal.aborted) unavailable();
     const binding: DurableResultBindingV1 = { tenantId: delivery.identity.tenantId, projectId: delivery.identity.projectId,
       jobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId, runId: delivery.identity.runId,
-      nodeId: delivery.identity.nodeId, workflowId, harness: run.harness, connectorProfileDigest: delivery.connectorProfileDigest,
+      nodeId: delivery.identity.nodeId, workflowId, harness: run.harness,
+      workerId: delivery.worker.workerId, adapterId: delivery.worker.adapterId,
+      agentProfileId: `agent-profile:${delivery.connectorProfileDigest.slice("sha256:".length)}`,
+      // This family is derived from the protected worker route, never from a
+      // browser/model string. It is deliberately coarse and therefore errs
+      // toward separating all reviewers that use the same configured harness.
+      modelFamily: `model-family:${run.harness}`, connectorProfileDigest: delivery.connectorProfileDigest,
       authorityDigest: delivery.authorityDigest, acceptanceProfileId: delivery.acceptanceProfileId,
       acceptanceProfileDigest: delivery.acceptanceProfileDigest,
       terminalEvidenceDigest: sha256Digest(terminal) };

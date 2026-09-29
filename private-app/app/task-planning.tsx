@@ -5,9 +5,15 @@ import { HERMES_LOCAL_ADAPTER_V1 } from "../../src/harness/hermes-local-v1/task-
 import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../src/harness/codex-v1/owner-trusted-local-task-planning-contract";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskPlanningBrowserClient, planningErrorMessage } from "../../src/web/v1/task-planning-browser-client";
-import type { TaskPlanningOptions, TaskPlanningReceipt } from "../../src/web/v1/task-planning-wire";
+import type { PreparedTaskStatus, TaskPlanningOptions, TaskPlanningReceipt } from "../../src/web/v1/task-planning-wire";
 import type { TaskDetail } from "../../src/web/v1/task-wire";
 import { taskUrl } from "./task-panels";
+
+export function retainPreparedWorkerSelectionV1(options: TaskPlanningOptions, previous?: string): string | undefined {
+  const templates = options.templates ?? [];
+  if (templates.length === 1) return templates[0]!.id;
+  return previous && templates.some(template => template.id === previous) ? previous : undefined;
+}
 
 export function TaskPlanningPanel({ options, receipt, error, pending, uncertain, selectedTemplateId, onSelectTemplate, onPrepare, onRetry }: {
   options?: TaskPlanningOptions; receipt?: TaskPlanningReceipt; error?: BrowserRequestError;
@@ -27,7 +33,8 @@ export function TaskPlanningPanel({ options, receipt, error, pending, uncertain,
       </select>
     </label>}
     {error && <p role="alert">{planningErrorMessage[error.code]}</p>}
-    {receipt ? <p role="status">Plan saved. <a href={taskUrl(receipt.projectId, receipt.jobId)}>Open the prepared task</a>. Saving this plan did not start an agent. Check the prepared task for current progress.</p>
+    {receipt ? <p role="status">Plan saved. {options?.preparedTask ? <>Prepared task status: <strong>{options.preparedTask.state.replaceAll("_", " ")}</strong>. </> : null}
+      <a href={taskUrl(receipt.projectId, receipt.jobId)}>Open the prepared task</a>. Saving this plan did not start an agent. Check the prepared task for current progress.</p>
       : uncertain ? <button type="button" disabled={pending} onClick={onRetry}>Check this exact preparation again</button>
       : options?.availability === "available" ? <button type="button" disabled={pending || needsChoice} onClick={onPrepare}>Prepare saved task</button>
       : <p className="private-note">{options?.availability === "not_configured" ? "Task preparation is not connected in this installation."
@@ -38,7 +45,8 @@ export function TaskPlanningPanel({ options, receipt, error, pending, uncertain,
 
 /** Kept mounted by the task page even when a refresh loses authorization. Hide data on failed
  * reads while retaining only the exact pending command for explicit reconciliation. */
-export function PrivateTaskPlanning({ detail, client: suppliedClient }: { detail?: TaskDetail; client?: ReturnType<typeof createTaskPlanningBrowserClient> }) {
+export function PrivateTaskPlanning({ detail, client: suppliedClient, onPreparedTask }: { detail?: TaskDetail;
+  client?: ReturnType<typeof createTaskPlanningBrowserClient>; onPreparedTask?: (sourceJobId: string, prepared?: PreparedTaskStatus) => void }) {
   const [client] = useState(() => suppliedClient ?? createTaskPlanningBrowserClient());
   const [options, setOptions] = useState<TaskPlanningOptions>();
   const [receipt, setReceipt] = useState<TaskPlanningReceipt>();
@@ -52,13 +60,15 @@ export function PrivateTaskPlanning({ detail, client: suppliedClient }: { detail
     const current = ++generation.current; let live = true;
     if (detail) void client.options(detail.task.projectId, detail.task.jobId, detail.inputDigest).then(value => {
       if (live && current === generation.current) { setCheckedDetail(detail); setOptions(value);
-        setSelectedTemplateId(value.templates?.length === 1 ? value.templates[0]!.id : undefined);
+        onPreparedTask?.(detail.task.jobId, value.preparedTask);
+        setSelectedTemplateId(previous => retainPreparedWorkerSelectionV1(value, previous));
         setReceipt(value.savedPlan ?? client.savedReceipt(detail.task.projectId, detail.task.jobId, detail.inputDigest));
         setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined); }
     }).catch(reason => { if (live && current === generation.current) { setCheckedDetail(detail); setOptions(undefined); setReceipt(undefined);
+      onPreparedTask?.(detail.task.jobId, undefined);
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); } });
     return () => { live = false; };
-  }, [client, detail]);
+  }, [client, detail, onPreparedTask]);
   async function prepare(retry = false) {
     if (busy.current || !detail || checkedDetail !== detail || !options || (!retry && options.availability !== "available")) return;
     busy.current = true; setPending(true); setError(undefined); const current = ++generation.current;
@@ -67,6 +77,16 @@ export function PrivateTaskPlanning({ detail, client: suppliedClient }: { detail
       // A same-source refresh may finish before this write. The confirmed receipt remains safe
       // to retain; rendering below still requires the current successful protected read.
       if (alive.current) setReceipt(value);
+      try {
+        const refreshed = await client.options(detail.task.projectId, detail.task.jobId, detail.inputDigest);
+        if (alive.current && current === generation.current) { setOptions(refreshed);
+          onPreparedTask?.(detail.task.jobId, refreshed.preparedTask); }
+      } catch (reason) {
+        // The saved receipt remains a safe navigation link. Without a fresh
+        // protected read, retain the conservative downstream placeholders.
+        if (alive.current && current === generation.current)
+          setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"));
+      }
     } catch (reason) {
       if (alive.current && current === generation.current) {
         const error = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); setError(error);

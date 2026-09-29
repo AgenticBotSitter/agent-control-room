@@ -6,6 +6,7 @@ import { sha256Digest } from "../../security/digest";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
 import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../../idea-lab/v1/schemas";
+import type { ProjectRegistryProjectionV1 } from "../../idea-lab/v1/types";
 import { assertProjectLifecycleTransitionV1 } from "../../idea-lab/v1/contracts";
 import { ideaLabProjectLifecycleActionsV1 } from "../../idea-lab/v1/lifecycle-service";
 import type { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-operation";
@@ -19,6 +20,9 @@ import { buildProjectPresentationV1, computeEffectiveProjectPresentationV1, pars
   ProjectPresentationError, verifyProjectTemplateSelectionV1,
   type EffectiveProjectPresentationV1, type ProjectPresentationV1 } from "../../config/v1/project-presentation";
 const iso = (value: string | Date) => new Date(value).toISOString();
+type CatalogRow = { id: string; adapter_id: string; payload: unknown; title: string; summary: string;
+  lifecycle: WebProject["lifecycle"] | null; version: number | string | null; created_at: string | Date | null;
+  updated_at: string | Date | null };
 
 function configurationDigestFor(productConfiguration: Readonly<ProductConfigurationV1>): string {
   return sha256Digest(productConfiguration);
@@ -47,13 +51,13 @@ export class WebProjectService {
   }
 
   private async authorized<T>(identity: VerifiedWebIdentity, action: string, projectId: string | undefined,
-    operation: (tx: DatabaseSession, actor: Actor) => Promise<T>): Promise<T> {
-    return this.authenticated(identity, (tx, actor) => { actor.require(action, projectId); return operation(tx, actor); });
+    operation: (tx: DatabaseSession, actor: Actor) => Promise<T>, readOnly = false): Promise<T> {
+    return this.authenticated(identity, (tx, actor) => { actor.require(action, projectId); return operation(tx, actor); }, readOnly);
   }
 
   private authenticated<T>(identity: VerifiedWebIdentity,
-    operation: (tx: DatabaseSession, actor: Actor) => Promise<T>): Promise<T> {
-    return this.authority.authenticated(identity, operation);
+    operation: (tx: DatabaseSession, actor: Actor) => Promise<T>, readOnly = false): Promise<T> {
+    return this.authority.authenticated(identity, operation, readOnly ? { readOnly: true } : undefined);
   }
 
   async list(identity: VerifiedWebIdentity): Promise<WebProject[]> {
@@ -66,11 +70,11 @@ export class WebProjectService {
       // Do not silently present a partial catalog. Pagination is required before expanding this beta limit.
       if (rows.rows.length > 200) throw new WebAccessError("conflict");
       return rows.rows.map(row => ({ ...row, version: Number(row.version), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) }));
-    });
+    }, true);
   }
 
   async authorizeCatalog(identity: VerifiedWebIdentity): Promise<void> {
-    await this.authenticated(identity, async (_, actor) => { this.catalogAccess(actor); });
+    await this.authenticated(identity, async (_, actor) => { this.catalogAccess(actor); }, true);
   }
 
   private catalogAccess(actor: Actor): ProjectCatalogPage["sources"] {
@@ -89,7 +93,9 @@ export class WebProjectService {
     if (lifecycle !== undefined && !lifecycleSchema.safeParse(lifecycle).success) throw new WebAccessError("invalid_request");
     return this.authenticated(identity, async (tx, actor) => {
       const sources = this.catalogAccess(actor);
-      const rows = await tx.query<{ id: string; adapter_id: string; payload: unknown }>(`SELECT p.id,p.adapter_id,p.payload FROM projects p
+      const rows = await tx.query<CatalogRow>(`SELECT p.id,p.adapter_id,p.payload,p.title,coalesce(p.description,'') AS summary,
+        h.lifecycle,h.version,h.created_at,h.updated_at FROM projects p
+        LEFT JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
         WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR p.id COLLATE "C" > $3 COLLATE "C")
         AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
           WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$5 AND $7::boolean))
@@ -97,16 +103,44 @@ export class WebProjectService {
         ORDER BY p.id COLLATE "C" LIMIT 51 FOR SHARE OF p`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
         this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included",
         lifecycle ?? null]);
+      const ideaIds = rows.rows.slice(0, 50).filter(row => row.adapter_id === CONTROL_ROOM_IDEA_ADAPTER_V1).map(row => row.id);
+      const ideaProjects = ideaIds.length && this.ideas
+        ? await this.ideas.getProjectsInSession(tx, this.scope.tenantId, this.scope.workspaceId, ideaIds)
+        : new Map<string, ProjectRegistryProjectionV1>();
       const projects: ProjectView[] = [];
       for (const row of rows.rows.slice(0, 50))
-        projects.push(await this.readViewWithPayload(tx, actor, row.id, row.adapter_id, row.payload));
+        projects.push(await this.readViewWithPayload(tx, actor, row.id, row.adapter_id, row.payload, row, ideaProjects.get(row.id)));
       return { projects, nextCursor: rows.rows.length > 50 ? projects.at(-1)!.projectId : null,
         canCreate: actor.can("projects.create"), sources };
-    });
+    }, true);
   }
 
   async getView(identity: VerifiedWebIdentity, projectId: string): Promise<ProjectView> {
-    return this.authenticated(identity, (tx, actor) => this.getViewInSession(tx, actor, projectId));
+    return this.authenticated(identity, (tx, actor) => this.getViewInSession(tx, actor, projectId), true);
+  }
+
+  /** Fixed-query project verification for task pages that already hold one
+   * authenticated transaction. Every returned row still passes the ordinary
+   * or Idea-specific integrity and permission checks used by getViewInSession. */
+  async getViewsInSession(tx: DatabaseSession, actor: Actor, projectIds: readonly string[]): Promise<ReadonlyMap<string, ProjectView>> {
+    const ids = [...new Set(projectIds)];
+    for (const id of ids) if (!catalogProjectIdSchema.safeParse(id).success) throw new WebAccessError("invalid_request");
+    if (!ids.length) return new Map();
+    const rows = (await tx.query<CatalogRow>(`SELECT p.id,p.adapter_id,p.payload,p.title,coalesce(p.description,'') AS summary,
+      h.lifecycle,h.version,h.created_at,h.updated_at FROM projects p
+      LEFT JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+      WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=ANY($3::text[])
+      AND p.adapter_id IN ($4,$5) ORDER BY p.id COLLATE "C" FOR SHARE OF p`,
+    [this.scope.tenantId, this.scope.workspaceId, ids, this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1])).rows;
+    const ideaIds = rows.filter(row => row.adapter_id === CONTROL_ROOM_IDEA_ADAPTER_V1).map(row => row.id);
+    const ideaProjects = ideaIds.length && this.ideas
+      ? await this.ideas.getProjectsInSession(tx, this.scope.tenantId, this.scope.workspaceId, ideaIds)
+      : new Map<string, ProjectRegistryProjectionV1>();
+    const output = new Map<string, ProjectView>();
+    for (const row of rows) output.set(row.id, await this.readViewWithPayload(tx, actor, row.id, row.adapter_id, row.payload,
+      row, ideaProjects.get(row.id)));
+    if (output.size !== ids.length) throw new WebAccessError("not_found");
+    return output;
   }
 
   /** Server-only composition inside the shared session/grant transaction. No new identity authority. */
@@ -115,20 +149,22 @@ export class WebProjectService {
       const ordinary = actor.can("projects.read", projectId), ideas = actor.can("idea_lab.project_read", projectId, true);
       // Decide eligible sources before resolving an ID. A hidden source and an absent row must look identical.
       if (!ordinary && !ideas) throw new WebAccessError("access_denied");
-      const row = (await tx.query<{ adapter_id: string; payload: unknown }>(`SELECT adapter_id, payload FROM projects
-        WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3
-        AND ((adapter_id=$4 AND $6::boolean) OR (adapter_id=$5 AND $7::boolean)) FOR SHARE`,
+      const row = (await tx.query<CatalogRow>(`SELECT p.id,p.adapter_id,p.payload,p.title,coalesce(p.description,'') AS summary,
+        h.lifecycle,h.version,h.created_at,h.updated_at FROM projects p
+        LEFT JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+        WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3
+        AND ((p.adapter_id=$4 AND $6::boolean) OR (p.adapter_id=$5 AND $7::boolean)) FOR SHARE OF p`,
       [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1, ordinary, ideas])).rows[0];
       if (!row) throw new WebAccessError("not_found");
-      return this.readViewWithPayload(tx, actor, projectId, row.adapter_id, row.payload);
+      return this.readViewWithPayload(tx, actor, projectId, row.adapter_id, row.payload, row);
   }
 
   private async readViewWithPayload(tx: DatabaseSession, actor: Actor, projectId: string, adapterId: string,
-    storedPayload: unknown): Promise<ProjectView> {
+    storedPayload: unknown, selected?: CatalogRow, selectedIdea?: ProjectRegistryProjectionV1): Promise<ProjectView> {
     if (adapterId === CONTROL_ROOM_IDEA_ADAPTER_V1) {
       actor.require("idea_lab.project_read", projectId, true);
       if (!this.ideas) throw new Error("idea_catalog_not_configured");
-      const idea = await this.ideas.getProjectInSession(tx, this.scope.tenantId, this.scope.workspaceId, projectId);
+      const idea = selectedIdea ?? await this.ideas.getProjectInSession(tx, this.scope.tenantId, this.scope.workspaceId, projectId);
       if (!idea) throw new WebAccessError("not_found");
       // A project-scoped grant must not reveal workspace-wide discussion IDs.
       // Register the optional read for the same transaction's precommit check.
@@ -149,12 +185,16 @@ export class WebProjectService {
     }
     actor.require("projects.read", projectId);
     if (adapterId !== this.manualAdapterId()) throw new WebAccessError("not_found");
-    const row = (await tx.query<WebProject>(`SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
+    const row = selected ? {
+      projectId: selected.id, title: selected.title, summary: selected.summary, lifecycle: selected.lifecycle,
+      version: selected.version, createdAt: selected.created_at, updatedAt: selected.updated_at,
+    } : (await tx.query<WebProject>(`SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
       h.lifecycle,h.version,h.created_at AS "createdAt",h.updated_at AS "updatedAt" FROM projects p
       JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
       WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 AND p.adapter_id=$4 FOR SHARE OF p,h`,
     [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId()])).rows[0];
-    if (!row) throw new WebAccessError("not_found");
+    if (!row || row.lifecycle === null || row.version === null || row.createdAt === null || row.updatedAt === null)
+      throw new WebAccessError("not_found");
     const presentation = this.derivePresentation(storedPayload);
     return projectViewSchema.parse({ ...row, version: Number(row.version), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt),
       origin: "ordinary", lifecycleEditable: actor.can("projects.lifecycle", projectId),
@@ -234,7 +274,7 @@ export class WebProjectService {
       return { ...rest, version: Number(rest.version), createdAt: iso(rest.createdAt),
         updatedAt: iso(rest.updatedAt),
         ...(presentation ? { presentation: presentation as EffectiveProjectPresentation } : {}) };
-    });
+    }, true);
   }
 
   async transition(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {

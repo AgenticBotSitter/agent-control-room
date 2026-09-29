@@ -359,11 +359,17 @@ One synthetic job travels dashboard/API → PostgreSQL → remote node → artif
 - approval, review, verification, finding, revision, and preference are separate records and state machines;
 - immutable review targets and acceptance profiles;
 - review items with image/video/audio/diff/report previews and claim-bound evidence bundles;
+- Mac-local text results use authenticated, short-lived preview/download tickets bound to project, task, run, artifact,
+  content digest, and byte count; legacy direct-content URLs, cross-project, expired, oversized, and path-shaped requests refuse;
 - deterministic verification scenarios with pass/fail/blocked/inconclusive results;
+- Mac-local profiles require a separately named owner-human scenario in addition to the automatic text-structure scenario;
+  only an explicit owner action can create the human record, and it grants neither approval nor execution authority;
 - AI pre-review comments clearly attributed and non-authoritative;
-- reviewer-independence constraints using author, worker, agent profile, harness, and model-family provenance;
+- reviewer-independence constraints using author, worker, agent profile, harness, adapter, and model-family provenance; profiles choose
+  `different_worker` as the minimum or `different_model_family` as the preferred policy, while human-owner review remains available;
 - deterministic risk floors that AI scoring may raise but never lower;
-- bounded request-changes/revise cycles with explicit finding resolution and supersession lineage;
+- bounded request-changes/revise cycles create a new proposed task, never mutate or rerun the source, and expose authenticated
+  previous/revised task links on both Mac-local task pages alongside explicit finding resolution and supersession lineage;
 - Completion Gate profiles for code, media, documents, and operational changes;
 - automatic low-risk disposition only when deterministic policy explicitly permits it.
 

@@ -38,7 +38,7 @@ test("ProjectNavigation shows only shared tabs before runtime and module configu
   }));
   assert.doesNotMatch(html, />\s*News\s*</);
   assert.match(html, /Overview/);
-  assert.match(html, /Work/);
+  assert.match(html, /Tasks/);
   assert.doesNotMatch(html, /Inbox/);
 });
 

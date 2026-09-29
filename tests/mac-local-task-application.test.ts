@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createMacLocalTaskApplicationV1 } from "../src/web/v1/mac-local-task-application";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
+import { sha256Digest } from "../src/security";
 
 test("Mac-local task composition reuses the canonical operations without starting a queue or worker", async t => {
   const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
   const f = fixture.scenario(), configuration = f.configuration;
+  const manualVerificationScenarios = [{ scenarioId: "scenario:human", label: "Owner observation",
+    instructions: "Read the result and record what you observed.", acceptanceProfileId: "profile:test",
+    acceptanceProfileDigest: sha256Digest({ profile: "test" }) }];
   const tasks = { ...configuration.web.tasks!, ownerReviews: {
     integrityKey: f.lifecycle.f.ownerConfig.integrityKey,
     checkpoints: f.lifecycle.f.ownerConfig.checkpoints,
-  } };
+  }, manualVerificationScenarios };
   const coordinator = {
     scope: { tenantId: configuration.web.tenantId, workspaceId: configuration.web.workspaceId },
     database: f.openDatabase(configuration.coordinator.database),
@@ -35,10 +39,17 @@ test("Mac-local task composition reuses the canonical operations without startin
   assert.equal(typeof app.operations.assignment?.assign, "function");
   assert.equal(typeof app.operations.approvals?.prepare, "function");
   assert.equal(typeof app.operations.ownerReviews?.record, "function");
-  assert.equal(app.operations.ownerVerifications, undefined, "manual verification remains unavailable until explicitly configured");
+  assert.equal(typeof app.operations.ownerVerifications?.record, "function",
+    "Mac-local mounts the separately configured human verification operation");
   assert.equal(app.taskReadKeys?.results, tasks.results, "the host must pass the same result reader to the local website");
+  assert.deepEqual(app.taskReadKeys?.taskPlanIntegrityKey, coordinator.planning.integrityKey,
+    "revision links must use the execution-plan key rather than the independent review key");
+  assert.notEqual(app.taskReadKeys?.taskPlanIntegrityKey, coordinator.planning.integrityKey,
+    "the browser-facing reader receives an isolated key copy");
   assert.equal(app.taskReadKeys?.ownerReviews, tasks.ownerReviews,
     "the result page must advertise owner review only when its mounted review operation is configured");
+  assert.equal(app.taskReadKeys?.manualVerificationScenarios, manualVerificationScenarios,
+    "the Mac-local result page receives the same human-only scenario source as the write operation");
   assert.equal(app.queueDelivery, undefined, "constructing the local website must not start or imply a queue worker");
   assert.ok(!f.trace.includes("queue-start"));
 

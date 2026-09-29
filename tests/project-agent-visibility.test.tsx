@@ -39,7 +39,7 @@ function taskDetail(jobId: string, routeEvidence: "local_hermes" | "local_claude
       lifecycle: "active", version: 1, createdAt: observedAt, updatedAt: observedAt, lifecycleEditable: true },
     task: { jobId, projectId: binding.projectId, requestId: `request:${jobId.split(":").at(-1)}`, title: "Current project task",
       state: "running", version: 2, createdAt: observedAt, updatedAt: observedAt },
-    instructions: "Review the bounded input", inputDigest: digest, observedAt,
+    instructions: "Review the bounded input", inputDigest: digest, observedAt, modelSelection: null, ownershipLeases: [],
     attempts: [{ attemptId: `attempt:${jobId.split(":").at(-1)}`, attemptNumber: 1, state: "running",
       runs: [{ runId: `run:${jobId.split(":").at(-1)}`, harness: "claude", state: "running", lastObservedAt: observedAt,
         stale: false, routeEvidence, firstObservedExecutionAt: observedAt, finishedObservedAt: null,
@@ -87,6 +87,18 @@ test("project reader propagates navigation cancellation to every independent sou
   assert.equal(attached, 4);
   assert.deepEqual(Object.values(result).map(value => value.state),
     ["unavailable", "unavailable", "unavailable", "unavailable", "unavailable"]);
+});
+
+test("project reader distinguishes absent local evidence sources from failed requests", async () => {
+  const read = (status: number) => readProjectAgentVisibility(binding.projectId,
+    (async () => new Response("unavailable", { status })) as typeof fetch);
+  const missing = await read(404);
+  assert.deepEqual(missing.connections, { state: "unavailable", code: "not_found" });
+  assert.deepEqual(missing.capacity, { state: "unavailable", code: "operator_surface_unavailable" });
+  const failed = await readProjectAgentVisibility(binding.projectId,
+    (async () => { throw new Error("synthetic request failure"); }) as typeof fetch);
+  assert.deepEqual(failed.connections, { state: "unavailable", code: "unavailable" });
+  assert.deepEqual(failed.capacity, { state: "unavailable", code: "request_failed" });
 });
 
 test("project reader uses the protected detail GET for each bounded current task and preserves per-task failure", async () => {
@@ -173,6 +185,51 @@ test("project view presents eligibility, availability, connections, and work as 
   assert.match(html, /does not expose a saved model/);
   assert.match(html, /current work is not attributed to a worker here/i);
   assert.doesNotMatch(html, /Assign without starting|Start work|Reserve worker|<button|<form/);
+});
+
+test("Mac-local agent view names unavailable installation sources without hiding real project work", () => {
+  const state: ProjectAgentVisibilityRead = {
+    eligibility: { state: "ready", value: { ...options, eligibilitySource: "not_configured", workers: [], tasksExamined: 0 } },
+    capacity: { state: "unavailable", code: "operator_surface_unavailable" },
+    connections: { state: "unavailable", code: "not_found" },
+    currentWork: { state: "ready", value: { projectId: binding.projectId, current: [], awaitingReview: [], recent: [],
+      additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false,
+      observedAt, startsWork: false } },
+    agentWork: { state: "ready", value: [] },
+  };
+  const html = renderToStaticMarkup(createElement(ProjectAgentVisibilityView, {
+    state: { state: "ready", value: state }, projectId: binding.projectId, local: true,
+  }));
+  assert.match(html, /Task assignment is not configured for this installation/);
+  assert.match(html, /No proposed, assigned, running, approval-waiting, or recovery work is recorded/);
+  assert.match(html, /not available on this computer yet/);
+  assert.doesNotMatch(html, /<button|<form|Assign|Start work/);
+});
+
+test("Mac-local agent view sends expired sessions to sign-in and gives failed reads a retry", () => {
+  const base: ProjectAgentVisibilityRead = {
+    eligibility: { state: "ready", value: { ...options, eligibilitySource: "not_configured", workers: [], tasksExamined: 0 } },
+    capacity: { state: "unavailable", code: "operator_surface_unavailable" },
+    connections: { state: "unavailable", code: "not_found" },
+    currentWork: { state: "unavailable", code: "authentication_required" },
+    agentWork: { state: "unavailable", code: "authentication_required" },
+  };
+  const expired = renderToStaticMarkup(createElement(ProjectAgentVisibilityView, {
+    state: { state: "ready", value: base }, projectId: binding.projectId, local: true, onRetry: () => {},
+  }));
+  assert.match(expired, /Your session has ended/);
+  assert.match(expired, /href="\/session"/);
+  assert.doesNotMatch(expired, /Try again|not available on this computer yet/);
+
+  const failed = renderToStaticMarkup(createElement(ProjectAgentVisibilityView, {
+    state: { state: "ready", value: { ...base,
+      currentWork: { state: "unavailable", code: "unavailable" },
+      agentWork: { state: "unavailable", code: "unavailable" } } },
+    projectId: binding.projectId, local: true, onRetry: () => {},
+  }));
+  assert.match(failed, /Some agent evidence could not be loaded/);
+  assert.match(failed, /<button type="button">Try again<\/button>/);
+  assert.doesNotMatch(failed, /not available on this computer yet/);
 });
 
 test("project task card downgrades uncertain local-route evidence without inventing worker status", () => {
