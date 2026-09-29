@@ -22,7 +22,8 @@ function fixture(options: Readonly<{ migrationResult?: unknown; provisionResult?
     database: "control_room", maintenanceDatabase: "postgres",
     operator: { username: "postgres", password: secret("operator") },
     migratorPassword: secret("migrator"), applicationPassword: secret("application"),
-    schedulerPassword: secret("scheduler"), requiredTables: ["tenants", "control_projects"],
+    schedulerPassword: secret("scheduler"), workIntakePassword: secret("work-intake"),
+    requiredTables: ["tenants", "control_projects"],
   } as const;
   const reviewedFiles = { schema: PRIVATE_POSTGRES_REVIEWED_FILES_V1, releaseDigest: digest("release"), files: {
     provision: { path: "deploy/postgres/provision-database.sql", sha256: "1".repeat(64) },
@@ -108,7 +109,7 @@ test("migration reuses the existing export with structured targets and only its 
   assert.deepEqual(request.migrateTarget, { ...request.bootstrapTarget, user: "control_room_migrator",
     password: f.configuration.migratorPassword, application_name: "control-room-owner-migrate" });
   assert.deepEqual(Object.keys(request.env).sort(), ["CONTROL_ROOM_APP_PASSWORD", "CONTROL_ROOM_MIGRATOR_PASSWORD",
-    "CONTROL_ROOM_SCHEDULER_PASSWORD"]);
+    "CONTROL_ROOM_SCHEDULER_PASSWORD", "CONTROL_ROOM_WORK_INTAKE_PASSWORD"]);
   assert.doesNotMatch(JSON.stringify(result), /operator-|migrator-|application-|scheduler-/u);
 });
 

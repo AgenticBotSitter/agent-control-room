@@ -2,6 +2,8 @@ import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { captureMacLocalProtectedConfigurationV1, type MacLocalProtectedConfigurationV1 } from "./mac-local-protected-configuration";
 import { captureMacLocalDatabaseRolesV1, type MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
+import { captureWorkIntakeServerConfigurationV1, type WorkIntakeServerConfigurationV1 } from
+  "../../work-intake/v1/installed-configuration";
 
 type Runtime = Readonly<{ lstat: typeof lstat; readFile: typeof readFile }>;
 const production: Runtime = Object.freeze({ lstat, readFile });
@@ -54,4 +56,27 @@ export async function loadMacLocalDatabaseRolesFromRootV1(protectedRoot: string,
     if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0 || entry.size > 64 * 1024) throw new Error();
     return captureMacLocalDatabaseRolesV1(JSON.parse(await runtime.readFile(path, "utf8")));
   } catch { throw new Error("mac_local_database_roles_root_invalid"); }
+}
+
+/** Optional installed child of the existing Mac-local host. A missing record
+ * keeps intake disabled; an unsafe or malformed record fails closed. */
+export async function loadWorkIntakeServerConfigurationFromRootV1(protectedRoot: string,
+  runtime: Runtime = production): Promise<WorkIntakeServerConfigurationV1 | undefined> {
+  if (!isAbsolute(protectedRoot) || resolve(protectedRoot) !== protectedRoot)
+    throw new Error("work_intake_installed_configuration_root_invalid");
+  const configRoot = join(protectedRoot, "config"), path = join(configRoot, "work-intake-server.json");
+  try {
+    for (const directory of [protectedRoot, configRoot]) {
+      const entry = await runtime.lstat(directory);
+      if (!entry.isDirectory() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) throw new Error();
+    }
+    let entry;
+    try { entry = await runtime.lstat(path); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0 || entry.size > 64 * 1024) throw new Error();
+    return captureWorkIntakeServerConfigurationV1(JSON.parse(await runtime.readFile(path, "utf8")));
+  } catch { throw new Error("work_intake_installed_configuration_root_invalid"); }
 }
