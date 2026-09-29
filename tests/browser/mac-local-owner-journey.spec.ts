@@ -10,6 +10,7 @@ import { sha256Digest } from "../../src/security";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
 import { openMacLocalRollbackCheckpointStoreV1 } from "../../src/web/v1/mac-local-rollback-checkpoint-store";
 import { loadMacLocalTaskRuntimeFromRootV1 } from "../../src/web/v1/mac-local-task-runtime";
+import { openResultWithDeferredOwnerReview, ownerReviewControlsWhenReady, requestChangesControlWhenReady } from "./owner-review-readiness";
 import { AuditStore, auditPartition } from "../../src/audit/audit-store";
 import type { DatabaseClient } from "../../src/persistence/database";
 import { workBatchProposalDigestV1 } from "../../src/work-intake/v1/digest";
@@ -29,14 +30,12 @@ async function expectHealthyPage(page: Page) {
 }
 
 async function refreshUntil(page: Page, locatorName: string, timeoutMs = 150_000) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    if (await page.getByRole("button", { name: locatorName }).count()) return;
+  await expect.poll(async () => {
+    if (await page.getByRole("button", { name: locatorName }).count()) return true;
     const refresh = page.getByRole("button", { name: "Check latest saved status" }).first();
     if (await refresh.isEnabled().catch(() => false)) await refresh.click();
-    await page.waitForTimeout(1_000);
-  }
-  throw new Error(`timed out waiting for ${locatorName}`);
+    return false;
+  }, { timeout: timeoutMs, intervals: [1_000] }).toBe(true);
 }
 
 async function createPreparedTask(page: Page, projectPath: string, title: string, worker: "Hermes Agent" | "Claude Code" | "Codex",
@@ -60,7 +59,7 @@ async function createPreparedTask(page: Page, projectPath: string, title: string
     let apiRequests = 0;
     const count = (request: { url(): string }) => { if (request.url().includes("/api/v1/")) apiRequests++; };
     page.on("request", count);
-    await page.waitForTimeout(60_500);
+    await expect.poll(() => apiRequests, { timeout: 70_000, intervals: [1_000] }).toBeGreaterThanOrEqual(2);
     page.off("request", count);
     expect(apiRequests, "a visible task page must use bounded refreshes, not a tight request loop").toBeLessThanOrEqual(30);
     await expect(workerChoice).toHaveValue(/template:/);
@@ -155,31 +154,33 @@ async function submitProposalOnlyBatch(projectId: string) {
 
 async function waitForLatestDisposableLeaseExpiry(jobId: string) {
   const { client, config } = await disposableAdmin();
-  let waitMs = -1;
   try {
-    const lease = (await client.query<{ wait_ms: string }>(`SELECT GREATEST(0,
-        CEIL(EXTRACT(EPOCH FROM (expires_at - clock_timestamp())) * 1000))::bigint::text AS wait_ms
-      FROM control_leases
-      WHERE tenant_id=$1 AND job_id=$2 AND state='active'`, [config.localOwnerSession.tenantId, jobId])).rows[0];
-    if (!lease) throw new Error("browser_expiry_fixture_missing_active_lease");
-    waitMs = Number(lease.wait_ms);
-    if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > 5 * 60_000)
-      throw new Error("browser_expiry_fixture_unbounded_wait");
+    await expect.poll(async () => {
+      const lease = (await client.query<{ wait_ms: string }>(`SELECT GREATEST(0,
+          CEIL(EXTRACT(EPOCH FROM (expires_at - clock_timestamp())) * 1000))::bigint::text AS wait_ms
+        FROM control_leases
+        WHERE tenant_id=$1 AND job_id=$2 AND state='active'`, [config.localOwnerSession.tenantId, jobId])).rows[0];
+      if (!lease) throw new Error("browser_expiry_fixture_missing_active_lease");
+      const waitMs = Number(lease.wait_ms);
+      if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > 5 * 60_000)
+        throw new Error("browser_expiry_fixture_unbounded_wait");
+      return waitMs;
+    }, { timeout: 5 * 60_000, intervals: [250] }).toBe(0);
   } finally { await client.end(); }
-  await new Promise(resolveWait => setTimeout(resolveWait, waitMs + 250));
 }
 
 async function openResult(page: Page) {
   await refreshUntil(page, "Read result");
   await expect(page.getByText(/Local agent evidence/).first()).toBeVisible();
   await expect(page.getByText(/Legacy adapter evidence/)).toHaveCount(0);
-  await page.getByRole("button", { name: "Read result" }).first().click();
-  await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
+  await openResultWithDeferredOwnerReview(page);
 }
 
 async function acceptReadResult(page: Page) {
-  await page.getByLabel("I read it and it’s correct").check();
-  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  const { attestation, accept } = await ownerReviewControlsWhenReady(page);
+  await attestation.check();
+  await expect(accept).toBeEnabled();
+  await accept.click();
   await expect(page.getByText(/Saved: quality acceptance/)).toBeVisible();
 }
 
@@ -286,10 +287,12 @@ test("owner completes the real local website journey for every configured worker
 
   await createPreparedTask(page, projectPath, "Hermes browser task", "Hermes Agent", true, true, true);
   await openResult(page);
-  await page.getByLabel("Changes you want").fill("Return a second harmless line in a linked revision.");
-  await page.getByRole("button", { name: "Request changes" }).click();
+  const requestChanges = await requestChangesControlWhenReady(page, "Return a second harmless line in a linked revision.");
+  await requestChanges.click();
   await expect(page.getByText(/Saved: changes requested/)).toBeVisible();
-  await page.getByRole("button", { name: "Prepare revised task" }).click();
+  const prepareRevision = page.getByRole("button", { name: "Prepare revised task" });
+  await expect(prepareRevision).toBeEnabled();
+  await prepareRevision.click();
   await expect(page.getByRole("link", { name: "Open revised task" })).toBeVisible();
 
   await createPreparedTask(page, projectPath, "Claude browser task", "Claude Code");

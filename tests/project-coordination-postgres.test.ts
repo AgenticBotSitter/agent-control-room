@@ -40,8 +40,8 @@ const BIN = CANDIDATE_BINS.find(dir => existsSync(join(dir, "initdb")) && exists
   ?? "/usr/lib/postgresql/17/bin";
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN, /opt/homebrew/opt/postgresql@17/bin, or /usr/lib/postgresql/17/bin)" };
-// Reserved disposable-cluster lane: 58280-58289.
-const PORT = 58280;
+// Reserved disposable-cluster lane: 56220-56229.
+const PORT = 56220;
 const exec = promisify(execFile);
 const native = (name: string, args: string[]) => exec(join(BIN, name), args,
   { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", LANG: "C", TMPDIR: run, NODE_ENV: "test" }, timeout: 120000, maxBuffer: 1 << 26 });
@@ -104,16 +104,12 @@ before(async () => {
   await admin.query(await readFile(join(ROOT, "db/roles/private_web_database.sql"), "utf8"));
   await admin.query(`CREATE ROLE cc_web LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
     PASSWORD 'ccweb' IN ROLE control_room_private_web`);
-  // db/roles/private_web_roles.sql does not grant control_room_private_web
-  // SELECT on attention_items, but composeProjectCoordinationPage's
-  // readAttention() unconditionally queries it on every read(). Without this
-  // grant every coordination page read fails with permission_denied before
-  // this file's proof (or any real read()) can even reach the authority
-  // check under test. This is a test-local, additive grant only -- it does
-  // NOT touch the production role file -- so this gap is reported
-  // separately rather than silently patched in production SQL.
-  await admin.query(`GRANT SELECT ON attention_items TO control_room_private_web`);
-  await admin.query(`GRANT SELECT ON control_job_dependencies TO control_room_private_web`);
+  // No test-local grant to the web role anywhere in this file. The only
+  // privileges the reader below holds are the ones
+  // db/roles/private_web_roles.sql gives control_room_private_web, applied
+  // verbatim above, so a read that needs more than the production role file
+  // grants fails here with 42501 (permission denied) instead of being
+  // papered over by a fixture-only grant.
   await admin.query(`CREATE ROLE cc_writer LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
     PASSWORD 'ccwrite'`);
   await admin.query(`GRANT ALL ON ALL TABLES IN SCHEMA public TO cc_writer`);

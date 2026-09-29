@@ -363,8 +363,8 @@ test("parseSharedMemorySegments reads macOS and Linux ipcs by header name, and r
   // creator, silently, on every row.
   const mac = "T     ID     KEY        MODE       OWNER    GROUP  CPID  LPID\n"
     + "Shared Memory:\n"
-    + "m 19005440 0x093a6b53 --rw------- alastairfraser    staff 68830 68830\n"
-    + "m 48168961 0x093a6b54 --rw------- alastairfraser    staff 68831 68831\n";
+    + "m 19005440 0x093a6b53 --rw------- ci-runner    staff 68830 68830\n"
+    + "m 48168961 0x093a6b54 --rw------- ci-runner    staff 68831 68831\n";
   assert.deepEqual(parseSharedMemorySegments(mac), [
     { id: "19005440", creatorPid: 68830 }, { id: "48168961", creatorPid: 68831 },
   ]);

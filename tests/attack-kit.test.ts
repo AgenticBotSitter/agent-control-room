@@ -1808,15 +1808,15 @@ describe("attack kit: the teardown ladder (shared-memory safety)", () => {
       "IPC status from <running system> as of Mon Sep 28 20:00:17 MDT 2026",
       "T     ID     KEY        MODE       OWNER    GROUP  CPID  LPID",
       "Shared Memory:",
-      "m 6881280 0x08f483b1 --rw------- alastairfraser    staff  39836  39836",
-      "m 43188225 0x08f483e6 --rw------- alastairfraser    staff  39867  39867",
+      "m 6881280 0x08f483b1 --rw------- ci-runner    staff  39836  39836",
+      "m 43188225 0x08f483e6 --rw------- ci-runner    staff  39867  39867",
       "",
     ].join("\n");
     const rows = parseSharedMemory(macos);
     assert.ok(rows !== null, "macOS output is recognised");
     assert.equal(rows.length, 2, "and both rows are read");
-    assert.deepEqual(rows[0], { id: "6881280", owner: "alastairfraser", creatorPid: 39836, lastPid: 39836 });
-    assert.deepEqual(rows[1], { id: "43188225", owner: "alastairfraser", creatorPid: 39867, lastPid: 39867 });
+    assert.deepEqual(rows[0], { id: "6881280", owner: "ci-runner", creatorPid: 39836, lastPid: 39836 });
+    assert.deepEqual(rows[1], { id: "43188225", owner: "ci-runner", creatorPid: 39867, lastPid: 39867 });
   });
 
   test("parseSharedMemory reads Linux ipcs, by header name", () => {
