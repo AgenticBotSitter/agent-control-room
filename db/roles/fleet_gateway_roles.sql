@@ -21,6 +21,10 @@ GRANT USAGE ON SCHEMA public TO control_room_fleet_gateway;
 -- The marker that identifies this privilege class to the 0140 guards.
 GRANT SELECT ON fleet_gateway_role_anchor TO control_room_fleet_gateway;
 GRANT EXECUTE ON FUNCTION fleet_valid_scope(text[],text[]) TO control_room_fleet_gateway;
+-- The shared audit table's work-intake row policy reads these, as for the
+-- coordinator and web roles. Neither grants any intake authority.
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_fleet_gateway;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_fleet_gateway;
 GRANT SELECT ON tenants, workspaces, projects, control_manual_project_heads, control_identities,
   control_role_grants, control_nodes, control_requests, control_workflows, control_jobs, control_attempts,
   control_leases, control_job_dependencies, control_task_model_selections, control_task_declared_scopes,

@@ -62,7 +62,9 @@ function decodeFiles(value: unknown) {
 }
 
 export type FleetGatewayHttpOptionsV1 = Readonly<{ store: FleetGatewayStoreV1; proposals?: WorkBatchServiceV1;
-  connectorScript?: Readonly<{ body: string; digest: string }>; now?: () => string }>;
+  connectorScript?: Readonly<{ body: string; digest: string }>; now?: () => string;
+  /** Operator log for failures that are not a fixed refusal. Never sent to the caller. */
+  onUnexpectedError?: (error: unknown) => void }>;
 
 export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) {
   const now = options.now ?? (() => new Date().toISOString());
@@ -156,6 +158,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       try { await route(request, response); }
       catch (error) {
         if (response.headersSent) { response.destroy(); return; }
+        if (!(error instanceof FleetErrorV1)) options.onUnexpectedError?.(error);
         const code = error instanceof FleetErrorV1 ? error.code : "refused";
         const status = error instanceof FleetErrorV1 ? error.status : 400;
         send(response, status, { ok: false, error: code });

@@ -775,20 +775,22 @@ DECLARE offer public.fleet_work_offers%ROWTYPE; decision text;
 BEGIN
   IF NOT public.is_fleet_gateway_session() THEN RETURN NEW; END IF;
   SELECT * INTO offer FROM public.fleet_work_offers o WHERE o.tenant_id=NEW.tenant_id AND o.job_id=NEW.id;
-  SELECT rv.decision INTO decision FROM public.fleet_results r JOIN public.fleet_result_reviews rv
+  SELECT rv.decision INTO decision FROM public.fleet_results r LEFT JOIN public.fleet_result_reviews rv
     ON rv.tenant_id=r.tenant_id AND rv.result_id=r.result_id
     WHERE r.tenant_id=NEW.tenant_id AND r.job_id=NEW.id ORDER BY r.submitted_at DESC LIMIT 1;
+  -- No review yet must refuse, never evaluate to NULL and slip through.
+  decision := coalesce(decision,'none');
   IF offer.offer_id IS NULL OR NEW.id<>OLD.id OR NEW.tenant_id<>OLD.tenant_id OR NEW.project_id<>OLD.project_id
     OR NEW.workflow_id<>OLD.workflow_id OR NEW.authority_digest<>OLD.authority_digest
     OR NEW.required_capability<>OLD.required_capability OR NEW.priority<>OLD.priority
-    OR (NEW.state IS DISTINCT FROM OLD.state AND NOT (
+    OR (NEW.state IS DISTINCT FROM OLD.state AND NOT coalesce(
       (NEW.state IN ('ready','leased') AND offer.state='open')
       OR (NEW.state IN ('running','waiting_approval') AND offer.state='open' AND EXISTS (
         SELECT 1 FROM public.fleet_claims fc WHERE fc.tenant_id=NEW.tenant_id AND fc.job_id=NEW.id))
       OR (NEW.state='orphaned')
       OR (NEW.state='succeeded' AND decision='accepted')
       OR (NEW.state='failed' AND decision='revision_requested')
-      OR (NEW.state='cancelled' AND decision='rejected'))) THEN
+      OR (NEW.state='cancelled' AND decision='rejected'), false)) THEN
     RAISE EXCEPTION 'fleet gateway job write rejected';
   END IF;
   RETURN NEW;

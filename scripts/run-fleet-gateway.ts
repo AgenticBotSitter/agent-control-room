@@ -52,7 +52,8 @@ async function main(path: string | undefined) {
     new Uint8Array(Buffer.from(config.workIntake.integrityKey, "base64url")))) : undefined;
   const script = await readFile(join(dirname(fileURLToPath(import.meta.url)), "fleet", "connector.mjs"), "utf8");
   const handler = createFleetGatewayHandlerV1({ store, ...(proposals ? { proposals } : {}),
-    connectorScript: { body: script, digest: `sha256:${createHash("sha256").update(script).digest("hex")}` } });
+    connectorScript: { body: script, digest: `sha256:${createHash("sha256").update(script).digest("hex")}` },
+    onUnexpectedError: error => { process.stderr.write(`fleet gateway: ${error instanceof Error ? error.name : "error"} ${(error as { code?: string }).code ?? ""}\n`); } });
   const server = createServer({ requestTimeout: 30_000, headersTimeout: 10_000, maxHeaderSize: 8192 },
     (request, response) => { void handler.handle(request, response); });
   server.listen(config.port, "127.0.0.1");
