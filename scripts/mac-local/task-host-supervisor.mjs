@@ -18,7 +18,11 @@ function invalidHostLog(path) {
 async function regularPrivateFile(path) {
   try {
     const entry = await lstat(path);
-    if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid())
+    // A second link is a second name for the same inode. Rotation renames the directory entry,
+    // not the file, so a hardlinked log keeps being written and read through its other name
+    // after this stack has moved it to a backup generation and out of its own private runtime.
+    if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink > 1
+      || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid())
       throw invalidHostLog(path);
     return entry;
   } catch (error) {
@@ -42,8 +46,11 @@ export async function rotateHostLog(path, maxBytes = HOST_LOG_MAX_BYTES, backups
 
 export function openHostLog(path) {
   const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  // Checked on the descriptor, not on the path: O_NOFOLLOW has already proved the entry we opened
+  // is not a symlink, and the link count is the only thing that says whether a name we do not
+  // control can still reach every byte appended to this file.
   const entry = fstatSync(fd);
-  if (!entry.isFile() || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid()) {
+  if (!entry.isFile() || entry.nlink > 1 || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid()) {
     closeSync(fd);
     throw invalidHostLog(path);
   }
