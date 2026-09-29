@@ -53,7 +53,8 @@ async function fixture(receiptOverride?: unknown) {
   const delivery = packet(); await provisionRun(f);
   await f.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, key, delivery, receipt(delivery), at(3000)));
   const workspace = manager();
-  const lease = await workspace.prepare({ runId: registration.id, repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
+  const lease = await workspace.prepare({ deliveryDigest: delivery.deliveryDigest, runId: registration.id,
+    repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision });
   const authority = createManagedWorktreeChangeAuditAuthorityV1({ workspaceManager: workspace,
     allowedPaths: ["src/**"], maximumChangedFiles: 3, maximumChangedBytes: 4096 });
   const savedPlan = await f.db.transaction(tx => persistManagedWorktreeChangeAuditPlanV1(tx, key, {
@@ -79,7 +80,8 @@ async function fixture(receiptOverride?: unknown) {
     receiptOverride === undefined ? durableResultReceiptTagV1(key, durableReceipt) : `hmac-sha256:${"b".repeat(64)}`]);
   const scope = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
     attemptId: binding.attemptId, runId: registration.id, artifactId };
-  const evidence = createWorktreeChangeAuditEvidenceV1(savedPlan.plan, { baseRevision: revision, changes: [
+  const evidence = createWorktreeChangeAuditEvidenceV1(savedPlan.plan, { baseRevision: revision,
+    headRevision: "b".repeat(40), changes: [
     { path: "src/safe.ts", kind: "modified", bytes: 20, contentDigest: contentHash },
   ], git: { headRevision: "b".repeat(40), commits: [{ revision: "b".repeat(40), subject: "Safe change" }],
     commitsTruncated: false, unifiedDiff: { text: "diff --git a/src/safe.ts b/src/safe.ts\n", originalBytes: 41,

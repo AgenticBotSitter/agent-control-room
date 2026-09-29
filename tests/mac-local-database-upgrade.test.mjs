@@ -96,22 +96,7 @@ test("grant plan covers the source role files and detects additions and extras e
   assert.throws(() => desiredMacGrantsV1(sources), /upgrade_grant_source_duplicate/u);
 });
 
-test("grant convergence admits only the pinned intake identity function boundary", async () => {
-  const calls = [];
-  const client = { query: async sql => { calls.push(sql); } };
-  await applyMacGrantDiffV1(client, { extra: [],
-    missing: ["control_room_private_web|function|public.is_work_intake_session()||EXECUTE|plain"] });
-  assert.deepEqual(calls,
-    ["GRANT EXECUTE ON FUNCTION public.is_work_intake_session() TO control_room_private_web"]);
-  await assert.rejects(applyMacGrantDiffV1(client, { extra: [],
-    missing: ["control_room_queue_worker|function|public.is_work_intake_session()||EXECUTE|plain"] }),
-  /upgrade_unexpected_function_grant/u);
-  await assert.rejects(applyMacGrantDiffV1(client, { extra: [],
-    missing: ["control_room_private_web|function|public.other_function()||EXECUTE|plain"] }),
-  /upgrade_unexpected_function_grant/u);
-});
-
-test("grant convergence applies only the pinned agent-review function boundary", async () => {
+test("grant convergence applies only the pinned function boundaries", async () => {
   const calls = [];
   const client = { query: async sql => { calls.push(sql); } };
   const signature = "public.commit_agent_review(text, jsonb, jsonb, bytea)";
@@ -123,6 +108,13 @@ test("grant convergence applies only the pinned agent-review function boundary",
     `REVOKE EXECUTE ON FUNCTION ${signature} FROM control_room_private_web`,
     `GRANT EXECUTE ON FUNCTION ${signature} TO control_room_agent_reviewer`,
   ]);
+  await applyMacGrantDiffV1(client, { extra: [],
+    missing: ["control_room_private_web|function|public.is_work_intake_session()||EXECUTE|plain"] });
+  assert.equal(calls.at(-1),
+    "GRANT EXECUTE ON FUNCTION public.is_work_intake_session() TO control_room_private_web");
+  await assert.rejects(applyMacGrantDiffV1(client, { extra: [],
+    missing: ["control_room_queue_worker|function|public.is_work_intake_session()||EXECUTE|plain"] }),
+  /upgrade_unexpected_function_grant/u);
   await assert.rejects(applyMacGrantDiffV1(client, {
     extra: ["control_room_private_web|function|public.other_function(text)||EXECUTE|plain"], missing: [],
   }), /upgrade_unexpected_function_grant/u);

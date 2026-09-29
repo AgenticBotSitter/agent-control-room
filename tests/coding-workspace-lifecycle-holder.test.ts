@@ -119,6 +119,9 @@ test("successful cleanup frees only the workspace slot and retains the terminal 
   assert.equal(holder.observation(first.identity.runId)?.disposition, "workspace_cleaned");
   assert.equal((await holder.acquire({ delivery: first, repositoryRoot: "/fixture/repo",
     workspaceRoot: "/fixture/work", revision })).disposition, "workspace_cleaned");
+  await assert.rejects(holder.acquire({ delivery: delivery("run:cleaned", "job:second-delivery"),
+    repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision }), /delivery_binding_mismatch/,
+  "a later delivery cannot reuse the cleaned checkout identity");
 
   await holder.acquire({ delivery: delivery("run:after-cleanup"), repositoryRoot: "/fixture/repo",
     workspaceRoot: "/fixture/work", revision });

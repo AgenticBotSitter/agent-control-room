@@ -12,6 +12,7 @@ import { now } from "./helpers/web-foundation";
 const at = new Date(now).toISOString(), key = new Uint8Array(32).fill(52);
 const template = { name: "Agent review authority", description: "Build, check and validate one bounded result.", stages: [
   { ordinal: 0, stageKind: "build", role: "builder", description: "Build it.", requiredCapability: "code.change",
+    allowedPaths: ["src/**"], maximumChangedFiles: 20, maximumChangedBytes: 262144,
     workerId: "worker:codex:one", workerKind: "codex", nodeId: "node:codex:one", selectionKey: "codex.standard",
     model: "gpt-test", effort: "medium", maxLoops: 3 },
   { ordinal: 1, stageKind: "check", role: "checker", description: "Check it.", requiredCapability: "code.review",

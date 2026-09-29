@@ -5,11 +5,30 @@ const safeText = z.string().min(1).max(2000);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const effort = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);
 const workerKind = z.enum(["codex", "claude-code", "hermes"]);
+const repositoryRelativePath = z.string().min(1).max(1024).superRefine((value, context) => {
+  const root = value.endsWith("/**") ? value.slice(0, -3) : value;
+  if (!root || root.startsWith("/") || root.includes("\\") || root.includes("\0")
+    || root.split("/").some(part => !part || part === "." || part === "..")) {
+    context.addIssue({ code: "custom", message: "build stage path scope invalid" });
+  }
+});
+export const pipelineBuildWritePolicySchemaV1 = z.object({
+  allowedPaths: z.array(repositoryRelativePath).min(1).max(100)
+    .refine(value => new Set(value).size === value.length, "build stage path scopes duplicated"),
+  maximumChangedFiles: z.number().int().min(1).max(500),
+  maximumChangedBytes: z.number().int().min(1).max(16 * 1024 * 1024),
+}).strict();
 const baseStage = z.object({ ordinal: z.number().int().min(0).max(2), description: safeText,
   requiredCapability: id, workerId: id, workerKind, nodeId: id, selectionKey: id,
   model: z.string().min(1).max(180), effort, provider: id.nullable().default(null),
   profile: id.nullable().default(null), maxLoops: z.number().int().min(0).max(20) }).strict();
 export const pipelineStageTemplateSchemaV1 = z.discriminatedUnion("stageKind", [
+  baseStage.extend({ stageKind: z.literal("build"), role: z.literal("builder"),
+    ...pipelineBuildWritePolicySchemaV1.shape }).strict(),
+  baseStage.extend({ stageKind: z.literal("check"), role: z.literal("checker") }).strict(),
+  baseStage.extend({ stageKind: z.literal("signoff"), role: z.literal("validator") }).strict(),
+]);
+export const legacyPipelineStageTemplateSchemaV1 = z.discriminatedUnion("stageKind", [
   baseStage.extend({ stageKind: z.literal("build"), role: z.literal("builder") }).strict(),
   baseStage.extend({ stageKind: z.literal("check"), role: z.literal("checker") }).strict(),
   baseStage.extend({ stageKind: z.literal("signoff"), role: z.literal("validator") }).strict(),
@@ -17,6 +36,21 @@ export const pipelineStageTemplateSchemaV1 = z.discriminatedUnion("stageKind", [
 export const linearPipelineTemplateInputSchemaV1 = z.object({
   name: z.string().min(1).max(180), description: safeText,
   stages: z.array(pipelineStageTemplateSchemaV1).length(3),
+  maxTotalLoops: z.number().int().min(0).max(60).default(6),
+  maxDurationSeconds: z.number().int().min(60).max(604800).default(86400),
+}).strict().superRefine((value, context) => {
+  const expected = [[0, "build", "builder"], [1, "check", "checker"], [2, "signoff", "validator"]] as const;
+  value.stages.forEach((stage, index) => {
+    const item = expected[index]!;
+    if (stage.ordinal !== item[0] || stage.stageKind !== item[1] || stage.role !== item[2])
+      context.addIssue({ code: "custom", message: "linear stage order invalid", path: ["stages", index] });
+    if ((stage.workerKind === "hermes") !== (stage.provider !== null && stage.profile !== null))
+      context.addIssue({ code: "custom", message: "provider profile invalid", path: ["stages", index] });
+  });
+});
+export const legacyLinearPipelineTemplateInputSchemaV1 = z.object({
+  name: z.string().min(1).max(180), description: safeText,
+  stages: z.array(legacyPipelineStageTemplateSchemaV1).length(3),
   maxTotalLoops: z.number().int().min(0).max(60).default(6),
   maxDurationSeconds: z.number().int().min(60).max(604800).default(86400),
 }).strict().superRefine((value, context) => {
@@ -41,6 +75,10 @@ export const pipelineStageViewSchemaV1 = z.object({ ordinal: z.number().int().mi
   jobId: id, workerId: id, nodeId: id, model: z.string().min(1).max(180), effort,
   state: z.enum(["waiting_dependency", "eligible", "assigned", "running", "completed", "failed", "paused", "uncertain"]),
   round: z.number().int().nonnegative().nullable(), usage: z.literal("unknown"),
+  writePolicy: pipelineBuildWritePolicySchemaV1.nullable(),
+  pullRequestEvidence: z.object({ url: z.string().url(), commitDigest: z.string().regex(/^[a-f0-9]{40}$/),
+    modelSelection: z.object({ workerId: id, model: z.string().min(1).max(180), effort: z.string().min(1).max(80) }).strict(),
+    usage: z.literal("unknown"), evidenceDigest: digest }).strict().nullable(),
   predecessorResultDigest: digest.nullable(), startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict();
 export const pipelineRunViewSchemaV1 = z.object({ runId: id, projectId: id, title: z.string().min(1).max(180),
   state: z.enum(["proposed", "active", "paused", "succeeded", "failed", "cancelled"]),

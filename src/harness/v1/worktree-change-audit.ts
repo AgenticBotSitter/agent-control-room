@@ -45,6 +45,9 @@ const evidenceSchema = z.object({
   schema: z.literal(WORKTREE_CHANGE_AUDIT_EVIDENCE_V1),
   planDigest: digest,
   baseRevision: revision,
+  /** Exact committed tree that was inventoried. Publication must bind this same
+   * commit and refuses evidence without it; historical evidence may omit it. */
+  headRevision: revision.optional(),
   /** A content digest lets the later result path bind evidence without storing a patch in this record. */
   changes: z.array(z.object({ path: relativePath, kind: z.enum(["added", "modified", "deleted"]),
     bytes: z.number().int().min(0).max(16 * 1024 * 1024), contentDigest: digest }).strict()).max(500),
@@ -116,7 +119,9 @@ export function createControllerDeliveryWorktreeChangeAuditPlanV1(input: Readonl
   const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
   const lease = { ...input.lease };
   assertCodexWorkspaceLeaseV1(lease);
-  if (lease.runId !== delivery.identity.runId) throw new Error("worktree_change_audit_delivery_lease_mismatch");
+  if (lease.runId !== delivery.identity.runId || lease.deliveryDigest !== delivery.deliveryDigest) {
+    throw new Error("worktree_change_audit_delivery_lease_mismatch");
+  }
   return createWorktreeChangeAuditPlanV1({ deliveryDigest: delivery.deliveryDigest,
     worktreeLeaseDigest: lease.leaseId, baseRevision: lease.revision,
     allowedPaths: [...input.allowedPaths], maximumChangedFiles: input.maximumChangedFiles,
@@ -142,7 +147,9 @@ export function createWorktreeChangeAuditEvidenceV1(planValue: unknown,
   const plan = verifyWorktreeChangeAuditPlanV1(planValue);
   const changes = z.array(z.object({ path: relativePath, kind: z.enum(["added", "modified", "deleted"]),
     bytes: z.number().int().min(0).max(16 * 1024 * 1024), contentDigest: digest }).strict()).max(500).parse(input.changes);
-  if (input.baseRevision !== plan.baseRevision || changes.length > plan.maximumChangedFiles
+  if (input.baseRevision !== plan.baseRevision || input.headRevision === plan.baseRevision
+    || (input.headRevision !== undefined && input.git !== undefined && input.git.headRevision !== input.headRevision)
+    || changes.length > plan.maximumChangedFiles
     || new Set(changes.map(change => change.path)).size !== changes.length
     || changes.some(change => !allowed(change.path, plan.allowedPaths))
     || changes.reduce((total, change) => total + change.bytes, 0) > plan.maximumChangedBytes) {
@@ -150,13 +157,15 @@ export function createWorktreeChangeAuditEvidenceV1(planValue: unknown,
   }
   const ordered = [...changes].sort((left, right) => left.path.localeCompare(right.path));
   const material = { schema: WORKTREE_CHANGE_AUDIT_EVIDENCE_V1, planDigest: plan.planDigest,
-    baseRevision: plan.baseRevision, changes: ordered, ...(input.git ? { git: input.git } : {}) };
+    baseRevision: plan.baseRevision, ...(input.headRevision ? { headRevision: input.headRevision } : {}),
+    changes: ordered, ...(input.git ? { git: input.git } : {}) };
   return freezeEvidence(evidenceSchema.parse({ ...material, evidenceDigest: sha256Digest(material) }));
 }
 
 export function verifyWorktreeChangeAuditEvidenceV1(planValue: unknown, value: unknown): WorktreeChangeAuditEvidenceV1 {
   const plan = verifyWorktreeChangeAuditPlanV1(planValue), parsed = evidenceSchema.parse(value);
   const expected = createWorktreeChangeAuditEvidenceV1(plan, { baseRevision: parsed.baseRevision,
+    ...(parsed.headRevision ? { headRevision: parsed.headRevision } : {}),
     changes: parsed.changes, ...(parsed.git ? { git: parsed.git } : {}) });
   if (canonicalJson(expected) !== canonicalJson(parsed)) throw new Error("worktree_change_audit_evidence_invalid");
   return expected;
