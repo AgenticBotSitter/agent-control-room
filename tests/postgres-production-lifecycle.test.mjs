@@ -464,9 +464,9 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   await assert.rejects(query(intake,"SELECT * FROM control_idempotency"),/permission denied/u);
 });
 
-// Two tenants, each with valid proposer grants. Only identity:work-intake:own in
-// tenant:batch-own is registered for the work-intake service; the other tenant's
-// proposer and a directly registered agent in the own tenant are not.
+// Two tenants, each registered for work intake exactly as the owner bootstraps
+// register agents (auth_provider='work-intake' plus a valid proposer grant).
+// A directly registered agent in the own tenant is not registered for intake.
 const seededBatchAt = "2026-09-27T12:00:00.000Z";
 const seededBatchProposal = JSON.stringify({ title: "Seeded proposal" });
 const seededBatchDigest = `sha256:${"b".repeat(64)}`;
@@ -475,9 +475,10 @@ const seededBatches = [
   // [tenant, proposer, auth provider, batch, has revision]
   ["tenant:batch-own", "identity:work-intake:own", "work-intake", "batch:own", true],
   ["tenant:batch-own", "identity:batch-own-direct", "agent-key", "batch:own-direct", true],
-  ["tenant:batch-other", "identity:batch-other", "agent-key", "batch:other", true],
-  ["tenant:batch-other", "identity:batch-other", "agent-key", "batch:other-open", false],
+  ["tenant:batch-other", "identity:work-intake:other", "work-intake", "batch:other", true],
+  ["tenant:batch-other", "identity:work-intake:other", "work-intake", "batch:other-open", false],
 ];
+const otherIntakeScope = "work-batches.propose/v1:identity:work-intake:other";
 const seededProject = tenantId => `project:${tenantId.slice("tenant:".length)}`;
 const insertSeededBatch = `INSERT INTO work_batches(id,tenant_id,project_id,proposed_by_identity_id,
   proposed_by_actor_type,proposed_at,state,proposal,queue_depth_limit,batch_digest,auth_tag,version,created_at,updated_at)
@@ -518,9 +519,16 @@ async function seedWorkBatchTenants(db) {
     if (hasRevision) await query(db, insertSeededRevision, [`${batchId}:revision:1`, tenantId, batchId, identityId,
       seededBatchAt, seededBatchProposal, seededBatchDigest, seededBatchTag]);
   }
+  // The other tenant's intake ledgers, in the namespace the intake login may use.
+  await query(db, `INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status,result,completed_at)
+    VALUES('tenant:batch-other',$1,'other-intake-key-0001',$2,'completed','{"batchId":"batch:other"}'::jsonb,$3)`,
+  [otherIntakeScope, `sha256:${"d".repeat(64)}`, seededBatchAt]);
+  await query(db, `INSERT INTO audit_events(id,tenant_id,project_id,actor_id,actor_type,action,target_type,target_id,
+    safe_metadata,occurred_at) VALUES('audit:work-intake:other-1','tenant:batch-other','project:batch-other',
+    'identity:work-intake:other','agent','work_batches.propose','work_batch','batch:other','{}'::jsonb,$1)`, [seededBatchAt]);
 }
 
-test("work-intake login reads and writes only its registered identity's work batches", needsPg, async () => {
+test("work-intake login reads and writes only its bound tenant's registered work batches", needsPg, async () => {
   await freshDatabase("cr_prod_intake_batches");
   const db=target("cr_prod_intake_batches");
   await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_intake_batches"),
@@ -537,9 +545,12 @@ test("work-intake login reads and writes only its registered identity's work bat
   assert.deepEqual((await query(intake,"SELECT proposal FROM work_batches WHERE tenant_id='tenant:batch-other'")).rows,[]);
   assert.deepEqual((await query(intake,
     "SELECT proposal FROM work_batch_revisions WHERE tenant_id='tenant:batch-other'")).rows,[]);
+  assert.deepEqual((await query(intake,
+    "SELECT operation_scope,result FROM control_idempotency WHERE tenant_id='tenant:batch-other'")).rows,[]);
+  assert.deepEqual((await query(intake,"SELECT id FROM audit_events WHERE tenant_id='tenant:batch-other'")).rows,[]);
 
   // Each forged proposer holds a valid proposer grant, so only the policy refuses it.
-  for (const [tenantId, identityId] of [["tenant:batch-other","identity:batch-other"],
+  for (const [tenantId, identityId] of [["tenant:batch-other","identity:work-intake:other"],
     ["tenant:batch-own","identity:batch-own-direct"]])
     await assert.rejects(query(intake,insertSeededBatch,[`batch:forged-${identityId.slice(9)}`,tenantId,
       seededProject(tenantId),identityId,seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),
@@ -549,8 +560,14 @@ test("work-intake login reads and writes only its registered identity's work bat
     seededProject("tenant:batch-other"),"identity:work-intake:own",seededBatchAt,seededBatchProposal,
     seededBatchDigest,seededBatchTag]),/row-level security|proposal-only work batch insert rejected/u);
   await assert.rejects(query(intake,insertSeededRevision,["batch:other-open:revision:1","tenant:batch-other",
-    "batch:other-open","identity:batch-other",seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),
+    "batch:other-open","identity:work-intake:other",seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),
   /row-level security|initial work batch revision insert rejected/u);
+  // The other tenant's agent holds a valid grant, so the ledger guard admits the
+  // row and only the tenant binding refuses it.
+  await assert.rejects(query(intake,`INSERT INTO control_idempotency
+    (tenant_id,operation_scope,idempotency_key,request_digest,status)
+    VALUES('tenant:batch-other',$1,'forged-other-key-0001',$2,'processing')`,
+  [otherIntakeScope,`sha256:${"e".repeat(64)}`]),/row-level security/u);
   await assert.rejects(query(intake,
     "UPDATE work_batches SET proposal='{}'::jsonb WHERE tenant_id='tenant:batch-other'"),/permission denied/u);
   await assert.rejects(query(intake,
