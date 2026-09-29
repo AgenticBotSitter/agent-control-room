@@ -76,6 +76,15 @@ test("a documentation guide about reports passes hygiene", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("a missing added-path result does not throw", () => {
+  const root = fixture();
+  try {
+    assert.deepEqual(inspect(root, "## Summary\n\nThe diff was unavailable.", ["docs/guide.md"], workflow, null), {
+      ok: true, errors: [], warnings: 0,
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("a nonexistent test reference fails", () => {
   const root = fixture();
   try {
@@ -111,6 +120,16 @@ function git(root, args) {
   return result.stdout.trim();
 }
 
+function runChecker(root, base, head) {
+  const event = join(root, "event.json");
+  writeFileSync(event, JSON.stringify({ pull_request: {
+    body: "## Summary\n\nHygiene regression.", base: { sha: base }, head: { sha: head },
+  } }));
+  return spawnSync(process.execPath, [checker], {
+    cwd: root, encoding: "utf8", env: { ...process.env, GITHUB_EVENT_PATH: event },
+  });
+}
+
 test("a body containing a configured private-name term is not echoed into logs", () => {
   const root = fixture();
   const privateTerm = "SyntheticPrivateNameForClaims";
@@ -136,6 +155,49 @@ test("a body containing a configured private-name term is not echoed into logs",
     const logs = `${result.stdout}\n${result.stderr}`;
     assert.doesNotMatch(logs.toLowerCase(), new RegExp(privateTerm.toLowerCase()));
     assert.match(logs, /absolute claim\(s\) lack an evidence line/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("real Git additions reject moved and copied reports but allow deletion", () => {
+  const root = mkdtempSync(join(tmpdir(), "pr-claims-git-"));
+  try {
+    mkdirSync(join(root, "docs"));
+    mkdirSync(join(root, "reports"));
+    mkdirSync(join(root, ".github/workflows"), { recursive: true });
+    writeFileSync(join(root, ".github/workflows/ci.yml"), workflow);
+    writeFileSync(join(root, "docs/moved.md"), "move me\n");
+    writeFileSync(join(root, "docs/copied.md"), "copy me\n");
+    writeFileSync(join(root, "reports/existing.md"), "delete me\n");
+    git(root, ["init", "-q"]);
+    git(root, ["config", "user.email", "fixture@example.invalid"]);
+    git(root, ["config", "user.name", "Fixture"]);
+    git(root, ["add", "."]);
+    git(root, ["commit", "-qm", "base"]);
+    const base = git(root, ["rev-parse", "HEAD"]);
+
+    git(root, ["mv", "docs/moved.md", "reports/moved.md"]);
+    git(root, ["commit", "-qm", "move report"]);
+    const movedHead = git(root, ["rev-parse", "HEAD"]);
+    const movedResult = runChecker(root, base, movedHead);
+    assert.equal(movedResult.status, 1, movedResult.stderr);
+    assert.match(movedResult.stderr, /stray_report_path/u);
+
+    const copiedBase = movedHead;
+    writeFileSync(join(root, "reports/copied.md"), readFileSync(join(root, "docs/copied.md")));
+    git(root, ["add", "reports/copied.md"]);
+    git(root, ["commit", "-qm", "copy report"]);
+    const copiedHead = git(root, ["rev-parse", "HEAD"]);
+    const copiedResult = runChecker(root, copiedBase, copiedHead);
+    assert.equal(copiedResult.status, 1, copiedResult.stderr);
+    assert.match(copiedResult.stderr, /stray_report_path/u);
+
+    const deleteBase = copiedHead;
+    git(root, ["rm", "reports/existing.md"]);
+    git(root, ["commit", "-qm", "delete report"]);
+    const deleteHead = git(root, ["rev-parse", "HEAD"]);
+    const deleteResult = runChecker(root, deleteBase, deleteHead);
+    assert.equal(deleteResult.status, 0, deleteResult.stderr);
+    assert.match(deleteResult.stdout, /PR claims check passed/u);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

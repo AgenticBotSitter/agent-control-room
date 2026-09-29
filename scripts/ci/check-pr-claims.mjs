@@ -133,6 +133,7 @@ export function checkPrClaims({
     return { ok: false, errors: ["changed_paths_unavailable"], warnings: absoluteWarnings(body) };
   }
 
+  if (!Array.isArray(addedPaths)) addedPaths = [];
   if (addedPaths.some((path) => strayReportPath.test(path))) {
     errors.push("stray_report_path");
   }
@@ -189,7 +190,7 @@ function diffPaths(event, root, filter) {
 }
 
 function changedPaths(event, root) { return diffPaths(event, root, "ACDMRTUXB"); }
-function addedPaths(event, root) { return diffPaths(event, root, "A"); }
+function addedPaths(event, root) { return diffPaths(event, root, "ARC"); }
 
 export function main(env = process.env) {
   try {
