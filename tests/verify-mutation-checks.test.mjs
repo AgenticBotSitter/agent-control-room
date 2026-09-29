@@ -515,19 +515,17 @@ test("deleting the SIGINT handler fails the mutated-run restoration test", async
   const root = fixture();
   try {
     const path = manifest(root, {
-      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+      test: 'exec node -e "setTimeout(() => process.exit(0), 1000)"',
     });
-    const checks = JSON.parse(readFileSync(path, "utf8"));
-    checks[0].test = 'node -e "process.exit(0)"';
-    writeFileSync(path, `${JSON.stringify(checks, null, 2)}\n`);
     const mutant = join(root, "verify-mutation-checks-no-sigint.mjs");
     writeFileSync(mutant, readFileSync(verifier, "utf8").replace('process.on("SIGINT", () => restoreOnSignal("SIGINT"));\n', ""));
-    git(root, "add", path, mutant);
+    git(root, "add", mutant);
     git(root, "commit", "-qm", "SIGINT-handler mutant");
-    const result = await interruptDuringMutation(root, path, "SIGINT", mutant, "APPLIED MUTATION [1] src/guard.mjs");
+    const result = await interruptDuringMutation(root, path, "SIGINT", mutant);
     assert.equal(result.sent, true, result.transcript);
     assert.notEqual(readFileSync(join(root, "src", "guard.mjs"), "utf8"), 'export const decision = "refuse";\n');
     git(root, "restore", "--", "src/guard.mjs");
+    await new Promise(resolveDone => setTimeout(resolveDone, 1_100));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
