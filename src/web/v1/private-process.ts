@@ -29,7 +29,7 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
-import { ideaCreationOptionsSchema } from "./idea-wire";
+import { ideaCreationOptionsSchema, ideaDecisionDraftSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
@@ -44,6 +44,7 @@ import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
 import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
+import { IdeaLabPromotionTaskLinkStoreV1, IDEA_LAB_PROMOTION_TASK_LINK_V1 } from "../../idea-lab/v1/promotion-task-link-store";
 import { parseOperatorSurfaceSnapshotV1, type ActionInboxItemV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
@@ -572,8 +573,26 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
             if (!ideaCreation?.decide) throw new Error("idea_decision_not_configured");
             let sessionId: string; try { sessionId = decodeURIComponent(ideaDecision[1]); } catch { throw new WebAccessError("invalid_request"); }
-            const result = await ideaCreation.decide(identity, sessionId, await readBoundedJson(request.body, 4096));
-            return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+            const body = ideaDecisionDraftSchema.safeParse(await readBoundedJson(request.body, 8192));
+            if (!body.success) throw new WebAccessError("invalid_request");
+            const decision = await ideaCreation.decide(identity, sessionId, body.data);
+            if (body.data.intent.decision !== "create_project") {
+              return Response.json({ ...decision, firstTask: null },
+                { status: decision.replayed ? 200 : 201, headers: privateResponseHeaders });
+            }
+            if (!decision.projectId || !body.data.promotionTask || !options.ideaProjects) throw new Error("idea_promotion_unavailable");
+            const firstTask = await tasks.propose(identity, decision.projectId, body.data.promotionTask,
+              `idea-promotion:${decision.decisionDigest.slice(7)}`);
+            await new IdeaLabPromotionTaskLinkStoreV1(options.database.client, options.ideaProjects.integrityKey).record({
+              contractVersion: IDEA_LAB_PROMOTION_TASK_LINK_V1, tenantId: options.tenantId, sessionId,
+              decisionDigest: decision.decisionDigest, projectId: decision.projectId,
+              jobId: firstTask.receipt.jobId, requestId: firstTask.receipt.requestId,
+              createdAt: firstTask.receipt.createdAt, startsWork: false,
+              grantsAssignmentAuthority: false, grantsApproval: false, grantsExecutionAuthority: false,
+            });
+            const replayed = decision.replayed && firstTask.replayed;
+            return Response.json({ ...decision, firstTask, replayed },
+              { status: replayed ? 200 : 201, headers: privateResponseHeaders });
           }
           const ideaStop = /^\/api\/v1\/ideas\/([^/]+)\/stop$/.exec(url.pathname);
           if (ideaStop) {

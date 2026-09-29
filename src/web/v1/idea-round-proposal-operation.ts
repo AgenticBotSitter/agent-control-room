@@ -58,6 +58,12 @@ export class WebIdeaRoundProposalOperation {
         throw new WebAccessError("conflict");
       const links = await new IdeaLabCanonicalTaskLinkStoreV1(db, this.key).list(this.scope.tenantId, sessionId);
       const contributions = await store.listContributions(this.scope.tenantId, sessionId);
+      const targetLinks = links.filter(link => link.round === input.data.round);
+      const expired = Date.parse(actor.now) > Date.parse(saved.createdAt) + saved.maxDurationSeconds * 1000;
+      // An exact, fully saved round remains replayable after the deadline so a
+      // lost browser response is recoverable. The deadline can never admit new
+      // or partial discussion work.
+      if (expired && targetLinks.length !== saved.participants.length) throw new WebAccessError("conflict");
       if (input.data.round === 1) {
         // A retained legacy run or result is evidence only. It cannot be mixed
         // into this new canonical task lineage. Existing exact first-round

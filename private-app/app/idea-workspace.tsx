@@ -14,9 +14,31 @@ import { IdeaResultProjectionControl } from "./idea-result-projection-control";
 
 export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: IdeaDetail; refresh?: () => void; pendingChanged?: (held: boolean) => void }) {
   const { session, contributions, synthesis, decision, run, canonicalTasks } = detail;
+  const expectedTurns = session.participants.length * session.maxRounds;
+  const missingTurns = Array.from({ length: session.maxRounds }, (_, index) => index + 1).flatMap(round =>
+    session.participants.filter(participant => !contributions.some(item => item.round === round && item.participantId === participant.participantId))
+      .map(participant => ({ round, participant })));
+  const deadline = new Date(Date.parse(session.createdAt) + session.maxDurationSeconds * 1000).toISOString();
+  const preparationExpired = Date.parse(detail.observedAt) > Date.parse(deadline);
   return <><h1>{session.title}</h1><p>{session.ideaSummary}</p><p>For: {session.targetCustomer}</p>
     <p>{detail.execution === "not_configured" ? "Discussion task preparation is not connected on this installation."
       : "Preparing ordinary Control Room tasks is configured. This does not contact a bot or confirm that a worker is available."}</p>
+    <section className="private-panel" aria-label="Discussion limits"><h2>Discussion limits</h2>
+      <p>{session.participants.length} selected participants · {session.maxRounds} round maximum · {expectedTurns} contribution maximum</p>
+      <p>{session.maxDurationSeconds} second preparation window, ending <time dateTime={deadline}>{deadline}</time>. {preparationExpired
+        ? "The window has elapsed; no new discussion round can be prepared." : "The window is still open."}</p>
+      <p>Cost limit: ${session.maxCostUsd.toFixed(2)}. {run
+        ? `Recorded provider cost: $${run.costUsd.toFixed(2)}. Token usage is not recorded in this view.`
+        : "Aggregate usage and cost for ordinary tasks are unknown here; inspect each task's retained usage evidence."}</p>
+    </section>
+    <section className="private-panel" aria-label="Contribution coverage"><h2>Contribution coverage</h2>
+      <p>{contributions.length} of {expectedTurns} contributions are retained. A recap never replaces the individual records below.</p>
+      {missingTurns.length ? <><p role="status">{missingTurns.length} contribution{missingTurns.length === 1 ? " is" : "s are"} missing or not yet reviewed.</p>
+        <ul>{missingTurns.map(({ round, participant }) => <li key={`${round}:${participant.participantId}`}>Round {round}: {participant.displayName} ({participant.perspective})</li>)}</ul></>
+        : <p>Every planned participant contribution is retained.</p>}
+      {run && ["failed_definite", "ambiguous", "cancelled"].includes(run.state)
+        ? <p role="alert">The discussion ended as {run.state.replace("_", " ")}. Missing contributions remain missing; they were not inferred.</p> : null}
+    </section>
     <section className="private-panel" aria-label="Panel status"><h2>Panel status</h2>{run ? <>
       <p>{({ prepared: "Prepared — no turn started", running: "Discussion in progress", completed: "Discussion completed",
         cancelled: "Discussion stopped", failed_definite: "Discussion failed", ambiguous: "Outcome uncertain — do not restart" })[run.state]}</p>
@@ -60,12 +82,17 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: Id
     </section> : null}
     <section className="private-panel"><h2>Discussion recap</h2>{synthesis ? <><p style={{ whiteSpace: "pre-wrap" }}>{synthesis.executiveSummary}</p>
       <p>Advisory score: {synthesis.overallScore}/100 — not a prediction of business success.</p>
-      <p>Proposed experiment: {synthesis.nextExperiment}</p></> : detail.canSynthesize
+      <p>Proposed experiment: {synthesis.nextExperiment}</p>
+      <p>This recap covers {contributions.length} retained contributions. Review the participant records and any missing entries above before deciding.</p></> : detail.canSynthesize
         ? <IdeaSynthesisControl key={run?.runId ?? "canonical-reviewed-tasks"} sessionId={session.sessionId} sessionDigest={session.sessionDigest}
           {...(run ? { runId: run.runId, mode: "legacy_panel" as const } : { mode: "canonical_reviewed_tasks" as const })} refresh={refresh} />
         : <p>No recap saved yet. Preparing one requires a completed discussion and current owner access.</p>}</section>
     <section className="private-panel"><h2>Your decision</h2>{decision ? <>
       <p>{decision.decision === "create_project" ? "Promoted to a project" : decision.decision === "save" ? "Saved for later" : "Rejected"}</p>
+      {detail.promotionTask ? <p>First task proposed. It is not assigned, approved or running. <a
+        href={`/projects/${encodeURIComponent(detail.promotionTask.projectId)}/tasks/${encodeURIComponent(detail.promotionTask.jobId)}`}>Review proposed task</a></p> : null}
+      {decision.decision === "create_project" && !detail.promotionTask
+        ? <p role="alert">The project decision is saved, but the first task proposal is not confirmed. Refresh before taking another action.</p> : null}
       {decision.project ? <a href={`/projects/${encodeURIComponent(decision.project.projectId)}`}
         style={{ display: "inline-flex", minHeight: 24, alignItems: "center" }}>Open project workspace</a> : null}
     </> : detail.canDecide ? <IdeaDecisionForm key={session.sessionId} detail={detail} pendingChanged={pendingChanged} />

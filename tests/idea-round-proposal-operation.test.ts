@@ -16,7 +16,8 @@ test("an owner prepares first-round Idea Lab tasks without contacting a provider
   const session = buildIdeaLabSessionV1({ sessionId: "idea:round-proposal-operation", tenantId: "tenant:web", workspaceId: "workspace:web",
     title: source.session.title, ideaSummary: source.session.ideaSummary, targetCustomer: source.session.targetCustomer,
     participants: source.session.participants, maxRounds: source.session.maxRounds, maxDurationSeconds: source.session.maxDurationSeconds,
-    maxCostUsd: source.session.maxCostUsd, createdByIdentityDigest: source.session.createdByIdentityDigest, createdAt: source.session.createdAt });
+    maxCostUsd: source.session.maxCostUsd, createdByIdentityDigest: source.session.createdByIdentityDigest,
+    createdAt: new Date(now).toISOString() });
   const key = new Uint8Array(32).fill(29);
   await new IdeaLabProjectRegistryStoreV1(f.client, key).registerSession(session);
   const operation = new WebIdeaRoundProposalOperation(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, f.tasks, () => now);
@@ -40,6 +41,16 @@ test("an owner prepares first-round Idea Lab tasks without contacting a provider
   assert.equal(detail.canStart, false);
   await assert.rejects(operation.propose(f.identity, session.sessionId,
     { sessionDigest: session.sessionDigest, projectId: "project:other", round: 1 }), WebAccessError);
+
+  const expired = buildIdeaLabSessionV1({ sessionId: "idea:expired-round-proposal", tenantId: "tenant:web", workspaceId: "workspace:web",
+    title: source.session.title, ideaSummary: source.session.ideaSummary, targetCustomer: source.session.targetCustomer,
+    participants: source.session.participants, maxRounds: 1, maxDurationSeconds: 60,
+    maxCostUsd: source.session.maxCostUsd, createdByIdentityDigest: source.session.createdByIdentityDigest,
+    createdAt: new Date(now - 61_000).toISOString() });
+  await new IdeaLabProjectRegistryStoreV1(f.client, key).registerSession(expired);
+  await assert.rejects(operation.propose(f.identity, expired.sessionId,
+    { sessionDigest: expired.sessionDigest, projectId: f.project.projectId, round: 1 }), WebAccessError);
+  assert.equal((await f.tasks.list(f.identity, f.project.projectId)).tasks.length, session.participants.length);
 });
 
 test("a later Idea Lab round requires every reviewed prior task and rechecks it before task preparation", async t => {
@@ -48,7 +59,8 @@ test("a later Idea Lab round requires every reviewed prior task and rechecks it 
   const session = buildIdeaLabSessionV1({ sessionId: "idea:round-proposal-later", tenantId: "tenant:web", workspaceId: "workspace:web",
     title: source.session.title, ideaSummary: source.session.ideaSummary, targetCustomer: source.session.targetCustomer,
     participants: source.session.participants, maxRounds: source.session.maxRounds, maxDurationSeconds: source.session.maxDurationSeconds,
-    maxCostUsd: source.session.maxCostUsd, createdByIdentityDigest: source.session.createdByIdentityDigest, createdAt: source.session.createdAt });
+    maxCostUsd: source.session.maxCostUsd, createdByIdentityDigest: source.session.createdByIdentityDigest,
+    createdAt: new Date(now).toISOString() });
   const key = new Uint8Array(32).fill(31);
   const store = new IdeaLabProjectRegistryStoreV1(f.client, key);
   await store.registerSession(session);
