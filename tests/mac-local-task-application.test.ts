@@ -50,6 +50,8 @@ test("Mac-local task composition reuses the canonical operations without startin
     "the result page must advertise owner review only when its mounted review operation is configured");
   assert.equal(app.taskReadKeys?.manualVerificationScenarios, manualVerificationScenarios,
     "the Mac-local result page receives the same human-only scenario source as the write operation");
+  assert.equal(typeof app.projectEvents?.read, "function",
+    "the Mac-local task host receives the canonical read-only project-event source");
   assert.equal(app.queueDelivery, undefined, "constructing the local website must not start or imply a queue worker");
   assert.ok(!f.trace.includes("queue-start"));
 

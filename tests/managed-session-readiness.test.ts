@@ -14,7 +14,7 @@ test('session admission requires a completed synchronous availability check', as
   for (const check of [undefined, () => false, () => Promise.resolve(), () => Promise.reject(new Error('synthetic pending check'))]) {
     const manager = new ManagedNativeSessions({ query: unexpected, transaction: unexpected, transactionWithPreCommitCheck: unexpected },
       { ...settings, nodes: [node] }, scope,
-      { stage: unexpected, transmit: unexpected, receipt: unexpected, progress: unexpected },
+      { stage: unexpected, transmit: unexpected, receipt: unexpected, renew: unexpected, progress: unexpected },
       unexpected, check ?? (() => {}), () => 1);
     if (check) assert.throws(() => manager.queueAttention());
     else assert.equal(manager.queueAttention().unavailableNodes, 1);
@@ -24,7 +24,7 @@ test('session admission requires a completed synchronous availability check', as
     let closes = 0;
     const manager = new ManagedNativeSessions({ query: unexpected, transaction: unexpected, transactionWithPreCommitCheck: unexpected },
       { ...settings, nodes: [node] }, scope,
-      { stage: unexpected, transmit: unexpected, receipt: unexpected, progress: unexpected },
+      { stage: unexpected, transmit: unexpected, receipt: unexpected, renew: unexpected, progress: unexpected },
       async work => work(), () => {}, () => 1);
     const transport = { send: unexpected, async close() { closes++; },
       isAvailable: (() => state === 'fulfilled' ? Promise.resolve(true)
@@ -39,7 +39,7 @@ test('session admission requires a completed synchronous availability check', as
     { query: unexpected, transaction: unexpected, transactionWithPreCommitCheck: unexpected },
     { ...settings, nodes: [node] }, scope,
     { queue: { locate: unexpected, stage: unexpected, transmit: unexpected, codexStage: unexpected },
-      stage: unexpected, transmit: unexpected, receipt: unexpected, progress: unexpected },
+      stage: unexpected, transmit: unexpected, receipt: unexpected, renew: unexpected, progress: unexpected },
     unexpected, () => {}, () => 1), /native_sessions_config_invalid/);
   assert.equal(effects, 0);
 });
