@@ -42,6 +42,7 @@ import { readSavedTaskPlansInSessionV1, readTaskRevisionLinksV1, savedTaskPlanPr
   type SavedTaskPlanRowV1 } from "./task-execution-planner";
 import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
 import { projectTaskDisplayStateV1 } from "./task-display-state";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
 import { costForUsageV1, rollupUsageGroupsV1, usageMeasurementSchemaV1, usagePriceTableSchemaV1,
   type UsagePriceTableV1, type UsageRollupV1 } from "../../usage/v1/usage-cost";
 import type { HarnessRunEventV1, HarnessRunV1 } from "../../harness/v1/types";
@@ -124,6 +125,7 @@ export class WebTaskService {
   private readonly taskPlanIntegrityKey?: Uint8Array;
   private readonly usagePriceTable?: UsagePriceTableV1;
   private readonly fileAccessKey?: Uint8Array;
+  private readonly projectEvents?: TaskProjectEventWriterV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
@@ -149,6 +151,8 @@ export class WebTaskService {
     if (keys?.harnessIntegrityKey !== undefined) {
       if (!(keys.harnessIntegrityKey instanceof Uint8Array) || keys.harnessIntegrityKey.length !== 32) throw new Error("task_key_invalid");
       this.harnessKey = new Uint8Array(keys.harnessIntegrityKey);
+      this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+        deriveProjectEventIntegrityKeyV1(this.harnessKey), () => new Date(this.clock()).toISOString()));
     }
     if (keys?.results) {
       if (!this.harnessKey) throw new Error("task_key_invalid");
@@ -361,6 +365,8 @@ export class WebTaskService {
         safeMetadata: { inputDigest: bundle.job.inputDigest, state: "proposed" } });
       await tx.query(`INSERT INTO control_web_task_commands(tenant_id,identity_id,idempotency_key,project_id,job_id,request_digest,result,occurred_at)
         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`, [this.scope.tenantId, actor.id, key, projectId, jobId, digest, JSON.stringify(receipt), actor.now]);
+      if (this.projectEvents) await this.projectEvents.appendInSession(tx, { ...this.scope, projectId, subjectId: jobId,
+        action: "task_created", sourceId: jobId, sourceVersion: "task-created-v1", occurredAt: actor.now });
       return { receipt, replayed: false };
   }
 

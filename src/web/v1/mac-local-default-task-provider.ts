@@ -181,6 +181,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       deliveryIntegrityKeys: { ownerTrustedLocal: keys.deliveryReceipt }, checkpoints: checkpointStore,
       storageClass: "local", storage });
     const publication = { db: publisherPool.client, integrityKey: keys.results, reviewKey: keys.review,
+      projectEventRootKey: keys.harness,
       storage, storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1(), reviewSubmission };
     const common = (index: number, registerRun: Parameters<typeof createOwnerTrustedLocalCliPublishV1>[0]["registerRun"]) => {
       const selected = workers[index]!;

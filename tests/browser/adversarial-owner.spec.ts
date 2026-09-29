@@ -449,8 +449,13 @@ test.describe("disposable owner website adversarial attacks", () => {
         await expect(page.locator("main")).toContainText("Revision lifecycle task");
       }
       if (path === `${projectPath}/activity`) {
-        await expect(page.locator("main")).toContainText("No saved project events are recorded yet");
         await expect(page.locator("main")).toContainText("Read-only history");
+        // The task and revision lifecycle just exercised above now publishes
+        // real project events; the feed is no longer the empty state.
+        await expect(page.locator("main")).toContainText("Task created");
+        await expect(page.locator("main")).toContainText("Task result accepted");
+        await expect(page.locator("main")).toContainText("Task changes requested");
+        await expect(page.locator("main")).toContainText("Task revision created");
       }
     }
     expect(browserErrors).toEqual([]);
