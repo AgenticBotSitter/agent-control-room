@@ -22,8 +22,10 @@
 //      order and paint order cannot disagree even if (1) is worked around.
 //   3. no owner page may use a positive `tabindex`, which reorders the tab
 //      sequence independently of the DOM and of the paint order alike.
-//   4. "Needs attention" precedes the other panels, so the attention-first
-//      result is a consequence of position rather than of a paint trick.
+//   4. the dashboard leads `main` and the framing copy closes it, so the
+//      attention-first result is a consequence of DOM position rather than of
+//      a paint trick. What panel leads *inside* the dashboard is deliberately
+//      not asserted; see the note on that test.
 //
 // It is also a mutation-resistant test: checks (1) and (3) read the shipped
 // stylesheet and markup rather than trusting the component, and check (2) is
@@ -70,14 +72,45 @@ function rulesOf(css: string): { selector: string; declarations: string[] }[] {
 }
 
 /**
- * Selectors naming one of Home's own top-level blocks. A reordering construct
- * on any of these is the finding this file exists to close, whatever property
- * carries it.
+ * The classes on Home's own top-level blocks — the children `main` actually
+ * renders, in `home-workspace.tsx` — with the condition under which each one
+ * is present. A reordering construct on any of these is the finding this file
+ * exists to close, whatever property carries it.
+ *
+ * A list rather than a regex, because a list can be asserted against the
+ * component (see "the blocks the grid-placement scan names really are children
+ * of Home's main") and a regex cannot. The first version of this was a regex
+ * naming only `.private-home-main`, `-lead` and `-intro` — 3 of the 8 — so a
+ * `grid-row: 1` on the dashboard grid was the same defect the guard exists for,
+ * reached through a class the old pattern never named. The conditions are
+ * stated because two of these are conditional, and the drift check below has to
+ * know which mode to hold each one to or it fails on correct code.
  */
-const HOME_TOP_LEVEL = /\.private-home-(?:main|lead|intro)\b/;
+type Mode = "local" | "hosted";
+
+const HOME_TOP_LEVEL_CLASSES: readonly { name: string; when: (mode: Mode) => boolean }[] = Object.freeze([
+  { name: "private-home-main", when: () => true },                    // the container itself
+  { name: "private-home-intro", when: () => true },                   // the eyebrow and the h1
+  { name: "private-dashboard-grid", when: () => true },               // the panels
+  { name: "private-dashboard-projects", when: () => true },           // the projects panel
+  { name: "private-local-worker-evidence", when: (mode: Mode) => mode === "local" },
+  { name: "private-action-link", when: () => true },                  // the dashboard's "New task" link
+  // The idea-lab aside, which needs hosted mode AND the module enabled. The
+  // jsdom harness renders with no product configuration, so the module read
+  // returns false and the aside never appears here; its presence is covered by
+  // the browser walk in hosted mode, not by this list.
+  { name: "private-home-note", when: () => false },
+  { name: "private-home-lead", when: () => true },                   // the framing copy, last by design
+]);
+
+/** True when a stylesheet selector names one of those blocks. */
+function isHomeTopLevel(selector: string): boolean {
+  return HOME_TOP_LEVEL_CLASSES.some(entry => selector.includes(`.${entry.name}`));
+}
 
 /** Every rule that assigns `order` to one of Home's `main` children. */
 const homeOrderDeclarations = rulesOf(STYLESHEET)
+  .filter(rule => isHomeTopLevel(rule.selector))
   .flatMap(rule => rule.declarations.filter(declaration => /^\s*order\s*:/.test(declaration))
     .map(declaration => ({ selector: rule.selector, declaration })));
 
@@ -96,8 +129,18 @@ const REVERSED_FLOW = /(?:^|[\s;{])(?:-moz-|-webkit-)?(?:flex-direction|directio
 /** Explicit grid placement: an item's row or area assigned by rule, not by source. */
 const GRID_PLACEMENT = /^\s*(?:grid-row|grid-row-start|grid-row-end|grid-area|grid-area-start|grid-area-end|grid-template-areas)\s*:/;
 
-/** Every `.tsx` in the owner app, for the static markup scans below. */
-const OWNER_SOURCES = readdirSync(APP_DIRECTORY)
+/**
+ * Every `.tsx` in the owner app, for the static markup scans below.
+ *
+ * `recursive: true` is load-bearing and was missing in the first version of
+ * this: `private-app/app/` has 20 subdirectories (`session/`, `needs-me/`,
+ * `workers/`, `settings/`, `setup/`, `connections/`, …) and a flat `readdirSync`
+ * saw 58 of the 85 components — 10 of the 16 `tabindex` uses. A `tabIndex={1}`
+ * on a worker card or on the sign-in page would have passed the guard that
+ * claims to cover every owner page. Verified: flat 58 files / 10 matches,
+ * recursive 85 files / 16 matches.
+ */
+const OWNER_SOURCES = readdirSync(APP_DIRECTORY, { recursive: true, encoding: "utf8" })
   .filter(entry => entry.endsWith(".tsx"))
   .map(entry => ({ path: join(APP_DIRECTORY, entry), source: readFileSync(join(APP_DIRECTORY, entry), "utf8") }));
 
@@ -242,7 +285,7 @@ test("no grid row or area may be placed on Home's own top-level blocks", () => {
   // fail on shipped behaviour and teach the next person that the test is
   // arbitrary.
   const placements = rulesOf(STYLESHEET)
-    .filter(rule => HOME_TOP_LEVEL.test(rule.selector))
+    .filter(rule => isHomeTopLevel(rule.selector))
     .flatMap(rule => rule.declarations.filter(declaration => GRID_PLACEMENT.test(declaration))
       .map(declaration => ({ selector: rule.selector, declaration })));
   assert.deepEqual(placements, [],
@@ -258,6 +301,72 @@ test("no flow direction may be reversed in the owner stylesheet", () => {
     .map(rule => ({ selector: rule.selector, declarations: rule.declarations.filter(d => REVERSED_FLOW.test(d)) }));
   assert.deepEqual(reversed, [],
     `a reversed flow direction paints against the tab sequence: ${JSON.stringify(reversed)}`);
+});
+
+test("the blocks the grid-placement scan names really are children of Home's main", async () => {
+  // `HOME_TOP_LEVEL_CLASSES` is a hand-written list of class names, and a list
+  // that drifts from the component is worse than no list: the grid-placement
+  // scan above silently stops covering a block it used to name. This asserts
+  // the list against what `main` actually renders, in both runtime modes, so
+  // adding a top-level block to Home without adding it here fails here first.
+  //
+  // One direction only. Every class in the list must appear in `main` (a stale
+  // entry is a bug); a class in `main` that is not in the list is only a gap
+  // the browser walk still covers, and a page may legitimately add a child
+  // that carries no reordering risk.
+  const named = HOME_TOP_LEVEL_CLASSES.map(entry => entry.name);
+  assert.ok(named.length >= 6,
+    `the grid-placement scan should name Home's real top-level blocks, it names ${named.length}`);
+  for (const mode of ["local", "hosted"] as const) {
+    const mounted = await mountHome(mode);
+    try {
+      const classes = new Set([...mounted.document.querySelectorAll("main *")].flatMap(element =>
+        String(element.className ?? "").split(/\s+/).filter(Boolean)));
+      // `main` itself is named but is the container, not one of its children,
+      // so its own presence is checked by the mode-independent rule below.
+      const unreachable = HOME_TOP_LEVEL_CLASSES
+        .filter(entry => entry.name !== "private-home-main" && entry.when(mode) && !classes.has(entry.name))
+        .map(entry => entry.name);
+      assert.deepEqual(unreachable, [],
+        `the grid-placement scan names blocks ${mode} mode's main does not render: ${JSON.stringify(unreachable)}`);
+      const lead = mounted.document.querySelector("main .private-home-lead");
+      assert.ok(lead, `the last main child must be the framing copy in ${mode} mode`);
+      assert.equal(lead, [...mounted.document.querySelector("main")!.children].at(-1),
+        `the framing copy must remain the last child of main in ${mode} mode`);
+    } finally { await mounted.restore(); }
+  }
+});
+
+test("the framing copy keeps the styling it had inside the intro, at every width", async () => {
+  // A real regression this branch shipped for one review round. The framing copy
+  // moved from `.private-home-intro` to `.private-home-lead` to put the panels
+  // above the fold, and the two paragraphs went with it. The second carries
+  // `className="private-note"` and kept its muted colour; the first has no class
+  // and was left at full `--text`, directly above a muted paragraph, at desktop
+  // width. It also lost the intro's 46rem measure.
+  //
+  // The phone-width suite could not see either: it only ever sets a 375px
+  // viewport, and the jsdom guard asserts nothing about colour or measure. So
+  // this asserts the computed result against the real stylesheet — the same
+  // cascade the per-mode tests now load — and does it in both runtime modes
+  // because the copy renders in both.
+  for (const mode of ["local", "hosted"] as const) {
+    const mounted = await mountHome(mode);
+    try {
+      const style = mounted.window.getComputedStyle.bind(mounted.window);
+      const lead = mounted.document.querySelector("main .private-home-lead")!;
+      const paragraphs = [...lead.querySelectorAll("p")] as HTMLElement[];
+      assert.ok(paragraphs.length >= 2,
+        `the framing copy must keep both of its paragraphs in ${mode} mode, got ${paragraphs.length}`);
+      for (const paragraph of paragraphs) {
+        assert.equal(style(paragraph).color, style(mounted.document.querySelector("main .private-note")!).color,
+          `the framing copy must be muted like the other secondary text in ${mode} mode, ` +
+          `so a moving block does not become the loudest text on the page`);
+      }
+      assert.equal(style(lead).maxWidth, style(mounted.document.querySelector("main .private-home-intro")!).maxWidth,
+        `the framing copy must keep the reading measure it had inside the intro in ${mode} mode`);
+    } finally { await mounted.restore(); }
+  }
 });
 
 test("no owner page may use a positive tabindex", () => {
@@ -377,10 +486,14 @@ for (const mode of ["local", "hosted"] as const) {
       // reordering would then "fail" for no owner-visible reason.
       assert.ok(panels.length >= 4,
         `the dashboard must carry its full panel set, got ${panels.length}`);
-      assert.ok(panels.indexOf(attention as Element) > -1);
+      // NOT `panels.includes(attention)`: `attention` was matched by the same
+      // selector `panels` is built from, so that assertion cannot fail and
+      // would read as coverage of the panel's position when it is not. The
+      // panel's position is deliberately not asserted; see above.
 
       // The framing copy and its button are last, so the copy is reached last
-      // by keyboard and announced last by a screen reader.
+      // by keyboard and announced last by a screen reader. This is the check
+      // that carries the attention-first result in the reading order.
       const lead = children.findIndex(child => child.className.includes("private-home-lead"));
       assert.equal(lead, children.length - 1,
         `the framing copy must be the last child of main in ${mode} mode, found at ${lead} of ${children.length}`);

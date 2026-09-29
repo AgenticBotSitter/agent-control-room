@@ -16,6 +16,23 @@
 .private-home-intro { max-width: 46rem; margin-bottom: 2rem; }
 .private-home-intro h1 { margin: .35rem 0 .75rem; font-size: clamp(2rem, 5vw, 3.25rem); letter-spacing: -.045em; }
 .private-home-intro p:not(.private-eyebrow) { color: var(--muted); }
+/* Home's framing copy, which moved here from `.private-home-intro` when the
+ * attention-first DOM reorder shipped. It carries its own rules rather than
+ * inheriting `.private-home-intro p`, because it is no longer inside it, and
+ * because the two selectors mean different things: this block is the closing
+ * note under the whole page, not the introduction above the heading.
+ *
+ * Both declarations are load-bearing and both were lost by the move until a
+ * later pass restored them. The copy is framing, not content: without
+ * `color` the first paragraph painted at full `--text` at every width, sitting
+ * directly above a muted `.private-note` and reading as the most important text
+ * on a page whose actual content is the panels. Without `max-width` it lost the
+ * 46rem measure the intro had, so the paragraphs ran the full width of a
+ * desktop window — 3.5 lines where there had been 2. tests/
+ * owner-home-reading-order.test.tsx asserts the copy is last in `main` in both
+ * runtime modes; this is what "moved" has to mean, not "moved and restyled". */
+.private-home-lead { max-width: 46rem; }
+.private-home-lead > p:not(.private-eyebrow) { color: var(--muted); }
 .private-home-grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .private-home-grid li { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .private-home-grid a { display: grid; min-height: 11rem; gap: .65rem; padding: 1.25rem; }
