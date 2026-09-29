@@ -255,6 +255,68 @@ notice; revisions that contain that mode run both the default and `--model-allow
 journeys. The aggregate merge gate depends on this job, so a failed or cancelled
 rehearsal makes the revision non-merge-ready.
 
+## Amendment: affected tests (fast)
+
+The `Affected tests (fast)` job is a second, merge-gated proof for the files changed by
+a pull request. It has a 45-minute timeout. A normal source edit runs its importing test
+files; uncertainty, configuration, assets and other unclassified paths run the complete
+test plan. This duplicates the complete plan when the selector returns `ALL`, which is
+intentional: it exposes a source-to-test failure before the lane catch-up and merge gate
+finish. The maximum additional hosted-run cost is therefore one 45-minute runner plus a
+conditional PostgreSQL installation; observed cost must be re-evaluated before increasing
+that timeout or broadening the selector.
+
+For selected PostgreSQL tests, the job installs PostgreSQL 17 and starts one loopback-only,
+disposable cluster. It exports the narrowly scoped test gates and two URLs to that cluster,
+adds the versioned binary directory to `PATH`, then stops and removes the cluster in an
+`always()` cleanup step. The runner separates PostgreSQL-marked files into a TAP stream and
+fails if any non-exempt stream reports any skipped test. This prevents missing database prerequisites
+from becoming a green merge-gate result. A deliberately bounded 15-entry skipped-test exemption
+list runs its entries separately and permits a skip only for these documented reasons:
+
+- `tests/automatic-claim-controller.test.mjs` — requires `ACR_MAIN_CHECKOUT` pointing at a current main checkout.
+- `tests/claude-code-macos-process-host-ports.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/claude-code-native-process.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/hermes-021-macos-pinned-executable-image.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/macos-claude-code-process-native-sidecar.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/macos-hermes-native-launch-custodian.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/macos-installation-journal-native-sidecar.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/macos-installed-configuration-native-sidecar.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/macos-service-native-sidecar.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/private-installation-journal-native-session.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/private-installed-configuration-native-host.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/private-macos-claude-code-qualification-route.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/private-macos-service-native-host.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/private-protected-root-native-directory.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/mac-local-pg17-rehearsal.test.mjs` — runs in the full-mac-local-rehearsal job, which provides `CONTROL_ROOM_MAC_REHEARSAL_ROOT` (see PR [#429](https://github.com/AgenticBotSitter/agent-control-room/pull/429)).
+
+The runner logs `Allowing skipped test exemption` only after that exempt test actually reports
+a skipped TAP result. The job adds no credentials, deployment access,
+private runner, or workflow permission; it retains `pull_request`, read-only contents,
+full-history checkout without persisted credentials, frozen install and pinned actions.
+
+The PG17 upgrade proof also needs a historically shaped pre-0086 repository input, not just
+a running server. The job materialises that reviewed, immutable commit with `git archive` in
+an owner-only `RUNNER_TEMP` directory, supplies that path only to the PG17 upgrade test, verifies
+that its ledger is pre-0086, and removes it in the existing always-cleanup. Full-history checkout
+makes the exact object available; the step does not fetch, execute, or grant access to any external
+source. Its bounded temporary tree is part of the same 45-minute job and adds no cache, artifact,
+credential, privileged filesystem change, or persistent host state.
+
+The migration safety tests invoke `squawk` directly. The fast runner is therefore wrapped
+in the same pinned `npm exec --yes --package=squawk-cli@2.61.0` environment as the existing
+`migration-lint` job. This is an explicit, public package download on the disposable hosted
+runner, not a new secret or a persistent install. The version is pinned to the migration
+lane's reviewed version, and the workflow-shape test asserts the wrapper.
+
+Documentation is not blanket-inert for this selector: a literal docs path read by a script
+is followed through the import graph to its tests. For example,
+`scripts/mac-local/provision-database.mjs` reads `docs/claude/SECURE_DB_ROUTE.md`; editing
+that document selects its provisioner tests. Only a docs-only change with no tracked reader
+can report no affected test. This corrects the earlier routing-table wording that described
+all of `docs/` as inert; the path-routing lanes remain protected by their complete
+merge-gate catch-up.
+
 ## Amendment: pull request claim evidence
 
 The `PR evidence claims` job reads the pull request body from GitHub's event

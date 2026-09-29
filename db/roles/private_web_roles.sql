@@ -36,6 +36,8 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_project_event_stream_heads, control_project_events,
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
+GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
+  work_batch_agent_queue_heads, control_native_task_queue, control_job_dependencies TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
@@ -57,6 +59,7 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
 GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web;
+GRANT INSERT ON work_batch_queue_admissions, work_batch_agent_queue_heads TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any
 -- head mutation. SELECT plus the five inserted columns plus the completion
 -- update; INSERT is column-scoped so the role can never smuggle
@@ -84,5 +87,6 @@ GRANT UPDATE (state, payload) ON control_action_inbox TO control_room_private_we
 GRANT UPDATE (state, approval_identity_id, approved_at, decision_reason_code, decision_digest,
   decision_auth_tag, version, updated_at)
   ON work_batches TO control_room_private_web;
+GRANT UPDATE (next_position, updated_at) ON work_batch_agent_queue_heads TO control_room_private_web;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
 COMMIT;

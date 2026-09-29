@@ -26,6 +26,10 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     || coordinator.ideaCreation.integrityKey.length !== 32 || web.ideaProjects.integrityKey.length !== 32
     || !timingSafeEqual(coordinator.ideaCreation.integrityKey, web.ideaProjects.integrityKey)))
     throw new Error("private_task_application_config_invalid");
+  if (web.workBatches && (!coordinator.workBatches || !coordinator.quality
+    || web.workBatches.integrityKey.length !== coordinator.workBatches.integrityKey.length
+    || !timingSafeEqual(web.workBatches.integrityKey, coordinator.workBatches.integrityKey)))
+    throw new Error("private_task_application_config_invalid");
   // Until construction succeeds, the caller retains both resources.
   if (coordinator.quality) validateTaskQualityKeys(coordinator.quality, coordinator.planning.reviewIntegrityKey, web.tasks);
   const tasks = createTaskCoordinatorLifecycle(coordinator);
@@ -64,6 +68,8 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
   try { app = createPrivateWebProcess({ ...web, database, operatorSurface, actionInboxSource,
+    ...(web.workBatches && tasks.workBatchAuthority ? { workBatches: { ...web.workBatches,
+      queueAdmissionAuthority: tasks.workBatchAuthority } } : {}),
     ...(web.projectEvents ? {} : web.tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
       deriveProjectEventIntegrityKeyV1(web.tasks.harnessIntegrityKey), () => new Date(web.clock?.() ?? Date.now()).toISOString()) } : {}),
     planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission,
