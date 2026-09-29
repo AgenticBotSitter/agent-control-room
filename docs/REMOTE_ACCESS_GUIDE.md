@@ -15,6 +15,12 @@ The real addresses are private. They go only in your protected file
 Nothing here installs software or opens a port on your router. `pnpm mac:remote-access`
 only prints steps, writes one file into your protected folder, and checks your setup.
 
+## Short owner guides
+
+- [Open Control Room on your phone](owner-guides/open-on-your-phone.md)
+- [Open Control Room from another computer](owner-guides/open-from-other-computers.md)
+- [Join another machine as a worker](owner-guides/join-another-machine.md)
+
 ## Before you start (once)
 
 - Tailscale is installed on the Mac and the phone, both signed in to the same tailnet.
