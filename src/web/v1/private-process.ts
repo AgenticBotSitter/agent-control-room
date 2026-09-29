@@ -313,7 +313,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const connections = new WebConnectionService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
-    { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+    { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey, newsIntegrityKey: options.news?.integrityKey,
+      productConfiguration });
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
@@ -331,7 +332,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     ? new WebIdeaRoundProposalOperation(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
       options.ideaProjects.integrityKey, tasks, clock, ideaResultProjection) : undefined;
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-    { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
+    { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey, productConfiguration }, clock);
   const herdr = new WebHerdrService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     options.herdrObservations ?? [], clock, options.ideaProjects?.integrityKey);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },

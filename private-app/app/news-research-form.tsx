@@ -6,6 +6,7 @@ import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { newsResearchPreviewSchema, newsArticleActions, type NewsArticleAction, type NewsPage } from "../../src/web/v1/news-wire";
 import type { TaskDraft, TaskReceipt } from "../../src/web/v1/task-wire";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
+import type { NewsWorkOrderProposalV1 } from "../../src/project-adapters/news/v1/types";
 
 type ResearchFormProps = {
   projectId: string; story: NewsPage["stories"][number]; close: () => void;
@@ -30,6 +31,7 @@ function BoundNewsResearchForm({ projectId, story, close, obscured, onHold }: Re
   const [action, setAction] = useState<NewsArticleAction>("research_brief");
   const [goal, setGoal] = useState("Check the claims in this article, explain what matters, and cite reliable sources.");
   const [draft, setDraft] = useState<TaskDraft>();
+  const [proposal, setProposal] = useState<NewsWorkOrderProposalV1>();
   const [receipt, setReceipt] = useState<TaskReceipt>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -52,16 +54,16 @@ function BoundNewsResearchForm({ projectId, story, close, obscured, onHold }: Re
       const preview = newsResearchPreviewSchema.parse(await readBrowserJson(response));
       if (abort.signal.aborted) return;
       if (preview.projectId !== projectId || preview.storyId !== story.storyId || preview.storyDigest !== story.storyDigest) throw new Error();
-      setDraft(preview.draft);
+      setDraft(preview.draft); setProposal(preview.proposal);
     } catch (reason) { setError(reason instanceof BrowserRequestError && reason.code === "authentication_required"
       ? browserAuthenticationRecovery(false)
       : "Could not prepare this draft. Check your access and goal; large source packages are not supported yet. No task was saved."); }
     finally { setBusy(false); }
   }
   async function save() {
-    if (busy || !draft) return;
+    if (busy || !draft || !proposal) return;
     setBusy(true); setError(undefined); onHold(true);
-    try { setReceipt(await (client.hasPending() ? client.retrySave() : client.propose(projectId, draft))); }
+    try { setReceipt(await (client.hasPending() ? client.retrySave() : client.proposeNewsResearch(projectId, proposal))); }
     catch (reason) { setError(reason instanceof BrowserRequestError && reason.code === "authentication_required"
       ? browserAuthenticationRecovery(client.hasPending())
       : taskErrorMessage[reason instanceof BrowserRequestError ? reason.code : "uncertain"]); }
@@ -77,7 +79,7 @@ function BoundNewsResearchForm({ projectId, story, close, obscured, onHold }: Re
     {receipt ? <p role="status">Task saved for review. No bot has been started. <a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(receipt.jobId)}`}>Open saved task</a></p>
       : draft ? <><h3>Review the task before saving</h3><p>{draft.title}</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{draft.instructions}</pre>
         <button type="button" disabled={busy} onClick={() => void save()}>{client.hasPending() ? "Check this exact save again" : "Save proposed task"}</button>
-        <button type="button" disabled={busy || client.hasPending()} onClick={() => setDraft(undefined)}>Change request</button></>
+        <button type="button" disabled={busy || client.hasPending()} onClick={() => { setDraft(undefined); setProposal(undefined); }}>Change request</button></>
         : <form onSubmit={event => { event.preventDefault(); void prepare(); }}>
           <label>What should the agent prepare?<select value={action} disabled={busy} onChange={event => setAction(event.target.value as typeof action)}>
             {newsArticleActions.filter(item => story.verificationState === "verified" || item.id === "research_brief")
