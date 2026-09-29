@@ -7,6 +7,11 @@ node_modules/
 /coverage/
 *.tsbuildinfo
 
+# Disposable PostgreSQL data directories created by test lanes. Must stay
+# inside the worktree so `with-test-slot` and scripts/dev/cleanup-test-postgres.mjs
+# can find and stop a cluster a run left behind.
+/.test-tmp/
+
 # Local credentials and environment overrides. Examples must contain placeholders.
 .env
 .env.*
