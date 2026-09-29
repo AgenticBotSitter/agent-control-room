@@ -45,6 +45,7 @@ const ROLE_PASSWORDS = Object.freeze({
   control_room_migrator: randomBytes(24).toString("base64url"),
   control_room_app: randomBytes(24).toString("base64url"),
   control_room_scheduler: randomBytes(24).toString("base64url"),
+  control_room_work_intake_agent: randomBytes(24).toString("base64url"),
   control_room_web: randomBytes(24).toString("base64url"),
   control_room_coordinator: randomBytes(24).toString("base64url"),
   control_room_results: randomBytes(24).toString("base64url"),
@@ -933,6 +934,7 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
         CONTROL_ROOM_MIGRATOR_PASSWORD: ROLE_PASSWORDS.control_room_migrator,
         CONTROL_ROOM_APP_PASSWORD: ROLE_PASSWORDS.control_room_app,
         CONTROL_ROOM_SCHEDULER_PASSWORD: ROLE_PASSWORDS.control_room_scheduler,
+        CONTROL_ROOM_WORK_INTAKE_PASSWORD: ROLE_PASSWORDS.control_room_work_intake_agent,
         NODE_ENV: "test",
       },
     });
