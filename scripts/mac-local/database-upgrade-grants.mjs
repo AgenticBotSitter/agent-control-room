@@ -1,4 +1,4 @@
-/** Exact direct ACL comparison for the five Mac-local database logins.
+/** Exact direct ACL comparison for the six Mac-local database logins.
  * This is an offline installer component, never imported by the task host. */
 import { readFile } from "node:fs/promises";
 import { databaseRoleManifestV1 } from "./database-role-manifest.mjs";
@@ -9,6 +9,7 @@ export const macRolePlan = Object.freeze(Object.fromEntries(Object.entries(datab
 const roleFiles = Object.freeze([
   "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
+  "agent_reviewer_roles.sql",
 ]);
 const groups = new Set(Object.values(macRolePlan));
 const identifier = /^[a-z][a-z0-9_]*$/u;
@@ -16,6 +17,12 @@ const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "
 const workIntakeIdentityFunction = "public.is_work_intake_session()";
 const workIntakeIdentityRoles = new Set(["control_room_private_web", "control_room_task_coordinator",
   "control_room_native_results", "control_room_local_result_publisher"]);
+// The reviewer's whole authority: the tenant-bound plan read and the commit.
+const agentReviewFunctions = new Set(["public.read_agent_review_plan(text)",
+  "public.commit_agent_review(text, jsonb, jsonb, bytea)"]);
+const knownFunctionGrant = object => object === workIntakeIdentityFunction || agentReviewFunctions.has(object);
+const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
+  || agentReviewFunctions.has(object) && role === "control_room_agent_reviewer";
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");
   return value;
@@ -52,11 +59,11 @@ export function desiredMacGrantsV1(sources) {
       const [, rights, objectKind, objects, role] = match;
       for (const rawObject of splitCommas(objects)) {
         const functionMatch = objectKind === "FUNCTION"
-          ? /^([a-z][a-z0-9_]*)(?:\.([a-z][a-z0-9_]*))?\(\)$/u.exec(rawObject)
+          ? /^([a-z][a-z0-9_]*)(?:\.([a-z][a-z0-9_]*))?\(([^()]*)\)$/u.exec(rawObject)
           : null;
         if (objectKind === "FUNCTION" && !functionMatch) throw new Error("upgrade_grant_source_refused");
         const object = objectKind === "FUNCTION"
-          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}()`
+          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${functionMatch[3].trim() ? splitCommas(functionMatch[3]).map(name).join(", ") : ""})`
           : objectKind === "SCHEMA" ? name(rawObject) : rawObject.split(".").map(name).join(".");
         if (!objectKind && !object.includes(".")) {
           if (!identifier.test(object)) throw new Error("upgrade_grant_source_refused");
@@ -67,7 +74,7 @@ export function desiredMacGrantsV1(sources) {
           if (!parsed || !privilege.has(parsed[1])
             || (objectKind === "SCHEMA" && (parsed[1] !== "USAGE" || parsed[2]))
             || (objectKind === "FUNCTION" && (parsed[1] !== "EXECUTE" || parsed[2]
-              || qualified !== workIntakeIdentityFunction || !workIntakeIdentityRoles.has(role))))
+              || !allowedFunctionGrant(role, qualified))))
             throw new Error("upgrade_grant_source_refused");
           const columns = parsed[2] ? splitCommas(parsed[2]).map(name) : [""];
           if (parsed[2] && objectKind) throw new Error("upgrade_grant_source_refused");
@@ -117,7 +124,7 @@ SELECT r.rolname, 'database', d.datname, '', a.privilege_type, a.is_grantable
 FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])
 UNION ALL
-SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', '', a.privilege_type, a.is_grantable
+SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')', '', a.privilege_type, a.is_grantable
 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
 CROSS JOIN LATERAL aclexplode(p.proacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])`;
@@ -144,8 +151,9 @@ function grantSql(item, verb) {
     throw new Error("upgrade_grant_catalog_refused");
   if (grantable !== "plain" && grantable !== "grantable") throw new Error("upgrade_grant_catalog_refused");
   if (kind === "function") {
-    if (object !== workIntakeIdentityFunction || !workIntakeIdentityRoles.has(role)
-      || column || right !== "EXECUTE") throw new Error("upgrade_unexpected_function_grant");
+    if (!knownFunctionGrant(object) || verb === "GRANT" && !allowedFunctionGrant(role, object)
+      || column || right !== "EXECUTE")
+      throw new Error("upgrade_unexpected_function_grant");
     return `${verb} EXECUTE ON FUNCTION ${object} ${verb === "GRANT" ? "TO" : "FROM"} ${role}`;
   }
   if (kind === "database") {

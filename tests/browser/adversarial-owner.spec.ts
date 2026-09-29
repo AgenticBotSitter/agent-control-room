@@ -125,7 +125,8 @@ async function assignAndOpenResult(page: Page, doubleClick = false) {
   expect(assignments, "one owner gesture must record at most one assignment").toHaveLength(1);
   expect(submissions, "one owner gesture must queue at most one submission").toHaveLength(1);
   await refreshUntil(page, "Read result");
-  await openResultWithDeferredOwnerReview(page);
+  // Revision rounds add results; the newest one is the result under test.
+  await openResultWithDeferredOwnerReview(page, "last");
 }
 
 async function disposableAdmin() {

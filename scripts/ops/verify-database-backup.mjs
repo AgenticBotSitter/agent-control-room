@@ -19,6 +19,57 @@ const sha256File = async path => `sha256:${createHash("sha256").update(await rea
 const identifier = value => typeof value === "string" && /^[a-z][a-z0-9_]{0,62}$/u.test(value);
 const quote = value => { if (!identifier(value)) throw new Error("database_backup_role_refused"); return `"${value}"`; };
 
+/** The disposable range the verifier accepts when nothing overrides it, and the
+ * range production and CI use. It is the DEFAULT, not a constant: a caller
+ * running under a different assigned range (a local helper, a rehearsal box) has
+ * to be able to say so without this module's answer changing for anyone else. */
+export const DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1 =
+  Object.freeze({ min: 15620, max: 15649 });
+/** How a caller narrows or moves the range. Unset, empty or whitespace-only
+ * means the default, the same reading `tests/helpers/disposable-postgres-cluster.ts`
+ * gives `CONTROL_ROOM_TEST_PG_PORT`; anything else must be `MIN-MAX`. */
+export const DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV =
+  "CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE";
+// A disposable PostgreSQL cluster never needs a privileged port, and never needs
+// the whole ephemeral space: a range this wide is a typo, not an assignment.
+const MIN_UNPRIVILEGED_PORT = 1024;
+const MAX_PORT = 65535;
+const MAX_PORT_RANGE_SPAN = 1024;
+const PORT_RANGE_REFUSED = "database_backup_verification_port_range_refused";
+const PORT_RANGE_PATTERN = /^(\d{1,5})-(\d{1,5})$/u;
+
+function validatedDatabaseBackupVerificationPortRangeV1(range) {
+  if (range === null || typeof range !== "object" || Array.isArray(range)) throw new Error(PORT_RANGE_REFUSED);
+  const { min, max } = range;
+  if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < MIN_UNPRIVILEGED_PORT
+    || max > MAX_PORT || min > max || max - min + 1 > MAX_PORT_RANGE_SPAN) throw new Error(PORT_RANGE_REFUSED);
+  return Object.freeze({ min, max });
+}
+
+/** Parse one `MIN-MAX` range. Strict: two decimal integers in ascending order,
+ * both inside the unprivileged port space, and a span narrow enough to be an
+ * assignment rather than a mistyped `1-65535`. Everything else is refused, so a
+ * bad value in CI is a loud failure instead of a silently wider blast radius. */
+export function parseDatabaseBackupVerificationPortRangeV1(value) {
+  if (typeof value !== "string") throw new Error(PORT_RANGE_REFUSED);
+  const match = PORT_RANGE_PATTERN.exec(value.trim());
+  if (!match) throw new Error(PORT_RANGE_REFUSED);
+  return validatedDatabaseBackupVerificationPortRangeV1({ min: Number(match[1]), max: Number(match[2]) });
+}
+
+/** The range in force for a call: the caller's `portRange` when it gave one,
+ * otherwise the environment variable, otherwise the documented default. */
+export function resolveDatabaseBackupVerificationPortRangeV1(
+  portRange, env = process.env) {
+  if (portRange !== undefined) {
+    return typeof portRange === "string" ? parseDatabaseBackupVerificationPortRangeV1(portRange)
+      : validatedDatabaseBackupVerificationPortRangeV1(portRange);
+  }
+  const raw = env[DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV];
+  if (raw === undefined || raw.trim() === "") return DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1;
+  return parseDatabaseBackupVerificationPortRangeV1(raw);
+}
+
 export function databaseBackupVerificationRootPrefixV1(platform = process.platform, temporaryDirectory = tmpdir()) {
   return platform === "darwin" ? "/tmp/crv-" : join(temporaryDirectory, "control-room-backup-verify-");
 }
@@ -118,10 +169,16 @@ export async function normalizeMacApplicationOwnershipV1(client) {
   }
 }
 
-export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin", teardown: teardownOptions = {} }) {
+export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin",
+  teardown: teardownOptions = {}, portRange = undefined, portRangeEnv = process.env }) {
   if (teardownOptions === null || typeof teardownOptions !== "object" || Array.isArray(teardownOptions))
     throw new Error("database_backup_verification_arguments_refused");
-  if (!Number.isInteger(port) || port < 15620 || port > 15649 || typeof pgBin !== "string" || !isAbsolute(pgBin))
+  // The range is read from the same input as the rest of the arguments, so a
+  // refused range is refused BEFORE a cluster is created — the same position the
+  // port itself has always been refused from, and the same `FAIL` for the caller.
+  const range = resolveDatabaseBackupVerificationPortRangeV1(portRange, portRangeEnv);
+  if (!Number.isInteger(port) || port < range.min || port > range.max
+    || typeof pgBin !== "string" || !isAbsolute(pgBin))
     throw new Error("database_backup_verification_arguments_refused");
   const bound = await readBoundBackup(backup);
   const root = await mkdtemp(databaseBackupVerificationRootPrefixV1());
@@ -230,12 +287,18 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
 }
 
 function flag(args, name) { const index = args.indexOf(name); return index === -1 ? undefined : args[index + 1]; }
+const USAGE = `usage: verify-database-backup.mjs --backup ABSOLUTE_DIRECTORY --port ${DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1.min}..${DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1.max} [--pg-bin ABSOLUTE_DIRECTORY] [--port-range MIN-MAX]`
+  + ` (${DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV}=MIN-MAX overrides the range for one run)`;
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const args = process.argv.slice(2), backup = flag(args, "--backup"), pgBin = flag(args, "--pg-bin"), port = Number(flag(args, "--port"));
-    if (!backup || !Number.isInteger(port) || args.some((value, index) => index % 2 === 0 && !["--backup", "--port", "--pg-bin"].includes(value)))
-      throw new Error("usage: verify-database-backup.mjs --backup ABSOLUTE_DIRECTORY --port 15620..15649 [--pg-bin ABSOLUTE_DIRECTORY]");
-    const result = await verifyMacLocalDatabaseBackupV1({ backup, port, ...(pgBin ? { pgBin } : {}) });
+    const args = process.argv.slice(2), backup = flag(args, "--backup"), pgBin = flag(args, "--pg-bin"),
+      portRange = flag(args, "--port-range"), port = Number(flag(args, "--port"));
+    if (!backup || !Number.isInteger(port)
+      || (args.includes("--port-range") && (typeof portRange !== "string" || portRange.startsWith("--")))
+      || args.some((value, index) => index % 2 === 0 && !["--backup", "--port", "--pg-bin", "--port-range"].includes(value)))
+      throw new Error(USAGE);
+    const result = await verifyMacLocalDatabaseBackupV1({ backup, port,
+      ...(pgBin ? { pgBin } : {}), ...(portRange === undefined ? {} : { portRange }) });
     console.log(`database backup verification PASS: ${result.identityDigest}`);
   } catch (error) {
     console.error(`database backup verification FAIL: ${error instanceof Error ? error.message : "unknown"}`);

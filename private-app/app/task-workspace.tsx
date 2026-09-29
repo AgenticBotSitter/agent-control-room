@@ -190,6 +190,16 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       </section>}{experimentNotice && <p role="status">{experimentNotice}</p>}
         <TaskProposalForm draft={draft} setDraft={setDraft} modelOptions={page.modelOptions} pending={pending} preparing={preparing} uncertain={uncertain} onSave={() => { void save(); }} /></div>
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
+    {/* TaskDetailPanel's own first section is the status lead: state chip,
+        title and an explicit "Assigned to" line (owner-ux-feedback-2026-09-27.md
+        item 4). Its later sections — Prepared worker, Local task route,
+        Ownership leases, Agent progress — are now collapsed behind <details>,
+        so "What happens next" (TaskStateGuidance) is reached after one status
+        section and a run of one-line collapsed headings, not a wall of
+        evidence text. Splitting TaskDetailPanel to put guidance literally
+        between its first section and the rest would duplicate the status line
+        for no owner-visible gain, since every later section is already
+        collapsed by default. */}
     {detail && <TaskDetailPanel detail={detail} />}
     {detail && <TaskStateGuidance detail={detail} refreshing={loading} onRefresh={refreshSaved} />}
     {detail && runtime.mode !== "checking" && <TaskWorkflowGuide local={runtime.mode === "local"} prepared={!!detail.preparedFor} />}

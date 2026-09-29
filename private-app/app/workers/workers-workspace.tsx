@@ -22,7 +22,8 @@ function LocalWorkers() {
               distinguishes "startup check passed" from "result proof recorded",
               which is exactly the honesty my first chip got wrong. The chip adds
               the scannable state without rewording a word of it. */}
-          <p><StateChip state={worker.state} tone={workerChipToneV1(worker)} />. {localWorkerStateLabel(worker)}.</p></li>)}</ul></>}
+          <p><StateChip state={worker.state} tone={workerChipToneV1(worker)} />. {localWorkerStateLabel(worker)}.</p>
+          <p className="private-note">Current task, capacity and last seen are unknown in Mac-local mode: this host does not yet record them per worker.</p></li>)}</ul></>}
     <FleetWorkers />
     <p><a href="/projects">Open projects</a></p>
   </main></div>;

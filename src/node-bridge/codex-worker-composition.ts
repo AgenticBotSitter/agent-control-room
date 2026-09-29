@@ -4,6 +4,8 @@ import { createCodexResultSenderV1 } from '../harness/codex-v1/result-sender';
 import { parseCodexTaskActivationV1 } from '../harness/codex-v1/activation-contract';
 import { assertSynchronousFence } from '../security/synchronous-fence';
 import { sha256Digest } from '../security/canonical-digest';
+import type { LinearPipelineServiceV1 } from '../pipelines/v1/service';
+import type { CodexBuildStagePublicationCompositionV1 } from '../harness/codex-v1/delivery-bound-workspace-preparation';
 
 type ResultConfiguration = Parameters<typeof createCodexResultSenderV1>[0];
 
@@ -22,9 +24,18 @@ export interface CodexWorkerCompositionInputV1 {
   assertSessionCurrent(): void;
 }
 
+export type InstalledPipelineCodexWorkerCompositionInputV1 = Readonly<{
+  worker: Omit<CodexWorkerCompositionInputV1, 'initial'> & Readonly<{
+    initial: Omit<CodexLocalInitialHostInputV1, 'buildPublication'>;
+  }>;
+  controller: LinearPipelineServiceV1;
+  delivery: unknown;
+  publication: Pick<CodexBuildStagePublicationCompositionV1, 'runGit' | 'journal' | 'openPullRequest'>;
+}>;
+
 const unavailable = (): never => { throw new Error('codex_worker_composition_unavailable'); };
 
-export function createCodexWorkerCompositionV1(value: CodexWorkerCompositionInputV1) {
+function composeCodexWorkerV1(value: CodexWorkerCompositionInputV1, delivery?: unknown) {
   const initial = Object.freeze({ ...value.initial }), recovery = Object.freeze({ ...value.recovery });
   const binding = Object.freeze({ ...value.binding });
   const assertSessionCurrent = value.assertSessionCurrent.bind(value);
@@ -53,6 +64,10 @@ export function createCodexWorkerCompositionV1(value: CodexWorkerCompositionInpu
       assertCurrent() { fence(); } },
     acquireProcess: (request, signal) => { fence(); return initial.acquireProcess(request, signal); },
   });
+  if (start.mode !== 'initial' || !('publishBuildPullRequest' in start)) unavailable();
+  const initialStart = start as Extract<typeof start, { mode: 'initial' }>;
+  if (delivery !== undefined) initialStart.bindDelivery(delivery);
+  const publishBuildPullRequest = initialStart.publishBuildPullRequest.bind(initialStart);
   const recover = createCodexLocalHostV1({ ...recovery,
     authority: { assertCurrent(identity: Parameters<CodexLocalRecoverHostInputV1['authority']['assertCurrent']>[0]) {
       fence(); return recovery.authority.assertCurrent(identity);
@@ -90,6 +105,25 @@ export function createCodexWorkerCompositionV1(value: CodexWorkerCompositionInpu
       }, signal);
       return Object.freeze({ disposition: 'receipted' as const, receipt });
     },
+    async publishBuildPullRequest() {
+      fence();
+      return publishBuildPullRequest();
+    },
     async close() { closed = true; await start.close(); await recover.close(); },
   });
+}
+
+export function createCodexWorkerCompositionV1(value: CodexWorkerCompositionInputV1) {
+  return composeCodexWorkerV1(value);
+}
+
+/** Ordinary installed build-stage path. The caller cannot inject publication
+ * authority, an integrity key, or a retention callback: those are minted and
+ * closed over by the canonical controller service. */
+export async function createInstalledPipelineCodexWorkerCompositionV1(
+  input: InstalledPipelineCodexWorkerCompositionInputV1) {
+  if ('buildPublication' in input.worker.initial) unavailable();
+  const buildPublication = await input.controller.createInstalledBuildPublication(input.delivery, input.publication);
+  return composeCodexWorkerV1({ ...input.worker,
+    initial: { ...input.worker.initial, buildPublication } }, input.delivery);
 }

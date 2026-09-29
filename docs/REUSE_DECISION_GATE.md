@@ -67,6 +67,7 @@ or bypass them.
 | `control_task_model_selections` | Remains the server-validated worker/model/effort choice. A requested intake value grants nothing. |
 | `control_native_review_plans` and Completion Gate reviewer separation | Remain the server-created plan and independence boundary for an agent checker; human owner review continues alongside it. |
 | `control_worktree_change_audit_plans`, `control_worktree_change_audit_records` and the Codex workspace lease | Remain the delivery-bound worktree scope, change-limit and preservation evidence. Pipeline code does not create another Git workspace authority. |
+| Canonical accepted result, native artifact receipt and Codex result publication | Remain the exact job/attempt/harness-run/artifact/content authority for a build-stage proposal. A delivery or pipeline pointer alone cannot select a result. |
 
 Only the following new records are justified. All are additive, tenant-scoped,
 digest-bound and use restrictive lineage foreign keys.
@@ -80,9 +81,19 @@ digest-bound and use restrictive lineage foreign keys.
 | `pipeline_runs` | Pins one template version and digest to one canonical request/workflow while retaining run-level presentation and lifecycle lineage. |
 | `pipeline_stage_runs` | Holds one ordered stage projection and current canonical job/attempt pointers; complete attempt, dependency and revision history stays in the existing ledgers. |
 | Nullable `control_jobs.stage_kind`, `stage_ordinal`, `pipeline_run_id` | Identifies ordinary jobs that belong to an ordered pipeline. The three values stand or fall together and existing rows are not rewritten. |
+| `control_pipeline_build_publications` | Retains one authenticated open-only pull-request result for the exact stage, delivery, accepted result and commit. It cannot merge and cannot create a second result history. |
 
 No new credential store, scheduler, task table, result table, review authority,
 approval path or merge operation is justified or introduced.
+
+Build publication is installed only through the trusted task-application/worker
+composer. The controller independently resolves the canonical repository and
+accepted-result proof, mints the snapshot, performs fresh currentness checks and
+retains the evidence. Its snapshot/record key never crosses into worker custody;
+the worker receives a separately derived evidence-only key plus the closed
+authority/current/retain channel. Missing repository or accepted-result authority
+makes a build publication unavailable, while non-build and legacy routes remain
+unchanged.
 
 ## Current decisions
 

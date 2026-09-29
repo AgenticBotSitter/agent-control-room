@@ -9,7 +9,8 @@ const plan = () => createWorktreeChangeAuditPlanV1({ deliveryDigest: digest("del
   baseRevision: "a".repeat(40), allowedPaths: ["src/**", "README.md"], maximumChangedFiles: 3, maximumChangedBytes: 100 });
 
 test("a worktree audit binds a small allowed change set to one delivery and lease", () => {
-  const value = createWorktreeChangeAuditEvidenceV1(plan(), { baseRevision: "a".repeat(40), changes: [
+  const value = createWorktreeChangeAuditEvidenceV1(plan(), { baseRevision: "a".repeat(40),
+    headRevision: "b".repeat(40), changes: [
     { path: "README.md", kind: "modified", bytes: 10, contentDigest: digest("readme") },
     { path: "src/worker.ts", kind: "added", bytes: 20, contentDigest: digest("worker") },
   ] });
@@ -21,11 +22,11 @@ test("a worktree audit binds a small allowed change set to one delivery and leas
 
 test("a worktree audit rejects changed revision, duplicate path, unsafe path, and out-of-scope changes", () => {
   const cases = [
-    { baseRevision: "b".repeat(40), changes: [] },
-    { baseRevision: "a".repeat(40), changes: [{ path: "README.md", kind: "modified" as const, bytes: 1, contentDigest: digest("a") },
+    { baseRevision: "b".repeat(40), headRevision: "c".repeat(40), changes: [] },
+    { baseRevision: "a".repeat(40), headRevision: "b".repeat(40), changes: [{ path: "README.md", kind: "modified" as const, bytes: 1, contentDigest: digest("a") },
       { path: "README.md", kind: "modified" as const, bytes: 1, contentDigest: digest("b") }] },
-    { baseRevision: "a".repeat(40), changes: [{ path: "../outside", kind: "added" as const, bytes: 1, contentDigest: digest("a") }] },
-    { baseRevision: "a".repeat(40), changes: [{ path: "package.json", kind: "modified" as const, bytes: 1, contentDigest: digest("a") }] },
+    { baseRevision: "a".repeat(40), headRevision: "b".repeat(40), changes: [{ path: "../outside", kind: "added" as const, bytes: 1, contentDigest: digest("a") }] },
+    { baseRevision: "a".repeat(40), headRevision: "b".repeat(40), changes: [{ path: "package.json", kind: "modified" as const, bytes: 1, contentDigest: digest("a") }] },
   ];
   for (const value of cases) assert.throws(() => createWorktreeChangeAuditEvidenceV1(plan(), value));
 });
@@ -46,8 +47,9 @@ test("a future local code task can bind its worktree evidence to the existing co
     issuedAt: delivery.issuedAt, expiresAt: delivery.expiresAt }).slice(7)}`;
   const packet = { ...delivery, inputDigest, deliveryId };
   const deliveryDigest = digest(packet);
-  const lease = { runId: "run:test", repositoryRealPath: "/private/repository", checkoutPath: "/private/work/codex-test",
-    revision: "b".repeat(40), device: "1", inode: "2" };
+  const lease = { deliveryDigest, runId: "run:test", repositoryRealPath: "/private/repository",
+    repositoryDevice: "1", repositoryInode: "2", checkoutPath: "/private/work/codex-test",
+    revision: "b".repeat(40), device: "1", inode: "3" };
   const leaseId = sha256Digest(lease);
   const audited = createControllerDeliveryWorktreeChangeAuditPlanV1({ delivery: { ...packet, deliveryDigest },
     lease: { ...lease, leaseId }, allowedPaths: ["src/**"], maximumChangedFiles: 2, maximumChangedBytes: 1024 });

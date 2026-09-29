@@ -14,6 +14,7 @@ export type MacLocalDatabaseRolesV1 = Readonly<{
   coordinator: PrivatePostgresConfiguration;
   results: PrivatePostgresConfiguration;
   publisher: PrivatePostgresConfiguration;
+  agentReviewer: PrivatePostgresConfiguration;
   queueWorker: PrivatePostgresConfiguration;
 }>;
 
@@ -32,18 +33,19 @@ export function captureMacLocalDatabaseRolesV1(value: unknown): MacLocalDatabase
     if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype)
       return invalid();
     const input = value as Record<string, unknown>;
-    const names = ["schema", "web", "coordinator", "results", "publisher", "queueWorker"];
+    const names = ["schema", "web", "coordinator", "results", "publisher", "agentReviewer", "queueWorker"];
     if (Object.keys(input).length !== names.length || names.some(name => !(name in input))
       || Object.keys(input).some(name => !names.includes(name)) || input.schema !== MAC_LOCAL_DATABASE_ROLES_V1) return invalid();
     const web = validatePrivatePostgresConfiguration(input.web as PrivatePostgresConfiguration);
     const coordinator = validatePrivatePostgresConfiguration(input.coordinator as PrivatePostgresConfiguration);
     const results = validatePrivatePostgresConfiguration(input.results as PrivatePostgresConfiguration);
     const publisher = validatePrivatePostgresConfiguration(input.publisher as PrivatePostgresConfiguration);
+    const agentReviewer = validatePrivatePostgresConfiguration(input.agentReviewer as PrivatePostgresConfiguration);
     const queueWorker = validatePrivatePostgresConfiguration(input.queueWorker as PrivatePostgresConfiguration);
-    const configurations = [web, coordinator, results, publisher, queueWorker];
+    const configurations = [web, coordinator, results, publisher, agentReviewer, queueWorker];
     if (new Set(configurations.map(endpointDigest)).size !== 1
       || new Set(configurations.map(configuration => configuration.username)).size !== configurations.length)
       return invalid();
-    return Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web, coordinator, results, publisher, queueWorker });
+    return Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web, coordinator, results, publisher, agentReviewer, queueWorker });
   } catch { return invalid(); }
 }

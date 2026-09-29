@@ -132,6 +132,34 @@ function deliveryEvent(event: JobEventBody, lineage: ArtifactLineageRecordV1 | u
   return { ...event, artifactLineage: structuredClone(lineage) };
 }
 
+type PullRequestPublicationJournalRecord = {
+  schema: "control-room.pull-request-publication-record/v1";
+  publicationId: string;
+  planDigest: string;
+  deliveryDigest: string;
+  state: "pending" | "published" | "reconciliation_required";
+  evidence: unknown | null;
+  authenticationTag: string;
+};
+
+function parsePullRequestPublicationJournalRecord(value: unknown): PullRequestPublicationJournalRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("pull_request_publication_record_invalid");
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== "authenticationTag,deliveryDigest,evidence,planDigest,publicationId,schema,state"
+    || record.schema !== "control-room.pull-request-publication-record/v1"
+    || typeof record.publicationId !== "string" || !/^publication:[a-f0-9]{64}$/.test(record.publicationId)
+    || typeof record.planDigest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(record.planDigest)
+    || typeof record.deliveryDigest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(record.deliveryDigest)
+    || !["pending", "published", "reconciliation_required"].includes(String(record.state))
+    || typeof record.authenticationTag !== "string" || !/^hmac-sha256:[a-f0-9]{64}$/.test(record.authenticationTag)
+    || (record.state === "published") !== (record.evidence !== null)) {
+    throw new Error("pull_request_publication_record_invalid");
+  }
+  const encoded = JSON.stringify(value);
+  if (Buffer.byteLength(encoded) > 256 * 1024) throw new Error("pull_request_publication_record_oversized");
+  return structuredClone(value) as PullRequestPublicationJournalRecord;
+}
+
 export class SqliteBridgeJournal implements ReplayGuard {
   private readonly db: DatabaseSync;
 
@@ -258,6 +286,65 @@ export class SqliteBridgeJournal implements ReplayGuard {
       if (saved.removal === "removed") return "existing";
       this.db.prepare("UPDATE bridge_workspace_removals SET removed=1 WHERE intent_digest=? AND removed=0").run(intentDigest);
       return "recorded";
+    });
+  }
+
+  /** Node-private durable PR intent/result record. Loading grants no retry authority. */
+  loadPullRequestPublication(publicationId: string): unknown | undefined {
+    if (!/^publication:[a-f0-9]{64}$/.test(publicationId)) throw new Error("pull_request_publication_id_invalid");
+    const row = this.db.prepare("SELECT record_json,record_digest FROM bridge_pull_request_publications WHERE publication_id=?")
+      .get(publicationId) as { record_json: string; record_digest: string } | undefined;
+    if (!row) return undefined;
+    const record = parsePullRequestPublicationJournalRecord(JSON.parse(row.record_json));
+    if (record.publicationId !== publicationId || sha256Digest(record) !== row.record_digest) {
+      throw new Error("pull_request_publication_record_integrity_invalid");
+    }
+    return record;
+  }
+
+  retainedPullRequestPublication(deliveryDigest: string): unknown | undefined {
+    if (!/^sha256:[a-f0-9]{64}$/.test(deliveryDigest)) throw new Error("pull_request_publication_delivery_invalid");
+    const row = this.db.prepare("SELECT publication_id FROM bridge_pull_request_publications WHERE delivery_digest=?")
+      .get(deliveryDigest) as { publication_id: string } | undefined;
+    return row ? this.loadPullRequestPublication(row.publication_id) : undefined;
+  }
+
+  reservePullRequestPublication(publicationId: string, value: unknown): "reserved" | "exists" {
+    const record = parsePullRequestPublicationJournalRecord(value);
+    if (record.publicationId !== publicationId || record.state !== "pending") {
+      throw new Error("pull_request_publication_reservation_invalid");
+    }
+    return this.transaction(() => {
+      const prior = this.db.prepare("SELECT publication_id FROM bridge_pull_request_publications WHERE publication_id=? OR delivery_digest=?")
+        .all(publicationId, record.deliveryDigest) as Array<{ publication_id: string }>;
+      if (prior.length) {
+        if (prior.length !== 1 || prior[0].publication_id !== publicationId) {
+          throw new Error("pull_request_publication_delivery_conflict");
+        }
+        return "exists";
+      }
+      this.db.prepare(`INSERT INTO bridge_pull_request_publications
+        (publication_id,delivery_digest,plan_digest,state,record_json,record_digest,version)
+        VALUES(?,?,?,?,?,?,1)`).run(publicationId, record.deliveryDigest, record.planDigest, record.state,
+        JSON.stringify(record), sha256Digest(record));
+      return "reserved";
+    });
+  }
+
+  replacePullRequestPublication(publicationId: string, expectedValue: unknown, terminalValue: unknown): boolean {
+    const expected = parsePullRequestPublicationJournalRecord(expectedValue);
+    const terminal = parsePullRequestPublicationJournalRecord(terminalValue);
+    if (expected.publicationId !== publicationId || terminal.publicationId !== publicationId
+      || expected.state !== "pending" || terminal.state === "pending"
+      || expected.deliveryDigest !== terminal.deliveryDigest || expected.planDigest !== terminal.planDigest) {
+      throw new Error("pull_request_publication_transition_invalid");
+    }
+    return this.transaction(() => {
+      const changed = this.db.prepare(`UPDATE bridge_pull_request_publications
+        SET state=?,record_json=?,record_digest=?,version=2
+        WHERE publication_id=? AND state='pending' AND version=1 AND record_digest=?`)
+        .run(terminal.state, JSON.stringify(terminal), sha256Digest(terminal), publicationId, sha256Digest(expected));
+      return Number(changed.changes) === 1;
     });
   }
 
@@ -1383,6 +1470,25 @@ export class SqliteBridgeJournal implements ReplayGuard {
         BEGIN SELECT RAISE(ABORT,'workspace removal transition invalid'); END;
       CREATE TRIGGER IF NOT EXISTS bridge_workspace_removals_no_delete BEFORE DELETE ON bridge_workspace_removals
         BEGIN SELECT RAISE(ABORT,'workspace removal is immutable'); END;
+      CREATE TABLE IF NOT EXISTS bridge_pull_request_publications (
+        publication_id TEXT PRIMARY KEY NOT NULL,
+        delivery_digest TEXT NOT NULL UNIQUE,
+        plan_digest TEXT NOT NULL UNIQUE,
+        state TEXT NOT NULL CHECK(state IN ('pending','published','reconciliation_required')),
+        record_json TEXT NOT NULL,
+        record_digest TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK(version IN (1,2)),
+        CHECK((state='pending' AND version=1) OR (state<>'pending' AND version=2))
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_pull_request_publications_transition
+        BEFORE UPDATE ON bridge_pull_request_publications
+        WHEN OLD.state<>'pending' OR OLD.version<>1 OR NEW.version<>2 OR NEW.state='pending'
+          OR NEW.publication_id<>OLD.publication_id OR NEW.delivery_digest<>OLD.delivery_digest
+          OR NEW.plan_digest<>OLD.plan_digest
+        BEGIN SELECT RAISE(ABORT,'pull request publication transition invalid'); END;
+      CREATE TRIGGER IF NOT EXISTS bridge_pull_request_publications_no_delete
+        BEFORE DELETE ON bridge_pull_request_publications
+        BEGIN SELECT RAISE(ABORT,'pull request publication is retained'); END;
       CREATE TABLE IF NOT EXISTS bridge_sequences (
         connection_id TEXT NOT NULL,
         direction TEXT NOT NULL CHECK(direction IN ('node_to_server','server_to_node')),

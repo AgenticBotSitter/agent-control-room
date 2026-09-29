@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { effectIntentRecordSchema, jobRecordSchema, type EffectIntentRecord, type JobRecord } from "../../domain/v1";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { databaseOperationSignal } from "../../persistence/operation-signal";
-import { assertNoSecretMaterial, computeAuthorityDigest, computeEffectOperationDigest, hmacSha256Tag, sha256Digest } from "../../security";
+import { assertNoSecretMaterial, canonicalJson, computeAuthorityDigest, computeEffectOperationDigest, hmacSha256Tag, sha256Digest } from "../../security";
 import { ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1, type AwaitableRollbackCheckpointStoreV1, type RollbackCheckpointV1 } from "../../security/rollback-checkpoint";
 import {
   completionAcceptanceProfileSchemaV1,
@@ -15,7 +15,7 @@ import {
   consequentialApprovalDecisionSchemaV1,
   consequentialApprovalRequestSchemaV1,
 } from "./schemas";
-import { assertReviewerIndependentV1 } from "./reviewer-independence";
+import { assertReviewerIndependentV1, ReviewerIndependenceErrorV1 } from "./reviewer-independence";
 import type {
   CompletionAcceptanceProfileV1,
   CompletionFindingV1,
@@ -34,7 +34,7 @@ import type {
 
 export type CompletionGateRecordKindV1="profile"|"target"|"review"|"verification"|"finding"|"revision"|"preference"|"approval_request"|"approval_decision";
 export type CompletionGateSafeCodeV1="invalid_record"|"record_conflict"|"record_not_found"|"scope_mismatch"|"profile_mismatch"|
-  "reviewer_not_independent"|"risk_floor_mismatch"|"verification_scenario_invalid"|"target_superseded"|"revision_invalid"|"approval_binding_invalid"|"integrity_failed";
+  "reviewer_not_independent"|"reviewer_provenance_missing"|"risk_floor_mismatch"|"verification_scenario_invalid"|"target_superseded"|"revision_invalid"|"approval_binding_invalid"|"integrity_failed";
 
 export class CompletionGateErrorV1 extends Error {
   constructor(readonly safeCode:CompletionGateSafeCodeV1){super(safeCode);this.name="CompletionGateErrorV1";}
@@ -54,6 +54,8 @@ interface ApprovalGrantRow {
   expires_at:string|Date|null;revoked_at:string|Date|null;
 }
 interface CompletionIntegrityRow {tenant_id:string;revision:number;record_count:number;state_digest:string;state_auth_tag:string;}
+interface AgentReviewCommitRow {replayed:boolean;prior_revision:number;prior_record_count:number;prior_state_digest:string;
+  prior_state_auth_tag:string;next_revision:number;next_record_count:number;next_state_digest:string;next_state_auth_tag:string;}
 type QuerySource=Pick<DatabaseClient,"query">|DatabaseSession;
 const columns="id,tenant_id,project_id,kind,record_key,subject_id,parent_id,record_digest,record_auth_tag,payload,occurred_at";
 const riskOrder:CompletionRiskV1[]=["low","medium","high","critical"];
@@ -208,6 +210,30 @@ export class CompletionGateStoreV1 {
       const stored=await this.insert(tx,"review",review);let replayed=stored.replayed;
       const storedFindings:CompletionFindingV1[]=[];for(const finding of findings){const result=await this.insert(tx,"finding",finding);replayed=replayed&&result.replayed;storedFindings.push(result.record as CompletionFindingV1);}
       return{review:stored.record as CompletionReviewV1,findings:storedFindings,replayed};});
+  }
+
+  /** Dedicated reviewer-role commit. PostgreSQL authenticates the transient
+   * key against the locked tenant state, derives every row tag, and advances
+   * the state before this method advances the independent checkpoint. */
+  async commitAgentReview(planId:string,input:unknown,findingInputs:unknown[]=[]):Promise<{review:CompletionReviewV1;findings:CompletionFindingV1[];replayed:boolean}>{
+    const review=parse(completionReviewSchemaV1,input) as CompletionReviewV1;
+    const findings=findingInputs.map(value=>parse(completionFindingSchemaV1,value) as CompletionFindingV1);
+    safe(review);safe(findings);
+    if(findings.length>1||!exactSorted(review.findingIds,[...findings.map(finding=>finding.id)].sort()))
+      throw new CompletionGateErrorV1("invalid_record");
+    return this.db.transaction(async tx=>{
+      const result=await tx.query<AgentReviewCommitRow>(`SELECT * FROM commit_agent_review($1,$2::jsonb,$3::jsonb,$4::bytea)`,[
+        planId,canonicalJson(review),findings[0]?canonicalJson(findings[0]):null,this.integrityKey]);
+      const row=result.rows[0];
+      if(!row)throw new CompletionGateErrorV1("integrity_failed");
+      const prior=this.checkpoint(review.tenantId,Number(row.prior_revision),Number(row.prior_record_count),row.prior_state_digest,row.prior_state_auth_tag);
+      const known=await this.readCheckpoint(review.tenantId);
+      if(!known||rollbackCheckpointDigestV1(known)!==rollbackCheckpointDigestV1(prior))throw new CompletionGateErrorV1("integrity_failed");
+      if(!row.replayed){const next=this.checkpoint(review.tenantId,Number(row.next_revision),Number(row.next_record_count),row.next_state_digest,row.next_state_auth_tag);
+        try{await this.checkpointOperation(signal=>this.checkpointAdvance(rollbackCheckpointDigestV1(prior),next,signal));}
+        catch{throw new CompletionGateErrorV1("integrity_failed");}}
+      return{review,findings,replayed:row.replayed};
+    });
   }
 
   async recordVerification(input:unknown):Promise<{verification:CompletionVerificationV1;replayed:boolean}>{
@@ -500,7 +526,8 @@ export class CompletionGateStoreV1 {
   }
   private assertIndependent(producer:CompletionPrincipalV1,reviewer:CompletionPrincipalV1,profile:CompletionAcceptanceProfileV1):void{
     try{assertReviewerIndependentV1(producer,reviewer,profile.reviewerSeparation);}
-    catch{throw new CompletionGateErrorV1("reviewer_not_independent");}
+    catch(error){throw new CompletionGateErrorV1(error instanceof ReviewerIndependenceErrorV1
+      ? error.safeCode : "reviewer_not_independent");}
   }
   private checkpointScope(tenantId:string){return `completion-gate:${tenantId}`;}
   private tenantStateTag(tenantId:string,revision:number,recordCount:number,stateDigest:string){return hmacSha256Tag(this.integrityKey,{module:"completion-gate",tenantId,revision,recordCount,stateDigest});}

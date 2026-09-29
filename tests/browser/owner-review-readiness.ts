@@ -74,10 +74,12 @@ export async function requestChangesControlWhenReady(page: Page, feedback: strin
 }
 
 /** Opens a result while proving the owner-review panel exposes its loading state before it becomes ready. */
-export async function openResultWithDeferredOwnerReview(page: Page): Promise<void> {
+export async function openResultWithDeferredOwnerReview(page: Page,
+  result: "first" | "last" = "first"): Promise<void> {
   const deferred = await deferNextOwnerReviewLoad(page);
   try {
-    await page.getByRole("button", { name: "Read result" }).first().click();
+    const buttons = page.getByRole("button", { name: "Read result" });
+    await (result === "last" ? buttons.last() : buttons.first()).click();
     await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
     await deferred.waitUntilHeld();
     const loading = page.locator('[role="status"][data-state="loading"]');

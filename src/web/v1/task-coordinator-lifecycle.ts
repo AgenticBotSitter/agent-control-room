@@ -354,7 +354,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
           const proof = await proofForSource(tx, selection);
           await assertAcceptedResultCurrent(tx, proof);
           const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
-          return Object.freeze({ contentHash: proof.contentHash, revision: accepted.target.revisionNumber });
+          return Object.freeze({ executionJobId: proof.executionJobId, attemptId: proof.attemptId,
+            harnessRunId: proof.runId, artifactId: proof.artifactId,
+            contentHash: proof.contentHash, revision: accepted.target.revisionNumber });
         } catch { return null; }
       },
     });

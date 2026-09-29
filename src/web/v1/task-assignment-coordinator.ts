@@ -243,10 +243,12 @@ export class TaskAssignmentCoordinator {
     const stage = (await tx.query<{ project_id: string; current_job_id: string; stage_kind: string; stage_ordinal: number;
       role: string; worker_id: string; worker_kind: "codex" | "claude-code" | "hermes"; node_id: string; selection_key: string; model: string;
       effort: string; provider: string | null; profile: string | null; state: string; max_loops: number;
+      allowed_paths: unknown | null; maximum_changed_files: number | null; maximum_changed_bytes: number | null;
       handoff_from_result_digest: string | null; signoff_review_id: string | null; started_at: string | Date | null;
       finished_at: string | Date | null; record_digest: string; auth_tag: string; version: number }>(`SELECT project_id,
         current_job_id,stage_kind,stage_ordinal,role,worker_id,worker_kind,node_id,selection_key,model,effort,provider,
-        profile,state,max_loops,handoff_from_result_digest,signoff_review_id,started_at,finished_at,record_digest,auth_tag,version
+        profile,state,max_loops,allowed_paths,maximum_changed_files,maximum_changed_bytes,handoff_from_result_digest,
+        signoff_review_id,started_at,finished_at,record_digest,auth_tag,version
       FROM pipeline_stage_runs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
     [this.scope.tenantId, link.pipeline_run_id, Number(link.stage_ordinal)])).rows[0];
     if (!stage || stage.project_id !== job.projectId || stage.stage_kind !== link.stage_kind
@@ -269,12 +271,22 @@ export class TaskAssignmentCoordinator {
       nodeId: stage.node_id, selectionKey: stage.selection_key, model: stage.model, effort: stage.effort,
       provider: stage.provider, profile: stage.profile, currentJobId: stage.current_job_id,
       currentAttemptId: null, currentLeaseId: null, state: stage.state, maxLoops: Number(stage.max_loops),
+      allowedPaths: stage.stage_kind === "build" ? stage.allowed_paths : null,
+      maximumChangedFiles: stage.stage_kind === "build" ? Number(stage.maximum_changed_files) : null,
+      maximumChangedBytes: stage.stage_kind === "build" ? Number(stage.maximum_changed_bytes) : null,
       handoffFromResultDigest: stage.handoff_from_result_digest, signoffReviewId: stage.signoff_review_id,
       startedAt: stage.started_at ? new Date(stage.started_at).toISOString() : null,
       finishedAt: stage.finished_at ? new Date(stage.finished_at).toISOString() : null, version: Number(stage.version) };
     const expected = Buffer.from(hmacSha256Tag(this.workBatchAdmission.integrityKey,
       { purpose: "pipeline-stage-run/v1", record: material })), actual = Buffer.from(stage.auth_tag);
-    if (sha256Digest(material) !== stage.record_digest || expected.length !== actual.length || !timingSafeEqual(expected, actual)) conflict();
+    if (sha256Digest(material) !== stage.record_digest || expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+      const { allowedPaths: _paths, maximumChangedFiles: _files, maximumChangedBytes: _bytes, ...legacy } = material;
+      const legacyExpected = Buffer.from(hmacSha256Tag(this.workBatchAdmission.integrityKey,
+        { purpose: "pipeline-stage-run/v1", record: legacy }));
+      if (stage.allowed_paths !== null || stage.maximum_changed_files !== null || stage.maximum_changed_bytes !== null
+        || sha256Digest(legacy) !== stage.record_digest || legacyExpected.length !== actual.length
+        || !timingSafeEqual(legacyExpected, actual)) conflict();
+    }
     try {
       await this.workBatchAdmission.assertCurrent(tx, { tenantId: this.scope.tenantId, projectId: job.projectId,
         batchId: link.pipeline_run_id, itemId: `${link.pipeline_run_id}:stage:${Number(stage.stage_ordinal)}`,
