@@ -9,9 +9,11 @@ import { IdeaLabOwnerDecisionServiceV1, IdeaLabOwnerDecisionServiceErrorV1, owne
 import { ideaDigestSchemaV1, ideaIdSchemaV1 } from "../../idea-lab/v1/schemas";
 import { WebSessionAuthority } from "./session-authority";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import { taskDraftSchema } from "./task-wire";
 
 export const ideaDecisionInputSchema = z.object({ sessionDigest: ideaDigestSchemaV1,
-  synthesisDigest: ideaDigestSchemaV1, intent: ownerIntentSchema }).strict();
+  synthesisDigest: ideaDigestSchemaV1, intent: ownerIntentSchema, promotionTask: taskDraftSchema.optional(),
+}).strict().refine(value => (value.intent.decision === "create_project") === !!value.promotionTask);
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 

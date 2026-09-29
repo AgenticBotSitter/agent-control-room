@@ -18,13 +18,13 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // Generated from public migrations through 0190 (filename order, including assigned gaps and 0160),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "4ff4fcc8b75a3f03f0a27b2b028d427e7550647ac13bc73132d1aa4edbac3144";
+export const privateWebSchemaDigest = "3e88272beb54989e9fc67814f61421fcae9f2184dba05498f3ebc19736b953b5";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
   "control_news_story_versions", "control_news_source_observations", "control_news_source_settings", "control_news_story_archives", "control_news_article_details",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
-  "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
+  "control_idea_canonical_task_sessions", "control_idea_canonical_task_links", "control_idea_promotion_task_links",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "work_intake_tenant_binding", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
@@ -45,6 +45,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
+  "control_idea_promotion_task_links",
   "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_event_stream_heads", "control_project_events", "control_project_coordinator_heads",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
