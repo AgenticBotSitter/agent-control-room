@@ -38,3 +38,61 @@ export function databaseRoleAttributesV1(role) {
   return `${Object.hasOwn(databaseRoleManifestV1.logins, role) ? "LOGIN" : "NOLOGIN"} INHERIT `
     + "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS";
 }
+
+/** A role name is a bare or double-quoted identifier. Anything carrying a
+ * placeholder (`%I`, `%s`, `$1`) is a position the source builds at run time
+ * and cannot be checked here, so it is never reported as a name. */
+const roleIdentifier = '(?:"[^"\\n]+"|[A-Za-z_][A-Za-z0-9_$]*)';
+const roleList = `(?:${roleIdentifier}\\s*(?:,\\s*${roleIdentifier}\\s*,?)*)`;
+// PUBLIC is the implicit grantee of the default privileges and CURRENT_USER
+// is the migrating login; neither is a role this manifest can own or refuse.
+const rolePseudoNames = new Set(["public", "current_user", "current_role", "session_user"]);
+// Every statement form that names a role, not just CREATE ROLE and `TO`:
+// membership grants (`IN ROLE`, `FOR ROLE`), object ownership (`OWNER TO`,
+// `DROP OWNED BY`), session impersonation (`SET ROLE`), the grantor of record
+// (`GRANTED BY`), and the catalog lookup every migration that has to tolerate
+// a role that may not exist yet uses (`rolname = '<role>'`). A migration that
+// names a role the upgrade will never create or check is a role the owner
+// cannot reason about at upgrade time, so each of these counts as naming one.
+const roleNameRules = Object.freeze([
+  ["create", new RegExp(`\\bCREATE\\s+(?:ROLE|USER|GROUP)\\s+(${roleList})`, "giu")],
+  ["alter", new RegExp(`\\bALTER\\s+(?:ROLE|USER|GROUP)\\s+(${roleList})`, "giu")],
+  ["drop", new RegExp(`\\bDROP\\s+(?:ROLE|USER|GROUP)\\s+(${roleList})`, "giu")],
+  ["member", new RegExp(`\\bIN\\s+(?:ROLE|GROUP)\\s+(${roleList})`, "giu")],
+  ["admin", new RegExp(`\\bFOR\\s+(?:ROLE|USER)\\s+(${roleList})`, "giu")],
+  ["grant", new RegExp(`\\bGRANT\\b[^;]*?\\bTO\\s+(?:GROUP\\s+)?(${roleList})`, "giu")],
+  ["revoke", new RegExp(`\\bREVOKE\\b[^;]*?\\bFROM\\s+(${roleList})`, "giu")],
+  ["owner", new RegExp(`\\bOWNER\\s+TO\\s+(${roleList})`, "giu")],
+  ["owned", new RegExp(`\\b(?:DROP|REASSIGN)\\s+OWNED\\s+BY\\s+(${roleList})`, "giu")],
+  ["session", new RegExp(`\\bSET\\s+(?:(?:LOCAL|SESSION)\\s+)?ROLE\\s+(${roleIdentifier})`, "giu")],
+  ["grantor", new RegExp(`\\bGRANTED\\s+BY\\s+(${roleIdentifier})`, "giu")],
+  ["catalog", /\brolname\s*(?:=~|=|IN)\s*'([^'\n]+)'/giu],
+]);
+
+/** Every distinct role name a SQL source names, mapped to the statement forms
+ * that named it. Line and block comments are removed first: a commented-out
+ * grant is not a role the database ever sees, and a role name written in prose
+ * must not be able to fail the manifest. */
+export function databaseRoleNamesInSqlV1(text) {
+  const source = String(text).replace(/\/\*[\s\S]*?\*\//gu, "").replace(/--[^\n]*/gu, "");
+  const found = new Map();
+  for (const [form, pattern] of roleNameRules) {
+    for (const match of source.matchAll(pattern)) {
+      for (const raw of (match[1] ?? "").split(",")) {
+        const name = raw.trim().replace(/^"|"$/gu, "").trim();
+        if (!name || name.includes("%") || rolePseudoNames.has(name.toLowerCase())) continue;
+        const forms = found.get(name);
+        if (forms) forms.add(form); else found.set(name, new Set([form]));
+      }
+    }
+  }
+  return found;
+}
+
+/** The role names `sources` names that the manifest does not, sorted, so a
+ * failing check reports the same bounded list every run. */
+export function unknownDatabaseRoleNamesV1(sources) {
+  const named = new Set();
+  for (const text of sources) for (const name of databaseRoleNamesInSqlV1(text).keys()) named.add(name);
+  return [...named].filter(name => !databaseRoleNamesV1.includes(name)).sort();
+}
