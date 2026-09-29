@@ -433,10 +433,16 @@ test("the loop limit stops advancing that run and raises exactly one Needs Atten
   assert.equal(attentions[0].maxLoops,1);
   assert.equal(attentions[0].kind,"question");
   assert.equal(attentions[0].state,"open");
-  // The stop is recorded as its own signed receipt of the ceiling decision.
+  // The stop is recorded as its own signed receipt of the ceiling decision. It
+  // names the LAST ROUND THE RUN ACTUALLY STARTED, not the round that was
+  // refused: a stop can sit at max_loops and never above it, which is what the
+  // table's own CHECK asserts. Recording the refused round instead made every
+  // stop fail its constraint and left the owner with a database error.
   const stops=f.loops.filter(row=>row.reason_code!=="stage_advanced");
   assert.equal(stops.length,1);
-  assert.equal(stops[0].loop_index,2);
+  assert.equal(stops[0].loop_index,1);
+  assert.equal(stops[0].max_loops,1);
+  assert.equal(stops[0].run_total_loops,2);
   assert.equal(stops[0].reason_code,"stage_loop_limit_reached");
   // Repeating the refusal raises no second item and claims no new round.
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
