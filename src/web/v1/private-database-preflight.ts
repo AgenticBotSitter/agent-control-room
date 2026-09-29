@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0092, including generic external-content
+// Generated from public migrations 0001-0100, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "514f57093dbace5f491721b631507324491753ddd36a9d2a78e3d793f8a9a623";
+export const privateWebSchemaDigest = "8e9aaaa492c493983860dd69afb35bbc362ae793bbd4f7e47bb7570447e129e9";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -31,6 +31,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans",
   "control_project_coordinator_heads", "control_project_coordination_proposals", "control_project_delegation_policies",
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",
+  "control_project_event_stream_heads", "control_project_events",
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations"] as const;

@@ -40,6 +40,7 @@ type Routes = {
   receipt: (session: ServerNodeSession, raw: string | Uint8Array, signal: AbortSignal) => ReturnType<NativeApprovalPacketStore["receiveDeliveryReceipt"]>;
   codexReceipt?: TaskAssignmentCoordinator["receiveCodexDeliveryReceipt"];
   codexResult?: CodexResultReturnIntakeV1;
+  renew: TaskAssignmentCoordinator["renewByHolder"];
   progress: NativeEvidenceReceiver["receive"];
   recover?: NativeEvidenceReceiver["recover"];
   register?: NativeEvidenceReceiver["register"];
@@ -87,6 +88,7 @@ export class ManagedNativeSessions {
         transmit: routes.queue.transmit.bind(routes.queue), codexStage: routes.queue.codexStage?.bind(routes.queue),
         codexTransmit: routes.queue.codexTransmit?.bind(routes.queue), ready: routes.queue.ready?.bind(routes.queue) }) : undefined,
       receipt: routes.receipt.bind(routes), progress: routes.progress.bind(routes), recover: routes.recover?.bind(routes),
+      renew: routes.renew.bind(routes),
       register: routes.register?.bind(routes), codexReceipt: routes.codexReceipt?.bind(routes),
       codexResult: routes.codexResult ? Object.freeze({ expectation: routes.codexResult.expectation.bind(routes.codexResult),
         publish: routes.codexResult.publish.bind(routes.codexResult) }) : undefined });
@@ -349,6 +351,14 @@ export class ManagedNativeSessions {
             if (record.harnessKind !== "codex" || !this.routes.codexResult)
               return Promise.reject(new Error("native_session_unavailable"));
             return this.operation(record, signal, session => session.acceptCodexResultReturn(copy, this.routes.codexResult!));
+          },
+          renew: (raw: string | Uint8Array, signal: AbortSignal) => {
+            const copy = frame(raw);
+            return this.operation(record, signal, session => session.acceptLeaseRenewalRequest(copy, (renewal, holder) => {
+              const body = renewal.body;
+              return this.routes.renew(holder, body.projectId, body.jobId, body.leaseId, body.leaseEpoch,
+                body.expectedLeaseVersion, body.renewalId, body.renewedAt, body.expiresAt);
+            }));
           },
           completeQueuedDelivery: (kind: "hermes" | "codex", value: z.infer<typeof nativeEvidenceRegistrationSchema>) => {
             const task = nativeEvidenceRegistrationSchema.parse(value), pending = record.pendingDelivery;

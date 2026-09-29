@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { NATIVE_DELIVERY_FEATURE } from "../harness/v1/native-delivery";
+import { NATIVE_DELIVERY_FEATURE, NATIVE_LEASE_DELIVERY_FEATURE } from "../harness/v1/native-delivery";
 import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1,
   controllerWorkerNodeReceiptRecoverySchemaV1 } from "../harness/v1/controller-worker-node-delivery";
 import { CODEX_DELIVERY_FEATURE } from '../harness/codex-v1/delivery-contract';
@@ -496,6 +496,18 @@ export class PortableNodeBridge {
   async heartbeat(body: HeartbeatBody, now: string): Promise<"staged" | "duplicate" | "coalesced"> {
     if (this.statusValue.state !== "online" && this.statusValue.state !== "draining") throw new Error("Bridge is not online");
     return this.sendBody("node.heartbeat", body, false, now);
+  }
+
+  /** Sends a holder-originated renewal request over the authenticated native
+   * channel. The server still re-reads the canonical lease and binds the
+   * request to this node before extending it. */
+  async renewOwnershipLease(body: NodeMessageBodyMap["job.lease.renew.request"], now: string): Promise<"staged" | "duplicate" | "coalesced"> {
+    if ((this.statusValue.state !== "online" && this.statusValue.state !== "draining")
+      || !this.identity.features.includes(NATIVE_LEASE_DELIVERY_FEATURE)
+      || !this.statusValue.enabledFeatures?.includes(NATIVE_LEASE_DELIVERY_FEATURE)) {
+      throw new Error("Ownership lease renewal unavailable");
+    }
+    return this.sendBody("job.lease.renew.request", body, true, now);
   }
 
   /** One exact, queue-bound, non-executing current-admission exchange. The
