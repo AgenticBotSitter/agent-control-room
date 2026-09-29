@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "e2db1d84c27b281d4a94ccc39944c86af4956651f79f432a46aa842018a43de8",
+  "digest": "fcb4a18ee83fe4fd5a488c1d5a43f0e3774295c6dd214b0392bbcf5c92e85c59",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -617,13 +617,13 @@
     {
       "file": "db/migrations/0177_supervisor_reconciliation.sql",
       "order": 103,
-      "sha256": "d75d687104d99803fec02cc05420f0ead366bb1a27a0d2321443542fd2302e5d",
+      "sha256": "35a67d9adfc50d699b66e6fdb97967b4ab9a4a85fbce8656e5131d0fda81152d",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0178_supervisor_machine_health.sql",
       "order": 104,
-      "sha256": "2997ee5785ea4522e8e93277c2db6238530537505169a2b56038c942944523b8",
+      "sha256": "723b85cf066043f8a30c62f7182f1c4663e3e137debe028aa07fb615287a7e0f",
       "kind": "migrate"
     },
     {

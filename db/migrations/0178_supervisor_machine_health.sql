@@ -23,7 +23,7 @@ CREATE TABLE control_supervisor_health_observations (
   loop_version bigint NOT NULL CHECK (loop_version >= 1),
   host_alive boolean NOT NULL,
   loop_alive boolean NOT NULL,
-  shared_memory_segments integer CHECK (shared_memory_segments IS NULL OR shared_memory_segments >= 0),
+  shared_memory_segments bigint CHECK (shared_memory_segments IS NULL OR shared_memory_segments >= 0),
   load_one_minute double precision CHECK (load_one_minute IS NULL OR load_one_minute >= 0),
   state text NOT NULL CHECK (state IN ('healthy','unhealthy')),
   safe_reason_codes jsonb NOT NULL CHECK (jsonb_typeof(safe_reason_codes)='array'),
