@@ -161,6 +161,13 @@ jobs:
       - name: Reject stale or incomplete test quarantines
         run: node scripts/check-test-quarantine.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      # The privileged-routine search_path gate does NOT run here. It used to:
+      # it read migration files as text, needed no PostgreSQL, and every
+      # review round found a way to fool it (a cross-file ALTER FUNCTION, a
+      # later SET/RESET, a nested comment, a quoted identifier). A regex model of
+      # PostgreSQL SQL cannot be made sound. It is now a CATALOG gate and runs in
+      # the attack-kit lane below, which already installs PostgreSQL 17, so it
+      # costs no extra job. The text scanner survives only as a local hint.
       - name: Test hygiene guards
         run: pnpm run test:hygiene
       - name: Type check contributor demo
@@ -264,6 +271,21 @@ jobs:
         run: pnpm run test:phase2b
       - name: Component lanes
         run: pnpm run test:components
+      # The shared attack-test kit and its own tests. This lane installs
+      # PostgreSQL 17 above, so the kit's real-cluster tests must run here
+      # rather than skip: tests/attack-kit.test.ts calls
+      # requiresRealPostgres() and FAILS when the binaries are present but the
+      # cluster tests did not run, so a lost PG install cannot pass silently.
+      #
+      # The search_path GATE runs here too, and before the kit's own tests, so
+      # a migration that introduces an unpinned privileged routine is reported
+      # as a gate failure in the job that already owns PostgreSQL 17. The gate
+      # builds its own disposable cluster from db/migrations/ plus the role
+      # files and reads pg_proc, so it adds seconds, not a second 10-minute job.
+      - name: Fail on a privileged routine without a pg_temp-pinned search_path
+        run: node --import tsx scripts/check-migration-search-path.mjs
+      - name: Attack-test kit
+        run: pnpm run test:attack-kit
       - name: Resource-bound connector contracts
         # The wrapper preserves this command's flags/files after filtering:
         # node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
@@ -606,6 +628,28 @@ jobs:
       - name: Note which lane this entry covers
         run: |
           echo "Merge-gate entry for lane: ${{ matrix.lane }}" >> "$GITHUB_STEP_SUMMARY"
+      # The catch-up components lane needs PostgreSQL 17 for the attack-test kit,
+      # exactly like the early components job. Without this the kit's real-cluster
+      # tests would skip here and a pull request that routed away from the
+      # components lane would still get a green merge gate with none of that
+      # coverage. Mirrors the PGDG keyring steps in the early job.
+      - name: Install PostgreSQL 17 from PGDG for the components catch-up
+        if: ${{ !cancelled() && matrix.lane == 'components' }}
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          test -s /tmp/pgdg.asc
+          head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
+          sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
+          echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+          echo "PG_BIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
       - name: Demo tests (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'demo' && needs.route.result == 'success' && needs.route.outputs.demo == 'false' }}
         run: |
@@ -622,6 +666,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm run test:components
+          pnpm run test:attack-kit
           node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
