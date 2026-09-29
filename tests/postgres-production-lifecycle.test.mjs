@@ -672,12 +672,10 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   await assert.rejects(query(intake,"SELECT * FROM control_idempotency"),/permission denied/u);
 });
 
-// Every S5 statement runs on the Mac-local login that executes it in
-// production (mac-local-default-task-provider.ts, codex-results.ts,
-// native-result-submission.ts), provisioned by the real narrow-role installer
-// with the real role files, and with the private pool's session settings.
-test("S5 agent-review reads and writes run on the Mac-local production logins", needsPg, async () => {
-  const database="cr_agent_review_logins";
+// A fully migrated database with the Mac-local logins the real narrow-role
+// installer creates from the real role files, each on a private-pool client
+// with production session settings.
+async function withMacLocalLogins(database,callback){
   await freshDatabase(database);
   const admin=target(database), client=postgresDatabase(admin);
   await applyMigrations({target:admin,bootstrapTarget:bootstrapTarget(database),migrateTarget:migrateTarget(database),
@@ -700,9 +698,24 @@ test("S5 agent-review reads and writes run on the Mac-local production logins", 
   const login=name=>{
     const config={host:"127.0.0.1",port:PORT,database,username:name,password:loginPasswords[name],majorVersion:17};
     const bound=bindPrivatePgPool(new Pool({...privatePgOptions(config),host:socket}));
-    pools.push(bound); return {config,db:bound.client};
+    // `direct` is the same login on a plain client, which keeps the server's
+    // refusal text that the private driver deliberately withholds.
+    pools.push(bound); return {config,db:bound.client,direct:postgresDatabase({...target(database,name),password:loginPasswords[name]})};
   };
   try {
+    await callback({client,login});
+  } finally {
+    await Promise.all(pools.map(pool=>pool.close()));
+    await query(adminDb(),`DROP DATABASE ${database}`);
+    for (const role of [...macRoles,...createdPostgres ? ["postgres"] : []]) await query(adminDb(),`DROP ROLE IF EXISTS ${role}`);
+  }
+}
+
+// Every S5 statement runs on the Mac-local login that executes it in
+// production (mac-local-default-task-provider.ts, codex-results.ts,
+// native-result-submission.ts).
+test("S5 agent-review reads and writes run on the Mac-local production logins", needsPg, () =>
+  withMacLocalLogins("cr_agent_review_logins",async({client,login})=>{
     const coordinator=login("control_room_coordinator"), reviewer=login("control_room_agent_reviewer_login");
     const results=login("control_room_results"), publisher=login("control_room_publisher");
     const at=new Date(webNow).toISOString(), reviewKey=new Uint8Array(32).fill(54);
@@ -727,12 +740,92 @@ test("S5 agent-review reads and writes run on the Mac-local production logins", 
       assert.equal((await db.query("SELECT model,effort FROM control_task_model_selections WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3",
         [own.tenantId,own.project.projectId,checkJob])).rows.length,1,name);
     }
-  } finally {
-    await Promise.all(pools.map(pool=>pool.close()));
-    await query(adminDb(),`DROP DATABASE ${database}`);
-    for (const role of [...macRoles,...createdPostgres ? ["postgres"] : []]) await query(adminDb(),`DROP ROLE IF EXISTS ${role}`);
-  }
-});
+  }));
+
+// The commit boundary stores the payloads it is given, and the Completion Gate
+// store re-parses every stored row, so one malformed review would leave the
+// tenant's gate unreadable for good. Each probe calls the boundary as the
+// production reviewer login with the correct key; every malformed shape must be
+// refused before anything is written, and the tenant must still take a valid
+// review afterwards.
+function malformedReviewProbe(database,probe){
+  return withMacLocalLogins(database,async({client,login})=>{
+    const coordinator=login("control_room_coordinator"), reviewer=login("control_room_agent_reviewer_login");
+    const at=new Date(webNow).toISOString(), reviewKey=new Uint8Array(32).fill(55);
+    const checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
+    const own=await seedAgentReviewTenant(client,"shape",reviewKey,checkpoints,at,coordinator.db);
+    await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[own.tenantId]);
+    const {plan,targetRecord,profile,state}=own;
+    const review=own.reviewPayload();
+    const negative={...review,decision:"changes_requested",findingIds:[plan.findingId]};
+    const finding={schemaVersion:"control-room-completion-gate/v1",id:plan.findingId,tenantId:own.tenantId,
+      projectId:own.project.projectId,targetId:targetRecord.id,targetDigest:sha256Digest(targetRecord),reviewId:plan.reviewId,
+      code:"agent:changes_requested",severity:"critical",statementDigest:sha256Digest("probe finding"),
+      evidenceDigests:[sha256Digest("probe evidence")],raisedAt:at};
+    const records=async()=>(await client.query(
+      "SELECT count(*)::int AS rows FROM control_completion_gate_records WHERE tenant_id=$1",[own.tenantId])).rows[0].rows;
+    const before=await state(), recordsBefore=await records();
+    const refused=async(label,reviewPayload,findingPayload,pattern)=>{
+      await assert.rejects(reviewer.direct.query("SELECT * FROM commit_agent_review($1,$2::jsonb,$3::jsonb,$4::bytea)",
+        [plan.planId,JSON.stringify(reviewPayload),findingPayload&&JSON.stringify(findingPayload),reviewKey]),pattern,label);
+      assert.deepEqual(await state(),before,`${label} moved the integrity row`);
+      assert.equal(await records(),recordsBefore,`${label} wrote a record`);
+    };
+    await probe({review,negative,finding,reviewer:plan.reviewer,refused});
+    // The tenant's gate is untouched and still takes a valid review.
+    await own.gate.verifyProvisionedTenantV1(own.tenantId);
+    const committed=await new AgentReviewServiceV1(reviewer.db,own.tenantId,reviewKey,checkpoints,own.routes,()=>at)
+      .record({planId:plan.planId,decision:"changes_requested",assessedRisk:"medium",
+        evidenceDigests:[sha256Digest("probe evidence")],findingStatementDigest:sha256Digest("probe finding")});
+    assert.equal(committed.replayed,false);
+    assert.equal(Number((await state()).revision),Number(before.revision)+1);
+    await own.gate.verifyProvisionedTenantV1(own.tenantId);
+    assert.equal((await own.gate.getRecord(own.tenantId,plan.reviewId,"review")).effectiveRisk,"critical");
+    assert.equal((await own.gate.getRecord(own.tenantId,plan.findingId,"finding")).severity,"critical");
+    assert.equal((await own.gate.getRecord(own.tenantId,profile.id,"profile")).id,profile.id);
+  });
+}
+const withoutKeys=(payload,...keys)=>Object.fromEntries(Object.entries(payload).filter(([key])=>!keys.includes(key)));
+
+test("production reviewer login cannot commit a review or finding with a missing field", needsPg, () =>
+  malformedReviewProbe("cr_agent_review_missing",async({review,negative,finding,refused})=>{
+    for (const key of ["effectiveRisk","grantsApproval","decision","authority","schemaVersion","evidenceDigests","reviewedAt"])
+      await refused(`review without ${key}`,withoutKeys(review,key),null,new RegExp(`agent review payload missing field: ${key}$`,"u"));
+    await refused("review without both authority flags",withoutKeys(review,"grantsApproval","grantsExecutionAuthority"),null,
+      /agent review payload missing field: grantsApproval,grantsExecutionAuthority$/u);
+    await refused("finding without severity",negative,withoutKeys(finding,"severity"),/agent review finding missing field: severity$/u);
+  }));
+
+test("production reviewer login cannot commit a review or finding with a null field", needsPg, () =>
+  malformedReviewProbe("cr_agent_review_null",async({review,negative,finding,refused})=>{
+    for (const key of ["effectiveRisk","grantsApproval","reviewer"])
+      await refused(`review with null ${key}`,{...review,[key]:null},null,new RegExp(`agent review payload null field: ${key}$`,"u"));
+    await refused("finding with null statementDigest",negative,{...finding,statementDigest:null},
+      /agent review finding null field: statementDigest$/u);
+  }));
+
+test("production reviewer login cannot commit a review or finding with an extra field", needsPg, () =>
+  malformedReviewProbe("cr_agent_review_extra",async({review,negative,finding,refused})=>{
+    await refused("review with an extra field",{...review,ownerApproved:true},null,/agent review payload extra field: ownerApproved$/u);
+    await refused("finding with an extra field",negative,{...finding,note:"extra"},/agent review finding extra field: note$/u);
+  }));
+
+test("production reviewer login cannot commit a review or finding with a wrong-typed field", needsPg, () =>
+  malformedReviewProbe("cr_agent_review_type",async({review,negative,finding,reviewer,refused})=>{
+    for (const [key,value] of [["grantsApproval","false"],["grantsExecutionAuthority",0],["effectiveRisk",4],
+      ["reviewer",JSON.stringify(reviewer)],["evidenceDigests",sha256Digest("probe evidence")],["findingIds","[]"]])
+      await refused(`review with a ${typeof value} ${key}`,{...review,[key]:value},null,
+        new RegExp(`agent review payload wrong type: ${key}$`,"u"));
+    // A list the store could not parse back: not digests, empty, unsorted or repeated.
+    for (const value of [[123],[],["not-a-digest"],[sha256Digest("a"),sha256Digest("b")].sort().reverse(),
+      [sha256Digest("probe evidence"),sha256Digest("probe evidence")]])
+      await refused(`review with evidenceDigests ${JSON.stringify(value)}`,{...review,evidenceDigests:value},null,
+        /agent review payload wrong type: evidenceDigests$/u);
+    await refused("finding with a numeric severity",negative,{...finding,severity:4},/agent review finding wrong type: severity$/u);
+    await refused("finding with a malformed statementDigest",negative,{...finding,statementDigest:"sha256:short"},
+      /agent review finding wrong type: statementDigest$/u);
+  }));
+
 
 test("agent-review down migration removes every surviving direct privilege", needsPg, async () => {
   await freshDatabase("cr_agent_review_down");

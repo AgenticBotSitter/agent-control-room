@@ -7,7 +7,13 @@ test("agent review guard binds the dedicated role to one server-created predeces
   assert.match(sql, /control_room_agent_reviewer/u);
   assert.match(sql, /agent reviewer raw insert rejected/u);
   assert.match(sql, /CREATE FUNCTION commit_agent_review[\s\S]*SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp/u);
-  assert.match(sql, /effective_risk<>greatest\(minimum_risk,assessed_risk\)/u);
+  assert.match(sql, /effective_risk IS DISTINCT FROM greatest\(minimum_risk,assessed_risk\)/u);
+  // The stored payloads' exact shape is checked before anything reads them, and
+  // a NULL binding term refuses rather than skips the raise.
+  for (const refusal of ["missing field", "null field", "extra field", "wrong type"])
+    assert.match(sql, new RegExp(`RAISE EXCEPTION 'agent review % ${refusal}: %'`, "u"));
+  assert.match(sql, /IF coalesce\(target\.id IS NULL[\s\S]*run\.state='succeeded'\),true\) THEN\s+RAISE EXCEPTION 'agent review commit binding rejected'/u);
+  assert.match(sql, /IF finding_payload IS NOT NULL AND coalesce\(/u);
   assert.match(sql, /agent_review_hmac_sha256\(integrity_key/u);
   // Both reviewer boundaries serve only the installation tenant the owner bound.
   assert.match(sql, /INTO plan FROM public\.control_agent_review_plans p\s+JOIN public\.work_intake_tenant_binding b ON b\.singleton AND b\.tenant_id=p\.tenant_id/u);

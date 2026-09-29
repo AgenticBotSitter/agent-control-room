@@ -177,7 +177,7 @@ DECLARE plan public.control_agent_review_plans%ROWTYPE; target public.control_co
   v_record_id text; v_record_kind text; v_record_key text; v_subject_id text; v_parent_id text; v_record_digest text;
   v_record_auth_tag text; v_occurred_at timestamptz; material jsonb; state_material jsonb; inserted_count integer := 0;
   minimum_risk integer; assessed_risk integer; effective_risk integer; expected_current_tag text;
-  computed_count bigint; computed_digest text;
+  computed_count bigint; computed_digest text; v_required text[]; v_fields text;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname='control_room_agent_reviewer'
       AND pg_catalog.pg_has_role(session_user,r.oid,'MEMBER'))
@@ -188,6 +188,43 @@ BEGIN
     OR (finding_payload IS NOT NULL AND pg_catalog.jsonb_typeof(finding_payload)<>'object') THEN
     RAISE EXCEPTION 'agent review commit input rejected';
   END IF;
+  -- The payloads are stored as sent and the Completion Gate store re-parses
+  -- every stored row, so a missing, null, extra or mistyped field would leave
+  -- the tenant's gate unreadable. Their exact shape is checked before anything
+  -- else reads them.
+  FOR v_record_kind, material, v_required IN SELECT * FROM (VALUES
+      ('payload',review_payload,ARRAY['schemaVersion','id','tenantId','projectId','targetId','targetDigest',
+        'acceptanceProfileId','acceptanceProfileDigest','reviewer','authority','decision','assessedRisk','effectiveRisk',
+        'evidenceDigests','findingIds','reviewedAt','grantsApproval','grantsExecutionAuthority']),
+      ('finding',finding_payload,ARRAY['schemaVersion','id','tenantId','projectId','targetId','targetDigest','reviewId',
+        'code','severity','statementDigest','evidenceDigests','raisedAt'])) AS shapes(kind,payload,required)
+    WHERE payload IS NOT NULL LOOP
+    SELECT pg_catalog.string_agg(k,',' ORDER BY k COLLATE "C") INTO v_fields
+      FROM pg_catalog.unnest(v_required) k WHERE NOT material ? k;
+    IF v_fields IS NOT NULL THEN RAISE EXCEPTION 'agent review % missing field: %',v_record_kind,v_fields; END IF;
+    SELECT pg_catalog.string_agg(e.key,',' ORDER BY e.key COLLATE "C") INTO v_fields
+      FROM pg_catalog.jsonb_each(material) e WHERE pg_catalog.jsonb_typeof(e.value)='null';
+    IF v_fields IS NOT NULL THEN RAISE EXCEPTION 'agent review % null field: %',v_record_kind,v_fields; END IF;
+    SELECT pg_catalog.string_agg(k,',' ORDER BY k COLLATE "C") INTO v_fields
+      FROM pg_catalog.jsonb_object_keys(material) k WHERE k <> ALL(v_required);
+    IF v_fields IS NOT NULL THEN RAISE EXCEPTION 'agent review % extra field: %',v_record_kind,v_fields; END IF;
+    SELECT pg_catalog.string_agg(k,',' ORDER BY k COLLATE "C") INTO v_fields
+      FROM pg_catalog.unnest(v_required) k WHERE pg_catalog.jsonb_typeof(material->k)<>CASE
+        WHEN k='reviewer' THEN 'object' WHEN k IN ('evidenceDigests','findingIds') THEN 'array'
+        WHEN k IN ('grantsApproval','grantsExecutionAuthority') THEN 'boolean' ELSE 'string' END;
+    IF v_fields IS NOT NULL THEN RAISE EXCEPTION 'agent review % wrong type: %',v_record_kind,v_fields; END IF;
+    -- 1 to 100 unique, sorted digests, as the store's schema requires.
+    IF pg_catalog.jsonb_array_length(material->'evidenceDigests') NOT BETWEEN 1 AND 100
+      OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(material->'evidenceDigests') item
+        WHERE pg_catalog.jsonb_typeof(item)<>'string' OR item#>>'{}' !~ '^sha256:[a-f0-9]{64}$')
+      OR material->'evidenceDigests' IS DISTINCT FROM (SELECT pg_catalog.jsonb_agg(d ORDER BY d COLLATE "C")
+        FROM (SELECT DISTINCT item#>>'{}' AS d FROM pg_catalog.jsonb_array_elements(material->'evidenceDigests') item) digests) THEN
+      RAISE EXCEPTION 'agent review % wrong type: evidenceDigests',v_record_kind;
+    END IF;
+    IF v_record_kind='finding' AND material->>'statementDigest' !~ '^sha256:[a-f0-9]{64}$' THEN
+      RAISE EXCEPTION 'agent review finding wrong type: statementDigest';
+    END IF;
+  END LOOP;
   -- The reviewer login serves the one installation tenant the owner bootstrap
   -- bound; a plan in any other tenant is unavailable to it.
   SELECT p.* INTO plan FROM public.control_agent_review_plans p
@@ -243,7 +280,8 @@ BEGIN
   minimum_risk=pg_catalog.array_position(ARRAY['low','medium','high','critical'],profile.payload->>'minimumRisk');
   assessed_risk=pg_catalog.array_position(ARRAY['low','medium','high','critical'],review_payload->>'assessedRisk');
   effective_risk=pg_catalog.array_position(ARRAY['low','medium','high','critical'],review_payload->>'effectiveRisk');
-  IF target.id IS NULL OR profile.id IS NULL OR target.record_digest<>plan.target_digest
+  -- A term that is NULL refuses rather than passes: IF NULL would skip the raise.
+  IF coalesce(target.id IS NULL OR profile.id IS NULL OR target.record_digest<>plan.target_digest
     OR profile.record_digest<>plan.acceptance_profile_digest
     OR target.payload->>'tenantId'<>plan.tenant_id OR target.payload->>'projectId'<>plan.project_id
     OR target.payload->>'acceptanceProfileId'<>profile.id
@@ -259,8 +297,9 @@ BEGIN
     OR review_payload->>'acceptanceProfileDigest'<>plan.acceptance_profile_digest
     OR review_payload->'reviewer'<>plan.reviewer OR review_payload->>'authority'<>'completion_gate'
     OR review_payload->>'decision' NOT IN ('accepted','changes_requested')
-    OR review_payload->>'grantsApproval'<>'false' OR review_payload->>'grantsExecutionAuthority'<>'false'
-    OR minimum_risk IS NULL OR assessed_risk IS NULL OR effective_risk<>greatest(minimum_risk,assessed_risk)
+    OR review_payload->'grantsApproval' IS DISTINCT FROM 'false'::jsonb
+    OR review_payload->'grantsExecutionAuthority' IS DISTINCT FROM 'false'::jsonb
+    OR minimum_risk IS NULL OR assessed_risk IS NULL OR effective_risk IS DISTINCT FROM greatest(minimum_risk,assessed_risk)
     OR review_payload->'findingIds'<>(CASE WHEN review_payload->>'decision'='accepted' THEN '[]'::jsonb
       ELSE pg_catalog.jsonb_build_array(plan.finding_id) END)
     OR (review_payload->>'reviewedAt')::timestamptz < (target.payload->>'submittedAt')::timestamptz
@@ -268,7 +307,7 @@ BEGIN
       JOIN public.control_attempts attempt ON attempt.tenant_id=run.tenant_id AND attempt.id=run.attempt_id
         AND attempt.job_id=run.job_id AND attempt.node_id=run.node_id AND attempt.worker_id=plan.reviewer->>'workerId'
       WHERE run.tenant_id=plan.tenant_id AND run.id=plan.reviewer_run_id AND run.job_id=plan.reviewer_job_id
-        AND run.project_id=plan.project_id AND run.node_id=plan.reviewer->>'actorId' AND run.state='succeeded') THEN
+        AND run.project_id=plan.project_id AND run.node_id=plan.reviewer->>'actorId' AND run.state='succeeded'),true) THEN
     RAISE EXCEPTION 'agent review commit binding rejected';
   END IF;
   IF review_payload->>'decision'='accepted' AND finding_payload IS NOT NULL THEN
@@ -277,14 +316,14 @@ BEGIN
   IF review_payload->>'decision'='changes_requested' AND finding_payload IS NULL THEN
     RAISE EXCEPTION 'agent review finding binding rejected';
   END IF;
-  IF finding_payload IS NOT NULL AND (
+  IF finding_payload IS NOT NULL AND coalesce(
       finding_payload->>'schemaVersion'<>'control-room-completion-gate/v1'
       OR finding_payload->>'id'<>plan.finding_id OR finding_payload->>'tenantId'<>plan.tenant_id
       OR finding_payload->>'projectId'<>plan.project_id OR finding_payload->>'targetId'<>plan.target_id
       OR finding_payload->>'targetDigest'<>plan.target_digest OR finding_payload->>'reviewId'<>plan.review_id
       OR finding_payload->>'code'<>'agent:changes_requested'
       OR finding_payload->>'severity'<>review_payload->>'effectiveRisk'
-      OR (finding_payload->>'raisedAt')::timestamptz < (review_payload->>'reviewedAt')::timestamptz) THEN
+      OR (finding_payload->>'raisedAt')::timestamptz < (review_payload->>'reviewedAt')::timestamptz,true) THEN
     RAISE EXCEPTION 'agent review finding binding rejected';
   END IF;
 
