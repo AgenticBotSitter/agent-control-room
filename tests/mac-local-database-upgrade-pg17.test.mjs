@@ -74,11 +74,12 @@ async function baseDatabase(root, port, suffix) {
     "-v", "dbname=control_room", "-v", "ON_ERROR_STOP=1", "-f",
     join(root, "deploy/postgres/provision-database.sql")]);
   const secrets = { migrator: `m${suffix}`.repeat(36), application: `a${suffix}`.repeat(36),
-    scheduler: `s${suffix}`.repeat(36) };
+    scheduler: `s${suffix}`.repeat(36), workIntake: `w${suffix}`.repeat(36) };
   await applyMigrations({ rootDir: root, ledgerPath: join(root, "deploy/postgres/migration-ledger.json"),
     bootstrapTarget: connection(port), migrateTarget: migrator(port, secrets.migrator),
     env: { CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator,
-      CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
+      CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler,
+      CONTROL_ROOM_WORK_INTAKE_PASSWORD: secrets.workIntake } });
   return secrets;
 }
 

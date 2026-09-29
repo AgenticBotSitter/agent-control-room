@@ -56,7 +56,8 @@ let teardown = null;
 const target = (database, user = "fixture_admin") =>
   ({ host: socket, port: PORT, database, user, password: "fixture_only" });
 const adminDb = () => target("postgres");
-const passwords = { CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24), CONTROL_ROOM_APP_PASSWORD: "a".repeat(24), CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24) };
+const passwords = { CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24), CONTROL_ROOM_APP_PASSWORD: "a".repeat(24),
+  CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24), CONTROL_ROOM_WORK_INTAKE_PASSWORD: "w".repeat(24) };
 const bootstrapTarget = (database) => target(database, "fixture_admin");
 const migrateTarget = (database) => ({ host: socket, port: PORT, database,
   user: "control_room_migrator", password: passwords.CONTROL_ROOM_MIGRATOR_PASSWORD });
