@@ -103,7 +103,8 @@ test("hosted Action Inbox uses the composed coordinator inbox reader and forward
   for (let index = 0; index < 101; index += 1) await store.upsertInbox(item(`attention:resolved-${index}`, "resolved",
     `2026-01-01T00:${String(index % 60).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`));
   const app = await createPrivateTaskApplication({ ...f.config.web, database: f.web, clock: () => webNow }, {
-    ...f.config.coordinator, scope: f.scope, database: f.coordinator,
+    scope: f.scope, database: f.coordinator, planning: f.config.coordinator.planning,
+    routes: f.config.coordinator.routes,
   });
   t.after(() => app.close());
   const response = await app.handle(request("/api/v1/needs-me/action-items", "GET", undefined,
