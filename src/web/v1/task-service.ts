@@ -191,7 +191,7 @@ export class WebTaskService {
         outputTokens: usageEvent.payload.outputTokens, totalTokens: usageEvent.payload.totalTokens
           ?? (usageEvent.payload.inputTokens !== null && usageEvent.payload.outputTokens !== null
             ? usageEvent.payload.inputTokens + usageEvent.payload.outputTokens : null),
-        wallTimeMs: usageEvent.payload.wallTimeMs ?? wallTimeMs })
+        cachedInputTokens: usageEvent.payload.cachedInputTokens, wallTimeMs: usageEvent.payload.wallTimeMs ?? wallTimeMs })
       : nativeUsage ? usageMeasurementSchemaV1.parse({ inputTokens: nativeUsage.inputTokens,
         outputTokens: nativeUsage.outputTokens, totalTokens: nativeUsage.totalTokens, wallTimeMs })
         : wallTimeMs === null ? null : usageMeasurementSchemaV1.parse({ inputTokens: null, outputTokens: null,

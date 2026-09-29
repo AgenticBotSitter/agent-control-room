@@ -1,7 +1,12 @@
 import { z } from "zod";
+import { catalogProjectIdSchema } from "../../web/v1/project-wire";
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/);
+// Shared with the detail wire schema (`task-wire.ts`'s `id`, itself
+// `catalogProjectIdSchema`): a price table that passes only this module's own
+// loader must never fail the detail read downstream, so both accept and
+// reject the exact same entry/table IDs.
+const id = catalogProjectIdSchema;
 const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/);
 const nanoUsd = z.string().regex(/^(?:0|[1-9][0-9]*)$/);
 
@@ -9,7 +14,11 @@ export const usagePriceTableSchemaV1 = z.object({
   schema: z.literal("control-room.usage-price-table/v1"), tableId: id, recordedAt: z.string().datetime(),
   entries: z.array(z.object({ entryId: id, harness: z.enum(["codex", "claude", "hermes", "other"]), model,
     billing: z.discriminatedUnion("kind", [z.object({ kind: z.literal("subscription") }).strict(),
-      z.object({ kind: z.literal("token"), inputNanoUsdPerToken: nanoUsd, outputNanoUsdPerToken: nanoUsd }).strict()]) }).strict()).max(256),
+      // `cachedInputNanoUsdPerToken` is optional: an owner who never sets it gets
+      // `unknown`/`cache_pricing_not_recorded` for any run with cache tokens,
+      // never a cost silently computed as if the cache tokens were free.
+      z.object({ kind: z.literal("token"), inputNanoUsdPerToken: nanoUsd, outputNanoUsdPerToken: nanoUsd,
+        cachedInputNanoUsdPerToken: nanoUsd.optional() }).strict()]) }).strict()).max(256),
 }).strict().superRefine((value, context) => {
   if (new Set(value.entries.map(entry => entry.entryId)).size !== value.entries.length)
     context.addIssue({ code: "custom", message: "price entry ids must be unique" });
@@ -19,7 +28,12 @@ export const usagePriceTableSchemaV1 = z.object({
 export type UsagePriceTableV1 = z.infer<typeof usagePriceTableSchemaV1>;
 
 export const usageMeasurementSchemaV1 = z.object({ inputTokens: count.nullable(), outputTokens: count.nullable(),
-  totalTokens: count.nullable(), wallTimeMs: count.nullable() }).strict().superRefine((value, context) => {
+  totalTokens: count.nullable(), wallTimeMs: count.nullable(),
+  /** Codex: a subset of `inputTokens`, billed at the cache rate instead of the
+   * full input rate. Claude/Hermes: additional to `inputTokens`, never a
+   * subset. Optional so every existing caller that predates cache tracking
+   * still parses; treated as 0 wherever absent. */
+  cachedInputTokens: count.nullable().optional() }).strict().superRefine((value, context) => {
   if (value.totalTokens !== null && value.inputTokens !== null && value.outputTokens !== null
     && value.totalTokens < value.inputTokens + value.outputTokens)
     context.addIssue({ code: "custom", message: "total tokens cannot be smaller than input plus output" });
@@ -27,7 +41,7 @@ export const usageMeasurementSchemaV1 = z.object({ inputTokens: count.nullable()
 export type UsageMeasurementV1 = z.infer<typeof usageMeasurementSchemaV1>;
 
 export type UsageCostUnknownReasonV1 = "usage_not_reported" | "model_not_recorded" | "price_table_not_recorded"
-  | "price_entry_not_recorded" | "partial_token_usage";
+  | "price_entry_not_recorded" | "partial_token_usage" | "cache_pricing_not_recorded";
 export type UsageCostV1 = Readonly<
   | { kind: "known"; nanoUsd: string; priceEntryId: string; tableId: string }
   | { kind: "included_in_subscription"; priceEntryId: string; tableId: string }
@@ -47,8 +61,19 @@ export function costForUsageV1(input: Readonly<{ harness: "codex" | "claude" | "
     return { kind: "unknown", reason: "usage_not_reported" };
   if (input.usage.inputTokens === null || input.usage.outputTokens === null)
     return { kind: "unknown", reason: "partial_token_usage" };
-  const value = BigInt(input.usage.inputTokens) * BigInt(entry.billing.inputNanoUsdPerToken)
-    + BigInt(input.usage.outputTokens) * BigInt(entry.billing.outputNanoUsdPerToken);
+  const cachedInputTokens = input.usage.cachedInputTokens ?? 0;
+  // Never guess a discount: any recorded cache usage requires an explicit
+  // owner-set cache price before a "known" figure is produced.
+  if (cachedInputTokens > 0 && entry.billing.cachedInputNanoUsdPerToken === undefined)
+    return { kind: "unknown", reason: "cache_pricing_not_recorded" };
+  // Codex reports `cachedInputTokens` as a subset of `inputTokens`; Claude and
+  // Hermes report it as additional usage. Only Codex's full input count needs
+  // the cached portion removed before applying the full input rate.
+  const billableInputTokens = input.harness === "codex" ? input.usage.inputTokens - cachedInputTokens : input.usage.inputTokens;
+  if (billableInputTokens < 0) return { kind: "unknown", reason: "partial_token_usage" };
+  const value = BigInt(billableInputTokens) * BigInt(entry.billing.inputNanoUsdPerToken)
+    + BigInt(input.usage.outputTokens) * BigInt(entry.billing.outputNanoUsdPerToken)
+    + BigInt(cachedInputTokens) * BigInt(entry.billing.cachedInputNanoUsdPerToken ?? "0");
   return { kind: "known", nanoUsd: value.toString(), priceEntryId: entry.entryId, tableId: table.tableId };
 }
 

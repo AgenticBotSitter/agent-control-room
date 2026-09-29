@@ -55,7 +55,8 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     || !config.publication || typeof config.registerRun !== "function") unavailable();
   const runs = new HarnessRunStoreV1(config.db, config.runIntegrityKey);
   async function record(input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal; startedAt?: string;
-    finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null }> | null }>, terminal: "succeeded" | "failed") {
+    finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
+      cachedInputTokens?: number }> | null }>, terminal: "succeeded" | "failed") {
     if (!input || !(input.signal instanceof AbortSignal) || input.signal.aborted) unavailable();
     const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
     const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(input.receipt);
@@ -100,7 +101,7 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
       if (!snapshot) return unavailable();
       const prior = snapshot.events.find(event => event.payload.category === "usage");
       const payload = { category: "usage" as const, inputTokens: input.usage?.inputTokens ?? null, outputTokens: input.usage?.outputTokens ?? null,
-        totalTokens: input.usage?.totalTokens ?? null, cachedInputTokens: null, reasoningTokens: null,
+        totalTokens: input.usage?.totalTokens ?? null, cachedInputTokens: input.usage?.cachedInputTokens ?? null, reasoningTokens: null,
         wallTimeMs: Date.parse(finishedAt) - Date.parse(startedAt) };
       if (prior) { if (sha256Digest(prior.payload) !== sha256Digest(payload)) unavailable(); }
       else await runs.append({ schemaVersion: "control-room-harness-event/v1", tenantId: run.tenantId, runId: run.id,
@@ -122,7 +123,8 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     return { delivery, receipt, run: current };
   }
   async function publish(input: Readonly<{ delivery: unknown; receipt: unknown; text: string; signal: AbortSignal;
-    startedAt?: string; finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null }> | null }>): Promise<void> {
+    startedAt?: string; finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
+      cachedInputTokens?: number }> | null }>): Promise<void> {
     const body = text.parse(input.text);
     const { delivery, run } = await record(input, "succeeded");
 
@@ -151,7 +153,8 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
       assertAuthority: () => { if (input.signal.aborted) unavailable(); } });
   };
   return Object.freeze({ publish, recordFailure: (input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal;
-    startedAt?: string; finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null }> | null }>) => record(input, "failed").then(() => {}) });
+    startedAt?: string; finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
+      cachedInputTokens?: number }> | null }>) => record(input, "failed").then(() => {}) });
 }
 
 export function createOwnerTrustedLocalCliPublishV1(config: OwnerTrustedLocalCliPublishConfigurationV1) {

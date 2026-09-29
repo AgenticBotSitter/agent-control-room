@@ -16,15 +16,15 @@ function unavailable(): never { throw new Error("owner_trusted_local_cli_deliver
  * into the existing canonical result/review lifecycle. */
 export type OwnerTrustedLocalCliExecutionV1 = Readonly<
   | { kind: "completed"; text: string; startedAt: string; finishedAt: string;
-      usage: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null }> | null }
+      usage: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; cachedInputTokens?: number }> | null }
   | { kind: "failed"; reason: string; startedAt: string; finishedAt: string;
-      usage: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null }> | null }
+      usage: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; cachedInputTokens?: number }> | null }
 >;
 export type OwnerTrustedLocalCliExecutionInputV1 = Readonly<
   | { kind: "completed"; text: string; startedAt?: string; finishedAt?: string;
-      usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null }> | null }
+      usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; cachedInputTokens?: number }> | null }
   | { kind: "failed"; reason: string; startedAt?: string; finishedAt?: string;
-      usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null }> | null }
+      usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; cachedInputTokens?: number }> | null }
 >;
 
 export type OwnerTrustedLocalCliDeliveryBindingV1 = Readonly<{
@@ -80,7 +80,8 @@ function result(value: unknown): OwnerTrustedLocalCliExecutionV1 {
   const startedAt = z.string().datetime().safeParse(candidate.startedAt ?? fallback), finishedAt = z.string().datetime().safeParse(candidate.finishedAt ?? fallback);
   const candidateUsage = candidate.usage ?? null;
   const usageResult = candidateUsage === null ? undefined : z.object({ inputTokens: z.number().int().nonnegative().nullable(),
-    outputTokens: z.number().int().nonnegative().nullable(), totalTokens: z.number().int().nonnegative().nullable() }).strict().safeParse(candidate.usage);
+    outputTokens: z.number().int().nonnegative().nullable(), totalTokens: z.number().int().nonnegative().nullable(),
+    cachedInputTokens: z.number().int().nonnegative().optional() }).strict().safeParse(candidate.usage);
   if (!startedAt.success || !finishedAt.success || Date.parse(finishedAt.data) < Date.parse(startedAt.data)
     || candidateUsage !== null && !usageResult?.success) return unavailable();
   const usage = candidateUsage === null ? null : usageResult!.success ? usageResult!.data : unavailable();

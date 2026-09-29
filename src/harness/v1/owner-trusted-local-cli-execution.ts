@@ -51,11 +51,13 @@ export function ownerTrustedLocalCliPromptV1(input: unknown): string {
 }
 
 function mapped(result: Readonly<{ status: string; text?: string; reason?: string;
-  usage?: Readonly<{ inputTokens?: number; outputTokens?: number; totalTokens?: number }> }>, startedAt: string, finishedAt: string): OwnerTrustedLocalCliExecutionV1 {
+  usage?: Readonly<{ inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number }> }>,
+  startedAt: string, finishedAt: string): OwnerTrustedLocalCliExecutionV1 {
   const usage = result.usage ? Object.freeze({ inputTokens: result.usage.inputTokens ?? null,
     outputTokens: result.usage.outputTokens ?? null,
     totalTokens: result.usage.totalTokens ?? (result.usage.inputTokens !== undefined && result.usage.outputTokens !== undefined
-      ? result.usage.inputTokens + result.usage.outputTokens : null) }) : null;
+      ? result.usage.inputTokens + result.usage.outputTokens : null),
+    ...(result.usage.cachedInputTokens !== undefined ? { cachedInputTokens: result.usage.cachedInputTokens } : {}) }) : null;
   if (result.status === "completed" && typeof result.text === "string") return Object.freeze({ kind: "completed" as const,
     text: result.text, startedAt, finishedAt, usage });
   if ((result.status === "failed" || result.status === "canceled" || result.status === "timed_out" || result.status === "cleanup_uncertain")

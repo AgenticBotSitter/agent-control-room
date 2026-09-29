@@ -132,6 +132,7 @@ const unknownCost: Record<Extract<TaskRun["cost"], { kind: "unknown" }>["reason"
   usage_not_reported: "the harness did not report token usage", model_not_recorded: "the run has no recorded model",
   price_table_not_recorded: "no owner price table is recorded", price_entry_not_recorded: "the recorded price table has no matching model entry",
   partial_token_usage: "the harness did not report both input and output tokens",
+  cache_pricing_not_recorded: "the run used cached tokens the recorded price table does not price",
 };
 function CostValue({ cost }: { cost: TaskRun["cost"] }) {
   return cost.kind === "known" ? <>{formatNanoUsdV1(cost.nanoUsd)} <span className="private-note">({cost.priceEntryId})</span></>

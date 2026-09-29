@@ -11,7 +11,7 @@ const KILL_CONFIRM_MS = 50;
 const SYSTEM_PATH = "/usr/bin:/bin";
 
 export type OwnerTrustedLocalCodexExecResultV1 = Readonly<
-  | { status: "completed"; text: string; usage?: Readonly<{ inputTokens?: number; outputTokens?: number }> }
+  | { status: "completed"; text: string; usage?: Readonly<{ inputTokens?: number; outputTokens?: number; cachedInputTokens?: number }> }
   | { status: "failed" | "canceled" | "timed_out" | "cleanup_uncertain"; reason: string }
 >;
 
@@ -67,7 +67,8 @@ function processGroupExists(child: ChildProcess): boolean {
   try { process.kill(-child.pid, 0); return true; } catch { return false; }
 }
 
-export function parseCodexJsonLineV1(line: string): { kind: "message"; text: string } | { kind: "complete"; usage?: { inputTokens?: number; outputTokens?: number } } | undefined {
+export function parseCodexJsonLineV1(line: string): { kind: "message"; text: string }
+  | { kind: "complete"; usage?: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } } | undefined {
   let value: unknown;
   try { value = JSON.parse(line); } catch { throw new Error("malformed_jsonl"); }
   if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
@@ -95,7 +96,12 @@ export function parseCodexJsonLineV1(line: string): { kind: "message"; text: str
       ? raw.input_tokens : undefined;
     const outputTokens = typeof raw.output_tokens === "number" && Number.isSafeInteger(raw.output_tokens) && raw.output_tokens >= 0
       ? raw.output_tokens : undefined;
-    return { kind: "complete", ...(inputTokens === undefined && outputTokens === undefined ? {} : { usage: { inputTokens, outputTokens } }) };
+    // `cached_input_tokens` is a subset of `input_tokens` (Codex's own
+    // accounting), reused at a discounted rate; it is never additional usage.
+    const cachedInputTokens = typeof raw.cached_input_tokens === "number" && Number.isSafeInteger(raw.cached_input_tokens)
+      && raw.cached_input_tokens >= 0 ? raw.cached_input_tokens : undefined;
+    return { kind: "complete", ...(inputTokens === undefined && outputTokens === undefined && cachedInputTokens === undefined
+      ? {} : { usage: { inputTokens, outputTokens, ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}) } }) };
   }
   if (typeof record.type !== "string") throw new Error("malformed_jsonl");
   return undefined;
@@ -137,7 +143,7 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
     const stdin = child.stdin, stdoutStream = child.stdout, stderrStream = child.stderr;
     return await new Promise<OwnerTrustedLocalCodexExecResultV1>(resolve => {
       let settled = false, bytes = 0, stdout = "", resultText: string | undefined, terminal = false;
-      let usage: { inputTokens?: number; outputTokens?: number } | undefined;
+      let usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } | undefined;
       let stop: "canceled" | "timed_out" | "failed" | undefined;
       let killer: ReturnType<typeof setTimeout> | undefined;
       const decoder = new StringDecoder("utf8");

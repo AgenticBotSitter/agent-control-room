@@ -25,7 +25,7 @@ export const OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1 = Object.freeze([
 
 export type OwnerTrustedLocalClaudeExecResultV1 = Readonly<
   | { status: "completed"; text: string; usageReported: boolean;
-      usage?: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number }> }
+      usage?: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number }> }
   | { status: "failed" | "canceled" | "timed_out" | "cleanup_uncertain"; reason: string }
 >;
 
@@ -122,7 +122,7 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
     return await new Promise<OwnerTrustedLocalClaudeExecResultV1>(resolve => {
       const decoder = createClaudeCodeStreamDecoderV1();
       let settled = false, bytes = 0, remainder = "", terminalText: string | undefined, usageReported = false;
-      let usage: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number }> | undefined;
+      let usage: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number }> | undefined;
       let stop: "canceled" | "timed_out" | "failed" | undefined;
       let killer: ReturnType<typeof setTimeout> | undefined;
       const utf8 = new StringDecoder("utf8");

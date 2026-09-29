@@ -21,8 +21,11 @@ const terminal = z.object({
 export function parseHermesTerminalUsageV1(value: unknown) {
   const parsed = terminal.parse(value);
   if (parsed.tokens.total < parsed.tokens.input + parsed.tokens.output) throw new Error("malformed_usage");
+  // Hermes always reports cache_read/cache_write (required fields); both are
+  // additional to input/output, so they are recorded as one combined count.
   return Object.freeze({ inputTokens: parsed.tokens.input, outputTokens: parsed.tokens.output,
-    totalTokens: parsed.tokens.total, durationMs: parsed.duration_ms });
+    totalTokens: parsed.tokens.total, cachedInputTokens: parsed.tokens.cache_read + parsed.tokens.cache_write,
+    durationMs: parsed.duration_ms });
 }
 
 /** Fixed controls; profile/model/provider come only from protected worker configuration. */
@@ -32,7 +35,7 @@ export const OWNER_TRUSTED_LOCAL_HERMES_FIXED_ARGS_V1 = Object.freeze([
 ] as const);
 
 export type OwnerTrustedLocalHermesExecResultV1 = Readonly<
-  | { status: "completed"; text: string; usage: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number }> }
+  | { status: "completed"; text: string; usage: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number }> }
   | { status: "failed" | "canceled" | "timed_out" | "cleanup_uncertain"; reason: string }
 >;
 
@@ -158,7 +161,8 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
           killer = setTimeout(() => groupExists(child) ? final(failed("cleanup_uncertain", "process_group_still_running")) : final(stopped()), KILL_CONFIRM_MS); return; }
         if (code !== 0 || !result) return final(failed("failed", "process_or_output_refused"));
         final(Object.freeze({ status: "completed" as const, text: result.text, usage: Object.freeze({ inputTokens: result.tokens.input,
-          outputTokens: result.tokens.output, totalTokens: result.tokens.total }) }));
+          outputTokens: result.tokens.output, totalTokens: result.tokens.total,
+          cachedInputTokens: result.tokens.cache_read + result.tokens.cache_write }) }));
       });
       try { stdin.end(input.prompt, "utf8"); } catch { terminate("failed"); }
     });

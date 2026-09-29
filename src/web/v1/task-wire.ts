@@ -11,7 +11,7 @@ const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/);
 const effort = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);
 const usageUnknownReason = z.enum(["usage_not_reported", "model_not_recorded", "price_table_not_recorded",
-  "price_entry_not_recorded", "partial_token_usage"]);
+  "price_entry_not_recorded", "partial_token_usage", "cache_pricing_not_recorded"]);
 export const usageCostSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("known"), nanoUsd: z.string().regex(/^(?:0|[1-9][0-9]*)$/), priceEntryId: id, tableId: id }).strict(),
   z.object({ kind: z.literal("included_in_subscription"), priceEntryId: id, tableId: id }).strict(),
@@ -75,7 +75,7 @@ export const taskRunSchema = z.object({ runId: id, harness: z.enum(["codex", "he
   source: z.enum(["native_snapshot", "legacy"]), nativeState: nativeState.nullable(),
   availability: z.enum(["unknown", "current", "offline", "expired"]).nullable(),
   usage: z.object({ inputTokens: count.nullable(), outputTokens: count.nullable(), totalTokens: count.nullable(),
-    wallTimeMs: count.nullable() }).strict().nullable(), cost: usageCostSchema,
+    wallTimeMs: count.nullable(), cachedInputTokens: count.nullable().optional() }).strict().nullable(), cost: usageCostSchema,
   resultClaim: z.object({ contentHash: digest, sizeBytes: count, verified: z.literal(false) }).strict().nullable(),
   timeline: z.array(progressPoint).max(50), earlierObservationsOmitted: z.boolean() }).strict();
 export type TaskRun = z.infer<typeof taskRunSchema>;

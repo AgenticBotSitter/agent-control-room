@@ -194,6 +194,15 @@ test("the real Mac-local composition wires the owner price table through to a ru
 test("a project's cost is refused for another project's owner", async t => {
   const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
   const f = fixture.scenario(), configuration = f.configuration;
+  // Creating a tenant is not a runtime grant of any application role (only
+  // migrations do it in production), so the raw superuser connection is used
+  // for this one row, done first before any role's `SET LOCAL SESSION
+  // AUTHORIZATION` touches this fixture's single shared connection.
+  const otherTenantId = "tenant:usage-wiring-refusal-other", otherProjectId = "project:usage-wiring-refusal-other";
+  const otherWorkspaceId = "workspace:usage-wiring-refusal-other";
+  await f.startup.raw.query("INSERT INTO tenants(id,display_name) VALUES($1,'Refusal-test other tenant')", [otherTenantId]);
+  await f.startup.raw.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Refusal-test other workspace')",
+    [otherWorkspaceId, otherTenantId]);
   await bootstrapOwner(f, configuration.web.tenantId);
   const tasks = { ...configuration.web.tasks!, usagePriceTable };
   const coordinator = {
@@ -230,7 +239,41 @@ test("a project's cost is refused for another project's owner", async t => {
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }),
   () => new Response("unused"));
   const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
-  const overview = await webProcess.handle(request("/api/v1/projects/project%3Adoes-not-exist/overview",
+
+  // A real project this owner genuinely cannot see: created for this tenant
+  // through the real HTTP surface, then cloned into a *different* tenant so
+  // the row actually exists in the database. Requesting it by that other
+  // tenant's real project ID is a stronger refusal proof than a made-up ID --
+  // it also fails if the tenant filter is ever dropped from the read query,
+  // since a broken filter would then find and leak this real row.
+  const created = await webProcess.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin,
+    "content-type": "application/json", "idempotency-key": "usage-refusal-project-001" },
+  body: JSON.stringify({ title: "Refusal source project", summary: "Cloned into another tenant" }) }),
+  () => new Response("unused"));
+  assert.equal(created.status, 201, await created.clone().text());
+  const sourceProjectId = (await created.json() as { project: { projectId: string } }).project.projectId;
+  const otherAdapterId = "adapter:usage-wiring-refusal-other";
+  await f.startup.raw.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
+      project_types,supported_read_operations,supported_commands,redaction_policy_version,cursor_retention_days)
+    SELECT $1,$2,source_system,contract_version,authority_mode,status,project_types,supported_read_operations,
+      supported_commands,redaction_policy_version,cursor_retention_days
+    FROM adapter_registry WHERE tenant_id=$3 AND id=(SELECT adapter_id FROM projects WHERE tenant_id=$3 AND id=$4)`,
+  [otherAdapterId, otherTenantId, configuration.web.tenantId, sourceProjectId]);
+  // The web login's own real INSERT grant on `projects` and
+  // `control_manual_project_heads` is used for these two (see `otherTenantId`'s row above).
+  await webDatabase.client.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,
+      normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+    SELECT $1,$2,$3,$4,$1,source_version,title,description,normalized_state,domain_state,health,
+      authority_mode,observed_at,payload,updated_at FROM projects WHERE tenant_id=$5 AND id=$6`,
+  [otherProjectId, otherTenantId, otherWorkspaceId, otherAdapterId, configuration.web.tenantId, sourceProjectId]);
+  await webDatabase.client.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+    SELECT $1,$2,lifecycle,version,created_at,updated_at FROM control_manual_project_heads WHERE tenant_id=$3 AND project_id=$4`,
+  [otherTenantId, otherProjectId, configuration.web.tenantId, sourceProjectId]);
+
+  const overview = await webProcess.handle(request(`/api/v1/projects/${encodeURIComponent(otherProjectId)}/overview`,
     { headers: { cookie: cookie! } }), () => new Response("unused"));
-  assert.equal(overview.status, 404, "a project that does not exist in this owner's scope must never leak a cost figure");
+  assert.equal(overview.status, 404, "a real project belonging to another tenant must never leak a cost figure");
+  const detail = await webProcess.handle(request(`/api/v1/projects/${encodeURIComponent(otherProjectId)}/tasks/some-job-id`,
+    { headers: { cookie: cookie! } }), () => new Response("unused"));
+  assert.equal(detail.status, 404, "task detail for another tenant's real project must also refuse, never leak a cost figure");
 });
