@@ -39,7 +39,8 @@ function binding(packet = delivery()): CodexLocalStartBindingV1 {
   }, dispatchFrameDigest } as CodexLocalStartBindingV1;
 }
 
-function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean } = {}) {
+function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean;
+  allowedPaths?: readonly string[] } = {}) {
   let creates = 0, removes = 0, inspections = 0, current = true;
   const journal = {
     reserveWorkspaceIntent: () => 'recorded' as const,
@@ -47,7 +48,7 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean }
     reserveWorkspaceRemoval: () => 'recorded' as const, recordWorkspaceRemoved() { return 'recorded' as const; },
   };
   const preparation = createCodexDeliveryBoundWorkspacePreparationV1({ workspaceIntent: intent, journal,
-    policy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
+    policy: { allowedPaths: options.allowedPaths ?? ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
     workspacePort: {
       async inspectRootIdentities() { return {
         repository: { realPath: intent.repositoryRoot, device: '1', inode: '2' },
@@ -82,11 +83,26 @@ test('one exact shared delivery prepares and retains one workspace while its dig
   assert.equal('workspacePath' in f.preparation, false);
 });
 
-test('durable ownership scopes narrow the real workspace change-audit policy', () => {
+test('durable ownership scopes narrow the real workspace change-audit policy', async () => {
   const packet = delivery({ writeScopes: [{ scopeKind: 'tree', path: 'src/leased' }] });
   assert.deepEqual(effectiveOwnershipLeaseAllowedPathsV1(packet, ['src/**']), ['src/leased/**']);
   assert.throws(() => effectiveOwnershipLeaseAllowedPathsV1(packet, ['docs/**']), /unavailable/,
     'a host policy that has no overlap refuses before workspace creation');
+  assert.throws(() => effectiveOwnershipLeaseAllowedPathsV1(
+    delivery({ writeScopes: [{ scopeKind: 'tree', path: 'srcx' }] }), ['src/**']), /unavailable/,
+  'scope containment requires a slash boundary');
+
+  const narrowed = fixture(), startBinding = binding(packet);
+  narrowed.preparation.bindDelivery(packet);
+  await narrowed.preparation.prepare(startBinding, narrowed.assertCurrent);
+  assert.deepEqual(narrowed.counts(), { creates: 1, removes: 0, inspections: 2 },
+    'the production holder accepts the exact lease intersection');
+
+  const disjoint = fixture({ allowedPaths: ['docs/**'] });
+  disjoint.preparation.bindDelivery(packet);
+  await assert.rejects(disjoint.preparation.prepare(startBinding, disjoint.assertCurrent), /unavailable/,
+    'the production preparation cannot fall back to the wider host ceiling');
+  assert.deepEqual(disjoint.counts(), { creates: 0, removes: 0, inspections: 0 });
 });
 
 test('absent, changed, or mismatched shared delivery refuses before workspace effects', async () => {

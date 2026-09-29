@@ -5,7 +5,7 @@
 CREATE OR REPLACE FUNCTION enforce_assignment_lease_scope_collision()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
   acquisition_time timestamptz;
@@ -16,7 +16,7 @@ BEGIN
   FROM control_leases lease
   JOIN control_jobs job ON job.tenant_id=lease.tenant_id AND job.id=lease.job_id
   WHERE lease.tenant_id=NEW.tenant_id AND lease.id=NEW.lease_id AND lease.state='active'
-    AND lease.expires_at>clock_timestamp()
+    AND lease.expires_at>lease.acquired_at
     AND lease.job_id=NEW.job_id AND lease.attempt_id=NEW.attempt_id AND lease.node_id=NEW.node_id
     AND job.project_id=NEW.project_id
     AND (EXISTS (
@@ -43,12 +43,12 @@ BEGIN
       AND held.project_id=NEW.project_id
       AND held.lease_id<>NEW.lease_id
       AND lease.state='active'
-      AND lease.expires_at>clock_timestamp()
+      AND lease.expires_at>LEAST(clock_timestamp(), acquisition_time)
       AND (
         (NEW.scope_kind='tree' AND (NEW.path_fold='' OR held.path_fold=NEW.path_fold
-          OR held.path_fold LIKE NEW.path_fold || '/%'))
+          OR left(held.path_fold, length(NEW.path_fold) + 1) = NEW.path_fold || '/'))
         OR (held.scope_kind='tree' AND (held.path_fold='' OR NEW.path_fold=held.path_fold
-          OR NEW.path_fold LIKE held.path_fold || '/%'))
+          OR left(NEW.path_fold, length(held.path_fold) + 1) = held.path_fold || '/'))
         OR (NEW.scope_kind='file' AND held.scope_kind='file' AND NEW.path_fold=held.path_fold)
       )
   ) THEN

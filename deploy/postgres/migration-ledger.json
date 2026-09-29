@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "4223fe22477975c52468826323168e9774f6f498969d760d039e8de30b159ded",
+  "digest": "a7a312734fb7fa8ff6c6ab2ccd7ff388952a33d8b8a778b4a280c9bf8e3ecfc8",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -557,7 +557,7 @@
     {
       "file": "db/migrations/0100_ownership_lease_collision_guard.sql",
       "order": 93,
-      "sha256": "893d418bfaa4c058be9c6108faf118badc7225ce037a6785c4b110747dc51052",
+      "sha256": "eab334220f14f0ac8801609336ea114aac4f9661290206032fb533858d6c072b",
       "kind": "migrate"
     },
     {

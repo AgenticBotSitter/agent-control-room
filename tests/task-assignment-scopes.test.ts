@@ -10,6 +10,8 @@ import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
+import { createAccessVerifier, WebAccessError } from "../src/web/v1/access-verifier";
+import { request, token, trust } from "./helpers/web-foundation";
 
 test("assignment scopes refuse overlap, allow disjoint work, and recover after expiry or a crash", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
@@ -26,6 +28,9 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
     localAdapterAdmission: { enabledAdapters: [CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1] } }, () => now);
   const route = [{ nodeId: binding.nodeId, executorId: authority.allowedExecutor,
+    capabilityProbeId: CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 8,
+    requiredScratchBytes: 0, leaseSeconds: 10 },
+  { nodeId: "node:alternate-holder", executorId: authority.allowedExecutor,
     capabilityProbeId: CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 8,
     requiredScratchBytes: 0, leaseSeconds: 10 }] as const;
   const signals = new FleetSignalStore(f.db);
@@ -97,12 +102,21 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
     "SELECT version FROM control_leases WHERE tenant_id=$1 AND id=$2",
     [binding.tenantId, renewableAssignment.receipt.leaseId])).rows[0]!;
   const holder = { tenantId: binding.tenantId, nodeId: binding.nodeId, expiresAt: at(240_000), assertCurrent() {} };
-  const nonHolder = { ...holder, nodeId: "node:not-the-holder" };
+  const nonHolder = { ...holder, nodeId: "node:alternate-holder" };
+  const wrongTenant = { ...holder, tenantId: "tenant:other" };
   now = instant + 35_000;
   await assert.rejects(assignments.renewByHolder(nonHolder, binding.projectId, renewable.jobId,
     renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, leaseRow.version,
     "renewal:holder-1", at(35_000), at(45_000)),
   (error: unknown) => (error as { code?: string }).code === "conflict", "only the authenticated holder can renew");
+  await assert.rejects(assignments.renewByHolder(wrongTenant, binding.projectId, renewable.jobId,
+    renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, leaseRow.version,
+    "renewal:tenant-1", at(35_000), at(45_000)),
+  (error: unknown) => (error as { code?: string }).code === "conflict", "a holder from another tenant cannot renew");
+  await assert.rejects(assignments.renewByHolder(holder, binding.projectId, renewable.jobId,
+    renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, leaseRow.version,
+    "renewal:overlong-1", at(35_000), at(46_000)),
+  (error: unknown) => (error as { code?: string }).code === "conflict", "renewal cannot exceed the configured route duration");
   const renewed = await assignments.renewByHolder(holder, binding.projectId, renewable.jobId,
     renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, leaseRow.version,
     "renewal:holder-1", at(35_000), at(45_000));
@@ -111,7 +125,6 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
     renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, leaseRow.version,
     "renewal:holder-1", at(35_000), at(45_000));
   assert.equal(renewalReplay.replayed, true, "a lost renewal response can replay the exact holder request");
-
   const inScope = await assignments.assertWriteEffectsInScope(holder, binding.projectId, renewable.jobId,
     renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, ["src/leased/ok.ts"]);
   assert.deepEqual(inScope.paths, ["src/leased/ok.ts"]);
@@ -127,6 +140,30 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
   const restartOverlap = await prepare("restart-overlap", "src/leased/child.ts", "file");
   await assert.rejects(restarted.assign(f.identity, binding.projectId, restartOverlap.jobId, binding.nodeId, restartOverlap.inputDigest),
     (error: unknown) => (error as { code?: string }).code === "conflict", "a fresh coordinator observes the durable lease");
+
+  const renewedRow = (await f.db.query<{ version: number }>(
+    "SELECT version FROM control_leases WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, renewableAssignment.receipt.leaseId])).rows[0]!;
+  now = Date.parse(renewed.receipt.expiresAt);
+  await assert.rejects(assignments.renewByHolder(holder, binding.projectId, renewable.jobId,
+    renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, renewedRow.version,
+    "renewal:at-expiry-1", renewed.receipt.expiresAt, at(46_000)),
+  (error: unknown) => (error as { code?: string }).code === "conflict", "renewal at the exact lease expiry is refused");
+
+  const identityAt = new Date(now).toISOString();
+  await f.db.query(`INSERT INTO control_identities
+    (id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES('identity:scope-operator',$1,'human','Scoped operator',$2,$3,'active',$4,$4)`,
+  [binding.tenantId, trust.issuer, sha256Digest({ provider: trust.issuer, subject: "scope-operator" }), identityAt]);
+  await f.db.query(`INSERT INTO control_role_grants
+    (id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+    VALUES('grant:scope-operator',$1,'identity:scope-operator','operator',$2::jsonb,$3::jsonb,'low',false,false,$4,$4)`,
+  [binding.tenantId, JSON.stringify(["*"]), JSON.stringify([binding.projectId]), identityAt]);
+  const operatorJwt = token({ sub: "scope-operator", iat: instant / 1000 - 60, exp: instant / 1000 + 600 });
+  const operator = createAccessVerifier(f.accessTrust)(request(undefined, undefined, undefined, undefined, operatorJwt), now);
+  await assert.rejects(restarted.revoke(operator, binding.projectId, renewable.jobId, renewable.inputDigest),
+    (error: unknown) => error instanceof WebAccessError && error.code === "access_denied",
+  "a fully privileged operator remains unable to revoke an ownership lease without the owner role");
 
   const revoked = await restarted.revoke(f.identity, binding.projectId, renewable.jobId, renewable.inputDigest);
   assert.equal(revoked.receipt.leaseState, "revoked");

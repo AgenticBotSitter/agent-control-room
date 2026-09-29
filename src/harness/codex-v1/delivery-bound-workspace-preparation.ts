@@ -109,10 +109,10 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
       const bound: ControllerWorkerDeliveryV1 = selected;
       assertBinding(bound, intent, binding);
       assertCurrent();
-      const allowedPaths = effectiveOwnershipLeaseAllowedPathsV1(bound, policy.allowedPaths);
+      const leaseAllowedPaths = effectiveOwnershipLeaseAllowedPathsV1(bound, policy.allowedPaths);
       holder ??= new CodingWorkspaceLifecycleHolderV1({
         maximumConcurrentWorkspaces: 1,
-        allowedPaths,
+        allowedPaths: leaseAllowedPaths,
         maximumChangedFiles: policy.maximumChangedFiles,
         maximumChangedBytes: policy.maximumChangedBytes,
         workspacePort: journaledWorkspacePort({ port: workspacePort, journal: input.journal,
@@ -120,6 +120,7 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
       });
       const observation = await holder.acquire({ delivery: bound, repositoryRoot: intent.repositoryRoot,
         workspaceRoot: intent.workspaceRoot, revision: intent.revision });
+      const auditPlan = observation.auditPlan;
       // Authority may have changed while the physical workspace was acquired.
       // Recheck before accepting it and before the start runtime can open its
       // separately owned process session.
@@ -127,8 +128,10 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
       if (observation.disposition !== 'workspace_held' || observation.reconciliationRequired
         || !observation.workspaceCapacityHeld || observation.runId !== intent.runId
         || observation.deliveryDigest !== bound.deliveryDigest
-        || observation.auditPlan?.deliveryDigest !== bound.deliveryDigest
-        || observation.auditPlan?.baseRevision !== intent.revision
+        || !auditPlan || auditPlan.deliveryDigest !== bound.deliveryDigest
+        || auditPlan.baseRevision !== intent.revision
+        || auditPlan.allowedPaths.length !== leaseAllowedPaths.length
+        || auditPlan.allowedPaths.some((path, index) => path !== leaseAllowedPaths[index])
         || observation.startsAdapter || observation.releasesCapacity) unavailable();
     },
   });
