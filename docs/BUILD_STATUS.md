@@ -1,8 +1,8 @@
 # Build status
 
-**As of 2026-09-28**, describing `main` at commit `0eb34353`. The most recent completed CI
-run on `main` is green; the run at this exact commit was still in flight when this was
-written.
+**As of 2026-09-28**, describing `main` at commit `28279049`. The most recent completed CI
+run on `main` before this was written is green; a run at that exact commit had not finished
+when this file was last updated.
 
 This file is the short, current answer. The long decision history it replaces is kept in
 [CR3 decision log](CR3_DECISION_LOG.md), the
@@ -66,6 +66,10 @@ turn depends on every lane below, so all of them gate a pull request.
 - **A shared attack-test kit** (`tests/support/attack-kit/`) supplies real-PostgreSQL,
   concurrency, isolation, and guard-mutation harnesses instead of hand-rolled ones.
   `cmd: pnpm run test:attack-kit`, `ci: Component lanes`.
+- **Database privilege probes in the rehearsal lane.** The full Mac-local rehearsal now
+  runs the PG17 negative privilege probes against the real cluster, and the lane fails if
+  any of them reports a skip — so a probe that silently stops proving a refusal fails the
+  build. `ci: Full Mac-local rehearsal`.
 
 ## In flight
 
@@ -78,7 +82,7 @@ above, except the last, which is called out.
 | Phase 1 hardening | Recoverable, observable task host; per-run CPU and memory limits; ownership leases and disjoint scope; activity timeline and lifecycle events | #391, #410, #411, #403, #409 |
 | Owner surfaces | Universal Action Inbox; truthful usage and cost; public roadmap; pre-assignment recommendation | #406, #412, #364, #326 |
 | Per-task evidence | Complete model-choice evidence | #408 |
-| Reliability | Disposable-cluster leak in the Mac-local journey lane; deflake owner browser review readiness; affected-test preconditions; declared guard-mutation CI check; PG17 negative privilege probes; multi-client load harness | #431, #422, #418, #416, #429, #426 |
+| Reliability | Disposable-cluster leak in the Mac-local journey lane; deflake owner browser review readiness; affected-test preconditions; declared guard-mutation CI check; multi-client load harness | #431, #422, #418, #416, #426 |
 | Recovery and hand-off | Structured blocker recovery and hand-off (draft) | #415 |
 | Phone width at route level | Ten owner routes walked at phone width plus an origin-refusal guard. **Closed, not on `main`:** #404 was merged into the `hermes/demo-look` feature branch, and its browser spec is not in `main`. Reopening this against `main` is outstanding | #404 |
 
