@@ -76,7 +76,7 @@ export class FleetGatewayStoreV1 {
   /** Redeems one enrollment code. The machine generated its credential locally
    * and sends only the digest, so no secret travels back in the response. */
   async enroll(input: Readonly<{ code: unknown; credentialDigest: unknown; platform: unknown; architecture: unknown;
-    connectorVersion: unknown }>) {
+    connectorVersion: unknown; clientNonce: unknown }>) {
     const code = typeof input.code === "string" && FLEET_CODE_PATTERN_V1.test(input.code) ? input.code : fleetFail("unauthenticated");
     const credentialDigest = typeof input.credentialDigest === "string" && FLEET_DIGEST_PATTERN_V1.test(input.credentialDigest)
       ? input.credentialDigest : fleetFail("invalid");
@@ -85,19 +85,32 @@ export class FleetGatewayStoreV1 {
       ? input.architecture : fleetFail("invalid");
     const connectorVersion = typeof input.connectorVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/u.test(input.connectorVersion)
       ? input.connectorVersion : fleetFail("invalid");
+    const clientNonce = typeof input.clientNonce === "string" && /^crn_[A-Za-z0-9_-]{43}$/u.test(input.clientNonce)
+      ? input.clientNonce : fleetFail("invalid");
+    const clientNonceDigest = plainSha256V1(clientNonce);
     const now = this.#now();
     return this.db.transaction(async tx => {
       const row = (await tx.query<{ id: string; purpose: "join" | "rekey"; worker_id: string; worker_kind: string;
-        display_name: string; project_ids: string[]; capabilities: string[]; max_concurrent: number; state: string;
-        expired: boolean }>(`SELECT id,purpose,worker_id,worker_kind,display_name,project_ids,capabilities,max_concurrent,
-          state,expires_at<=statement_timestamp() OR expires_at<=$3::timestamptz AS expired
-        FROM fleet_enrollment_codes WHERE tenant_id=$1 AND code_digest=$2 FOR UPDATE`,
-      [this.#tenantId, plainSha256V1(code), now])).rows[0];
-      // One refusal for unknown, used, cancelled and expired codes.
-      if (!row || row.state !== "issued" || row.expired) return fleetFail("unauthenticated");
+        display_name: string; project_ids: string[]; capabilities: string[]; max_concurrent: number;
+        redeemed_at: string | Date; replayed: boolean }>(`SELECT * FROM redeem_fleet_enrollment($1,$2,$3,$4,$5)`,
+      [this.#tenantId, code, clientNonceDigest, credentialDigest, now])).rows[0];
+      // One refusal for unknown, cancelled and expired codes. A committed
+      // redemption remains replayable only by the same pending connector.
+      if (!row) return fleetFail("unauthenticated");
       const linked = fleetWorkerLinkedIdsV1(row.worker_id);
-      await tx.query(`UPDATE fleet_enrollment_codes SET state='consumed',consumed_at=$3
-        WHERE tenant_id=$1 AND id=$2 AND state='issued'`, [this.#tenantId, row.id, now]);
+      if (row.replayed) {
+        const credential = (await tx.query<{ expires_at: string | Date }>(`SELECT expires_at FROM fleet_worker_credentials
+          WHERE tenant_id=$1 AND source_code_id=$2 AND worker_id=$3 AND secret_digest=$4 AND state='active'`,
+        [this.#tenantId, row.id, row.worker_id, credentialDigest])).rows[0];
+        const worker = (await tx.query<{ state: string }>(`SELECT state FROM fleet_workers
+          WHERE tenant_id=$1 AND worker_id=$2`, [this.#tenantId, row.worker_id])).rows[0];
+        if (!credential || worker?.state !== "active") return fleetFail("unauthenticated");
+        await this.#presence(tx, row.worker_id, connectorVersion, platform, now);
+        return Object.freeze({ workerId: row.worker_id, nodeId: linked.nodeId, displayName: row.display_name,
+          workerKind: row.worker_kind, projectIds: row.project_ids, capabilities: row.capabilities,
+          maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: iso(credential.expires_at), purpose: row.purpose,
+          replayed: true });
+      }
       if (row.purpose === "join") {
         const node = nodeRecordSchema.parse({ contractVersion: DOMAIN_CONTRACT_VERSION, kind: "node", id: linked.nodeId,
           tenantId: this.#tenantId, displayName: row.display_name, state: "active", version: 1, platform, architecture,
@@ -146,7 +159,7 @@ export class FleetGatewayStoreV1 {
         safeMetadata: { codeId: row.id, credentialId, platform, architecture, connectorVersion } });
       return Object.freeze({ workerId: row.worker_id, nodeId: linked.nodeId, displayName: row.display_name,
         workerKind: row.worker_kind, projectIds: row.project_ids, capabilities: row.capabilities,
-        maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: expiresAt, purpose: row.purpose });
+        maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: expiresAt, purpose: row.purpose, replayed: false });
     });
   }
 
@@ -559,8 +572,6 @@ export class FleetGatewayStoreV1 {
           await moveFleetEntityV1(tx, attempt, "succeeded", { ...base, patch: { finishedAt: now } });
           job = await moveFleetEntityV1(tx, job, "running", base);
           await moveFleetEntityV1(tx, job, "succeeded", base);
-          await tx.query(`UPDATE fleet_work_offers SET state='closed',close_reason='accepted',closed_at=$3
-            WHERE tenant_id=$1 AND job_id=$2 AND state='open'`, [this.#tenantId, review.job_id, now]);
         } else if (review.decision === "revision_requested") {
           await moveFleetEntityV1(tx, attempt, "failed", { ...base, patch: { finishedAt: now, safeFailureCode: "revision_requested" } });
           job = await moveFleetEntityV1(tx, job, "failed", base);
@@ -568,8 +579,6 @@ export class FleetGatewayStoreV1 {
         } else {
           await moveFleetEntityV1(tx, attempt, "failed", { ...base, patch: { finishedAt: now, safeFailureCode: "result_rejected" } });
           await moveFleetEntityV1(tx, job, "cancelled", base);
-          await tx.query(`UPDATE fleet_work_offers SET state='closed',close_reason='rejected',closed_at=$3
-            WHERE tenant_id=$1 AND job_id=$2 AND state='open'`, [this.#tenantId, review.job_id, now]);
         }
         await appendAuditWith(tx, { id: `audit:fleet-apply:${review.review_id.slice(13)}`, tenantId: this.#tenantId,
           projectId: review.project_id, actorId: gatewayActor.actorId, actorType: "service", action: "fleet.review.applied",

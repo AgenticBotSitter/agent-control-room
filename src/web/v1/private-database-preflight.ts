@@ -15,11 +15,11 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0140 (filename order: ...0108,0109,0135,0140),
+// Generated from public migrations 0001-0141 (filename order: ...0108,0109,0135,0140,0141),
 // including generic external-content migrations 0025/0026, read from a live
 // PostgreSQL 17 cluster installed the production way. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "4dbe5bf0936a033cdfaec9d9dfd7d256e7b25dea7a45b764f4a0d77739e504b3";
+export const privateWebSchemaDigest = "d9d7a6e226041674ccc6cd05ebe4ed8c04515fbf868bbc5acfba5d2a0a095308";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -45,7 +45,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_action_inbox",
   // T2-F fleet: the owner's fleet decisions and read-only views of worker records.
   "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers",
-  "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews",
+  "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews",
   "control_project_settings"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -57,7 +57,6 @@ inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 inserts.add("control_job_dependencies");
-inserts.add("fleet_enrollment_codes"); inserts.add("fleet_work_offers"); inserts.add("fleet_result_reviews");
 inserts.add("control_project_settings"); inserts.add("pipeline_unattended_transitions");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
@@ -96,8 +95,6 @@ const updates: Record<string, readonly string[]> = {
   pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
     "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
-  fleet_enrollment_codes: ["state"], fleet_workers: ["state", "revoked_at", "revoked_by_identity_id"],
-  fleet_worker_credentials: ["state", "ended_at"], fleet_work_offers: ["state", "closed_at", "close_reason"],
   control_project_settings: ["eligible_worker_kinds", "max_concurrent_tasks", "default_worker_kind",
     "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
 };
@@ -442,7 +439,17 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                   OR pg_get_userbyid(a.grantee) NOT IN ('control_room_application','control_room_reader','control_room_backup',
                     'control_room_work_intake','control_room_private_web','control_room_task_coordinator',
                     'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
-                    'control_room_idea_creation','control_room_news_coordinator','control_room_fleet_gateway'))))
+                    'control_room_idea_creation','control_room_news_coordinator','control_room_fleet_gateway',
+                    'control_room_fleet_owner_authority'))))
+            OR (p.oid='redeem_fleet_enrollment(text,text,text,text,timestamptz)'::regprocedure
+              AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND has_function_privilege('control_room_fleet_gateway',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee)<>'control_room_fleet_gateway')))
             OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
               AND (($2 AND p.prosecdef AND pg_get_userbyid(p.proowner)='control_room_schema_owner'

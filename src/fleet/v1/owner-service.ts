@@ -78,7 +78,8 @@ export class FleetOwnerServiceV1 {
     workerKind: string; displayName: string; projectIds: readonly string[]; capabilities: readonly string[]; maxConcurrent: number }>) {
     const code = newFleetCodeV1(), codeId = `fleet-code:${randomHexV1()}`;
     const createdAt = actor.now, expiresAt = iso(new Date(Date.parse(createdAt) + FLEET_CODE_LIFETIME_MS_V1));
-    await tx.query(`UPDATE fleet_enrollment_codes SET state='revoked' WHERE tenant_id=$1 AND worker_id=$2 AND state='issued'`,
+    await tx.query(`UPDATE fleet_enrollment_codes c SET state='revoked' WHERE c.tenant_id=$1 AND c.worker_id=$2 AND c.state='issued'
+      AND NOT EXISTS (SELECT 1 FROM fleet_enrollment_redemptions r WHERE r.tenant_id=c.tenant_id AND r.code_id=c.id)`,
       [this.#tenantId, input.workerId]);
     await tx.query(`INSERT INTO fleet_enrollment_codes(tenant_id,id,code_digest,purpose,worker_id,worker_kind,display_name,
       project_ids,capabilities,max_concurrent,created_by_identity_id,created_at,expires_at,state)
@@ -101,7 +102,7 @@ export class FleetOwnerServiceV1 {
       actor.require("workers.manage", undefined, true, "high");
       const worker = (await tx.query<{ worker_kind: string; display_name: string; project_ids: string[]; capabilities: string[];
         max_concurrent: number; state: string }>(`SELECT worker_kind,display_name,project_ids,capabilities,max_concurrent,state
-        FROM fleet_workers WHERE tenant_id=$1 AND worker_id=$2`, [this.#tenantId, workerId])).rows[0];
+        FROM fleet_workers WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE`, [this.#tenantId, workerId])).rows[0];
       if (!worker) return fleetFail("not_found");
       if (worker.state !== "active") return fleetFail("conflict");
       return this.#issueCode(tx, actor, { purpose: "rekey", workerId, workerKind: worker.worker_kind,
@@ -114,8 +115,9 @@ export class FleetOwnerServiceV1 {
     const codeId = typeof codeIdValue === "string" && /^fleet-code:[a-f0-9]{32}$/u.test(codeIdValue) ? codeIdValue : fleetFail("not_found");
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("workers.manage", undefined, true);
-      const updated = await tx.query(`UPDATE fleet_enrollment_codes SET state='revoked' WHERE tenant_id=$1 AND id=$2
-        AND state='issued' RETURNING id`, [this.#tenantId, codeId]);
+      const updated = await tx.query(`UPDATE fleet_enrollment_codes c SET state='revoked' WHERE c.tenant_id=$1 AND c.id=$2
+        AND c.state='issued' AND NOT EXISTS (SELECT 1 FROM fleet_enrollment_redemptions r
+          WHERE r.tenant_id=c.tenant_id AND r.code_id=c.id) RETURNING c.id`, [this.#tenantId, codeId]);
       return Object.freeze({ cancelled: updated.rows.length === 1 });
     });
   }
@@ -134,7 +136,8 @@ export class FleetOwnerServiceV1 {
         WHERE tenant_id=$1 AND worker_id=$2`, [this.#tenantId, workerId, actor.now, actor.id]);
       await tx.query(`UPDATE fleet_worker_credentials SET state='revoked',ended_at=GREATEST(issued_at,$3::timestamptz)
         WHERE tenant_id=$1 AND worker_id=$2 AND state='active'`, [this.#tenantId, workerId, actor.now]);
-      await tx.query(`UPDATE fleet_enrollment_codes SET state='revoked' WHERE tenant_id=$1 AND worker_id=$2 AND state='issued'`,
+      await tx.query(`UPDATE fleet_enrollment_codes c SET state='revoked' WHERE c.tenant_id=$1 AND c.worker_id=$2 AND c.state='issued'
+        AND NOT EXISTS (SELECT 1 FROM fleet_enrollment_redemptions r WHERE r.tenant_id=c.tenant_id AND r.code_id=c.id)`,
         [this.#tenantId, workerId]);
       await appendAuditWith(tx, { id: `audit:fleet-revoke:${workerId.slice(13)}`, tenantId: this.#tenantId, actorId: actor.id,
         actorType: "human", action: "fleet.worker.revoked", targetType: "fleet_worker", targetId: workerId, occurredAt: actor.now });
@@ -161,8 +164,10 @@ export class FleetOwnerServiceV1 {
         FROM fleet_workers w LEFT JOIN fleet_worker_presence p ON p.tenant_id=w.tenant_id AND p.worker_id=w.worker_id
         WHERE w.tenant_id=$1 ORDER BY w.state,w.display_name LIMIT 100`, [this.#tenantId])).rows;
       const codes = (await tx.query<{ id: string; purpose: string; worker_id: string; display_name: string; expires_at: string | Date }>(
-        `SELECT id,purpose,worker_id,display_name,expires_at FROM fleet_enrollment_codes WHERE tenant_id=$1 AND state='issued'
-          AND expires_at>$2::timestamptz ORDER BY created_at DESC LIMIT 20`, [this.#tenantId, actor.now])).rows;
+        `SELECT c.id,c.purpose,c.worker_id,c.display_name,c.expires_at FROM fleet_enrollment_codes c
+          WHERE c.tenant_id=$1 AND c.state='issued' AND c.expires_at>$2::timestamptz
+          AND NOT EXISTS (SELECT 1 FROM fleet_enrollment_redemptions r WHERE r.tenant_id=c.tenant_id AND r.code_id=c.id)
+          ORDER BY c.created_at DESC LIMIT 20`, [this.#tenantId, actor.now])).rows;
       return Object.freeze({
         workers: workers.map(row => {
           const seen = row.last_seen_at ? Date.parse(iso(row.last_seen_at)) : undefined;
@@ -334,7 +339,10 @@ export class FleetOwnerServiceV1 {
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       const rows = (await tx.query<{ offer_id: string; job_id: string; capability: string; state: string; close_reason: string | null;
-        job_state: string }>(`SELECT o.offer_id,o.job_id,o.capability,o.state,o.close_reason,j.state AS job_state
+        job_state: string }>(`SELECT o.offer_id,o.job_id,o.capability,
+          CASE WHEN o.state='closed' OR j.state IN ('succeeded','cancelled') THEN 'closed' ELSE 'open' END AS state,
+          coalesce(o.close_reason,CASE j.state WHEN 'succeeded' THEN 'accepted' WHEN 'cancelled' THEN 'rejected' END) AS close_reason,
+          j.state AS job_state
         FROM fleet_work_offers o JOIN control_jobs j ON j.tenant_id=o.tenant_id AND j.id=o.job_id
         WHERE o.tenant_id=$1 AND o.project_id=$2 ORDER BY o.created_at DESC LIMIT 100`, [this.#tenantId, projectId])).rows;
       return rows.map(row => Object.freeze({ offerId: row.offer_id, jobId: row.job_id, capability: row.capability,

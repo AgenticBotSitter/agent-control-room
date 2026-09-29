@@ -54,7 +54,8 @@ async function main(path: string | undefined) {
   const handler = createFleetGatewayHandlerV1({ store, ...(proposals ? { proposals } : {}),
     connectorScript: { body: script, digest: `sha256:${createHash("sha256").update(script).digest("hex")}` },
     onUnexpectedError: error => { process.stderr.write(`fleet gateway: ${error instanceof Error ? error.name : "error"} ${(error as { code?: string }).code ?? ""}\n`); } });
-  const server = createServer({ requestTimeout: 30_000, headersTimeout: 10_000, maxHeaderSize: 8192 },
+  const server = createServer({ requestTimeout: 15_000, headersTimeout: 5_000, maxHeaderSize: 8192,
+    highWaterMark: 8 * 1024 },
     (request, response) => { void handler.handle(request, response); });
   server.listen(config.port, "127.0.0.1");
   // Owner decisions and elapsed leases are applied on a steady timer as well

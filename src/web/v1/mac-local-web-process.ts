@@ -74,10 +74,10 @@ export interface MacLocalWebProcessOptionsV1 {
   actionInboxSource?: Readonly<{ read(input: { tenantId: string; actorId: string; grantedAt: string; now: string }): Promise<{
     observedAt: string; items: ActionInboxItemV1[]; truncated: boolean;
   }> }>;
-  /** Remote workers (T2-F). Present only when the host runs the fleet gateway.
-   * The hook applies owner decisions on the gateway's own login; the web
-   * login here only records them. */
-  fleet?: Readonly<{ gatewayOrigin?: string; afterDecision?: () => Promise<unknown> }>;
+  /** Remote workers (T2-F). Owner decisions use a distinct restricted
+   * database login; neither the ordinary web login nor the gateway can write
+   * those tables. The hook only asks the gateway to reconcile afterward. */
+  fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string; afterDecision?: () => Promise<unknown> }>;
   clock?: () => number;
 }
 
@@ -133,7 +133,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const pipelineHttp = pipelines ? createLinearPipelineHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: pipelines, clock }) : undefined;
   const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
-    service: new FleetOwnerServiceV1(options.database.client, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
+    service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
       clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
     ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}) }) : undefined;
   let closed: Promise<void> | undefined;

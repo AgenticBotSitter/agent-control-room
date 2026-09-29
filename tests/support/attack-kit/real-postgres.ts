@@ -57,6 +57,7 @@ const ROLE_PASSWORDS = Object.freeze({
   control_room_intake: randomBytes(24).toString("base64url"),
   control_room_news: randomBytes(24).toString("base64url"),
   control_room_fleet: randomBytes(24).toString("base64url"),
+  control_room_fleet_owner: randomBytes(24).toString("base64url"),
 });
 
 /**
@@ -101,6 +102,7 @@ export const ROLE_LOGINS = Object.freeze({
   scheduler: Object.freeze({ login: "control_room_scheduler", group: "control_room_schedule_admissions" }),
   migrator: Object.freeze({ login: "control_room_migrator", group: "control_room_schema_owner" }),
   fleet: Object.freeze({ login: "control_room_fleet", group: "control_room_fleet_gateway" }),
+  fleetOwner: Object.freeze({ login: "control_room_fleet_owner", group: "control_room_fleet_owner_authority" }),
   owner: Object.freeze({ login: "control_room_web", group: "control_room_private_web" }),
 });
 

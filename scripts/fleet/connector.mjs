@@ -34,6 +34,7 @@ const MAX_FILE_BYTES = 262_144;
 
 export const sha256 = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 export const newSecret = () => `crf_${randomBytes(32).toString("base64url")}`;
+export const newEnrollmentNonce = () => `crn_${randomBytes(32).toString("base64url")}`;
 
 export function platformName(value = process.platform) {
   return value === "darwin" ? "macos" : value === "win32" ? "windows" : value === "linux" ? "linux" : "other";
@@ -122,12 +123,27 @@ export function createClient(config, fetcher = globalThis.fetch) {
 export async function join({ server, code, configPath, fetcher }) {
   const origin = checkServer(server);
   if (!CODE_PATTERN.test(code ?? "")) throw new Error("The join code is not valid. Copy it again from the Workers page.");
-  const secret = newSecret();
-  // The secret is saved before it is used, so a lost reply never strands it.
-  await writePrivate(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: null, secret, credentialExpiresAt: null });
+  const codeDigest = sha256(code);
+  let pending;
+  try {
+    await stat(configPath);
+    pending = await loadConfig(configPath);
+  } catch (error) {
+    if ((error?.code ?? "") !== "ENOENT" && !String(error?.message ?? "").startsWith("This machine has not joined yet.")) throw error;
+  }
+  if (pending?.workerId) throw new Error("This machine has already joined. Use status or rotate instead.");
+  if (pending && (pending.server !== origin || pending.codeDigest !== codeDigest
+    || !/^crn_[A-Za-z0-9_-]{43}$/u.test(pending.clientNonce ?? "")))
+    throw new Error("A different join is already pending in this credential file. Finish it with the original server and code.");
+  const secret = pending?.secret ?? newSecret();
+  const clientNonce = pending?.clientNonce ?? newEnrollmentNonce();
+  // The secret, code binding and nonce are saved before use. A lost response
+  // retries this exact enrollment instead of consuming a second credential.
+  await writePrivate(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: null, secret,
+    credentialExpiresAt: null, codeDigest, clientNonce });
   const client = createClient({ server: origin, workerId: null, secret }, fetcher);
   const result = await client.enroll({ code, credentialDigest: sha256(secret), platform: platformName(),
-    architecture: process.arch, connectorVersion: CONNECTOR_VERSION });
+    architecture: process.arch, connectorVersion: CONNECTOR_VERSION, clientNonce });
   await writePrivate(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: result.workerId, secret,
     credentialExpiresAt: result.credentialExpiresAt });
   return result;

@@ -48,10 +48,11 @@ const sqlState = (error: unknown) => (error as { code?: string }).code;
 test("fleet connector end to end and least privilege, as the production logins", async t => {
   if (!PG) { t.skip(realPostgresSkipMessage()); return; }
   await withRealPostgres(async postgres => {
-    const admin = adminPool(postgres), web = pool(postgres, "web"), fleet = pool(postgres, "fleet");
+    const admin = adminPool(postgres), web = pool(postgres, "web"), fleet = pool(postgres, "fleet"),
+      fleetOwner = pool(postgres, "fleetOwner");
     const dir = await mkdtemp(join(tmpdir(), "fleet-pg-"));
     const gateway = new FleetGatewayStoreV1(fleet.client, { tenantId: FLEET_TENANT });
-    const owner = new FleetOwnerServiceV1(web.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
+    const owner = new FleetOwnerServiceV1(fleetOwner.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
       afterDecision: () => gateway.reconcile() });
     const unexpected: unknown[] = [];
     const handler = createFleetGatewayHandlerV1({ store: gateway, onUnexpectedError: error => { unexpected.push(error); console.error(error); } });
@@ -64,7 +65,7 @@ test("fleet connector end to end and least privilege, as the production logins",
     };
     try {
       assert.equal(await readPrivateWebSchemaDigest(admin.client), privateWebSchemaDigest,
-        "the recorded private web schema digest matches a live cluster with 0140 applied");
+        "the recorded private web schema digest matches a live cluster with 0141 applied");
       await seedFleetTenant((sql, params) => admin.client.query(sql, params));
       // The existing exact-privilege preflights still pass with the fleet
       // grants and guards installed: no new definer-rights function, and the
@@ -106,6 +107,12 @@ test("fleet connector end to end and least privilege, as the production logins",
       await assert.rejects(direct("fleet", `INSERT INTO fleet_result_reviews(tenant_id,review_id,result_id,decision,
         reviewed_by_identity_id,reviewed_at) VALUES($1,'fleet-review:${"1".repeat(32)}',$2,'accepted','identity:fleet-owner',now())`,
       [FLEET_TENANT, second.resultId]), (error: unknown) => sqlState(error) === "42501");
+      await assert.rejects(direct("fleet", `UPDATE fleet_enrollment_codes SET state='revoked' WHERE tenant_id=$1`,
+        [FLEET_TENANT]), (error: unknown) => sqlState(error) === "42501");
+      await assert.rejects(direct("fleet", `INSERT INTO fleet_enrollment_redemptions(tenant_id,code_id,worker_id,
+        client_nonce_digest,credential_digest,redeemed_at) SELECT tenant_id,id,worker_id,
+        'sha256:${"8".repeat(64)}','sha256:${"9".repeat(64)}',now() FROM fleet_enrollment_codes LIMIT 1`),
+      (error: unknown) => sqlState(error) === "42501", "direct gateway SQL cannot redeem an owner code");
       await assert.rejects(direct("fleet", "SELECT * FROM control_web_sessions"), (error: unknown) => sqlState(error) === "42501",
         "the gateway never reads owner sessions");
       await assert.rejects(direct("fleet", `UPDATE control_jobs SET updated_at=updated_at WHERE id=$1`, [untouched.jobId]),
@@ -118,7 +125,7 @@ test("fleet connector end to end and least privilege, as the production logins",
         SELECT 'grant:fleet:${"4".repeat(32)}',tenant_id,identity_id,'owner','["*"]','["*"]','critical',true,false,now(),now()
         FROM fleet_workers`), /grant write rejected/u, "a worker identity can never be granted owner authority");
       await assert.rejects(direct("fleet", `UPDATE fleet_work_offers SET state='closed',close_reason='withdrawn',closed_at=now()
-        WHERE job_id=$1`, [betaTask.jobId]), /offer close rejected/u);
+        WHERE job_id=$1`, [betaTask.jobId]), (error: unknown) => sqlState(error) === "42501");
 
       // A claimed job cannot be marked succeeded by the gateway without an owner acceptance.
       const pending = await seedProposedTask(admin.client, PROJECT_A, "pg-2");
@@ -130,6 +137,22 @@ test("fleet connector end to end and least privilege, as the production logins",
 
       // --- The web login records decisions but cannot act as the gateway.
       await assert.rejects(direct("web", "SELECT * FROM fleet_gateway_role_anchor"), (error: unknown) => sqlState(error) === "42501");
+      await assert.rejects(direct("web", `INSERT INTO fleet_result_reviews(tenant_id,review_id,result_id,decision,
+        reviewed_by_identity_id,reviewed_at) VALUES($1,'fleet-review:${"7".repeat(32)}',$2,'accepted',
+        'identity:fleet-owner',now())`, [FLEET_TENANT, second.resultId]),
+      (error: unknown) => sqlState(error) === "42501", "the ordinary web login cannot forge an owner review");
+      await assert.rejects(direct("web", `UPDATE fleet_workers SET state='revoked',revoked_at=now(),
+        revoked_by_identity_id='identity:fleet-owner' WHERE tenant_id=$1`, [FLEET_TENANT]),
+      (error: unknown) => sqlState(error) === "42501", "the ordinary web login cannot forge an owner revocation");
+      await assert.rejects(direct("web", `UPDATE fleet_work_offers SET state='closed',close_reason='withdrawn',closed_at=now()
+        WHERE tenant_id=$1`, [FLEET_TENANT]), (error: unknown) => sqlState(error) === "42501",
+      "the ordinary web login cannot forge an offer withdrawal");
+      await assert.rejects(direct("web", `INSERT INTO fleet_enrollment_codes(tenant_id,id,code_digest,purpose,worker_id,
+        worker_kind,display_name,project_ids,capabilities,max_concurrent,created_by_identity_id,created_at,expires_at,state)
+        VALUES($1,'fleet-code:${"6".repeat(32)}','sha256:${"7".repeat(64)}','join','fleet-worker:${"8".repeat(32)}',
+        'mcp-agent','forged',ARRAY[$2],ARRAY['writing'],1,'identity:fleet-owner',now(),now()+interval '5 minutes','issued')`,
+      [FLEET_TENANT, PROJECT_A]), (error: unknown) => sqlState(error) === "42501",
+      "the ordinary web login cannot forge an enrollment");
       await assert.rejects(direct("web", `UPDATE fleet_enrollment_codes SET consumed_at=now()`), (error: unknown) => sqlState(error) === "42501");
       await assert.rejects(direct("web", `INSERT INTO fleet_worker_credentials(tenant_id,credential_id,worker_id,secret_digest,state,
         issued_at,expires_at,rotated_from_credential_id) SELECT tenant_id,'fleet-credential:${"5".repeat(32)}',worker_id,
@@ -149,7 +172,7 @@ test("fleet connector end to end and least privilege, as the production logins",
       assert.equal(identity.rows[0].state, "revoked");
     } finally {
       await new Promise(done => server.close(done));
-      await Promise.all([admin.close(), web.close(), fleet.close()]);
+      await Promise.all([admin.close(), web.close(), fleet.close(), fleetOwner.close()]);
       await rm(dir, { recursive: true, force: true });
     }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 240_000 });

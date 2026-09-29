@@ -5,7 +5,7 @@
 // production logins in tests/fleet-connector-postgres.test.ts.
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { createServer, request as httpRequest, type Server } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,8 @@ import test from "node:test";
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
-import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1 } from "../src/fleet/v1";
+import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1,
+  type FleetGatewayAdmissionV1 } from "../src/fleet/v1";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
@@ -23,7 +24,7 @@ import * as connector from "../scripts/fleet/connector.mjs";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 
-async function fixture(options: { gatewayClock?: () => number } = {}) {
+async function fixture(options: { gatewayClock?: () => number; admission?: FleetGatewayAdmissionV1 } = {}) {
   const raw = new PGlite();
   for (const file of (await readdir("db/migrations")).filter(name => name.endsWith(".sql")).sort())
     await raw.exec(await readFile(`db/migrations/${file}`, "utf8"));
@@ -34,7 +35,8 @@ async function fixture(options: { gatewayClock?: () => number } = {}) {
     afterDecision: () => gateway.reconcile() });
   const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(db, new Uint8Array(32).fill(3)));
   const handler = createFleetGatewayHandlerV1({ store: gateway, proposals,
-    connectorScript: { body: "export {};\n", digest: `sha256:${"0".repeat(64)}` } });
+    connectorScript: { body: "export {};\n", digest: `sha256:${"0".repeat(64)}` },
+    ...(options.admission ? { admission: options.admission } : {}) });
   let reads = 0;
   const server: Server = createServer((request, response) => {
     // Count only when the handler starts reading the body.
@@ -95,6 +97,89 @@ test("one-command join: a single-use code enrolls a machine whose secret never l
   assert.equal(workers.workers[0]!.status, "connected");
 });
 
+test("a lost enrollment response is recovered with the same pending secret and nonce", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Recoverable", workerKind: "mcp-agent",
+    projectIds: [PROJECT_A], capabilities: ["writing"] });
+  const configPath = join(f.dir, "recoverable.json");
+  let drop = true;
+  const loseFirstResponse: typeof fetch = async (...args) => {
+    const response = await fetch(...args);
+    if (drop && response.ok) { drop = false; await response.arrayBuffer(); throw new Error("simulated lost enrollment response"); }
+    return response;
+  };
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath, fetcher: loseFirstResponse }),
+    /simulated lost enrollment response/u);
+  const pending = await connector.loadConfig(configPath);
+  assert.equal(pending.workerId, null);
+  assert.match(pending.clientNonce, /^crn_[A-Za-z0-9_-]{43}$/u);
+  const recovered = await connector.join({ server: f.origin, code: code.code, configPath });
+  const saved = await connector.loadConfig(configPath);
+  assert.equal(saved.workerId, recovered.workerId);
+  assert.equal(saved.secret, pending.secret, "retry keeps the credential whose digest was committed");
+  assert.equal((await f.query("SELECT 1 FROM fleet_enrollment_redemptions")).length, 1);
+  assert.equal((await f.query("SELECT 1 FROM fleet_worker_credentials")).length, 1);
+  const alteredNoncePath = join(f.dir, "altered-nonce.json");
+  await writeFile(alteredNoncePath, JSON.stringify({ schema: "control-room.fleet-connector/v1", server: f.origin,
+    workerId: null, secret: pending.secret, credentialExpiresAt: null, codeDigest: connector.sha256(code.code),
+    clientNonce: connector.newEnrollmentNonce() }), { mode: 0o600 });
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath: alteredNoncePath }),
+    /unauthenticated/u, "even the committed credential digest cannot replay with a different client nonce");
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath: join(f.dir, "attacker.json") }),
+    /unauthenticated/u, "the consumed code is not replayable with another secret or nonce");
+});
+
+test("enrollment rejects oversized and rate-limited traffic before another body or database read", async t => {
+  let now = 10_000;
+  const admission = createFleetGatewayAdmissionV1({ clock: () => now, windowMs: 1_000,
+    enrollPerIp: 3, enrollGlobal: 10, authenticatePerIp: 10, authenticateGlobal: 10, maxConcurrent: 2 });
+  const f = await fixture({ admission }); t.after(() => f.close());
+  const before = f.bodyReads();
+  const oversized = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
+    "content-type": "application/json" }, body: "x".repeat(4_097) });
+  assert.equal(oversized.status, 413);
+  assert.equal(f.bodyReads(), before, "declared oversize is rejected before streaming the body");
+  for (let index = 0; index < 2; index += 1) {
+    const response = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
+      "content-type": "application/json" }, body: "{}" });
+    assert.equal(response.status, 400);
+  }
+  const readsAfterAllowed = f.bodyReads();
+  const limited = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
+    "content-type": "application/json" }, body: "{}" });
+  assert.equal(limited.status, 429);
+  assert.equal(f.bodyReads(), readsAfterAllowed, "rate refusal happens before the body iterator and store");
+  now += 1_001;
+  const recovered = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
+    "content-type": "application/json" }, body: "{}" });
+  assert.equal(recovered.status, 400, "the fixed window recovers without a restart");
+});
+
+test("enrollment has a global limit across trustworthy loopback proxy client addresses", async t => {
+  const admission = createFleetGatewayAdmissionV1({ enrollPerIp: 10, enrollGlobal: 2,
+    authenticatePerIp: 10, authenticateGlobal: 10, maxConcurrent: 2 });
+  const f = await fixture({ admission }); t.after(() => f.close());
+  for (const address of ["192.0.2.10", "192.0.2.11"]) {
+    const response = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
+      "content-type": "application/json", "cf-connecting-ip": address }, body: "{}" });
+    assert.equal(response.status, 400);
+  }
+  const limited = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
+    "content-type": "application/json", "cf-connecting-ip": "192.0.2.12" }, body: "{}" });
+  assert.equal(limited.status, 429);
+});
+
+test("gateway admission caps concurrent unauthenticated work and recovers on release", () => {
+  const admission = createFleetGatewayAdmissionV1({ enrollPerIp: 10, enrollGlobal: 10,
+    authenticatePerIp: 10, authenticateGlobal: 10, maxConcurrent: 1 });
+  const request = { socket: { remoteAddress: "192.0.2.20" }, headers: {} } as unknown as IncomingMessage;
+  const release = admission.enter(request, "enroll");
+  assert.throws(() => admission.enter(request, "enroll"), /fleet_rate_limited/u);
+  release();
+  const recovered = admission.enter(request, "enroll");
+  recovered();
+});
+
 test("an expired or cancelled enrollment code is refused", async t => {
   let skew = 0;
   const f = await fixture({ gatewayClock: () => Date.now() + skew }); t.after(() => f.close());
@@ -115,7 +200,7 @@ test("an expired or cancelled enrollment code is refused", async t => {
     expires_at=now()-interval '10 minutes' WHERE id=$1`, [direct.codeId]);
   await f.raw.exec("ALTER TABLE fleet_enrollment_codes ENABLE TRIGGER fleet_enrollment_codes_guard");
   await assert.rejects(f.raw.query(`UPDATE fleet_enrollment_codes SET state='consumed',
-    consumed_at=created_at+interval '1 minute' WHERE id=$1`, [direct.codeId]), /consumption rejected/u);
+    consumed_at=created_at+interval '1 minute' WHERE id=$1`, [direct.codeId]), /enrollment code update rejected/u);
 });
 
 test("codes cannot be widened: scope is fixed at creation and re-key copies it", async t => {
@@ -311,6 +396,21 @@ test("there is no route to approve, accept, merge, assign or widen permissions",
   assert.ok(result instanceof Error);
 });
 
+test("owner decision tables are writable only by the fleet owner-authority role", async () => {
+  const source = await readFile("db/roles/fleet_gateway_roles.sql", "utf8");
+  const statements = source.split(";").map(statement => statement.replace(/--[^\n]*/gu, " ").replace(/\s+/gu, " ").trim());
+  const decisionWrite = (statement: string) => /\b(?:fleet_enrollment_codes|fleet_enrollment_redemptions|fleet_work_offers|fleet_result_reviews)\b/u.test(statement)
+    || /\bUPDATE\b/u.test(statement) && /\bfleet_workers\b/u.test(statement);
+  const writes = (role: string) => statements.filter(statement => /^GRANT\b/u.test(statement)
+    && /\b(?:INSERT|UPDATE)\b/u.test(statement) && decisionWrite(statement)
+    && new RegExp(`\\bTO ${role}\\b`, "u").test(statement));
+  assert.deepEqual(writes("control_room_private_web"), []);
+  assert.deepEqual(writes("control_room_fleet_gateway"), []);
+  const ownerWrites = writes("control_room_fleet_owner_authority").join(" ");
+  for (const table of ["fleet_enrollment_codes", "fleet_work_offers", "fleet_result_reviews", "fleet_workers"])
+    assert.match(ownerWrites, new RegExp(`\\b${table}\\b`, "u"), table);
+});
+
 test("a proposal is recorded for the owner and never starts work", async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Proposer");
@@ -379,7 +479,10 @@ test("end to end: enroll, claim, progress, submit, owner asks for changes, resub
   assert.equal(pending[0]!.resultId, final.resultId);
   await f.owner.review(ownerIdentity(), { resultId: final.resultId, decision: "accepted" });
   assert.deepEqual(await f.query("SELECT state FROM control_jobs WHERE id=$1", [task.jobId]), [{ state: "succeeded" }]);
-  assert.deepEqual(await f.query("SELECT state,close_reason FROM fleet_work_offers"), [{ state: "closed", close_reason: "accepted" }]);
+  assert.deepEqual(await f.query("SELECT state,close_reason FROM fleet_work_offers"), [{ state: "open", close_reason: null }],
+    "the gateway never rewrites the owner's offer record");
+  const offers = await f.owner.projectOffers(ownerIdentity(), PROJECT_A);
+  assert.equal(offers[0]!.state, "closed"); assert.equal(offers[0]!.closeReason, "accepted");
   const attempts = await f.query<{ state: string }>("SELECT state FROM control_attempts ORDER BY attempt_number");
   assert.deepEqual(attempts.map(row => row.state), ["failed", "succeeded"]);
   const audit = await f.query<{ action: string }>("SELECT action FROM audit_events WHERE action LIKE 'fleet.%'");

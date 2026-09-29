@@ -1,9 +1,9 @@
 /** Safe, fixed refusal codes. Messages never carry request content. */
 export type FleetErrorCodeV1 = "unauthenticated" | "forbidden" | "not_found" | "conflict" | "invalid"
-  | "too_large" | "expired" | "unavailable";
+  | "too_large" | "rate_limited" | "expired" | "unavailable";
 
 const statuses: Readonly<Record<FleetErrorCodeV1, number>> = Object.freeze({ unauthenticated: 401, forbidden: 403,
-  not_found: 404, conflict: 409, invalid: 400, too_large: 413, expired: 410, unavailable: 503 });
+  not_found: 404, conflict: 409, invalid: 400, too_large: 413, rate_limited: 429, expired: 410, unavailable: 503 });
 
 export class FleetErrorV1 extends Error {
   constructor(readonly code: FleetErrorCodeV1) {
