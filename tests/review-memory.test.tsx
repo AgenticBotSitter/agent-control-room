@@ -106,6 +106,21 @@ test('a server session-handoff refusal clears the old gesture and requires re-co
   assert.equal(session.getSnapshot().error?.code, 'conflict');
 });
 
+test('a 401 observed by the review client clears a live gesture and it does not revive', async () => {
+  let calls = 0;
+  const workspace = createTaskReviewWorkspace(observe => createTaskReviewBrowserClient(async () => {
+    calls += 1; return Response.json({ error: 'authentication_required' }, { status: 401 }); }, () => 'probe-401-key', observe));
+  workspace.bindAuthenticatedSession(authentication);
+  const session = workspace.get(binding);
+  const identity = { scenarioId: scenario, instructionsDigest };
+  session.setAttested(identity, true);
+  await session.client.options(binding.projectId, binding.jobId, binding).catch(() => undefined);
+  assert.equal(calls, 1);
+  assert.equal(session.attested(identity), false);
+  workspace.bindAuthenticatedSession(authentication);
+  assert.equal(session.attested(identity), false);
+});
+
 /* ------------------------------------------------------------------ *
  * The read-and-correct gesture is scoped to ONE exact result.
  *
