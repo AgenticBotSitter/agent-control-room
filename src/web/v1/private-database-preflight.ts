@@ -42,7 +42,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links"] as const;
-const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
+export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
   "control_idea_promotion_task_links",
@@ -50,15 +50,15 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
   "control_news_task_proposal_links",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_event_stream_heads", "control_project_events", "control_project_coordinator_heads",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
-inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
-inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
-inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
-inserts.add("control_job_dependencies");
-inserts.add("control_project_settings"); inserts.add("pipeline_unattended_transitions");
-inserts.add("control_improvement_requests"); inserts.add("control_update_candidate_decisions");
-inserts.add("owner_web_push_subscriptions"); inserts.add("owner_web_push_deliveries");
+privateWebInsertTables.add("work_batch_revisions"); privateWebInsertTables.add("work_batch_items");
+privateWebInsertTables.add("work_batch_queue_admissions"); privateWebInsertTables.add("work_batch_agent_queue_heads");
+privateWebInsertTables.add("pipeline_templates"); privateWebInsertTables.add("pipeline_runs"); privateWebInsertTables.add("pipeline_stage_runs");
+privateWebInsertTables.add("control_job_dependencies");
+privateWebInsertTables.add("control_project_settings"); privateWebInsertTables.add("pipeline_unattended_transitions");
+privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
+privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // 0190: a task proposal may cite a retained news story (append-only provenance).
-inserts.add("control_news_task_proposal_links");
+privateWebInsertTables.add("control_news_task_proposal_links");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
