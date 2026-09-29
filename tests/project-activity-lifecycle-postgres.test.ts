@@ -338,25 +338,68 @@ async function stageMainState(): Promise<{ root: string; mainMigrations: string[
  * The grantees the down migration's equality is asserted over, before it is
  * narrowed to the ones that exist.
  *
- * The list includes the four roles the down file names, the queue worker (the
- * negative case, which must hold nothing) and the schema owner (whose implicit
- * owner privileges `acldefault` contributes to every table). PUBLIC's default is
- * included by the query itself, since a change there would change every role at
- * once.
+ * The list is DERIVED, not written out. Two things are unioned:
  *
- * The scope is then narrowed to the roles the CLUSTER actually has. Two
- * databases on one cluster cannot be compared over roles only one of them
- * created: the attack kit's standard role files do not include the native
- * evidence profile, so the role exists only on the baseline database (which
- * replays that file to create it), and a comparison over the full list would
- * report that one-role difference as a down-file defect. The native evidence
- * role's grants are covered where its role is created -- the upgrade test's
- * cluster, which asserts the grant survives an in-place upgrade.
+ *  - every role named in this migration's up file, which is the set of roles the
+ *    down file is allowed to touch at all, and
+ *  - every grantee that actually holds a privilege on one of the three objects
+ *    the migration touches, read from the database under test.
+ *
+ * The second half is the one that matters. A fixed list could only compare the
+ * roles someone remembered to write down, so a grant the up file made to any
+ * other role would survive the down file and the equality would still pass --
+ * a hole a reviewer demonstrated by over-granting `control_room_reader` in the
+ * up file and watching the whole suite report 6/6. Reading the grantees means
+ * the comparison covers whoever the grants reached, and `comparableRoles`
+ * requires the roles the down file names to be among them, so a down file that
+ * silently stopped naming one of them fails too.
+ *
+ * PUBLIC's default is included by the query itself, since a change there would
+ * change every role at once.
  */
-const DOWN_COMPARISON_ROLES = Object.freeze([
-  "control_room_private_web", "control_room_task_coordinator",
-  "control_room_native_evidence", "control_room_local_result_publisher",
-  "control_room_queue_worker", "control_room_schema_owner"]);
+async function touchedObjectGrantees(client: Client): Promise<string[]> {
+  // The scope is the two ACTIVITY tables only, and that is a deliberate
+  // narrowing. `projects` is the third object the migration touches, but the
+  // roles that hold grants on it are largely incidental: the news, intake and
+  // results logins hold `projects` reads that an earlier release granted and
+  // that this down file neither adds nor removes. Including them would compare
+  // grants the down file has no opinion about, and would report a difference
+  // caused by how the two fixture databases were built rather than by the
+  // rollback.
+  //
+  // The publisher's own `projects` grant -- the only one this migration adds --
+  // is still covered, by `rolesNamedByUpMigration`, which puts the publisher in
+  // the compared set, and by the explicit `projectsSelect` assertion below.
+  const rows = (await client.query<{ rolname: string }>(
+    `SELECT DISTINCT (CASE WHEN p.grantee = 0 THEN 'PUBLIC' ELSE r.rolname END) AS rolname
+     FROM pg_class c
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) p
+     LEFT JOIN pg_roles r ON r.oid = p.grantee
+     WHERE n.nspname = 'public' AND c.relname = ANY($1::text[])
+     UNION
+     SELECT DISTINCT (CASE WHEN p.grantee = 0 THEN 'PUBLIC' ELSE r.rolname END) AS rolname
+     FROM pg_attribute a
+     JOIN pg_class c ON c.oid = a.attrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     CROSS JOIN LATERAL aclexplode(a.attacl) p
+     LEFT JOIN pg_roles r ON r.oid = p.grantee
+     WHERE n.nspname = 'public' AND c.relname = ANY($1::text[])
+       AND a.attnum > 0 AND NOT a.attisdropped`,
+  [ACTIVITY_OBJECTS])).rows;
+  return rows.map(row => row.rolname).filter(name => name !== "PUBLIC");
+}
+
+/**
+ * The roles the up migration names, read from its own text so a role added to
+ * the migration is compared without anyone editing this list.
+ */
+async function rolesNamedByUpMigration(): Promise<string[]> {
+  const source = await readFile(
+    join(REPOSITORY_ROOT, "db/migrations/0107_task_project_activity_events.sql"), "utf8");
+  const named: string[] = source.match(/'(control_room_[a-z_]+)'/gu) ?? [];
+  return Array.from(new Set(named.map(name => name.slice(1, -1))));
+}
 
 /**
  * The privileges an installation that predates this migration holds on the three
@@ -376,7 +419,7 @@ const DOWN_COMPARISON_ROLES = Object.freeze([
  * from passing.
  */
 async function mainStateBaseline(postgres: RealPostgres, migratorPassword: string, database: string):
-Promise<{ client: Client; grants: string[] }> {
+Promise<Client> {
   const stage = await stageMainState();
   const admin = new Client(postgres.admin());
   await admin.connect();
@@ -425,9 +468,11 @@ Promise<{ client: Client; grants: string[] }> {
       assert.ok(grants.length > 0, `${file} base version must still contribute its grants`);
       for (const statement of grants) await baseline.query(statement);
     }
-    const result = { client: baseline, grants: await privilegeSet(baseline, DOWN_COMPARISON_ROLES) };
     await closeAdmin();
-    return result;
+    // Only the client is returned. The privilege set is read by the caller,
+    // which is the only party that knows the database under test and can
+    // therefore choose a role scope that is the same on both sides.
+    return baseline;
   } catch (error) {
     await closeAdmin();
     throw error;
@@ -435,19 +480,44 @@ Promise<{ client: Client; grants: string[] }> {
 }
 
 /**
- * The roles of `DOWN_COMPARISON_ROLES` that this cluster actually has, narrowed
- * to the ones the database under test will also have so the two privilege sets
- * are comparable.
+ * The roles the down migration's equality is asserted over: every role the up
+ * migration names, plus every role that actually holds one of these privileges
+ * on the database under test, narrowed to the ones the BASELINE database has too.
+ *
+ * The scope is those two sets and NOTHING wider. Adding "every role on the
+ * cluster" looks thorough and is not: the baseline database is built from the
+ * four role files this migration touches, while the database under test carries
+ * the attack kit's full set, so roles outside the migration (the news, intake
+ * and results logins) hold grants on `projects` in one database and not the
+ * other. That difference is an artefact of how the fixture was built, and
+ * comparing it would fail every run for a reason the down file never caused.
+ *
+ * The narrowing is safe because the grantees are read from the database under
+ * test: a role that appears here is a role that holds one of these privileges
+ * right now, which is precisely the set a down file has to return to baseline.
  */
-async function comparableRoles(client: Client): Promise<string[]> {
-  const rows = (await client.query<{ rolname: string }>(
-    "SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[])", [DOWN_COMPARISON_ROLES])).rows;
-  const present = rows.map(row => row.rolname);
-  // A comparison over zero or one role would prove nothing, and the roles the
-  // down file names are the point of the test.
-  assert.ok(present.filter(role => role !== "control_room_schema_owner").length >= 3,
-    `the cluster must carry at least three of the roles the down file names, found ${present.join(",")}`);
-  return present;
+async function comparableRoles(client: Client, baselineClient: Client): Promise<string[]> {
+  const grantees = await touchedObjectGrantees(client);
+  const named = await rolesNamedByUpMigration();
+  const have = new Set((await client.query<{ rolname: string }>(
+    "SELECT rolname FROM pg_roles")).rows.map(row => row.rolname));
+  const baselineHas = new Set((await baselineClient.query<{ rolname: string }>(
+    "SELECT rolname FROM pg_roles")).rows.map(row => row.rolname));
+  const candidates = Array.from(new Set([...named, ...grantees]))
+    .filter(role => have.has(role) && baselineHas.has(role))
+    .sort();
+  // The roles the down file is supposed to be about must be among the compared
+  // ones. If a down file silently stopped naming one of them, or a role the up
+  // migration names does not exist on the cluster, the comparison would quietly
+  // lose a role -- so that is a failure, not a narrowing.
+  const missing = named.filter(role => !candidates.includes(role));
+  assert.deepEqual(missing, [],
+    `every role the up migration grants must exist on the cluster and be compared, missing ${missing.join(",")}`);
+  assert.ok(named.length >= 3,
+    `the up migration must name at least three roles for this comparison to mean anything, found ${named.join(",")}`);
+  // A grantee outside the migration's own roles that survives is the case a
+  // hard-coded list could not catch; the equality below is what asserts it.
+  return candidates;
 }
 
 /**
@@ -726,16 +796,16 @@ test("the down migration returns every role to the main-state baseline, and only
       // main-state database on this same cluster and returns its privilege set.
       const baselineDatabase = "control_room_at_main_baseline";
       const baseline = await mainStateBaseline(postgres, MIGRATOR_PASSWORD, baselineDatabase);
-      // Only roles this cluster HAS are compared, and over the same list on both
-      // sides. The attack kit does not create the native evidence role, so that
-      // role exists only on the baseline database; including it would report the
-      // one-role difference as a down-file defect.
-      const comparable = await comparableRoles(baseline.client);
-      const baselineGrants = await privilegeSet(baseline.client, comparable);
+      // Every role that actually holds one of these privileges is compared, over
+      // the same list on both sides, so a grant the up file made to a role
+      // nobody wrote down cannot survive the down file unnoticed. See
+      // `comparableRoles` for how the list is derived and narrowed.
+      const comparable = await comparableRoles(admin, baseline);
+      const baselineGrants = await privilegeSet(baseline, comparable);
       try {
         // Checked before anything is asserted against it, so a baseline that
         // had already applied this migration cannot make the equality vacuous.
-        await verifyBaselineIsMainState(baseline.client);
+        await verifyBaselineIsMainState(baseline);
         const down = (await readdir(join(REPOSITORY_ROOT, "db/down")))
           .filter(name => name.endsWith("_task_project_activity_events.sql"));
         assert.equal(down.length, 1, "exactly one down migration for the activity grants");
@@ -774,8 +844,8 @@ test("the down migration returns every role to the main-state baseline, and only
         const tables = await admin.query<{ present: string | null }>(
           "SELECT to_regclass('public.control_project_events') AS present");
         assert.ok(tables.rows[0]?.present, "the activity tables belong to an earlier migration and must survive");
-        return { roles: present.length, grants: baseline.grants.length };
-      } finally { await baseline.client.end(); }
+        return { roles: present.length, grants: baselineGrants.length, compared: comparable.length };
+      } finally { await baseline.end(); }
     } finally { await admin.end(); }
   }, { port: LIVE_PORT + 3, allowedPorts: ALLOWED_PORTS, boundMs: 900_000 });
   assert.equal(result.cleanedUp, true, `the cluster must be gone: ${result.leftovers.join(",")}`);
@@ -866,6 +936,15 @@ test("the activity migration is idempotent on a second apply", needsPg, async t 
 /** The three objects this migration's up file and down file both touch. */
 const TOUCHED_OBJECTS = Object.freeze([
   "control_project_events", "control_project_event_stream_heads", "projects"]);
+
+/**
+ * The two of them the down migration manages by name. `projects` is excluded
+ * because the roles holding grants on it are mostly incidental (see
+ * `touchedObjectGrantees`); the one grant on it that this migration owns, the
+ * publisher's read, is asserted by name instead.
+ */
+const ACTIVITY_OBJECTS = Object.freeze([
+  "control_project_events", "control_project_event_stream_heads"]);
 
 /**
  * EVERY privilege every role holds on the three objects this migration touches,
@@ -968,7 +1047,7 @@ async function snapshot(connection: Client, privilegeRoles?: readonly string[]):
                  AND (p.grantee = 0 OR p.grantee = (SELECT oid FROM pg_roles WHERE rolname = $1)))
                 AS "headUpdate"`, [role])).rows[0] : null;
   }
-  return { ledger, privileges, acl: await privilegeSet(connection, privilegeRoles ?? DOWN_COMPARISON_ROLES) };
+  return { ledger, privileges, acl: await privilegeSet(connection, privilegeRoles ?? await rolesNamedByUpMigration()) };
 }
 
 /** A project row the fixture needs, inserted as the schema owner. */
