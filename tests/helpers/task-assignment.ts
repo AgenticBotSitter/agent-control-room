@@ -3,7 +3,8 @@ import { taskDraft } from "./web-task";
 import { binding, enrollment, instant } from "../hermes-native-fixture";
 import { at } from "../native-task-fixture";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../../src/web/v1/task-execution-planner";
-import { TaskAssignmentCoordinator, type TaskAssignmentRoute } from "../../src/web/v1/task-assignment-coordinator";
+import { TaskAssignmentCoordinator, type TaskAssignmentRoute,
+  type WorkBatchAssignmentAdmissionAuthority } from "../../src/web/v1/task-assignment-coordinator";
 import { computeAuthorityDigest, sha256Digest } from "../../src/security";
 import { FleetSignalStore } from "../../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../../src/node-fleet/v1/schemas";
@@ -12,7 +13,9 @@ import type { TaskDraft } from "../../src/web/v1/task-wire";
 
 export type TaskSourcePreparation = (fixture: Awaited<ReturnType<typeof ownerReviewFixture>>) => Promise<{
   draft: TaskDraft;
-  source: Awaited<ReturnType<Awaited<ReturnType<typeof ownerReviewFixture>>["tasks"]["propose"]>>;
+  source: Readonly<{ receipt: Readonly<{ jobId: string }> }>;
+  /** Pipeline and batch sources are admitted only through this authority. */
+  admission?: WorkBatchAssignmentAdmissionAuthority;
 }>;
 
 export async function taskAssignmentFixture(prepareSource?: TaskSourcePreparation) {
@@ -29,7 +32,7 @@ export async function taskAssignmentFixture(prepareSource?: TaskSourcePreparatio
   const planner = new TaskExecutionPlanner(f.db, f.scope, plannerConfig, () => instant + 7000);
   // A workflow test may supply its real saved source in this same disposable database.
   // The planner still derives/binds the exact draft digest, never a fixture-selected substitute.
-  const sourceInput = prepareSource ? await prepareSource(f) : {
+  const sourceInput: Awaited<ReturnType<TaskSourcePreparation>> = prepareSource ? await prepareSource(f) : {
     draft: taskDraft, source: await f.tasks.propose(f.identity, binding.projectId, taskDraft, "assignment-source-001") };
   const source = sourceInput.source;
   const prepared = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(sourceInput.draft));
@@ -48,9 +51,10 @@ export async function taskAssignmentFixture(prepareSource?: TaskSourcePreparatio
   await signals.ingestAuthenticated(telemetry, at(6000), binding);
   await signals.ingestAuthenticated(capability, at(6000), binding);
   const create = (db: DatabaseClient = f.db, clock = () => instant + 8000, routes = [route]) =>
-    new TaskAssignmentCoordinator(db, f.scope, planner, routes, clock);
+    new TaskAssignmentCoordinator(db, f.scope, planner, routes, clock, [], undefined, undefined, undefined, undefined,
+      sourceInput.admission);
   const coordinator = create();
   const assign = () => coordinator.assign(f.identity, binding.projectId, prepared.receipt.jobId, binding.nodeId, prepared.receipt.inputDigest);
-  return { ...f, source, sourceDraft: sourceInput.draft, prepared, planner, plannerConfig, route, signals, telemetry, capability, create, coordinator, assign };
+  return { ...f, source, sourceDraft: sourceInput.draft, admission: sourceInput.admission, prepared, planner, plannerConfig, route, signals, telemetry, capability, create, coordinator, assign };
   } catch (error) { await f.close(); throw error; }
 }

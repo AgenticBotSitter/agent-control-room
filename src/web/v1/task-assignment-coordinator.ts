@@ -213,6 +213,113 @@ export class TaskAssignmentCoordinator {
       if (await this.transitionAdmission.isPausedInSession(tx, this.scope.tenantId, nodeId)) conflict();
     } catch { conflict(); }
   }
+  /** A pipeline row narrows the ordinary assignment path; it is never an
+   * assignment authority of its own.  The saved exact selection and every
+   * predecessor's canonical accepted result are rechecked under the same
+   * transaction that creates the ordinary attempt/lease.
+   *
+   * No row locks: every row read here (stage runs, execution plans, model
+   * selections, dependency edges) is append-only for the coordinator login,
+   * which holds no UPDATE privilege a lock would need. Each value is instead
+   * authenticated (stage HMAC) or compared field for field below. */
+  private async assertPipelineAdmission(tx: DatabaseSession, job: JobRecord,
+    route: TaskAssignmentRoute, attemptWorkerId?: string | null): Promise<boolean> {
+    const link = (await tx.query<{ pipeline_run_id: string | null; stage_kind: string | null; stage_ordinal: number | null }>(
+      `SELECT pipeline_run_id,stage_kind,stage_ordinal FROM control_jobs WHERE tenant_id=$1 AND id=$2`,
+    [this.scope.tenantId, job.id])).rows[0];
+    if (!link?.pipeline_run_id) {
+      // Lineage is write-once in the database, but membership is also derived
+      // from rows no app login can update or delete: the job's execution plan
+      // and the stage row naming its source job. A stage job with cleared
+      // lineage must not fall through to ordinary admission. When the lineage
+      // is set, the plan binding below is the disagreement check.
+      const member = (await tx.query(`SELECT 1 FROM pipeline_stage_runs s WHERE s.tenant_id=$1
+        AND (s.current_job_id=$2 OR s.current_job_id IN (SELECT p.source_job_id FROM control_task_execution_plans p
+          WHERE p.tenant_id=$1 AND p.job_id=$2)) LIMIT 1`, [this.scope.tenantId, job.id])).rows.length;
+      if (member) conflict();
+      return false;
+    }
+    if (link.stage_kind === null || link.stage_ordinal === null || !this.workBatchAdmission) conflict();
+    const stage = (await tx.query<{ project_id: string; current_job_id: string; stage_kind: string; stage_ordinal: number;
+      role: string; worker_id: string; worker_kind: "codex" | "claude-code" | "hermes"; node_id: string; selection_key: string; model: string;
+      effort: string; provider: string | null; profile: string | null; state: string; max_loops: number;
+      handoff_from_result_digest: string | null; signoff_review_id: string | null; started_at: string | Date | null;
+      finished_at: string | Date | null; record_digest: string; auth_tag: string; version: number }>(`SELECT project_id,
+        current_job_id,stage_kind,stage_ordinal,role,worker_id,worker_kind,node_id,selection_key,model,effort,provider,
+        profile,state,max_loops,handoff_from_result_digest,signoff_review_id,started_at,finished_at,record_digest,auth_tag,version
+      FROM pipeline_stage_runs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
+    [this.scope.tenantId, link.pipeline_run_id, Number(link.stage_ordinal)])).rows[0];
+    if (!stage || stage.project_id !== job.projectId || stage.stage_kind !== link.stage_kind
+      || stage.worker_id !== route.executorId || stage.node_id !== route.nodeId
+      || attemptWorkerId !== undefined && attemptWorkerId !== stage.worker_id) conflict();
+    const plan = (await tx.query<{ source_job_id: string }>(`SELECT source_job_id FROM control_task_execution_plans
+      WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3`,
+    [this.scope.tenantId, job.projectId, job.id])).rows[0];
+    if (!plan || plan.source_job_id !== stage.current_job_id) conflict();
+    const selection = (await tx.query<{ worker_kind: string | null; selection_key: string | null; model: string | null;
+      effort: string | null; provider: string | null; profile: string | null }>(`SELECT worker_kind,selection_key,model,
+        effort,provider,profile FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`,
+    [this.scope.tenantId, job.id])).rows[0];
+    if (!selection || selection.worker_kind !== stage.worker_kind || selection.selection_key !== stage.selection_key
+      || selection.model !== stage.model || selection.effort !== stage.effort
+      || selection.provider !== stage.provider || selection.profile !== stage.profile) conflict();
+    const material = { id: `${link.pipeline_run_id}:stage:${Number(stage.stage_ordinal)}`, tenantId: this.scope.tenantId,
+      projectId: stage.project_id, pipelineRunId: link.pipeline_run_id, stageOrdinal: Number(stage.stage_ordinal),
+      stageKind: stage.stage_kind, role: stage.role, workerId: stage.worker_id, workerKind: stage.worker_kind,
+      nodeId: stage.node_id, selectionKey: stage.selection_key, model: stage.model, effort: stage.effort,
+      provider: stage.provider, profile: stage.profile, currentJobId: stage.current_job_id,
+      currentAttemptId: null, currentLeaseId: null, state: stage.state, maxLoops: Number(stage.max_loops),
+      handoffFromResultDigest: stage.handoff_from_result_digest, signoffReviewId: stage.signoff_review_id,
+      startedAt: stage.started_at ? new Date(stage.started_at).toISOString() : null,
+      finishedAt: stage.finished_at ? new Date(stage.finished_at).toISOString() : null, version: Number(stage.version) };
+    const expected = Buffer.from(hmacSha256Tag(this.workBatchAdmission.integrityKey,
+      { purpose: "pipeline-stage-run/v1", record: material })), actual = Buffer.from(stage.auth_tag);
+    if (sha256Digest(material) !== stage.record_digest || expected.length !== actual.length || !timingSafeEqual(expected, actual)) conflict();
+    try {
+      await this.workBatchAdmission.assertCurrent(tx, { tenantId: this.scope.tenantId, projectId: job.projectId,
+        batchId: link.pipeline_run_id, itemId: `${link.pipeline_run_id}:stage:${Number(stage.stage_ordinal)}`,
+        sourceJobId: stage.current_job_id, executionJobId: job.id, workerId: stage.worker_id, workerKind: stage.worker_kind,
+        nodeId: stage.node_id, selectionKey: stage.selection_key, model: stage.model, effort: stage.effort,
+        provider: stage.provider, profile: stage.profile });
+    } catch { conflict(); }
+    const dependencies = (await tx.query<{ depends_on_job_id: string }>(`SELECT depends_on_job_id
+      FROM control_job_dependencies WHERE tenant_id=$1 AND job_id=$2 ORDER BY depends_on_job_id`,
+    [this.scope.tenantId, stage.current_job_id])).rows;
+    if (Number(stage.stage_ordinal) === 0) {
+      if (dependencies.length !== 0) conflict();
+      return true;
+    }
+    const predecessor = (await tx.query<{ current_job_id: string; worker_id: string; node_id: string }>(`SELECT current_job_id,
+        worker_id,node_id FROM pipeline_stage_runs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
+    [this.scope.tenantId, link.pipeline_run_id, Number(stage.stage_ordinal) - 1])).rows[0];
+    if (!predecessor || dependencies.length !== 1 || dependencies[0]?.depends_on_job_id !== predecessor.current_job_id) conflict();
+    const proof = (await tx.query<WorkBatchAcceptedResultProof>(`SELECT completed.project_id AS "projectId",
+        p.source_job_id AS "sourceJobId",completed.id AS "executionJobId",attempt.id AS "attemptId",
+        artifact.run_id AS "runId",artifact.artifact_id AS "artifactId",artifact.receipt->>'contentHash' AS "contentHash",
+        review.plan->>'targetId' AS "targetId",transition.safe_metadata->'receipt'->>'targetDigest' AS "targetDigest",
+        attempt.worker_id AS "workerId",attempt.node_id AS "nodeId",completed.tenant_id AS "tenantId"
+      FROM control_task_execution_plans p JOIN control_jobs completed ON completed.tenant_id=p.tenant_id AND completed.id=p.job_id
+      JOIN control_attempts attempt ON attempt.tenant_id=completed.tenant_id AND attempt.job_id=completed.id AND attempt.state='succeeded'
+        AND attempt.worker_id=$3 AND attempt.node_id=$4
+      JOIN control_native_artifact_receipts artifact ON artifact.tenant_id=attempt.tenant_id AND artifact.job_id=attempt.job_id
+        AND artifact.attempt_id=attempt.id
+      JOIN control_artifact_manifests manifest ON manifest.tenant_id=artifact.tenant_id AND manifest.id=artifact.artifact_id
+        AND manifest.job_id=artifact.job_id AND manifest.attempt_id=artifact.attempt_id
+        AND manifest.content_hash=artifact.receipt->>'contentHash' AND manifest.state IN ('uploaded','verified')
+      JOIN control_native_review_plans review ON review.tenant_id=artifact.tenant_id AND review.project_id=artifact.project_id
+        AND review.job_id=artifact.job_id AND review.run_id=artifact.run_id
+      JOIN control_transition_events transition ON transition.tenant_id=completed.tenant_id AND transition.entity_kind='job'
+        AND transition.entity_id=completed.id AND transition.to_state='succeeded'
+        AND transition.idempotency_key LIKE 'native-completion:%:job'
+      WHERE p.tenant_id=$1 AND p.source_job_id=$2 AND completed.state='succeeded'
+        AND transition.safe_metadata->'receipt'->>'artifactId'=artifact.artifact_id
+        AND transition.safe_metadata->'receipt'->>'contentHash'=artifact.receipt->>'contentHash'
+      ORDER BY attempt.attempt_number DESC LIMIT 1`, [this.scope.tenantId, predecessor.current_job_id,
+        predecessor.worker_id, predecessor.node_id])).rows[0];
+    if (!proof?.contentHash || !proof.targetId || !proof.targetDigest) conflict();
+    try { await this.workBatchAdmission.assertAcceptedResultCurrent(tx, proof); } catch { conflict(); }
+    return true;
+  }
   /** Work-batch admission is an additional fail-closed constraint on the
    * ordinary canonical assignment/queue path, never a second assignment
    * authority.  A batch job may use its dependency edges only when this
@@ -221,6 +328,7 @@ export class TaskAssignmentCoordinator {
    * completion transition. */
   private async assertWorkBatchQueueAdmission(tx: DatabaseSession, job: JobRecord,
     route: TaskAssignmentRoute, attemptWorkerId?: string | null): Promise<boolean> {
+    if (await this.assertPipelineAdmission(tx, job, route, attemptWorkerId)) return true;
     type GateRow = { item_id: string; batch_id: string; source_job_id: string; worker_id: string | null;
       node_id: string | null; queue_position: string | number | null; worker_kind: "codex" | "claude-code" | "hermes" | null;
       selection_key: string | null; model: string | null; effort: string | null; provider: string | null; profile: string | null;

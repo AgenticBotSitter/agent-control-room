@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "9b37359f9714c179051ae4a0fa22ec9cdd9d9ea0dceee1e65f95b468f26d2a43",
+  "digest": "0631e8254513d320cf02280085958b8b8aac5ca477f04755c2558a6e87587741",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -585,20 +585,26 @@
       "kind": "migrate"
     },
     {
-      "file": "db/roles/production_roles.sql",
+      "file": "db/migrations/0105_linear_pipeline_runs.sql",
       "order": 98,
+      "sha256": "dde578a0a387bf64b5816bc1faaef6a7f47f9320840740691428627c94ff77c9",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/roles/production_roles.sql",
+      "order": 99,
       "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 99,
-      "sha256": "0f8692d61c572cb4a0d2b4281f3f316131637d2fbba76a50f5e089e70b36c961",
+      "order": 100,
+      "sha256": "aa83d633385eecd9826b8fd99f6a12a842025d6749cbe06b6be72a1ca91f7aa5",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 100,
+      "order": 101,
       "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }
