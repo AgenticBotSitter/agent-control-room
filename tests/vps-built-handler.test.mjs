@@ -5,7 +5,12 @@ import handler from "../dist-vps/server/index.js";
 import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
 import { fixture, now, origin, trust, request } from "./helpers/web-foundation.ts";
 import { seedWebIdea, webIdeaKey } from "./helpers/web-idea-project.ts";
-import { seedWebConnection, seedWebSignal, webConnectionKeys } from "./helpers/web-connection.ts";
+import { safeWebConnection, seedWebConnection, seedWebSignal, webConnectionKeys } from "./helpers/web-connection.ts";
+import { ConnectionCenterReadServiceV1, ConnectionCenterReadErrorV1 } from "../src/connection-center/v1/service.ts";
+import { AuthenticatedFleetTelemetryFreshnessSourceV1 } from "../src/connection-center/v1/authenticated-freshness.ts";
+import { ConnectionRegistryStoreV1 } from "../src/connection-registry/v1/store.ts";
+import { AuthenticatedTelemetryReceiptStoreV1 } from "../src/node-fleet/v1/authenticated-telemetry-receipt-store.ts";
+import { sha256Digest } from "../src/security/digest.ts";
 
 test("compiled Node entry protects pages, APIs and streams before application composition", async () => {
   assert.equal(typeof handler, "function");
@@ -158,4 +163,114 @@ test("compiled private routes use the installed process, real disposable SQL, an
     `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
   await app.close(); assert.equal((await handler(request("/projects"))).status, 503);
+});
+
+/** Covers the Connection Center signal-freshness classification wiring:
+ * ConnectionCenterReadServiceV1 + buildConnectionCenterProjectionV1
+ * (src/connection-center/v1/service.ts) with AuthenticatedTelemetryReceiptStoreV1
+ * (src/node-fleet/v1/authenticated-telemetry-receipt-store.ts) wrapped by
+ * AuthenticatedFleetTelemetryFreshnessSourceV1
+ * (src/connection-center/v1/authenticated-freshness.ts) — the same services
+ * src/web/v1/connection-service.ts constructs for /api/v1/connections. */
+const connectionCenterNow = new Date(now).toISOString();
+
+function connectionCenterReadService(client) {
+  return new ConnectionCenterReadServiceV1(
+    new ConnectionRegistryStoreV1(client, webConnectionKeys.registryIntegrityKey),
+    new AuthenticatedFleetTelemetryFreshnessSourceV1(client, webConnectionKeys.telemetryIntegrityKey));
+}
+
+/** Enrolls an extra connection on an already-seeded node. seedWebConnection always
+ * creates the node row, so a second connection sharing a node goes straight
+ * through the registry with its own enrollment id. Route and profile digests
+ * must differ per connection: the registry rejects two active connections that
+ * share either as a replay. */
+async function seedSharedNodeConnection(client, nodeId, connectionId, enrollmentId) {
+  const enrollment = safeWebConnection({ nodeId, connectionId, enrollmentId,
+    connectorRouteDigest: sha256Digest({ route: connectionId }),
+    profileIdentityDigest: sha256Digest({ profile: connectionId }) });
+  await new ConnectionRegistryStoreV1(client, webConnectionKeys.registryIntegrityKey)
+    .enrollAuthenticated(enrollment, connectionCenterNow,
+      { tenantId: "tenant:web", nodeId, connectionId });
+}
+
+async function seedExpiredWebSignal(client, nodeId) {
+  const observedAt = new Date(now - 10 * 60_000).toISOString();
+  await new AuthenticatedTelemetryReceiptStoreV1(client, webConnectionKeys.telemetryIntegrityKey)
+    .recordAfterAuthenticatedIngress({
+      tenantId: "tenant:web", nodeId, signalSequence: 1,
+      signalDigest: sha256Digest({ nodeId, kind: "expired-signal" }),
+      messageId: "message:expired", keyId: "key:test", connectionId: "connection:test",
+      observedAt, expiresAt: new Date(now - 5 * 60_000).toISOString(), authenticatedAt: observedAt });
+}
+
+test("connection center renders multiple connections with deduplicated node references and signal counts", async t => {
+  const f = await fixture();
+  t.after(() => f.db.close());
+  const distinctRoute = (connectionId) => ({ connectorRouteDigest: sha256Digest({ route: connectionId }),
+    profileIdentityDigest: sha256Digest({ profile: connectionId }) });
+  await seedWebConnection(f.client, { nodeId: "node:shared-a", connectionId: "connection:a-1",
+    enrollmentId: "enrollment:durable:101", ...distinctRoute("connection:a-1") });
+  await seedSharedNodeConnection(f.client, "node:shared-a", "connection:a-2", "enrollment:durable:102");
+  await seedWebConnection(f.client, { nodeId: "node:other-b", connectionId: "connection:b-1",
+    enrollmentId: "enrollment:durable:103", ...distinctRoute("connection:b-1") });
+  await seedWebSignal(f.client, "node:shared-a");
+  await seedExpiredWebSignal(f.client, "node:other-b");
+  const projection = await connectionCenterReadService(f.client)
+    .read({ tenantId: "tenant:web", now: connectionCenterNow });
+  assert.equal(projection.connections.length, 3);
+  const freshnessByNode = new Map();
+  for (const item of projection.connections) {
+    if (!freshnessByNode.has(item.nodeReference)) freshnessByNode.set(item.nodeReference, []);
+    freshnessByNode.get(item.nodeReference).push(item.signalFreshness);
+  }
+  assert.equal(freshnessByNode.size, 2);
+  assert.deepEqual([...freshnessByNode.values()].map(group => group.sort().join(",")).sort(),
+    ["current,current", "stale"]);
+  assert.equal(projection.summary.connectionCount, 3);
+  assert.equal(projection.summary.currentSignalCount, 2);
+  assert.equal(projection.summary.staleSignalCount, 1);
+  assert.equal(projection.summary.missingSignalCount, 0);
+});
+
+test("connection center classifies an expired telemetry receipt as stale", async t => {
+  const f = await fixture();
+  t.after(() => f.db.close());
+  await seedWebConnection(f.client);
+  await seedExpiredWebSignal(f.client, "node:private-test");
+  const projection = await connectionCenterReadService(f.client)
+    .read({ tenantId: "tenant:web", now: connectionCenterNow });
+  assert.equal(projection.connections.length, 1);
+  assert.equal(projection.connections[0].signalFreshness, "stale");
+  assert.equal(projection.connections[0].signalFreshnessBasis, "authenticated_telemetry");
+  assert.equal(projection.summary.staleSignalCount, 1);
+  assert.equal(projection.summary.currentSignalCount, 0);
+});
+
+test("connection center classifies a node with no telemetry receipt as missing", async t => {
+  const f = await fixture();
+  t.after(() => f.db.close());
+  await seedWebConnection(f.client);
+  const projection = await connectionCenterReadService(f.client)
+    .read({ tenantId: "tenant:web", now: connectionCenterNow });
+  assert.equal(projection.connections.length, 1);
+  const item = projection.connections[0];
+  assert.equal(item.signalFreshness, "missing");
+  assert.equal(item.signalFreshnessBasis, "none");
+  assert.equal(item.signalObservedAt, null);
+  assert.equal(item.signalExpiresAt, null);
+  assert.equal(projection.summary.missingSignalCount, 1);
+});
+
+test("connection center rejects a tampered telemetry receipt instead of serving it", async t => {
+  const f = await fixture();
+  t.after(() => f.db.close());
+  await seedWebConnection(f.client);
+  await seedWebSignal(f.client);
+  await f.client.query(
+    "UPDATE control_connection_authenticated_telemetry_receipts SET expires_at = $1 WHERE tenant_id = $2 AND node_id = $3",
+    [new Date(now + 3_600_000).toISOString(), "tenant:web", "node:private-test"]);
+  await assert.rejects(
+    connectionCenterReadService(f.client).read({ tenantId: "tenant:web", now: connectionCenterNow }),
+    (error) => error instanceof ConnectionCenterReadErrorV1 && error.safeCode === "invalid_roster");
 });
