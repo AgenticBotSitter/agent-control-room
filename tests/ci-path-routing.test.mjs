@@ -301,7 +301,9 @@ test("the affected-test automation has the required budget and security review",
   assert.match(budgetSecurityReview, /## Amendment: affected tests \(fast\)/u);
   assert.match(budgetSecurityReview, /45-minute timeout/u);
   assert.match(budgetSecurityReview, /squawk-cli@2\.61\.0/u);
-  assert.match(budgetSecurityReview, /fails if that stream reports any skipped test/u);
+  assert.match(budgetSecurityReview, /fails if any non-exempt stream reports any skipped test/u);
+  assert.match(budgetSecurityReview, /15-entry skipped-test exemption/u);
+  assert.match(budgetSecurityReview, /mac-local-pg17-rehearsal\.test\.mjs.*CONTROL_ROOM_MAC_REHEARSAL_ROOT/u);
   assert.match(budgetSecurityReview, /pre-0086 repository input/u);
   assert.match(budgetSecurityReview, /RUNNER_TEMP/u);
 });

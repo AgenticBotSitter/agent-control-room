@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +12,7 @@ import {
   requiresPostgres,
   runAffectedTests,
   selectionOutputs,
+  skippedTestExemptions,
 } from "../scripts/ci/affected-tests.mjs";
 
 function fixture(files) {
@@ -173,10 +174,33 @@ test("an explicitly exempt skipped test passes and prints its reason", () => {
   try {
     assert.equal(runAffectedTests(["tests/mac-local-pg17-rehearsal.test.mjs"], ["tests/mac-local-pg17-rehearsal.test.mjs"], root,
       () => 0, () => true, () => ({ status: 0, output: "# skipped 1\n" })), 0);
-    assert.match(messages.join("\n"), /mac-local-pg17-rehearsal\.test\.mjs.*requires an owner-attended Mac/u);
+    assert.match(messages.join("\n"), /mac-local-pg17-rehearsal\.test\.mjs.*CONTROL_ROOM_MAC_REHEARSAL_ROOT/u);
   } finally {
     console.log = originalLog;
     rmSync(root, { recursive: true });
+  }
+});
+
+test("an exempt test that did not skip does not claim a waived skip", () => {
+  const root = fixture({ "tests/mac-local-pg17-rehearsal.test.mjs": "import test from 'node:test'; test('gate', () => {});" });
+  const messages = [], originalLog = console.log;
+  console.log = message => messages.push(message);
+  try {
+    assert.equal(runAffectedTests(["tests/mac-local-pg17-rehearsal.test.mjs"], ["tests/mac-local-pg17-rehearsal.test.mjs"], root,
+      () => 0, () => true, () => ({ status: 0, output: "# skipped 0\n" })), 0);
+    assert.deepEqual(messages, []);
+  } finally {
+    console.log = originalLog;
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("every skipped-test exemption names an existing file and non-empty reason", () => {
+  assert.equal(skippedTestExemptions.size, 15, "the documented exemption list must stay deliberately bounded");
+  for (const [file, reason] of skippedTestExemptions) {
+    assert.ok(existsSync(join(process.cwd(), file)), `exemption file must exist: ${file}`);
+    assert.equal(typeof reason, "string", `exemption reason must be text: ${file}`);
+    assert.ok(reason.trim().length > 0, `exemption reason must not be empty: ${file}`);
   }
 });
 

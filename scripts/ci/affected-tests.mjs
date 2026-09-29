@@ -13,7 +13,7 @@ const postgresTestMarker = /(?:requiresRealPostgres|\bPG_BIN\b|\binitdb\b|\bpg_c
 const squawkTestMarker = /\bsquawk\b/iu;
 // This list is deliberately small and each entry has an execution reason.
 // Exemptions run separately and their allowed skips are logged below.
-const skippedTestExemptions = new Map([
+export const skippedTestExemptions = new Map([
   ["tests/automatic-claim-controller.test.mjs", "requires ACR_MAIN_CHECKOUT pointing at a current main checkout"],
   // These suites require a non-root macOS host and its native toolchain.
   ["tests/claude-code-macos-process-host-ports.test.ts", "requires a non-root macOS host and native toolchain"],
@@ -29,8 +29,7 @@ const skippedTestExemptions = new Map([
   ["tests/private-macos-claude-code-qualification-route.test.ts", "requires a non-root macOS host and native toolchain"],
   ["tests/private-macos-service-native-host.test.ts", "requires a non-root macOS host and native toolchain"],
   ["tests/private-protected-root-native-directory.test.ts", "requires a non-root macOS host and native toolchain"],
-  // This database privilege rehearsal requires an owner-attended Mac.
-  ["tests/mac-local-pg17-rehearsal.test.mjs", "requires an owner-attended Mac"],
+  ["tests/mac-local-pg17-rehearsal.test.mjs", "runs in the full-mac-local-rehearsal job, which provides CONTROL_ROOM_MAC_REHEARSAL_ROOT (see PR #429)"],
 ]);
 
 function normalized(value) {
@@ -250,13 +249,14 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
       continue;
     }
     const testCommand = testCommands[index - preparationCount];
-    if (testCommand.exempt) {
-      console.log(`Allowing skipped test exemption: ${testCommand.tests[0]} — ${skippedTestExemptions.get(testCommand.tests[0])}`);
-    }
     const execution = executeCapturingOutput(command, arguments_, repositoryRoot, testCommand.environment);
     const status = typeof execution === "number" ? execution : execution.status;
     if (status !== 0) return status;
-    if (!testCommand.exempt && hasSkippedTests(typeof execution === "number" ? "" : execution.output)) {
+    const output = typeof execution === "number" ? "" : execution.output;
+    if (testCommand.exempt && hasSkippedTests(output)) {
+      console.log(`Allowing skipped test exemption: ${testCommand.tests[0]} — ${skippedTestExemptions.get(testCommand.tests[0])}`);
+    }
+    if (!testCommand.exempt && hasSkippedTests(output)) {
       console.error("Selected test plan reported skipped tests; merge-gated tests must run or fail unless explicitly exempted.");
       return 1;
     }

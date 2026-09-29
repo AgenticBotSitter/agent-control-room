@@ -270,8 +270,28 @@ For selected PostgreSQL tests, the job installs PostgreSQL 17 and starts one loo
 disposable cluster. It exports the narrowly scoped test gates and two URLs to that cluster,
 adds the versioned binary directory to `PATH`, then stops and removes the cluster in an
 `always()` cleanup step. The runner separates PostgreSQL-marked files into a TAP stream and
-fails if that stream reports any skipped test. This prevents missing database prerequisites
-from becoming a green merge-gate result. The job adds no credentials, deployment access,
+fails if any non-exempt stream reports any skipped test. This prevents missing database prerequisites
+from becoming a green merge-gate result. A deliberately bounded 15-entry skipped-test exemption
+list runs its entries separately and permits a skip only for these documented reasons:
+
+- `tests/automatic-claim-controller.test.mjs` — requires `ACR_MAIN_CHECKOUT` pointing at a current main checkout.
+- `tests/claude-code-macos-process-host-ports.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/claude-code-native-process.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/hermes-021-macos-pinned-executable-image.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/macos-claude-code-process-native-sidecar.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/macos-hermes-native-launch-custodian.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/macos-installation-journal-native-sidecar.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/macos-installed-configuration-native-sidecar.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/macos-service-native-sidecar.test.mjs` — requires a non-root macOS host and native toolchain.
+- `tests/private-installation-journal-native-session.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/private-installed-configuration-native-host.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/private-macos-claude-code-qualification-route.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/private-macos-service-native-host.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/private-protected-root-native-directory.test.ts` — requires a non-root macOS host and native toolchain.
+- `tests/mac-local-pg17-rehearsal.test.mjs` — runs in the full-mac-local-rehearsal job, which provides `CONTROL_ROOM_MAC_REHEARSAL_ROOT` (see PR [#429](https://github.com/AgenticBotSitter/agent-control-room/pull/429)).
+
+The runner logs `Allowing skipped test exemption` only after that exempt test actually reports
+a skipped TAP result. The job adds no credentials, deployment access,
 private runner, or workflow permission; it retains `pull_request`, read-only contents,
 full-history checkout without persisted credentials, frozen install and pinned actions.
 
