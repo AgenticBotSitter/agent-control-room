@@ -56,6 +56,31 @@ test("coding-change evidence is aggregate-only and never mistaken for authority"
   assert.match(unavailable, /does not mean no files changed/);
 });
 
+test("the exact open result renders its protected bounded diff evidence", () => {
+  const artifact = { artifactId: "artifact:test", attemptId: "attempt:test", runId: "run:test",
+    contentHash: `sha256:${"a".repeat(64)}`, sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z",
+    byteCheck: "matched_recorded_claim" as const, qualityAccepted: false as const };
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact], reviews: [],
+    additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true, reviewCommands: "not_connected" };
+  const marker = "[CONTROL ROOM: unified diff truncated; original 70000 bytes; sha256:full]";
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact, text: "Done",
+    contentVerifiedAt: artifact.receivedAt, untrustedContent: true, worktreeChangeEvidence: {
+      schema: "control-room.worktree-change-audit-detail/v1", baseRevision: "1".repeat(40), headRevision: "2".repeat(40),
+      changes: [{ path: "src/worker.ts", kind: "modified", bytes: 42, contentDigest: `sha256:${"3".repeat(64)}` }],
+      commits: [{ revision: "2".repeat(40), subject: "Build isolated worker" }], commitsTruncated: false,
+      unifiedDiff: { text: `diff --git a/src/worker.ts b/src/worker.ts\n${marker}`, originalBytes: 70_000,
+        retainedBytes: 100, truncated: true, contentDigest: `sha256:${"4".repeat(64)}`, retainedDigest: `sha256:${"5".repeat(64)}` },
+      confinement: { kind: "workspace_write", outsideWorktree: "refused", evidenceDigest: `sha256:${"6".repeat(64)}` },
+      evidenceDigest: `sha256:${"7".repeat(64)}`,
+    } };
+  const html = renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false}
+    onOpen={() => {}} onClose={() => {}} />);
+  assert.match(html, /Verified code changes/); assert.match(html, /src\/worker.ts/);
+  assert.match(html, /Build isolated worker/); assert.match(html, /unified diff truncated/);
+  assert.match(html, /refused writes outside/); assert.match(html, /does not run, approve, merge, retry or resume/);
+});
+
 test("result open mounts command readers only for the newest current matching target", () => {
   const contentHash = `sha256:${"a".repeat(64)}`, targetDigest = `sha256:${"b".repeat(64)}`;
   const artifact = { artifactId: "artifact:test", attemptId: "attempt:test", runId: "run:test", contentHash,

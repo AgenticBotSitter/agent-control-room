@@ -52,7 +52,7 @@ async function collectConsistentSnapshot(source, { requiredTables }) {
       `SELECT n.nspname || '.' || c.relname AS object, pg_get_userbyid(c.relowner) AS owner,
               coalesce(c.relacl, acldefault(CASE WHEN c.relkind = 'S' THEN 's'::"char" ELSE 'r'::"char" END, c.relowner))::text AS acl
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'S') ORDER BY 1`)).rows;
+       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'S', 'v') ORDER BY 1`)).rows;
     const schemaDigest = await readSchemaDigest(evidenceClient);
     const rows = [];
     for (const table of requiredTables) {

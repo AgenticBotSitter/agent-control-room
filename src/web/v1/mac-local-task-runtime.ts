@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { link, lstat, readFile, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { parseCanonicalHttpsDestination } from "../../node-policy/v1/network-target-guard";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 export const MAC_LOCAL_TASK_RUNTIME_V1 = "control-room.mac-local-task-runtime/v1" as const;
 
@@ -27,7 +28,7 @@ export type MacLocalTaskRuntimeV1 = Readonly<{
 }>;
 
 const invalid = (): never => { throw new Error("mac_local_task_runtime_invalid"); };
-const identifier = /^[A-Za-z0-9._:/-]{1,180}$/u;
+const identifier = MODEL_IDENTIFIER_PATTERN_V1;
 const base64url = /^[A-Za-z0-9_-]{43}$/u;
 const MAX_FILE_BYTES = 16 * 1024;
 

@@ -37,6 +37,10 @@ import { isPrivateRemoteControllerWorkerQueueCapabilityV1,
   "../../harness/v1/private-remote-controller-worker-composition";
 import { NativeResultStore } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
+import { readTaskReviewPlanV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
+import { sha256Digest } from "../../security";
+import type { WorkBatchQueueSelectionAuthorityV1, WorkBatchQueueSelectionV1 } from "../../work-intake/v1";
+import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
 import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
@@ -97,6 +101,10 @@ export type TaskCoordinatorConfiguration = {
   /** Private installation journal key. It is copied at assembly and never
    * mounted in a route, template, browser operation, queue item, or worker. */
   installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
+  /** One protected host generation's batch key and exact-selection validator.
+   * Requires quality/result configuration so predecessor acceptance is checked
+   * from retained bytes and checkpoint-authenticated Completion Gate state. */
+  workBatches?: { integrityKey: Uint8Array; selectionAuthority: WorkBatchQueueSelectionAuthorityV1 };
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
   /** Installation-owned, authenticated result reader for a supported local adapter.
@@ -131,6 +139,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   for (const [value, ceiling] of [[maxActive, 8], [drainMs, 30_000], [closeMs, 5000]])
     if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new Error("task_coordinator_config_invalid");
   if (input.revisionPlanning !== undefined && (input.revisionPlanning !== true || !input.quality)) throw new Error("task_coordinator_config_invalid");
+  if (input.workBatches && (!(input.workBatches.integrityKey instanceof Uint8Array)
+    || input.workBatches.integrityKey.length !== 32 || !input.quality
+    || typeof input.workBatches.selectionAuthority?.assertCurrent !== "function"))
+    throw new Error("task_coordinator_config_invalid");
   if (input.ensurePlanningProject !== undefined && typeof input.ensurePlanningProject !== "function")
     throw new Error("task_coordinator_config_invalid");
   if (input.resultDatabase && (!input.quality || input.resultDatabase === input.database || input.resultDatabase.client === input.database.client))
@@ -268,6 +280,72 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     }; return db;
   };
   const db = guardedDatabase(pool);
+  const workBatchAuthority = input.workBatches ? (() => {
+    const integrityKey = Uint8Array.from(input.workBatches!.integrityKey);
+    const assertSelection = input.workBatches!.selectionAuthority.assertCurrent.bind(input.workBatches!.selectionAuthority);
+    const results = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: input.quality!.harnessIntegrityKey,
+      results: input.quality!.results, reviewIntegrityKey: input.planning.reviewIntegrityKey });
+    const gate = new CompletionGateStoreV1(db, input.quality!.integrityKey, input.quality!.checkpoints,
+      () => new Date((input.clock ?? Date.now)()).toISOString());
+    const assertAcceptedResultCurrent = async (tx: DatabaseSession, proof: import("./task-assignment-coordinator").WorkBatchAcceptedResultProof) => {
+      const binding = (await tx.query<{ present: boolean }>(`SELECT EXISTS(
+        SELECT 1 FROM control_task_execution_plans p JOIN control_attempts a
+          ON a.tenant_id=p.tenant_id AND a.job_id=p.job_id
+        WHERE p.tenant_id=$1 AND p.source_job_id=$2 AND p.job_id=$3
+          AND a.id=$4 AND a.worker_id=$5 AND a.node_id=$6 AND a.state='succeeded'
+      ) AS present`, [proof.tenantId, proof.sourceJobId, proof.executionJobId, proof.attemptId,
+        proof.workerId, proof.nodeId])).rows[0];
+      if (!binding?.present) throw new Error("work_batch_result_unavailable");
+      const result = await results.read(tx, proof.tenantId, proof.projectId, proof.executionJobId, proof.artifactId);
+      if (!result || result.receipt.attemptId !== proof.attemptId || result.receipt.runId !== proof.runId
+        || result.receipt.nodeId !== proof.nodeId || result.receipt.contentHash !== proof.contentHash)
+        throw new Error("work_batch_result_unavailable");
+      const plan = await readTaskReviewPlanV1(tx, input.planning.reviewIntegrityKey,
+        proof.tenantId, proof.projectId, proof.executionJobId);
+      if (!plan) throw new Error("work_batch_result_unavailable");
+      const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
+      verifyTaskReviewTargetV1(plan, accepted.target, result.receipt);
+      if (accepted.target.id !== proof.targetId || accepted.snapshot.targetDigest !== proof.targetDigest
+        || accepted.target.subjectDigest !== proof.contentHash || sha256Digest(accepted.target) !== proof.targetDigest)
+        throw new Error("work_batch_result_unavailable");
+    };
+    const proofForSource = async (tx: DatabaseSession, selection: Readonly<{
+      sourceJobId: string; workerId: string; nodeId: string }>) => {
+      const proof = (await tx.query<import("./task-assignment-coordinator").WorkBatchAcceptedResultProof>(`SELECT
+          j.tenant_id AS "tenantId",j.project_id AS "projectId",p.source_job_id AS "sourceJobId",
+          j.id AS "executionJobId",a.id AS "attemptId",r.run_id AS "runId",r.artifact_id AS "artifactId",
+          r.receipt->>'contentHash' AS "contentHash",q.plan->>'targetId' AS "targetId",
+          e.safe_metadata->'receipt'->>'targetDigest' AS "targetDigest",a.worker_id AS "workerId",a.node_id AS "nodeId"
+        FROM control_task_execution_plans p JOIN control_jobs j ON j.tenant_id=p.tenant_id AND j.id=p.job_id
+        JOIN control_attempts a ON a.tenant_id=j.tenant_id AND a.job_id=j.id AND a.state='succeeded'
+        JOIN control_native_artifact_receipts r ON r.tenant_id=a.tenant_id AND r.job_id=a.job_id AND r.attempt_id=a.id
+        JOIN control_native_review_plans q ON q.tenant_id=r.tenant_id AND q.project_id=r.project_id
+          AND q.job_id=r.job_id AND q.run_id=r.run_id
+        JOIN control_transition_events e ON e.tenant_id=j.tenant_id AND e.entity_kind='job' AND e.entity_id=j.id
+          AND e.to_state='succeeded' AND e.idempotency_key LIKE 'native-completion:%:job'
+        WHERE p.tenant_id=$1 AND p.source_job_id=$2 AND j.state='succeeded'
+          AND a.worker_id=$3 AND a.node_id=$4
+        ORDER BY a.attempt_number DESC LIMIT 1`, [scope.tenantId, selection.sourceJobId,
+        selection.workerId, selection.nodeId])).rows[0];
+      if (!proof || !proof.targetId || !proof.targetDigest || proof.workerId !== selection.workerId
+        || proof.nodeId !== selection.nodeId)
+        throw new Error("work_batch_result_unavailable");
+      return proof;
+    };
+    const ownerAuthority = Object.freeze({
+      assertCurrent: (selection: WorkBatchQueueSelectionV1) => assertSelection(selection) === true,
+      async isAcceptedResultCurrent(tx: DatabaseSession, selection: Readonly<{
+        sourceJobId: string; workerId: string; nodeId: string }>) {
+        try { await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true; }
+        catch { return false; }
+      },
+    });
+    return Object.freeze({ integrityKey, ownerAuthority,
+      assignmentAuthority: Object.freeze({ integrityKey,
+        assertCurrent: async (_tx: DatabaseSession, selection: WorkBatchQueueSelectionV1) => {
+          if (assertSelection(selection) !== true) throw new Error("work_batch_selection_unavailable");
+        }, assertAcceptedResultCurrent }) });
+  })() : undefined;
   const ideaService = ideaPool ? new IdeaSessionCreationService(guardedDatabase(ideaPool), scope,
     input.ideaCreation!.integrityKey, input.ideaCreation!.participants, input.clock) : undefined;
   const ideaDecision = ideaPool ? new WebIdeaDecisionOperation(guardedDatabase(ideaPool), scope,
@@ -297,7 +375,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock,
     input.revisionPlanning ? input.quality : undefined, input.resultInspectionSource);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
-    input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex, transitionAdmission);
+    input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex, transitionAdmission,
+    workBatchAuthority?.assignmentAuthority);
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
@@ -399,6 +478,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       ...(input.codex ? { codexStage: assignment.stageApprovedCodexQueueDelivery.bind(assignment),
         codexTransmit: assignment.transmitApprovedCodexQueueDelivery.bind(assignment) } : {}) } : undefined,
     stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
+    renew: assignment.renewByHolder.bind(assignment),
     receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
     ...(input.codex ? { codexReceipt: assignment.receiveCodexDeliveryReceipt.bind(assignment) } : {}),
     ...(codexResultIntake ? { codexResult: codexResultIntake } : {}),
@@ -439,6 +519,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   const assignments: TaskAssignmentOperation = Object.freeze({ ...scope,
     assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
+    revoke: (...args) => run(() => assignment.revoke(...args)),
     options: (...args) => run(() => assignment.options(...args)),
     projectOptions: (...args) => run(() => assignment.projectOptions(...args)) });
   const approvals: TaskApprovalOperation | undefined = input.approvals ? Object.freeze({ ...scope,
@@ -523,6 +604,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
+    ...(workBatchAuthority ? { workBatchAuthority: workBatchAuthority.ownerAuthority } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),
     ...(nativeSubmission && (sessions || hermes021Local || hermesLocal || claudeCodeLocal || codexOwnerTrustedLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {

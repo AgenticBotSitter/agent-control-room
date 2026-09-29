@@ -22,6 +22,10 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { Client, Pool } from "pg";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 import { privateWebInsertColumns } from "../src/web/v1/private-database-preflight.ts";
 import { sha256Digest } from "../src/security/digest.ts";
 import {
@@ -47,10 +51,13 @@ const PORT = 65437;
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
+/** The shared teardown, created before `initdb` and released by `after()`. */
+let teardown = null;
 const target = (database, user = "fixture_admin") =>
   ({ host: socket, port: PORT, database, user, password: "fixture_only" });
 const adminDb = () => target("postgres");
-const passwords = { CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24), CONTROL_ROOM_APP_PASSWORD: "a".repeat(24), CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24) };
+const passwords = { CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24), CONTROL_ROOM_APP_PASSWORD: "a".repeat(24),
+  CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24), CONTROL_ROOM_WORK_INTAKE_PASSWORD: "w".repeat(24) };
 const bootstrapTarget = (database) => target(database, "fixture_admin");
 const migrateTarget = (database) => ({ host: socket, port: PORT, database,
   user: "control_room_migrator", password: passwords.CONTROL_ROOM_MIGRATOR_PASSWORD });
@@ -91,6 +98,15 @@ before(async () => {
   socket = join(run, "socket");
   data = join(run, "data");
   await mkdir(socket, { mode: 0o700, recursive: true });
+  // Registered BEFORE initdb, and that ordering is the fix. This lane had no
+  // SIGINT/SIGTERM handler at all, so a runner that stopped it at its bound, or
+  // a Ctrl-C, skipped `after()` and left a postmaster holding a 56-byte SysV
+  // shared-memory segment with a dead creator. `pg_ctl start` runs the postmaster
+  // with `setsid`, so it is its own session leader with PPID 1 and a group
+  // signal from the runner cannot reach it either. This machine has 32 of those
+  // segments in total.
+  teardown = createClusterTeardown({ dataDirectory: data, runDirectory: run,
+    socketDirectory: socket, port: PORT, pgBin: BIN });
   if (process.getuid?.() === ROOT_UID) {
     await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, run]);
   }
@@ -98,6 +114,11 @@ before(async () => {
   await native("initdb", ["-D", data, "-U", "fixture_admin", "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
   await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "30", "-o",
     `-k ${socket} -p ${PORT} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
+  // Retained while the cluster is up. WITHOUT this the teardown has no pid to
+  // signal, so it takes the branch that can only try one `pg_ctl` and then give
+  // up: the ladder — the whole point of this change — would never run for this
+  // lane, and the one path that can stop a wedged postmaster would be unused.
+  await teardown?.capturePostmasterPid();
   await query(adminDb(), `CREATE DATABASE "cr_prod_coord200" OWNER fixture_admin`);
   await applyMigrations({ target: target("cr_prod_coord200"), bootstrapTarget: bootstrapTarget("cr_prod_coord200"),
     migrateTarget: migrateTarget("cr_prod_coord200"), rootDir: ROOT, env: { ...process.env, ...passwords } });
@@ -143,11 +164,11 @@ before(async () => {
 
 after(async () => {
   if (!PG_AVAILABLE || !run) return;
-  try {
-    await native("pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]);
-  } finally {
-    await rm(run, { recursive: true, force: true });
-  }
+  // The shared ladder decides the order and refuses to report success when the
+  // postmaster survives. The old `finally { rm }` deleted the data directory
+  // even when the stop had failed, which is how a leaked segment became
+  // unreapable: nothing was left to stop the postmaster with.
+  await teardown?.stop();
 });
 
 const webTarget = () => ({ host: socket, port: PORT, database: "cr_prod_coord200",
@@ -520,5 +541,78 @@ test("policy lifecycle is durable on the live cluster: one mutation, saved recei
     assert.equal(ledger.rows[0]?.count, "1");
   } finally {
     await conn.end();
+  }
+});
+
+test("ownership-scope trigger gives exactly one winner under concurrent transactions", needsPg, async () => {
+  const digest = DIGEST("7"), acquiredAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  const setup = await open(target("cr_prod_coord200"));
+  try {
+    await setup.query("BEGIN");
+    await setup.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
+      VALUES('node:scope-race','tenant:test','active',0,'key:scope-race',
+        jsonb_build_object('id','node:scope-race','tenantId','tenant:test','state','active','version',0,
+          'identityKeyId','key:scope-race'),$1::timestamptz,$1::timestamptz)`, [acquiredAt]);
+    await setup.query(`INSERT INTO control_requests(id,tenant_id,project_id,state,version,idempotency_key,payload,created_at,updated_at)
+      VALUES('request:scope-race','tenant:test','project:alpha','accepted',0,'scope-race',
+        jsonb_build_object('id','request:scope-race','tenantId','tenant:test','projectId','project:alpha',
+          'state','accepted','version',0,'idempotencyKey','scope-race'),$1::timestamptz,$1::timestamptz)`, [acquiredAt]);
+    await setup.query(`INSERT INTO control_workflows(id,tenant_id,request_id,project_id,definition_digest,state,version,payload,created_at,updated_at)
+      VALUES('workflow:scope-race','tenant:test','request:scope-race','project:alpha',$2,'active',0,
+        jsonb_build_object('id','workflow:scope-race','tenantId','tenant:test','requestId','request:scope-race',
+          'projectId','project:alpha','definitionDigest',$2::text,'state','active','version',0),$1::timestamptz,$1::timestamptz)`, [acquiredAt, digest]);
+    await setup.query(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,
+        authority_digest,payload,created_at,updated_at)
+      SELECT id,'tenant:test','workflow:scope-race','project:alpha','leased',0,50,'fixture',$2,
+        jsonb_build_object('id',id,'tenantId','tenant:test','workflowId','workflow:scope-race','projectId','project:alpha',
+          'state','leased','version',0,'priority',50,'requiredCapability','fixture','authority',jsonb_build_object('digest',$2::text)),$1::timestamptz,$1::timestamptz
+      FROM (VALUES('job:scope-race-a'),('job:scope-race-b')) AS jobs(id)`, [acquiredAt, digest]);
+    await setup.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at)
+      SELECT 'attempt:' || right(id,1),'tenant:test',id,1,'leased',0,'worker:scope-race','node:scope-race',1,
+        jsonb_build_object('id','attempt:' || right(id,1),'tenantId','tenant:test','jobId',id,'attemptNumber',1,
+          'state','leased','version',0,'workerId','worker:scope-race','nodeId','node:scope-race','leaseEpoch',1),$1::timestamptz,$1::timestamptz
+      FROM (VALUES('job:scope-race-a'),('job:scope-race-b')) AS jobs(id)`, [acquiredAt]);
+    await setup.query(`INSERT INTO control_leases(id,tenant_id,job_id,attempt_id,node_id,epoch,state,version,acquired_at,expires_at,payload,created_at,updated_at)
+      SELECT 'lease:' || right(id,1),'tenant:test',id,'attempt:' || right(id,1),'node:scope-race',1,'active',0,$1,$2,
+        jsonb_build_object('id','lease:' || right(id,1),'tenantId','tenant:test','jobId',id,
+          'attemptId','attempt:' || right(id,1),'nodeId','node:scope-race','epoch',1,'state','active','version',0,
+          'acquiredAt',$1::timestamptz,'expiresAt',$2::timestamptz),$1::timestamptz,$1::timestamptz
+      FROM (VALUES('job:scope-race-a'),('job:scope-race-b')) AS jobs(id)`, [acquiredAt, expiresAt]);
+    await setup.query(`INSERT INTO control_task_declared_scopes(tenant_id,project_id,job_id,scope_kind,path,path_fold)
+      SELECT 'tenant:test','project:alpha',id,'tree','src/race','src/race'
+      FROM (VALUES('job:scope-race-a'),('job:scope-race-b')) AS jobs(id)`);
+    await setup.query("COMMIT");
+  } catch (error) {
+    await setup.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    await setup.end();
+  }
+
+  const a = await open(target("cr_prod_coord200")), b = await open(target("cr_prod_coord200"));
+  const acquire = async (conn, suffix) => {
+    await conn.query("BEGIN");
+    try {
+      await conn.query(`INSERT INTO control_assignment_lease_scopes
+        (tenant_id,lease_id,project_id,job_id,attempt_id,node_id,scope_kind,path,path_fold)
+        VALUES('tenant:test',$1,'project:alpha',$2,$3,'node:scope-race','tree','src/race','src/race')`,
+      [`lease:${suffix}`, `job:scope-race-${suffix}`, `attempt:${suffix}`]);
+      await conn.query("COMMIT");
+      return "winner";
+    } catch (error) {
+      await conn.query("ROLLBACK").catch(() => {});
+      assert.equal(error.code, "23P01");
+      return "refused";
+    }
+  };
+  try {
+    const outcomes = await Promise.all([acquire(a, "a"), acquire(b, "b")]);
+    assert.deepEqual(outcomes.sort(), ["refused", "winner"]);
+    const rows = await a.query(`SELECT count(*)::text AS count FROM control_assignment_lease_scopes
+      WHERE tenant_id='tenant:test' AND project_id='project:alpha' AND path_fold='src/race'`);
+    assert.equal(rows.rows[0]?.count, "1");
+  } finally {
+    await Promise.all([a.end(), b.end()]);
   }
 });

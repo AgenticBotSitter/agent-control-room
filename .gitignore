@@ -7,6 +7,16 @@ node_modules/
 /coverage/
 *.tsbuildinfo
 
+# Disposable PostgreSQL data directories created by test lanes. Must stay
+# inside the worktree: `with-test-slot` only stops postmasters whose -D data
+# directory is under its $PWD, so a cluster in the system temp dir is invisible
+# to it. (scripts/dev/cleanup-test-postgres.mjs does NOT see these either — it
+# only treats a directory as disposable when it is under os.tmpdir() or carries
+# a mac-local-rehearsal marker, neither of which a test lane writes. The
+# in-process teardown in tests/helpers/disposable-postgres-cluster.ts is what
+# actually stops them.)
+/.test-tmp/
+
 # Local credentials and environment overrides. Examples must contain placeholders.
 .env
 .env.*
@@ -19,6 +29,9 @@ node_modules/
 *.log
 *.ndjson
 .DS_Store
+
+# Job reports live outside the repo.
+/reports/
 
 # Playwright scratch output from a local owner-journey run: traces, screencasts
 # and per-test artifacts. Nothing here belongs in the repository, and it is large
@@ -33,6 +46,24 @@ node_modules/
 #   scripts/owner-page-screenshots.mjs    -> /test-results/owner-screenshots
 /test-results/playwright/
 /test-results/owner-screenshots/
+
+# Disposable PostgreSQL data directories for local test runs.
+#
+# A disposable cluster's data directory belongs inside the worktree and not in
+# the system temp directory. Two reasons, both measured:
+#   - `with-test-slot` (an operator-side wrapper, NOT in this repository) stops a
+#     PostgreSQL server only when its data directory is under the worktree it ran
+#     in, so a cluster outside the worktree survives that cleanup entirely.
+#   - a postmaster killed without a clean shutdown leaves a 56-byte SysV
+#     shared-memory segment behind, and this machine has 32 of those in total.
+# So a cluster outside the worktree both survives cleanup and costs the machine a
+# segment, and a leak blocks every other job on it.
+#
+# Nothing under this path is release source. It is listed explicitly rather than
+# under a broad rule, so a source directory that happens to be called
+# .test-tmp is not silently ignored and a third scratch producer has to be
+# added deliberately instead of inheriting this rule.
+/.test-tmp/
 
 # Do not add automation without an explicit budget/security review.
 # The CI workflow is reviewed in docs/ci-budget-security-review.md. Anything

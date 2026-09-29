@@ -5,6 +5,7 @@ import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-con
 import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { DatabaseClient } from "../../persistence/database";
+import type { WorkBatchQueueCatalogV1, WorkBatchQueueSelectionAuthorityV1 } from "../../work-intake/v1";
 
 export const MAC_LOCAL_TASK_PROVIDER_V1 = "control-room.mac-local-task-provider/v1" as const;
 /** Product worker identities are harness names, not an upstream release. */
@@ -14,6 +15,7 @@ type MacLocalWorkerKindV1 = typeof MAC_LOCAL_THREE_AGENT_KINDS_V1[number];
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type TaskApplication = Readonly<{
   operations: object;
+  projectEvents?: import("../../project-events/v1").ProjectEventReadSourceV1;
   isReady(): boolean;
   close(): Promise<void>;
   queueDelivery?: unknown;
@@ -35,6 +37,8 @@ export type MacLocalTaskProviderV1 = Readonly<{
     database: OpenedDatabase;
     workerReadiness: MacLocalWorkerReadinessV1;
     databaseRoles: MacLocalDatabaseRolesV1;
+    workBatches?: Readonly<{ integrityKey: Uint8Array; queueCatalog: WorkBatchQueueCatalogV1;
+      selectionAuthority: WorkBatchQueueSelectionAuthorityV1 }>;
   }>): Promise<TaskApplication> | TaskApplication;
 }>;
 

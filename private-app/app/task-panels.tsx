@@ -1,5 +1,6 @@
 import type { HermesDeliveryRecovery, TaskDetail, TaskDraft, TaskPage, TaskRun } from "../../src/web/v1/task-wire";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { formatNanoUsdV1 } from "../../src/usage/v1/usage-cost";
 import { StateChip, chipToneForStateV1 } from "./owner-ui";
 
 export const taskStateLabel: Record<TaskPage["tasks"][number]["state"], string> = {
@@ -75,7 +76,17 @@ export function TaskStateGuidance({ detail, refreshing, onRefresh }: { detail: T
 
 export function TaskProposalForm({ draft, setDraft, modelOptions = [], pending, preparing = false, uncertain, onSave }: { draft: TaskDraft;
   setDraft: (value: TaskDraft) => void; modelOptions?: TaskPage["modelOptions"]; pending: boolean; preparing?: boolean; uncertain: boolean; onSave: () => void }) {
-  const choices = modelOptions.flatMap(worker => worker.choices.map(choice => ({ ...choice, workerKind: worker.workerKind })));
+  const workerLabels = { codex: "Codex", "claude-code": "Claude Code", hermes: "Hermes Agent" } as const;
+  const grouped = new Map<string, Array<NonNullable<TaskPage["modelOptions"]>[number]["choices"][number] &
+    { workerKind: NonNullable<TaskPage["modelOptions"]>[number]["workerKind"] }>>();
+  for (const worker of modelOptions) for (const choice of worker.choices)
+    grouped.set(choice.key, [...(grouped.get(choice.key) ?? []), { ...choice, workerKind: worker.workerKind }]);
+  const ambiguousKeys: string[] = [];
+  const choices = [...grouped.values()].flatMap(group => {
+    const efforts = group[0]!.efforts.filter(effort => group.every(choice => choice.efforts.includes(effort)));
+    if (!efforts.length) { ambiguousKeys.push(group[0]!.key); return []; }
+    return [{ ...group[0]!, efforts, label: `${group.map(choice => workerLabels[choice.workerKind]).join(" / ")}: ${group[0]!.label}` }];
+  });
   const selected = choices.find(choice => choice.key === draft.model);
   return <form id="new-task" className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
     <h2>New task</h2><p className="private-note">Describe and save the work you want done. Saving does not assign or start an agent.
@@ -88,13 +99,23 @@ export function TaskProposalForm({ draft, setDraft, modelOptions = [], pending, 
     <label htmlFor="task-instructions">What should the agent deliver?</label>
     <textarea id="task-instructions" required rows={8} maxLength={4000} value={draft.instructions} disabled={pending || preparing || uncertain}
       aria-describedby="task-secrets-note" onChange={event => setDraft({ ...draft, instructions: event.target.value })} />
+    <fieldset><legend>Configured worker, model and effort defaults</legend>
+      {!!modelOptions.length ? <><p className="private-note">These are the owner-configured defaults. Choosing a model saves the exact model and effort request; preparation still checks it against the worker you choose.</p>
+        <ul>{(["hermes", "claude-code", "codex"] as const).map(workerKind => {
+          const worker = modelOptions.find(item => item.workerKind === workerKind);
+          const recommendation = worker?.choices.find(choice => choice.key === worker.defaultModel);
+          return <li key={workerKind}><strong>{workerLabels[workerKind]}:</strong> {recommendation
+            ? `${recommendation.label} · effort ${worker!.defaultEffort}` : "not configurable"}</li>;
+        })}</ul>{!!ambiguousKeys.length && <p className="private-note">A model shared by workers with no common effort is not offered here. Choose compatible worker settings before saving it.</p>}</>
+        : <p className="private-note">Model and effort are not configurable for this installation. The selected worker uses its protected default.</p>}
+    </fieldset>
     {!!choices.length && <><label htmlFor="task-model">Model (optional)</label><select id="task-model" value={draft.model ?? ""}
       disabled={pending || preparing || uncertain} onChange={event => {
         const choice = choices.find(item => item.key === event.target.value);
         setDraft({ ...draft, model: choice?.key || undefined,
           effort: choice ? (choice.efforts.includes(draft.effort as never) ? draft.effort : choice.efforts[0]) : undefined });
-      }}><option value="">Worker default</option>{choices.map(choice => <option key={`${choice.workerKind}:${choice.key}`}
-        value={choice.key}>{choice.workerKind}: {choice.label}</option>)}</select>
+      }}><option value="">Worker default</option>{choices.map(choice => <option key={choice.key}
+        value={choice.key}>{choice.label}</option>)}</select>
       {selected && <><label htmlFor="task-effort">Effort</label><select id="task-effort" value={draft.effort ?? selected.efforts[0]}
         disabled={pending || preparing || uncertain} onChange={event => setDraft({ ...draft, effort: event.target.value as TaskDraft["effort"] })}>
         {selected.efforts.map(value => <option key={value} value={value}>{value}</option>)}</select>
@@ -130,7 +151,30 @@ export function TaskCatalogPanel({ page, after, href = (projectId, jobId, cursor
   </section>;
 }
 
-function RunPanel({ run }: { run: TaskRun }) {
+const unknownCost: Record<Extract<TaskRun["cost"], { kind: "unknown" }>["reason"], string> = {
+  usage_not_reported: "the harness did not report token usage", model_not_recorded: "the run has no recorded model",
+  price_table_not_recorded: "no owner price table is recorded", price_entry_not_recorded: "the recorded price table has no matching model entry",
+  partial_token_usage: "the harness did not report both input and output tokens",
+  cache_pricing_not_recorded: "the run used cached tokens the recorded price table does not price",
+};
+function CostValue({ cost }: { cost: TaskRun["cost"] }) {
+  return cost.kind === "known" ? <>{formatNanoUsdV1(cost.nanoUsd)} <span className="private-note">({cost.priceEntryId})</span></>
+    : cost.kind === "included_in_subscription" ? <>Included in subscription <span className="private-note">({cost.priceEntryId})</span></>
+      : <>Cost unknown — {unknownCost[cost.reason]}</>;
+}
+function UsageRollup({ value, label }: { value: TaskDetail["usageRollup"]; label: string }) {
+  return <section className="private-panel" aria-label={`${label} usage and cost`}><h3>{label} usage and cost</h3>
+    <dl className="private-task-facts"><div><dt>Runs</dt><dd>{value.runs.toLocaleString()}</dd></div>
+      <div><dt>Input tokens</dt><dd>{value.inputTokens === null ? "Unknown — at least one run did not report them" : value.inputTokens.toLocaleString()}</dd></div>
+      <div><dt>Output tokens</dt><dd>{value.outputTokens === null ? "Unknown — at least one run did not report them" : value.outputTokens.toLocaleString()}</dd></div>
+      <div><dt>Wall time</dt><dd>{value.wallTimeMs === null ? "Unknown — at least one run has no finished wall time" : `${value.wallTimeMs.toLocaleString()} ms`}</dd></div>
+      <div><dt>Known cost</dt><dd>{formatNanoUsdV1(value.knownCostNanoUsd)} across {value.knownCostRuns} priced run(s)</dd></div>
+      <div><dt>Subscription</dt><dd>{value.subscriptionRuns} run(s) included in subscription</dd></div>
+      <div><dt>Unknown cost</dt><dd>{value.unknownCostRuns} run(s){value.unknownCostReasons.length
+        ? ` — ${value.unknownCostReasons.map(reason => unknownCost[reason]).join("; ")}` : ""}</dd></div></dl></section>;
+}
+
+export function RunPanel({ run }: { run: TaskRun }) {
   const retained = run.stale || run.state === "disconnected" || run.availability !== null && run.availability !== "current";
   const label = run.nativeState ? nativeLabel[run.nativeState] : run.state.replaceAll("_", " ");
   const routeLabel = run.routeEvidence === "local_hermes" ? "local Hermes Agent adapter"
@@ -149,11 +193,14 @@ function RunPanel({ run }: { run: TaskRun }) {
       Last reported state: {label}.</p>}
     <p>{run.source === "native_snapshot" ? "Native agent evidence"
       : run.routeEvidence && run.routeEvidence !== "other_or_unknown" ? "Local agent evidence" : "Legacy adapter evidence"} · <ConfiguredTimestamp value={run.lastObservedAt} prefix="Last observed" /></p>
-    {run.model && <p><strong>Model:</strong> {run.profile ? `${run.profile} · ` : ""}{run.model} · effort {run.effort ?? "unknown"}{run.provider ? ` · ${run.provider}` : ""}</p>}
+    <p><strong>Model:</strong> {run.model ? <>{run.profile ? `${run.profile} · ` : ""}{run.model} · effort {run.effort ?? "unknown"}{run.provider ? ` · ${run.provider}` : ""}</>
+      : "Unknown — no model was recorded for this run"}</p>
     {routeLabel && <p className="private-note">Saved adapter route: {routeLabel}. This identifies the signed run record only; it does not prove that this computer still has that worker configured, available, or running.</p>}
     <dl className="private-task-facts"><div><dt>First observed working</dt><dd>{run.firstObservedExecutionAt ? <ConfiguredTimestamp value={run.firstObservedExecutionAt} /> : "Unknown"}</dd></div>
-      <div><dt>Reported tokens</dt><dd>{run.usage?.totalTokens === null || run.usage?.totalTokens === undefined ? "Unknown" : run.usage.totalTokens.toLocaleString()}</dd></div>
-      <div><dt>Cost</dt><dd>Unavailable — no enforced dollar limit</dd></div></dl>
+      <div><dt>Input tokens</dt><dd>{run.usage?.inputTokens === null || run.usage?.inputTokens === undefined ? "Unknown — not reported" : run.usage.inputTokens.toLocaleString()}</dd></div>
+      <div><dt>Output tokens</dt><dd>{run.usage?.outputTokens === null || run.usage?.outputTokens === undefined ? "Unknown — not reported" : run.usage.outputTokens.toLocaleString()}</dd></div>
+      <div><dt>Wall time</dt><dd>{run.usage?.wallTimeMs === null || run.usage?.wallTimeMs === undefined ? "Unknown — run has not recorded a complete interval" : `${run.usage.wallTimeMs.toLocaleString()} ms`}</dd></div>
+      <div><dt>Cost</dt><dd><CostValue cost={run.cost} /></dd></div></dl>
     {run.cancellation !== "not_requested" && <p className="private-note">Cancellation: {run.cancellation.replaceAll("_", " ")}. This view does not prove that every process or external action has stopped.</p>}
     {run.resultClaim && <div className="private-result-claim"><h4>Result reported by the agent</h4>
       <p>{run.resultClaim.sizeBytes.toLocaleString()} bytes reported. This fingerprint is a producer claim; received files and their checks are shown separately below.</p>
@@ -244,6 +291,10 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         links={detail.revisionLinks ?? { previousJobId: null, nextJobId: null, revisionNumber: 0 }} /></section>
     {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
       <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p>
+      {detail.modelSelection?.model
+        ? <p><strong>Chosen for this prepared task:</strong> {preparedFor} · {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
+          {detail.modelSelection.model} · effort {detail.modelSelection.effort}</p>
+        : <p className="private-note">Model and effort are not configurable for this task; the worker uses its protected default.</p>}
       <p className="private-note">{preparedRouteDetail}</p>
       <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p></section>}
     <LocalRouteObservationPanel detail={detail} />
@@ -251,6 +302,10 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
       {detail.ownershipLeases.map(lease => <div key={`${lease.nodeId}:${lease.expiresAt}`}><p><strong>{lease.nodeId}</strong> · {lease.current ? "active" : lease.state} · expires <ConfiguredTimestamp value={lease.expiresAt} /></p>
         <ul>{lease.scopes.map(scope => <li key={`${scope.kind}:${scope.path}`}>{scope.kind}: <code>{scope.path || "/"}</code></li>)}</ul></div>)}</section>}
     <HermesDeliveryRecoveryPanel recovery={detail.hermesDeliveryRecovery} />
+    <UsageRollup value={detail.usageRollup} label="Task" />
+    <p className="private-note">{detail.priceTable.state === "recorded"
+      ? <>Cost uses owner-recorded table <code>{detail.priceTable.tableId}</code>, recorded <ConfiguredTimestamp value={detail.priceTable.recordedAt!} />.</>
+      : "No owner price table is recorded. Usage remains visible and cost stays unknown."}</p>
     <section className="private-panel"><h2>Agent progress</h2>
       <p>{detail.dispatch === "configured"
         ? "Task submission is configured. A recorded submission is not proof that an agent is online or has started."
@@ -263,6 +318,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
             class, which is what the chip dot used to convey. */}
         <h3 className={`private-attempt-state is-${chipToneForStateV1(attempt.state)}`}>
           Attempt {attempt.attemptNumber} · {attempt.state.replaceAll("_", " ")}</h3>
+        <UsageRollup value={attempt.usageRollup} label={`Attempt ${attempt.attemptNumber}`} />
         {detail.progressSource === "configured" && !attempt.runs.length && <p>No agent observation is recorded for this attempt.</p>}
         {attempt.runs.map(run => <RunPanel key={run.runId} run={run} />)}
         {attempt.additionalRunsOmitted && <p>Only the 10 most recently created run records are shown.</p>}</section>)}

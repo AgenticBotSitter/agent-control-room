@@ -16,6 +16,14 @@ import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../../src/harness/v1/owner-trusted-local-enablements";
 import { readPinnedMacExecutableVersion } from "../start-web-host.mjs";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "../../dev/postgres-cluster-lifecycle.mjs";
+import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
+  workIntakeClientFileNameV1, workIntakeIdentityIdV1,
+  WORK_INTAKE_CLIENT_CONFIGURATION_V1, WORK_INTAKE_SERVER_CONFIGURATION_V1 } from
+  "../../../src/work-intake/v1/installed-configuration";
 
 const [action, dir] = process.argv.slice(2);
 const portIndex = process.argv.indexOf("--port");
@@ -24,7 +32,7 @@ const webPortIndex = process.argv.indexOf("--web-port");
 const webPort = webPortIndex === -1 ? 3217 : Number(process.argv[webPortIndex + 1]);
 const fakeExecutables = process.argv.includes("--fake-executables");
 if (!["up", "down"].includes(action) || !dir || !isAbsolute(dir) || !Number.isInteger(port)
-  || !Number.isInteger(webPort) || webPort < 1024 || webPort > 65535 || webPort === port) {
+  || !Number.isInteger(webPort) || webPort < 1024 || webPort > 65534 || webPort === port || webPort + 1 === port) {
   console.error("usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499] [--web-port 3217] [--fake-executables]");
   process.exit(2);
 }
@@ -38,15 +46,35 @@ const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
 const pg = join(dir, "pg");
 const bounded = { env, stdio: "ignore" as const, timeout: 120_000, killSignal: "SIGKILL" as const };
 const pgctl = (...args: string[]) => execFileSync(pgExecutable("pg_ctl"), ["-D", pg, ...args], bounded);
+
+// The shared teardown, created BEFORE initdb. That ordering is the fix.
+//
+// This script's own signal handlers ran `pg_ctl stop -m fast` with the error
+// SWALLOWED, and its `exit` hook had the same shape. Two consequences on a
+// machine with 32 SysV shared-memory segments in total, one per postmaster:
+// a `pg_ctl` that failed left a live postmaster holding its 56-byte segment
+// with a dead creator, and a start that forked and then failed left one too,
+// because `clusterStarted` was only set AFTER `pg_ctl start` returned. The
+// shared teardown registers first, asks for the stop in the order that
+// RELEASES the segment, and refuses to report success when the postmaster
+// survives.
+//
+// `keepCluster` is honoured here rather than inside the teardown: this
+// rehearsal intentionally leaves a running cluster for the owner's browser
+// session, and the teardown is released rather than stopped in that case.
+const teardown = createClusterTeardown({ dataDirectory: pg, runDirectory: dir, port, pgBin,
+  removeDirectories: false });
 let clusterStarted = false;
 let keepCluster = false;
-let stopping = false;
 
 function stopStartedCluster() {
-  if (!clusterStarted || stopping) return;
-  stopping = true;
-  try { pgctl("stop", "-m", "fast"); } catch { /* Preserve the original setup or signal failure. */ }
+  if (!clusterStarted) return;
   clusterStarted = false;
+  // Not awaited: this is the synchronous teardown path (`process.on("exit")` and
+  // a signal handler), and the teardown's own hook has already run the bounded
+  // cooperative stop by the time this is reached. The rejection is the original
+  // setup or signal failure, which must reach the caller.
+  void teardown.stop().catch(() => { /* Preserve the original setup or signal failure. */ });
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => {
@@ -79,8 +107,15 @@ try {
   }
   pgctl("-l", join(dir, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
   clusterStarted = true;
+  // Retained while the cluster is up, so a teardown reached from a signal or the
+  // exit hook has a pid even when the rest of setup is about to throw.
+  await teardown.capturePostmasterPid();
   if (!fresh) {
     keepCluster = true;
+    // The cluster is deliberately handed to the owner's session, so the hooks
+    // are disarmed. They were armed at startup anyway, which is what protects
+    // the window before this point: a failure there still stops the cluster.
+    teardown.release();
     console.log(`rehearsal database running on 127.0.0.1:${port}; protected root ${join(dir, "protected")}`);
     process.exit(0);
   }
@@ -88,7 +123,7 @@ try {
 execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", "postgres", "-v", "dbname=control_room",
   "-f", fileURLToPath(new URL("../../../deploy/postgres/provision-database.sql", import.meta.url))], bounded);
 const pw = () => randomBytes(24).toString("base64url");
-const secrets = { migrator: pw(), application: pw(), scheduler: pw() };
+const secrets = { migrator: pw(), application: pw(), scheduler: pw(), workIntake: pw() };
 const local: Record<string, string> = { control_room_web: pw(), control_room_coordinator: pw(), control_room_results: pw(), control_room_publisher: pw(), control_room_queue_worker: pw() };
 const bootstrapTarget = `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
 await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
@@ -96,7 +131,8 @@ await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
   bootstrapTarget,
   migrateTarget: `host=127.0.0.1 port=${port} dbname=control_room user=control_room_migrator password=${secrets.migrator}`,
   env: { NODE_ENV: "test", CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator,
-    CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
+    CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler,
+    CONTROL_ROOM_WORK_INTAKE_PASSWORD: secrets.workIntake } });
 const psql = (database: string, file: string) => execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", database,
   "-v", "ON_ERROR_STOP=1", "-f", fileURLToPath(new URL(file, import.meta.url))], bounded);
 // Match the reviewed package-5 sequence against this fresh disposable cluster.
@@ -168,13 +204,55 @@ const ownerCode = pw() + pw();
 const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: webPort, workspaceId: "workspace:mac-local",
   localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: `http://127.0.0.1:${webPort}`, tenantId: "tenant:mac-local",
     provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
-  database, enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers } };
+  database, enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers },
+  workIntakeProjectIds: ["*"] };
 captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
-for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)], ["owner-sign-in.txt", ownerCode]])
+const clients = workers.map(worker => ({ worker, client: captureWorkIntakeClientConfigurationV1({
+  schema: WORK_INTAKE_CLIENT_CONFIGURATION_V1, origin: `http://127.0.0.1:${webPort + 1}`,
+  bearerSecret: randomBytes(32).toString("base64url") }) }));
+const credentialStart=new Date(),credentialEnd=new Date(credentialStart.getTime()+8*60*60*1000);
+const workIntake = captureWorkIntakeServerConfigurationV1({ schema: WORK_INTAKE_SERVER_CONFIGURATION_V1,
+  port: webPort + 1, database: { ...database, username: "control_room_work_intake_agent", password: secrets.workIntake },
+  integrityKey: randomBytes(32).toString("base64url"), queueDepthLimit: 10,
+  credentials: clients.map(({ worker, client }) => ({ workerId:worker.workerId,workerKind:worker.kind,
+    credentialDigest: sha256Digest(client.bearerSecret),
+    principal: { tenantId: "tenant:mac-local",
+      identityId: workIntakeIdentityIdV1("tenant:mac-local",worker.workerId), actorType: "agent",
+      authenticatedAt: credentialStart.toISOString(), expiresAt: credentialEnd.toISOString() } })) });
+for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)],
+  ["work-intake-server.json", JSON.stringify(workIntake)], ["owner-sign-in.txt", ownerCode]])
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
+const clientRoot=join(config,"work-intake-clients"); mkdirSync(clientRoot,{recursive:true,mode:0o700});
+for(const {worker,client} of clients) writeFileSync(join(clientRoot,workIntakeClientFileNameV1(worker.workerId)),`${JSON.stringify(client)}\n`,{mode:0o600});
+// An owner price table, present for every rehearsal run: this is the only
+// end-to-end proof that the real production provider (mac-local-default-task-provider.ts)
+// actually loads `usage-prices.json` and carries it through the full
+// composition into the started host's own HTTP responses (Control Room #412
+// review finding 3 -- the untested provider hop). Prices cover both the
+// default and `--model-allowlists` journeys; unmatched entries are inert.
+const usagePriceTable = { schema: "control-room.usage-price-table/v1", tableId: "rehearsal-usage-prices",
+  recordedAt: "2026-01-01T00:00:00.000Z", entries: [
+    { entryId: "rehearsal-hermes-default", harness: "hermes", model: "default",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-claude-default", harness: "claude", model: "default",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-codex-default", harness: "codex", model: "default",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-hermes-allowlist", harness: "hermes", model: "model-rehearsal",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-claude-allowlist", harness: "claude", model: "sonnet-rehearsal",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-codex-allowlist", harness: "codex", model: "gpt-rehearsal",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+  ] };
+writeFileSync(join(root, "usage-prices.json"), `${JSON.stringify(usagePriceTable)}\n`, { mode: 0o600 });
 console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
 console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
   keepCluster = true;
+  // Deliberate hand-off, as above: the hooks are disarmed so a later Ctrl-C in
+  // the owner's shell does not stop a database the rehearsal was asked to leave
+  // running. `pnpm mac:rehearsal down` is what stops it.
+  teardown.release();
 } finally {
   if (!keepCluster) stopStartedCluster();
 }

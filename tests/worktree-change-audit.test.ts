@@ -34,11 +34,13 @@ test("a future local code task can bind its worktree evidence to the existing co
   const delivery = { schema: "control-room.controller-worker-delivery/v1" as const,
     identity: { tenantId: "tenant:test", projectId: "project:test", jobId: "job:test", attemptId: "attempt:test", runId: "run:test", nodeId: "node:test" },
     worker: { workerId: "worker:test", adapterId: "adapter:test", adapterRevision: "1234567" },
-    input: { prompt: "Review a small change", instructions: "Return evidence only" }, authorityDigest: digest("authority"),
+    input: { prompt: "Review a small change", instructions: "Return evidence only" },
+    writeScopes: [{ scopeKind: "tree" as const, path: "src" }], authorityDigest: digest("authority"),
     connectorProfileDigest: digest("profile"), acceptanceProfileId: "profile:test", acceptanceProfileDigest: digest("acceptance"),
     issuedAt: "2026-09-20T00:00:00.000Z", expiresAt: "2026-09-20T00:10:00.000Z" };
   const inputDigest = digest(delivery.input);
   const deliveryId = `delivery:${sha256Digest({ identity: delivery.identity, worker: delivery.worker, inputDigest,
+    writeScopes: delivery.writeScopes,
     authorityDigest: delivery.authorityDigest, connectorProfileDigest: delivery.connectorProfileDigest,
     acceptanceProfileId: delivery.acceptanceProfileId, acceptanceProfileDigest: delivery.acceptanceProfileDigest,
     issuedAt: delivery.issuedAt, expiresAt: delivery.expiresAt }).slice(7)}`;

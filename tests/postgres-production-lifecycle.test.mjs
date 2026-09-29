@@ -3,15 +3,19 @@
 // --auth-host=reject. Needs the PG 17 bin directory (PG_BIN or the Debian default).
 import assert from "node:assert/strict";
 import test, { before, after } from "node:test";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, mkdir, rm, cp, readdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { Client } from "pg";
 import { applyMigrations, readSchemaDigest } from "../deploy/postgres/apply-migrations.mjs";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown, pidAlive } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 import { backupDatabase } from "../deploy/postgres/backup-database.mjs";
 import { restoreDatabase } from "../deploy/postgres/restore-database.mjs";
 import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.mjs";
@@ -20,6 +24,17 @@ import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migratio
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
 import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
+import { AuditStore } from "../src/audit/audit-store.ts";
+import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
+import { WorkBatchOwnerServiceV1 } from "../src/work-intake/v1/owner-service.ts";
+import { workBatchProposalDigestV1 } from "../src/work-intake/v1/digest.ts";
+import { sha256Digest } from "../src/security/canonical-digest.ts";
+import { SecurityStore } from "../src/security/security-store.ts";
+import { WebProjectService } from "../src/web/v1/project-service.ts";
+import { WebTaskService } from "../src/web/v1/task-service.ts";
+import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
+import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
+import { now as webNow, request as webRequest, trust as webTrust } from "./helpers/web-foundation.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
@@ -29,14 +44,19 @@ const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
 // failing the whole lane for an unrelated pull request.
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN or /usr/lib/postgresql/17/bin)" };
-const PORT = 15630;
+// Socket-only clusters; the base is overridable so concurrent local runs can
+// stay inside an assigned port range. PORT..PORT+3 are used.
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 15630);
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
+/** The shared teardown, created before `initdb` and released by `after()`. */
+let teardown = null;
 const target = (database, user = "fixture_admin") =>
   ({ host: socket, port: PORT, database, user, password: "fixture_only" });
 const adminDb = () => target("postgres");
-const passwords = { CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24), CONTROL_ROOM_APP_PASSWORD: "a".repeat(24), CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24) };
+const passwords = { CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24), CONTROL_ROOM_APP_PASSWORD: "a".repeat(24),
+  CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24), CONTROL_ROOM_WORK_INTAKE_PASSWORD: "w".repeat(24) };
 // Production-correct migrator target: the bootstrap phase creates the
 // control_room_migrator login with the password from CONTROL_ROOM_MIGRATOR_PASSWORD,
 // then the migrate phase connects as that login (IN ROLE schema_owner) and runs
@@ -77,12 +97,40 @@ async function query(target, sql, params = []) {
   }
 }
 
+function postgresDatabase(target) {
+  const one = async (callback) => {
+    const client=new Client(target); await client.connect();
+    try { return await callback(client); } finally { await client.end(); }
+  };
+  const database={
+    query:(sql,params=[])=>one(client=>client.query(sql,params)),
+    transaction:(callback)=>one(async client=>{ await client.query("BEGIN");
+      try { const result=await callback({query:(sql,params=[])=>client.query(sql,params)});
+        await client.query("COMMIT"); return result; }
+      catch(error){ await client.query("ROLLBACK"); throw error; } }),
+    transactionWithPreCommitCheck:(callback,check)=>one(async client=>{ await client.query("BEGIN");
+      try { const result=await callback({query:(sql,params=[])=>client.query(sql,params)});
+        await check(); await client.query("COMMIT"); return result; }
+      catch(error){ await client.query("ROLLBACK"); throw error; } }),
+  };
+  return Object.freeze(database);
+}
+
 before(async () => {
   if (!PG_AVAILABLE) return;
   run = await mkdtemp(join(tmpdir(), "cr-pg63-"));
   socket = join(run, "socket");
   data = join(run, "data");
   await mkdir(socket, { mode: 0o700 });
+  // Registered BEFORE initdb, and that ordering is the fix. This lane had no
+  // SIGINT/SIGTERM handler at all, so a runner that stopped it at its bound, or
+  // a Ctrl-C, skipped `after()` and left a postmaster holding a 56-byte SysV
+  // shared-memory segment with a dead creator. `pg_ctl start` runs the postmaster
+  // with `setsid`, so it is its own session leader with PPID 1 and a group
+  // signal from the runner cannot reach it either. This machine has 32 of those
+  // segments in total.
+  teardown = createClusterTeardown({ dataDirectory: data, runDirectory: run,
+    socketDirectory: socket, port: PORT, pgBin: BIN });
   // On a root dev box, chown the run directory to the postgres pseudo-user
   // so initdb/pg_ctl/postgres (which run with that UID) can write the data
   // directory. Non-root CI runners skip the chown — the test driver already
@@ -94,15 +142,20 @@ before(async () => {
   await native("initdb", ["-D", data, "-U", "fixture_admin", "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
   await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "30", "-o",
     `-k ${socket} -p ${PORT} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
+  // Retained while the cluster is up. WITHOUT this the teardown has no pid to
+  // signal, so it takes the branch that can only try one `pg_ctl` and then give
+  // up: the ladder — the whole point of this change — would never run for this
+  // lane, and the one path that can stop a wedged postmaster would be unused.
+  await teardown?.capturePostmasterPid();
 });
 
 after(async () => {
   if (!PG_AVAILABLE || !run) return;
-  try {
-    await native("pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]);
-  } finally {
-    await rm(run, { recursive: true, force: true });
-  }
+  // The shared ladder decides the order and refuses to report success when the
+  // postmaster survives. The old `finally { rm }` deleted the data directory
+  // even when the stop had failed, which is how a leaked segment became
+  // unreapable: nothing was left to stop the postmaster with.
+  await teardown?.stop();
 });
 
 async function freshDatabase(name) {
@@ -166,6 +219,76 @@ test("ordered upgrade applies a pending suffix in two phases", needsPg, async ()
     const phase2 = await applyMigrations({ target: target("cr_prod_upgrade"), bootstrapTarget: bootstrapTarget("cr_prod_upgrade"), migrateTarget: migrateTarget("cr_prod_upgrade"), rootDir: stage, ledgerPath });
     assert.equal(phase2.applied.length, 5);
     assert.deepEqual(phase2.applied.map(entry => entry.order), [6, 7, 8, 9, 10]);
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
+});
+
+// A database already at main (S1 0093, 0100, 0101 and S2 0102 applied) must
+// upgrade by appending only this head's queue migration after main's last
+// applied order, never by slotting it in before an applied order.
+test("upgrade from main's applied ledger appends only the agent-queue migration", needsPg, async () => {
+  const stage = await mkdtemp(join(tmpdir(), "cr-pg63main-"));
+  try {
+    for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
+      await mkdir(join(stage, dir), { recursive: true });
+    const migrations = (await readdir(join(ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
+    const queue = migrations.filter(name => name.endsWith("_work_batch_agent_queue.sql"));
+    assert.equal(queue.length, 1);
+    const mainMigrations = migrations.filter(name => name !== queue[0]);
+    for (const shipped of ["0100_ownership_lease_collision_guard.sql", "0101_owner_review_job_lock.sql",
+      "0102_work_batch_owner_approval.sql"]) assert.ok(mainMigrations.includes(shipped), shipped);
+    for (const file of mainMigrations)
+      await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
+    for (const file of ["production_roles.sql", "production_provision.sql"])
+      await cp(join(ROOT, "db/roles", file), join(stage, "db/roles", file));
+    // main's grants: this head's file without the agent-queue additions.
+    const grants = await readFile(join(ROOT, "db/roles/production_table_grants.sql"), "utf8");
+    const mainGrants = grants.replace(", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads", "");
+    assert.notEqual(mainGrants, grants);
+    await writeFile(join(stage, "db/roles/production_table_grants.sql"), mainGrants);
+    await cp(join(ROOT, "db/setup/production_migration_ledger.sql"), join(stage, "db/setup/production_migration_ledger.sql"));
+    const entries = await collectLedgerEntries(stage);
+    const ledgerPath = join(stage, "deploy/postgres/migration-ledger.json");
+    await writeFile(ledgerPath, JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
+
+    await freshDatabase("cr_prod_upgrade_main");
+    const db = target("cr_prod_upgrade_main");
+    const atMain = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
+      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
+    assert.equal(atMain.grants, "applied");
+    const mainLedger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
+    assert.deepEqual(mainLedger.map(row => row.filename), mainMigrations.map(file => `db/migrations/${file}`));
+    assert.equal((await query(db, "SELECT to_regclass('public.work_batch_queue_admissions') AS present")).rows[0].present, null);
+
+    const upgraded = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
+      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
+    assert.deepEqual(upgraded.applied.map(entry => [entry.file, entry.order]),
+      [[`db/migrations/${queue[0]}`, mainMigrations.length + 1]]);
+    assert.equal(upgraded.grants, "applied");
+    assert.deepEqual((await query(db, `SELECT ledger_order, count(*)::int AS rows FROM control_room_schema_migrations
+      GROUP BY ledger_order HAVING count(*) > 1`)).rows, []);
+    const ledger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
+    assert.deepEqual(ledger.map(row => row.ledger_order), ledger.map((_, index) => index + 1));
+    assert.deepEqual(ledger.slice(0, -1), mainLedger);
+    assert.deepEqual(ledger.at(-1), { filename: `db/migrations/${queue[0]}`, ledger_order: mainMigrations.length + 1 });
+    // Grants converged on the new objects in the same run: no shared or agent login reaches them.
+    assert.deepEqual((await query(db, `SELECT r.role, t.name,
+      has_table_privilege(r.role, t.name, 'SELECT') OR has_table_privilege(r.role, t.name, 'INSERT')
+        OR has_table_privilege(r.role, t.name, 'UPDATE') OR has_table_privilege(r.role, t.name, 'DELETE') AS any
+      FROM unnest(ARRAY['control_room_work_intake','control_room_work_intake_agent','control_room_reader',
+        'control_room_application','control_room_schedule_admissions','control_room_github_broker']) r(role)
+      CROSS JOIN unnest(ARRAY['work_batch_queue_admissions','work_batch_agent_queue_heads',
+        'work_batch_effective_queue_admissions']) t(name)
+      WHERE has_table_privilege(r.role, t.name, 'SELECT') OR has_table_privilege(r.role, t.name, 'INSERT')
+        OR has_table_privilege(r.role, t.name, 'UPDATE') OR has_table_privilege(r.role, t.name, 'DELETE')`)).rows, []);
+
+    const rerun = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
+      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
+    assert.equal(rerun.noOp, true);
+    assert.equal(rerun.grants, "applied");
+    assert.deepEqual((await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows,
+      ledger);
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
@@ -289,6 +412,716 @@ test("schedule-admission service gets narrow grants on fresh install and upgrade
   assert.equal(back.sched_insert, true);
 });
 
+test("work-intake login cannot read or forge another subsystem's shared-ledger records", needsPg, async () => {
+  await freshDatabase("cr_prod_intake_guard");
+  const db=target("cr_prod_intake_guard");
+  await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_intake_guard"),
+    migrateTarget:migrateTarget("cr_prod_intake_guard"), rootDir:ROOT, env:{...process.env,...passwords} });
+  await query(db,"INSERT INTO tenants(id,display_name) VALUES('tenant:intake-guard','intake guard')");
+  await query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:intake-guard')");
+  await query(db,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:intake-guard','tenant:intake-guard','workspace')");
+  await query(db,`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
+    redaction_policy_version,cursor_retention_days) VALUES('adapter:intake-guard','tenant:intake-guard','manual','1',
+    'control_room_native','fixture','v1',1)`);
+  for(const projectId of ["project:intake-guard","project:intake-other"])
+    await query(db,`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,
+      normalized_state,domain_state,health,authority_mode,observed_at,payload) VALUES($1,'tenant:intake-guard',
+      'workspace:intake-guard','adapter:intake-guard',$1,'1','Project','ready','ready','healthy',
+      'control_room_native','2026-09-27T12:00:00.000Z','{}')`,[projectId]);
+  await query(db,`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+    auth_subject_digest,state,created_at,updated_at) VALUES('identity:intake-guard','tenant:intake-guard','agent',
+    'Intake agent','work-intake',$1,'active','2026-09-27T12:00:00.000Z','2026-09-27T12:00:00.000Z')`,
+    [`sha256:${"6".repeat(64)}`]);
+  await query(db,`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+    risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at) VALUES('grant:intake-guard',
+    'tenant:intake-guard','identity:intake-guard','work_batch_proposer','["work_batches.propose"]',
+    '["project:intake-guard"]','low',false,false,'2026-09-27T12:00:00.000Z','2026-09-27T12:00:00.000Z')`);
+  await query(db,`INSERT INTO control_idempotency
+    (tenant_id,operation_scope,idempotency_key,request_digest,status)
+    VALUES('tenant:intake-guard','other.operation/v1','other-key-0001',$1,'processing')`,[`sha256:${"1".repeat(64)}`]);
+  await query(db,`INSERT INTO audit_events
+    (id,tenant_id,actor_id,actor_type,action,target_type,target_id,safe_metadata,occurred_at)
+    VALUES('audit:other:1','tenant:intake-guard','identity:other','service','other.action','tenant',
+      'tenant:intake-guard','{}'::jsonb,'2026-09-27T12:00:00.000Z')`);
+  await query(db,`INSERT INTO control_audit_chain_heads
+    (tenant_id,chain_partition,head_hash,event_count,updated_at)
+    VALUES('tenant:intake-guard','month:2026-09',$1,0,'2026-09-27T12:00:00.000Z')`,[`sha256:${"0".repeat(64)}`]);
+  const intake={...target("cr_prod_intake_guard","control_room_work_intake_agent"),
+    password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+  assert.deepEqual((await query(intake,"SELECT operation_scope FROM control_idempotency")).rows,[]);
+  assert.deepEqual((await query(intake,"SELECT id FROM audit_events")).rows,[]);
+  await assert.rejects(query(intake,`INSERT INTO control_idempotency
+    (tenant_id,operation_scope,idempotency_key,request_digest,status)
+    VALUES('tenant:intake-guard','other.operation/v1','attack-key-0001',$1,'processing')`,
+    [`sha256:${"2".repeat(64)}`]),/work intake idempotency insert rejected/u);
+  await assert.rejects(query(intake,`INSERT INTO audit_events
+    (id,tenant_id,actor_id,actor_type,action,target_type,target_id,safe_metadata,occurred_at,
+      chain_version,chain_partition,chain_sequence,event_digest,prev_hash,event_hash)
+    VALUES('audit:work-intake:forged','tenant:intake-guard','identity:other','agent','other.action',
+      'project','project:other','{}'::jsonb,'2026-09-27T12:00:00.000Z',1,'month:2026-09',1,$1,$2,$3)`,
+    [`sha256:${"3".repeat(64)}`,`sha256:${"0".repeat(64)}`,`sha256:${"4".repeat(64)}`]),
+    /work intake audit event insert rejected/u);
+  await assert.rejects(query(intake,`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:not-a-batch','tenant:intake-guard','project:intake-guard','other','approval','open',
+      'delivered','2026-09-27T12:00:00.000Z','{}'::jsonb)`),/work batch notification insert rejected/u);
+  await assert.rejects(query(intake,`UPDATE control_audit_chain_heads SET head_hash=$1,event_count=1
+    WHERE tenant_id='tenant:intake-guard' AND chain_partition='month:2026-09'`,[`sha256:${"5".repeat(64)}`]),
+    /work intake audit head update rejected/u);
+
+  // Grants and the binding retain the group OID across a rename. Every guard
+  // and restrictive policy must therefore remain active without matching the
+  // group's original display name.
+  await query(db,"ALTER ROLE control_room_work_intake RENAME TO control_room_work_intake_renamed");
+  try {
+    assert.deepEqual((await query(intake,"SELECT operation_scope FROM control_idempotency")).rows,[]);
+    await assert.rejects(query(intake,`INSERT INTO control_idempotency
+      (tenant_id,operation_scope,idempotency_key,request_digest,status)
+      VALUES('tenant:intake-guard','other.operation/v1','renamed-key-0001',$1,'processing')`,
+      [`sha256:${"a".repeat(64)}`]),/work intake idempotency insert rejected/u);
+  } finally {
+    await query(db,"ALTER ROLE control_room_work_intake_renamed RENAME TO control_room_work_intake");
+  }
+
+  await query(db,"GRANT control_room_work_intake TO control_room_scheduler");
+  try {
+    const alternate={...target("cr_prod_intake_guard","control_room_scheduler"),
+      password:passwords.CONTROL_ROOM_SCHEDULER_PASSWORD};
+    await assert.rejects(query(alternate,`INSERT INTO control_idempotency
+      (tenant_id,operation_scope,idempotency_key,request_digest,status)
+      VALUES('tenant:intake-guard','other.operation/v1','alternate-key-0001',$1,'processing')`,
+      [`sha256:${"7".repeat(64)}`]),/work intake idempotency insert rejected/u);
+  } finally { await query(db,"REVOKE control_room_work_intake FROM control_room_scheduler"); }
+
+  const intakeDb=postgresDatabase(intake), store=new WorkBatchStoreV1(intakeDb,new Uint8Array(32).fill(8));
+  const lockPrivileges=(await query(db,`SELECT
+    has_column_privilege('control_room_work_intake','control_identities','web_lock','UPDATE') AS identity_lock,
+    has_column_privilege('control_room_work_intake','control_role_grants','web_lock','UPDATE') AS grant_lock,
+    has_column_privilege('control_room_work_intake','projects','coordinator_lock','UPDATE') AS project_lock,
+    has_column_privilege('control_room_work_intake','control_identities','state','UPDATE') AS identity_state,
+    has_column_privilege('control_room_work_intake','projects','domain_state','UPDATE') AS project_state`)).rows[0];
+  assert.deepEqual(lockPrivileges,{identity_lock:true,grant_lock:true,project_lock:true,identity_state:false,project_state:false});
+  const principal={tenantId:"tenant:intake-guard",identityId:"identity:intake-guard",actorType:"agent",
+    authenticatedAt:"2026-09-27T11:00:00.000Z",expiresAt:"2027-09-27T12:00:00.000Z"};
+  const positiveClient=new Client(intake); await positiveClient.connect();
+  try {
+    await positiveClient.query("BEGIN");
+    const statements=[];
+    const session={query:(sql,params=[])=>{statements.push(sql);return positiveClient.query(sql,params);}};
+    const transactionalDb={query:session.query,transaction:callback=>callback(session),
+      transactionWithPreCommitCheck:async(callback,check)=>{const value=await callback(session);await check();return value;}};
+    const positiveStore=new WorkBatchStoreV1(transactionalDb,new Uint8Array(32).fill(8));
+    const positiveProposal={schema:"control-room.work-batch-proposal/v1",projectId:"project:intake-guard",tasks:[{
+      localId:"build",title:"Build",instructions:"Build the bounded change.",requiredCapability:"code.change",
+      role:"builder",acceptanceCriteria:"The change is bounded.",acceptanceTests:"Run focused tests."}],edges:[]};
+    const receipt=await positiveStore.create({principal,proposal:positiveProposal,
+      proposalDigest:workBatchProposalDigestV1(positiveProposal),idempotencyKey:"positive-notification-0001",
+      now:"2026-09-27T12:00:15.000Z",queueDepthLimit:10});
+    assert.match(receipt.batchId,/^batch:/u);
+    assert.equal(statements.filter(sql=>/^INSERT INTO control_action_inbox/iu.test(sql.trim())).length,1,
+      "the successful real-PostgreSQL transaction issued one canonical notification insert");
+  } finally {
+    await positiveClient.query("ROLLBACK").catch(()=>{}); await positiveClient.end();
+  }
+  const auditCountBeforeNonAgent=(await query(intake,"SELECT count(*)::int AS count FROM audit_events")).rows[0].count;
+  assert.deepEqual(await store.authorize({...principal,actorType:"human"},"project:intake-guard",
+    "2026-09-27T12:00:30.000Z"),{allowed:false,safeReasonCode:"credential_inactive"});
+  assert.equal((await query(intake,"SELECT count(*)::int AS count FROM audit_events")).rows[0].count,
+    auditCountBeforeNonAgent,"non-agent refusal is not misattributed as intake-agent activity");
+  assert.equal((await store.authorizeAction(principal,"project:intake-other","work_batches.propose",
+    "2026-09-27T12:01:00.000Z")).allowed,false,"wrong-project refusal is recorded");
+  await query(db,"UPDATE control_role_grants SET revoked_at='2026-09-27T12:01:30.000Z' WHERE id='grant:intake-guard'");
+  assert.equal((await store.authorizeAction(principal,"project:intake-guard","work_batches.propose",
+    "2026-09-27T12:02:00.000Z")).allowed,false,"revoked-grant refusal is recorded");
+  await query(db,"UPDATE control_role_grants SET revoked_at=NULL,expires_at='2026-09-27T12:02:30.000Z' WHERE id='grant:intake-guard'");
+  assert.equal((await store.authorizeAction(principal,"project:intake-guard","work_batches.propose",
+    "2026-09-27T12:03:00.000Z")).allowed,false,"expired-grant refusal is recorded");
+  await query(db,"UPDATE control_role_grants SET expires_at=NULL WHERE id='grant:intake-guard'; UPDATE control_identities SET state='suspended' WHERE id='identity:intake-guard'");
+  assert.equal((await store.authorizeAction(principal,"project:intake-guard","work_batches.propose",
+    "2026-09-27T12:04:00.000Z")).allowed,false,"inactive-identity refusal is recorded");
+  const verified=await new AuditStore(intakeDb).verify("tenant:intake-guard","month:2026-09");
+  assert.equal(verified.valid,true); assert.equal(verified.checkedEvents,4);
+
+  await query(db,`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:ordinary','tenant:intake-guard','project:intake-guard','ordinary','question','open',
+      'delivered','2026-09-27T12:04:30.000Z','{"state":"open"}'::jsonb)`);
+  const privateWebClient=new Client(db);
+  await privateWebClient.connect();
+  try {
+    // Role definitions are cluster-global. Install this probe transactionally so
+    // the later role-matrix attack test observes a clean cluster.
+    await privateWebClient.query("BEGIN");
+    await privateWebClient.query((await readFile(join(ROOT,"db/roles/private_web_roles.sql"),"utf8"))
+      .replace(/^(?:BEGIN|COMMIT);$/gmu,""));
+    await privateWebClient.query("SET LOCAL ROLE control_room_private_web");
+    await assert.rejects(privateWebClient.query(`UPDATE control_action_inbox
+      SET state='resolved',payload='{"state":"resolved"}'::jsonb
+      WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`),
+    /work batch notification update rejected/u);
+  } finally {
+    await privateWebClient.query("ROLLBACK").catch(()=>{});
+    await privateWebClient.end();
+  }
+  assert.equal((await query(db,`SELECT state FROM control_action_inbox
+    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`)).rows[0].state,"open");
+  await query(db,"DELETE FROM control_action_inbox WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'");
+
+  const head=(await query(intake,`SELECT head_hash,event_count::int FROM control_audit_chain_heads
+    WHERE tenant_id='tenant:intake-guard' AND chain_partition='month:2026-09'`)).rows[0];
+  const orphanMaterial={id:"audit:work-intake-refusal:orphan",tenantId:"tenant:intake-guard",workspaceId:null,
+    projectId:"project:intake-guard",actorId:"identity:intake-guard",actorType:"agent",
+    action:"work_batches.propose.refused",targetType:"project",targetId:"project:intake-guard",
+    correlationId:null,idempotencyKey:null,safeMetadata:{reasonCode:"no_matching_grant"},
+    occurredAt:"2026-09-27T12:05:00.000Z"};
+  const orphanDigest=sha256Digest(orphanMaterial), orphanSequence=head.event_count+1;
+  const orphanHash=sha256Digest({chainVersion:1,partition:"month:2026-09",sequence:orphanSequence,
+    previousHash:head.head_hash,eventDigest:orphanDigest});
+  await assert.rejects(query(intake,`INSERT INTO audit_events
+    (id,tenant_id,project_id,actor_id,actor_type,action,target_type,target_id,safe_metadata,occurred_at,
+      chain_version,chain_partition,chain_sequence,event_digest,prev_hash,event_hash)
+    VALUES($1,'tenant:intake-guard','project:intake-guard','identity:intake-guard','agent',
+      'work_batches.propose.refused','project','project:intake-guard',$2::jsonb,
+      '2026-09-27T12:05:00.000Z',1,'month:2026-09',$3,$4,$5,$6)`,
+    [orphanMaterial.id,JSON.stringify(orphanMaterial.safeMetadata),orphanSequence,
+      `sha256:${"8".repeat(64)}`,head.head_hash,`sha256:${"9".repeat(64)}`]),/work intake audit hash rejected/u);
+  await assert.rejects(query(intake,`INSERT INTO audit_events
+    (id,tenant_id,project_id,actor_id,actor_type,action,target_type,target_id,safe_metadata,occurred_at,
+      chain_version,chain_partition,chain_sequence,event_digest,prev_hash,event_hash)
+    SELECT 'audit:work-intake-refusal:orphan','tenant:intake-guard','project:intake-guard',
+      'identity:intake-guard','agent','work_batches.propose.refused','project','project:intake-guard',$1::jsonb,
+      '2026-09-27T12:05:00.000Z',1,'month:2026-09',$2,$3,$4,$5`,
+    [JSON.stringify(orphanMaterial.safeMetadata),orphanSequence,orphanDigest,head.head_hash,orphanHash]),
+    /committed without head advance/u);
+
+  const queueDown=await readFile(join(ROOT,"db/down/0104_work_batch_agent_queue.sql"),"utf8");
+  const ownerDown=await readFile(join(ROOT,"db/down/0102_work_batch_owner_approval.sql"),"utf8");
+  const down=await readFile(join(ROOT,"db/down/0093_work_batch_intake.sql"),"utf8");
+  await query(db,"CREATE POLICY test_dependent_policy ON audit_events AS RESTRICTIVE USING (true)");
+  await assert.rejects(query(db,down),/shared-ledger RLS policies depend on it/u);
+  const retained=(await query(db,`SELECT
+    has_column_privilege('control_room_work_intake','control_idempotency','status','UPDATE') AS column_update,
+    (SELECT count(*)::int FROM pg_trigger WHERE tgname='control_idempotency_work_intake_guard' AND NOT tgisinternal) AS guard_count,
+    (SELECT count(*)::int FROM pg_policies WHERE policyname='audit_events_work_intake_scope') AS policy_count`)).rows[0];
+  assert.deepEqual(retained,{column_update:true,guard_count:1,policy_count:1});
+  await query(db,"DROP POLICY test_dependent_policy ON audit_events");
+  // The owner-approval slice depends on the intake tables. Exercise the
+  // reviewed recovery order before removing the proposal-only base slice.
+  await query(db,queueDown);
+  await query(db,ownerDown);
+  const restoredSearchPath=(await query(db,`SELECT proconfig FROM pg_proc
+    WHERE oid='public.guard_initial_work_batch_revision_insert()'::regprocedure`)).rows[0]?.proconfig;
+  assert.deepEqual(restoredSearchPath,["search_path=pg_catalog, public, pg_temp"]);
+  await query(db,down);
+  const remaining=(await query(db,`SELECT
+    has_table_privilege('control_room_work_intake','control_idempotency','SELECT') AS table_select,
+    has_column_privilege('control_room_work_intake','control_idempotency','status','UPDATE') AS column_update,
+    has_column_privilege('control_room_work_intake','control_audit_chain_heads','head_hash','UPDATE') AS head_update,
+    has_column_privilege('control_room_work_intake','control_identities','web_lock','UPDATE') AS identity_lock,
+    has_column_privilege('control_room_work_intake','projects','coordinator_lock','UPDATE') AS project_lock`)).rows[0];
+  assert.deepEqual(remaining,{table_select:false,column_update:false,head_update:false,identity_lock:false,project_lock:false});
+  await assert.rejects(query(intake,"SELECT * FROM control_idempotency"),/permission denied/u);
+});
+
+// Two tenants, each registered for work intake exactly as the owner bootstraps
+// register agents (auth_provider='work-intake' plus a valid proposer grant).
+// A directly registered agent in the own tenant is not registered for intake.
+const seededBatchAt = "2026-09-27T12:00:00.000Z";
+const seededBatchProposal = JSON.stringify({ title: "Seeded proposal" });
+const seededBatchDigest = `sha256:${"b".repeat(64)}`;
+const seededBatchTag = `hmac-sha256:${"c".repeat(64)}`;
+const seededBatches = [
+  // [tenant, proposer, auth provider, batch, has revision]
+  ["tenant:batch-own", "identity:work-intake:own", "work-intake", "batch:own", true],
+  ["tenant:batch-own", "identity:batch-own-direct", "agent-key", "batch:own-direct", true],
+  ["tenant:batch-other", "identity:work-intake:other", "work-intake", "batch:other", true],
+  ["tenant:batch-other", "identity:work-intake:other", "work-intake", "batch:other-open", false],
+];
+const intakeScope = identityId => `work-batches.propose/v1:${identityId}`;
+const intakeLedgerTables = ["work_batches", "work_batch_revisions", "work_batch_items", "control_idempotency", "audit_events"];
+// Decided proposal content. Rejected items need no job, so each seeded batch
+// can carry one while it is still proposed.
+const seededItems = [["tenant:batch-own", "batch:own"], ["tenant:batch-own", "batch:own-direct"],
+  ["tenant:batch-other", "batch:other"]];
+const insertSeededItem = `INSERT INTO work_batch_items(id,tenant_id,batch_id,batch_revision,project_id,local_id,ordinal,
+  role,required_capability,depends_on_local_ids,acceptance_criteria,acceptance_tests,decision_state,decision_reason_code,
+  item_digest,auth_tag,created_at) VALUES($1,$2,$3,1,$4,'build',0,'builder','code.change','{}',$5,'Run the tests.',
+  'rejected','not_selected',$6,$7,$8)`;
+const seededProject = tenantId => `project:${tenantId.slice("tenant:".length)}`;
+const insertSeededBatch = `INSERT INTO work_batches(id,tenant_id,project_id,proposed_by_identity_id,
+  proposed_by_actor_type,proposed_at,state,proposal,queue_depth_limit,batch_digest,auth_tag,version,created_at,updated_at)
+  VALUES($1,$2,$3,$4,'agent',$5,'proposed',$6::jsonb,5,$7,$8,1,$5,$5)`;
+const insertSeededRevision = `INSERT INTO work_batch_revisions(id,tenant_id,batch_id,revision,edited_by_identity_id,
+  edited_at,reason_code,proposal,revision_digest,auth_tag) VALUES($1,$2,$3,1,$4,$5,'submitted',$6::jsonb,$7,$8)`;
+
+async function seedWorkBatchTenants(db) {
+  for (const tenantId of ["tenant:batch-own", "tenant:batch-other"]) {
+    const suffix = tenantId.slice("tenant:".length);
+    await query(db, "INSERT INTO tenants(id,display_name) VALUES($1,$1)", [tenantId]);
+    await query(db, "INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'workspace')",
+      [`workspace:${suffix}`, tenantId]);
+    await query(db, `INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
+      redaction_policy_version,cursor_retention_days) VALUES($1,$2,'manual','1','control_room_native','fixture','v1',1)`,
+    [`adapter:${suffix}`, tenantId]);
+    await query(db, `INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,
+      normalized_state,domain_state,health,authority_mode,observed_at,payload) VALUES($1,$2,$3,$4,$1,'1','Project',
+      'ready','ready','healthy','control_room_native',$5,'{}')`,
+    [seededProject(tenantId), tenantId, `workspace:${suffix}`, `adapter:${suffix}`, seededBatchAt]);
+  }
+  const identities = new Map(seededBatches.map(([tenantId, identityId, provider]) =>
+    [`${tenantId}|${identityId}`, { tenantId, identityId, provider }]));
+  let index = 0;
+  for (const { tenantId, identityId, provider } of identities.values()) {
+    index += 1;
+    await query(db, `INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+      auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'agent','Proposing agent',$3,$4,'active',$5,$5)`,
+    [identityId, tenantId, provider, `sha256:${String(index).repeat(64)}`, seededBatchAt]);
+    await query(db, `INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+      risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at) VALUES($1,$2,$3,
+      'work_batch_proposer','["work_batches.propose"]',$4::jsonb,'low',false,false,$5,$5)`,
+    [`grant:seeded-${index}`, tenantId, identityId, JSON.stringify([seededProject(tenantId)]), seededBatchAt]);
+  }
+  for (const [tenantId, identityId, , batchId, hasRevision] of seededBatches) {
+    await query(db, insertSeededBatch, [batchId, tenantId, seededProject(tenantId), identityId, seededBatchAt,
+      seededBatchProposal, seededBatchDigest, seededBatchTag]);
+    if (hasRevision) await query(db, insertSeededRevision, [`${batchId}:revision:1`, tenantId, batchId, identityId,
+      seededBatchAt, seededBatchProposal, seededBatchDigest, seededBatchTag]);
+  }
+  for (const [tenantId, batchId] of seededItems)
+    await query(db, insertSeededItem, [`${batchId}:item:build`, tenantId, batchId, seededProject(tenantId),
+      `SECRET criteria for ${batchId}`, seededBatchDigest, seededBatchTag, seededBatchAt]);
+  // Each tenant's intake ledger rows, in the namespace the intake login may use.
+  for (const [tenantId, identityId, batchId] of [["tenant:batch-own","identity:work-intake:own","batch:own"],
+    ["tenant:batch-other","identity:work-intake:other","batch:other"]]) {
+    const suffix = tenantId.slice("tenant:batch-".length);
+    await query(db, `INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status,
+      result,completed_at) VALUES($1,$2,$3,$4,'completed',$5::jsonb,$6)`, [tenantId, intakeScope(identityId),
+      `${suffix}-intake-key-0001`, `sha256:${"d".repeat(64)}`, JSON.stringify({ batchId }), seededBatchAt]);
+    await query(db, `INSERT INTO audit_events(id,tenant_id,project_id,actor_id,actor_type,action,target_type,target_id,
+      safe_metadata,occurred_at) VALUES($1,$2,$3,$4,'agent','work_batches.propose','work_batch',$5,'{}'::jsonb,$6)`,
+    [`audit:work-intake:${suffix}-1`, tenantId, seededProject(tenantId), identityId, batchId, seededBatchAt]);
+  }
+}
+
+test("work-intake login reads and writes only its bound tenant's registered work batches", needsPg, async () => {
+  await freshDatabase("cr_prod_intake_batches");
+  const db=target("cr_prod_intake_batches");
+  await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_intake_batches"),
+    migrateTarget:migrateTarget("cr_prod_intake_batches"), rootDir:ROOT, env:{...process.env,...passwords} });
+  await seedWorkBatchTenants(db);
+  const intake={...target("cr_prod_intake_batches","control_room_work_intake_agent"),
+    password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+  const intakeRows=async()=>Object.fromEntries(await Promise.all(intakeLedgerTables.map(async table=>
+    [table,(await query(intake,`SELECT tenant_id FROM ${table} ORDER BY tenant_id`)).rows.map(row=>row.tenant_id)])));
+  const nothing=Object.fromEntries(intakeLedgerTables.map(table=>[table,[]]));
+
+  // Fail closed: with no binding row the intake login sees and writes nothing,
+  // not even its own tenant's proposals.
+  assert.deepEqual(await intakeRows(),nothing);
+  await assert.rejects(query(intake,insertSeededBatch,["batch:unbound","tenant:batch-own",seededProject("tenant:batch-own"),
+    "identity:work-intake:own",seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),/row-level security/u);
+  await query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:batch-own')");
+  // One binding per cluster database, readable but never writable by the intake login.
+  await assert.rejects(query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:batch-other')"),
+    /duplicate key/u);
+  await assert.rejects(query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(false,'tenant:batch-other')"),
+    /check constraint/u);
+  await assert.rejects(query(intake,"UPDATE work_intake_tenant_binding SET tenant_id='tenant:batch-other'"),/permission denied/u);
+  await assert.rejects(query(intake,"DELETE FROM work_intake_tenant_binding"),/permission denied/u);
+  await assert.rejects(query(intake,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:batch-other')"),
+    /permission denied/u);
+  assert.deepEqual(await intakeRows(),{work_batches:["tenant:batch-own"],work_batch_revisions:["tenant:batch-own"],
+    work_batch_items:["tenant:batch-own"],control_idempotency:["tenant:batch-own"],audit_events:["tenant:batch-own"]});
+
+  assert.deepEqual((await query(intake,"SELECT tenant_id,id FROM work_batches ORDER BY tenant_id,id")).rows,
+    [{tenant_id:"tenant:batch-own",id:"batch:own"}]);
+  assert.deepEqual((await query(intake,
+    "SELECT tenant_id,batch_id FROM work_batch_revisions ORDER BY tenant_id,batch_id")).rows,
+  [{tenant_id:"tenant:batch-own",batch_id:"batch:own"}]);
+  assert.deepEqual((await query(intake,"SELECT proposal FROM work_batches WHERE tenant_id='tenant:batch-other'")).rows,[]);
+  assert.deepEqual((await query(intake,
+    "SELECT proposal FROM work_batch_revisions WHERE tenant_id='tenant:batch-other'")).rows,[]);
+  assert.deepEqual((await query(intake,
+    "SELECT operation_scope,result FROM control_idempotency WHERE tenant_id='tenant:batch-other'")).rows,[]);
+  assert.deepEqual((await query(intake,"SELECT id FROM audit_events WHERE tenant_id='tenant:batch-other'")).rows,[]);
+  // Items follow their batch: none from the other tenant, and none for a batch
+  // whose proposer the owner did not register for intake.
+  assert.deepEqual((await query(intake,"SELECT tenant_id,batch_id FROM work_batch_items ORDER BY batch_id")).rows,
+    [{tenant_id:"tenant:batch-own",batch_id:"batch:own"}]);
+  assert.deepEqual((await query(intake,
+    "SELECT acceptance_criteria FROM work_batch_items WHERE tenant_id='tenant:batch-other'")).rows,[]);
+
+  // Each forged proposer holds a valid proposer grant, so only the policy refuses it.
+  for (const [tenantId, identityId] of [["tenant:batch-other","identity:work-intake:other"],
+    ["tenant:batch-own","identity:batch-own-direct"]])
+    await assert.rejects(query(intake,insertSeededBatch,[`batch:forged-${identityId.slice(9)}`,tenantId,
+      seededProject(tenantId),identityId,seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),
+    /row-level security/u, `${tenantId} ${identityId}`);
+  // The registered identity named under the other tenant has no grant there either.
+  await assert.rejects(query(intake,insertSeededBatch,["batch:forged-own-elsewhere","tenant:batch-other",
+    seededProject("tenant:batch-other"),"identity:work-intake:own",seededBatchAt,seededBatchProposal,
+    seededBatchDigest,seededBatchTag]),/row-level security|proposal-only work batch insert rejected/u);
+  await assert.rejects(query(intake,insertSeededRevision,["batch:other-open:revision:1","tenant:batch-other",
+    "batch:other-open","identity:work-intake:other",seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),
+  /row-level security|(?:initial )?work batch revision insert rejected/u);
+  // The other tenant's agent holds a valid grant, so the ledger guard admits the
+  // row and only the tenant binding refuses it.
+  await assert.rejects(query(intake,`INSERT INTO control_idempotency
+    (tenant_id,operation_scope,idempotency_key,request_digest,status)
+    VALUES('tenant:batch-other',$1,'forged-other-key-0001',$2,'processing')`,
+  [intakeScope("identity:work-intake:other"),`sha256:${"e".repeat(64)}`]),/row-level security/u);
+  await assert.rejects(query(intake,
+    "UPDATE work_batches SET proposal='{}'::jsonb WHERE tenant_id='tenant:batch-other'"),/permission denied/u);
+  await assert.rejects(query(intake,
+    "UPDATE work_batch_revisions SET proposal='{}'::jsonb WHERE tenant_id='tenant:batch-other'"),/permission denied/u);
+  assert.deepEqual((await query(db,`SELECT (SELECT count(*)::int FROM work_batches) AS batches,
+    (SELECT count(*)::int FROM work_batch_revisions) AS revisions,
+    (SELECT count(*)::int FROM work_batch_items) AS items`)).rows[0],{batches:4,revisions:3,items:3});
+
+  // The registered identity still proposes and reads back through the real store.
+  const store=new WorkBatchStoreV1(postgresDatabase(intake),new Uint8Array(32).fill(9));
+  const principal={tenantId:"tenant:batch-own",identityId:"identity:work-intake:own",actorType:"agent",
+    authenticatedAt:"2026-09-27T11:00:00.000Z",expiresAt:"2027-09-27T12:00:00.000Z"};
+  const proposal={schema:"control-room.work-batch-proposal/v1",projectId:"project:batch-own",
+    tasks:[{localId:"build",title:"Build",instructions:"Implement the bounded change.",
+      requiredCapability:"code.change",role:"builder",requestedWorkerKind:"worker:code",
+      requestedModelKey:"model:allowed",acceptanceCriteria:"The focused checks pass.",
+      acceptanceTests:"Run the focused test lane."}],edges:[]};
+  const receipt=await store.create({principal,proposal,proposalDigest:sha256Digest(proposal),
+    idempotencyKey:"intake-batches-key-0001",now:"2026-09-27T12:10:00.000Z",queueDepthLimit:5});
+  assert.equal(receipt.replayed,false);
+  const status=await store.status(principal,"project:batch-own",receipt.batchId,"2026-09-27T12:11:00.000Z");
+  assert.equal(status.batchId,receipt.batchId);
+  assert.deepEqual((await query(intake,"SELECT id FROM work_batches ORDER BY id")).rows.map(row=>row.id).sort(),
+    ["batch:own",receipt.batchId].sort());
+
+  // Removing the binding closes the login again, including its own new rows.
+  await query(db,"DELETE FROM work_intake_tenant_binding");
+  assert.deepEqual(await intakeRows(),nothing);
+  await assert.rejects(store.status(principal,"project:batch-own",receipt.batchId,"2026-09-27T12:12:00.000Z"),
+    {safeCode:"batch_not_found"});
+});
+
+test("non-intake roles keep exactly their work-batch access", needsPg, async () => {
+  await freshDatabase("cr_prod_batch_roles");
+  const db=target("cr_prod_batch_roles");
+  await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_batch_roles"),
+    migrateTarget:migrateTarget("cr_prod_batch_roles"), rootDir:ROOT, env:{...process.env,...passwords} });
+  await seedWorkBatchTenants(db);
+  const allBatches=seededBatches.map(([tenantId,,,batchId])=>`${tenantId}|${batchId}`).sort();
+  const allRevisions=seededBatches.filter(row=>row[4]).map(([tenantId,,,batchId])=>`${tenantId}|${batchId}`).sort();
+  const allItems=seededItems.map(([tenantId,batchId])=>`${tenantId}|${batchId}`).sort();
+  const client=new Client(db);
+  await client.connect();
+  try {
+    // Role files are cluster-global; install the owner-web and coordinator groups
+    // only inside this transaction so no other test observes them.
+    await client.query("BEGIN");
+    for (const file of ["private_web_roles.sql","task_coordinator_roles.sql"])
+      await client.query((await readFile(join(ROOT,"db/roles",file),"utf8")).replace(/^(?:BEGIN|COMMIT);$/gmu,""));
+    const observe=async role=>{
+      const seen={};
+      for (const [table,column] of [["work_batches","id"],["work_batch_revisions","batch_id"],["work_batch_items","batch_id"]]) {
+        await client.query("SAVEPOINT probe");
+        try {
+          await client.query(`SET LOCAL ROLE ${role}`);
+          seen[table]=(await client.query(`SELECT tenant_id || '|' || ${column} AS row FROM ${table}`)).rows
+            .map(row=>row.row).sort();
+        } catch (error) { seen[table]=error.code==="42501" ? "permission denied" : error.message; }
+        finally { await client.query("ROLLBACK TO SAVEPOINT probe"); }
+      }
+      return seen;
+    };
+    const denied={work_batches:"permission denied",work_batch_revisions:"permission denied",
+      work_batch_items:"permission denied"};
+    const all={work_batches:allBatches,work_batch_revisions:allRevisions,work_batch_items:allItems};
+    const expected={
+      control_room_schema_owner:all,
+      control_room_backup:all,
+      control_room_reader:denied, control_room_application:denied, control_room_schedule_admissions:denied,
+      control_room_github_broker:denied,
+      control_room_private_web:all,
+      // The assignment gate reads batch and item records to verify admissions;
+      // it never reads proposal revisions.
+      control_room_task_coordinator:{work_batches:allBatches,work_batch_revisions:"permission denied",
+        work_batch_items:allItems},
+    };
+    const observed={};
+    for (const role of Object.keys(expected)) observed[role]=await observe(role);
+    assert.deepEqual(observed,expected);
+    const privileges=(await client.query(`SELECT r.role,t.table_name,
+      has_table_privilege(r.role,t.table_name,'INSERT') AS insert,
+      has_table_privilege(r.role,t.table_name,'UPDATE') AS update,
+      has_table_privilege(r.role,t.table_name,'DELETE') AS delete
+      FROM unnest($1::text[]) r(role) CROSS JOIN unnest(ARRAY['work_batches','work_batch_revisions']) t(table_name)
+      WHERE has_table_privilege(r.role,t.table_name,'INSERT') OR has_table_privilege(r.role,t.table_name,'UPDATE')
+        OR has_table_privilege(r.role,t.table_name,'DELETE') ORDER BY 1,2`,[Object.keys(expected)])).rows;
+    assert.deepEqual(privileges,[
+      {role:"control_room_private_web",table_name:"work_batch_revisions",insert:true,update:false,delete:false},
+      {role:"control_room_schema_owner",table_name:"work_batch_revisions",insert:true,update:true,delete:true},
+      {role:"control_room_schema_owner",table_name:"work_batches",insert:true,update:true,delete:true}]);
+  } finally {
+    await client.query("ROLLBACK").catch(() => {});
+    await client.end();
+  }
+});
+
+// The owner revises and decides through the real owner service; the proposing
+// agent then reads status and list over the production intake login, where
+// the tenant-binding policies apply (the owner fixture's connection bypasses them).
+test("intake status and list stay readable on the production login after owner revision and decision", needsPg, async () => {
+  await freshDatabase("cr_prod_intake_owner");
+  const db=target("cr_prod_intake_owner");
+  await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_intake_owner"),
+    migrateTarget:migrateTarget("cr_prod_intake_owner"), rootDir:ROOT, env:{...process.env,...passwords} });
+  const scope={tenantId:"tenant:web",workspaceId:"workspace:web"}, clock=()=>webNow;
+  const at=new Date(webNow).toISOString();
+  await query(db,"INSERT INTO tenants(id,display_name) VALUES('tenant:web','Test tenant')");
+  await query(db,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:web','tenant:web','Test workspace')");
+  const admin=postgresDatabase(db);
+  await new SecurityStore(admin).bootstrapOwner({ tenantId:"tenant:web", provider:webTrust.issuer, subject:"test-owner",
+    identityId:"identity:web", grantId:"grant:web", displayName:"Test owner", verifiedAt:new Date(webNow-60_000).toISOString(),
+    expiresAt:new Date(webNow+300_000).toISOString(), now:at });
+  const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
+  const { project }=await new WebProjectService(admin,scope,clock).create(identity,
+    { title:"Batch project", summary:"Real PostgreSQL owner review" },"intake-owner-project-0001");
+  const projectId=project.projectId;
+  await query(db,`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+    auth_subject_digest,state,created_at,updated_at) VALUES('identity:batch-agent','tenant:web','agent','Batch agent',
+    'work-intake',$1,'active',$2,$2)`,[sha256Digest("batch-agent"),at]);
+  await query(db,`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+    risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at) VALUES('grant:batch-agent','tenant:web',
+    'identity:batch-agent','work_batch_proposer','["work_batches.propose"]',$1::jsonb,'low',false,false,$2,$2)`,
+  [JSON.stringify([projectId]),at]);
+  await query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:web')");
+
+  const key=new Uint8Array(32).fill(7);
+  const intake={...target("cr_prod_intake_owner","control_room_work_intake_agent"),
+    password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+  const store=new WorkBatchStoreV1(postgresDatabase(intake),key);
+  const owner=new WorkBatchOwnerServiceV1(admin,new WebTaskService(admin,scope,clock),scope,key,clock);
+  const principal={tenantId:"tenant:web",identityId:"identity:batch-agent",actorType:"agent",
+    authenticatedAt:"2026-09-04T11:59:00.000Z",expiresAt:"2026-09-04T13:00:00.000Z"};
+  const task=(localId,role,capability)=>({localId,title:`${localId} the change`,instructions:`${localId} the bounded change.`,
+    requiredCapability:capability,role,acceptanceCriteria:`The ${localId} step is bounded.`,
+    acceptanceTests:`Run the focused ${localId} tests.`});
+  const proposalOf=(tasks,edges=[])=>({schema:"control-room.work-batch-proposal/v1",projectId,tasks,edges});
+  const submit=async (value,keySuffix)=>store.create({principal,proposal:value,proposalDigest:workBatchProposalDigestV1(value),
+    idempotencyKey:`intake-owner-submit-${keySuffix}`,now:at,queueDepthLimit:10});
+  const batch=await submit(proposalOf([task("build","builder","code.change")]),"0001");
+  const untouched=await submit(proposalOf([task("draft","builder","code.change")]),"0002");
+  assert.equal((await store.status(principal,projectId,batch.batchId,at)).taskCount,1);
+
+  const revised=proposalOf([task("build","builder","code.change"),task("check","checker","code.review"),
+    task("validate","validator","code.validate")],[{fromLocalId:"build",toLocalId:"check"}]);
+  await owner.command(identity,projectId,{ operation:"revise", batchId:batch.batchId, expectedRevision:1,
+    reasonCode:"owner_edit", proposal:revised },"intake-owner-revise-0001");
+  const afterRevision=await store.status(principal,projectId,batch.batchId,at);
+  assert.equal(afterRevision.state,"proposed");
+  assert.equal(afterRevision.taskCount,3);
+  assert.equal(afterRevision.proposalDigest,workBatchProposalDigestV1(revised));
+  // The intake login reads the owner's current revision, not only its own.
+  assert.deepEqual((await query(intake,`SELECT revision::int,edited_by_identity_id FROM work_batch_revisions
+    WHERE batch_id=$1 ORDER BY revision`,[batch.batchId])).rows,
+  [{revision:1,edited_by_identity_id:"identity:batch-agent"},{revision:2,edited_by_identity_id:"identity:web"}]);
+  assert.deepEqual((await store.list(principal,projectId,at)).map(row=>[row.batchId,row.state]).sort(),
+    [[batch.batchId,"proposed"],[untouched.batchId,"proposed"]].sort());
+  // Reading owner revisions never lets the intake login write one.
+  await assert.rejects(query(intake,`INSERT INTO work_batch_revisions(id,tenant_id,batch_id,revision,edited_by_identity_id,
+    edited_at,reason_code,proposal,revision_digest,auth_tag) VALUES($1,'tenant:web',$2,3,'identity:web',$3,'owner_edit',
+    $4::jsonb,$5,$6)`,[`${batch.batchId}:revision:3`,batch.batchId,at,JSON.stringify(revised),
+    workBatchProposalDigestV1(revised),`hmac-sha256:${"a".repeat(64)}`]),/row-level security/u);
+
+  const decided=await owner.command(identity,projectId,{ operation:"decide", batchId:batch.batchId, expectedRevision:2,
+    items:[{localId:"build",decision:"approve"},{localId:"check",decision:"approve"},
+      {localId:"validate",decision:"reject",reasonCode:"not_selected"}] },"intake-owner-decide-0001");
+  assert.equal(decided.state,"partially_approved");
+  const afterDecision=await store.status(principal,projectId,batch.batchId,at);
+  assert.equal(afterDecision.state,"partially_approved");
+  assert.equal(afterDecision.taskCount,3);
+  assert.equal(afterDecision.proposalDigest,workBatchProposalDigestV1(revised));
+  assert.deepEqual((await store.list(principal,projectId,at)).map(row=>[row.batchId,row.state]).sort(),
+    [[batch.batchId,"partially_approved"],[untouched.batchId,"proposed"]].sort());
+  assert.equal((await query(intake,"SELECT count(*)::int AS items FROM work_batch_items WHERE batch_id=$1",
+    [batch.batchId])).rows[0].items,3);
+});
+
+// S3 queue records. Two realistic tenants: each has its own owner and a
+// work-intake agent with a valid proposer grant, proposes through the real
+// store as the production intake login, and is admitted to the exact-worker
+// queue by the real owner service. The intake login must never reach the
+// other tenant's queue records, and the owner web role must be able to write
+// and render them on its own narrow grants.
+test("agent-queue records stay in the bound intake tenant and work on the production logins", needsPg, async () => {
+  await freshDatabase("cr_prod_agent_queue");
+  const db=target("cr_prod_agent_queue");
+  await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_agent_queue"),
+    migrateTarget:migrateTarget("cr_prod_agent_queue"), rootDir:ROOT, env:{...process.env,...passwords} });
+  const admin=postgresDatabase(db), clock=()=>webNow, at=new Date(webNow).toISOString();
+  const key=new Uint8Array(32).fill(7);
+  const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
+  const catalog=[{ workerId:"worker:codex-one", workerKind:"codex", nodeId:"node:mac.codex",
+    modelPolicy:{ models:["gpt-build","gpt-check"], defaultModel:"gpt-build", efforts:["high"], defaultEffort:"high" } }];
+  const modelCatalog=captureTaskModelCatalogV1(catalog.map(worker=>({ kind:worker.workerKind, policy:worker.modelPolicy })));
+  const authority={ assertCurrent:()=>true, isAcceptedResultCurrent:()=>false };
+  const intake={...target("cr_prod_agent_queue","control_room_work_intake_agent"),
+    password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+  const store=new WorkBatchStoreV1(postgresDatabase(intake),key);
+  const bind=async tenantId=>{ await query(db,"DELETE FROM work_intake_tenant_binding");
+    await query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[tenantId]); };
+  const task=localId=>({localId,title:`${localId} the change`,instructions:`${localId} the bounded change.`,
+    requiredCapability:"code.change",role:"builder",requestedWorkerId:"worker:codex-one",requestedWorkerKind:"codex",
+    requestedModelKey:"gpt-build",acceptanceCriteria:`SECRET ${localId} criteria`,acceptanceTests:`Run the ${localId} tests.`});
+  const tenants={};
+  for (const [name,tenantId] of [["own","tenant:queue-own"],["other","tenant:queue-other"]]) {
+    const scope={tenantId,workspaceId:`workspace:queue-${name}`};
+    await query(db,"INSERT INTO tenants(id,display_name) VALUES($1,$1)",[tenantId]);
+    await query(db,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'workspace')",[scope.workspaceId,tenantId]);
+    await new SecurityStore(admin).bootstrapOwner({ tenantId, provider:webTrust.issuer, subject:"test-owner",
+      identityId:`identity:queue-owner-${name}`, grantId:`grant:queue-owner-${name}`, displayName:"Test owner",
+      verifiedAt:new Date(webNow-60_000).toISOString(), expiresAt:new Date(webNow+300_000).toISOString(), now:at });
+    const { project }=await new WebProjectService(admin,scope,clock).create(identity,
+      { title:"Queue project", summary:"Real PostgreSQL agent queue" },`queue-project-${name}-0001`);
+    const agentId=`identity:work-intake:queue-${name}`;
+    await query(db,`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+      auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'agent','Batch agent','work-intake',$3,'active',$4,$4)`,
+    [agentId,tenantId,sha256Digest(`queue-agent-${name}`),at]);
+    await query(db,`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+      risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at) VALUES($1,$2,$3,
+      'work_batch_proposer','["work_batches.propose"]',$4::jsonb,'low',false,false,$5,$5)`,
+    [`grant:work-intake:queue-${name}`,tenantId,agentId,JSON.stringify([project.projectId]),at]);
+    const principal={tenantId,identityId:agentId,actorType:"agent",
+      authenticatedAt:"2026-09-04T11:59:00.000Z",expiresAt:"2026-09-04T13:00:00.000Z"};
+    const owner=new WorkBatchOwnerServiceV1(admin,new WebTaskService(admin,scope,clock,{modelCatalog}),scope,key,clock,
+      catalog,authority);
+    tenants[name]={tenantId,scope,projectId:project.projectId,principal,owner};
+  }
+  // Each tenant's agent proposes while the owner has its tenant bound; the
+  // owner then admits the batch to the exact worker queue.
+  for (const name of ["other","own"]) {
+    const t=tenants[name];
+    await bind(t.tenantId);
+    const value={schema:"control-room.work-batch-proposal/v1",projectId:t.projectId,tasks:[task("build")],edges:[]};
+    t.batch=await store.create({principal:t.principal,proposal:value,proposalDigest:workBatchProposalDigestV1(value),
+      idempotencyKey:`queue-${name}-submit-0001`,now:at,queueDepthLimit:5});
+    const decided=await t.owner.command(identity,t.projectId,{ operation:"decide", batchId:t.batch.batchId,
+      expectedRevision:1, items:[{localId:"build",decision:"approve"}] },`queue-${name}-decide-0001`);
+    assert.equal(decided.state,"approved");
+  }
+  const byTenant=async (conn,table)=>(await query(conn,`SELECT tenant_id FROM ${table} ORDER BY tenant_id`)).rows
+    .map(row=>row.tenant_id);
+  const queueTables=["work_batch_agent_queue_heads","work_batch_queue_admissions"];
+  for (const table of queueTables)
+    assert.deepEqual(await byTenant(db,table),["tenant:queue-other","tenant:queue-own"],table);
+
+  // Agent-facing reads on the production intake login, bound to its own tenant:
+  // the decided batch (items now carry the exact requested worker) verifies.
+  const own=tenants.own, other=tenants.other;
+  const status=await store.status(own.principal,own.projectId,own.batch.batchId,at);
+  assert.equal(status.state,"approved");
+  assert.deepEqual((await store.list(own.principal,own.projectId,at)).map(row=>[row.batchId,row.state]),
+    [[own.batch.batchId,"approved"]]);
+  assert.deepEqual((await query(intake,"SELECT tenant_id,requested_worker_id FROM work_batch_items")).rows,
+    [{tenant_id:"tenant:queue-own",requested_worker_id:"worker:codex-one"}]);
+  await assert.rejects(store.status(other.principal,other.projectId,other.batch.batchId,at),{safeCode:"batch_not_found"});
+  // The intake login holds no grant on the queue records at all.
+  for (const table of [...queueTables,"work_batch_effective_queue_admissions"])
+    await assert.rejects(query(intake,`SELECT tenant_id FROM ${table}`),/permission denied/u,table);
+  // Defence in depth: even if a later grant exposed the queue tables to the
+  // intake group, the tenant binding still hides and refuses the other tenant.
+  await query(db,`GRANT SELECT,INSERT ON work_batch_agent_queue_heads,work_batch_queue_admissions
+    TO control_room_work_intake`);
+  try {
+    for (const table of queueTables) {
+      assert.deepEqual(await byTenant(intake,table),["tenant:queue-own"],table);
+      assert.deepEqual((await query(intake,`SELECT * FROM ${table} WHERE tenant_id='tenant:queue-other'`)).rows,[],table);
+    }
+    await assert.rejects(query(intake,`INSERT INTO work_batch_agent_queue_heads(tenant_id,worker_id,next_position,updated_at)
+      VALUES('tenant:queue-other','worker:forged',1,$1)`,[at]),/row-level security/u);
+    await query(db,"DELETE FROM work_intake_tenant_binding");
+    for (const table of queueTables) assert.deepEqual(await byTenant(intake,table),[],table);
+  } finally {
+    await query(db,`REVOKE SELECT,INSERT ON work_batch_agent_queue_heads,work_batch_queue_admissions
+      FROM control_room_work_intake`);
+    await bind(own.tenantId);
+  }
+
+  // Owner-facing queue writes and reads on the restricted private-web role.
+  // Role definitions are cluster-global, so the role is installed inside one
+  // transaction and every service transaction runs as a savepoint that fires
+  // the deferred queue-head consistency check before it is released.
+  const client=new Client(db);
+  await client.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query((await readFile(join(ROOT,"db/roles/private_web_roles.sql"),"utf8")).replace(/^(?:BEGIN|COMMIT);$/gmu,""));
+    await client.query("SET LOCAL ROLE control_room_private_web");
+    let savepoint=0;
+    const session={query:(sql,params=[])=>client.query(sql,params)};
+    const nested=async (work,check)=>{
+      const name=`service_${++savepoint}`;
+      await client.query(`SAVEPOINT ${name}`);
+      try {
+        const result=await work(session);
+        if (check) await check();
+        await client.query("SET CONSTRAINTS ALL IMMEDIATE");
+        await client.query("SET CONSTRAINTS ALL DEFERRED");
+        await client.query(`RELEASE SAVEPOINT ${name}`);
+        return result;
+      } catch (error) { await client.query(`ROLLBACK TO SAVEPOINT ${name}`); throw error; }
+    };
+    const web={query:(sql,params=[])=>client.query(sql,params),transaction:work=>nested(work),
+      transactionWithPreCommitCheck:(work,check)=>nested(work,check)};
+    const webOwner=new WorkBatchOwnerServiceV1(web,new WebTaskService(web,own.scope,clock,{modelCatalog}),own.scope,key,
+      clock,catalog,authority);
+    assert.equal((await client.query("SELECT current_user AS role")).rows[0].role,"control_room_private_web");
+    const view=await webOwner.view(identity,own.projectId,own.batch.batchId);
+    assert.deepEqual(view.queue.map(item=>[item.localId,item.position,item.workerId,item.state]),
+      [["build",1,"worker:codex-one","awaiting_preparation"]]);
+    // The store needs the intake login; propose the second batch there, then
+    // decide it on the private-web role inside this uncommitted transaction.
+    await client.query("RESET ROLE");
+    const second={schema:"control-room.work-batch-proposal/v1",projectId:own.projectId,tasks:[task("check")],edges:[]};
+    const secondBatch=await new WorkBatchStoreV1(web,key).create({principal:own.principal,proposal:second,
+      proposalDigest:workBatchProposalDigestV1(second),idempotencyKey:"queue-own-submit-0002",now:at,queueDepthLimit:5});
+    await client.query("SET LOCAL ROLE control_room_private_web");
+    const decided=await webOwner.command(identity,own.projectId,{ operation:"decide", batchId:secondBatch.batchId,
+      expectedRevision:1, items:[{localId:"check",decision:"approve"}] },"queue-own-decide-0002");
+    assert.equal(decided.state,"approved");
+    assert.deepEqual((await webOwner.view(identity,own.projectId,secondBatch.batchId)).queue
+      .map(item=>[item.localId,item.position,item.workerId]),[["check",2,"worker:codex-one"]]);
+    assert.deepEqual((await client.query(`SELECT tenant_id,next_position::int FROM work_batch_agent_queue_heads
+      ORDER BY tenant_id`)).rows,[{tenant_id:"tenant:queue-other",next_position:2},{tenant_id:"tenant:queue-own",next_position:3}]);
+    // Narrow grants: no delete, no rewrite of an admission, no head rewind.
+    await client.query("SAVEPOINT refusals");
+    await assert.rejects(client.query("DELETE FROM work_batch_queue_admissions"),/permission denied/u);
+    await client.query("ROLLBACK TO SAVEPOINT refusals");
+    await assert.rejects(client.query("UPDATE work_batch_queue_admissions SET model='tampered'"),/permission denied/u);
+    await client.query("ROLLBACK TO SAVEPOINT refusals");
+    await assert.rejects(client.query(`UPDATE work_batch_agent_queue_heads SET next_position=1
+      WHERE tenant_id='tenant:queue-own'`),/queue head update rejected/u);
+    await client.query("ROLLBACK TO SAVEPOINT refusals");
+    // The assignment gate's coordinator role reads the queue only through the
+    // effective-admission view, never the raw records or heads.
+    await client.query("RESET ROLE");
+    await client.query((await readFile(join(ROOT,"db/roles/task_coordinator_roles.sql"),"utf8")).replace(/^(?:BEGIN|COMMIT);$/gmu,""));
+    await client.query("SET LOCAL ROLE control_room_task_coordinator");
+    assert.deepEqual((await client.query(`SELECT tenant_id,queue_position::int FROM work_batch_effective_queue_admissions
+      WHERE tenant_id='tenant:queue-own' ORDER BY queue_position`)).rows,
+    [{tenant_id:"tenant:queue-own",queue_position:1},{tenant_id:"tenant:queue-own",queue_position:2}]);
+    await client.query("SAVEPOINT coordinator");
+    for (const table of queueTables) {
+      await assert.rejects(client.query(`SELECT 1 FROM ${table}`),/permission denied/u,table);
+      await client.query("ROLLBACK TO SAVEPOINT coordinator");
+    }
+  } finally {
+    await client.query("ROLLBACK").catch(()=>{});
+    await client.end();
+  }
+  assert.deepEqual((await query(db,`SELECT rolname FROM pg_roles WHERE rolname IN
+    ('control_room_private_web','control_room_task_coordinator')`)).rows,[]);
+});
+
 test("backup and disposable restore preserve rows, owners, grants and identity", needsPg, async () => {
   await freshDatabase("cr_prod_source");
   await applyMigrations({ target: target("cr_prod_source"), bootstrapTarget: bootstrapTarget("cr_prod_source"), migrateTarget: migrateTarget("cr_prod_source"), rootDir: ROOT, env: { ...process.env, ...passwords } });
@@ -305,6 +1138,8 @@ test("backup and disposable restore preserve rows, owners, grants and identity",
   assert.deepEqual(restoredRows, sourceRows);
   const ownerOf = async (conn) => (await query(conn, "SELECT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'tenants'")).rows[0].owner;
   assert.equal(await ownerOf(target("cr_prod_restored")), await ownerOf(target("cr_prod_source")));
+  const viewOwnerOf = async (conn) => (await query(conn, "SELECT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'work_batch_effective_queue_admissions' AND c.relkind = 'v'")).rows[0].owner;
+  assert.equal(await viewOwnerOf(target("cr_prod_restored")), await viewOwnerOf(target("cr_prod_source")));
   // Role model preserved: the reconciled target carries exactly the source's
   // control-room memberships (roles are cluster-global in this fixture, which
   // is why the dedicated reconcile test below revokes first to prove the
@@ -377,15 +1212,18 @@ test("operator provision script creates logins via psql without exposing passwor
   const provision = (vars) => exec(join(BIN, "psql"),
     ["-v", `migrator_password=${vars.migrator}`, "-v", `app_password=${vars.app}`,
      "-v", `scheduler_password=${vars.scheduler}`,
+     "-v", `work_intake_password=${vars.workIntake}`,
      "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
     { env: psqlEnv, timeout: 60000, maxBuffer: 1 << 26 });
   // Short passwords fail closed before any login is created.
-  const short = await provision({ migrator: "x".repeat(23), app: "y".repeat(24), scheduler: "z".repeat(24) }).then(
+  const short = await provision({ migrator: "x".repeat(23), app: "y".repeat(24), scheduler: "z".repeat(24),
+    workIntake: "w".repeat(24) }).then(
     () => { throw new Error("provision_accepted_short_password"); },
     (error) => error);
   assert.match(`${short.stderr ?? ""}`, /provision_refused_short_migrator_password/);
   // Full run: genuinely executable through real psql variable substitution.
-  const pw = { migrator: "provision-test-migrator-0001", app: "provision-test-app-00001", scheduler: "provision-test-scheduler-0001" };
+  const pw = { migrator: "provision-test-migrator-0001", app: "provision-test-app-00001",
+    scheduler: "provision-test-scheduler-0001", workIntake: "provision-test-work-intake-001" };
   const done = await provision(pw);
   for (const secret of Object.values(pw)) {
     assert.ok(!`${done.stdout ?? ""}${done.stderr ?? ""}`.includes(secret), "password leaked into psql output");
@@ -393,7 +1231,8 @@ test("operator provision script creates logins via psql without exposing passwor
   const roles = (await query(target("cr_prod_provision"),
     "SELECT rolname, rolcanlogin, rolpassword FROM pg_roles WHERE rolname LIKE 'control@_room@_%' ESCAPE '@' ORDER BY 1")).rows;
   const byName = new Map(roles.map(role => [role.rolname, role]));
-  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler"]) {
+  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler",
+      "control_room_work_intake_agent"]) {
     assert.equal(byName.get(login)?.rolcanlogin, true, `${login} can login`);
     assert.ok(byName.get(login)?.rolpassword, `${login} has a password set`);
   }
@@ -401,7 +1240,8 @@ test("operator provision script creates logins via psql without exposing passwor
   const memberships = await roleMemberships(target("cr_prod_provision"));
   for (const [member, role] of [["control_room_migrator", "control_room_schema_owner"],
       ["control_room_app", "control_room_application"],
-      ["control_room_scheduler", "control_room_schedule_admissions"]]) {
+      ["control_room_scheduler", "control_room_schedule_admissions"],
+      ["control_room_work_intake_agent", "control_room_work_intake"]]) {
     assert.ok(memberships.some(entry => entry.member === member && entry.role === role), `${member} in ${role}`);
   }
 });
@@ -411,13 +1251,13 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   // not mask a provision script that assumes groups already exist, and the
   // restore target must not inherit shared-cluster role state either. Every
   // step below is the documented operator flow, executed literally.
-  const CLEAN_PORT = 15631;
+  const CLEAN_PORT = PORT + 1;
   const cleanSocket = join(run, "clean-socket"), cleanData = join(run, "clean-data");
   const cleanBackup = join(run, "clean-backup-set");
   // The restore target lives in its OWN disposable cluster: roles and
   // memberships are cluster-wide, so a second database in the source cluster
   // would inherit the source's role state before target provisioning.
-  const TARGET_PORT = 15632;
+  const TARGET_PORT = PORT + 2;
   const targetSocket = join(run, "clean-target-socket"), targetData = join(run, "clean-target-data");
   const asPostgres = process.getuid?.() === ROOT_UID;
   const ownDirs = async (...dirs) => {
@@ -438,21 +1278,47 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     await native("pg_ctl", ["-D", data, "-l", join(run, log), "-w", "-t", "30", "-o",
       `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
   };
+  // Both teardowns are armed BEFORE either cluster starts, and both are released
+  // here whatever the outcome. Creating them inside this hook — which is what
+  // the first version of this change did — armed nothing during `startCluster`,
+  // so a throw from the SECOND start left two live postmasters unsupervised:
+  // the exact window this change exists to close.
+  //
+  // The ladder, whose order is what RELEASES a postmaster's SysV segment. The
+  // old `catch {}` on each `pg_ctl` reported success for a cluster that was
+  // still running and then removed its data directory — leaving a live
+  // postmaster holding a segment and nothing left to stop it with.
+  const inner = [
+    createClusterTeardown({ dataDirectory: cleanData, runDirectory: cleanData,
+      socketDirectory: cleanSocket, port: CLEAN_PORT, pgBin: BIN, removeDirectories: false }),
+    createClusterTeardown({ dataDirectory: targetData, runDirectory: targetData,
+      socketDirectory: targetSocket, port: TARGET_PORT, pgBin: BIN, removeDirectories: false }),
+  ];
   t.after(async () => {
-    for (const data of [cleanData, targetData]) {
-      try {
-        await native("pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]);
-      } catch {}
+    // Every teardown is attempted and the failures are collected: a throw from
+    // the first `.stop()` must not skip the second cluster, which would leave
+    // precisely the orphan this is here to prevent.
+    const failures = [];
+    for (const [index, teardown] of inner.entries()) {
+      try { await teardown.stop(); }
+      catch (error) { failures.push(`cluster_${index}:${error?.message ?? String(error)}`); }
     }
-    await rm(cleanSocket, { recursive: true, force: true });
-    await rm(cleanData, { recursive: true, force: true });
-    await rm(targetSocket, { recursive: true, force: true });
-    await rm(targetData, { recursive: true, force: true });
-    await rm(cleanBackup, { recursive: true, force: true });
+    for (const directory of [cleanData, targetData, cleanSocket, targetSocket, cleanBackup]) {
+      await rm(directory, { recursive: true, force: true });
+    }
+    if (failures.length > 0) throw new Error(`disposable_cluster_teardown_failed:${failures.join(" | ")}`);
   });
   await startCluster(cleanSocket, cleanData, CLEAN_PORT, "clean-server.log");
+  // The pid is retained while the cluster is up. Without it the teardown has
+  // nothing to signal, so it takes the branch that can only try one `pg_ctl` and
+  // then give up: the ladder would never run for this cluster.
+  await inner[0].capturePostmasterPid();
   await startCluster(targetSocket, targetData, TARGET_PORT, "clean-target-server.log");
-  const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
+  await inner[1].capturePostmasterPid();
+  // origin/main added a fourth role password for the work-intake provisioning;
+  // both are kept, and the consumer below already passes `-v work_intake_password`.
+  const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001",
+    scheduler: "clean-install-scheduler-0001", workIntake: "clean-install-work-intake-001" };
   const psqlFor = (socket, port) => ({
     PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
     PGHOST: socket, PGPORT: String(port), PGUSER: "postgres",
@@ -462,6 +1328,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const provisionRoles = (database, env = psqlBase) => exec(join(BIN, "psql"),
     ["-v", `migrator_password=${pw.migrator}`, "-v", `app_password=${pw.app}`,
      "-v", `scheduler_password=${pw.scheduler}`,
+     "-v", `work_intake_password=${pw.workIntake}`,
      "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
     { env: { ...env, PGDATABASE: database }, timeout: 60000, maxBuffer: 1 << 26 });
   const cleanConn = (socket, port, database, user = "postgres", password = "fixture_only") =>
@@ -498,7 +1365,8 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     { cwd: ROOT, timeout: 300000, maxBuffer: 1 << 26,
       env: { ...process.env, PATH: "/usr/bin:/bin", LC_ALL: "C",
         CONTROL_ROOM_MIGRATOR_PASSWORD: pw.migrator, CONTROL_ROOM_APP_PASSWORD: pw.app,
-        CONTROL_ROOM_SCHEDULER_PASSWORD: pw.scheduler } });
+        CONTROL_ROOM_SCHEDULER_PASSWORD: pw.scheduler,
+        CONTROL_ROOM_WORK_INTAKE_PASSWORD: pw.workIntake } });
   const result = JSON.parse(migrated.stdout);
   assert.ok((result.applied?.length ?? 0) > 0, "migrations applied through the documented CLI");
   // The install is complete and least-privilege: logins, groups, memberships,
@@ -517,7 +1385,8 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const roles = (await cleanTargetQuery(
     "SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname LIKE 'control@_room@_%' ESCAPE '@' ORDER BY 1")).rows;
   const byName = new Map(roles.map(role => [role.rolname, role]));
-  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler"]) {
+  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler",
+      "control_room_work_intake_agent"]) {
     assert.equal(byName.get(login)?.rolcanlogin, true, `${login} can login`);
   }
   for (const group of ["control_room_schema_owner", "control_room_application", "control_room_schedule_admissions"]) {
@@ -526,7 +1395,8 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const memberships = await roleMemberships(db);
   for (const [member, role] of [["control_room_migrator", "control_room_schema_owner"],
       ["control_room_app", "control_room_application"],
-      ["control_room_scheduler", "control_room_schedule_admissions"]]) {
+      ["control_room_scheduler", "control_room_schedule_admissions"],
+      ["control_room_work_intake_agent", "control_room_work_intake"]]) {
     assert.ok(memberships.some(entry => entry.member === member && entry.role === role), `${member} in ${role}`);
   }
   const owners = (await cleanTargetQuery(
@@ -578,8 +1448,10 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   }
   assert.deepEqual(await roleMemberships(cleanTarget), memberships, "restored target carries the clean install memberships");
   const restoredOwners = (await cleanQuery(targetSocket, TARGET_PORT, "cr_clean_restored",
-    "SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'")).rows;
-  assert.deepEqual(restoredOwners.map(row => row.owner), ["control_room_schema_owner"]);
+    `SELECT c.relname,c.relkind,pg_get_userbyid(c.relowner) AS owner FROM pg_class c
+      JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' ORDER BY c.relname`)).rows;
+  assert.deepEqual([...new Set(restoredOwners.map(row => row.owner))], ["control_room_schema_owner"],
+    `unexpected restored public owners: ${JSON.stringify(restoredOwners.filter(row => row.owner!=="control_room_schema_owner"))}`);
   // Database ownership matches the source: the recorded owner is re-applied,
   // not the invoking administrator.
   const targetDbOwner = (await cleanQuery(targetSocket, TARGET_PORT, "postgres",
@@ -605,9 +1477,123 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const manifest = await createMacLocalDatabaseBackupV1({ source: db, out: macBackup, pgBin: BIN,
     now: () => "2026-09-27T00:00:00.000Z" });
   assert.match(manifest.dumpDigest, /^sha256:[a-f0-9]{64}$/u);
-  const verified = await verifyMacLocalDatabaseBackupV1({ backup: macBackup, port: 15633, pgBin: BIN });
+  const verified = await verifyMacLocalDatabaseBackupV1({ backup: macBackup, port: PORT + 3, pgBin: BIN });
   assert.equal(verified.verified, true);
   assert.equal(verified.identityDigest, manifest.restoreIdentityDigest);
+  // The same backup, verified again against a teardown whose `pg_ctl` stops all
+  // refuse — a real `fast` shutdown that misses its 60 s window after this
+  // script's write-heavy restore, with `immediate`/`SIGQUIT` ending it. The
+  // verification is identical, the postmaster is gone, nothing leaked, and the
+  // verdict must be the SAME `verified: true`.
+  //
+  // It used to be a `disposable_postgres_stop_degraded` throw out of the
+  // `finally`, which the CLI turns into `database backup verification FAIL` and
+  // `process.exitCode = 1` — a `FAIL` for a backup whose digests, ledger,
+  // ownership and grants had all matched, and the response
+  // docs/BACKUP_AND_RESTORE.md:41-44 prescribes for a mismatch. Port 15635 is
+  // this lane's own block; the degraded reason is still logged, and the
+  // companion assertion is that a FORCED teardown is still a failure.
+  const degraded = [];
+  const verifiedThroughSlowShutdown = await verifyMacLocalDatabaseBackupV1({ backup: macBackup,
+    port: 15635, pgBin: BIN, teardown: { degradedLogger: line => { degraded.push(line); },
+      pgCtl: args => {
+        if (args.includes("stop")) throw new Error("pg_ctl: server does not take a fast shutdown request");
+        execFileSync(join(BIN, "pg_ctl"), args, { encoding: "utf8", timeout: 90_000 });
+      } } });
+  assert.equal(verifiedThroughSlowShutdown.verified, true,
+    "a slow shutdown must not turn a verified backup into a failure");
+  assert.equal(verifiedThroughSlowShutdown.identityDigest, manifest.restoreIdentityDigest,
+    "the verdict is the backup's, and it is unchanged by how the cluster stopped");
+  assert.ok(degraded.some(line => /disposable_postgres_stop_degraded/u.test(line)),
+    `the degraded teardown must still be reported: ${degraded.join(" | ")}`);
+
+  // The seam cannot be pointed at another cluster, and this is where that is
+  // observable rather than asserted. The first call above hijacks
+  // `dataDirectory`/`runDirectory`/`socketDirectory`/`port`/`pgBin`/
+  // `removeDirectories` at the same time as supplying the refusing `pg_ctl` —
+  // the exact combination a spread would have honoured, which would leave the
+  // verifier's OWN postmaster running while `stop()` reported a clean teardown of
+  // an empty directory. The allowlist means those keys never arrive, so the stop
+  // below runs against the directory the verifier created and this `pgCtl` — the
+  // one standing in for the real binary — sees the real `-D`.
+  const hijack = { dataDirectory: join(run, "not-the-cluster"),
+    runDirectory: join(run, "not-the-cluster"), socketDirectory: join(run, "not-the-cluster"),
+    port: 1, pgBin: "/also/unused/bin", removeDirectories: false };
+  const realDirectories = [], livePids = [];
+  const notHijacked = await verifyMacLocalDatabaseBackupV1({ backup: macBackup,
+    port: 15638, pgBin: BIN, teardown: { ...hijack,
+      degradedLogger: line => { degraded.push(line); },
+      pgCtl: args => {
+        const directory = args[args.indexOf("-D") + 1] ?? "";
+        realDirectories.push(directory);
+        // The pid is read HERE, at the first `pg_ctl` of the teardown, because
+        // that is the last moment `postmaster.pid` exists: PostgreSQL removes it
+        // on shutdown and the directory is then deleted. Reading it after
+        // `stop()` returns would find nothing and prove nothing.
+        if (livePids.length === 0) {
+          try { livePids.push(Number(readFileSync(join(directory, "postmaster.pid"), "utf8").split("\n")[0])); }
+          catch { /* recorded as missing below */ }
+        }
+        execFileSync(join(BIN, "pg_ctl"), args, { encoding: "utf8", timeout: 90_000 });
+      } } });
+  assert.equal(notHijacked.verified, true);
+  assert.ok(realDirectories.length > 0 && realDirectories.every(directory => directory !== hijack.dataDirectory),
+    `the stop must target the verifier's own cluster, not a caller-supplied path: ${realDirectories.join(", ")}`);
+  // And the real cluster the verifier started for that call is gone, not orphaned.
+  // Attributed by the postmaster pid recorded in the REAL `-D` at teardown time,
+  // not by a directory listing: four test slots share this login, so another
+  // job's cluster in the temp dir is not this test's leak, and counting them
+  // would report someone else's.
+  assert.deepEqual(livePids, [livePids[0]].filter(value => Number.isInteger(value) && value > 0),
+    "the real cluster must have published a postmaster pid in the teardown's own data directory");
+  for (const pid of livePids) assert.equal(pidAlive(pid), false,
+    `a hijacked teardown left the verifier's own postmaster ${pid} running`);
+
+  // The same thing through the ACTUAL command an operator types, as a real
+  // subprocess, so the printed verdict and the exit code are observed rather
+  // than inferred. The `pg_ctl` in `shimBin` refuses every `stop` and forwards
+  // everything else to the real binary, so the verifier really does initdb,
+  // restore and verify a backup, and really does reach the ladder, which then
+  // ends the real postmaster on `immediate`/`SIGQUIT`. Nothing in the repository
+  // is configured to do this: a `pg_bin` whose `pg_ctl` does not take a shutdown
+  // request is a real condition (a wrapper, a wrapper script, a hardlinked
+  // binary from another install), and it is the only way to reach the branch
+  // from the CLI, which has no injection seam.
+  const shimBin = join(run, "shim-bin");
+  await mkdir(shimBin, { recursive: true });
+  for (const name of ["initdb", "pg_restore", "pg_dump", "psql", "postgres", "pg_ctl"]) {
+    await writeFile(join(shimBin, name), `#!/bin/sh\nexec ${JSON.stringify(join(BIN, name))} "$@"\n`, { mode: 0o755 });
+  }
+  await writeFile(join(shimBin, "pg_ctl"),
+    `#!/bin/sh\nfor argument in "$@"; do\n  if [ "$argument" = "stop" ]; then\n    echo "pg_ctl: server does not take a fast shutdown request" >&2\n    exit 1\n  fi\ndone\nexec ${JSON.stringify(join(BIN, "pg_ctl"))} "$@"\n`, { mode: 0o755 });
+  // `promisify(execFile)` REJECTS on a non-zero exit, so a plain `await` would
+  // report "undefined !== 0" and hide the output that says why. The result is
+  // captured either way, so a failure prints what the CLI actually said.
+  const cli = await exec(process.execPath, [join(ROOT, "scripts/ops/verify-database-backup.mjs"),
+    "--backup", macBackup, "--port", "15636", "--pg-bin", shimBin],
+    { encoding: "utf8", timeout: 300_000, maxBuffer: 1 << 24 })
+    .then(value => ({ stdout: value.stdout, stderr: value.stderr, code: 0 }),
+      error => ({ stdout: error.stdout ?? "", stderr: error.stderr ?? "", code: error.code ?? null }));
+  assert.equal(cli.code, 0,
+    `a verified backup must exit 0 even when its cluster needed several shutdown steps:\n${cli.stderr}`);
+  assert.match(cli.stdout, /^database backup verification PASS: sha256:[a-f0-9]{64}$/mu,
+    `a verified backup must print PASS: ${cli.stdout} ${cli.stderr}`);
+  assert.match(cli.stderr, /disposable_postgres_stop_degraded/u,
+    `the degraded teardown must still be visible to the operator: ${cli.stderr}`);
+
+  // And the CLI still fails, loudly, on a real mismatch — the `FAIL` that
+  // docs/BACKUP_AND_RESTORE.md:41-44 describes. Without this, "a degraded
+  // teardown no longer fails the run" would be indistinguishable from "the run
+  // can no longer fail".
+  await exec(process.execPath, [join(ROOT, "scripts/ops/verify-database-backup.mjs"),
+    "--backup", join(macBackup, "..", "does-not-exist"), "--port", "15637", "--pg-bin", BIN],
+    { encoding: "utf8", timeout: 60_000 }).then(
+    () => assert.fail("the CLI must exit non-zero when the backup does not verify"),
+    error => {
+      assert.equal(error.code, 1);
+      assert.match(error.stderr, /^database backup verification FAIL: /mu);
+    });
+
   const dumpPath = join(macBackup, "database.dump"), altered = await readFile(dumpPath);
   altered[0] ^= 0xff;
   await writeFile(dumpPath, altered);

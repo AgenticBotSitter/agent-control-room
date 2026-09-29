@@ -10,9 +10,10 @@ const navigation: readonly NavigationItem[] = [
   { href: "/", label: "Home" },
   { href: "/projects", label: "Projects" },
   { href: "/workers", label: "Workers" },
+  { href: "/session-watch", label: "Session watch" },
   { href: "/setup", label: "Setup" },
   { href: "/workboard", label: "Control Room" },
-  { href: "/needs-me", label: "Needs attention" },
+  { href: "/needs-me", label: "Action Inbox" },
   { href: "/settings", label: "Settings" },
   { href: "/ideas", label: "Idea Lab", optional: true },
 ];
@@ -54,7 +55,7 @@ export function PrivateHeader() {
     <nav id="private-workspace-navigation" className={menuOpen ? "private-navigation is-open" : "private-navigation"}
       aria-label="Workspace pages">
       {navigation.filter(item => runtime.mode === "hosted" ? !item.optional || ideaLab
-        : ["/", "/projects", "/workers", "/needs-me"].includes(item.href)).map(item => <a key={item.href} href={item.href}
+        : ["/", "/projects", "/workers", "/session-watch", "/needs-me"].includes(item.href)).map(item => <a key={item.href} href={item.href}
         aria-current={isCurrent(pathname, item.href) ? "page" : undefined}>
         {item.label}{item.optional ? <span className="private-optional">Optional</span> : null}
       </a>)}

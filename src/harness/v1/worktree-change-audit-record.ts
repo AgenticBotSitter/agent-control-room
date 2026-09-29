@@ -51,6 +51,18 @@ export type WorktreeChangeAuditSummaryV1 = Readonly<{
   evidenceDigest: string;
 }>;
 
+export type WorktreeChangeAuditDetailV1 = Readonly<{
+  schema: "control-room.worktree-change-audit-detail/v1";
+  baseRevision: string;
+  headRevision: string;
+  changes: WorktreeChangeAuditEvidenceV1["changes"];
+  commits: NonNullable<WorktreeChangeAuditEvidenceV1["git"]>["commits"];
+  commitsTruncated: boolean;
+  unifiedDiff: NonNullable<WorktreeChangeAuditEvidenceV1["git"]>["unifiedDiff"];
+  confinement: NonNullable<WorktreeChangeAuditEvidenceV1["git"]>["confinement"];
+  evidenceDigest: string;
+}>;
+
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
     for (const key of Reflect.ownKeys(value)) deepFreeze((value as Record<PropertyKey, unknown>)[key]);
@@ -122,4 +134,15 @@ export function summarizeWorktreeChangeAuditRecordV1(value: unknown): WorktreeCh
     modifiedFiles: changes.filter(change => change.kind === "modified").length,
     deletedFiles: changes.filter(change => change.kind === "deleted").length,
     evidenceDigest: record.evidence.evidenceDigest });
+}
+
+/** Full but bounded owner-review projection. It omits private paths, the
+ * workspace lease, delivery packet, receipt and persistence authentication. */
+export function detailWorktreeChangeAuditRecordV1(value: unknown): WorktreeChangeAuditDetailV1 | undefined {
+  const record = verifyWorktreeChangeAuditRecordV1(value), git = record.evidence.git;
+  if (!git) return undefined;
+  return deepFreeze({ schema: "control-room.worktree-change-audit-detail/v1", baseRevision: record.evidence.baseRevision,
+    headRevision: git.headRevision, changes: record.evidence.changes, commits: git.commits,
+    commitsTruncated: git.commitsTruncated, unifiedDiff: git.unifiedDiff,
+    confinement: git.confinement, evidenceDigest: record.evidence.evidenceDigest });
 }

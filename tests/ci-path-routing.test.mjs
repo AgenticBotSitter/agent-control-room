@@ -15,6 +15,7 @@ import {
 } from "../scripts/ci-path-routing.mjs";
 
 const workflow = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+const budgetSecurityReview = readFileSync(join(process.cwd(), "docs", "ci-budget-security-review.md"), "utf8");
 
 function decisionFor(...paths) {
   return routeChanges({ paths });
@@ -260,6 +261,51 @@ test("the merge gate cannot be skipped by anything the pull request controls", (
     "routing must never gate the merge-check job itself, only which lanes run early",
   );
   assert.match(header, /full-mac-local-rehearsal/u, "the full rehearsal must be required by the merge gate");
+  assert.match(header, /affected-tests/u, "the affected-tests lane must be required by the merge gate");
+  assert.match(gateJob, /check affected-tests "\$\{\{ needs\.affected-tests\.result \}\}"/u,
+    "the merge gate must reject a failed affected-tests lane");
+});
+
+test("the affected-test lane gives selected PostgreSQL tests a disposable, gated environment", () => {
+  const start = workflow.indexOf("  affected-tests:");
+  const end = workflow.indexOf("\n  route:", start);
+  assert.ok(start >= 0 && end > start, "the affected-tests job must exist before route");
+  const job = workflow.slice(start, end);
+  assert.match(job, /--github-output/u, "selection must expose its requirements to CI");
+  assert.match(job, /steps\.selection\.outputs\.needs-pg == 'true'/u,
+    "PostgreSQL installation must follow selected PostgreSQL tests, not only ALL");
+  assert.match(job, /Install PostgreSQL 17 when selected tests require it/u);
+  assert.match(job, /Prepare the reviewed pre-0086 database-upgrade fixture/u);
+  assert.match(job, /git archive --format=tar 88941c0414407be5b226c9b1d78fb17c53ec9810/u,
+    "the gated PG17 upgrade test must receive its reviewed pre-0086 input tree");
+  assert.match(job, /CONTROL_ROOM_PG17_UPGRADE_FIXTURE_ROOT=\$\{fixture_root\}/u,
+    "the PG17 upgrade test must receive the runner-owned historical fixture root");
+  assert.match(job, /! grep -q '0086_mac_local_owner_review_profile'/u,
+    "the fixture setup must fail rather than silently use a current migration ledger");
+  assert.match(job, /Start disposable PostgreSQL for selected database tests/u);
+  assert.match(job, /CONTROL_ROOM_PG17_UPGRADE_REHEARSAL=1/u);
+  assert.match(job, /CONTROL_ROOM_PG_CONCURRENCY_GATE=1/u);
+  assert.match(job, /postgres_port=.*socket\.socket/u, "the disposable cluster must avoid a fixed-port collision");
+  assert.match(job, /mkdir -m 700 "\$\{postgres_root\}\/socket"/u,
+    "the disposable cluster needs a runner-owned Unix-socket directory");
+  assert.match(job, /unix_socket_directories='\$\{postgres_root\}\/socket'/u);
+  assert.match(job, /CONTROL_ROOM_TEST_PG_URL_A=postgresql:\/\/postgres@127\.0\.0\.1:\$\{postgres_port\}\/postgres/u);
+  assert.match(job, /cat "\$\{postgres_root\}\/postgres\.log" >&2/u,
+    "a disposable database startup failure must preserve its diagnostic in the CI log");
+  assert.match(job, /npm exec --yes --package=squawk-cli@2\.61\.0 -- pnpm test:affected/u,
+    "selected migration tests must inherit the same pinned Squawk setup as migration-lint");
+  assert.match(job, /Stop disposable PostgreSQL for selected database tests/u);
+});
+
+test("the affected-test automation has the required budget and security review", () => {
+  assert.match(budgetSecurityReview, /## Amendment: affected tests \(fast\)/u);
+  assert.match(budgetSecurityReview, /45-minute timeout/u);
+  assert.match(budgetSecurityReview, /squawk-cli@2\.61\.0/u);
+  assert.match(budgetSecurityReview, /fails if any non-exempt stream reports any skipped test/u);
+  assert.match(budgetSecurityReview, /15-entry skipped-test exemption/u);
+  assert.match(budgetSecurityReview, /mac-local-pg17-rehearsal\.test\.mjs.*CONTROL_ROOM_MAC_REHEARSAL_ROOT/u);
+  assert.match(budgetSecurityReview, /pre-0086 repository input/u);
+  assert.match(budgetSecurityReview, /RUNNER_TEMP/u);
 });
 
 test("the full Mac-local rehearsal is isolated, fake, PG17, and runs every supported mode", () => {
