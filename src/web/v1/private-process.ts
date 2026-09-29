@@ -3,6 +3,7 @@ import { createAccessKeyCache, type AccessKeyLoader } from "./access-key-cache";
 import { captureGatewayAssertionProviderProfileV1, captureWebOrigins, cloudflareAccessGatewayAssertionProfileV1,
   createAccessVerifier, requireSameOrigin, WebAccessError, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import { privateResponseHeaders, webFailure, readBoundedJson } from "./http-common";
+import { applyReadValidator, readValidatorScope } from "./private-read-validator";
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
 import { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-operation";
@@ -333,6 +334,36 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   let closePromise: Promise<void> | undefined;
   let force!: () => void;
   const forced = new Promise<Response>(resolve => { force = () => resolve(webFailure(new Error())); });
+  // Records the verified session digest for the response a request is about to
+  // produce. It is keyed by the `Request` object rather than held in one shared
+  // variable: this process serves many requests concurrently, and a single shared
+  // field would let one request's scope be read by another request's response.
+  // A `WeakMap` also means a discarded request releases its entry immediately,
+  // so a scope can never outlive the request that was verified for it.
+  const validatedScopes = new WeakMap<Request, string>();
+
+    /**
+     * Adds a per-identity ETag to an authorized JSON read and answers a matching
+     * conditional request with 304.
+     *
+     * This runs strictly *after* `dispatch` has verified the identity, checked
+     * project authority and performed the read, so a 304 never skips
+     * authorization and never skips the database round trip. What it saves is
+     * the response body, its serialisation and its transfer.
+     *
+     * `cache-control: no-store` is untouched: the private response policy is
+     * applied by the transport after this returns, and this layer only ever
+     * adds an `etag` header. The scope digest includes the verified session's
+     * `tokenDigest`, so a validator can never match across two sessions and
+     * cannot survive a sign-out.
+     */
+    async function conditionalRead(request: Request, response: Response): Promise<Response> {
+      const scope = validatedScopes.get(request);
+      validatedScopes.delete(request);
+      if (scope === undefined || response.status !== 200) return response;
+      try { return (await applyReadValidator(request, response, scope, privateResponseHeaders)).response; }
+      catch { return response; }
+    }
 
     async function dispatch(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
       try {
@@ -345,6 +376,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = { ...await keys.get(), audience: site.audience };
         const identity = createAccessVerifier(trust, gatewayAssertionProfile)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          // Bind the validator scope to the identity that was just verified for
+          // this exact request. It is keyed by the request, so a concurrent
+          // request can never read or overwrite it, and `conditionalRead`
+          // consumes it whatever the outcome.
+          try { validatedScopes.set(request, readValidatorScope(identity.tokenDigest, request.method, url.pathname, url.search)); }
+          catch { validatedScopes.delete(request); }
           if (url.pathname === "/api/v1/product-configuration") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             if (!productConfiguration) throw new WebAccessError("not_found");
@@ -822,7 +859,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     async handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
       if (closing || active >= 64) return webFailure(new Error());
       active++;
-      try { return await Promise.race([dispatch(request, render), forced]); }
+      try {
+        const response = await Promise.race([dispatch(request, render), forced]);
+        return await conditionalRead(request, response);
+      }
       finally { active--; if (closing && active === 0) drained?.(); }
     },
     close(): Promise<void> {
