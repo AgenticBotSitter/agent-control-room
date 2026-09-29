@@ -9,6 +9,7 @@ type NavigationItem = { href: string; label: string; optional?: boolean };
 
 const navigation: readonly NavigationItem[] = [
   { href: "/", label: "Home" },
+  { href: "/morning", label: "Morning summary" },
   { href: "/projects", label: "Projects" },
   { href: "/workers", label: "Workers" },
   { href: "/session-watch", label: "Session watch" },
@@ -112,7 +113,7 @@ export function PrivateHeader() {
     <nav id="private-workspace-navigation" className={menuOpen ? "private-navigation is-open" : "private-navigation"}
       aria-label="Workspace pages">
       {navigation.filter(item => runtime.mode === "hosted" ? !item.optional || ideaLab
-        : ["/", "/projects", "/workers", "/session-watch", "/needs-me"].includes(item.href)).map(item => <a key={item.href} href={item.href}
+        : ["/", "/morning", "/projects", "/workers", "/session-watch", "/needs-me"].includes(item.href)).map(item => <a key={item.href} href={item.href}
         aria-current={isCurrent(pathname, item.href) ? "page" : undefined}>
         {item.label}{item.optional ? <span className="private-optional">Optional</span> : null}
         {item.href === "/needs-me" ? <NeedsAttentionBadge enabled={runtime.mode !== "checking"} /> : null}
