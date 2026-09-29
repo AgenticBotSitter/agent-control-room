@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "1947b098c1f37fea96546b027b204e91f4702714eab8ba325f9e96a60ea6f17c",
+  "digest": "c00f42d07acba7f141360815e8b920a3874866fa23bfd8b03583786578dc1e38",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -615,26 +615,50 @@
       "kind": "migrate"
     },
     {
-      "file": "db/roles/production_roles.sql",
+      "file": "db/migrations/0173_owner_web_push_subscriptions.sql",
       "order": 103,
+      "sha256": "db167e9858d1e229202e6a72df105c9bcd947dac0d7cc7ee81721b6f7068d100",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0174_owner_web_push_delivery_ledger.sql",
+      "order": 104,
+      "sha256": "cfe71fa0f86af24a1c5cdabd733a5123494c04e76b9aea4239eba8ddb601961b",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0175_owner_web_push_tenant_isolation.sql",
+      "order": 105,
+      "sha256": "32dac31f73e8b58f4dc87f2e462ddb5a996220ad8c05989f150ded864c883e1b",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0176_owner_web_push_retention.sql",
+      "order": 106,
+      "sha256": "71ad26a9a7192fcc682d416d6e3960e0f7897e1fea68143c73820e24dc5dd19c",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/roles/production_roles.sql",
+      "order": 107,
       "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 104,
+      "order": 108,
       "sha256": "a10ea650194e4b369c7259c651a3a4063b3163d927e0c6750f43397002d570f9",
       "kind": "grants"
     },
     {
       "file": "db/roles/agent_reviewer_roles.sql",
-      "order": 105,
+      "order": 109,
       "sha256": "69a199a5dc16a7263e7037c47bb86b2908bdbbf3d741d2d948c4889781b5d5f9",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 106,
+      "order": 110,
       "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }

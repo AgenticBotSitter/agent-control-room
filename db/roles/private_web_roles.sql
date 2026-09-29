@@ -45,6 +45,11 @@ GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissio
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
+-- Owner Web Push: browser subscriptions and delivery reservations only. This
+-- does not grant task, approval, scheduler, or configuration authority.
+GRANT SELECT, INSERT, DELETE ON owner_web_push_subscriptions TO control_room_private_web;
+GRANT SELECT, INSERT ON owner_web_push_deliveries TO control_room_private_web;
+GRANT UPDATE (state, status_code, completed_at) ON owner_web_push_deliveries TO control_room_private_web;
 -- Per-project settings (eligible worker kinds, concurrency cap, defaults): the
 -- web role reads them both for the owner-facing Settings tab and to enforce
 -- eligibility/concurrency during assignment, and writes them only through the
