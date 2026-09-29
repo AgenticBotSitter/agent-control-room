@@ -1,7 +1,7 @@
 # Improve Control Room desk
 
-**Status:** design and first-slice contract  
-**Scope:** the built-in Control Room self-project, from an owner request through an update candidate  
+**Status:** design and first-slice contract
+**Scope:** the built-in Control Room self-project, from an owner request through an update candidate
 **Not active in the first slice:** installation mutation, database upgrade, restart, rollback and GitHub publication
 
 ## Product outcome
@@ -180,4 +180,3 @@ Publication requires separate current GitHub release credentials held by the rel
 3. **Signed approval:** durable upgrade request/approval tables, strong-session signature, exact migration/release/rollback binding and in-app Approve.
 4. **Safe deploy:** verified backup, rehearsal, database upgrade, build, graceful restart, health checks, automatic rollback and uncertain-state recovery.
 5. **Release train:** weekly/monthly setting, public-name guard, changelog, squash commit, version tag, artifacts and publication reconciliation.
-

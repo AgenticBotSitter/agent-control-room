@@ -122,4 +122,3 @@ test("the desk real-PostgreSQL proof ran when PostgreSQL is available", () => {
   if (!PG) { assert.equal(required, 0); return; }
   assert.equal(required, 1); assert.equal(ran, required);
 });
-

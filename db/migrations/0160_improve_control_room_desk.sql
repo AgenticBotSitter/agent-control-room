@@ -85,4 +85,3 @@ CREATE INDEX control_improvement_requests_project_created
   ON control_improvement_requests(tenant_id, project_id, created_at DESC);
 CREATE INDEX control_update_candidates_ready_created
   ON control_update_candidates(tenant_id, state, created_at DESC);
-
