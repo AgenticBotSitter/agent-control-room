@@ -30,6 +30,9 @@ node_modules/
 *.ndjson
 .DS_Store
 
+# Job reports live outside the repo.
+/reports/
+
 # Playwright scratch output from a local owner-journey run: traces, screencasts
 # and per-test artifacts. Nothing here belongs in the repository, and it is large
 # enough that committing it by accident is a nuisance. CI writes its own copy to

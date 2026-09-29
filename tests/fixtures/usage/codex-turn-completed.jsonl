@@ -1,0 +1,2 @@
+{"type":"item.completed","item":{"type":"agent_message","text":"fixture result"}}
+{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":30}}

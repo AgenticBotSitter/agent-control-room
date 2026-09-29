@@ -16,6 +16,9 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
+import { SessionWatchServiceV1 } from "./session-watch-service";
+import { catalogProjectIdSchema } from "./project-wire";
+import { sessionWatchIdSchema } from "./session-watch-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
@@ -36,7 +39,7 @@ export interface MacLocalWebProcessOptionsV1 {
   revisions?: TaskRevisionOperation;
   /** Read capabilities from the same host-owned task application as the
    * submission operations. Without them, a published result looks absent. */
-  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey">;
+  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey" | "usagePriceTable">;
   /** Host-generation display state built only after pinned executable
    * verification. It is not a delivery, queue, or result authority. */
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
@@ -68,6 +71,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
   const tasks = new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
+  const sessionWatch = new SessionWatchServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.taskReadKeys?.harnessIntegrityKey, clock);
   const projectHttp = createProjectHttpHandler({ origin: options.origin, localOwnerSession: sessions, service: projects, clock });
   const taskHttp = createTaskHttpHandler({ origin: options.origin, localOwnerSession: sessions, service: tasks, clock,
     ...(options.ownerReviews ? { ownerReviews: options.ownerReviews } : {}),
@@ -128,6 +133,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     }
     if (url.pathname === "/workers") {
       if (url.search) throw new WebAccessError("invalid_request");
+      return render();
+    }
+    if (url.pathname === "/session-watch") {
+      if ([...url.searchParams.keys()].some(name => name !== "after") || url.searchParams.getAll("after").length > 1)
+        throw new WebAccessError("invalid_request");
+      if (url.searchParams.has("after") && !sessionWatchIdSchema.safeParse(url.searchParams.get("after")).success)
+        throw new WebAccessError("invalid_request");
+      await sessionWatch.authorize(identity);
       return render();
     }
     const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings)$/.exec(url.pathname);
@@ -204,6 +217,12 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/home/tasks") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         return Response.json(await tasks.home(identity), { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/session-watch") {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+          || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+        return Response.json(await sessionWatch.read(identity, url.searchParams.get("after") ?? undefined),
+          { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/needs-me/tasks") {
         if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")

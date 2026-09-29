@@ -52,14 +52,19 @@ const at = "2026-09-13T00:00:00.000Z";
 const digest = `sha256:${"a".repeat(64)}`;
 function detail(state: TaskDetail["task"]["state"], run?: Partial<TaskDetail["attempts"][number]["runs"][number]>,
   progressSource: TaskDetail["progressSource"] = "configured"): TaskDetail {
+  const emptyUsage = { runs: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, wallTimeMs: 0,
+    knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0, unknownCostRuns: 0,
+    unknownCostReasons: [] as TaskDetail["usageRollup"]["unknownCostReasons"] };
   return { project: { projectId: "project:test", title: "Test project", summary: "Test summary", origin: "ordinary",
     lifecycle: "active", version: 1, createdAt: at, updatedAt: at, lifecycleEditable: true },
     task: { jobId: "job:test", projectId: "project:test", requestId: "request:test", title: "Test task",
       state, version: 1, createdAt: at, updatedAt: at }, instructions: "Deliver the requested result", inputDigest: digest,
-    observedAt: at, modelSelection: null, ownershipLeases: [], attempts: run ? [{ attemptId: "attempt:test", attemptNumber: 1, state: "running", additionalRunsOmitted: false,
+    observedAt: at, modelSelection: null, ownershipLeases: [], usageRollup: emptyUsage,
+    priceTable: { state: "not_recorded", tableId: null, recordedAt: null }, attempts: run ? [{ attemptId: "attempt:test", attemptNumber: 1, state: "running", additionalRunsOmitted: false, usageRollup: emptyUsage,
       runs: [{ runId: "run:test", harness: "codex", state: "running", lastObservedAt: at, stale: false,
         firstObservedExecutionAt: at, finishedObservedAt: null, cancellation: "not_requested", source: "native_snapshot",
-        nativeState: "running", availability: "current", usage: null, resultClaim: null, timeline: [],
+        nativeState: "running", availability: "current", usage: null,
+        cost: { kind: "unknown", reason: "usage_not_reported" }, resultClaim: null, timeline: [],
         earlierObservationsOmitted: false, ...run }] }] : [], earlierAttemptsOmitted: false,
     preparedFor: null, hermesDeliveryRecovery: { source: "not_applicable" },
     localRouteObservation: { state: "not_prepared", adapter: null },
