@@ -149,7 +149,7 @@ jobs:
       - name: Test the lane coverage checker and the path routing
         # The quarantine wrapper delegates the original invocation after applying
         # its exact-name exclusions: node --test tests/check-test-lane-coverage.test.mjs
-        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/browser/owner-review-readiness.test.ts
+        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs
       - name: Test the PR evidence claims checker
         run: node --test tests/check-pr-claims.test.mjs
       - name: Fail if any test file is unreachable from GitHub Actions
@@ -161,6 +161,8 @@ jobs:
       - name: Reject stale or incomplete test quarantines
         run: node scripts/check-test-quarantine.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test the owner review readiness helper
+        run: node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/browser/owner-review-readiness.test.ts
       # The privileged-routine search_path gate does NOT run here. It used to:
       # it read migration files as text, needed no PostgreSQL, and every
       # review round found a way to fool it (a cross-file ALTER FUNCTION, a
