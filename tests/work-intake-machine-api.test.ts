@@ -118,6 +118,10 @@ test("protected loopback client sends the bearer only in the header and accepts 
 test("production privilege preflight admits only the dedicated role on intake tables", () => {
   assert.equal(matchesPostgresProductionAclV1("public.work_batches",
     "{control_room_schema_owner=arwdDxtm/control_room_schema_owner,control_room_backup=r/control_room_schema_owner,control_room_work_intake=ar/control_room_schema_owner}"), true);
+  assert.equal(matchesPostgresProductionAclV1("public.work_batch_items",
+    "{control_room_schema_owner=arwdDxtm/control_room_schema_owner,control_room_backup=r/control_room_schema_owner,control_room_work_intake=r/control_room_schema_owner}"), true);
+  assert.equal(matchesPostgresProductionAclV1("public.control_action_inbox",
+    "{control_room_schema_owner=arwdDxtm/control_room_schema_owner,control_room_application=arw/control_room_schema_owner,control_room_reader=r/control_room_schema_owner,control_room_backup=r/control_room_schema_owner,control_room_work_intake=a/control_room_schema_owner}"), true);
   assert.equal(matchesPostgresProductionAclV1("public.work_batches",
     "{control_room_schema_owner=arwdDxtm/control_room_schema_owner,control_room_private_web=ar/control_room_schema_owner,control_room_work_intake=ar/control_room_schema_owner}"), false);
   assert.equal(matchesPostgresProductionAclV1("public.work_intake_role_anchor",
@@ -135,10 +139,11 @@ test("production privilege preflight admits only the dedicated role on intake ta
 });
 
 test("role creation and least-privilege grants travel through reviewed production provisioning", async () => {
-  const [roles, provision, grants, browser, migration] = await Promise.all([
+  const [roles, provision, grants, browser, migration, ownerMigration] = await Promise.all([
     ...["production_roles.sql", "production_provision.sql", "production_table_grants.sql", "private_web_roles.sql"]
       .map(file => readFile(`db/roles/${file}`, "utf8")),
-    readFile("db/migrations/0093_work_batch_intake.sql", "utf8")]);
+    readFile("db/migrations/0093_work_batch_intake.sql", "utf8"),
+    readFile("db/migrations/0102_work_batch_owner_approval.sql", "utf8")]);
   assert.match(roles, /CREATE ROLE control_room_work_intake NOLOGIN/u);
   assert.match(provision, /CREATE ROLE control_room_work_intake NOLOGIN/u);
   assert.match(provision, /CREATE ROLE control_room_work_intake_agent LOGIN/u);
@@ -146,7 +151,9 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.match(grants, /GRANT SELECT ON control_identities, control_role_grants, projects, work_batches/u);
   assert.doesNotMatch(grants, /GRANT .*control_jobs.* TO control_room_work_intake/u);
   assert.doesNotMatch(grants, /GRANT .*control_room_queue.* TO control_room_work_intake/u);
-  assert.doesNotMatch(browser, /work_batches|work_batch_revisions/u);
+  assert.match(browser, /work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web/u);
+  assert.match(browser, /GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web/u);
+  assert.doesNotMatch(browser, /GRANT .*control_room_queue.* TO control_room_private_web/u);
   assert.match(migration, /CREATE TABLE work_intake_role_anchor/u);
   assert.match(migration, /pg_has_role\(s\.oid,a\.grantee,'member'\)/u);
   assert.doesNotMatch(migration, /r\.rolname='control_room_work_intake'/u);
@@ -170,6 +177,15 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.match(migration, /NEW\.result->>'grantsExecutionAuthority'<>'false'/u);
   assert.match(migration, /NEW\.event_count<>OLD\.event_count\+1/u);
   assert.doesNotMatch(migration, /NEW\.action LIKE 'work_batches\.%'/u);
+  assert.match(ownerMigration, /\(NEW\.payload - 'createdAt'\) IS DISTINCT FROM pg_catalog\.jsonb_build_object/u);
+  assert.match(ownerMigration, /\(NEW\.payload->>'createdAt'\)::timestamptz IS DISTINCT FROM NEW\.created_at/u);
+  assert.match(ownerMigration, /ADD COLUMN auth_material_version bigint NOT NULL DEFAULT 1/u);
+  assert.match(ownerMigration, /IF public\.is_work_intake_session\(\)/u);
+  assert.doesNotMatch(ownerMigration, /rolname='control_room_work_intake'/u);
+  assert.match(ownerMigration, /pg_catalog\.pg_has_role\(session_user,[\s\S]*?pg_catalog\.pg_roles\s+WHERE\s+rolname='control_room_private_web'\),'member'\)/u);
+  assert.match(ownerMigration, /OLD\.id NOT LIKE 'attention:work-batch:%'/u);
+  assert.doesNotMatch(ownerMigration, /SELECT \* INTO batch FROM work_batches b[\s\S]*FOR UPDATE/u);
+  assert.doesNotMatch(ownerMigration, /work_intake_canonical_jsonb/u);
 });
 
 test("invokable CLI binds to one protected configuration path and exact secret-bearing document", async () => {

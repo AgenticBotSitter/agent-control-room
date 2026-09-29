@@ -277,6 +277,16 @@ export class WebTaskService {
 
   private async proposeInternal(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string,
     dependsOnJobIds: readonly string[]) {
+    return this.authority.authenticated(identity, (tx, actor) =>
+      this.proposeWithDependenciesInSession(tx, actor, projectId, value, key, dependsOnJobIds));
+  }
+
+  /** Server-only composition seam for a larger owner-authorized transaction.
+   * It performs the same validation, authorization, idempotency, audit and
+   * ordinary proposed-task materialization as proposeWithDependencies(), but
+   * never opens or commits a nested transaction. */
+  async proposeWithDependenciesInSession(tx: DatabaseSession, actor: WebActor, projectId: string,
+    value: unknown, key: string, dependsOnJobIds: readonly string[]) {
     this.id(projectId);
     const parsed = taskDraftSchema.safeParse(value);
     const dependencies = [...dependsOnJobIds].sort();
@@ -294,8 +304,7 @@ export class WebTaskService {
     // proposals. Only the narrow dependency integration adds this field.
     const digest = sha256Digest({ ...this.scope, projectId, action: "tasks.propose", draft: parsed.data,
       ...(dependencies.length ? { dependsOnJobIds: dependencies } : {}) });
-    return this.authority.authenticated(identity, async (tx, actor) => {
-      actor.require("tasks.read", projectId); actor.require("tasks.propose", projectId);
+    actor.require("tasks.read", projectId); actor.require("tasks.propose", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const existing = (await tx.query<{ request_digest: string; project_id: string; job_id: string; result: unknown }>(
         `SELECT request_digest,project_id,job_id,result FROM control_web_task_commands
@@ -353,7 +362,6 @@ export class WebTaskService {
       await tx.query(`INSERT INTO control_web_task_commands(tenant_id,identity_id,idempotency_key,project_id,job_id,request_digest,result,occurred_at)
         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`, [this.scope.tenantId, actor.id, key, projectId, jobId, digest, JSON.stringify(receipt), actor.now]);
       return { receipt, replayed: false };
-    });
   }
 
   async detail(identity: VerifiedWebIdentity, projectId: string, jobId: string) {
