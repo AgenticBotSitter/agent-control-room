@@ -39,8 +39,12 @@ export type MacLocalTaskProviderV1 = Readonly<{
     database: OpenedDatabase;
     workerReadiness: MacLocalWorkerReadinessV1;
     databaseRoles: MacLocalDatabaseRolesV1;
-    /** Optional until cook/pause lands. Its server-owned implementation is the
-     * only supported way for machine health to pause new starts. */
+    /** Supplied by the host once the server-side operations mode exists. Its
+     * server-owned implementation is the only supported way for machine health
+     * to pause new starts: the port never writes an operations record itself.
+     * Omitted when the installation has no operations mode, in which case a
+     * failed health check has no way to pause and the watchdog records an
+     * `operations_pause_unavailable` incident. */
     supervisor?: Readonly<{ operations: SupervisorOperationsModePortV1; supervisorId: string }>;
     workBatches?: Readonly<{ integrityKey: Uint8Array; queueCatalog: WorkBatchQueueCatalogV1;
       selectionAuthority: WorkBatchQueueSelectionAuthorityV1 }>;
