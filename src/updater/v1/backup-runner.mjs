@@ -229,12 +229,26 @@ export async function assertSafeGenerationV1(backupRoot, generationId, { require
   if (!names.includes(DUMP_FILE_V1)) throw updaterRefuseV1("updater_backup_manifest_refused");
   const manifest = JSON.parse(await readBoundedV1(paths.manifest));
   if (manifest?.schema !== MANIFEST_SCHEMA_V1 || manifest.generationId !== generationId
-      || typeof manifest.dumpSha256 !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(manifest.dumpSha256))
+      || typeof manifest.dumpSha256 !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(manifest.dumpSha256)
+      || typeof manifest.fileSha256 !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(manifest.fileSha256))
     throw updaterRefuseV1("updater_backup_manifest_refused");
   const dump = await lstat(paths.dump);
-  if (dump.size !== manifest.dumpBytes) throw updaterRefuseV1("updater_backup_manifest_refused");
-  const actual = await sha256FileV1(paths.dump, manifest.dumpBytes);
-  if (actual !== manifest.dumpSha256) throw updaterRefuseV1("updater_backup_manifest_refused");
+  // WHICH digest the bytes on disk are checked against, and why the two differ.
+  //
+  // A SEALED generation's file holds the CIPHERTEXT, so its digest is
+  // `fileSha256`. A plain generation's file holds the dump, so its digest is
+  // `dumpSha256`. The first version of this check always compared against
+  // `dumpSha256`, which means it refused EVERY sealed generation with
+  // `updater_backup_manifest_refused` — a false refusal on exactly the case the
+  // carry-forward cares about most (a backup on a drive with no ownership). The
+  // size check follows the same choice, for the same reason: a sealed file is
+  // larger than the dump it came from.
+  const onDisk = manifest.encrypted === true;
+  const expectedDigest = onDisk ? manifest.fileSha256 : manifest.dumpSha256;
+  if (dump.size !== manifest.dumpBytes && !onDisk)
+    throw updaterRefuseV1("updater_backup_manifest_refused");
+  const actual = await sha256FileV1(paths.dump, onDisk ? undefined : manifest.dumpBytes);
+  if (actual !== expectedDigest) throw updaterRefuseV1("updater_backup_manifest_refused");
   return Object.freeze({ ...paths, entries: names.sort(), manifest });
 }
 
