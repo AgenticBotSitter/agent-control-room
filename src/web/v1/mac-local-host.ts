@@ -130,8 +130,14 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     start: service.start.bind(service),
     isReady: () => service.isReady() && taskApplication.isReady(),
     close: () => close ??= (async () => {
-      const results = await Promise.allSettled([service.close(), taskApplication.close()]);
-      if (results.some(result => result.status === "rejected")) throw new Error("mac_local_host_cleanup_uncertain");
+      // The task application owns the restricted controller/result pools. It
+      // first refuses new operations and drains active saves, so it must finish
+      // before the web composition closes the database beneath the host. Keep
+      // the later close best-effort even when the drain reports uncertainty.
+      const task = await Promise.allSettled([taskApplication.close()]);
+      const site = await Promise.allSettled([service.close()]);
+      if ([...task, ...site].some(result => result.status === "rejected"))
+        throw new Error("mac_local_host_cleanup_uncertain");
     })(),
   });
 }

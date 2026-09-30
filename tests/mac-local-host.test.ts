@@ -85,7 +85,7 @@ test("protected Mac startup creates the shared task lifecycle only after worker 
   const running = await host.start();
   assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application"]);
   await running.close();
-  assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application", "web-close", "task-close"]);
+  assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application", "task-close", "web-close"]);
 });
 
 test("protected host captures one batch key, catalog and exact-selection authority for the task application", async () => {
@@ -151,6 +151,27 @@ test("a Mac-local host owns the shared task composition and fails ready when tha
   assert.equal(taskCloses, 1);
 });
 
+test("a failed task drain still closes the site database and remains failed on retry", async () => {
+  const trace: string[] = [];
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { trace.push("site-close"); queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const service = createMacLocalWebServiceFromConfigurationV1({
+    configuration,
+    database: { client: {} as never, isAvailable: () => true, async close() { trace.push("database-close"); } },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+    taskApplication: { operations: {}, isReady: () => true, async close() {
+      trace.push("task-close"); throw new Error("injected_task_drain_failure");
+    } },
+  });
+  await service.start();
+  await assert.rejects(service.close(), /mac_local_host_cleanup_uncertain/);
+  await assert.rejects(service.close(), /mac_local_host_cleanup_uncertain/);
+  assert.deepEqual(trace, ["task-close", "site-close", "database-close"]);
+});
+
 test("a Mac-local host refuses operations from a different controller lifecycle", () => {
   assert.throws(() => createMacLocalWebServiceFromConfigurationV1({ configuration,
     database: { client: {} as never, async close() {} } as never,
@@ -171,7 +192,7 @@ test("a protected Mac host refuses bare operations mixed with a task-application
   }), /mac_local_host_configuration_invalid/);
 });
 
-test("starts the existing queue worker only after the loopback site is listening and closes both together", async () => {
+test("starts the existing queue worker only after the loopback site is listening and drains writers before databases", async () => {
   const trace: string[] = [];
   const server = new EventEmitter() as Server;
   server.listen = ((_options: object, callback: () => void) => { trace.push("site-start"); queueMicrotask(callback); return server; }) as Server["listen"];
@@ -197,7 +218,48 @@ test("starts the existing queue worker only after the loopback site is listening
   const running = await host.start();
   assert.deepEqual(trace.slice(0, 2), ["site-start", "queue-start"]);
   await running.close();
-  assert.deepEqual(trace.slice(-4), ["queue-close", "site-close", "database-close", "task-close"]);
+  assert.deepEqual(trace.slice(-4), ["queue-close", "task-close", "site-close", "database-close"]);
+});
+
+test("a readiness quarantine drains a mid-write task before either owned database closes", async () => {
+  const trace: string[] = [];
+  let databaseAvailable = true, databaseClosed = false, releaseWrite!: () => void;
+  const writeMayFinish = new Promise<void>(resolve => { releaseWrite = resolve; });
+  const results: string[] = [];
+  const activeWrite = (async () => {
+    trace.push("write-start");
+    await writeMayFinish;
+    assert.equal(databaseClosed, false, "an in-flight result must never write after the host database closes");
+    results.push("saved"); trace.push("write-recorded");
+  })();
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { trace.push("site-start"); queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { trace.push("site-close"); queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const service = createMacLocalWebServiceFromConfigurationV1({
+    configuration,
+    database: { client: {} as never, isAvailable: () => databaseAvailable,
+      async close() { databaseClosed = true; trace.push("web-database-close"); } },
+    taskApplication: { operations: {}, isReady: () => true, async close() {
+      trace.push("task-drain-start");
+      await activeWrite;
+      assert.deepEqual(results, ["saved"], "the task drain must retain the completed result");
+      trace.push("task-close");
+    } },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+  });
+  await service.start();
+  databaseAvailable = false;
+  assert.equal(service.isReady(), false, "database quarantine must make the host unavailable before restart");
+  const closes = Array.from({ length: 32 }, () => service.close());
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(databaseClosed, false, "shutdown must keep the database open while the result write is blocked");
+  assert.equal(trace.includes("task-close"), false, "task resources must remain open until the active write finishes");
+  releaseWrite();
+  await Promise.all(closes);
+  assert.deepEqual(results, ["saved"]);
+  assert.deepEqual(trace, ["write-start", "site-start", "task-drain-start", "write-recorded", "task-close", "site-close", "web-database-close"]);
 });
 
 test("refuses a queue-worker factory without the task lifecycle it delivers", () => {
