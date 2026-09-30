@@ -171,10 +171,13 @@ const catalog = [
   // `/api/v1/workers-board` are hosted-only -- private-process.ts mounts the
   // latter and the Mac-local composition does not -- so requesting them here only
   // measured a 404 that no owner would ever see.
-  { name: "updates", route: "/needs-me",
+  // Deliberately NOT project-scoped: the Action Inbox spans the workspace, so
+  // seeing other projects' ids in it is the correct answer, not a leak.
+  { name: "updates", projectScoped: false, route: "/needs-me",
     reads: ["/api/v1/local-workers", "/api/v1/needs-me/tasks", "/api/v1/needs-me/action-items"],
     poll: { path: () => "/api/v1/needs-me/tasks", baseMs: 30_000, quietBackoff: true } },
-  { name: "needs-me", route: "/needs-me",
+  // Cross-project by design, like the Action Inbox itself.
+  { name: "needs-me", projectScoped: false, route: "/needs-me",
     reads: ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks"],
     poll: { path: () => "/api/v1/needs-me/tasks", baseMs: 30_000, quietBackoff: true } },
   { name: "session-watch", route: "/session-watch",
