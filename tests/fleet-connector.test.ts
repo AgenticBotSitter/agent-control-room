@@ -318,12 +318,19 @@ test("one IPv6 /64 cannot rotate addresses to lock out an enrolled machine", asy
 });
 
 test("one IPv6 /48 cannot rotate /64s to spend the global failure budget", () => {
-  const admission = createFleetGatewayAdmissionV1({ authenticatePerIp: 2, authenticatePerIpv6_48: 3,
-    authenticateGlobal: 4, maxConcurrent: 1 });
-  for (const address of ["2001:db8:1:1::1", "2001:db8:1:1::2", "2001:db8:1:2::1"])
+  let now = 0;
+  const admission = createFleetGatewayAdmissionV1({ clock: () => now, windowMs: 100,
+    authenticatePerIp: 2, authenticatePerIpv6_48: 3, authenticateGlobal: 4, maxConcurrent: 1 });
+  for (const address of ["2001:db8:1:1::1", "2001:db8:1:1::2"])
     admission.enter(requestFrom(address), "authenticate").completeAuthentication(null);
+  now = 50;
+  admission.enter(requestFrom("2001:db8:1:2::1"), "authenticate").completeAuthentication(null);
+  now = 60;
   assert.throws(() => admission.enter(requestFrom("2001:db8:1:2::2"), "authenticate"), /fleet_rate_limited/u,
     "three failures across one /48 exhaust its allocation budget");
+  now = 101;
+  assert.doesNotThrow(() => admission.enter(requestFrom("2001:db8:1:2::3"), "authenticate")
+    .completeAuthentication(null), "the /48 refusal refunded its provisional /64 charge");
   assert.doesNotThrow(() => admission.enter(requestFrom("2001:db8:2:1::1"), "authenticate")
     .completeAuthentication(null), "a /48 refusal spends neither another allocation nor the global budget");
 
@@ -422,7 +429,7 @@ test("default proxy policy prevents header rotation from manufacturing authentic
 test("known workers are refused before database admission when their window is spent", () => {
   let now = 10_000;
   const admission = createFleetGatewayAdmissionV1({ clock: () => now, windowMs: 1_000,
-    authenticatePerIp: 1, authenticateGlobal: 1, authenticatedPerWorker: 2, authenticatedGlobal: 2,
+    authenticatePerIp: 1, authenticateGlobal: 1, authenticatedPerWorker: 2, authenticatedGlobal: 4,
     maxConcurrent: 4 });
   const workerId = "fleet-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const secret = `crf_${"A".repeat(43)}`;
