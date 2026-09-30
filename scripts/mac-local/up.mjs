@@ -5,7 +5,6 @@
 // agent, so it starts at login and restarts after a crash. Without it, the host is a detached child.
 // Usage: pnpm mac:up -- --protected-root ABS_PATH [--install-service]   (or CONTROL_ROOM_PROTECTED_ROOT)
 import { spawn } from "node:child_process";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { lstat, mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,6 +14,8 @@ import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runt
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
 import { captureMacLocalBuildSourceV1, macLocalBuildSourceV1 } from "./build-source.mjs";
 import { readHostState, readRecoverableHostState } from "./task-host-supervisor.mjs";
+import { createHealthNonceV1, healthRequestTagV1, healthResponseTagMatchesV1,
+  LOCAL_HOST_HEALTH_ENDPOINT_V1 } from "../../src/updater/v1/health-protocol.mjs";
 
 const PROVIDER_MODULE = "dist-vps/server/macLocalDefaultTaskProvider.js";
 const BUILD_SOURCE = "dist-vps/server/mac-local-build-source.json";
@@ -100,9 +101,10 @@ export async function readHealthProbeKey(root) {
 async function requestAuthenticatedHostHealth(port, healthProbeKey, timeoutMs = 1_000, transport = fetch) {
   const origin = `http://127.0.0.1:${port}`;
   try {
-    const nonce = randomBytes(32).toString("base64url");
+    const nonce = createHealthNonceV1();
+    const reqTag = healthRequestTagV1(healthProbeKey, nonce, LOCAL_HOST_HEALTH_ENDPOINT_V1);
     const response = await transport(`${origin}/api/v1/local-host-health`, { method: "POST",
-      headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }),
+      headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce, reqTag }),
       signal: AbortSignal.timeout(timeoutMs) });
     const value = await boundedHealthResponse(response);
     if (!value || typeof value !== "object" || Array.isArray(value)
@@ -111,18 +113,16 @@ async function requestAuthenticatedHostHealth(port, healthProbeKey, timeoutMs = 
       || value.nonce !== nonce || !Number.isSafeInteger(value.pid) || value.pid <= 1
       || typeof value.releaseId !== "string" || typeof value.startedAt !== "string"
       || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.tag !== "string") return undefined;
-    const material = JSON.stringify({ nonce, pid: value.pid, purpose: "local-host-health/v1",
-      releaseId: value.releaseId, startedAt: value.startedAt });
-    const expected = `hmac-sha256:${createHmac("sha256", healthProbeKey).update(material, "utf8").digest("hex")}`;
-    const actualBytes = Buffer.from(value.tag, "utf8"), expectedBytes = Buffer.from(expected, "utf8");
-    if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) return undefined;
+    const signed = { schema: value.schema, nonce: value.nonce, ready: value.ready, pid: value.pid,
+      releaseId: value.releaseId, startedAt: value.startedAt };
+    if (!healthResponseTagMatchesV1(healthProbeKey, LOCAL_HOST_HEALTH_ENDPOINT_V1, signed, value.tag)) return undefined;
     return value.pid;
   } catch { return undefined; }
 }
 
 /** A ready host proves one coherent generation: its supervisor wrote the private pid/state files,
  * both recorded processes still have the exact commands for this root, and the child itself answers
- * the owner-code-authenticated health route on the configured port. The records are re-read after
+ * the independently keyed health route on the configured port. The records are re-read after
  * the request so a restart halfway through the probe is a retry, never a mixed-generation success. */
 export async function authenticatedHostReady(root, port, runtime = {}) {
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return undefined;

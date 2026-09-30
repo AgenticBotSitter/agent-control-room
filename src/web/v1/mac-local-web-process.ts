@@ -42,7 +42,10 @@ import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
-import { hmacSha256Tag } from "../../security";
+import { captureUpdaterHealthCountsV1, HealthNonceLedgerV1, healthResponseTagV1,
+  LOCAL_HOST_HEALTH_ENDPOINT_V1, UPDATER_HEALTH_ENDPOINT_V1,
+  verifyHealthRequestV1 } from "../../updater/v1/health-protocol.mjs";
+import type { UpdaterHealthWebReadPortV1 } from "../../updater/v1/health-ports";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -126,6 +129,7 @@ export interface MacLocalWebProcessOptionsV1 {
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
+  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;
 }
 
 /** Existing controller operations supplied by the host.  This is deliberately
@@ -162,6 +166,16 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   if (options.cloudflareAccessOrigin !== undefined && !profile.remoteOrigins?.includes(options.cloudflareAccessOrigin))
     throw new Error("mac_local_web_process_config_invalid");
   const sessions = new LocalOwnerSessionServiceV1(profile, options.localOwnerSessionStore, options.initialLocalOwnerSessions);
+  const healthNonces = new HealthNonceLedgerV1();
+  const authenticateHealthRequest = async (request: Request, endpoint: string) => {
+    if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
+      || !request.body) throw new WebAccessError("invalid_request");
+    const body = await readBoundedJson(request.body, 256, 1_000);
+    try {
+      return verifyHealthRequestV1({ key: options.healthProbeKey!, endpoint, value: body,
+        ledger: healthNonces, now: clock() });
+    } catch { throw new WebAccessError("access_denied"); }
+  };
   const productConfiguration = parseProductConfigurationV1({ schema: "control-room.product-configuration/v1",
     displayName: "Control Room", defaultTimezone: "UTC",
     modules: { ideaLab: false, news: false, sessionObservations: false },
@@ -369,19 +383,26 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           throw new WebAccessError("not_found");
         if (url.origin !== options.origin) throw new WebAccessError("access_denied");
         sessions.assertLocalRequest(request, true);
-        if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
-          || !request.body) throw new WebAccessError("invalid_request");
-        const body = await readBoundedJson(request.body, 256);
-        if (!body || typeof body !== "object" || Array.isArray(body) || Object.getPrototypeOf(body) !== Object.prototype
-          || Object.keys(body).length !== 1 || typeof (body as { nonce?: unknown }).nonce !== "string"
-          || !/^[A-Za-z0-9_-]{43}$/u.test((body as { nonce: string }).nonce))
-          throw new WebAccessError("invalid_request");
-        const nonce = (body as { nonce: string }).nonce, pid = options.hostProcessId,
+        const { nonce } = await authenticateHealthRequest(request, LOCAL_HOST_HEALTH_ENDPOINT_V1);
+        const pid = options.hostProcessId,
           releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!;
-        const tag = hmacSha256Tag(options.healthProbeKey!,
-          { purpose: "local-host-health/v1", nonce, pid, releaseId, startedAt });
-        return Response.json({ schema: "control-room.local-host-health/v1", ready: true, pid, nonce, releaseId, startedAt, tag },
+        const response = { schema: "control-room.local-host-health/v1", nonce, ready: true, pid, releaseId, startedAt };
+        const tag = healthResponseTagV1(options.healthProbeKey!, LOCAL_HOST_HEALTH_ENDPOINT_V1, response);
+        return Response.json({ ...response, tag },
           { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/updater-health") {
+        if (request.method !== "POST" || url.search || options.hostProcessId === undefined
+          || !options.updaterHealthReadPort) throw new WebAccessError("not_found");
+        if (url.origin !== options.origin) throw new WebAccessError("access_denied");
+        sessions.assertLocalRequest(request, true);
+        const { nonce } = await authenticateHealthRequest(request, UPDATER_HEALTH_ENDPOINT_V1);
+        const counts = captureUpdaterHealthCountsV1(await options.updaterHealthReadPort.readHealthCounts({
+          tenantId: profile.tenantId, workspaceId: options.workspaceId,
+        }));
+        const response = { schema: "control-room.updater-health/v1", nonce, ready: true, ...counts };
+        const tag = healthResponseTagV1(options.healthProbeKey!, UPDATER_HEALTH_ENDPOINT_V1, response);
+        return Response.json({ ...response, tag }, { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/local-workers") {
         if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");

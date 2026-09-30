@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { hmacSha256Tag, InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
+import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
@@ -8,6 +8,8 @@ import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 import { nodeExchange } from "./helpers/web-node";
+import { createHealthNonceV1, healthRequestTagV1, healthResponseTagV1,
+  LOCAL_HOST_HEALTH_ENDPOINT_V1 } from "../src/updater/v1/health-protocol.mjs";
 
 after(closePrivateOwnerBootstrapConformanceDatabase);
 
@@ -50,11 +52,13 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   }
   const signedOutWrite = await app.handle(request("/projects", { method: "POST" }), () => new Response("unused"));
   assert.equal(signedOutWrite.status, 401);
-  const nonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const healthKey = new Uint8Array(32).fill(9);
+  const nonce = createHealthNonceV1(conformanceNow, size => Buffer.alloc(size, 1));
+  const reqTag = healthRequestTagV1(healthKey, nonce, LOCAL_HOST_HEALTH_ENDPOINT_V1);
   const wrongHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
     origin, "content-type": "application/json" }, body: JSON.stringify({ nonce: "short" }) }),
   () => new Response("unused"));
-  assert.equal(wrongHealth.status, 400); assert.equal(wrongHealth.headers.get("set-cookie"), null);
+  assert.equal(wrongHealth.status, 403); assert.equal(wrongHealth.headers.get("set-cookie"), null);
   const unsignedHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
     "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
   assert.equal(unsignedHealth.status, 403, "even the correct code needs the exact loopback Origin");
@@ -62,11 +66,12 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     origin: trustedOrigin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
   assert.equal(remoteHealth.status, 403, "the readiness oracle exists only on the loopback origin");
   const health = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
-    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce, reqTag }) }), () => new Response("unused"));
   assert.equal(health.status, 200); assert.equal(health.headers.get("set-cookie"), null);
   assert.deepEqual(await health.json(), { schema: "control-room.local-host-health/v1", ready: true, pid: 4_243, nonce,
-    releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z", tag: hmacSha256Tag(new Uint8Array(32).fill(9),
-      { purpose: "local-host-health/v1", nonce, pid: 4_243, releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });
+    releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z", tag: healthResponseTagV1(healthKey,
+      LOCAL_HOST_HEALTH_ENDPOINT_V1, { schema: "control-room.local-host-health/v1", nonce, ready: true,
+        pid: 4_243, releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });
   const healthRead = await app.handle(request("/api/v1/local-host-health"), () => new Response("unused"));
   assert.equal(healthRead.status, 404, "health is an authenticated POST, not a public read");
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {

@@ -11,6 +11,8 @@ import { updaterRefuseV1 } from "./contracts.mjs";
 // the item-5 lifecycle and item-14 health ports. `startUpdaterV1` accepts that
 // composed instance through `options.effects` and settles it before listening.
 export { DiskReserveV1, PairHistoryV1, UpdaterActuatorV1, collectOldReleasesV1 } from "./actuator.mjs";
+export { UpdaterHealthEvaluatorV1, UpdaterScheduledHealthV1, captureHealthPolicyV1,
+  loadRunningHealthPolicyV1, readUpdaterHealthProbeKeyV1 } from "./health.mjs";
 
 function updaterRootV1(env) {
   const production = "/Library/Application Support/Control Room";
@@ -61,6 +63,7 @@ export async function startUpdaterV1(options = {}) {
     process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
   });
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, onError: reportTimerError });
+  const scheduledHealth = options.scheduledHealth;
   let heartbeatState = { state: "idle", step: null };
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportTimerError });
@@ -75,14 +78,16 @@ export async function startUpdaterV1(options = {}) {
     // run is observed. The actuator either completes it or restores its source.
     await effects.recover?.();
     await control.start(); await heartbeat.beat(); await loop.tick(); heartbeat.start(); loop.start();
+    await scheduledHealth?.start();
   } catch (error) {
-    loop.stop(); await heartbeat.stop(); await control.stop();
+    loop.stop(); await scheduledHealth?.stop(); await heartbeat.stop(); await control.stop();
     if (ownsClient) await client.end();
     throw error;
   }
-  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control,
+  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, scheduledHealth,
     setHeartbeatState(value) { heartbeatState = value; },
-    async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); if (ownsClient) await client.end(); } });
+    async stop() { loop.stop(); await scheduledHealth?.stop(); await heartbeat.stop(); await control.stop();
+      if (ownsClient) await client.end(); } });
 }
 
 const invoked = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

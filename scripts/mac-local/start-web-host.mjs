@@ -110,6 +110,7 @@ export async function startMacLocalWebHost(input, runtime = {}) {
     ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
     ...(ownerWebPush ? { ownerWebPush } : {}),
     healthProbeKey, healthReleaseId, healthStartedAt: hostStartedAt,
+    ...(runtime.updaterHealthReadPort ? { updaterHealthReadPort: runtime.updaterHealthReadPort } : {}),
     assets, render: rendererModule.default,
   });
   return startHostWithOptionalIntake(host, installed, intakeModule);
@@ -188,6 +189,7 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
     ...(ownerWebPush ? { ownerWebPush } : {}),
     healthProbeKey, healthReleaseId, healthStartedAt: hostStartedAt,
+    ...(runtime.updaterHealthReadPort ? { updaterHealthReadPort: runtime.updaterHealthReadPort } : {}),
     createTaskApplication: async hostInput => {
       providerModule.requireMacLocalThreeAgentReadinessV1(provider, hostInput.workerReadiness);
       return provider.createTaskApplication({ ...hostInput, protectedRoot: input.protectedRoot });
