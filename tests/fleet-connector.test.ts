@@ -537,9 +537,16 @@ test("every fleet move to ready takes the tenant mutex explicitly", async () => 
     const transactionStart = before.lastIndexOf("this.db.transaction(");
     assert.ok(transactionStart >= 0, "a fleet -> ready move must live inside a transaction");
     const body = source.slice(transactionStart, move.index ?? 0);
-    assert.match(body, /#tenantMutex\(tx\)/u,
+    const mutexAt = body.search(/#tenantMutex\(tx\)/u);
+    assert.ok(mutexAt >= 0,
       "a fleet -> ready move must take the tenant mutex in ITS OWN transaction; the release path lost its "
       + "(accidental) serialisation");
+    // Mutex FIRST, rows second — the order every coordinator mutex holder uses.
+    // Taking it after a job/attempt/lease row lock closes a deadlock cycle with a
+    // coordinator that holds the mutex and waits on that row.
+    const firstRowLock = body.search(/readFleetEntityV1\(tx,/u);
+    assert.ok(firstRowLock < 0 || mutexAt < firstRowLock,
+      "the tenant mutex must be taken BEFORE the first job/attempt/lease row lock in the same transaction");
   }
 });
 

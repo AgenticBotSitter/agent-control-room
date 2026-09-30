@@ -712,6 +712,11 @@ export class FleetGatewayStoreV1 {
       const claim = await this.#liveClaim(tx, principal, input.claimId);
       const event = await this.#event(tx, principal, claim, "blocker", message, idempotencyKey, now);
       if (event.replayed || input.release !== true) return { ...event, released: false };
+      // This release returns owner-visible work to the open offer, so it takes the
+      // tenant mutex, and it takes it BEFORE any job/attempt/lease row lock: every
+      // coordinator mutex holder locks the mutex first and rows second, so taking it
+      // after the row locks would close a deadlock cycle with them.
+      await this.#tenantMutex(tx);
       let job = await readFleetEntityV1(tx, this.#tenantId, "job", claim.job_id);
       const attempt = await readFleetEntityV1(tx, this.#tenantId, "attempt", claim.attempt_id);
       const lease = await readFleetEntityV1(tx, this.#tenantId, "lease", claim.lease_id);
@@ -722,9 +727,6 @@ export class FleetGatewayStoreV1 {
       await moveFleetEntityV1(tx, attempt, attempt.state === "leased" ? "cancelled" : "failed",
         { ...base, patch: { finishedAt: now, safeFailureCode: "worker_blocked" } });
       if (job.state === "running") job = await moveFleetEntityV1(tx, job, "orphaned", base);
-      // This move returns owner-visible work to the open offer, so it takes the
-      // tenant mutex explicitly rather than relying on a foreign-key wait.
-      await this.#tenantMutex(tx);
       await moveFleetEntityV1(tx, job, "ready", base);
       await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2", [this.#tenantId, lease.id]);
       await appendAuditWith(tx, { id: `audit:fleet-release:${event.eventId.slice(12)}`, tenantId: this.#tenantId,
@@ -852,6 +854,9 @@ export class FleetGatewayStoreV1 {
     [this.#tenantId])).rows;
     for (const review of reviews) {
       await this.db.transaction(async tx => {
+        // A requested revision returns the job to the open offer, which needs the
+        // tenant mutex. Take it before the row locks (mutex first, rows second).
+        if (review.decision === "revision_requested") await this.#tenantMutex(tx);
         let job = await readFleetEntityV1(tx, this.#tenantId, "job", review.job_id);
         const attempt = await readFleetEntityV1(tx, this.#tenantId, "attempt", review.attempt_id);
         if (job.state !== "waiting_approval" || attempt.state !== "waiting") return;
@@ -864,8 +869,6 @@ export class FleetGatewayStoreV1 {
         } else if (review.decision === "revision_requested") {
           await moveFleetEntityV1(tx, attempt, "failed", { ...base, patch: { finishedAt: now, safeFailureCode: "revision_requested" } });
           job = await moveFleetEntityV1(tx, job, "failed", base);
-          // Back to the open offer, so the tenant mutex is taken explicitly.
-          await this.#tenantMutex(tx);
           await moveFleetEntityV1(tx, job, "ready", base);
         } else {
           await moveFleetEntityV1(tx, attempt, "failed", { ...base, patch: { finishedAt: now, safeFailureCode: "result_rejected" } });
