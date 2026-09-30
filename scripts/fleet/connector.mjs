@@ -16,9 +16,9 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join as joinPath, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -31,7 +31,7 @@ const WORKER_PATTERN = /^fleet-worker:[a-f0-9]{32}$/u;
 const ROTATE_BEFORE_MS = 7 * 86_400_000;
 const MEDIA_TYPES = Object.freeze({ ".txt": "text/plain", ".log": "text/plain", ".md": "text/markdown",
   ".csv": "text/csv", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg", ".pdf": "application/pdf" });
+  ".jpeg": "image/jpeg", ".pdf": "application/pdf", ".srt": "text/plain", ".vtt": "text/plain" });
 const MAX_FILE_BYTES = 262_144;
 const MAX_RESULT_BYTES = 65_536;
 const MAX_PROPOSAL_BYTES = 256 * 1024;
@@ -42,6 +42,7 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u;
 const OFFER_PATTERN = /^fleet-offer:[a-f0-9]{32}$/u;
 const CLAIM_PATTERN = /^fleet-claim:[a-f0-9]{32}$/u;
 const PROJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
+const CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{1,63}$/u;
 let bundledHarnessAdapterFactory = null;
 
 /** The build entry registers the reviewed harness factory before invoking the
@@ -241,7 +242,8 @@ export function createClient(config, fetcher = globalThis.fetch) {
   return Object.freeze({
     enroll: body => call("POST", "/fleet/v1/enroll", body, null),
     me: () => call("GET", "/fleet/v1/me"),
-    heartbeat: () => call("POST", "/fleet/v1/heartbeat", { connectorVersion: CONNECTOR_VERSION, platform: platformName() }),
+    heartbeat: (adapterCapabilities = []) => call("POST", "/fleet/v1/heartbeat",
+      { connectorVersion: CONNECTOR_VERSION, platform: platformName(), adapterCapabilities }),
     rotate: (digest, secret) => call("POST", "/fleet/v1/rotate", { newCredentialDigest: digest }, secret),
     work: () => call("GET", "/fleet/v1/work"),
     waitForWork: () => call("GET", "/fleet/v1/work/wait", undefined, config.secret, {}, 32_000),
@@ -266,6 +268,7 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
   if (!CODE_PATTERN.test(code ?? "")) throw new Error("The join code is not valid. Copy it again from the Workers page.");
   if (typeof workerKind !== "string" || !/^[a-z][a-z0-9-]{1,39}$/u.test(workerKind))
     throw new Error("The worker kind is required to redeem a join code.");
+  const tools = workerKind === "tool" ? await loadToolAdapters(defaultToolAdaptersPath(configPath)) : null;
   const codeDigest = sha256(code);
   let pending;
   try {
@@ -288,7 +291,8 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
   let result;
   try {
     result = await client.enroll({ code, workerKind, credentialDigest: sha256(secret), platform: platformName(),
-      architecture: process.arch, connectorVersion: CONNECTOR_VERSION, clientNonce });
+      architecture: process.arch, connectorVersion: CONNECTOR_VERSION, clientNonce,
+      adapterCapabilities: tools?.capabilities ?? [] });
   } catch (error) {
     // A refusal is final for this code. Network failures and server failures
     // retain the nonce and secret because the redemption may have committed.
@@ -1103,6 +1107,173 @@ export async function serveMcp({ configPath, input = process.stdin, output = pro
 }
 
 // ---------------------------------------------------------------------------
+// Owner-written local tool adapters
+// ---------------------------------------------------------------------------
+const TOOL_ADAPTERS_SCHEMA = "control-room.local-tool-adapters/v1";
+const TOOL_ADAPTER_ID_PATTERN = /^[a-z][a-z0-9_-]{1,39}$/u;
+const TOOL_PLACEHOLDER_PATTERN = /^\{(input|output):([a-z][a-z0-9_-]{0,39})\}$/u;
+const ENV_NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/u;
+const SHELL_META_PATTERN = /[;&|`$<>\\\r\n]/u;
+const MAX_TOOL_OUTPUT_BYTES = 1_048_576, MAX_TOOL_OUTPUT_FILES = 8, TOOL_KILL_GRACE_MS = 250;
+
+export const defaultToolAdaptersPath = configPath => joinPath(dirname(configPath), "tool-adapters.json");
+const toolManifestError = detail => new Error(`The tool adapter manifest is not valid: ${detail}.`);
+const exactKeys = (value, keys) => plainObject(value) && Object.keys(value).every(key => keys.includes(key))
+  && keys.every(key => Object.hasOwn(value, key));
+const toolError = (code, message) => Object.assign(new Error(message), { code });
+
+async function trustedToolExecutable(path, what) {
+  const info = await stat(path);
+  if (!info.isFile()) throw toolManifestError(`${what} is not a regular file`);
+  if (process.platform !== "win32") {
+    const uid = process.getuid?.();
+    if ((info.mode & 0o022) !== 0 || (uid !== undefined && info.uid !== 0 && info.uid !== uid))
+      throw toolManifestError(`${what} can be changed by other users`);
+    const parent = await stat(dirname(path));
+    const stickyRoot = parent.uid === 0 && (parent.mode & 0o1000) !== 0;
+    if (!parent.isDirectory() || ((parent.mode & 0o022) !== 0 && !stickyRoot))
+      throw toolManifestError(`the folder containing ${what} can be changed by other users`);
+  }
+  if (process.platform !== "win32" && (info.mode & 0o111) === 0) throw toolManifestError(`${what} is not executable`);
+  return Object.freeze({ dev: String(info.dev), ino: String(info.ino), uid: info.uid, mode: info.mode });
+}
+
+export async function loadToolAdapters(path) {
+  let raw;
+  try { raw = await readFile(path, "utf8"); }
+  catch (error) { if (error?.code === "ENOENT") return null; throw new Error("The tool adapter manifest cannot be read."); }
+  await refuseSharedWrite(path, "The tool adapter manifest");
+  let value; try { value = JSON.parse(raw); } catch { throw toolManifestError("not valid JSON"); }
+  if (!exactKeys(value, ["schema", "maxConcurrent", "adapters"]) || value.schema !== TOOL_ADAPTERS_SCHEMA)
+    throw toolManifestError("schema or keys are invalid");
+  if (!Number.isSafeInteger(value.maxConcurrent) || value.maxConcurrent < 1 || value.maxConcurrent > 32
+    || !Array.isArray(value.adapters) || value.adapters.length < 1 || value.adapters.length > 32)
+    throw toolManifestError("maxConcurrent or adapters is invalid");
+  const adapters = new Map();
+  for (const candidate of value.adapters) {
+    const keys = ["id", "capability", "executable", "arguments", "timeoutMs", "maxOutputBytes", "envAllowlist"];
+    if (!exactKeys(candidate, keys) || typeof candidate.id !== "string" || !TOOL_ADAPTER_ID_PATTERN.test(candidate.id)
+      || adapters.has(candidate.id) || typeof candidate.capability !== "string" || !CAPABILITY_PATTERN.test(candidate.capability))
+      throw toolManifestError("adapter id or capability is invalid");
+    if (!absolutePath(candidate.executable)) throw toolManifestError(`${candidate.id}.executable must be an absolute path`);
+    const executableIdentity = await trustedToolExecutable(candidate.executable, `the tool executable for ${candidate.id}`);
+    if (!Array.isArray(candidate.arguments) || candidate.arguments.length < 2 || candidate.arguments.length > 64
+      || candidate.arguments.some(arg => typeof arg !== "string" || !arg || arg.length > 1024)) throw toolManifestError(`${candidate.id}.arguments is invalid`);
+    const placeholders = candidate.arguments.map(arg => TOOL_PLACEHOLDER_PATTERN.exec(arg));
+    if (candidate.arguments.some((arg, i) => !placeholders[i] && (SHELL_META_PATTERN.test(arg) || arg.includes("{") || arg.includes("}"))))
+      throw toolManifestError(`${candidate.id}.arguments contains shell metacharacters or a partial placeholder`);
+    const inputNames = [...new Set(placeholders.filter(x => x?.[1] === "input").map(x => x[2]))];
+    const outputNames = [...new Set(placeholders.filter(x => x?.[1] === "output").map(x => x[2]))];
+    if (!inputNames.length || !outputNames.length) throw toolManifestError(`${candidate.id}.arguments must contain named input and output placeholders`);
+    if (!Number.isSafeInteger(candidate.timeoutMs) || candidate.timeoutMs < 100
+      || candidate.timeoutMs > 3_600_000 || !Number.isSafeInteger(candidate.maxOutputBytes) || candidate.maxOutputBytes < 1
+      || candidate.maxOutputBytes > MAX_TOOL_OUTPUT_BYTES || !Array.isArray(candidate.envAllowlist) || candidate.envAllowlist.length > 32
+      || candidate.envAllowlist.some(name => typeof name !== "string" || !ENV_NAME_PATTERN.test(name))
+      || new Set(candidate.envAllowlist).size !== candidate.envAllowlist.length) throw toolManifestError(`${candidate.id} has invalid placeholders or limits`);
+    adapters.set(candidate.id, Object.freeze({ ...candidate, executableIdentity, arguments: Object.freeze([...candidate.arguments]),
+      envAllowlist: Object.freeze([...candidate.envAllowlist]), inputNames: Object.freeze(inputNames), outputNames: Object.freeze(outputNames) }));
+  }
+  return Object.freeze({ maxConcurrent: value.maxConcurrent, adapters, capabilities: Object.freeze([...new Set([...adapters.values()].map(x => x.capability))].sort()) });
+}
+
+function killToolProcess(child, signal = "SIGTERM") {
+  if (!child.pid) return;
+  try { if (process.platform === "win32") child.kill(signal); else process.kill(-child.pid, signal); } catch { /* already gone or unkillable */ }
+}
+const safeToolInputName = (value, fallback) => basename(typeof value === "string" ? value : "").replace(/[^A-Za-z0-9._-]/gu, "_")
+  .replace(/^[^A-Za-z0-9]+/u, "").slice(0, 100) || `${fallback}.input`;
+
+async function collectToolOutputs(root, roots, limit, needles) {
+  const files = []; let total = 0;
+  async function walk(folder) {
+    for (const entry of await readdir(folder, { withFileTypes: true })) {
+      const path = joinPath(folder, entry.name), info = await lstat(path);
+      if (info.isSymbolicLink() || !info.isFile() && !info.isDirectory()) throw toolError("tool_adapter_output_invalid", "Tool output must contain only regular files.");
+      if (info.isDirectory()) { await walk(path); continue; }
+      if (info.nlink > 1) throw toolError("tool_adapter_output_invalid", "Tool output may not contain hard links.");
+      total += info.size;
+      if (files.length >= MAX_TOOL_OUTPUT_FILES || info.size > limit || total > limit) throw toolError("tool_adapter_output_too_large", "Tool output exceeded its declared limit.");
+      const content = await readFile(path);
+      if (containsSecret(content.toString("utf8"), needles)) throw toolError("tool_adapter_secret_refused", "Tool output contained secret material.");
+      const mediaType = MEDIA_TYPES[extname(entry.name).toLowerCase()];
+      if (!mediaType) throw toolError("tool_adapter_output_invalid", "Tool output included an unsupported file type.");
+      files.push(Object.freeze({ name: relative(root, path).split(sep).join("__").replace(/[^A-Za-z0-9._-]/gu, "_").slice(0, 120), mediaType, contentBase64: content.toString("base64") }));
+    }
+  }
+  for (const folder of roots) await walk(folder);
+  return Object.freeze(files);
+}
+
+function acquireToolSlot(state, signal) {
+  if (signal?.aborted) return Promise.reject(toolError("tool_adapter_aborted", "The tool run was stopped before it began."));
+  if (state.active < state.limit) { state.active += 1; return Promise.resolve(); }
+  return new Promise((resolveSlot, reject) => { const queued = { resolve: resolveSlot, reject, signal, onAbort: undefined };
+    queued.onAbort = () => { const i = state.queue.indexOf(queued); if (i >= 0) state.queue.splice(i, 1); reject(toolError("tool_adapter_aborted", "The tool run was stopped before it began.")); };
+    signal?.addEventListener("abort", queued.onAbort, { once: true }); state.queue.push(queued); });
+}
+function releaseToolSlot(state) { const next = state.queue.shift(); if (next) { next.signal?.removeEventListener("abort", next.onAbort); next.resolve(); } else state.active -= 1; }
+
+async function restoreToolWorkPermissions(path) {
+  let info;
+  try { info = await lstat(path); } catch { return; }
+  try {
+    if (info.isDirectory()) {
+      await chmod(path, 0o700);
+      for (const entry of await readdir(path)) await restoreToolWorkPermissions(joinPath(path, entry));
+    } else if (!info.isSymbolicLink()) await chmod(path, 0o600);
+  } catch { /* removal below remains best effort and must not retain the slot */ }
+}
+
+export function createLocalToolAdapterRunner(registry, options = {}) {
+  if (!registry?.adapters || !Number.isSafeInteger(registry.maxConcurrent)) throw new Error("tool_adapter_registry_invalid");
+  const state = { active: 0, limit: registry.maxConcurrent, queue: [] }, spawner = options.spawner ?? spawn;
+  const environment = options.environment ?? process.env, temporaryRoot = options.temporaryRoot ?? tmpdir(), log = options.log ?? (() => {}),
+    removeWork = options.removeWork ?? rm, killProcess = options.killProcess ?? killToolProcess;
+  return Object.freeze({ get active() { return state.active; }, async execute(task, signal) {
+    const adapter = typeof task?.adapterId === "string" ? registry.adapters.get(task.adapterId) : undefined;
+    if (!adapter) throw toolError("tool_adapter_unknown", "This machine has no owner-declared adapter with that id.");
+    if (!exactKeys(task, ["adapterId", "inputs"]) || !plainObject(task.inputs) || Object.keys(task.inputs).sort().join("\0") !== [...adapter.inputNames].sort().join("\0")) throw toolError("tool_adapter_input_invalid", "The tool task inputs do not match the adapter manifest.");
+    await acquireToolSlot(state, signal); let work;
+    try {
+      // Revalidate the exact executable immediately before every spawn.
+      const identity = await trustedToolExecutable(adapter.executable, `the tool executable for ${adapter.id}`);
+      if (JSON.stringify(identity) !== JSON.stringify(adapter.executableIdentity)) throw toolError("tool_adapter_executable_changed", "The owner-declared tool executable changed after the manifest was loaded.");
+      work = await mkdtemp(joinPath(temporaryRoot, "control-room-tool-")); await chmod(work, 0o700).catch(() => {});
+      const inputRoot = joinPath(work, "inputs"), outputRoot = joinPath(work, "outputs"); await mkdir(inputRoot, { recursive: true, mode: 0o700 }); await mkdir(outputRoot, { recursive: true, mode: 0o700 });
+      const inputPaths = new Map(), outputPaths = new Map();
+      for (const name of adapter.inputNames) { const input = task.inputs[name]; if (!plainObject(input) || typeof input.contentBase64 !== "string" || input.contentBase64.length > 2_000_000 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(input.contentBase64)) throw toolError("tool_adapter_input_invalid", `Input ${name} is not valid base64 file data.`); const folder = joinPath(inputRoot, name); await mkdir(folder, { mode: 0o700 }); const path = joinPath(folder, safeToolInputName(input.name, name)); await writeFile(path, Buffer.from(input.contentBase64, "base64"), { mode: 0o600, flag: "wx" }); inputPaths.set(name, path); }
+      for (const name of adapter.outputNames) { const path = joinPath(outputRoot, name); await mkdir(path, { mode: 0o700 }); outputPaths.set(name, path); }
+      const argv = adapter.arguments.map(arg => { const match = TOOL_PLACEHOLDER_PATTERN.exec(arg); return !match ? arg : match[1] === "input" ? inputPaths.get(match[2]) : outputPaths.get(match[2]); });
+      const env = {}; for (const name of adapter.envAllowlist) if (typeof environment[name] === "string") env[name] = environment[name];
+      const child = spawner(adapter.executable, argv, { cwd: work, env, shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      let stdout = "", stderr = "", timedOut = false, overflow = false, stopped = false, terminating = false, killTimer;
+      const terminate = () => { if (terminating) return; terminating = true; killProcess(child); killTimer = setTimeout(() => { killProcess(child, "SIGKILL"); child.stdout?.destroy(); child.stderr?.destroy(); }, TOOL_KILL_GRACE_MS); };
+      const append = (which, chunk) => { const next = (which === "stdout" ? stdout : stderr) + chunk.toString("utf8"); if (Buffer.byteLength(next, "utf8") > adapter.maxOutputBytes) { overflow = true; terminate(); } else if (which === "stdout") stdout = next; else stderr = next; };
+      child.stdout?.on("data", chunk => append("stdout", chunk)); child.stderr?.on("data", chunk => append("stderr", chunk));
+      const stop = () => { stopped = true; terminate(); }; signal?.addEventListener("abort", stop, { once: true });
+      const timeout = setTimeout(() => { timedOut = true; terminate(); }, adapter.timeoutMs);
+      let hardDeadline;
+      const result = await new Promise(resolveProcess => { let settled = false; const done = value => { if (!settled) { settled = true; resolveProcess(value); } }; child.once("error", error => done({ error })); child.once("exit", (code, processSignal) => done({ code, signal: processSignal })); hardDeadline = setTimeout(() => done({ code: null, deadline: true }), adapter.timeoutMs + TOOL_KILL_GRACE_MS * 2); }).finally(() => { clearTimeout(timeout); clearTimeout(hardDeadline); signal?.removeEventListener("abort", stop); clearTimeout(killTimer); });
+      // Always stop surviving group members before examining staged output.
+      killProcess(child, "SIGKILL"); child.stdout?.destroy(); child.stderr?.destroy();
+      if (timedOut || result.deadline) throw toolError("tool_adapter_timeout", "The local tool exceeded its owner-declared time limit.");
+      if (stopped) throw toolError("tool_adapter_aborted", "The local tool was stopped.");
+      if (overflow) throw toolError("tool_adapter_output_too_large", "The local tool wrote too much process output.");
+      if (result.error || result.code !== 0) throw toolError("tool_adapter_failed", "The local tool exited without completing successfully.");
+      const needles = secretNeedles(options.secrets ?? []); if (containsSecret(stdout, needles) || containsSecret(stderr, needles)) throw toolError("tool_adapter_secret_refused", "The local tool output contained secret material.");
+      const files = await collectToolOutputs(outputRoot, [...outputPaths.values()], adapter.maxOutputBytes, needles); const summary = storableText(stdout);
+      return Object.freeze({ adapterId: adapter.id, capability: adapter.capability, summary: summary && Buffer.byteLength(summary, "utf8") <= MAX_RESULT_BYTES ? summary : `Local tool ${adapter.id} completed.`, files });
+    } finally { try { if (work) { await restoreToolWorkPermissions(work); await removeWork(work, { recursive: true, force: true }); } } catch (error) { log(`Could not remove a local tool work directory: ${error?.code ?? "unknown"}`); } finally { releaseToolSlot(state); } }
+  } });
+}
+
+export async function runClaimedToolTask({ client, claim, runner, signal, secrets = [] }) {
+  const keyBase = `tool-${claim.claimId.slice("fleet-claim:".length)}`, outcome = { claimId: claim.claimId, jobId: claim.jobId };
+  try { await report(() => client.progress(claim.claimId, "Started the owner-declared local tool on this machine.", `${keyBase}-start`)); const result = await runner.execute({ adapterId: claim.adapterId, inputs: claim.inputs }, signal); const stored = await report(() => client.result(claim.claimId, result.summary, result.files, `${keyBase}-result`)); return Object.freeze({ ...outcome, outcome: "submitted", resultId: stored.resultId }); }
+  catch (error) { const code = /^tool_adapter_[a-z_]+$/u.test(error?.code ?? "") ? error.code : "tool_adapter_failed"; const message = `The local tool did not produce an uploadable result (${code}). Nothing was submitted.`; try { await report(() => client.blocker(claim.claimId, message, `${keyBase}-blocker`, true)); return Object.freeze({ ...outcome, outcome: "blocked", message, reason: code }); } catch (reportError) { return Object.freeze({ ...outcome, outcome: "abandoned", message, reason: reportError?.code ?? "unreachable" }); } }
+}
+
+// ---------------------------------------------------------------------------
 // Harness hand-off: `run` gives a claimed task to one local harness
 // ---------------------------------------------------------------------------
 // The machine owner enables harnesses in a local settings file next to the
@@ -1239,7 +1410,9 @@ function secretNeedles(secrets) {
   }
   return [...needles];
 }
-const containsSecret = (text, needles) => needles.some(needle => needle.length > 0 && String(text).includes(needle));
+const SECRET_MATERIAL_PATTERNS = Object.freeze([/\b(?:api[_-]?key|password|secret)\s*[:=]\s*\S{8,}/iu]);
+const containsSecret = (text, needles) => needles.some(needle => needle.length > 0 && String(text).includes(needle))
+  || SECRET_MATERIAL_PATTERNS.some(pattern => pattern.test(String(text)));
 
 export const TASK_DATA_OPEN = "<<<CONTROL_ROOM_TASK_DATA_V1>>>";
 export const TASK_DATA_CLOSE = "<<<END_CONTROL_ROOM_TASK_DATA_V1>>>";
@@ -1393,6 +1566,8 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
   sleep = ms => new Promise(done => setTimeout(done, ms)), random = Math.random, watchdogGraceMs = WATCHDOG_GRACE_MS,
   now = Date.now }) {
   const settings = await loadHarnessSettings(harnessesPath);
+  const tools = await loadToolAdapters(defaultToolAdaptersPath(configPath));
+  const toolRunner = tools ? createLocalToolAdapterRunner(tools) : null;
   const handedBack = new Set(); // tasks this machine could not finish; left for another worker
   let adapter = null, said = "", agreementShown = false, consecutiveFailures = 0;
   const retryDelay = failures => {
@@ -1408,7 +1583,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
     }
     const client = createClient(current, fetcher);
     let me;
-    try { me = await client.heartbeat(); }
+    try { me = await client.heartbeat(tools?.capabilities ?? []); }
     catch (error) {
       if (error?.code === "unauthenticated") throw new Error("Control Room no longer accepts this machine's key. Ask the owner for a new key.");
       say(`Could not reach Control Room (${error?.code ?? "network"}); trying again.`);
@@ -1422,11 +1597,15 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
     if (!agreementShown) { log(`Working agreement v${agreement.version}:\n${agreement.text}`); agreementShown = true; }
     const mode = operationsMode(me.operationsMode);
     const harness = HANDOFF_HARNESSES.includes(me.workerKind) ? me.workerKind : null;
+    const isTool = me.workerKind === "tool";
     let pass = { state: "idle" }, answeredEmpty = false, retryAfterMs;
-    if (!harness) {
+    if (isTool && !toolRunner) {
+      say(`Connected as ${me.displayName}. No owner-declared local tool manifest is enabled, so no work is taken.`);
+      pass = { state: "not_enabled" };
+    } else if (!harness && !isTool) {
       say(`Connected as ${me.displayName}. This worker is driven through MCP, so run starts no harness.`);
       pass = { state: "no_harness" };
-    } else if (settings?.harnesses?.[harness]?.enabled !== true) {
+    } else if (harness && settings?.harnesses?.[harness]?.enabled !== true) {
       say(`Connected as ${me.displayName}. ${HARNESS_LABELS[harness]} is not enabled on this machine, so no work is taken. `
         + `Enable it in ${harnessesPath}.`);
       pass = { state: "not_enabled" };
@@ -1436,7 +1615,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       pass = { state: "paused", mode };
     } else {
       // Load before claiming, so a broken local setup never strands a task.
-      adapter ??= await loadHarnessAdapter(settings, harness, importer);
+      if (harness) adapter ??= await loadHarnessAdapter(settings, harness, importer);
       let offers = [], claim;
       try {
         if (once) offers = await client.work();
@@ -1466,13 +1645,14 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       if (pass.state === "paused") say("Control Room paused new work, so none was taken.");
       else if (!claim && pass.state !== "unreachable") say(`Connected as ${me.displayName}. Waiting for work (${offers.length} offered).`);
       else if (claim) {
-        say(`Claimed "${claim.title}" for ${HARNESS_LABELS[harness]}.`);
+        say(`Claimed "${claim.title}" for ${isTool ? "the owner-declared local tool" : HARNESS_LABELS[harness]}.`);
         const readMode = async () => operationsMode((await client.heartbeat()).operationsMode);
         // The adapter never receives these; they are only checked against the
         // adapter's own answer afterward, so a leaked key cannot be sent on.
         const secrets = [current.secret, current.pendingSecret].filter(value => typeof value === "string" && value);
-        const finished = await runClaimedTask({ client, claim, adapter, progressIntervalMs, readMode, log,
-          watchdogGraceMs, secrets });
+        const finished = isTool
+          ? await runClaimedToolTask({ client, claim, runner: toolRunner, secrets })
+          : await runClaimedTask({ client, claim, adapter, progressIntervalMs, readMode, log, watchdogGraceMs, secrets });
         if (finished.outcome !== "submitted") handedBack.add(claim.jobId);
         say(finished.outcome === "submitted" ? `Sent the result of "${claim.title}" to the owner for review.`
           : `Could not finish "${claim.title}": ${finished.message ?? finished.reason}`);

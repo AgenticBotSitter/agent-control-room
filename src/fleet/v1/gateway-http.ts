@@ -386,7 +386,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     if (method === "POST" && path === "/fleet/v1/enroll") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),
-        ["code", "workerKind", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"]);
+        ["code", "workerKind", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"], ["adapterCapabilities"]);
       const lease = admission.enter(request, "enroll");
       try {
         const result = await options.store.enroll(body as never);
@@ -445,7 +445,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       return send(response, 201, { ok: true, result: await options.store.recordMcpCall(principal, body as never) });
     }
     if (path === "/fleet/v1/heartbeat") {
-      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"]);
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"], ["adapterCapabilities"]);
       return send(response, 200, { ok: true, result: await options.store.heartbeat(principal, body as never) });
     }
     if (path === "/fleet/v1/rotate") {
