@@ -77,7 +77,34 @@ function createLoopbackService(options: ListenerOptions, makeBridge: () => Reque
   const binding = new AbortController();
   let attempted = false, ready = false, closed: Promise<void> | undefined, server: Server | undefined;
   const sockets = new Set<Socket>();
+  // This is deliberately outside the bridge.  The bridge's own close drains
+  // its application operations, but it must not be asked to close the shared
+  // database until every HTTP call already admitted by this listener has
+  // settled.  That includes owner review, verification and task-service calls
+  // made through the ordinary web connection.
+  const active = new Set<Promise<void>>();
+  let drained: (() => void) | undefined;
   function stopSockets() { for (const socket of sockets) socket.destroy(); }
+  function waitForDrain() {
+    return active.size === 0 ? Promise.resolve() : new Promise<void>(resolve => { drained = resolve; });
+  }
+  function rejectDuringShutdown(response: ServerResponse) {
+    if (response.destroyed || response.headersSent) { response.destroy(); return; }
+    response.writeHead(503, { ...privateResponseHeaders, connection: "close" }); response.end();
+  }
+  function handle(request: IncomingMessage, response: ServerResponse) {
+    // `closed` is assigned synchronously by close(), so a request observed
+    // after shutdown begins is refused before it can enter a write path.
+    if (closed) { rejectDuringShutdown(response); return; }
+    let handled: Promise<void>;
+    try { handled = Promise.resolve(bridge.handle(request, response)); }
+    catch { response.destroy(); return; }
+    active.add(handled);
+    void handled.catch(() => response.destroy()).finally(() => {
+      active.delete(handled);
+      if (active.size === 0) drained?.();
+    });
+  }
   function close(): Promise<void> {
     if (closed) return closed;
     ready = false;
@@ -90,16 +117,27 @@ function createLoopbackService(options: ListenerOptions, makeBridge: () => Reque
           reject(new Error("private_listener_close_uncertain")); else resolve(); });
         server!.closeIdleConnections();
       }) : Promise.resolve();
+      let listenerUncertain = false, bridgeUncertain = false;
       try {
-        await Promise.race([Promise.allSettled([network, bridge.close()]).then(results => {
-          if (results.some(result => result.status === "rejected")) throw new Error("private_listener_close_uncertain");
-        }), new Promise<never>((_, reject) => {
+        // `server.close()` stops accepting before its callback can settle.  A
+        // callback alone is insufficient for injected/test listeners, so wait
+        // for the listener and every admitted handler explicitly.
+        const outcome = await Promise.race([Promise.all([network.then(() => false, () => true), waitForDrain()])
+          .then(([networkFailed]) => networkFailed ? "network_failed" as const : "clean" as const),
+        new Promise<"timeout">(resolve => { timer = setTimeout(() => resolve("timeout"), closeMs); })]);
+        listenerUncertain = outcome !== "clean";
+      } catch {
+        listenerUncertain = true;
+      } finally { clearTimeout(timer); }
+      if (listenerUncertain) server?.closeAllConnections();
+      stopSockets();
+      try {
+        await Promise.race([bridge.close(), new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error("private_listener_close_uncertain")), closeMs);
         })]);
-      } catch {
-        server?.closeAllConnections(); stopSockets();
-        throw new Error("private_listener_close_uncertain");
-      } finally { clearTimeout(timer); stopSockets(); }
+      } catch { bridgeUncertain = true; }
+      finally { clearTimeout(timer); }
+      if (listenerUncertain || bridgeUncertain) throw new Error("private_listener_close_uncertain");
     })();
     return closed;
   }
@@ -120,7 +158,7 @@ function createLoopbackService(options: ListenerOptions, makeBridge: () => Reque
           socket.setTimeout(30_000, () => socket.destroy());
         });
         instance.on("request", (request: IncomingMessage, response: ServerResponse) => {
-          void bridge.handle(request, response).catch(() => response.destroy());
+          handle(request, response);
         });
         instance.on("upgrade", (_request, socket) => socket.destroy());
         instance.on("connect", (_request, socket) => socket.destroy());

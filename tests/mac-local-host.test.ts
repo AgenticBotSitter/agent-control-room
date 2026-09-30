@@ -153,6 +153,8 @@ test("a Mac-local host owns the shared task composition and fails ready when tha
 
 test("a failed task drain still closes the site database and remains failed on retry", async () => {
   const trace: string[] = [];
+  let releaseTaskClose!: () => void, taskCloseStarted = false;
+  const taskCloseMayFinish = new Promise<void>(resolve => { releaseTaskClose = resolve; });
   const server = new EventEmitter() as Server;
   server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
   server.close = ((callback?: (error?: Error) => void) => { trace.push("site-close"); queueMicrotask(() => callback?.()); return server; }) as Server["close"];
@@ -163,13 +165,20 @@ test("a failed task drain still closes the site database and remains failed on r
     assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
     taskApplication: { operations: {}, isReady: () => true, async close() {
+      taskCloseStarted = true; trace.push("task-close-start");
+      await taskCloseMayFinish;
       trace.push("task-close"); throw new Error("injected_task_drain_failure");
     } },
   });
   await service.start();
+  const closing = service.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(taskCloseStarted, true);
+  assert.deepEqual(trace, ["task-close-start"], "the site close cannot race a blocked task drain");
+  releaseTaskClose();
+  await assert.rejects(closing, /mac_local_host_cleanup_uncertain/);
   await assert.rejects(service.close(), /mac_local_host_cleanup_uncertain/);
-  await assert.rejects(service.close(), /mac_local_host_cleanup_uncertain/);
-  assert.deepEqual(trace, ["task-close", "site-close", "database-close"]);
+  assert.deepEqual(trace, ["task-close-start", "task-close", "site-close", "database-close"]);
 });
 
 test("a Mac-local host refuses operations from a different controller lifecycle", () => {
