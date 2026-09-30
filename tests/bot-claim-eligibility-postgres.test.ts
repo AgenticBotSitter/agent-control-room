@@ -243,6 +243,45 @@ test("an owner-picked model and a restricted worker kind both refuse a fleet cla
       const withdrawnClaim = await claimCode(await offerFixture("elig-withdrawn"), "elig-withdrawn-0001");
       assert.equal(withdrawnClaim.refused, false, `no restriction means no refusal: ${withdrawnClaim.text}`);
 
+      // --- 7. Under load, not just once. A guard that holds for one caller and
+      // leaks for twenty is not a guard. The per-IP budget answers a real
+      // burst, so the two facts are measured separately: a small burst proves
+      // the budget still refuses, and a SERIALISED run of the same twenty
+      // proves the guards themselves refuse every caller, one at a time,
+      // with no contention to hide behind.
+      const RATE_LIMITED = "rate_limited";
+      const stressModel = await proposeWithModel("Owner picked a model under load",
+        { model: "model:any", effort: "high" });
+      const stressModelOffer = await offerOf(stressModel);
+      await setEligible(["codex"]);
+      const stressRestrictedOffer = await offerFixture("elig-restricted-load");
+      const burst = await Promise.all(Array.from({ length: 8 }, (_unused, index) => bot.call("claim",
+        { offerId: stressModelOffer, idempotencyKey: `elig-load-model-${index}` })));
+      const throttled = burst.filter(call => call.refusalCode === RATE_LIMITED).length;
+      process.stderr.write(`dogfood eligibility burst: ${burst.length} parallel callers,`
+        + ` ${throttled} throttled by the per-IP budget\n`);
+      assert.ok(throttled > 0, "the per-IP budget still refuses a parallel burst");
+      for (const call of burst) assert.equal(call.refused, true,
+        `a burst never got past the guard: ${call.text}`);
+      const serial = [];
+      for (let index = 0; index < 20; index += 1) serial.push(await bot.call("claim",
+        { offerId: stressModelOffer, idempotencyKey: `elig-serial-model-${index}` }));
+      const judged = serial.filter(call => call.refusalCode === "conflict").length;
+      process.stderr.write(`dogfood eligibility serial: ${serial.length} callers,`
+        + ` ${judged} refused as a conflict by the model guard\n`);
+      assert.equal(judged, 20, "the model guard refuses every caller, not only the first");
+      for (const call of serial) assert.equal(call.refused, true,
+        `the model guard let a caller through under a repeated attempt: ${call.text}`);
+      const kindsSerial = [];
+      for (let index = 0; index < 20; index += 1) kindsSerial.push(await bot.call("claim",
+        { offerId: stressRestrictedOffer, idempotencyKey: `elig-serial-kinds-${index}` }));
+      assert.equal(kindsSerial.filter(call => call.refusalCode === "conflict").length, 20,
+        "the eligible-kinds guard refuses every caller, not only the first");
+      // And a claim that IS allowed still works after all that contention.
+      await setEligible(null);
+      const afterLoad = await claimCode(await offerFixture("elig-after-load"), "elig-after-load-0001");
+      assert.equal(afterLoad.refused, false, `a claim still works after the burst: ${afterLoad.text}`);
+
       // The whole run answered every refusal. A guard that threw instead of
       // refusing would land in the operator log, and the assertion above
       // already proved no fault fires at all.
