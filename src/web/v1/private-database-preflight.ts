@@ -25,7 +25,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // against a PGlite build of the same migrations; both agree, so the number is
 // not an artefact of either applier. Catalog query below; not a mutable
 // database marker.
-export const privateWebSchemaDigest = "84ca9eb9c7ad0a9fd82d90c2a22157915123d20d9f79222d15ce317c7056726d";
+export const privateWebSchemaDigest = "3cdf9d3eec0ebb93ab16c80ac02fbfe02eb790cfbeec186ca41f6bfe384dc116";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -760,7 +760,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND has_function_privilege('control_room_private_web',p.oid,'EXECUTE')
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
-                  OR pg_get_userbyid(a.grantee)<>'control_room_private_web'))))
+                  OR pg_get_userbyid(a.grantee)<>'control_room_private_web')))
             OR (p.oid='redeem_fleet_enrollment(text,text,text,text,timestamptz)'::regprocedure
               AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND NOT p.proleakproof AND p.proparallel='u'
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'

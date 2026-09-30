@@ -673,17 +673,89 @@ test("every SECURITY DEFINER trigger a migration creates is pinned in the live p
   // character class would stop at the first newline. Both spellings of the pin's
   // tail are asserted below, so a branch that was found but says the wrong thing
   // still fails.
-  const branch = /OR \(p\.oid='guard_planner_needs_you_item_insert\(\)'::regprocedure[\s\S]*?a\.grantee<>p\.proowner\)\)/u
-    .exec(source);
-  assert.ok(branch, "the Needs-you trigger's pinned branch was not found in the preflight");
-  assert.match(branch[0], /p\.prorettype='trigger'::regtype/, "the pinned trigger branch no longer pins the return type");
-  assert.match(branch[0], /p\.prosecdef/, "the pinned trigger branch no longer pins SECURITY DEFINER");
-  assert.match(branch[0], /p\.proconfig=ARRAY\['search_path=pg_catalog, public, pg_temp'\]::text\[\]/u,
+  // The branch is delimited by its OWN parentheses rather than by scanning to the
+  // next `))`: the SQL puts several `OR (...)` branches side by side and each one
+  // ends with the same two characters, so a lookahead would run into the NEXT
+  // branch and the branch's own tail -- which is what the balance check below
+  // needs to see -- would be outside the match. A depth-counting read from the
+  // branch's opening parenthesis is the only read that gets the branch and
+  // nothing else.
+  const opened = source.indexOf("OR (p.oid='guard_planner_needs_you_item_insert()'::regprocedure");
+  assert.ok(opened >= 0, "the Needs-you trigger's pinned branch was not found in the preflight");
+  let depth = 0, end = opened;
+  for (let index = opened + 3; index < source.length; index += 1) {
+    if (source[index] === "(") depth += 1;
+    else if (source[index] === ")") { depth -= 1; if (depth === 0) { end = index + 1; break; } }
+  }
+  assert.ok(end > opened, "the pinned trigger branch never closes");
+  const branch = source.slice(opened, end);
+  // THE FUNCTION SCAN BALANCES, and this is the assertion that catches a
+  // mis-balanced branch. Round 4's first attempt at this fix removed one `)` from
+  // the branch tail; every string comparison still passed -- the branch was
+  // present, named the right function and said the right things -- and the cost
+  // was a 42601 on the WHOLE scan, reported as the same opaque
+  // `private_database_preflight_failed`. Reading the branch's own tail does not
+  // catch it, because a missing `)` is consumed by the next branch's `(`.
+  //
+  // So the balance is measured over the whole function-scan segment with SQL
+  // COMMENTS STRIPPED FIRST, and pinned to the value the reviewed text produces.
+  // Comments are the reason a naive count is useless here: every one of the
+  // entries above is preceded by a prose block whose parentheses are not SQL, and
+  // they move the count in both directions. Stripping them makes the count mean
+  // something, and pinning the value means adding an unbalanced branch fails here
+  // rather than in the owner's startup.
+  const scanStart = source.indexOf("OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace");
+  const scanEnd = source.indexOf("OR NOT has_schema_privilege('public','USAGE') AS unsafe");
+  assert.ok(scanStart > 0 && scanEnd > scanStart, "the preflight's function scan segment could not be located");
+  const scanSql = source.slice(scanStart, scanEnd).replace(/\/\*[\s\S]*?\*\//gu, "").replace(/--[^\n]*/gu, "");
+  assert.equal([...scanSql].reduce((count, char) => count + (char === "(" ? 1 : char === ")" ? -1 : 0), 0), 0,
+    "the preflight's function scan no longer balances; an unbalanced OR branch is a 42601 at run time, "
+    + "which the preflight reports as the same opaque private_database_preflight_failed");
+  assert.match(branch, /p\.prorettype='trigger'::regtype/, "the pinned trigger branch no longer pins the return type");
+  assert.match(branch, /p\.prosecdef/, "the pinned trigger branch no longer pins SECURITY DEFINER");
+  assert.match(branch, /p\.proconfig=ARRAY\['search_path=pg_catalog, public, pg_temp'\]::text\[\]/u,
     "the pinned trigger branch no longer pins the search_path");
-  assert.match(branch[0], /p\.prolang=\(SELECT oid FROM pg_language WHERE lanname='plpgsql'\)/u,
+  assert.match(branch, /p\.prolang=\(SELECT oid FROM pg_language WHERE lanname='plpgsql'\)/u,
     "the pinned trigger branch no longer pins the language");
-  assert.match(branch[0], /NOT has_function_privilege\('public',p\.oid,'EXECUTE'\)/u,
+  assert.match(branch, /NOT has_function_privilege\('public',p\.oid,'EXECUTE'\)/u,
     "the pinned trigger branch no longer refuses an EXECUTE grant to PUBLIC");
+  // The trigger branch requires NOTHING to hold EXECUTE, so its ACL test is the
+  // whole guarantee -- a weakened form of it passes the `prosecdef` check above.
+  assert.match(branch, /AND NOT EXISTS\(SELECT 1 FROM aclexplode/u,
+    "the pinned trigger branch no longer checks that no login holds EXECUTE on it");
+  assert.match(branch, /a\.privilege_type='EXECUTE' AND a\.grantee<>p\.proowner\)\)/u,
+    "the pinned trigger branch's ACL test no longer admits no login at all");
+
+  // And the OTHER entry this round narrowed: the retry function's ACL is the same
+  // shape, and both halves of it are asserted because either alone passes. Round 4
+  // measured that the coordinator's grant let the coordinator set the latch
+  // itself, so the ACL now admits exactly one login AND requires that login to
+  // hold EXECUTE -- without the requirement, a database where the grant was never
+  // issued would still pass.
+  const retryStart = source.indexOf("OR (p.oid='control_room_planner_grant_owner_retry(text,text,text[])'::regprocedure");
+  assert.ok(retryStart > 0, "the retry function's pinned branch was not found in the preflight");
+  let retryDepth = 0, retryEnd = retryStart;
+  for (let index = retryStart + 3; index < source.length; index += 1) {
+    if (source[index] === "(") retryDepth += 1;
+    else if (source[index] === ")") { retryDepth -= 1; if (retryDepth === 0) { retryEnd = index + 1; break; } }
+  }
+  const retryBranch = source.slice(retryStart, retryEnd);
+  assert.match(retryBranch, /has_function_privilege\('control_room_private_web',p\.oid,'EXECUTE'\)/u,
+    "the retry function's pin no longer requires the owner's web login to hold EXECUTE on it");
+  assert.match(retryBranch, /pg_get_userbyid\(a\.grantee\)<>'control_room_private_web'/u,
+    "the retry function's ACL no longer admits exactly one login");
+  assert.doesNotMatch(retryBranch, /control_room_task_coordinator/u,
+    "the coordinator is back in the retry function's ACL, which round 4 measured as a way to set the latch");
+  // The parenthesis balance was checked by the depth count that READ the branch
+  // above, and that count is the assertion. This is the failure round 4's first
+  // attempt at this fix made and did not catch: an unbalanced `OR (...)` does not
+  // make the preflight refuse a database for a readable reason -- it makes the
+  // whole scan un-parseable, and PostgreSQL answers 42601, which the preflight
+  // reports as the same opaque `private_database_preflight_failed`. Every string
+  // comparison on a mis-balanced branch still passes, because the branch is
+  // present and says the right things; only its arity is wrong. So the branch is
+  // read by counting parentheses rather than by a pattern, and a branch that does
+  // not close is a failure here rather than a 42601 in the owner's startup.
 });
 
 test("the comparison above reads role files it has to be able to read", () => {
