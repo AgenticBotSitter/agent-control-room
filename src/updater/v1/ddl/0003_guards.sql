@@ -896,8 +896,26 @@ REVOKE ALL ON FUNCTION updater.enqueue_cooling_off_notices(text, integer, timest
 ALTER TABLE updater.push_queue ADD COLUMN IF NOT EXISTS not_before timestamptz;
 -- A row may not be sent before it was queued, and a NULL is the ordinary
 -- "send at once" case, so the CHECK is one-sided.
-ALTER TABLE updater.push_queue ADD CONSTRAINT push_not_before_after_queued
-  CHECK (not_before IS NULL OR not_before >= queued_at) NOT VALID;
+--
+-- THE `DO` BLOCK IS NOT COSMETIC. PostgreSQL has no `ADD CONSTRAINT IF NOT
+-- EXISTS`, and the updater applies this file at EVERY startup — so the unguarded
+-- form fails on the second apply with `constraint "..." already exists`, which is
+-- an updater that cannot restart. The existing schema lane caught exactly this,
+-- which is what that lane's "a second apply changes nothing and refuses nothing"
+-- assertion is for. Every ADD CONSTRAINT in this schema is therefore wrapped; the
+-- ones inside `0002_schema.sql` are wrapped the same way.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'push_queue'
+       AND c.conname = 'push_not_before_after_queued') THEN
+    ALTER TABLE updater.push_queue ADD CONSTRAINT push_not_before_after_queued
+      CHECK (not_before IS NULL OR not_before >= queued_at) NOT VALID;
+  END IF;
+END;
+$$;
 ALTER TABLE updater.push_queue VALIDATE CONSTRAINT push_not_before_after_queued;
 -- The repeat row must carry one; the immediate rows must not need to. Stated as a
 -- guard on the UPDATE path so a future change cannot quietly move a scheduled

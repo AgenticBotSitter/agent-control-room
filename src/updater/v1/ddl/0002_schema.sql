@@ -343,15 +343,52 @@ ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS
 -- the only place it is written. Each is added NOT VALID and validated in the
 -- next statement, so an existing installation is checked row by row and a row
 -- that cannot satisfy the bound is a row no verifier could have accepted.
-ALTER TABLE updater.passkey_registrations ADD CONSTRAINT passkey_registrations_client_data_bound
-  CHECK (octet_length(client_data_json) BETWEEN 1 AND 4096) NOT VALID;
+--
+-- WHY EACH IS WRAPPED IN A `DO` BLOCK. PostgreSQL has no `ADD CONSTRAINT IF NOT
+-- EXISTS`, and the updater applies this file at EVERY startup (design §9.1). The
+-- unguarded form therefore fails on the second apply with `constraint "..."
+-- already exists` — an updater that cannot restart. `tests/updater-schema-
+-- postgres.test.ts` asserts that a second apply "changes nothing and refuses
+-- nothing", and it caught exactly this, which is that assertion earning its
+-- place. Every ADD CONSTRAINT in this schema is wrapped the same way, and the
+-- wrapper is idempotent rather than merely quiet: the constraint is added if and
+-- only if it is absent.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'passkey_registrations'
+       AND c.conname = 'passkey_registrations_client_data_bound') THEN
+    ALTER TABLE updater.passkey_registrations ADD CONSTRAINT passkey_registrations_client_data_bound CHECK (octet_length(client_data_json) BETWEEN 1 AND 4096) NOT VALID;
+  END IF;
+END;
+$$;
 ALTER TABLE updater.passkey_registrations VALIDATE CONSTRAINT passkey_registrations_client_data_bound;
-ALTER TABLE updater.passkey_registrations ADD CONSTRAINT passkey_registrations_transports_bound
-  CHECK (updater.bounded_transports(transports)) NOT VALID;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'passkey_registrations'
+       AND c.conname = 'passkey_registrations_transports_bound') THEN
+    ALTER TABLE updater.passkey_registrations ADD CONSTRAINT passkey_registrations_transports_bound CHECK (updater.bounded_transports(transports)) NOT VALID;
+  END IF;
+END;
+$$;
 ALTER TABLE updater.passkey_registrations VALIDATE CONSTRAINT passkey_registrations_transports_bound;
-ALTER TABLE updater.passkey_registrations ADD CONSTRAINT passkey_registrations_authorization_pair
-  CHECK (updater.authorization_complete(auth_credential_id, auth_authenticator_data,
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'passkey_registrations'
+       AND c.conname = 'passkey_registrations_authorization_pair') THEN
+    ALTER TABLE updater.passkey_registrations ADD CONSTRAINT passkey_registrations_authorization_pair CHECK (updater.authorization_complete(auth_credential_id, auth_authenticator_data,
     auth_client_data_json, auth_signature)) NOT VALID;
+  END IF;
+END;
+$$;
 ALTER TABLE updater.passkey_registrations VALIDATE CONSTRAINT passkey_registrations_authorization_pair;
 
 -- ---------------------------------------------------------------------------

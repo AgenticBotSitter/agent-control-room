@@ -77,7 +77,7 @@ test("every trigger is attached to a table in schema updater, never a release ta
   }
   // Stated once rather than per file: the guard files hold the triggers, and a
   // per-file demand would be a false failure on the two that hold none.
-  assert.ok(total >= 20, `only ${total} triggers were found, so the scan read something other than the DDL`);
+  assert.ok(total >= 28, `only ${total} triggers were found, so the scan read something other than the DDL`);
 });
 
 test("the DDL creates exactly the design's tables, and the loader runs every file", async () => {
@@ -95,8 +95,14 @@ test("the DDL creates exactly the design's tables, and the loader runs every fil
     for (const match of withoutComments(sql).matchAll(
       /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?updater\.(\w+)/giu)) created.add(match[1]!);
   }
+  // The DDL's table set must equal the loader's declared list EXACTLY. It is not
+  // the design's original nine any more — item 10a added the open-registration
+  // table, the refusal pair and the limits table — and naming a fixed count here
+  // would have made this lane fail on a change that was the whole point of the
+  // change. The direction that matters is preserved: a table in the DDL that is
+  // not in the declared list, or one declared but absent from the DDL, both fail.
   assert.deepEqual([...created].sort(), [...updaterTablesV1].sort(),
-    "the DDL's tables are the design's nine and no others");
+    "the DDL's tables are exactly the loader's declared list");
 });
 
 test("the release-reader grant names only the three tables the loader allows", async () => {

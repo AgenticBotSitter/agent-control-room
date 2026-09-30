@@ -32,7 +32,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
-import { applyUpdaterSchemaV1, updaterDdlFilesV1, type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
+import { applyUpdaterSchemaV1, updaterDdlFilesV1, updaterTablesV1,
+  type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 
 // CONTROL_ROOM_PG_TEST_PORT_BASE moves the disposable cluster, as in the module
@@ -199,7 +200,8 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
     // The updater's own loader, in the design's order: role and schema as the
     // installer, tables and guards as the deployer.
     const created = await installUpdaterSchema(postgres);
-    assert.equal(created.tables, 9, "the design's nine tables exist");
+    assert.equal(created.tables, updaterTablesV1.length,
+      `the loader's table list exists (${updaterTablesV1.length} tables)`);
     assert.deepEqual([...created.appliedFiles], [...updaterDdlFilesV1()],
       "every DDL file was applied, in order");
     // Idempotent: the updater applies this at every startup.
@@ -271,7 +273,15 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
           "the web login inserts exactly the design's four tables");
         // The updater's own state is not insertable by the web: a compromised
         // release cannot manufacture a run, a journal line or a heartbeat.
-        const notInsertable = ["heartbeat", "plan_approval_outcomes", "plans", "run_events", "runs"];
+        // Item 10a adds three tables (`passkey_open_registrations`,
+        // `approval_refusals`, `approval_refusal_buckets`, plus the limits table)
+        // and none of them is insertable by the web: the open-registration table is
+        // the UPDATER's (a web that could insert one could mint its own challenge),
+        // and the refusal tables are the aggregate's. Asserted by name so a future
+        // grant here is a test failure rather than a surprise.
+        const notInsertable = ["heartbeat", "plan_approval_outcomes", "plans", "run_events", "runs",
+          "passkey_open_registrations", "passkey_registrations_limits", "approval_refusals",
+          "approval_refusal_buckets"];
         for (const table of notInsertable)
           assert.equal(surface.find(row => row.table_name === table)?.insert, false,
             `the web login must not INSERT into updater.${table}`);
@@ -295,9 +305,13 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
       const tables = (await privileged.query<{ relname: string }>(
         `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='updater' AND c.relkind='r' ORDER BY 1`)).rows.map(row => row.relname);
-      assert.deepEqual(tables, ["heartbeat", "owner_requests", "passkey_registrations", "plan_approval_outcomes",
-        "plan_approvals", "plans", "push_queue", "run_events", "runs"],
-      "the design's nine tables, and no others");
+      // The catalog's table set must equal the loader's declared list EXACTLY, in
+    // both directions. Naming the nine item-7 tables here instead would mean a
+    // table added by item 10a failed this lane rather than being required — which
+    // is the wrong failure: the list moved, and the list is the declaration of
+    // what exists. So the assertion reads the same constant the loader checks.
+    assert.deepEqual(tables, [...updaterTablesV1].sort(),
+      "the catalog holds exactly the loader's declared tables, and no others");
     } finally { await privileged.end(); }
 
     // The release ledger created none of this. If a future migration reached
