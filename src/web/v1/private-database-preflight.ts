@@ -15,10 +15,19 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0195 (filename order, including assigned gaps, 0155-0157 and 0160),
+// Generated from public migrations through 0196 (filename order, including assigned gaps, 0155-0157 and 0160-0162),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "247472b45fbd066478387c49019d8e1e36f6f1f7ceb85b3f56a1c0b1f8bc724a";
+export const privateWebSchemaDigest = "6972a386dee74093415735f30cb110a27e5ae33c315fed5b22e0e3b3296291ce";
+/** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
+ * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
+ * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
+ * the web login must hold exactly SELECT, and without it the web login must hold nothing,
+ * because the column audit still compares every column against the live grant, so an
+ * unexpected fleet grant is refused either way. */
+export const privateWebFleetReadTables = ["fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials",
+  "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events",
+  "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -63,31 +72,6 @@ privateWebInsertTables.add("control_news_task_proposal_links");
 privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
-
-/** The web login's read-only fleet tables (0140/0141).
- *
- * These are NOT granted by db/roles/private_web_roles.sql. The only file that
- * grants SELECT on them to control_room_private_web is
- * db/roles/fleet_gateway_roles.sql, and a Mac-local cluster never installs it:
- * scripts/mac-local/narrow-role-provision.mjs and
- * scripts/mac-local/database-upgrade-grants.mjs both install the seven
- * non-fleet role files only. So on Mac-local these eleven tables are absent
- * from the web role's ACL, while a full production install (which does apply
- * the fleet file) has them.
- *
- * The preflight compares the live ACL against a fixed declaration, so listing
- * them unconditionally made a correct Mac-local database fail its own startup
- * preflight with `private_database_preflight_failed` — the same shape of break
- * the 0190 news grant caused after the fleet+MCP merge. They are therefore
- * declared separately and required only when the fleet gateway role actually
- * exists in the cluster, which is exactly the condition under which
- * fleet_gateway_roles.sql was applied. Everything else about the declaration is
- * unchanged: when the gateway is present the tables are still required, and
- * when it is absent no extra privilege is accepted.
- */
-export const privateWebFleetReadTables = ["fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials",
-  "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims",
-  "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -599,8 +583,17 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
       const scopedInserts = kind === "web" ? privateWebInsertColumns
         : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
-      if (!columns.length || columns.some(c => c.extra
-        || c.read !== (reads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))
+      if (!columns.length) fail();
+      // Fleet tables are granted to the web login by fleet_gateway_roles.sql, which the
+      // Mac-local install never runs, so where the fleet gateway is absent the web login
+      // must hold nothing on any fleet table. The expectation follows the install; the
+      // comparison does not soften, so a stray grant is still refused.
+      const effectiveReads = new Set(reads);
+      if (kind === "web" && (await tx.query<{ present: boolean }>(
+        "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') AS present")
+      ).rows[0]?.present !== true) for (const table of privateWebFleetReadTables) effectiveReads.delete(table);
+      if (columns.some(c => c.extra
+        || c.read !== (effectiveReads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))
         || c.insert !== (allowedInserts.has(c.table_name) || !!scopedInserts[c.table_name]?.includes(c.column_name))
         || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name)
         || c.remove !== allowedDeletes.has(c.table_name))) fail();

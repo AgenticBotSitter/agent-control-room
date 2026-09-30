@@ -50,6 +50,7 @@ import { isPrivateRemoteControllerWorkerQueueCapabilityV1 } from
   "../../harness/v1/private-remote-controller-worker-composition";
 import type { CoordinationCostEvidencePortV1 } from "../../project-coordination/v1/schemas";
 import type { WorkBatchQueueSelectionAuthorityV1 } from "../../work-intake/v1";
+import type { UpdateCandidatePublisherConfigurationV1 } from "../../improve-control-room/v1";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
@@ -107,7 +108,8 @@ export type PrivateTaskStartupConfiguration = {
     /** Explicit S7 controller composition. Absence leaves both routes and the
      * controller cycle unavailable; `enabled` is the live default-off fence. */
     pipelines?: { integrityKey:Uint8Array; selectionAuthority:WorkBatchQueueSelectionAuthorityV1;
-      advance?:{enabled:()=>boolean;costEvidence:CoordinationCostEvidencePortV1;pollIntervalMs:number} };
+      advance?:{enabled:()=>boolean;costEvidence:CoordinationCostEvidencePortV1;pollIntervalMs:number;
+        candidatePublisher?:UpdateCandidatePublisherConfigurationV1} };
     /** Explicit local composition; no default worker factory or deployment activation. */
     queueWorker?: { database: PrivatePostgresConfiguration; concurrency?: number };
     /** Read-only, installation-journal-bound admission for the exact local Hermes composition. */
@@ -169,7 +171,8 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       selectionAuthority:Object.freeze({assertCurrent:pipelineInput.selectionAuthority.assertCurrent.bind(pipelineInput.selectionAuthority)}),
       ...(pipelineInput.advance?{advance:{enabled:pipelineInput.advance.enabled.bind(pipelineInput.advance),
         costEvidence:Object.freeze({currentCost:pipelineInput.advance.costEvidence.currentCost.bind(pipelineInput.advance.costEvidence)}),
-        pollIntervalMs:pipelineInput.advance.pollIntervalMs}}:{})}:undefined;
+        pollIntervalMs:pipelineInput.advance.pollIntervalMs,
+        ...(pipelineInput.advance.candidatePublisher?{candidatePublisher:pipelineInput.advance.candidatePublisher}:{})}}:{})}:undefined;
     if(pipelines&&typeof pipelines.selectionAuthority.assertCurrent!=="function")throw new Error();
     if(pipelines?.advance&&(!nativeQueue||!approvals||typeof pipelines.advance.enabled!=="function"
       ||typeof pipelines.advance.costEvidence.currentCost!=="function"||!Number.isSafeInteger(pipelines.advance.pollIntervalMs)
@@ -621,7 +624,8 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(config.pipelines?{workBatches:{integrityKey:config.pipelines.integrityKey,
           selectionAuthority:config.pipelines.selectionAuthority}}:{}),
         ...(config.pipelines?.advance?{pipelineAdvance:{enabled:config.pipelines.advance.enabled,
-          costEvidence:config.pipelines.advance.costEvidence}}:{}),
+          costEvidence:config.pipelines.advance.costEvidence,
+          ...(config.pipelines.advance.candidatePublisher?{candidatePublisher:config.pipelines.advance.candidatePublisher}:{})}}:{}),
       });
       requireActive();
       if (!application.isReady()) throw new Error();

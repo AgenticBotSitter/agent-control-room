@@ -281,8 +281,20 @@ test("ordered upgrade applies a pending suffix in two phases", needsPg, async ()
 // which apply-migrations.mjs surfaces as `deferred_partial_schema`, and the
 // S-slice tests assert `grants === "applied"`.
 const UNATTENDED_OBJECTS = ["pipeline_unattended_transitions", "pipeline_advance_receipts"];
+
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
+// Everything the shipped ledger carries after 0135's project settings. 0140-0190 were
+// added to the repository after 0108/0109/0135 and sort after them, so a staged prefix
+// that ends at 0108, 0109 or 0135 has this real remainder behind it rather than a shorter
+// one. Declared once and named explicitly: a rung's expected suffix is read from the
+// shipped ledger's order, never re-derived from the list it is asserting, so the
+// assertion stays a comparison rather than a tautology.
+const AFTER_0135 = ["0140_fleet_worker_connector.sql", "0141_fleet_owner_authority.sql", "0160_improve_control_room_desk.sql",
+  "0161_update_candidate_evidence.sql", "0162_validate_update_candidate_evidence.sql", "0173_owner_web_push_subscriptions.sql",
+  "0174_owner_web_push_delivery_ledger.sql", "0175_owner_web_push_tenant_isolation.sql", "0176_owner_web_push_retention.sql",
+  "0177_supervisor_reconciliation.sql", "0178_supervisor_machine_health.sql", "0179_provider_wait_states.sql",
+  "0190_news_task_proposal_links.sql"];
 
 /** Splits a SQL file into its top-level statements, keeping each one's text.
  *
@@ -419,6 +431,9 @@ async function stageAppliedPrefix({ withheld }) {
     assert.deepEqual([...applied, ...migrations.filter(file => held.includes(file))].sort(), migrations);
     for (const shipped of ["0100_ownership_lease_collision_guard.sql", "0101_owner_review_job_lock.sql",
       "0102_work_batch_owner_approval.sql"]) assert.ok(applied.includes(shipped), shipped);
+    // The staged set plus the withheld set is the whole ledger exactly once:
+    // never a hole and never a duplicate. `applied` above already asserts that
+    // the staged set is the ledger with exactly those files removed.
     for (const file of applied)
       await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
     // The reviewer role file is a grants entry the production applier verifies
@@ -1908,6 +1923,158 @@ async function catalogState(db){
   return {schema:await readSchemaDigest(client),acl};
 }
 
+/** Rewrites a role/grants file for a database that does not have every table the
+ * file names, so it can be replayed against that database. Only the ABSENT NAMES are
+ * pruned from a list: a statement is never dropped because one name in it is missing,
+ * because that would take the grants that do apply down with it. A statement whose
+ * whole list was absent is dropped, since there is then nothing left to grant. The
+ * object list is read within a single statement, so it can never run past the `;`
+ * into the next statement's own `ON ... TO`. */
+function pruneAbsentObjects(sql, present, isAbsent) {
+  // Only GRANT and REVOKE statements are rewritten. The files also carry `BEGIN;`
+  // and `DO $$ ... $$` blocks whose bodies contain semicolons, so splitting the
+  // whole file on ";" would tear them apart; a line-oriented split keeps every other
+  // byte of the file exactly as it was.
+  const objectList = /\bON\s+(.*?)\s+(TO|FROM)\b/isu;
+  return sql.split(/(?=^\s*(?:GRANT|REVOKE)\b)/gmu).map(statement => {
+    if (!/^\s*(?:GRANT|REVOKE)\b/iu.test(statement)) return statement;
+    const match = statement.match(objectList);
+    if (!match) return statement;
+    // Names the file writes with a type prefix or as a schema-wide sweep are left
+    // alone: a sweep over the tables this database does have is still correct.
+    // A list carrying a parenthesised argument type is a function signature, not a
+    // list of names -- `read_agent_review_plan(text), bytea)` splits on its own
+    // commas -- so a list with an unbalanced "(" is left exactly as written.
+    if (match[1].includes("(")) return statement;
+    const names = match[1].split(",").map(entry => entry.trim());
+    const kept = names.filter(name => {
+      const bare = name.split("(")[0].trim();
+      return !/^[a-z_][a-z0-9_]*$/iu.test(bare) || !isAbsent(bare);
+    });
+    if (kept.length === names.length) return statement;
+    // The grantee keyword is put back: it is part of the match, not part of the
+    // object list, and a grant that lost its TO/FROM is not SQL.
+    if (kept.length === 0) return "";
+    return statement.replace(/\s*\bON\s+.*?\s+(TO|FROM)\b/isu, ` ON ${kept.join(", ")} ${match[2]}`);
+  }).join("");
+}
+
+test("pruning a role file for a database that lacks a table keeps the grants that do apply", () => {
+  const prune = (sql, present) => pruneAbsentObjects(sql, new Set(present), name => !present.includes(name));
+  // One absent name in a list: the statement survives with the rest of its list, and
+  // keeps its grantee keyword. Losing the TO/FROM here produces invalid SQL, which
+  // is the bug this test exists to prevent.
+  assert.equal(prune("GRANT SELECT ON alpha, beta, gamma TO some_role;", ["alpha", "gamma"]),
+    "GRANT SELECT ON alpha, gamma TO some_role;");
+  assert.equal(prune("REVOKE ALL ON alpha, beta FROM some_role;", ["alpha"]),
+    "REVOKE ALL ON alpha FROM some_role;");
+  // A list that is entirely absent leaves nothing to grant, so the statement goes
+  // and its neighbour is untouched.
+  assert.equal(prune("GRANT SELECT ON beta TO some_role;\nGRANT INSERT ON alpha TO some_role;", ["alpha"]),
+    "GRANT INSERT ON alpha TO some_role;");
+  // A list spanning lines and a comma-continued grantee list is read whole: the
+  // multi-line list is rebuilt on one line and the grantee list is left alone.
+  assert.equal(prune("GRANT SELECT ON alpha,\n  beta, gamma\n  TO first_role, second_role;", ["alpha", "beta"]),
+    "GRANT SELECT ON alpha, beta TO first_role, second_role;");
+  // A name that is not a bare identifier -- a schema sweep, or a type prefix -- is
+  // left alone rather than guessed at.
+  assert.equal(prune("GRANT SELECT ON ALL TABLES IN SCHEMA public TO some_role;", []),
+    "GRANT SELECT ON ALL TABLES IN SCHEMA public TO some_role;");
+  // A `DO $$ ... $$` body carries semicolons of its own and must survive byte for
+  // byte, or the role file it belongs to stops being valid SQL.
+  const withBlock = "BEGIN;\nDO $$ BEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_roles) THEN\n    CREATE ROLE r NOLOGIN;\n  END IF;\nEND $$;\nGRANT SELECT ON alpha, beta TO r;\nCOMMIT;";
+  assert.equal(prune(withBlock, ["alpha"]), withBlock.replace("alpha, beta", "alpha"));
+  // A function signature carries a parenthesised argument type, whose own commas are
+  // not name separators. Splitting on them once produced
+  // `read_agent_review_plan(text), bytea)`, which is not SQL.
+  const signature = "GRANT EXECUTE ON FUNCTION read_plan(text), bytea) TO reviewer;";
+  assert.equal(prune(signature, []), signature);
+  // The same, with a name the database LACKS: without the guard the signature is
+  // split on its own commas and rebuilt as `read_plan(text), bytea)` plus a dropped
+  // grantee, which is the corruption this guard exists to prevent.
+  assert.equal(prune(signature, ["unrelated"]), signature);
+  // A real function grant out of a role file, against a database with none of it.
+  const grant = readFileSync(join(ROOT, "db/roles", "agent_reviewer_roles.sql"), "utf8");
+  const functionGrant = grant.split(/(?=\s*GRANT\b)/u)
+    .find(statement => /ON FUNCTION\s+read_agent_review_plan\b/u.test(statement));
+  assert.ok(functionGrant, "the reviewer role file grants read_agent_review_plan");
+  // Compared on the trimmed statement text: the pruner preserves layout, and the
+  // surrounding file's own trailing lines are not what this assertion is about.
+  assert.equal(prune(functionGrant, ["nothing_here"]).trim(), functionGrant.trim());
+  // A real role file pruned against a database holding only SOME of what it names
+  // keeps the names that are present, drops the ones that are not, and keeps every
+  // statement that still has a name. A pruner that quietly kept an absent name, or
+  // dropped a statement whole, would pass a weaker check than this. Only GRANT and
+  // REVOKE name an object; ALTER DEFAULT PRIVILEGES names a kind, and a name can
+  // appear in several grants, so each distinct name is counted once.
+  // The names are read the way the pruner reads them -- GRANT/REVOKE only, split at
+  // a line that begins one -- so the present/absent split is derived from exactly the
+  // names the pruner is deciding about. Reading them any other way would compute a
+  // different set and the assertions below would be about the reader, not the pruner.
+  const names = sql => {
+    const bare = name => /^[a-z_][a-z0-9_]*$/iu.test(name);
+    const statements = sql.split(/(?=\s*(?:GRANT|REVOKE)\b)/gmu)
+      .filter(statement => /^\s*(?:GRANT|REVOKE)\b/iu.test(statement));
+    const found = [];
+    for (const statement of statements)
+      for (const match of statement.matchAll(/\bON\s+(.*?)\s+(?:TO|FROM)\b/giu))
+        for (const entry of match[1].split(",")) {
+          const name = entry.trim();
+          if (bare(name)) found.push(name);
+        }
+    return [...new Set(found)].sort();
+  };
+  for (const name of ["private_web_roles.sql", "task_coordinator_roles.sql", "production_table_grants.sql"]) {
+    const sql = readFileSync(join(ROOT, "db/roles", name), "utf8");
+    const all = names(sql);
+    // Halve the DEDUPLICATED name list, so "present" and "absent" are decided from
+    // the same list the assertions read. Deriving them from separate lists would let
+    // a name be called present in one and absent in the other.
+    const half = all.filter((_, index) => index % 2 === 0);
+    const pruned = prune(sql, half);
+    const kept = new Set(names(pruned));
+    // Every name the database has is still granted somewhere, and nothing the file
+    // did not name appears. The per-statement layout is deliberately not compared:
+    // dropping a statement whose whole list was absent makes the surviving
+    // statements run together in a split, which is a change of layout, not of grant.
+    for (const object of half) assert.ok(kept.has(object), `${name}: dropped ${object}`);
+    assert.deepEqual([...kept].filter(object => !all.includes(object)), [], name);
+    // A pruner that kept an absent name would be caught here.
+    assert.ok(all.length > half.length, `${name}: nothing was pruned`);
+  }
+});
+
+/** Re-applies the shipped grants file as the schema owner, exactly as the applier
+ * does at the end of every migration run. A down migration only reverses its own
+ * statements; it does not re-converge the blanket grants, so a head that has been
+ * rolled back holds a different privilege set from a baseline that was built by a
+ * migration run. Replaying the grants file is the step that makes the two comparable,
+ * and it is the same step a real upgrade takes. */
+async function replayGrants(db) {
+  // The grants file is a forward-looking document: it names 0109's and 0108's tables,
+  // which a rolled-back head no longer has, so 42P01 would stop it part way. Comments
+  // are stripped first, so a comment's words are never replayed as SQL.
+  const present = new Set([
+    ...(await query(db, `SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m')`)).rows.map(r => r.name),
+    ...(await query(db, `SELECT p.proname AS name FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public'`)).rows.map(r => r.name),
+  ]);
+  const sql = (await readFile(join(ROOT, "db/roles/production_table_grants.sql"), "utf8")).replace(/--[^\n]*/gu, "");
+  await query(db, "SET ROLE control_room_schema_owner");
+  try {
+    // One statement at a time, and only GRANT/REVOKE: the applier runs this file as
+    // a single script, but running the rewritten GRANT/REVOKE statements one by one
+    // keeps a pruned statement from taking the file down with it.
+    const rewritten = pruneAbsentObjects(sql, present, name => !present.has(name));
+    for (const statement of rewritten.split(/(?=^\s*(?:GRANT|REVOKE)\b)/gmu)) {
+      const text = statement.trim();
+      if (!/^(?:GRANT|REVOKE)\b/iu.test(text)) continue;
+      await query(db, `${text.replace(/;\s*$/u, "")};`);
+    }
+  } finally { await query(db, "RESET ROLE"); }
+}
+
 // 0109's then 0108's down files return a head database to exactly the main + S4 + S5
 // state: the same objects and function bodies, and the same privileges. The
 // baseline withholds only 0108 and 0109, so a migration added after this test
@@ -1918,21 +2085,46 @@ test("0109 then 0108 down return a head database to exactly the main plus S4 and
   // 0109 — 0135's project settings included — is applied to BOTH sides. The
   // comparison therefore stays exactly about what these two down files revoke:
   // the head is not rolled back past a migration the baseline also carries.
-  const { stage, ledgerPath } = await stageAppliedPrefix({
-    withheld: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"] });
+  const withheld = ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"];
+  const { stage, ledgerPath } = await stageAppliedPrefix({ withheld });
+  // The narrow-role install runs as the cluster superuser, and both databases
+  // are dropped afterwards, so the cluster is left as it was found.
+  const admin = adminDb();
+  const createdPostgres = !(await query(admin, "SELECT 1 FROM pg_roles WHERE rolname='postgres'")).rows.length;
+  if (createdPostgres) await query(admin, "CREATE ROLE postgres SUPERUSER LOGIN");
+  assert.deepEqual((await query(admin, "SELECT rolname FROM pg_roles WHERE rolname=ANY($1::text[])",
+    [MAC_ROLE_GROUPS])).rows, []);
   try {
     await freshDatabase("cr_prod_s6_baseline");
     await applyMigrations({ target: target("cr_prod_s6_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s6_baseline"),
       migrateTarget: migrateTarget("cr_prod_s6_baseline"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
+    // The baseline carries the role state those two migrations had not yet
+    // produced, derived from the withheld migrations themselves rather than from
+    // a hand-written list of the grants they add — the same derivation the
+    // S-slice tests use for the staged grants file.
+    await installMacRoleFilesWithout("cr_prod_s6_baseline", withheld);
     await freshDatabase("cr_prod_s6_down");
     await applyMigrations({ target: target("cr_prod_s6_down"), bootstrapTarget: bootstrapTarget("cr_prod_s6_down"),
       migrateTarget: migrateTarget("cr_prod_s6_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
+    // The 0177-0179 down files revoke from control_room_task_coordinator and 0190's
+    // from control_room_private_web without an existence guard, so the head has to
+    // carry the same narrow roles a real install has before it can be rolled back.
+    // The baseline deliberately does not: it predates those migrations entirely.
+    await installMacRoleFiles("cr_prod_s6_down");
     assert.notDeepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
+
     await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
     await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0108_pipeline_build_publications.sql"), "utf8"));
+    await replayGrants(target("cr_prod_s6_down"));
+    // 0108/0109's down files revoke the grants they granted, so the head is now
+    // in exactly the role state the pre-migration release had. Re-installing the
+    // SHIPPED role files here would put 0109's own grants back, so the head is
+    // compared as the rollback left it: the same state the baseline was built in.
     assert.deepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
   } finally {
     await rm(stage, { recursive: true, force: true });
+    for (const database of ["cr_prod_s6_baseline", "cr_prod_s6_down"]) await query(admin, `DROP DATABASE IF EXISTS ${database}`);
+    for (const role of [...MAC_ROLE_GROUPS, ...createdPostgres ? ["postgres"] : []]) await query(admin, `DROP ROLE IF EXISTS ${role}`);
   }
 });
 
@@ -2151,6 +2343,20 @@ async function installMacRoleFiles(database, edits = {}) {
     await client.query(await readFile(join(ROOT, "db/roles/production_roles.sql"), "utf8"));
     if (!(await inspectFixedQueueSchemaV1(client)).schemaExists) await installFixedQueueSchemaV1(client);
     await client.query(await readFile(join(ROOT, "db/roles/private_web_database.sql"), "utf8"));
+    // The tables this database does not have, read from its own catalog: a prefix
+    // that predates 0135, 0160 or 0190 lacks those tables, and replaying the shipped
+    // role files onto it raises 42P01 naming one of them. `edits` is applied first,
+    // so an S6-era edit that removes a grant is judged against the file it edits and
+    // a new migration's tables need no edit here.
+    const present = new Set([
+      ...(await client.query(`SELECT c.relname AS name FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m')`)).rows.map(r => r.name),
+      // Columns too: 0109 adds unattended_last_swept_at to pipeline_runs, so a
+      // baseline that predates it fails 42703 on the column-level grant, not 42P01.
+      ...(await client.query(`SELECT a.attname AS name FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND a.attnum > 0 AND NOT a.attisdropped`)).rows.map(r => r.name),
+    ]);
     for (const file of MAC_ROLE_FILES) {
       let sql = await readFile(join(ROOT, "db/roles", file), "utf8");
       const pairs = edits[file] ?? [];
@@ -2158,6 +2364,25 @@ async function installMacRoleFiles(database, edits = {}) {
         assert.ok(sql.includes(pairs[index]), `${file}: ${pairs[index]}`);
         sql = sql.replace(pairs[index], pairs[index + 1]);
       }
+      // Grants on objects this database does not have are pruned by name, after
+      // `edits` so an S6-era edit is judged against the text it edits. Only the absent
+      // names go: the coordinator's SELECT grant names 0108's and 0109's tables
+      // alongside tables this database has, and dropping the whole statement would
+      // take the grants that do apply with it. A column-level grant keeps only the
+      // columns that exist, because 0109 adds unattended_last_swept_at to
+      // pipeline_runs and a baseline predating it fails 42703 rather than 42P01.
+      // Comments are stripped before the list is read: a "-- ... table names ..."
+      // line inside a statement would otherwise be read as part of its object list.
+      // A column-level grant keeps only the columns that exist. The list may wrap
+      // across lines, so newlines are part of the character class.
+      // A grant naming an object this database does not have is pruned from
+      // its statement, and a column list keeps only the columns that exist.
+      sql = pruneAbsentObjects(sql.replace(/--[^\n]*/gu, ""), present, name => !present.has(name))
+        .replace(/GRANT\s+(SELECT|INSERT|UPDATE|DELETE|REFERENCES|TRIGGER)\s*\(([^)]*)\)/giu,
+        (whole, verb, list) => {
+          const kept = list.split(",").map(entry => entry.trim()).filter(entry => entry && present.has(entry));
+          return kept.length ? `GRANT ${verb} (${kept.join(", ")})` : whole;
+        });
       for (const [statement, role] of sql.matchAll(/^CREATE ROLE (\w+)[^;]*;/gmu))
         if ((await client.query("SELECT 1 FROM pg_roles WHERE rolname=$1", [role])).rows.length) sql = sql.replace(statement, "");
       await client.query(sql);
@@ -2191,7 +2416,9 @@ test("0109 down returns a Mac-local head database to exactly the main plus S4, S
     await installMacRoleFiles("cr_prod_s7_down");
     const head = await catalogState(target("cr_prod_s7_down"));
     assert.notDeepEqual(head, await catalogState(target("cr_prod_s7_baseline")));
+
     await query(target("cr_prod_s7_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
+    await replayGrants(target("cr_prod_s7_down"));
     assert.deepEqual(await catalogState(target("cr_prod_s7_down")), await catalogState(target("cr_prod_s7_baseline")));
   } finally {
     await rm(stage, { recursive: true, force: true });
