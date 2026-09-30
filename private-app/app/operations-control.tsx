@@ -1,94 +1,123 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StateChip, type ChipTone } from "./owner-ui";
+import { createOperationsModeBrowserClient } from "../../src/web/v1/operations-mode-browser-client";
+import { BrowserRequestError, browserErrorMessage } from "../../src/web/v1/browser-client";
+import type { OperationsModeV1, OperationsModeReceiptV1, OperationsModeViewV1 } from "../../src/web/v1/operations-mode-wire";
 
-export const OPERATIONS_CONTROL_STATES = ["running", "pause_new_claims", "draining", "stopped"] as const;
-export type OperationsControlState = (typeof OPERATIONS_CONTROL_STATES)[number];
+export const OPERATIONS_CONTROL_STATES = ["running", "paused", "draining", "stopped"] as const;
+export type { OperationsModeV1 };
 
-export interface OperationsControlRecord {
-  state: OperationsControlState;
-  reason: string;
-  setAt: string;
-}
-
-const STORAGE_KEY = "control-room:operations-control:v1";
-const DEFAULT_RECORD: OperationsControlRecord = { state: "running", reason: "", setAt: "" };
-
-const labels: Record<OperationsControlState, { label: string; tone: ChipTone; explanation: string }> = {
+const labels: Record<OperationsModeV1, { label: string; tone: ChipTone; explanation: string }> = {
   running: { label: "Running", tone: "good", explanation: "Work proceeds as normal." },
-  pause_new_claims: { label: "Pause new claims", tone: "warn", explanation: "No new work should be claimed. Work already in progress is not affected." },
-  draining: { label: "Draining", tone: "warn", explanation: "No new work should be claimed, and running work should finish rather than be extended." },
-  stopped: { label: "Stopped", tone: "bad", explanation: "Nothing should claim or continue work until this is set back to Running." },
+  paused: { label: "Paused", tone: "warn",
+    explanation: "No new work is claimed or started. Work already in progress keeps running." },
+  draining: { label: "Draining", tone: "warn",
+    explanation: "No new work is claimed or started. Work already in progress finishes rather than being extended." },
+  stopped: { label: "Stopped", tone: "bad",
+    explanation: "Nothing new is claimed or started, and running work has been asked to stop." },
 };
 
-function readStoredRecord(): OperationsControlRecord {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_RECORD;
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return DEFAULT_RECORD;
-    const record = parsed as Record<string, unknown>;
-    if (typeof record.state !== "string" || !OPERATIONS_CONTROL_STATES.includes(record.state as OperationsControlState)) return DEFAULT_RECORD;
-    return { state: record.state as OperationsControlState,
-      reason: typeof record.reason === "string" ? record.reason : "",
-      setAt: typeof record.setAt === "string" ? record.setAt : "" };
-  } catch { return DEFAULT_RECORD; }
-}
-
 /**
- * Pause / Drain / Stop, the owner-facing control asked for in cook stream W1.
- * No pause mechanism existed anywhere in this app to wire this to (checked:
- * project-coordination-http.ts has a per-project pause/resume policy action,
- * which is a different, narrower thing — a project lead's authority inside
- * one project, not an operation-wide switch). Per the stream instructions,
- * this builds the owner-facing control and its stored state, and says
- * plainly what still has to honour it.
+ * The mode is a server-side fact, not a browser note.
  *
- * The stored state is deliberately `localStorage`, not a new database table.
- * A real cross-device, owner-of-record switch needs a migration, an
- * authenticated endpoint and the real-PostgreSQL-as-production-role tests
- * this build requires for any DB change (COOK_PLAN.md) — the existing
- * migrations in this owner-authority family (e.g. 0102) carry per-tenant RLS,
- * guard triggers and HMAC auth tags, which is not a surface to improvise
- * under time pressure without the independent review cook mode requires
- * before such a change lands. `localStorage` is the honest alternative: it
- * survives a reload on this one browser, and nothing about it is claimed to
- * do more than that. See the report for the concrete migration this should
- * become next.
+ * It is read from the authenticated endpoint on mount, so the phone, the
+ * desktop and the workers all see the same state, and a page loaded on a
+ * different device shows what the installation is actually doing. Nothing is
+ * cached in this browser: the previous localStorage version survived a reload on
+ * one browser and nothing else, and said so in a permanent disclosure.
+ *
+ * A failed read is not a mode. The panel then says the state is unknown and
+ * offers the one action that is still trustworthy — read it again — rather than
+ * showing a green "Running" it did not read.
  */
-export function useOperationsControl() {
-  const [record, setRecord] = useState<OperationsControlRecord>(DEFAULT_RECORD);
-  useEffect(() => { setRecord(readStoredRecord()); }, []);
-  const set = (state: OperationsControlState, reason: string) => {
-    const next: OperationsControlRecord = { state, reason: reason.trim().slice(0, 240), setAt: new Date().toISOString() };
-    setRecord(next);
-    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* best-effort only; the control still reflects in this session */ }
-  };
-  return { record, set };
+/** The only two things the panel asks the server. Typed structurally so a test
+ * can supply a stand-in, and so nothing else can be smuggled in. */
+export type OperationsModeClient = {
+  read: (signal?: AbortSignal) => Promise<OperationsModeViewV1>;
+  set: (value: unknown, signal?: AbortSignal) => Promise<OperationsModeReceiptV1>;
+};
+
+export function useOperationsControl(client: OperationsModeClient = createOperationsModeBrowserClient()) {
+  const [view, setView] = useState<OperationsModeViewV1>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const mounted = useRef(true);
+  const read = useCallback(async () => {
+    try {
+      const next = await client.read();
+      if (!mounted.current) return;
+      setView(next); setError(undefined);
+    } catch (reason) {
+      if (!mounted.current) return;
+      setView(undefined);
+      setError(reason instanceof BrowserRequestError ? browserErrorMessage[reason.code]
+        : "Control Room could not read the current state. No change was made.");
+    }
+  }, [client]);
+  useEffect(() => {
+    mounted.current = true;
+    void read();
+    return () => { mounted.current = false; };
+  }, [read]);
+  const set = useCallback(async (mode: OperationsModeV1, reason: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await client.set({ mode, reason });
+      await read();
+    } catch (reason) {
+      if (mounted.current) setError(reason instanceof BrowserRequestError ? browserErrorMessage[reason.code]
+        : "Control Room could not change the state. Check the current state before trying again.");
+    } finally { if (mounted.current) setBusy(false); }
+  }, [busy, client, read]);
+  return { view, error, busy, set, refresh: read };
 }
 
-export function OperationsControlPanel() {
-  const { record, set } = useOperationsControl();
+export function OperationsControlPanel({ client }: { client?: OperationsModeClient } = {}) {
+  const { view, error, busy, set, refresh } = useOperationsControl(client);
   const [reason, setReason] = useState("");
-  const current = labels[record.state];
-  return <section className="private-panel" aria-labelledby="operations-control-title">
+  return <form className="private-panel" aria-labelledby="operations-control-title"
+    onSubmit={event => event.preventDefault()}>
     <h2 id="operations-control-title">Pause, drain or stop</h2>
-    <p><StateChip state={record.state} tone={current.tone} label={current.label} /> {current.explanation}</p>
-    {record.setAt && <p className="private-note">Set {new Date(record.setAt).toLocaleString()}{record.reason ? ` — ${record.reason}` : ""}.</p>}
-    {/* This disclosure is deliberately NOT behind a details toggle, unlike the
-        caveats elsewhere on this page: it is the one sentence that says
-        whether Stop actually stops anything, and a safety disclosure is not
-        the kind of caveat owner-ux-feedback-2026-09-27.md meant to move out
-        of the main flow. */}
-    <p className="private-notice"><strong>This is a signal only, stored in this browser.</strong> Nothing in Control Room's task claiming,
-      dispatch or running work currently checks it. Setting "Stopped" here does not stop a running agent, and reloading this page on a
-      different device or browser will not show this state. Treat it as a note to yourself until it is wired to real enforcement.</p>
+    {view
+      ? <>
+        <p><StateChip state={view.mode} tone={labels[view.mode].tone} label={labels[view.mode].label} />{" "}
+          {labels[view.mode].explanation}</p>
+        {view.revision > 0
+          ? <p className="private-note">Set {new Date(view.setAt).toLocaleString()}{view.reason ? ` — ${view.reason}` : ""}.</p>
+          : <p className="private-note">No one has paused this installation, so it is running normally.</p>}
+        {!view.admitsNewWork
+          && <p className="private-note">No new work will be claimed or started while this is set.</p>}
+        {view.mode === "stopped" && view.stopRequests
+          && <p className="private-note">Control Room asked {view.stopRequests.requested === null
+            ? "the running work" : view.stopRequests.requested} to stop; {view.stopRequests.revoked} were stopped here.
+            It cannot confirm that a process on a worker saw the request
+            {view.stopRequests.uncertainJobIds.length
+              ? `, and ${view.stopRequests.uncertainJobIds.length} could not be stopped` : ""}.</p>}
+      </>
+      : <p role="status">{error ?? "Reading the current state…"}</p>}
+    {error && view && <p role="alert" className="private-notice">{error}</p>}
     <label htmlFor="operations-control-reason">Reason (optional, shown with the state above)</label>
-    <textarea id="operations-control-reason" rows={2} maxLength={240} value={reason} onChange={event => setReason(event.target.value)} />
+    <textarea id="operations-control-reason" rows={2} maxLength={240} value={reason} disabled={busy}
+      onChange={event => setReason(event.target.value)} />
     <div className="private-actions">
-      {OPERATIONS_CONTROL_STATES.filter(state => state !== record.state).map(state =>
-        <button key={state} type="button" onClick={() => { set(state, reason); setReason(""); }}>{labels[state].label}</button>)}
+      {/* With no state read there is nothing to change *from*, so a press would
+          be a blind write against an installation whose current state is
+          unknown. Read again is the only action offered until a read succeeds. */}
+      {view && OPERATIONS_CONTROL_STATES.filter(state => state !== view.mode).map(state =>
+        <button key={state} type="button" disabled={busy}
+          onClick={event => {
+            // Read the field from the form the button belongs to, not from a
+            // state value the render may have closed over before the last
+            // keystroke. A reason the owner typed and then immediately pressed a
+            // mode for is the reason they meant to record.
+            const form = event.currentTarget.form;
+            void set(state, form ? (form.elements.namedItem("operations-control-reason") as HTMLTextAreaElement | null)?.value ?? "" : reason);
+            setReason("");
+          }}>{labels[state].label}</button>)}
+      <button type="button" disabled={busy} onClick={() => { void refresh(); }}>Read again</button>
     </div>
-  </section>;
+  </form>;
 }

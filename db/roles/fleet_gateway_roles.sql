@@ -57,6 +57,10 @@ GRANT UPDATE (expires_at, renewed_at) ON control_leases TO control_room_fleet_ga
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_fleet_gateway;
 -- Row-lock rights only, matching the coordinator's lock order.
 GRANT UPDATE (coordinator_lock) ON tenants, control_manual_project_heads, projects TO control_room_fleet_gateway;
+-- The 0156 claim guard is SECURITY INVOKER and reads the installation
+-- operations mode as whoever inserts the attempt, so a claim login must be able
+-- to read the mode or every claim it makes is refused, running included.
+GRANT SELECT ON installation_operations_mode_revisions TO control_room_fleet_gateway;
 
 -- The ordinary web login can present fleet data but cannot write any owner
 -- decision. A separate protected login inherits only the owner-authority role

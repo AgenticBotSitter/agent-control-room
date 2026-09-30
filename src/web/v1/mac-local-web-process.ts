@@ -22,6 +22,8 @@ import { WorkBatchOwnerServiceV1, type WorkBatchQueueAcceptedResultPortV1,
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { LinearPipelineServiceV1 } from "../../pipelines/v1";
 import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
+import { createOperationsModeHttpHandlerV1 } from "./operations-mode-http";
+import { WebOperationsModeServiceV1, type OperationsModeStopAuthorityV1 } from "./operations-mode-service";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { ProjectActivityServiceV1 } from "./project-activity-service";
 import { SessionWatchServiceV1 } from "./session-watch-service";
@@ -61,6 +63,19 @@ export interface MacLocalWebProcessOptionsV1 {
   /** Same protected installation key used by proposal intake. Omission keeps
    * the Pipelines owner module absent. */
   workBatchIntegrityKey?: Uint8Array;
+  /** Installation-wide Pause / Drain / Stop. The mode is a separate concern
+   * from the batch modules, so it has its own key and its own absence.
+   *
+   * Supply either `operationsModeIntegrityKey`, which builds one here, or
+   * `operationsMode`, which is the instance the host already built. Two
+   * instances would be two answers to "what mode is this installation in", and
+   * the supervisor's health port and the owner endpoint could then disagree. */
+  operationsModeIntegrityKey?: Uint8Array;
+  operationsMode?: WebOperationsModeServiceV1;
+  /** Coordinator-side stop requests, so `stopped` reaches running work. Omission
+   * records the mode and still refuses every new claim and start, but the
+   * receipt says no stop request was sent rather than implying one. */
+  operationsModeStop?: OperationsModeStopAuthorityV1;
   /** Exact protected worker, node and model-policy snapshot used only to
    * admit approved batch items to the existing per-agent queue. */
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
@@ -154,6 +169,17 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
       clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
     ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}) }) : undefined;
+  // One service, never two: a supplied instance and a key together are refused
+  // rather than silently preferring one, because two instances would each hold
+  // their own view of the same installation-wide state.
+  if (options.operationsMode && options.operationsModeIntegrityKey)
+    throw new Error("mac_local_web_process_config_invalid");
+  const operationsMode = options.operationsMode ?? (options.operationsModeIntegrityKey
+    ? new WebOperationsModeServiceV1(options.database.client,
+      { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.operationsModeIntegrityKey, clock,
+      options.operationsModeStop) : undefined);
+  const operationsModeHttp = operationsMode ? createOperationsModeHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: operationsMode, clock }) : undefined;
   let closed: Promise<void> | undefined;
 
   function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
@@ -429,6 +455,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
       if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
+      if (operationsModeHttp && url.pathname === "/api/v1/operations-mode") return operationsModeHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
       if (improvementHttp && (url.pathname === "/api/v1/update-candidates"

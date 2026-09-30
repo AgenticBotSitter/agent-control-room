@@ -34,7 +34,8 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   control_installation_transition_revisions,
   control_supervisor_task_heads, control_supervisor_reconciliation_events, control_supervisor_agent_health,
   control_supervisor_loop_heads, control_supervisor_health_observations, control_provider_waits,
-  control_service_incident_heads, control_service_incidents
+  control_service_incident_heads, control_service_incidents,
+  installation_operations_mode_revisions
   TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;

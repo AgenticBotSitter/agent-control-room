@@ -143,7 +143,7 @@ async function ledger90Fixture(cluster) {
 }
 
 /** A fresh HEAD install, built the same way the Mac's own first-owner setup
- * builds one: full migration ledger, then the five narrow Mac roles. This is
+ * builds one: full migration ledger, then the manifest's narrow Mac roles. This is
  * the independent baseline the upgraded ledger-90 database is compared to. */
 async function freshHeadDatabase(cluster) {
   const { applyMigrations } = await import("../deploy/postgres/apply-migrations.mjs");

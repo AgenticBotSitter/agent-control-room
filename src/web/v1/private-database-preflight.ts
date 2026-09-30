@@ -15,12 +15,12 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0190 (filename order, including assigned gaps and 0160),
+// Generated from public migrations through 0195 (filename order, including assigned gaps, 0155-0157 and 0160),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script and cross-checked against a real PostgreSQL 17 cluster
 // installed the production way; both agree. Catalog query below; not a mutable
 // database marker.
-export const privateWebSchemaDigest = "9cf2fabe0328a5a04297965da10df3729ad4b0ea87033b965f0a6965756c4075";
+export const privateWebSchemaDigest = "9929454e7ba2354e08cc49e2e6837f255678b3593c718c522ad21b22c11c6bc7";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -44,7 +44,8 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_unattended_transitions",
   "pipeline_installation_allowances", "pipeline_machine_capacity_observations",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links"] as const;
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
+  "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -64,6 +65,9 @@ privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTabl
 privateWebInsertTables.add("control_news_task_proposal_links");
 // S7b: the owner sets the installation's caps and reports the machine's cluster count.
 privateWebInsertTables.add("pipeline_installation_allowances"); privateWebInsertTables.add("pipeline_machine_capacity_observations");
+privateWebInsertTables.add("installation_operations_mode_revisions");
+// 0195: the owner's append-only module install approvals (read current, insert new).
+privateWebInsertTables.add("control_module_install_approvals");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -172,6 +176,7 @@ coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_run
 coordinatorReads.push("control_improvement_requests", "control_update_candidates");
 // Scheduling reads each project's worker and concurrency settings (0135).
 coordinatorReads.push("control_project_settings");
+coordinatorReads.push("installation_operations_mode_revisions");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");

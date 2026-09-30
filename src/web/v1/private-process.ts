@@ -51,6 +51,8 @@ import { createInstallationPlanViewV1 } from "../../installer/v1/installation-pl
 import { WorkBatchOwnerServiceV1, type WorkBatchQueueAcceptedResultPortV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
+import { createOperationsModeHttpHandlerV1 } from "./operations-mode-http";
+import { WebOperationsModeServiceV1, type OperationsModeStopAuthorityV1 } from "./operations-mode-service";
 import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
 import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
@@ -136,6 +138,9 @@ export interface PrivateWebProcessOptions {
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
   queueAttention?: QueueAttentionSource;
+  /** Installation-wide Pause / Drain / Stop. Omission keeps the endpoint and
+   * the Home control absent rather than showing a switch that does nothing. */
+  operationsMode?: { integrityKey: Uint8Array; stop?: OperationsModeStopAuthorityV1 };
   /**
    * Project coordination surface: the canonical store adapter for the
    * coordination engine. Production supplies the real PostgreSQL-backed
@@ -328,6 +333,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
   const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, pipelines, clock) : undefined;
+  const operationsMode = options.operationsMode ? new WebOperationsModeServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.operationsMode.integrityKey, clock,
+    options.operationsMode.stop) : undefined;
   const sessionWatch = new SessionWatchServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
@@ -460,6 +468,16 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               actor.require("projects.read", undefined, true);
               return Response.json({ plan: installationPlanView }, { headers: privateResponseHeaders });
             });
+          }
+          if (url.pathname === "/api/v1/operations-mode") {
+            if (!operationsMode) throw new WebAccessError("not_found");
+            if (request.method === "GET" && !url.search)
+              return Response.json(await operationsMode.read(identity), { headers: privateResponseHeaders });
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
+              throw new WebAccessError("invalid_request");
+            const receipt = await operationsMode.set(identity, await readBoundedJson(request.body, 2048));
+            return Response.json(receipt, { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me/action-items") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");

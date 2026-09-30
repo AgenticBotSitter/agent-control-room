@@ -88,6 +88,10 @@ GRANT INSERT ON work_batch_queue_admissions, work_batch_agent_queue_heads TO con
 GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO control_room_private_web;
 GRANT INSERT ON control_improvement_requests, control_update_candidate_decisions TO control_room_private_web;
 GRANT UPDATE (state, version, decided_at) ON control_update_candidates TO control_room_private_web;
+-- Module install approvals (0195): the owner's append-only approval of one exact
+-- module bundle. Read to show the current approval; insert only through the
+-- owner-gated approval action. No UPDATE or DELETE: a new approval supersedes.
+GRANT SELECT, INSERT ON control_module_install_approvals TO control_room_private_web;
 -- Owner-authored dependent proposals (pipeline stages, approved batch items)
 -- write the edge between two jobs this role itself inserts. Append-only: no
 -- UPDATE or DELETE, and SELECT stays the three coordination-page columns.
@@ -133,5 +137,10 @@ GRANT UPDATE (state, approval_identity_id, approved_at, decision_reason_code, de
   decision_auth_tag, version, updated_at)
   ON work_batches TO control_room_private_web;
 GRANT UPDATE (next_position, updated_at) ON work_batch_agent_queue_heads TO control_room_private_web;
+-- Installation-wide operations mode. The owner session is the only writer, and
+-- 0155's guard trigger refuses any identity that is not a live human owner.
+-- No UPDATE or DELETE: a recorded decision is appended, never rewritten.
+GRANT SELECT, INSERT ON installation_operations_mode_revisions TO control_room_private_web;
+GRANT SELECT ON installation_effective_operations_mode TO control_room_private_web;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
 COMMIT;
