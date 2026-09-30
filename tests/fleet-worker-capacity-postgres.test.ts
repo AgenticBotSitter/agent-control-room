@@ -303,7 +303,55 @@ test("a fleet worker never holds more live claims than its maxConcurrent, under 
           for (const worker of workerIds) await releaseWorkerClaims(worker);
           assert.equal(await liveCounts(subject), 0, "the racing worker starts with nothing live");
 
-// THE ISOLATION LEVEL. Every race above is READ COMMITTED, which is
+          // THE TRIGGER ORDER, which is a property of the NAME and nothing else.
+          // BEFORE triggers on one table fire in NAME order, so the capacity
+          // guard's name is what puts it after 0140's guard rather than before.
+          // Reading it from pg_trigger rather than from the migration text is
+          // what makes this a check of the DATABASE's order and not of a
+          // comment: the first spelling of this trigger sorted first, so a
+          // worker at its ceiling was told `54000 capacity reached` for a claim
+          // 0140 would have refused as inadmissible.
+          const triggerOrder = (await admin.query<{ tgname: string }>(`SELECT t.tgname FROM pg_trigger t
+            JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='fleet_claims' AND NOT t.tgisinternal
+            ORDER BY t.tgname`)).rows.map(row => row.tgname);
+          assert.ok(triggerOrder.includes("fleet_claims_zz_capacity_guard"),
+            `0234's capacity trigger is installed (${triggerOrder.join(", ")})`);
+          assert.ok(triggerOrder.indexOf("fleet_claims_zz_capacity_guard") > triggerOrder.indexOf("fleet_claims_guard"),
+            `the capacity guard fires AFTER 0140's own guard (${triggerOrder.join(", ")})`);
+
+          // THE ADVISORY KEY IS NAMESPACED. The lock is keyed on the tenant and
+          // the worker, and 0100 keys its lease-scope lock on the tenant and the
+          // PROJECT -- hashtextextended over json_build_array of each. That is
+          // the SAME keyspace, not a similar one: a fleet worker id is shaped
+          // `fleet-worker:<32 hex>`, which the project-id pattern accepts, so
+          // without a tag the two can collide on one 64-bit key.
+          //
+          // Read from the INSTALLED function rather than from the migration
+          // text, so this measures the key the server actually takes. The
+          // function body is the only place the key is written down, and a test
+          // that greps the SQL would still pass if the guard used a different
+          // one.
+          const capacityBody = (await admin.query<{ definition: string }>(
+            "SELECT pg_get_functiondef(p.oid) AS definition FROM pg_proc p JOIN pg_namespace n"
+            + " ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='enforce_fleet_worker_claim_capacity'"))
+            .rows[0]?.definition ?? "";
+          assert.ok(capacityBody.includes("json_build_array('fleet_worker_capacity'"),
+            `the capacity guard's lock key is tagged (${capacityBody.match(/json_build_array[^)]*\)/u)?.[0]})`);
+          // And the two keyspaces genuinely differ, computed by the server's own
+          // hash rather than asserted: with the tag the worker key is a
+          // different key from the one 0100's project lock would use for a
+          // project id of the same shape.
+          const keys = (await admin.query<{ worker: string; untagged: string; project: string }>(`SELECT
+            hashtextextended(json_build_array('fleet_worker_capacity',$1::text,$2::text)::text, 0)::text AS worker,
+            hashtextextended(json_build_array($1::text,$2::text)::text, 0)::text AS untagged,
+            hashtextextended(json_build_array($1::text,$3::text)::text, 0)::text AS project`,
+          [FLEET_TENANT, subject, "project:fleet-race-0"])).rows[0]!;
+          assert.notEqual(keys.worker, keys.untagged,
+            "the tag moves the worker's lock out of the untagged keyspace");
+          assert.notEqual(keys.worker, keys.project,
+            "and out of the keyspace 0100's lease-scope lock uses");
+
+          // THE ISOLATION LEVEL. Every race above is READ COMMITTED, which is
           // what the gateway pool opens.
           //
           // This is the shape an advisory lock alone does not cover. An RR
