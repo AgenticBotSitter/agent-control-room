@@ -152,6 +152,11 @@
 .private-pipeline-decisions fieldset { display: grid; gap: .75rem; border: 1px solid var(--border); border-radius: .6rem; padding: 1rem; }
 .private-pipeline-decisions label, .private-panel details > label { display: grid; gap: .4rem; margin-block: .75rem; font-weight: 650; }
 .private-pipeline-decisions select, .private-pipeline-decisions input, .private-panel details input, .private-panel details textarea { width: 100%; padding: .65rem; border: 1px solid var(--border-strong); border-radius: .5rem; color: var(--text); background: var(--surface); font: inherit; }
+.private-orchestration label { display: block; margin-block: .75rem .4rem; font-weight: 700; }
+.private-orchestration textarea, .private-orchestration select { box-sizing: border-box; width: 100%; padding: .75rem; border: 1px solid var(--border-strong); border-radius: .5rem; color: var(--text); background: var(--surface); font: inherit; }
+.private-orchestration > button { margin-top: .85rem; min-height: 44px; }
+.private-suggestion { margin-block: 1rem; }
+.private-suggestion h3 { margin-top: 0; }
 .private-panel > details { border-top: 1px solid var(--border); padding-block: 1rem; }
 .private-panel > details summary { min-height: 44px; cursor: pointer; font-weight: 700; }
 .private-session-watch-list { list-style: none; padding: 0; display: grid; gap: 1rem; }

@@ -65,6 +65,8 @@ import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
+import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-owner";
+import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -132,6 +134,8 @@ export interface PrivateWebProcessOptions {
   workBatches?: { integrityKey: Uint8Array; queueCatalog?: WorkBatchQueueCatalogV1;
     queueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
     pipelineRepositories?: CanonicalPipelineRepositoryRegistryV1 };
+  /** Owner-facing chief-of-staff bridge. Storage and planner lifetime remain in the supplying composition. */
+  orchestration?: ProjectOrchestrationOwnerPortV1;
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
   planning?: TaskPlanningOperation;
@@ -898,6 +902,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               inflight: coordinationInflight,
             })(request);
           }
+          if (options.orchestration && (/^\/api\/v1\/projects\/[^/]+\/orchestration(?:-settings)?$/.test(url.pathname)
+            || /^\/api\/v1\/projects\/[^/]+\/pipelines\/[^/]+\/suggestions(?:\/|$)/.test(url.pathname)))
+            return createProjectOrchestrationHttpHandlerV1({ origin: site.origin, trust,
+              gatewayAssertionProfile, service: options.orchestration, clock })(request);
           if (workBatches && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname))
             return createWorkBatchOwnerHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: workBatches, clock })(request);
