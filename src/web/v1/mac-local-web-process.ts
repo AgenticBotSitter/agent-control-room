@@ -36,6 +36,7 @@ import { parseProductConfigurationV1 } from "../../config/v1/product-configurati
 import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { FleetOwnerServiceV1 } from "../../fleet/v1";
 import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
+import type { ConnectorManifestV1 } from "./connect-bot-install-line";
 import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
@@ -105,7 +106,8 @@ export interface MacLocalWebProcessOptionsV1 {
   /** Remote workers (T2-F). Owner decisions use a distinct restricted
    * database login; neither the ordinary web login nor the gateway can write
    * those tables. The hook only asks the gateway to reconcile afterward. */
-  fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string; afterDecision?: () => Promise<unknown> }>;
+  fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string; connectorManifest?: ConnectorManifestV1;
+    afterDecision?: () => Promise<unknown> }>;
   clock?: () => number;
 }
 
@@ -187,7 +189,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
     service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
       clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
-    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}) }) : undefined;
+    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}),
+    ...(options.fleet.connectorManifest ? { connectorManifest: options.fleet.connectorManifest } : {}) }) : undefined;
   // One service, never two: a supplied instance and a key together are refused
   // rather than silently preferring one, because two instances would each hold
   // their own view of the same installation-wide state.

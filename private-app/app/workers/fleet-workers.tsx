@@ -19,9 +19,6 @@ const statusWords: Record<string, [string, ChipTone]> = {
   working: ["Working", "busy"], connected: ["Connected", "good"], offline: ["Offline", "warn"],
   revoked: ["Removed", "neutral"], needs_new_key: ["Needs a new key", "bad"],
 };
-const kinds = [["codex", "Codex"], ["claude-code", "Claude Code"], ["hermes", "Hermes"], ["mcp-agent", "Any agent (MCP)"]] as const;
-const capabilities = [["code.change", "Change code"], ["code.review", "Review code"], ["research", "Research"],
-  ["writing", "Writing"], ["testing", "Testing"]] as const;
 
 async function call(path: string, body?: unknown) {
   const response = await fetch(path, { method: body === undefined ? "GET" : "POST", credentials: "same-origin",
@@ -53,44 +50,6 @@ function JoinCommand({ issued, onDone }: { issued: Issued; onDone: () => void })
       : <><p>The connector address is not configured, so only the code is shown:</p><pre className="private-summary">{issued.code}</pre>
         <div className="private-actions"><button type="button" onClick={onDone}>Done</button></div></>}
   </div>;
-}
-
-function AddWorker({ onIssued }: { onIssued: (issued: Issued) => void }) {
-  const [open, setOpen] = useState(false);
-  const [projects, setProjects] = useState<{ projectId: string; title: string }[]>([]);
-  const [name, setName] = useState(""), [kind, setKind] = useState("mcp-agent");
-  const [chosen, setChosen] = useState<string[]>([]), [caps, setCaps] = useState<string[]>(["writing"]);
-  const [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    void call("/api/v1/projects").then(value => setProjects(((value as { projects?: { projectId: string; title: string }[] })
-      .projects ?? []).map(p => ({ projectId: p.projectId, title: p.title })))).catch(() => setProjects([]));
-  }, [open]);
-  const toggle = (list: string[], value: string) => list.includes(value) ? list.filter(v => v !== value) : [...list, value];
-  if (!open) return <div className="private-actions"><button type="button" onClick={() => setOpen(true)}>Add a worker</button></div>;
-  return <form aria-label="Add a worker" onSubmit={event => {
-    event.preventDefault(); setBusy(true); setError(null);
-    call("/api/v1/fleet/enrollment-codes", { displayName: name, workerKind: kind, projectIds: chosen, capabilities: caps, maxConcurrent: 1 })
-      .then(value => { onIssued(value as Issued); setOpen(false); setName(""); setChosen([]); })
-      .catch(() => setError("The code was not created. Check the name, pick at least one project and one skill, then try again."))
-      .finally(() => setBusy(false));
-  }}>
-    <label>Name for this machine or agent<input value={name} maxLength={80} required onChange={e => setName(e.target.value)} /></label>
-    <label>Kind<select value={kind} onChange={e => setKind(e.target.value)}>
-      {kinds.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-    <fieldset><legend>Projects it may work on</legend>
-      {projects.length === 0 && <p className="private-note">No projects found yet.</p>}
-      {projects.map(p => <label key={p.projectId}><input type="checkbox" checked={chosen.includes(p.projectId)}
-        onChange={() => setChosen(toggle(chosen, p.projectId))} /> {p.title}</label>)}</fieldset>
-    <fieldset><legend>What it may do</legend>
-      {capabilities.map(([value, label]) => <label key={value}><input type="checkbox" checked={caps.includes(value)}
-        onChange={() => setCaps(toggle(caps, value))} /> {label}</label>)}</fieldset>
-    {error && <p role="alert">{error}</p>}
-    <div className="private-actions"><button type="submit" disabled={busy || !name.trim() || !chosen.length || !caps.length}>
-      Create join code</button><button type="button" onClick={() => setOpen(false)}>Cancel</button></div>
-    <p className="private-note">The worker can list, claim and report work only in these projects. It can never approve,
-      accept or merge anything, and it never gets a database password or your login.</p>
-  </form>;
 }
 
 function ResultReview({ result, onSaved }: { result: FleetResult; onSaved: () => void }) {
@@ -146,8 +105,9 @@ export function FleetWorkers() {
       <ul className="private-local-agent-list">{waiting.map(r => <ResultReview key={r.resultId} result={r} onSaved={load} />)}</ul>
     </div>}
     {notice && <p role="status">{notice}</p>}
-    {issued ? <JoinCommand issued={issued} onDone={() => { setIssued(null); load(); }} /> : <AddWorker onIssued={value => { setIssued(value); load(); }} />}
-    {board.workers.length === 0 && board.pendingCodes.length === 0 && <p>No other machines yet. Use “Add a worker” to connect one.</p>}
+    {issued ? <JoinCommand issued={issued} onDone={() => { setIssued(null); load(); }} />
+      : <div className="private-actions"><a href="/workers/connect">Connect a bot</a></div>}
+    {board.workers.length === 0 && board.pendingCodes.length === 0 && <p>No other machines yet. Use “Connect a bot” to add one.</p>}
     <ul className="private-local-agent-list">
       {board.pendingCodes.map(code => <li key={code.codeId} className="private-local-agent-card">
         <h3>{code.displayName}</h3><p><StateChip state="pending" tone="warn" label="Waiting to join" /> Code valid until {new Date(code.expiresAt).toLocaleTimeString()}.</p>

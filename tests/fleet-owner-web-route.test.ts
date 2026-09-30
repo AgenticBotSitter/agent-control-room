@@ -19,11 +19,13 @@ test("owner fleet routes: add a worker returns a one-time join command; foreign 
   });
   const origin = "http://127.0.0.1:3210", ownerCode = "mac-local-owner-code-long-enough";
   // The fleet tables enforce expiry with the database clock, so this route uses real time.
-  const make = (fleet?: { gatewayOrigin: string; ownerAuthority: typeof fixture.client }) => createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
+  const connectorManifest = { path: "/fleet/v1/connector-0.3.0.mjs", sha256: `sha256:${"a".repeat(64)}` };
+  const make = (fleet?: { gatewayOrigin: string; connectorManifest: typeof connectorManifest;
+    ownerAuthority: typeof fixture.client }) => createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
     database: { client: fixture.client, close: async () => {} }, ...(fleet ? { fleet } : {}) });
-  const app = make({ gatewayOrigin: "https://control.example.ts.net", ownerAuthority: fixture.client });
+  const app = make({ gatewayOrigin: "https://control.example.ts.net", connectorManifest, ownerAuthority: fixture.client });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const unused = () => new Response("unused");
   assert.equal((await app.handle(request("/api/v1/fleet"), unused)).status, 401);
@@ -53,6 +55,30 @@ test("owner fleet routes: add a worker returns a one-time join command; foreign 
   const listed = await board.json() as { pendingCodes: { displayName: string }[]; workers: unknown[] };
   assert.deepEqual(listed.pendingCodes.map(code => code.displayName), ["Build server"]);
   assert.ok(!JSON.stringify(listed).includes(value.code), "the code is shown once and never listed again");
+
+  const connectBody = JSON.stringify({ botKind: "cursor", name: "desktop-cursor", operatingSystem: "windows",
+    projectIds: [projectId], capabilities: ["writing"] });
+  const connected = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
+    "content-type": "application/json" }, body: connectBody }), unused);
+  assert.equal(connected.status, 201, await connected.clone().text());
+  const install = await connected.json() as { installLine: string; expiresAt: string; manifest: typeof connectorManifest };
+  assert.deepEqual(install.manifest, connectorManifest);
+  assert.match(install.installLine, /install --server .* --code .* --bot 'cursor' --name 'desktop-cursor'/u);
+  assert.match(install.installLine, /sha256:a{64}/u);
+  const installUrl = install.installLine.match(/https:\/\/[^ ']+/u)?.[0] ?? "";
+  assert.equal(installUrl.includes("crj_"), false, "the code is never placed in the connector URL");
+  const bad = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
+    "content-type": "application/json" }, body: JSON.stringify({ ...JSON.parse(connectBody), name: "bad name", extra: true }) }), unused);
+  assert.equal(bad.status, 400);
+  const stoppedHalfway = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
+    "content-type": "application/json" }, body: "{" }), unused);
+  assert.equal(stoppedHalfway.status, 400, "a request stopped halfway creates no partial success");
+  const burst = await Promise.all(Array.from({ length: 24 }, (_, index) => app.handle(request("/api/v1/fleet/connect-codes", {
+    method: "POST", headers: { cookie, origin, "content-type": "application/json" },
+    body: JSON.stringify({ ...JSON.parse(connectBody), name: `burst-${index}` }) }), unused)));
+  assert.ok(burst.every(response => response.status === 201), "24 parallel owner callers each receive one isolated code");
+  assert.equal(new Set((await Promise.all(burst.map(response => response.json() as Promise<{ workerId: string }>)))
+    .map(item => item.workerId)).size, 24, "parallel calls never share a worker binding");
 
   const without = make();
   assert.equal((await without.handle(request("/api/v1/fleet", { headers: { cookie } }), unused)).status, 401,

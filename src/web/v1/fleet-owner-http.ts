@@ -3,6 +3,8 @@ import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTru
 import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import { FleetErrorV1, type FleetOwnerServiceV1 } from "../../fleet/v1";
+import { captureConnectBotRequestV1, captureConnectorGatewayOriginV1, captureConnectorManifestV1, connectBotInstallLineV1,
+  type ConnectorManifestV1 } from "./connect-bot-install-line";
 
 /**
  * Owner-only fleet routes: add a worker, give it a new key, revoke it, open a
@@ -11,7 +13,8 @@ import { FleetErrorV1, type FleetOwnerServiceV1 } from "../../fleet/v1";
  */
 export type FleetOwnerHttpOptionsV1 = Readonly<{ origin: string; service: FleetOwnerServiceV1;
   /** Public address of the connector gateway, shown in the one-line join command. */
-  gatewayOrigin?: string; trust?: AccessTrust; gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
+  gatewayOrigin?: string; connectorManifest?: ConnectorManifestV1;
+  trust?: AccessTrust; gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
   clock?: () => number; localOwnerSession?: LocalOwnerSessionServiceV1 }>;
 
 function translate(error: unknown): never {
@@ -38,6 +41,10 @@ export function createFleetOwnerHttpHandlerV1(options: FleetOwnerHttpOptionsV1) 
   if (local && (options.trust || options.gatewayAssertionProfile) || !local && !options.trust)
     throw new Error("fleet_owner_http_authentication_invalid");
   if (options.gatewayOrigin !== undefined && !shellSafe.test(options.gatewayOrigin)) throw new Error("fleet_owner_http_gateway_invalid");
+  if ((options.gatewayOrigin === undefined) !== (options.connectorManifest === undefined))
+    throw new Error("fleet_owner_http_connector_manifest_invalid");
+  const connectorGatewayOrigin = options.gatewayOrigin ? captureConnectorGatewayOriginV1(options.gatewayOrigin) : undefined;
+  const connectorManifest = options.connectorManifest ? captureConnectorManifestV1(options.connectorManifest) : undefined;
   const verify = options.trust ? createAccessVerifier(options.trust, options.gatewayAssertionProfile) : undefined;
   const clock = options.clock ?? Date.now;
   const withCommands = <T extends { code: string }>(issued: T) => ({ ...issued,
@@ -55,7 +62,9 @@ export function createFleetOwnerHttpHandlerV1(options: FleetOwnerHttpOptionsV1) 
         if (path === "/api/v1/fleet") {
           const [board, results] = await Promise.all([options.service.listWorkers(identity),
             options.service.listResults(identity, { awaitingOnly: false })]).catch(translate);
-          return Response.json({ ...board, results, gatewayConfigured: !!options.gatewayOrigin }, { headers: privateResponseHeaders });
+          return Response.json({ ...board, results, gatewayConfigured: !!options.gatewayOrigin,
+            connectBot: connectorManifest ? { available: true, manifest: connectorManifest } : { available: false } },
+          { headers: privateResponseHeaders });
         }
         const files = /^\/api\/v1\/fleet\/results\/(fleet-result:[a-f0-9]{32})\/files$/u.exec(path);
         if (files) return Response.json(await options.service.listResultFiles(identity, files[1]).catch(translate),
@@ -73,6 +82,18 @@ export function createFleetOwnerHttpHandlerV1(options: FleetOwnerHttpOptionsV1) 
         || !request.body) throw new WebAccessError("invalid_request");
       const body = await readBoundedJson(request.body, 16_384) as Record<string, unknown>;
       if (!body || typeof body !== "object" || Array.isArray(body)) throw new WebAccessError("invalid_request");
+      if (path === "/api/v1/fleet/connect-codes") {
+        if (!connectorGatewayOrigin || !connectorManifest) throw new WebAccessError("not_found");
+        const input = captureConnectBotRequestV1(body);
+        const issued = await options.service.createEnrollmentCode(identity, { displayName: input.name,
+          workerKind: input.botKind, projectIds: input.projectIds, capabilities: input.capabilities,
+          maxConcurrent: input.maxConcurrent }).catch(translate);
+        return Response.json({ codeId: issued.codeId, workerId: issued.workerId, expiresAt: issued.expiresAt,
+          operatingSystem: input.operatingSystem, manifest: connectorManifest,
+          installLine: connectBotInstallLineV1({ gatewayOrigin: connectorGatewayOrigin, manifest: connectorManifest,
+            code: issued.code, botKind: input.botKind, name: input.name, operatingSystem: input.operatingSystem }) },
+        { status: 201, headers: privateResponseHeaders });
+      }
       if (path === "/api/v1/fleet/enrollment-codes") return Response.json(withCommands(await options.service
         .createEnrollmentCode(identity, body as never).catch(translate)), { status: 201, headers: privateResponseHeaders });
       const worker = /^\/api\/v1\/fleet\/workers\/(fleet-worker:[a-f0-9]{32})\/(revoke|new-key)$/u.exec(path);
