@@ -69,7 +69,12 @@ mutate() {
     --lane) lane="$2"; shift 2;;
     --pattern) pattern="$2"; shift 2;;
     *) shift;; esac; done
-  if ! grep -qF -- "${old//@TICK@/$(printf "\140")}" "$file"; then
+  # The backtick is introduced through a variable rather than inline: a nested
+  # command substitution inside the pattern substitution read as a quoting error,
+  # and under `set -u` the guard then saw fewer than four arguments.
+  local literal_tick
+  literal_tick=$(printf '\140')
+  if ! grep -qF -- "${old//@TICK@/$literal_tick}" "$file"; then
     echo "SETUP-ERROR $id: anchor not found in $file" | tee "$RESULTS_DIR/$id.log"
     fail=$((fail+1)); failures="$failures $id(setup)"; return
   fi
