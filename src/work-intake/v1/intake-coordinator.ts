@@ -152,14 +152,41 @@ export interface IntakeCompletionLookupPortV1 {
    * so the same request key under a different identity is a different request and
    * must not be answered from the first one's receipt.
    *
-   * `ownerRequest` is OPTIONAL and is NOT passed by the coordinator. It exists so
-   * a caller that has a description can say "this receipt may not be yours" (N8),
-   * and an implementation answers null when it is present rather than guessing
-   * that a completed key means the same question is being asked again. The stored
-   * digest is over the planner's OUTPUT, so a description cannot be compared to it;
-   * refusing is the only honest answer. A caller with no description -- the
-   * coordinator's own retry path, which resends the retained body -- is answered
-   * as before. */
+   * `ownerRequest` is OPTIONAL and the coordinator DOES NOT PASS IT. That is a
+   * decision, not an omission, and round 4's N8 finding -- which called the
+   * refusal dead code in production -- is what forced it to be stated here rather
+   * than left as an apparent gap.
+   *
+   * The two paths that reach this lookup need opposite answers:
+   *
+   *   * The RECOVERY path is the reason this port exists. The owner lost the
+   *     response to a describe that succeeded, presses again, and the browser
+   *     resends the RETAINED BODY under the SAME key. It must be answered from
+   *     storage, or the press spends a second planner run and then collides with
+   *     its own earlier work -- measured before this port existed as three exact
+   *     retries each running the planner and each throwing `replay_conflict`.
+   *
+   *   * The N8 case is a caller that reuses a COMPLETED key for a DIFFERENT
+   *     description. Answering it from storage tells that caller a job it never
+   *     asked for has been prepared, and the answer to what it actually asked is
+   *     never computed.
+   *
+   * Nothing in the request distinguishes them: both arrive as (tenant, project,
+   * identity, requestKey), and the stored `request_digest` is over the planner's
+   * OUTPUT, which the owner cannot compute before the planner has run. So the
+   * refusal has to be the answer for one of them, and it is the DIFFERENT-description
+   * one that must lose -- losing it costs a run, while losing the recovery costs a
+   * false "could not be reached" for a proposal that already exists, which is the
+   * failure this port was written to remove.
+   *
+   * WHICH MEANS THE PORT'S `ownerRequest` PARAMETER IS UNREACHABLE FROM THE
+   * COORDINATOR, and an implementation that honours it must never be reached by
+   * this path. It is kept because a DIRECT caller of the port is a different
+   * question with a different answer, and because the honest response to "this key
+   * may not be yours" is still `null`. A future wiring must arrive with the
+   * distinction that makes it safe -- a caller-declared retry of a retained body,
+   * not an unconditional pass-through -- and must not simply forward the
+   * description, which would break recovery. */
   completed(input: Readonly<{ tenantId: string; projectId: string; identityId: string; requestKey: string;
     ownerRequest?: string }>): Promise<IntakeCoordinatorResultV1 | null> | IntakeCoordinatorResultV1 | null;
 }

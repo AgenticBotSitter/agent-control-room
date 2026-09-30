@@ -607,6 +607,19 @@ export class PostgresIntakeCompletionLookupV1 implements IntakeCompletionLookupP
     // always resends the retained body, and its describe mints a fresh key),
     // which is exactly why a direct API caller could and nothing noticed.
     //
+    // AND THIS REFUSAL IS NOT REACHED FROM THE COORDINATOR, which is round 4's N8
+    // finding restated honestly rather than defended. The coordinator does not pass
+    // `ownerRequest` here, and must not: its recovery path -- the owner retrying a
+    // describe that succeeded, with the browser resending the RETAINED BODY -- is
+    // the one this port exists to answer, and forwarding the description would make
+    // every such retry answer `null`, spend a second planner run and collide with
+    // its own earlier work. Two callers that arrive identically need opposite
+    // answers, so one of them has to lose, and the one that loses here is the
+    // different-description caller, because losing it costs a run while losing
+    // recovery costs a false failure for work that already succeeded. The argument
+    // is written out on `IntakeCompletionLookupPortV1`, which is where a future
+    // wiring has to start: it needs a caller-declared retry, not a pass-through.
+    //
     // WHY THIS REFUSES RATHER THAN COMPARES. The stored `request_digest` is
     // `sha256Digest({ identityId, idempotencyKey, proposalDigest })` -- a digest
     // of the PLANNER'S OUTPUT. The owner cannot recompute it before the planner

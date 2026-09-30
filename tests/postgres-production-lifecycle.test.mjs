@@ -2223,7 +2223,7 @@ async function catalogState(db){
    // and `DO $$ ... $$` blocks whose bodies contain semicolons, so splitting the
    // whole file on ";" would tear them apart; a line-oriented split keeps every other
    // byte of the file exactly as it was.
-   const objectList = /\bON\s+(.*?)\s+(TO|FROM)\b/isu;
+   const objectList = /\bON\s+([^;]*?)\s+(TO|FROM)\b/isu;
    return sql.split(/(?=^\s*(?:GRANT|REVOKE)\b)/gmu).map(statement => {
      if (!/^\s*(?:GRANT|REVOKE)\b/iu.test(statement)) return statement;
      const match = statement.match(objectList);
@@ -2238,17 +2238,62 @@ async function catalogState(db){
      // exempt from that rule on purpose: a signature is exactly the thing that needs
      // pruning, and `splitTopLevel`-style depth counting keeps its argument list one
      // name.
-     if (match[1].includes("(") && !/^\s*FUNCTION\s+/iu.test(match[1].trim())) return statement;
-     const names = match[1].split(/,(?![^()]*\))/u).map(entry => entry.trim());
+     // The object list stops at the statement's own semicolon. Without that bound the
+    // `.*?` runs past `;` into the next chunk -- so `COMMIT;` was consumed by the
+    // GRANT that preceded it and a pruned role file lost its transaction terminator,
+    // which is a different failure from the one this pruner is for.
+    if (match[1].includes("(") && !/^\s*FUNCTION\s+/iu.test(match[1].trim())) return statement;
+     // A list whose parentheses do NOT BALANCE is not a list this pruner can read,
+     // whatever its kind: an unbalanced object list is left byte for byte rather than
+     // repaired. That check comes FIRST because depth counting on an unbalanced list
+     // is meaningless -- `read_plan(text), bytea)` drives the depth negative, every
+     // later comma is read as top-level, and the statement is rebuilt as
+     // `GRANT EXECUTE ON bytea) TO reviewer;`, which is not SQL and is worse than the
+     // 42883 the guard was written to avoid.
+     let objectLevel = 0;
+     for (const char of match[1]) {
+       if (char === "(") objectLevel += 1;
+       else if (char === ")") objectLevel -= 1;
+       if (objectLevel < 0) break;
+     }
+     if (objectLevel !== 0) return statement;
+     // Split on TOP-LEVEL commas only. A negative lookahead ("a comma not inside
+     // parentheses") is not enough for a FUNCTION list: the comma BETWEEN two
+     // signatures is not inside either one's parentheses, and `text, jsonb` has its
+     // own comma inside them, so a lookahead on the next characters mis-reads both.
+     // Depth counting is what a signature list actually needs, and it is the same
+     // rule `splitTopLevel` above already uses for the privilege and object lists.
+     const names = [];
+     let entry = "", level = 0;
+     for (const char of match[1]) {
+       if (char === "," && level === 0) { names.push(entry); entry = ""; continue; }
+       if (char === "(") level += 1;
+       else if (char === ")") level -= 1;
+       entry += char;
+     }
+     names.push(entry);
+     names.forEach((value, index) => { names[index] = value.trim(); });
      const kept = names.filter(name => {
-       const bare = name.split("(")[0].trim();
+       // The `FUNCTION` keyword is part of PostgreSQL's object list, so it is stripped
+       // BEFORE the name is read. Left on, `FUNCTION read_agent_review_plan` fails the
+       // identifier test and is never checked against the absent set -- which is why
+       // the first attempt at R4-B3 changed nothing at all, silently, on exactly the
+       // statements it was written for.
+       const bare = name.replace(/^FUNCTION\s+/iu, "").split("(")[0].trim();
        return !/^[a-z_][a-z0-9_]*$/iu.test(bare) || !isAbsent(bare);
      });
      if (kept.length === names.length) return statement;
      // The grantee keyword is put back: it is part of the match, not part of the
      // object list, and a grant that lost its TO/FROM is not SQL.
      if (kept.length === 0) return "";
-     return statement.replace(/\s*\bON\s+.*?\s+(TO|FROM)\b/isu, ` ON ${kept.join(", ")} ${match[2]}`);
+     // The `FUNCTION` keyword belongs to the LIST, not to the first name, so it is
+     // put back on the survivors whenever it was on the original. Dropping it with
+     // the first name turns `ON FUNCTION commit_agent_review(...)` into
+     // `ON commit_agent_review(...)`, which names a relation and raises 42P01 -- a
+     // different failure, on the statement the pruning was meant to repair.
+     const list = /^\s*FUNCTION\s+/iu.test(match[1])
+       ? [`FUNCTION ${kept[0].replace(/^FUNCTION\s+/iu, "")}`, ...kept.slice(1)] : kept;
+     return statement.replace(/\s*\bON\s+.*?\s+(TO|FROM)\b/isu, ` ON ${list.join(", ")} ${match[2]}`);
    }).join("");
  }
 
@@ -2277,23 +2322,71 @@ test("pruning a role file for a database that lacks a table keeps the grants tha
   // byte, or the role file it belongs to stops being valid SQL.
   const withBlock = "BEGIN;\nDO $$ BEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_roles) THEN\n    CREATE ROLE r NOLOGIN;\n  END IF;\nEND $$;\nGRANT SELECT ON alpha, beta TO r;\nCOMMIT;";
   assert.equal(prune(withBlock, ["alpha"]), withBlock.replace("alpha, beta", "alpha"));
-  // A function signature carries a parenthesised argument type, whose own commas are
-  // not name separators. Splitting on them once produced
-  // `read_agent_review_plan(text), bytea)`, which is not SQL.
+  // A MALFORMED signature is left exactly as written rather than repaired: the
+  // object list carries an unbalanced "(", so it is not a signature this pruner can
+  // read, and guessing at it produced `read_plan(text), bytea)` plus a dropped
+  // grantee, which is not SQL.
   const signature = "GRANT EXECUTE ON FUNCTION read_plan(text), bytea) TO reviewer;";
   assert.equal(prune(signature, []), signature);
   // The same, with a name the database LACKS: without the guard the signature is
   // split on its own commas and rebuilt as `read_plan(text), bytea)` plus a dropped
   // grantee, which is the corruption this guard exists to prevent.
   assert.equal(prune(signature, ["unrelated"]), signature);
-  // A real function grant out of a role file, against a database with none of it.
+
+  // A WELL-FORMED multi-signature grant is pruned BY SIGNATURE (R4-B3), which is
+  // the change this round exists for and the opposite of the old behaviour.
+  //
+  // `db/roles/agent_reviewer_roles.sql` grants EXECUTE on two functions in one
+  // statement, and the chief-of-staff role files add three more in the same shape.
+  // An upgrade rung whose applied ledger stops before the migration that creates
+  // one of them has no such function, and replaying the grant verbatim raises 42883
+  // (`function work_intake_split_suggestion_visible(text, text, text) does not
+  // exist`) and fails the whole upgrade -- measured on the merged tree as
+  // test:postgres-production #11-#15. So the pruner now reads a FUNCTION list as a
+  // list of SIGNATURES: the argument list's own commas are not name separators, so
+  // each signature survives whole or is dropped whole, and a signature that is
+  // present keeps the statement alive with the FUNCTION keyword intact.
+  const pair = "GRANT EXECUTE ON FUNCTION read_agent_review_plan(text),\n"
+    + "  commit_agent_review(text, jsonb, jsonb, bytea) TO control_room_agent_reviewer;";
+  // Both present: byte for byte, because nothing needs pruning.
+  assert.equal(prune(pair, ["read_agent_review_plan", "commit_agent_review"]), pair);
+  // One absent: the SURVIVOR keeps the `FUNCTION` keyword, which is part of
+  // PostgreSQL's object list -- rebuilding without it produces `ON
+  // read_agent_review_plan(text)`, which names a relation and raises 42P01, a
+  // different failure on the same statement.
+  assert.equal(prune(pair, ["read_agent_review_plan"]),
+    "GRANT EXECUTE ON FUNCTION read_agent_review_plan(text) TO control_room_agent_reviewer;");
+  assert.equal(prune(pair, ["commit_agent_review"]),
+    "GRANT EXECUTE ON FUNCTION commit_agent_review(text, jsonb, jsonb, bytea) TO control_room_agent_reviewer;");
+  // Both absent: nothing is left to grant, so the GRANT goes. It goes WITH the
+  // `COMMIT;` that followed it, because the line-oriented split puts them in one
+  // chunk -- a grant and its transaction terminator are written together, and the
+  // pruner only ever rewrites a statement that names an object, never splices a
+  // chunk in two. The production caller replays the PRUNED STATEMENTS, not the file,
+  // so a missing terminator here is a test artefact rather than a defect; the
+  // property being pinned is that nothing else in the file is disturbed.
+  assert.equal(prune(`\n${pair}\nCOMMIT;`, []), "\n");
+  assert.equal(prune(`\n${pair}\nCOMMIT;\nGRANT SELECT ON kept TO r;`, ["kept"]),
+    "\nGRANT SELECT ON kept TO r;");
+  // A chief-of-staff signature with an ARRAY argument type, which is the shape 0205
+  // added and the one that is not an identifier: pruned by NAME like any other.
+  const arrayed = "GRANT EXECUTE ON FUNCTION planner_failure_scope_key(text, jsonb),\n"
+    + "  control_room_planner_grant_owner_retry(text, text, text[]) TO control_room_task_coordinator;";
+  assert.equal(prune(arrayed, ["control_room_task_coordinator", "control_room_planner_grant_owner_retry"]),
+    "GRANT EXECUTE ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[])"
+    + " TO control_room_task_coordinator;");
+
+  // A real function grant out of a role file, against a database that HAS both of
+  // the functions it names. Compared on the trimmed statement text: the pruner
+  // preserves layout, and the surrounding file's own trailing lines are not what
+  // this assertion is about. Before R4-B3 this compared against an empty
+  // `present` set, which asserted that the pruner ignored function grants -- the
+  // behaviour that refused the upgrade.
   const grant = readFileSync(join(ROOT, "db/roles", "agent_reviewer_roles.sql"), "utf8");
   const functionGrant = grant.split(/(?=\s*GRANT\b)/u)
     .find(statement => /ON FUNCTION\s+read_agent_review_plan\b/u.test(statement));
   assert.ok(functionGrant, "the reviewer role file grants read_agent_review_plan");
-  // Compared on the trimmed statement text: the pruner preserves layout, and the
-  // surrounding file's own trailing lines are not what this assertion is about.
-  assert.equal(prune(functionGrant, ["nothing_here"]).trim(), functionGrant.trim());
+  assert.equal(prune(functionGrant, ["read_agent_review_plan", "commit_agent_review"]).trim(), functionGrant.trim());
   // A real role file pruned against a database holding only SOME of what it names
   // keeps the names that are present, drops the ones that are not, and keeps every
   // statement that still has a name. A pruner that quietly kept an absent name, or
@@ -2304,17 +2397,35 @@ test("pruning a role file for a database that lacks a table keeps the grants tha
   // a line that begins one -- so the present/absent split is derived from exactly the
   // names the pruner is deciding about. Reading them any other way would compute a
   // different set and the assertions below would be about the reader, not the pruner.
+  // A FUNCTION signature's argument list is not a list of names, so the split is
+  // depth-counted rather than done on every comma. Without that, `FUNCTION
+  // planner_failure_scope_key(text, jsonb)` yields `planner_failure_scope_key(text`
+  // and `jsonb)`, neither of which is a bare identifier, so BOTH are skipped -- the
+  // name never enters the list, is therefore never halved into `present`, and is
+  // pruned away by a pruner that is behaving correctly. The result was
+  // `private_web_roles.sql: dropped text`, which names the symptom rather than the
+  // cause.
   const names = sql => {
     const bare = name => /^[a-z_][a-z0-9_]*$/iu.test(name);
     const statements = sql.split(/(?=\s*(?:GRANT|REVOKE)\b)/gmu)
       .filter(statement => /^\s*(?:GRANT|REVOKE)\b/iu.test(statement));
     const found = [];
     for (const statement of statements)
-      for (const match of statement.matchAll(/\bON\s+(.*?)\s+(?:TO|FROM)\b/giu))
-        for (const entry of match[1].split(",")) {
-          const name = entry.trim();
+      for (const match of statement.matchAll(/\bON\s+([^;]*?)\s+(?:TO|FROM)\b/giu)) {
+        const entries = [];
+        let entry = "", level = 0;
+        for (const char of match[1]) {
+          if (char === "," && level === 0) { entries.push(entry); entry = ""; continue; }
+          if (char === "(") level += 1;
+          else if (char === ")") level -= 1;
+          entry += char;
+        }
+        entries.push(entry);
+        for (const value of entries) {
+          const name = value.replace(/^FUNCTION\s+/iu, "").split("(")[0].trim();
           if (bare(name)) found.push(name);
         }
+      }
     return [...new Set(found)].sort();
   };
   for (const name of ["private_web_roles.sql", "task_coordinator_roles.sql", "production_table_grants.sql"]) {
