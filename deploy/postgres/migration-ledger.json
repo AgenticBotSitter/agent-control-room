@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "9031e53d34e6c41bf7d28b35bb910ec0b1419f7d1268b5d0679c4099bd2a1580",
+  "digest": "171f4be6fdd03186133a46c5482ff5bb0eea8423269c8465a9a89593ebc65193",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -791,13 +791,13 @@
     {
       "file": "db/migrations/0206_result_file_catalog.sql",
       "order": 132,
-      "sha256": "a12830f8de9274629636af6ac72dec741d427ccb4aa92df1a94c91633a7c1bf3",
+      "sha256": "6f01b8592ebdab5d4853eeb06677852116e890a094e474fac6af08852c848f09",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0207_result_file_store_admission.sql",
       "order": 133,
-      "sha256": "99df31113cf9e10bd1353cf616a41bc7230cba3aab1ff3fa47ebf8b933efcbb9",
+      "sha256": "e0ffcbadd72dd141cfb992b015fe11c7689d47ea2b952bdf1c6acc2b0ad43b15",
       "kind": "migrate"
     },
     {

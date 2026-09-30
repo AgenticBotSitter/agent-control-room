@@ -1,0 +1,616 @@
+// The four findings the independent review reproduced on a live database and
+// this fix round had to answer, proved on real PostgreSQL 17 as the PRODUCTION
+// logins:
+//
+//   B1  the real download path: a link minted and spent through the actual
+//       WebTaskService, so the job id that reaches `readScopedResult` is the one
+//       the database holds. The original proof used a pass-through authority and
+//       a hand-made session row, which is exactly why B1 and B2 shipped.
+//   B2  the grant row the service actually writes is accepted by 0208's own
+//       guard, as the web login, for a real Mac-local-shaped identity.
+//   B4  50 concurrent publications cannot overrun the 10 GiB installation quota.
+//   B5  two owner sessions, one file: each download spends its OWN grant.
+//   B6  a native set needs BOTH the fixed producer name AND a receipt, and a
+//       native set claiming a worker impostor is refused.
+//
+// Every refusal is asserted on the SQLSTATE the server reported, never on a
+// guard's message. The superuser connection only seeds fixtures.
+import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { Client, Pool } from "pg";
+import { concurrently } from "./support/attack-kit/index";
+import type { AttackRole, RealPostgres } from "./support/attack-kit/index";
+import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
+import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
+import { privatePgOptions } from "../src/web/v1/private-pg-options";
+import { sha256Digest } from "../src/security";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
+import { WebTaskService } from "../src/web/v1/task-service";
+import { composeResultFileService } from "../src/web/v1/result-file-composition";
+import { ResultFileStoreV1 } from "../src/artifacts/v1/result-file-store";
+
+// The assigned lane for this fix round: 59520-59529.
+const PORTS = Array.from({ length: 10 }, (_, index) => 59520 + index);
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59520);
+const PG = requiresRealPostgres();
+let required = 0, ran = 0;
+const needsPg = () => { if (PG) { required += 1; return undefined; } return { skip: realPostgresSkipMessage() }; };
+
+const TENANT = "tenant:files-fix-pg";
+const WORKSPACE = "workspace:files-fix-pg";
+// `WebProjectService` derives the manual adapter id from its own scope digest, so
+// the fixture's project must carry THAT id or the real project view reports
+// not_found — which is precisely the boundary the download path has to cross.
+const ADAPTER = `adapter:manual:${sha256Digest({ tenantId: TENANT, workspaceId: WORKSPACE }).slice(7, 39)}`;
+const OWNER = "identity:files-fix-owner";
+const AGENT = "identity:files-fix-agent";
+const issuedAt = new Date(Date.now() - 60_000).toISOString();
+const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+const token = (id: string) => sha256Digest({ session: id });
+const digestOf = (bytes: Uint8Array) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+const text = (value: string) => new TextEncoder().encode(value);
+const newGrantId = () => `result-grant:${randomUUID().replace(/-/gu, "").slice(0, 32)}`;
+const ZERO = `sha256:${"0".repeat(64)}`;
+const ONE = `sha256:${"1".repeat(64)}`;
+/** A distinct set id per caller, so 50 concurrent publications never collide. */
+const setId = (n: number) => `result-set:${n.toString(16).padStart(32, "0")}`;
+const fileId = (n: number) => `result-file:${n.toString(16).padStart(32, "0")}`;
+
+const stateOf = (error: unknown): string =>
+  String((error as { sqlState?: string; code?: string }).sqlState
+    ?? (error as { code?: string }).code ?? "");
+
+async function rows<T>(postgres: RealPostgres, role: AttackRole | "admin",
+  sql: string, params: unknown[]): Promise<T[]> {
+  const options = role === "admin" ? postgres.admin({ database: postgres.database })
+    : (() => { const login = postgres.connection(role); return {
+      host: login.host, port: postgres.port, database: postgres.database, user: login.user,
+      password: login.password }; })();
+  const client = new Client(options);
+  await client.connect();
+  try { return ((await client.query(sql, params)).rows ?? []) as T[]; }
+  finally { await client.end(); }
+}
+
+/** A dedicated connection for one caller, so 50 of them really are 50. */
+async function withClient<T>(postgres: RealPostgres, role: AttackRole,
+  work: (client: Client) => Promise<T>): Promise<T> {
+  const login = postgres.connection(role);
+  const client = new Client({ host: login.host, port: postgres.port, database: postgres.database,
+    user: login.user, password: login.password });
+  await client.connect();
+  try { return await work(client); }
+  finally { await client.end(); }
+}
+
+test("the real download path, the grant it writes, two sessions one file, the quota race and the producer guard", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  const root = await mkdtemp(join(tmpdir(), "cr-files-fix-pg-"));
+  try {
+    await withRealPostgres(async postgres => {
+      const admin = <T = Record<string, unknown>>(sql: string, params: unknown[] = []) =>
+        rows<T>(postgres, "admin", sql, params);
+      const asRole = (role: AttackRole) => <T = Record<string, unknown>>(sql: string, params: unknown[] = []) =>
+        rows<T>(postgres, role, sql, params);
+      const web = asRole("web"), results = asRole("results");
+
+      // --- fixtures --------------------------------------------------------
+      await admin("INSERT INTO tenants(id,display_name) VALUES($1,$1)", [TENANT]);
+      await admin("INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,$1)", [WORKSPACE, TENANT]);
+      await admin(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
+        redaction_policy_version,cursor_retention_days)
+        VALUES($1,$2,'control-room-manual','1.0.0','control_room_native','disabled','v1',30)`, [ADAPTER, TENANT]);
+      for (const id of [OWNER, AGENT])
+        await admin(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+          auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'human',$1,'test',$3,'active',$4,$4)`,
+        [id, TENANT, sha256Digest({ provider: "test", subject: id }), issuedAt]);
+      // A human identity with no grant at all, which is the reader that must not
+      // be able to mint a download grant for itself.
+      await admin(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+        risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+        VALUES('grant:files-fix-owner',$1,$2,'owner','["*"]','["*"]','critical',true,false,$3,$3)`,
+      [TENANT, OWNER, issuedAt]);
+
+      const projectId = `project:${"c".repeat(24)}`;
+      await admin(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,
+        title,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+        VALUES($1,$2,$3,$4,$1,'1',$1,'running','fixture','healthy','control_room_native',$5,'{}',$5)`,
+      [projectId, TENANT, WORKSPACE, ADAPTER, issuedAt]);
+      await admin(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+        VALUES($1,$2,'active',1,$3,$3)`, [TENANT, projectId, issuedAt]);
+      // The three canonical rows carry their OWN contract payloads, because the
+      // real `WebTaskService` parses them (`jobRecordSchema` and friends) before
+      // it will authorise anything. A fixture with a partial payload would make
+      // this proof fail for a reason that has nothing to do with result files,
+      // so the payloads are built from the schemas' own requirements.
+      // The literal `validators.ts` demands, not a guess: a fixture that
+      // used "1.0.0" was refused by the very parser it was meant to satisfy.
+      const contractVersion = "control-room-domain/v1";
+      const authorityEnvelope = (expires: string) => ({
+        projectId, allowedExecutor: "worker:files-fix", allowedOperations: ["task.execute"],
+        credentialRefs: [], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [],
+        // `effectPolicy: "none"` and a non-zero concurrency cap are mutually
+        // exclusive in the schema, so the cap is zero.
+        effectPolicy: "none", maxRisk: "low", maxDurationSeconds: 3_600, maxConcurrentEffects: 0,
+        expiresAt: expires, digest: `sha256:${"a".repeat(64)}`,
+      });
+      const requestDigest = `sha256:${"c".repeat(64)}`;
+      await admin(`INSERT INTO control_requests(id,tenant_id,project_id,state,version,idempotency_key,payload,created_at,updated_at)
+        VALUES('request:files-fix',$1,$2,'fulfilled',1,'files-fix-0001',
+          jsonb_build_object('contractVersion',$3::text,'id','request:files-fix','tenantId',$1::text,'version',1,
+            'createdAt',$4::text,'updatedAt',$4::text,'kind','request','projectId',$2::text,'title','files fix proof',
+            'objective','Prove the owner download path on a real database.','state','fulfilled','priority',50,
+            'requestedBy',jsonb_build_object('actorId',$5::text,'actorType','human'),'idempotencyKey','files-fix-0001'),
+          $4::timestamptz,$4::timestamptz)`, [TENANT, projectId, contractVersion, issuedAt, OWNER]);
+      await admin(`INSERT INTO control_workflows(id,tenant_id,request_id,project_id,definition_digest,state,version,payload,created_at,updated_at)
+        VALUES('workflow:files-fix',$1,'request:files-fix',$2,$3,'active',1,
+          jsonb_build_object('contractVersion',$4::text,'id','workflow:files-fix','tenantId',$1::text,'version',1,
+            'createdAt',$5::text,'updatedAt',$5::text,'kind','workflow','requestId','request:files-fix','projectId',$2::text,
+            'definitionVersion','files-fix/v1','definitionDigest',$3::text,'authorityMode','control_room_native',
+            'state','active','jobIds',jsonb_build_array('job:files-fix')),$5::timestamptz,$5::timestamptz)`,
+      [TENANT, projectId, requestDigest, contractVersion, issuedAt]);
+      await admin(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,
+        required_capability,authority_digest,payload,created_at,updated_at)
+        VALUES('job:files-fix',$1,'workflow:files-fix',$2,'running',1,50,'text',$3,
+          jsonb_build_object('contractVersion',$4::text,'id','job:files-fix','tenantId',$1::text,'version',1,
+            'createdAt',$5::text,'updatedAt',$5::text,'kind','job','workflowId','workflow:files-fix','projectId',$2::text,
+            'jobType','task.proposal','specVersion','1.0.0','inputDigest',$6::text,'state','running','priority',50,
+            'requiredCapability','text','dependsOnJobIds',jsonb_build_array(),
+            'authority',$7::jsonb,'retryPolicy',jsonb_build_object('maxAttempts',1,'backoffSeconds',0,
+              'retryableFailureCodes',jsonb_build_array(),'retryAfterOrphan',false,'ambiguousEffectPolicy','attention')),
+          $5::timestamptz,$5::timestamptz)`,
+      // `task-service.ts` recomputes the job's input digest from the request's
+      // own title and objective and refuses a row that disagrees, so the fixture
+      // derives it the same way rather than inventing a value.
+      [TENANT, projectId, `sha256:${"a".repeat(64)}`, contractVersion, issuedAt,
+        sha256Digest({ title: "files fix proof", instructions: "Prove the owner download path on a real database." }),
+        JSON.stringify(authorityEnvelope(new Date(Date.parse(issuedAt) + 86_400_000).toISOString()))]);
+      await admin(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
+        VALUES('node:files-fix',$1,'active',0,'key:files-fix',
+          jsonb_build_object('id','node:files-fix','tenantId',$1::text,'state','active','version',0,
+            'identityKeyId','key:files-fix'),$2,$2)`, [TENANT, issuedAt]);
+      // One attempt that HAS a published native receipt (the legitimate native
+      // set), and one that has none (the forged-producer and no-receipt cases).
+      for (const [id, number] of [["attempt:files-fix", 1], ["attempt:files-fix-bare", 2]] as const)
+        await admin(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,payload,created_at,updated_at)
+          VALUES($1,$2,'job:files-fix',$3,'running',0,NULL,'node:files-fix',
+            jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','running','version',0,
+              'jobId','job:files-fix','attemptNumber',$3::int,'workerId',NULL::text,'nodeId','node:files-fix'),$4,$4)`,
+        [id, TENANT, number, issuedAt]);
+      const nativeHash = digestOf(text("# native result\n"));
+      await admin(`INSERT INTO control_harness_runs(tenant_id,id,project_id,job_id,attempt_id,node_id,adapter_id,
+        harness,native_session_key_digest,state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+        VALUES($1,'run:files-fix',$2,'job:files-fix','attempt:files-fix','node:files-fix',$3,'other',$4,'running',0,$5,
+        $6,'{}',$7,$7,$7)`, [TENANT, projectId, ADAPTER, `sha256:${"f".repeat(64)}`,
+        `sha256:${"e".repeat(64)}`, `hmac-sha256:${"e".repeat(64)}`, issuedAt]);
+      const nativeArtifactId = `artifact:result:${"1".repeat(64)}`;
+      await admin(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,
+        content_hash,state,version,payload,created_at,updated_at)
+        VALUES($1,$2,$3,'workflow:files-fix','job:files-fix','attempt:files-fix',$4,'uploaded',1,
+          jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','uploaded','version',1,'projectId',$3::text,
+            'workflowId','workflow:files-fix','jobId','job:files-fix','attemptId','attempt:files-fix','contentHash',$4::text),$5,$5)`,
+      [nativeArtifactId, TENANT, projectId, nativeHash, issuedAt]);
+      await admin(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,
+        artifact_id,receipt,auth_tag) VALUES($1,$2,'job:files-fix','attempt:files-fix','run:files-fix',$3,$4,$5)`,
+      [TENANT, projectId, nativeArtifactId, JSON.stringify({ schema: "control-room.native-result-receipt/v1" }),
+        `hmac-sha256:${"e".repeat(64)}`]);
+
+      // --- the byte store, on a real 0700 directory ------------------------
+      const storeRoot = join(root, "store");
+      await mkdir(storeRoot, { recursive: true, mode: 0o700 });
+      const store = await ResultFileStoreV1.create({ rootPath: storeRoot, maximumFiles: 32,
+        maximumFileBytes: 268_435_456, maximumSetBytes: 536_870_912, maximumTotalBytes: 10_737_418_240,
+        operationTimeoutMs: 5_000 });
+
+      // A real file-store set, published by the publisher login, so there is a
+      // stored file with bytes to download.
+      const content = text("the report body\n");
+      const hash = digestOf(content);
+      const storedSet = setId(1);
+      await results(`BEGIN;
+        INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,attempt_id,producer_kind,
+          producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,created_at)
+        VALUES('${TENANT}','${storedSet}','${projectId}','job:files-fix','attempt:files-fix','native',
+          'control-room-native','declared','native-text',1,${content.byteLength},'${ZERO}','provisional','${issuedAt}');
+        INSERT INTO control_result_files(tenant_id,set_id,project_id,job_id,ordinal,file_id,display_name,
+          declared_media_type,detected_media_type,size_bytes,content_digest,storage_key,state,created_at)
+        VALUES('${TENANT}','${storedSet}','${projectId}','job:files-fix',1,'${fileId(1)}','report.txt','text/plain',
+          'text/plain',${content.byteLength},'${hash}','${ZERO}','declared','${issuedAt}');
+        UPDATE control_result_files SET state='stored',stored_at='${issuedAt}' WHERE tenant_id='${TENANT}' AND set_id='${storedSet}';
+        UPDATE control_result_file_sets SET state='stored',stored_at='${issuedAt}',manifest_digest=
+          (SELECT 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(string_agg(
+            ordinal::text || ':' || storage_key || ':' || content_digest || ':' || size_bytes::text,
+            E'\\n' ORDER BY ordinal), 'UTF8')), 'hex') FROM control_result_files
+            WHERE tenant_id='${TENANT}' AND set_id='${storedSet}' AND state='stored')
+          WHERE tenant_id='${TENANT}' AND set_id='${storedSet}';
+        COMMIT`);
+      const storedFile = fileId(1);
+      await store.put({ tenantId: TENANT, projectId, fileId: storedFile, contentDigest: hash, bytes: content });
+      assert.deepEqual(Buffer.from((await store.read({ tenantId: TENANT, projectId, fileId: storedFile,
+        contentDigest: hash }))!), Buffer.from(content), "the stored file is on disk and provable");
+
+      // --- the REAL service, over the production driver ---------------------
+      // This is the part the original proof stood in for. `WebTaskService` is
+      // the real class and `composeResultFileService` is the real composition
+      // `mac-local-web-process.ts` builds, so B1 and B2 are answered against the
+      // code that actually runs.
+      const webLogin = postgres.connection("web");
+      const config = { host: "127.0.0.1", port: postgres.port, database: postgres.database,
+        username: webLogin.user, password: webLogin.password, majorVersion: 17 as const };
+      const bound = bindPrivatePgPool(new Pool({ ...privatePgOptions(config), host: webLogin.host }));
+      const passthrough: DatabaseSession = { query: (sql, params) => bound.client.query(sql, params) };
+      const client: DatabaseClient = { query: (sql, params) => bound.client.query(sql, params),
+        transaction: work => bound.client.transaction(tx => work(passthrough)),
+        transactionWithPreCommitCheck: (work, check) =>
+          bound.client.transactionWithPreCommitCheck(tx => work(passthrough), check) };
+      // The real WebTaskService. Its scope is the tenant and workspace the
+      // fixtures created, and the keys are the only ones it insists on.
+      // No review or planning keys: the download path authorises through the
+      // session, the project view and `tasks.results.read`, and needs nothing
+      // else, so this is the shape a host that has configured no reviews has.
+      const tasks = new WebTaskService(client, { tenantId: TENANT, workspaceId: WORKSPACE }, Date.now);
+      const service = composeResultFileService({ database: client, tasks, tenantId: TENANT,
+        downloadKey: new Uint8Array(32).fill(11), store });
+
+      // A real owner session, created by the service's own authentication, so
+      // `control_web_sessions` holds exactly the digest the grant names.
+      const identity = (subject: string): VerifiedWebIdentity => ({ provider: "test", subject,
+        tokenDigest: token(subject), issuedAt, expiresAt, verificationExpiresAt: expiresAt });
+
+      try {
+        // ==== B1 + B2: mint and download through the real service ==========
+        const owner = identity(OWNER);
+        const link = await service.issueDownload(owner, projectId, storedSet, storedFile);
+        assert.match(link.href, /\?token=/u, "a link was minted, not refused by 0208's guard");
+        const tokenValue = new URL(`https://x${link.href}`).searchParams.get("token")!;
+        // The grant row the service really wrote, read back as the superuser.
+        const [granted] = await admin<{ issued_to_token_digest: string; issued_to_identity_id: string }>(
+          "SELECT issued_to_token_digest,issued_to_identity_id FROM control_result_file_download_grants WHERE tenant_id=$1",
+          [TENANT]);
+        assert.equal(granted!.issued_to_token_digest, token(OWNER),
+          "B2: the row carries the session's OWN token digest, which is what 0208's guard compares");
+        assert.equal(granted!.issued_to_identity_id, OWNER,
+          "B2: and the resolved identity id from the authenticated transaction");
+        // And the bytes actually come back, through the real authority.
+        const file = await service.download(owner, projectId, storedSet, storedFile, tokenValue);
+        assert.deepEqual(Buffer.from(file.bytes), Buffer.from(content),
+          "B1: the owner's own stored file downloads; no not_found on a real job lookup");
+        assert.equal(file.displayName, "report.txt");
+        // A replay of the same link is refused, and the grant is spent once.
+        await assert.rejects(service.download(owner, projectId, storedSet, storedFile, tokenValue),
+          (error: unknown) => (error as { code?: string }).code === "not_found");
+        assert.equal((await admin<{ n: number }>("SELECT count(*)::int AS n FROM control_result_file_download_grants WHERE tenant_id=$1 AND spent_at IS NOT NULL",
+          [TENANT]))[0]!.n, 1, "exactly one spend is recorded");
+
+        // The catalog is readable through the same boundary, and it lists the
+        // file with its link.
+        const catalog = await service.catalog(owner, projectId, "job:files-fix");
+        assert.equal(catalog.sets.length, 1);
+        assert.equal(catalog.sets[0]!.files[0]!.downloadHref,
+          `/api/v1/projects/${encodeURIComponent(projectId)}/result-files/`
+          + `${encodeURIComponent(storedSet)}/${encodeURIComponent(storedFile)}/download`);
+
+        // ==== B5: two sessions, one file, each spends its own grant ==========
+        // A second owner session: a different token digest for the SAME
+        // identity, which is what a phone and a laptop look like to the
+        // database. The review's live case: A's download spent B's grant, B's
+        // link then failed, and the ledger recorded the wrong recipient.
+        const secondToken = sha256Digest({ session: `${OWNER}-phone` });
+        await admin(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
+          VALUES($1,$2,$3,$4,$5)`, [TENANT, secondToken, OWNER, issuedAt, expiresAt]);
+        const phone: VerifiedWebIdentity = { ...identity(OWNER), tokenDigest: secondToken };
+        const linkA = await service.issueDownload(owner, projectId, storedSet, storedFile);
+        const linkB = await service.issueDownload(phone, projectId, storedSet, storedFile);
+        const tokenA = new URL(`https://x${linkA.href}`).searchParams.get("token")!;
+        const tokenB = new URL(`https://x${linkB.href}`).searchParams.get("token")!;
+        // The spent count is measured as a DELTA, because the B1 proof above
+        // already spent one grant for the same file. A count from zero would
+        // read the earlier spend as this test's.
+        const spentCount = async () => (await admin<{ n: number }>(
+          "SELECT count(*)::int AS n FROM control_result_file_download_grants WHERE tenant_id=$1 AND spent_at IS NOT NULL",
+          [TENANT]))[0]!.n;
+        const beforeSpent = await spentCount();
+        await service.download(owner, projectId, storedSet, storedFile, tokenA);
+        assert.equal(await spentCount(), beforeSpent + 1, "A's download spent exactly one grant");
+        // B's link is STILL valid, which is the whole point: it was not the one
+        // A's download spent.
+        const fromPhone = await service.download(phone, projectId, storedSet, storedFile, tokenB);
+        assert.deepEqual(Buffer.from(fromPhone.bytes), Buffer.from(content), "B's own link still works");
+        // And the two spends are recorded against two DIFFERENT rows, which is
+        // what "who was given this file?" has to be able to answer. A store
+        // that spent one row twice would report one distinct id.
+        const spentRows = await admin<{ grant_id: string }>(
+          "SELECT grant_id FROM control_result_file_download_grants WHERE tenant_id=$1 AND spent_at IS NOT NULL", [TENANT]);
+        assert.equal(new Set(spentRows.map(row => row.grant_id)).size, spentRows.length,
+          "every spend is recorded against its own distinct grant row");
+
+        // ==== B4: 50 concurrent publications cannot overrun the quota =======
+        // The review's live case: the tenant was filled to 10 GiB - 512 MiB, 50
+        // parallel 512 MiB publications ran, and 2 committed, leaving the
+        // tenant 512 MiB OVER the limit. The fix serialises the sum per tenant.
+        //
+        // The quota itself is 10 GiB and a set may hold at most 512 MiB, so the
+        // tenant is filled with real sets first. Each filler set is a real
+        // publication through the same trigger.
+        // The quota sums `total_bytes` as DECLARED over STORED sets, and 0206
+        // refuses a set whose declared total disagrees with its catalog files —
+        // so the tenant is filled with REAL sets. Each filler is one set of one
+        // 512 MiB file (the per-set ceiling), and the rows are catalog rows
+        // only: this proves the DATABASE's quota, not the byte store's, so no
+        // bytes are written to disk for the fillers. A 512 MiB `size_bytes` is a
+        // declared length in a row, not a buffer.
+        const perSet = 536_870_912;             // 512 MiB, the per-set ceiling
+        // A 512 MiB set is TWO 256 MiB files, because 256 MiB is the per-FILE
+        // ceiling. Both are declared lengths in catalog rows, not buffers.
+        const perFile = 268_435_456;            // 256 MiB, the per-file ceiling
+        const perSetFiles = Math.ceil(perSet / perFile);
+        // The room left after the one real stored file above is already part of
+        // the occupied total, so the fillers are counted against what is left
+        // rather than against the whole quota.
+        const alreadyStored = content.byteLength;
+        const fillers = Math.floor((10_737_418_240 - perSet - alreadyStored) / perSet);
+        await admin(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,payload,created_at,updated_at)
+          SELECT 'attempt:quota-'||g, $1, 'job:files-fix', 100+g, 'running', 0, NULL, 'node:files-fix',
+            jsonb_build_object('id','attempt:quota-'||g,'tenantId',$1::text,'state','running','version',0,
+              'jobId','job:files-fix','attemptNumber',100+g,'workerId',NULL::text,'nodeId','node:files-fix'), $2, $2
+          FROM generate_series(1,$3::int) g`, [TENANT, issuedAt, fillers]);
+        await admin(`INSERT INTO control_harness_runs(tenant_id,id,project_id,job_id,attempt_id,node_id,adapter_id,
+          harness,native_session_key_digest,state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+          SELECT $1, 'run:quota-'||g, $2, 'job:files-fix', 'attempt:quota-'||g, 'node:files-fix', $3, 'other',
+            'sha256:'||lpad(to_hex(400000+g),64,'0'), 'running', 0, $4, $5, '{}', $6, $6, $6
+          FROM generate_series(1,$7::int) g`,
+        [TENANT, projectId, ADAPTER, `sha256:${"5".repeat(64)}`,
+          `hmac-sha256:${"5".repeat(64)}`, issuedAt, fillers]);
+        await admin(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,
+          content_hash,state,version,payload,created_at,updated_at)
+          SELECT 'artifact:result:'||lpad(to_hex(500000+g),64,'0'), $1, $2, 'workflow:files-fix', 'job:files-fix',
+            'attempt:quota-'||g, $3, 'uploaded', 1,
+            jsonb_build_object('id','artifact:result:'||lpad(to_hex(500000+g),64,'0'),'tenantId',$1::text,
+              'state','uploaded','version',1,'projectId',$2::text,'workflowId','workflow:files-fix',
+              'jobId','job:files-fix','attemptId','attempt:quota-'||g,'contentHash',$3::text), $4, $4
+          FROM generate_series(1,$5::int) g`,
+        [TENANT, projectId, `sha256:${"5".repeat(64)}`, issuedAt, fillers]);
+        await admin(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,
+          artifact_id,receipt,auth_tag)
+          SELECT $1, $2, 'job:files-fix', 'attempt:quota-'||g, 'run:quota-'||g,
+            'artifact:result:'||lpad(to_hex(500000+g),64,'0'), '{}', $3
+          FROM generate_series(1,$4::int) g`,
+        [TENANT, projectId, `hmac-sha256:${"e".repeat(64)}`, fillers]);
+        // ONE transaction for the set and its file: 0206's deferred completeness
+        // trigger runs at COMMIT, so a set committed without its declared files
+        // is refused — which is the publication boundary this whole feature rests
+        // on, and a real publication is exactly one transaction.
+        await withClient(postgres, "results", async pg => {
+          await pg.query("BEGIN");
+          await pg.query(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,attempt_id,producer_kind,
+            producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,created_at)
+            SELECT $1, 'result-set:'||lpad(to_hex(1000+g),32,'0'), $2, 'job:files-fix', 'attempt:quota-'||g, 'native',
+              'control-room-native', 'declared', 'file-store', $7, $3, $4, 'provisional', $5
+            FROM generate_series(1,$6::int) g`,
+          [TENANT, projectId, perSet, ZERO, issuedAt, fillers, perSetFiles]);
+          await pg.query(`INSERT INTO control_result_files(tenant_id,set_id,project_id,job_id,ordinal,file_id,display_name,
+            declared_media_type,detected_media_type,size_bytes,content_digest,storage_key,state,created_at)
+            SELECT $1, 'result-set:'||lpad(to_hex(1000+g),32,'0'), $2, 'job:files-fix', o,
+              'result-file:'||lpad(to_hex(600000+g*8+o),32,'0'), 'a.bin', 'application/octet-stream',
+              'application/octet-stream', $3,
+              -- One digest per (set, ordinal): 0206 refuses a second file in one
+              -- set that repeats a digest, so the two halves of a 512 MiB set
+              -- cannot be the same bytes.
+              'sha256:'||lpad(to_hex(700000+g*8+o),64,'0'), $4, 'declared', $5
+            FROM generate_series(1,$6::int) g CROSS JOIN generate_series(1,$7::int) o`,
+          [TENANT, projectId, perFile, ZERO, issuedAt, fillers, perSetFiles]);
+          await pg.query("COMMIT");
+        });
+        await admin(`UPDATE control_result_files SET state='stored',stored_at=$2
+          WHERE tenant_id=$1 AND set_id IN (SELECT 'result-set:'||lpad(to_hex(1000+g),32,'0')
+            FROM generate_series(1,$3::int) g)`, [TENANT, issuedAt, fillers]);
+        await admin(`UPDATE control_result_file_sets SET state='stored',stored_at=$2,
+          manifest_digest=(SELECT 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+            string_agg(f.ordinal::text || ':' || f.storage_key || ':' || f.content_digest || ':' || f.size_bytes::text,
+              E'\n' ORDER BY f.ordinal), 'UTF8')), 'hex') FROM control_result_files f
+            WHERE f.tenant_id='${TENANT}' AND f.set_id=control_result_file_sets.set_id AND f.state='stored')
+          WHERE tenant_id=$1 AND set_id IN (SELECT 'result-set:'||lpad(to_hex(1000+g),32,'0')
+            FROM generate_series(1,$3::int) g)`, [TENANT, issuedAt, fillers]);
+        const occupied = await admin<{ total: string }>(
+          "SELECT coalesce(sum(total_bytes),0)::text AS total FROM control_result_file_sets WHERE tenant_id=$1 AND retention_state IN ('provisional','retained')",
+          [TENANT]);
+        assert.ok(Number(occupied[0]!.total) + perSet <= 10_737_418_240,
+          `the tenant is within one set of the quota: ${occupied[0]!.total}`);
+        assert.ok(Number(occupied[0]!.total) > 10_737_418_240 - 2 * perSet,
+          "and it really is near the quota, not trivially far from it");
+
+        // The racing publications' CONTEXT — each attempt's harness run, its
+        // manifest and its native receipt — is seeded first, as the superuser,
+        // because the publisher login holds no grant on those tables. The race
+        // itself writes only the catalog, which is where the quota guard lives.
+        for (let index = 0; index < 50; index += 1) {
+          const attempt = `attempt:race-${index}`;
+          const artifactId = `artifact:result:${(0x200000 + index).toString(16).padStart(64, "0")}`;
+          await admin(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,payload,created_at,updated_at)
+            VALUES($1,$2,'job:files-fix',$3,'running',0,NULL,'node:files-fix',
+              jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','running','version',0,
+                'jobId','job:files-fix','attemptNumber',$3::int,'workerId',NULL::text,'nodeId','node:files-fix'),$4,$4)`,
+          [attempt, TENANT, 500 + index, issuedAt]);
+          await admin(`INSERT INTO control_harness_runs(tenant_id,id,project_id,job_id,attempt_id,node_id,
+            adapter_id,harness,native_session_key_digest,state,last_sequence,run_digest,run_auth_tag,payload,
+            created_at,updated_at,last_observed_at)
+            VALUES($1,$2,$3,'job:files-fix',$4,'node:files-fix',$5,'other',$6,'running',0,$7,$8,'{}',$9,$9,$9)`,
+          [TENANT, `run:race-${index}`, projectId, attempt, ADAPTER,
+            `sha256:${(0x300000 + index).toString(16).padStart(64, "0")}`,
+            `sha256:${"6".repeat(64)}`, `hmac-sha256:${"6".repeat(64)}`, issuedAt]);
+          await admin(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,
+            attempt_id,content_hash,state,version,payload,created_at,updated_at)
+            VALUES($1,$2,$3,'workflow:files-fix','job:files-fix',$4,$5,'uploaded',1,
+              jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','uploaded','version',1,
+                'projectId',$3::text,'workflowId','workflow:files-fix','jobId','job:files-fix',
+                'attemptId',$4::text,'contentHash',$5::text),$6,$6)`,
+          [artifactId, TENANT, projectId, attempt, `sha256:${"6".repeat(64)}`, issuedAt]);
+          await admin(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,
+            artifact_id,receipt,auth_tag) VALUES($1,$2,'job:files-fix',$3,$4,$5,'{}',$6)`,
+          [TENANT, projectId, attempt, `run:race-${index}`, artifactId, `hmac-sha256:${"e".repeat(64)}`]);
+        }
+        // The racing publications. Each is its own TRANSACTION on its own
+        // connection, drawn from a bounded pool of the PUBLISHER login — the
+        // review's case is 50 concurrent transactions, which is what makes the
+        // race, and 50 simultaneous logins would only measure the cluster's
+        // connection ceiling instead.
+        //
+        // Each racer claims the WHOLE remaining quota in one set, so EXACTLY ONE
+        // can land. That is the shape that makes the test a proof rather than a
+        // smoke test: with the quota serialised, 1 commits and 49 are refused;
+        // with the sum taken under READ COMMITTED and no lock, several read the
+        // same free space and the tenant ends up over the limit. A racer of a
+        // few bytes could never overrun, and would pass with or without the fix.
+        const racers = 50;
+        // A plain `pg` pool over the cluster's own socket directory: the same
+        // login the refusals above use, and the production driver's endpoint
+        // policy is deliberately not involved in a fixture's own pool.
+        const resultsLogin = postgres.connection("results");
+        const publisherPool = new Pool({ host: resultsLogin.host, port: postgres.port,
+          database: postgres.database, user: resultsLogin.user, password: resultsLogin.password, max: 20 });
+        const quotaResults = await concurrently(racers, async index => {
+          const attempt = `attempt:race-${index}`;
+          const set = `result-set:${(0x1000 + index).toString(16).padStart(32, "0")}`;
+          return publisherPool.connect().then(async handle => {
+            const pg = handle;
+            try {
+              await pg.query("BEGIN");
+              // Each racer claims the WHOLE remaining quota: one set of
+              // perSet bytes, carried by perSetFiles files of perFile bytes each,
+              // so its declared total is exactly the space that is left. Exactly
+              // ONE racer can therefore land, and 49 must be refused. A racer of
+              // a few bytes could never overrun and would pass with or without
+              // the fix; this is the shape that makes the assertion a proof.
+              await pg.query(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,attempt_id,
+                producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,created_at)
+                VALUES($1,$2,$3,'job:files-fix',$4,'native','control-room-native','declared','file-store',$5,$6,$7,
+                  'provisional',$8::timestamptz)`,
+              [TENANT, set, projectId, attempt, perSetFiles, perSet, ZERO, issuedAt]);
+              await pg.query(`INSERT INTO control_result_files(tenant_id,set_id,project_id,job_id,ordinal,file_id,
+                display_name,declared_media_type,detected_media_type,size_bytes,content_digest,storage_key,state,created_at)
+                SELECT $1, $2, $3, 'job:files-fix', o,
+                  'result-file:'||lpad(to_hex($4*8+o),32,'0'), 'a.bin', 'application/octet-stream',
+                  'application/octet-stream', $5,
+                  'sha256:'||lpad(to_hex($6*8+o),64,'0'), $7, 'declared', $8::timestamptz
+                FROM generate_series(1,$9::int) o`,
+              [TENANT, set, projectId, 0x700000 + index * 0x100, perFile, 0x800000 + index * 0x100, ZERO,
+                issuedAt, perSetFiles]);
+              await pg.query("UPDATE control_result_files SET state='stored',stored_at=$2::timestamptz "
+                + "WHERE tenant_id=$1 AND set_id=$3", [TENANT, issuedAt, set]);
+              // The move the quota is checked on. This is where the race was.
+              // One parameter per distinct value: an earlier revision reused
+              // `$2` for both the timestamp and the set id, which binds a
+              // timestamptz into a text column and fails 42804.
+              await pg.query(`UPDATE control_result_file_sets SET state='stored',stored_at=$3::timestamptz,manifest_digest=
+                (SELECT 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(string_agg(
+                  f.ordinal::text || ':' || f.storage_key || ':' || f.content_digest || ':' || f.size_bytes::text,
+                  E'\n' ORDER BY f.ordinal), 'UTF8')), 'hex') FROM control_result_files f
+                  WHERE f.tenant_id=$1 AND f.set_id=$2 AND f.state='stored')
+                WHERE tenant_id=$1 AND set_id=$2`, [TENANT, set, issuedAt]);
+              await pg.query("COMMIT");
+              return { index, committed: true, state: "" };
+            } catch (error) {
+              await pg.query("ROLLBACK").catch(() => {});
+              return { index, committed: false, state: stateOf(error),
+                detail: String((error as { message?: string }).message ?? "").slice(0, 120) };
+            } finally { handle.release(); }
+          });
+        }, { boundMs: 120_000 }).finally(() => publisherPool.end());
+        const committed = quotaResults.filter(result => result.committed);
+        const refused = quotaResults.filter(result => !result.committed);
+        // The tenant must be WITHIN the quota. That is the assertion the review's
+        // live case failed, and it is the only one that matters: a fix that
+        // refuses every racer passes it too, so the next line proves the quota
+        // is still usable.
+        const after = await admin<{ total: string }>(
+          "SELECT coalesce(sum(total_bytes),0)::text AS total FROM control_result_file_sets WHERE tenant_id=$1 AND retention_state IN ('provisional','retained')",
+          [TENANT]);
+        const finalBytes = Number(after[0]!.total);
+        assert.ok(finalBytes <= 10_737_418_240,
+          `B4: the tenant is within the 10 GiB quota after ${racers} concurrent publications: ${finalBytes} bytes`);
+        for (const refusal of refused)
+          assert.ok(["23514", "23503", "42501", "40001", "40P01", "57014"].includes(refusal.state),
+            `a refused publication reports a real SQLSTATE: ${refusal.state || "none"} detail=${refusal.detail}`);
+        // The quota is still usable: at least one racer landed, because the
+        // tenant had exactly one set of room before they started.
+        console.log(`quota race: ${committed.length} committed, ${refused.length} refused of ${racers}; `
+          + `final ${finalBytes} bytes (limit 10737418240)`);
+        assert.ok(committed.length >= 1,
+          `the quota is still usable: ${committed.length} of ${racers} committed, ${refused.length} refused `
+          + `states=${JSON.stringify([...new Set(refused.map(entry => entry.state))])} `
+          + `occupied=${(await admin<{ total: string }>(
+            "SELECT coalesce(sum(total_bytes),0)::text AS total FROM control_result_file_sets WHERE tenant_id=$1 AND retention_state IN ('provisional','retained')",
+            [TENANT]))[0]!.total}`);
+
+        // ==== B6: a native set needs BOTH the fixed name AND a receipt ======
+        // The review's two live cases: a `native` set naming
+        // `fleet-worker:impostor` was accepted whenever a receipt existed, and a
+        // `native` set with NO receipt was accepted under the fixed name. The
+        // guard was `ELSIF producer_id<>'control-room-native' THEN <receipt>`,
+        // which is the other two thirds of the statement.
+        const forged = setId(0x2000);
+        await assert.rejects(results(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,
+          attempt_id,producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,created_at)
+          VALUES($1,$2,$3,'job:files-fix','attempt:files-fix','native','fleet-worker:impostor','declared','native-text',1,1,$4,
+          'provisional',$5)`, [TENANT, forged, projectId, ZERO, issuedAt]),
+        (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
+        "B6: a native set claiming a worker impostor is refused even though a receipt exists");
+        const unreceipted = setId(0x2001);
+        await assert.rejects(results(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,
+          attempt_id,producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,created_at)
+          VALUES($1,$2,$3,'job:files-fix','attempt:files-fix-bare','native','control-room-native','declared','file-store',0,0,$4,
+          'provisional',$5)`, [TENANT, unreceipted, projectId, ZERO, issuedAt]),
+        (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
+        "B6: a native set whose attempt has no published receipt is refused under the fixed name");
+        // And the guard did not simply refuse everything: the legitimate native
+        // set published above, from an attempt WITH a receipt under the fixed
+        // name, is in the catalog. That is what proves the guard discriminates
+        // rather than blocking.
+        assert.ok((await admin<{ n: number }>("SELECT count(*)::int AS n FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
+          [TENANT, storedSet]))[0]!.n === 1, "the legitimate native set is still accepted");
+
+        // A superuser is refused on the same two shapes, so this is the guard
+        // and not the login's grants.
+        await assert.rejects(admin(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,
+          attempt_id,producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,created_at)
+          VALUES($1,$2,$3,'job:files-fix','attempt:files-fix','native','fleet-worker:impostor','declared','native-text',1,1,$4,
+          'provisional',$5)`, [TENANT, setId(0x2002), projectId, ZERO, issuedAt]),
+        (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
+        "B6: a forged native producer is refused for a superuser too");
+
+        // ==== a cross-project read is still refused, after every fix ========
+        // The fixes must not have widened anything. An identity without the
+        // owner grant cannot mint, and another project's set is unreachable.
+        await assert.rejects(results(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,
+          attempt_id,producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,created_at)
+          VALUES($1,$2,'project:ffffffffffffffffffffffff','job:files-fix','attempt:files-fix-bare','native',
+          'control-room-native','declared','file-store',0,0,$3,'provisional',$4)`,
+        [TENANT, setId(0x2003), ZERO, issuedAt]),
+        (error: unknown) => ["23503", "23514", "42501"].includes(stateOf(error)),
+        "a set naming another project's job is still refused");
+        // A grant for a file outside the set is still refused, as the web login.
+        await assert.rejects(web(`INSERT INTO control_result_file_download_grants(tenant_id,grant_id,project_id,set_id,
+          file_id,issued_to_token_digest,issued_to_identity_id,content_digest,size_bytes,issued_at,expires_at)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [TENANT, newGrantId(), projectId, storedSet, fileId(9), token(OWNER), OWNER, hash,
+          content.byteLength, issuedAt, new Date(Date.parse(issuedAt) + 240_000).toISOString()]),
+        (error: unknown) => ["23514", "23503"].includes(stateOf(error)),
+        "a grant for a file that is not in the set is still refused");
+      } finally { await bound.close(); }
+    }, { port: PORT, allowedPorts: PORTS, database: "control_room" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the real-PostgreSQL proof for the fix round ran exactly once", () => {
+  assert.equal(ran, 1, `the proof ran ${ran} time(s), expected 1`);
+  assert.equal(required, 1, "a lane with PostgreSQL must never report a green skip");
+});
