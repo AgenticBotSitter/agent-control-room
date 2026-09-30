@@ -12,7 +12,12 @@ export const privateDatabaseLimits = Object.freeze({ connections: 8, checkoutMs:
  * All three rolled back whole, so the operation did nothing and may be replayed;
  * none of them is an outage. */
 export type PrivateDatabaseRollbackSqlState = "40P01" | "40001" | "55P03";
-const ROLLBACK_SQL_STATES: ReadonlySet<string> = new Set(["40P01", "40001", "55P03"]);
+/** The one rollback set. It lives next to the reader because the reader and the
+ * set it is compared against must never drift apart: every caller reads through
+ * `databaseSqlStateIsAnyV1` against this literal, so a second copy elsewhere is
+ * a second reader by another name and is refused by the one-reader guard. */
+export const ROLLBACK_SQL_STATES_V1: readonly PrivateDatabaseRollbackSqlState[] =
+  Object.freeze(["40P01", "40001", "55P03"] as const);
 export class PrivateDatabaseError extends Error {
   constructor(readonly code: "database_unavailable" | "database_outcome_uncertain" | "database_close_uncertain",
     /** PostgreSQL's sanitized five-character SQLSTATE. It proves that the
@@ -20,7 +25,7 @@ export class PrivateDatabaseError extends Error {
      * is known and must not quarantine every connection in the pool. */
     readonly sqlState?: string) { super(code); }
   get rollbackSqlState(): PrivateDatabaseRollbackSqlState | undefined {
-    return this.sqlState !== undefined && ROLLBACK_SQL_STATES.has(this.sqlState)
+    return this.sqlState !== undefined && ROLLBACK_SQL_STATES_V1.includes(this.sqlState as PrivateDatabaseRollbackSqlState)
       ? this.sqlState as PrivateDatabaseRollbackSqlState : undefined;
   }
 }

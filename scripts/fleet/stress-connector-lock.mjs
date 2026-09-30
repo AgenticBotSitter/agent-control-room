@@ -12,9 +12,12 @@ import { pathToFileURL } from "node:url";
 const workers = Number(process.argv[2] ?? 50);
 const acquisitions = Number(process.argv[3] ?? 40);
 const killRate = Number(process.argv[4] ?? 0.10);
+const noProgressTimeoutMs = Number(process.env.CONTROL_ROOM_STRESS_NO_PROGRESS_TIMEOUT_MS ?? 120_000);
 if (!Number.isSafeInteger(workers) || workers < 1 || !Number.isSafeInteger(acquisitions) || acquisitions < 40
   || !Number.isFinite(killRate) || killRate < 0.05 || killRate > 0.15)
   throw new Error("usage: stress-connector-lock.mjs [workers] [acquisitions>=40] [kill-rate 0.05..0.15]");
+if (!Number.isSafeInteger(noProgressTimeoutMs) || noProgressTimeoutMs < 1)
+  throw new Error("CONTROL_ROOM_STRESS_NO_PROGRESS_TIMEOUT_MS must be a positive integer");
 
 const root = await mkdtemp(join(tmpdir(), "control-room-lock-stress-"));
 const lockPath = join(root, "credential.rotate.lock"), criticalPath = join(root, "critical-holder.json");
@@ -52,6 +55,7 @@ const childSource = String.raw`
         await new Promise(done => setTimeout(done, 1 + Math.floor(Math.random() * 5)));
         await unlink(markerPath);
         completed += 1;
+        process.send?.({ type: "progress", completed });
       } finally {
         try { await marker?.close(); } catch {}
         if (!killed) await release();
@@ -64,8 +68,9 @@ const childSource = String.raw`
   }
 `;
 
-let kills = 0, violations = 0, completed = 0;
+let kills = 0, violations = 0, completed = 0, lastProgressAt = Date.now();
 const failures = [];
+const children = new Set();
 const runSlot = async slot => {
   let remaining = acquisitions;
   while (remaining > 0) {
@@ -74,13 +79,16 @@ const runSlot = async slot => {
       cwd: resolve("."), env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
+    children.add(child);
     let stderr = "", reported = 0, deliberatelyKilled = false;
     child.stderr.on("data", chunk => { stderr += chunk; });
     child.on("message", message => {
       if (message?.type === "killed") { deliberatelyKilled = true; reported = message.completed; kills += 1; }
-      if (message?.type === "done") reported = message.completed;
+      if (["progress", "done"].includes(message?.type)) reported = message.completed;
+      if (["progress", "killed", "done"].includes(message?.type)) lastProgressAt = Date.now();
     });
     const code = await new Promise((done, reject) => { child.once("error", reject); child.once("close", done); });
+    children.delete(child);
     remaining -= reported;
     completed += reported;
     if (deliberatelyKilled) continue;
@@ -93,10 +101,23 @@ const runSlot = async slot => {
 };
 
 try {
-  await Promise.race([
-    Promise.all(Array.from({ length: workers }, (_, slot) => runSlot(slot))),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("stress probe wedged for 240 seconds")), 240_000)),
-  ]);
+  const slots = Promise.all(Array.from({ length: workers }, (_, slot) => runSlot(slot)));
+  let watchdog;
+  const stalled = new Promise((_, reject) => {
+    watchdog = setInterval(() => {
+      if (Date.now() - lastProgressAt >= noProgressTimeoutMs)
+        reject(new Error(`stress probe made no progress for ${noProgressTimeoutMs} ms`));
+    }, Math.min(1_000, noProgressTimeoutMs));
+  });
+  try {
+    await Promise.race([slots, stalled]);
+  } catch (error) {
+    for (const child of children) child.kill("SIGKILL");
+    await Promise.allSettled([slots]);
+    throw error;
+  } finally {
+    clearInterval(watchdog);
+  }
   let markerLeft = false;
   try {
     const holder = JSON.parse(await readFile(criticalPath, "utf8"));
@@ -111,5 +132,6 @@ try {
   if (completed !== workers * acquisitions || failures.length || violations || markerLeft || leftovers.length)
     process.exitCode = 1;
 } finally {
+  for (const child of children) child.kill("SIGKILL");
   await rm(root, { recursive: true, force: true });
 }

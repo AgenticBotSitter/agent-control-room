@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -23,6 +23,8 @@ test.before(async () => {
   bundledConnector = await import(`${pathToFileURL(bundledSource).href}?install-tests=1`);
 });
 test.after(async () => { if (bundledRoot) await rm(bundledRoot, { recursive: true, force: true }); });
+const WORKING_AGREEMENT = Object.freeze({ version: connector.WORKING_AGREEMENT.version,
+  digest: connector.WORKING_AGREEMENT.digest, startsWork: false, grantsAuthority: false });
 
 function code(character) { return `crj_${character.repeat(43)}`; }
 
@@ -53,7 +55,7 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
       }
       return json(true, { workerId: WORKER_ID, displayName: "Fixture bot", projectIds: ["project:test"],
         workerKind: resultWorkerKind ?? body.workerKind, capabilities: ["writing"],
-        credentialExpiresAt: "2099-01-01T00:00:00.000Z" }, 201);
+        credentialExpiresAt: "2099-01-01T00:00:00.000Z", workingAgreement: WORKING_AGREEMENT }, 201);
     }
     if (!authenticated) return json(false, "unauthenticated", 401);
     if (path === "/fleet/v1/rotate") {
@@ -63,9 +65,10 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
       if (state.dropAfterRotate) { state.dropAfterRotate = false; throw new Error("connection dropped"); }
       return json(true, { credentialExpiresAt: "2099-02-01T00:00:00.000Z" });
     }
-    if (path === "/fleet/v1/heartbeat") return json(true, { displayName: "Fixture bot", operationsMode: "running" });
+    if (path === "/fleet/v1/heartbeat") return json(true, { displayName: "Fixture bot", operationsMode: "running",
+      workingAgreement: WORKING_AGREEMENT });
     if (path === "/fleet/v1/me") return json(true, { displayName: "Fixture bot",
-      credentialExpiresAt: "2099-02-01T00:00:00.000Z" });
+      credentialExpiresAt: "2099-02-01T00:00:00.000Z", workingAgreement: WORKING_AGREEMENT });
     throw new Error(`unexpected request ${path}`);
   };
   return { fetcher, state };
@@ -549,7 +552,7 @@ test("an explicit credential path overrides profile-derived lookup", async t => 
     { out: { write: value => { out += value; } }, err: { write: () => {} } },
     { homeDir, realHomeDir: homeDir, fetcher: async url => {
       assert.equal(new URL(url).pathname, "/fleet/v1/heartbeat");
-      return json(true, { displayName: "Chosen" });
+      return json(true, { displayName: "Chosen", workingAgreement: WORKING_AGREEMENT });
     } });
   assert.equal(status, 0);
   assert.match(out, /Chosen/u);
@@ -624,6 +627,110 @@ test("ten concurrent rotations make exactly one server rotation and stale locks 
   await rm(stale, { recursive: true });
 });
 
+test("unlock removes only a stale empty profile lock after excluding live contenders", async t => {
+  const homeDir = await temporary(t, "connector-unlock-"), name = "wedged";
+  const paths = connector.connectorInstallPaths({ homeDir, platform: "linux", env: {}, name });
+  const lockPath = `${paths.configPath}.rotate.lock`, old = new Date(Date.now() - 60_000);
+  await mkdir(lockPath, { recursive: true });
+  await utimes(lockPath, old, old);
+  let out = "", err = "";
+  const status = await connector.main(["unlock", "--name", name],
+    { out: { write: value => { out += value; } }, err: { write: value => { err += value; } } },
+    { homeDir, realHomeDir: join(homeDir, "real"), platform: "linux", env: {}, staleMs: 1 });
+  assert.equal(status, 0, err);
+  assert.match(out, /"unlocked": "wedged"/u);
+  await assert.rejects(stat(lockPath), error => error.code === "ENOENT");
+
+  await mkdir(lockPath);
+  await assert.rejects(connector.unlockConnector({ name, homeDir, platform: "linux", env: {}, staleMs: 60_000 }),
+    /not stale yet/u);
+  await writeFile(join(lockPath, `owner-${"a".repeat(32)}.json`), "{}\n");
+  await utimes(lockPath, old, old);
+  await assert.rejects(connector.unlockConnector({ name, homeDir, platform: "linux", env: {}, staleMs: 1 }),
+    /has an owner record/u);
+  await rm(lockPath, { recursive: true });
+
+  await mkdir(lockPath);
+  await utimes(lockPath, old, old);
+  const token = "b".repeat(32), contender = `${lockPath}.${process.pid}.${token}.tmp`;
+  await writeFile(contender, `${JSON.stringify({ pid: process.pid, processIdentity: "same", token })}\n`, { mode: 0o600 });
+  await assert.rejects(connector.unlockConnector({ name, homeDir, platform: "linux", env: {}, staleMs: 1,
+    isPidAlive: () => true, getProcessIdentity: async () => "same" }), /still running/u);
+  assert.equal((await stat(lockPath)).isDirectory(), true);
+  await connector.unlockConnector({ name, homeDir, platform: "linux", env: {}, staleMs: 1,
+    isPidAlive: () => false, getProcessIdentity: async () => null });
+  await assert.rejects(stat(contender), error => error.code === "ENOENT");
+
+  await mkdir(lockPath);
+  await utimes(lockPath, old, old);
+  await assert.rejects(connector.unlockConnector({ name, homeDir, platform: "linux", env: {}, staleMs: 1,
+    beforeRemovalCheck: async () => { await rmdir(lockPath); await mkdir(lockPath); },
+  }), /changed while unlock was checking/u);
+  assert.equal((await stat(lockPath)).isDirectory(), true);
+  await rmdir(lockPath);
+
+  await mkdir(lockPath);
+  await utimes(lockPath, old, old);
+  const results = await Promise.allSettled(Array.from({ length: 20 }, () => connector.unlockConnector({
+    name, homeDir, platform: "linux", env: {}, staleMs: 1,
+  })));
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter(result => result.status === "rejected").length, 19);
+  for (const result of results.filter(result => result.status === "rejected"))
+    assert.match(result.reason?.message ?? "", /Another unlock check|No credential lock exists/u);
+});
+
+test("a reused live PID does not preserve a dead owner generation", async t => {
+  const root = await temporary(t, "connector-pid-reuse-"), lockPath = join(root, "bot.rotate.lock");
+  const token = "c".repeat(32), ownerPath = join(lockPath, `owner-${token}.json`);
+  await mkdir(lockPath);
+  await writeFile(ownerPath, `${JSON.stringify({ pid: 777777, processIdentity: "old-process", token })}\n`, { mode: 0o600 });
+  const release = await connector.acquireRotationLock(lockPath, {
+    deadlineMs: 100,
+    isPidAlive: () => true,
+    getProcessIdentity: async pid => pid === 777777 ? "reused-process" : "test-process",
+  });
+  await release();
+  await assert.rejects(stat(lockPath), error => error.code === "ENOENT");
+});
+
+test("a live process generation is never cleaned merely because its lock is old", async t => {
+  const root = await temporary(t, "connector-live-generation-"), lockPath = join(root, "bot.rotate.lock");
+  const token = "d".repeat(32), ownerPath = join(lockPath, `owner-${token}.json`);
+  await mkdir(lockPath);
+  await writeFile(ownerPath, `${JSON.stringify({ pid: process.pid, processIdentity: "same-process", token })}\n`, { mode: 0o600 });
+  const old = new Date(Date.now() - 60_000);
+  await utimes(lockPath, old, old);
+  await assert.rejects(connector.acquireRotationLock(lockPath, {
+    staleMs: 1,
+    deadlineMs: 30,
+    waitMs: 5,
+    isPidAlive: () => true,
+    getProcessIdentity: async () => "same-process",
+  }), /Another session is renewing/u);
+  assert.deepEqual(JSON.parse(await readFile(ownerPath, "utf8")),
+    { pid: process.pid, processIdentity: "same-process", token });
+});
+
+test("the lock stress probe stops children after a no-progress timeout", async () => {
+  const child = spawn(process.execPath, ["scripts/fleet/stress-connector-lock.mjs", "1", "40", "0.05"], {
+    cwd: resolve("."),
+    env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", CONTROL_ROOM_STRESS_NO_PROGRESS_TIMEOUT_MS: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "", forced = false;
+  child.stderr.on("data", chunk => { stderr += chunk; });
+  const force = setTimeout(() => { forced = true; child.kill("SIGKILL"); }, 5_000);
+  const code = await new Promise((resolveClose, reject) => {
+    child.once("error", reject);
+    child.once("close", resolveClose);
+  });
+  clearTimeout(force);
+  assert.equal(forced, false);
+  assert.notEqual(code, 0);
+  assert.match(stderr, /made no progress for 1 ms/u);
+});
+
 test("fifty cross-process rotations stay exclusive and recover an actually killed owner", async t => {
   const homeDir = await temporary(t, "connector-process-rotation-");
   const configPath = join(homeDir, "bot.json"), secret = `crf_${"R".repeat(43)}`;
@@ -652,14 +759,16 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
       await new Promise(done => setTimeout(done, 100));
       state.digest = body.newCredentialDigest;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z" } }));
+      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z",
+        workingAgreement: WORKING_AGREEMENT } }));
       state.activeRotations -= 1;
       blockedRequestFinished?.();
       return;
     }
     if (request.url === "/fleet/v1/me") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z" } }));
+      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z",
+        workingAgreement: WORKING_AGREEMENT } }));
       return;
     }
     response.writeHead(404, { "content-type": "application/json" });
@@ -902,15 +1011,17 @@ test("a losing stale cleaner cannot remove a new winner before owner publication
   const laggerHasRead = new Promise(resolveLagger => { laggerObserved = resolveLagger; });
   const winnerHasDirectory = new Promise(resolveWinner => { winnerElected = resolveWinner; });
   const winnerMayPublish = new Promise(resolveRelease => { releaseWinner = resolveRelease; });
-  let laggerElected = false;
+  let laggerElected = false, cleanerElections = 0;
   const winner = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
     beforeDeadOwnerCleanup: async () => laggerHasRead,
+    afterCleanerElection: async () => { cleanerElections += 1; },
     afterDirectoryElection: async () => { winnerElected(); await winnerMayPublish; } } });
   const lagger = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
     beforeDeadOwnerCleanup: async () => {
       laggerObserved();
       await winnerHasDirectory;
     },
+    afterCleanerElection: async () => { cleanerElections += 1; },
     afterDirectoryElection: async () => { laggerElected = true; await winnerMayPublish; } } });
   try {
     await winnerHasDirectory;
@@ -920,6 +1031,7 @@ test("a losing stale cleaner cannot remove a new winner before owner publication
     releaseWinner();
     await Promise.allSettled([winner, lagger]);
   }
+  assert.equal(cleanerElections, 1);
 });
 
 test("ten concurrent installs of one profile serialize and all succeed", async t => {
