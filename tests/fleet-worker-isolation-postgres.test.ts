@@ -276,6 +276,15 @@ test("a repeatable read claimer is refused, and a serializable one is not", asyn
             const insertClaim = async (client: Client, offer: { offerId: string; projectId: string; jobId: string;
               attemptId: string; leaseId: string }, claimSeed: string, keySeed: string, commit: boolean) => {
               try {
+                // Bounded, so a racer that waits on the worker lock can only wait
+                // so long. Without this the suite HANGS rather than failing when
+                // a peer is holding the lock: under mutation, with the repeatable
+                // read refusal removed, one RR transaction wins the claim and keeps
+                // that lock until it is rolled back, and every SERIALIZABLE caller
+                // behind it waits indefinitely. A mutation check that can hang
+                // reports a timeout instead of the refusal it exists to prove.
+                await client.query("SET LOCAL lock_timeout = '3s'");
+                await client.query("SET LOCAL statement_timeout = '15s'");
                 await client.query(`INSERT INTO fleet_claims(tenant_id,claim_id,offer_id,worker_id,node_id,project_id,
                   job_id,attempt_id,lease_id,idempotency_key,claimed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())`,
                 [FLEET_TENANT, `fleet-claim:${claimSeed.padStart(32, "0")}`, offer.offerId, subject, subjectNode,
