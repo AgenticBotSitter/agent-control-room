@@ -3,42 +3,42 @@
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
     "find": "  PERFORM pg_catalog.pg_advisory_xact_lock(\n    pg_catalog.hashtextextended(json_build_array('fleet_worker_capacity', NEW.tenant_id, NEW.worker_id)::text, 0));",
     "replace": "  -- MUTATED: the serialising lock is gone",
-    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "test": "node scripts/generate-migration-ledger.mjs && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
     "why": "a worker's live-claim ceiling is serialised in the database, so three unlocked racing claimers cannot all read the same count and all win"
   },
   {
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
     "find": "    AND l.state='active' AND l.expires_at>pg_catalog.statement_timestamp();",
     "replace": "    AND l.state='active';",
-    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "test": "node scripts/generate-migration-ledger.mjs && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
     "why": "a lease past its expiry does not occupy a slot, so a crashed machine does not hold its own ceiling open"
   },
   {
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
     "find": "  IF live_claims>=worker_max_concurrent THEN",
     "replace": "  IF live_claims>worker_max_concurrent THEN",
-    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "test": "node scripts/generate-migration-ledger.mjs && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
     "why": "the ceiling is exactly maxConcurrent, not one above it"
   },
   {
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
     "find": "  IF pg_catalog.current_setting('transaction_isolation')='repeatable read' THEN\n    RAISE EXCEPTION 'fleet claim capacity cannot be enforced in a repeatable read transaction'\n      USING ERRCODE='0A000';\n  END IF;",
     "replace": "  -- MUTATED: the repeatable read refusal is gone",
-    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "test": "node scripts/generate-migration-ledger.mjs && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
     "why": "an advisory lock cannot serialise a REPEATABLE READ caller's COUNT, because its snapshot predates the wait for the lock, so the ceiling only holds if the mode itself is refused"
   },
   {
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
     "find": "    pg_catalog.hashtextextended(json_build_array('fleet_worker_capacity', NEW.tenant_id, NEW.worker_id)::text, 0));",
     "replace": "    pg_catalog.hashtextextended(json_build_array(NEW.tenant_id, NEW.worker_id)::text, 0));",
-    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "test": "node scripts/generate-migration-ledger.mjs && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
     "why": "the advisory key is namespaced by a literal tag, so a fleet worker id cannot collide with 0100's project-scope lock keyspace and serialise against it"
   },
   {
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
     "find": "CREATE TRIGGER fleet_claims_zz_capacity_guard",
     "replace": "CREATE TRIGGER fleet_claims_capacity_guard",
-    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "test": "node scripts/generate-migration-ledger.mjs && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
     "why": "BEFORE triggers fire in NAME order, so the zz_ prefix is what puts the capacity guard after 0140's guard: an inadmissible claim is refused before it takes a lock"
   },
   {
