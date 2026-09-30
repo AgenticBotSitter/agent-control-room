@@ -17,14 +17,14 @@
     "file": "src/web/v1/private-database-preflight.ts",
     "find": "OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)\n              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'\n",
     "replace": "OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)\n",
-    "test": "node --import tsx --test --test-name-pattern \"database-only check refuses the (agent-review commit executable|agent-review plan read executable)\" tests/vps-built-database-check.test.mjs",
+    "test": "node --import tsx --test --test-name-pattern \"every SECURITY DEFINER function the preflight exempts is owned by the schema owner, unconditionally\" tests/private-web-role-preflight-declaration.test.ts",
     "why": "the agent-review boundary functions stay exempt only while they are owned by control_room_schema_owner for every login kind, not just the reviewer (cook/journey e27bfd68a)"
   },
   {
     "file": "src/modules/v1/manifest.ts",
     "find": "import { sha256Digest } from \"../../security/canonical-digest\";",
     "replace": "import { sha256Digest } from \"../../security\";",
-    "test": "node --import tsx --test --test-name-pattern \"browser bundles never include server-only host-value security code\" tests/vps-built-assignment.test.mjs",
+    "test": "node --import tsx --test --test-name-pattern \"no client-reachable module imports the server-only security barrel\" tests/vps-built-assignment.test.mjs",
     "why": "the module registry is reachable from the client graph, so importing the security barrel drags host-value's import-time throw into every browser chunk and blanks the page"
   },
   {
