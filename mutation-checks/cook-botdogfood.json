@@ -15,9 +15,16 @@
   },
   {
     "file": "src/persistence/canonical-store.ts",
-    "find": "        if (selected?.worker_kind && (!selected.selection_key || !selected.model || !selected.effort)) {\n          throw new Error(\"Task model selection is unresolved\");\n        }",
-    "replace": "        if (selected && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {\n          throw new Error(\"Task model selection is unresolved\");\n        }",
-    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=59620 node --import tsx --test --test-timeout=300000 tests/bot-dogfood-postgres.test.ts",
-    "why": "an all-NULL model-selection row is 0091's 'not chosen yet' state, so a task proposed without an explicit model is still claimable; only a row that names a worker and is missing the rest is unresolved"
+    "find": "        if (selected && (selected.worker_kind || selected.selection_key || selected.effort)\n          && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {\n          throw new TaskModelSelectionUnresolvedError();\n        }",
+    "replace": "        if (selected && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {\n          throw new TaskModelSelectionUnresolvedError();\n        }",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=59620 node --import tsx --test --test-timeout=300000 tests/bot-claim-eligibility-postgres.test.ts",
+    "why": "an all-NULL model-selection row is 0091's 'nothing was requested' state, so a task proposed without an explicit model is still claimable; only a row that names a model or an effort is an owner request the worker cannot honour"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      if (settings?.eligible_worker_kinds !== null && settings?.eligible_worker_kinds !== undefined\n        && !settings.eligible_worker_kinds.includes(principal.workerKind)) return fleetFail(\"conflict\");",
+    "replace": "      if (settings?.eligible_worker_kinds === null || settings?.eligible_worker_kinds === undefined\n        || !settings.eligible_worker_kinds.includes(principal.workerKind)) return fleetFail(\"conflict\");",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=59620 node --import tsx --test --test-timeout=300000 tests/bot-claim-eligibility-postgres.test.ts",
+    "why": "the guard is an allow-list, not a blanket refusal: a project with no eligible_worker_kinds configured must stay claimable, and only a configured list that omits this worker's kind refuses"
   }
 ]

@@ -206,14 +206,21 @@ export class ScriptedBotV1 {
 
   /** One MCP tool call. Never throws: a refusal is data, not an exception.
    * The shape is uniform on purpose, so a caller can read `value` after a
-   * refusal without narrowing. `value` is undefined exactly when refused. */
+   * refusal without narrowing. `value` is undefined exactly when refused.
+   * `refusalCode` is the gateway's own fixed code when the connector reported
+   * one, and "" when the refusal came from the connector or the client itself
+   * (an unknown tool, arguments that do not match, a file outside the
+   * workspace). It is never inferred from the message text. */
   async call(name, args = {}) {
     const reply = await this.raw("tools/call", { name, arguments: args });
     if (reply && "error" in reply)
-      return Object.freeze({ refused: true, text: String(reply.error?.message ?? "error"), value: undefined });
+      return Object.freeze({ refused: true, text: String(reply.error?.message ?? "error"), value: undefined,
+        refusalCode: "" });
     const result = reply?.result;
-    return Object.freeze({ refused: result?.isError === true, text: String(result?.content?.[0]?.text ?? ""),
-      value: result?.structuredContent?.result });
+    const refused = result?.isError === true;
+    const code = refused ? String(result?.structuredContent?.refusalCode ?? "") : "";
+    return Object.freeze({ refused, text: String(result?.content?.[0]?.text ?? ""),
+      refusalCode: code || undefined, value: refused ? undefined : result?.structuredContent?.result });
   }
 
   async write(relativePath, contents) {
