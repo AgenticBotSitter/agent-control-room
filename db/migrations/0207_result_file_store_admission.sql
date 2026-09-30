@@ -59,16 +59,24 @@ BEGIN
       OR NEW.producer_id NOT LIKE 'fleet-worker:%' THEN
       RAISE EXCEPTION 'result file set producer rejected' USING ERRCODE = '42501';
     END IF;
-  ELSIF NEW.producer_id<>'control-room-native' THEN
+  ELSIF NEW.producer_id<>'control-room-native'
+      OR NOT EXISTS (SELECT 1 FROM public.control_native_artifact_receipts r
+        WHERE r.tenant_id=NEW.tenant_id AND r.attempt_id=NEW.attempt_id AND r.job_id=NEW.job_id
+          AND r.project_id=NEW.project_id) THEN
     -- Native work is produced by the Mac itself under one fixed name, and it
     -- must have a published native receipt for this exact project, job and
     -- attempt. That receipt is what makes "the existing native text result"
     -- an honest catalog row rather than a relabelled file store.
-    IF NOT EXISTS (SELECT 1 FROM public.control_native_artifact_receipts r
-        WHERE r.tenant_id=NEW.tenant_id AND r.attempt_id=NEW.attempt_id AND r.job_id=NEW.job_id
-          AND r.project_id=NEW.project_id) THEN
-      RAISE EXCEPTION 'result file set producer rejected' USING ERRCODE = '42501';
-    END IF;
+    --
+    -- BOTH conditions are on one line deliberately. A native set needs the fixed
+    -- name AND the receipt, and the review found this written as
+    -- `producer_id<>'control-room-native' THEN <require receipt>`, which is the
+    -- other two thirds of the statement: a `native` set naming a worker
+    -- impostor was accepted whenever a receipt happened to exist, and a
+    -- `native` set with no receipt at all was accepted under the fixed name.
+    -- The catalog then attributed files to work that never produced them. One
+    -- `ELSIF ... OR ...` is the only shape in which neither slip is available.
+    RAISE EXCEPTION 'result file set producer rejected' USING ERRCODE = '42501';
   END IF;
   RETURN NEW;
 END $$;

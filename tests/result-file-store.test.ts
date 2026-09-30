@@ -317,3 +317,193 @@ test("no error message carries a path, a display name or a digest", async () => 
     }
   } });
 });
+
+
+// ---------------------------------------------------------------------------
+// The three store bugs the review reproduced, each as its own case. The store
+// opens over a real directory here, so a leftover is a real file and a write in
+// flight is a real write.
+// ---------------------------------------------------------------------------
+
+test("B3: the 32-file ceiling is per SET, not for the whole installation", async () => {
+  // The review stored 33 files and watched the 33rd be refused `store_capacity`
+  // on an installation whose largest set held one. `inventory.count` counted
+  // every file in the store, so a per-set limit was applied installation-wide.
+  // A result file is created by a set; the installation's ceiling is BYTES.
+  await withStore({ async after(_root, store) {
+    for (let index = 0; index < 40; index += 1) {
+      const content = bytes(`report ${index}\n`);
+      // Every file is in its OWN set, and each set is empty but this one, so
+      // no per-set ceiling is anywhere near being reached.
+      const id = identity(PROJECT, `result-file:${index.toString(16).padStart(32, "0")}`, content);
+      await store.put({ ...id, bytes: content, setBytes: 0, setFiles: 0 });
+    }
+    assert.equal((await readdir(_root)).filter(entry => entry.endsWith(".crbf")).length, 40,
+      "forty files across forty sets, all stored");
+  } });
+});
+
+test("B3: the per-set ceiling is still refused, and the installation total still bites", async () => {
+  await withStore({ async after(_root, store) {
+    const content = bytes("one\n");
+    const id = identity(PROJECT, FILE, content);
+    // The 33rd file in ONE set is refused, which is the limit the schema and
+    // the store both declare. Dropping the installation-wide count did not
+    // weaken this one.
+    await assert.rejects(store.put({ ...id, bytes: content, setBytes: 0, setFiles: 32 }),
+      (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_capacity");
+    // And the installation's own total is still a refusal once it is reached.
+    const first = bytes("first stored file\n");
+    const firstId = identity("project:one", FILE, first);
+    await store.put({ ...firstId, bytes: first });
+    const small = await ResultFileStoreV1.create({ rootPath: _root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304,
+      maximumTotalBytes: first.byteLength, operationTimeoutMs: 2_000 });
+    const second = bytes("second file would exceed the total\n");
+    const secondId = identity("project:two", `result-file:${"c".repeat(32)}`, second);
+    await assert.rejects(small.put({ ...secondId, bytes: second }),
+      (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_capacity");
+  } });
+});
+
+test("B7: a crashed writer's leftovers do not stop the store from opening", async () => {
+  // The review's live case: a surviving lock or an orphaned `pending-*` file
+  // made `create()` throw `store_ambiguous`, and the Mac-local task provider
+  // awaits `create()` with no fallback — so one interrupted write locked the
+  // owner out of EVERY task, not just Files.
+  for (const leftover of ["lock", "pending"]) {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-crash-")));
+    try {
+      const root = join(base, "store");
+      await mkdir(root, { recursive: true, mode: 0o700 });
+      const open = () => ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+        maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+        operationTimeoutMs: 2_000 });
+      // Store one real file first, so recovery is proved to preserve results.
+      const store = await open();
+      const content = bytes("kept across the crash\n");
+      const id = identity(PROJECT, FILE, content);
+      await store.put({ ...id, bytes: content });
+      // A DEAD writer's leftovers. The lock names a pid that cannot be running:
+      // `process.kill(deadPid, 0)` is the proof the recovery relies on, and a pid
+      // that is certainly not this process is certainly not a live writer here.
+      if (leftover === "lock")
+        await writeFile(join(root, ".control-room-result-file-store.lock"),
+          "control-room-result-file-store-write\n2147483646\n", { mode: 0o600 });
+      else
+        await writeFile(join(root, `.control-room-result-file-store-pending-${"f".repeat(32)}`),
+          bytes("half written"), { mode: 0o600 });
+      // Re-opening succeeds, and the result file is untouched.
+      const reopened = await open();
+      assert.deepEqual(Buffer.from((await reopened.read(id))!), Buffer.from(content),
+        `a ${leftover} leftover did not cost the stored file`);
+      assert.ok(!(await readdir(root)).some(entry =>
+        entry === ".control-room-result-file-store.lock" || entry.startsWith(".control-room-result-file-store-pending-")),
+      `the ${leftover} leftover was cleared`);
+    } finally { await rm(base, { recursive: true, force: true }); }
+  }
+});
+
+test("B7: a LIVE writer's lock and pending file are never cleared", async () => {
+  // The recovery must be able to tell a dead writer from a live one, or it
+  // destroys a write in progress. This process is live, so its own pid in the
+  // lock is the proof of liveness.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-live-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const open = () => ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    await writeFile(join(root, ".control-room-result-file-store.lock"),
+      `control-room-result-file-store-write\n${process.pid}\n`, { mode: 0o600 });
+    const pendingName = `.control-room-result-file-store-pending-${"a".repeat(32)}`;
+    await writeFile(join(root, pendingName), bytes("a write in progress"), { mode: 0o600 });
+    // The store still OPENS — a second instance publishing through another
+    // process must not stop this one starting, which is the point of the fix.
+    const store = await open();
+    assert.ok(store);
+    // And the live writer's entries are both still exactly where they were.
+    assert.ok((await readdir(root)).includes(".control-room-result-file-store.lock"),
+      "a live writer's lock was not deleted");
+    assert.ok((await readdir(root)).includes(pendingName),
+      "a live writer's pending file was not deleted");
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("B7: a lock with no readable pid is a refusal, and nothing is deleted", async () => {
+  // The store must not guess. An empty lock could be a writer that has not yet
+  // written its pid, so it is treated as live and left alone; the only entry it
+  // will not classify is refused rather than removed.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-nopid-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    await writeFile(join(root, ".control-room-result-file-store.lock"), "", { mode: 0o600 });
+    const store = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    assert.ok((await readdir(root)).includes(".control-room-result-file-store.lock"),
+      "an unclassifiable lock is left alone");
+    // A bookkeeping name that is a DIRECTORY is not this store's own file. The
+    // lock is still unclassifiable, so it is treated as live and NOTHING is
+    // removed — including this. The store still opens, because a leftover must
+    // never be the reason the owner's whole task application refuses to start;
+    // what it must not do is delete a name it does not own.
+    await mkdir(join(root, ".control-room-result-file-store-pending-deadbeef"), { mode: 0o700 });
+    await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    assert.ok((await readdir(root)).includes(".control-room-result-file-store-pending-deadbeef"),
+      "a directory the store did not write is never deleted");
+    // And a WRITE is still refused while an unclassifiable lock holds the store,
+    // because the O_EXCL create is the mutual exclusion and it has not been
+    // weakened: reads work, writes wait.
+    const content = bytes("would this write succeed?\n");
+    const id = identity(PROJECT, FILE, content);
+    const writer = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    await assert.rejects(writer.put({ ...id, bytes: content }),
+      (error: unknown) => error instanceof ResultFileStoreError);
+    assert.equal(await writer.read(id), undefined, "and nothing was written");
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("B8: a read succeeds while a write is in progress", async () => {
+  // The review's live case: 50 reads of a stored file raced one 64 MiB upload
+  // and 13 of the 50 failed `store_ambiguous`, which the route turns into a
+  // 503. The cause was the read's whole-directory check refusing the writer's
+  // own `pending-*` name. Downloads must not depend on no upload happening.
+  await withStore({ async after(root, store) {
+    const content = bytes("the file being downloaded\n");
+    const id = identity(PROJECT, FILE, content);
+    await store.put({ ...id, bytes: content });
+    // While the write is in progress, the directory holds the lock AND the
+    // staging file. A real concurrent put is what creates them, so this runs one.
+    const large = new Uint8Array(900_000);
+    large.fill(65);
+    const largeId = identity("project:other", FILE, large);
+    const writing = store.put({ ...largeId, bytes: large });
+    const reads = await Promise.all(Array.from({ length: 50 }, () => store.read(id)));
+    await writing;
+    assert.equal(reads.filter(value => value !== undefined).length, 50,
+      "every read succeeded while a write was in progress");
+    for (const value of reads) assert.deepEqual(Buffer.from(value!), Buffer.from(content));
+  } });
+});
+
+test("B8: a read is still refused for an entry the store did not write", async () => {
+  // The fix ignores ONLY the store's own bookkeeping. A stray file is still a
+  // refusal, and still not a deletion.
+  await withStore({ async after(root, store) {
+    const content = bytes("stored\n");
+    const id = identity(PROJECT, FILE, content);
+    await store.put({ ...id, bytes: content });
+    await writeFile(join(root, "notes.txt"), "not ours");
+    const before = await lstat(join(root, "notes.txt"));
+    await assert.rejects(store.read(id),
+      (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_ambiguous");
+    assert.deepEqual((await lstat(join(root, "notes.txt"))).ino, before.ino, "nothing was deleted");
+  } });
+});

@@ -518,9 +518,17 @@ export class WebTaskService {
     });
   }
 
-  /** Trusted server composition, never a browser-supplied callback. */
+  /** Trusted server composition, never a browser-supplied callback.
+   *
+   * The scope carries `identityId` — the RESOLVED `control_identities.id` from
+   * the authenticated transaction, not the caller's asserted subject. A caller
+   * that needs to name the identity in a database row (the download grant does,
+   * and 0208's guard compares it to the session row) must be given the value the
+   * authentication actually resolved, because the two differ on a Mac-local
+   * install: the session's subject is `owner:local` and the identity id is
+   * `macLocalOwnerIdentityIdV1(tenant)`. */
   async readScopedResult<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string,
-    read: (scope: { tenantId: string; projectId: string; jobId: string }) => Promise<T>) {
+    read: (scope: { tenantId: string; projectId: string; jobId: string; identityId: string }) => Promise<T>) {
     this.id(projectId); this.id(jobId);
     return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
@@ -529,7 +537,7 @@ export class WebTaskService {
         [this.scope.tenantId, projectId, jobId])).rows[0];
       if (!row) throw new WebAccessError("not_found");
       validated(row, this.scope.tenantId, projectId);
-      return read({ tenantId: this.scope.tenantId, projectId, jobId });
+      return read({ tenantId: this.scope.tenantId, projectId, jobId, identityId: actor.id });
     });
   }
 

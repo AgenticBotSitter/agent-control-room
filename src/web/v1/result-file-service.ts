@@ -29,9 +29,13 @@ export interface ResultFileServiceKeysV1 {
 }
 
 export type ResultFileAuthorityV1 = {
-  /** The same authorised read boundary the task results use. */
+  /** The same authorised read boundary the task results use. The `read` scope
+   * carries the RESOLVED identity id from the authenticated transaction
+   * (`actor.id`), not the caller's own `identity.subject`: on a Mac-local install
+   * the subject is `owner:local` while the identity id is a tenant-scoped value,
+   * and 0208's grant guard compares the row against `control_identities.id`. */
   readScopedResult: <T>(identity: VerifiedWebIdentity, projectId: string, jobId: string,
-    read: (scope: { tenantId: string; projectId: string; jobId: string }) => Promise<T>) => Promise<T>;
+    read: (scope: { tenantId: string; projectId: string; jobId: string; identityId: string }) => Promise<T>) => Promise<T>;
   /** The project view check, so a scoped read can be authorised without a job. */
   authorizeProject: (identity: VerifiedWebIdentity, projectId: string) => Promise<void>;
   canRead: (identity: VerifiedWebIdentity, projectId: string) => boolean;
@@ -73,7 +77,7 @@ const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url
  * changed underneath it, the read fails.
  */
 function issueToken(key: Uint8Array, input: Readonly<{ sessionDigest: string; projectId: string;
-  setId: string; fileId: string; contentDigest: string; sizeBytes: number }>, now: number) {
+  setId: string; fileId: string; contentDigest: string; sizeBytes: number; grantId: string }>, now: number) {
   const claims = { v: 1, ...input, iat: now, exp: now + tokenLifetimeMs };
   const payload = encode(JSON.stringify(claims));
   const tag = hmacSha256Tag(key, { purpose: "result-file-download/v1", payload });
@@ -81,7 +85,8 @@ function issueToken(key: Uint8Array, input: Readonly<{ sessionDigest: string; pr
 }
 
 function verifyToken(key: Uint8Array, token: string, expected: Readonly<{ sessionDigest: string;
-  projectId: string; setId: string; fileId: string }>, now: number) {
+  projectId: string; setId: string; fileId: string }>, now: number): Readonly<{ grantId: string;
+  contentDigest: string; sizeBytes: number }> {
   try {
     if (token.length > 4096) throw new Error();
     const parts = token.split(".");
@@ -93,15 +98,27 @@ function verifyToken(key: Uint8Array, token: string, expected: Readonly<{ sessio
     if (expectedTag.length !== actualTag.length || !expectedTag.equals(actualTag)) throw new Error();
     if (claims.v !== 1 || claims.projectId !== expected.projectId || claims.setId !== expected.setId
       || claims.fileId !== expected.fileId || claims.sessionDigest !== expected.sessionDigest
+      || typeof claims.grantId !== "string" || !/^result-grant:[a-f0-9]{32}$/u.test(claims.grantId)
+      || typeof claims.contentDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(claims.contentDigest)
+      || typeof claims.sizeBytes !== "number" || !Number.isSafeInteger(claims.sizeBytes)
+      || claims.sizeBytes < 0 || claims.sizeBytes > 268_435_456
       || typeof claims.iat !== "number" || typeof claims.exp !== "number"
       || now < (claims.iat as number) || now >= (claims.exp as number)
       || (claims.exp as number) - (claims.iat as number) > tokenLifetimeMs) throw new Error();
-    return claims as { contentDigest: string; sizeBytes: number; iat: number; exp: number };
+    return { grantId: claims.grantId, contentDigest: claims.contentDigest, sizeBytes: claims.sizeBytes };
   } catch { throw new WebAccessError("access_denied"); }
 }
 
-const sessionDigestOf = (identity: VerifiedWebIdentity) =>
-  `sha256:${createHash("sha256").update(identity.tokenDigest, "utf8").digest("hex")}`;
+/** The value 0208's grant guard compares against `control_web_sessions.token_digest`.
+ *
+ * It is the session's OWN stored digest, NOT a hash of it. The table stores
+ * `sha256(token)` and the service was writing `sha256(sha256(token))`, so the
+ * guard could never match and every grant insert failed 42501 — the second bug
+ * that stopped every real download. The binding to the session is already
+ * enforced by `WebSessionAuthority`, which refuses an identity whose
+ * `tokenDigest` has no live unrevoked session row; re-hashing it here added
+ * nothing and broke the comparison. */
+const sessionDigestOf = (identity: VerifiedWebIdentity) => identity.tokenDigest;
 
 export interface ResultFileServiceConfigurationV1 {
   tenantId: string;
@@ -145,6 +162,28 @@ export function createResultFileServiceV1(db: DatabaseClient, authority: ResultF
     return grouped;
   };
 
+  /**
+   * The set row, read BEFORE any authorisation, and read with the project the
+   * caller's URL already names.
+   *
+   * The first bug the review found: this was passed to `readScopedResult` as
+   * though a SET ID were a JOB ID. `WebTaskService.readScopedResult` looks its
+   * third argument up as a job (`WHERE j.id=$3`), no job is named `result-set:…`,
+   * and every real download answered `not_found` before a byte was read. The
+   * service tests never saw it because they replaced `readScopedResult` with a
+   * stub that ignored its arguments.
+   *
+   * So the job id is resolved HERE, from the set's own row, and it is that job
+   * which is then authorised through the same boundary the task results use. The
+   * set lookup is itself project-scoped, so a set belonging to another project is
+   * a miss here and never reaches the authority at all — a result file is no
+   * more reachable than the job it was produced for.
+   */
+  const readSetForJob = async (tx: DatabaseClient, tenantId: string, projectId: string, setId: string) =>
+    (await tx.query<{ job_id: string }>(`SELECT job_id FROM control_result_file_sets
+      WHERE tenant_id=$1 AND set_id=$2 AND project_id=$3`,
+    [tenantId, setId, projectId])).rows[0];
+
   const project = async (tx: DatabaseClient, identity: VerifiedWebIdentity, projectId: string,
     jobId?: string): Promise<ResultFileCatalog> => {
     if (!configuration.store) return resultFileCatalogSchema.parse({ projectId, ...(jobId ? { jobId } : {}),
@@ -186,11 +225,18 @@ export function createResultFileServiceV1(db: DatabaseClient, authority: ResultF
       if (!catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
       if (!/^result-set:[a-f0-9]{32}$/u.test(setId) || !/^result-file:[a-f0-9]{32}$/u.test(fileId))
         throw new WebAccessError("invalid_request");
-      return authority.readScopedResult(identity, projectId, setId, async (scope) => {
-        const row = (await db.query<SetRow & { job_id: string }>(`SELECT s.set_id,s.project_id,s.job_id,s.state,
-            s.source_kind,s.producer_kind,s.producer_id,s.manifest_digest,s.retention_state,s.created_at,s.stored_at
-          FROM control_result_file_sets s WHERE s.tenant_id=$1 AND s.set_id=$2 AND s.project_id=$3`,
-        [scope.tenantId, setId, scope.projectId])).rows[0];
+      // Resolve the set's OWN job id, then authorise through that job. The set
+      // lookup is project-scoped, so a set id from another project is a miss and
+      // never reaches the authority; everything after this is the existing
+      // `tasks.read` + `tasks.results.read` boundary for the job that produced
+      // the file.
+      const located = await readSetForJob(db, configuration.tenantId, projectId, setId);
+      if (!located) throw new WebAccessError("not_found");
+      return authority.readScopedResult(identity, projectId, located.job_id, async (scope) => {
+        const row = (await db.query<SetRow>(`SELECT set_id,project_id,job_id,state,source_kind,producer_kind,
+            producer_id,manifest_digest,retention_state,created_at,stored_at
+          FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2 AND project_id=$3 AND job_id=$4`,
+        [scope.tenantId, setId, scope.projectId, located.job_id])).rows[0];
         if (!row || row.state !== "stored") throw new WebAccessError("not_found");
         const file = (await db.query<FileRow>(`SELECT set_id,file_id,ordinal,display_name,declared_media_type,
             detected_media_type,size_bytes,content_digest,state,created_at
@@ -200,21 +246,36 @@ export function createResultFileServiceV1(db: DatabaseClient, authority: ResultF
         const now = clock();
         // 0208 requires a grant row before the bytes can be read, and its guard
         // re-checks the owner session, the file's state and its exact digest and
-        // size. A duplicate for the same (session, file, expiry) replays, so a
-        // double-clicked Download does not mint a second row.
-        const issued = issueToken(key, { sessionDigest: sessionDigestOf(identity), projectId,
-          setId, fileId, contentDigest: file.content_digest, sizeBytes: Number(file.size_bytes) }, now);
-        const existing = (await db.query<{ grant_id: string }>(
-          `SELECT grant_id FROM control_result_file_download_grants
-           WHERE tenant_id=$1 AND issued_to_token_digest=$2 AND file_id=$3 AND expires_at=$4`,
-        [scope.tenantId, sessionDigestOf(identity), fileId, new Date(now + tokenLifetimeMs).toISOString()])).rows[0];
-        if (!existing) await db.query(`INSERT INTO control_result_file_download_grants(tenant_id,grant_id,
-            project_id,set_id,file_id,issued_to_token_digest,issued_to_identity_id,content_digest,size_bytes,
-            issued_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [scope.tenantId, `result-grant:${randomUUID().replace(/-/gu, "").slice(0, 32)}`, scope.projectId, setId,
-          fileId, sessionDigestOf(identity), identity.subject, file.content_digest, Number(file.size_bytes),
-          new Date(now).toISOString(), issued.expiresAt]);
-        return { href: downloadHref(scope.projectId, setId, fileId, issued.token), expiresAt: issued.expiresAt };
+        // size.
+        // The grant id is part of the token's claims, so a download spends ITS OWN
+        // grant and not whichever row the query plan happened to return first.
+        const grantId = `result-grant:${randomUUID().replace(/-/gu, "").slice(0, 32)}`;
+        const reissued = issueToken(key, { sessionDigest: sessionDigestOf(identity), projectId, setId, fileId,
+          contentDigest: file.content_digest, sizeBytes: Number(file.size_bytes), grantId }, now);
+        // A double-clicked Download must not mint a second row. The dedupe key is
+        // (session, file, expiry) and its unique violation is what a losing racer
+        // gets, so the insert is `ON CONFLICT DO NOTHING` and then re-reads the
+        // winner: a SELECT-then-INSERT pair raced and turned 50 parallel mints
+        // over 16 files into 16 successes and 34 x 503.
+        await db.query(`INSERT INTO control_result_file_download_grants(tenant_id,grant_id,project_id,set_id,
+            file_id,issued_to_token_digest,issued_to_identity_id,content_digest,size_bytes,issued_at,expires_at)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          ON CONFLICT (tenant_id,issued_to_token_digest,file_id,expires_at) DO NOTHING`,
+        [scope.tenantId, grantId, scope.projectId, setId, fileId, sessionDigestOf(identity),
+          scope.identityId, file.content_digest, Number(file.size_bytes),
+          new Date(now).toISOString(), reissued.expiresAt]);
+        // Whichever row now exists for this (session, file, expiry) is the one
+        // this link spends, and the token names it, so mint and spend agree even
+        // when a concurrent mint won the conflict.
+        const live = (await db.query<{ grant_id: string }>(`SELECT grant_id
+          FROM control_result_file_download_grants
+          WHERE tenant_id=$1 AND issued_to_token_digest=$2 AND file_id=$3 AND expires_at=$4`,
+        [scope.tenantId, sessionDigestOf(identity), fileId, reissued.expiresAt])).rows[0];
+        if (!live) throw new WebAccessError("conflict");
+        const link = live.grant_id === grantId ? reissued : issueToken(key, { sessionDigest: sessionDigestOf(identity),
+          projectId, setId, fileId, contentDigest: file.content_digest, sizeBytes: Number(file.size_bytes),
+          grantId: live.grant_id }, now);
+        return { href: downloadHref(scope.projectId, setId, fileId, link.token), expiresAt: link.expiresAt };
       });
     },
 
@@ -222,45 +283,63 @@ export function createResultFileServiceV1(db: DatabaseClient, authority: ResultF
       if (!catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
       if (!/^result-set:[a-f0-9]{32}$/u.test(setId) || !/^result-file:[a-f0-9]{32}$/u.test(fileId))
         throw new WebAccessError("invalid_request");
-      // A grant is read and spent in ONE transaction, so two concurrent
-      // downloads of the same link cannot both succeed: the second sees the
-      // spent timestamp the first wrote and is refused.
-      return authority.readScopedResult(identity, projectId, setId, async (scope) => {
-        if (!configuration.store) throw new WebAccessError("not_found");
-        const claims = verifyToken(key, token, { sessionDigest: sessionDigestOf(identity), projectId,
-          setId, fileId }, clock());
-        const grant = (await db.query<{ grant_id: string; content_digest: string; size_bytes: string;
-          spent_at: Date | null; state: string; display_name: string; declared_media_type: string;
-          detected_media_type: string }>(`SELECT g.grant_id,g.content_digest,g.size_bytes,g.spent_at,
-            f.state,f.display_name,f.declared_media_type,f.detected_media_type
-          FROM control_result_file_download_grants g
-          JOIN control_result_files f ON f.tenant_id=g.tenant_id AND f.file_id=g.file_id
-          WHERE g.tenant_id=$1 AND g.set_id=$2 AND g.file_id=$3 AND g.project_id=$4`,
-        [scope.tenantId, setId, fileId, scope.projectId])).rows[0];
-        if (!grant || grant.spent_at !== null || grant.state !== "stored"
-          || grant.content_digest !== claims.contentDigest || Number(grant.size_bytes) !== claims.sizeBytes)
-          throw new WebAccessError("not_found");
-        const bytes = await configuration.store.read({ tenantId: scope.tenantId, projectId: scope.projectId,
+      // Captured before the closure: `configuration.store` is optional, and the
+      // narrowing from the guard below does not reach inside a callback.
+      const store = configuration.store;
+      if (!store) throw new WebAccessError("not_found");
+      // The token is verified BEFORE any database work, and it names the grant it
+      // spends. The review's fifth bug: the grant was found with
+      // `WHERE tenant, set, file, project` and `rows[0]`, so a link minted by one
+      // session spent ANOTHER session's grant for the same file — the other
+      // session's valid link then failed, and the ledger recorded the wrong
+      // "who was given this file?". Which row came back depended on the plan.
+      // The token now carries the grant id, and the spend names it.
+      const claims = verifyToken(key, token, { sessionDigest: sessionDigestOf(identity), projectId,
+        setId, fileId }, clock());
+      // Same fix as the mint: the set's OWN job id, never a set id passed where
+      // a job id is expected.
+      const located = await readSetForJob(db, configuration.tenantId, projectId, setId);
+      if (!located) throw new WebAccessError("not_found");
+      return authority.readScopedResult(identity, projectId, located.job_id, async (scope) => {
+        // The spend is ONE conditional statement, and it happens BEFORE any byte
+        // is read. It is the single point where "this link may be used once" is
+        // decided, so two concurrent downloads of the same link cannot both
+        // succeed: the first UPDATE takes the row, the second matches nothing
+        // because `spent_at IS NULL` is no longer true, and `RETURNING` hands the
+        // row to exactly one of them.
+        //
+        // The row is also required to be unexpired AT THE DATABASE CLOCK
+        // (`now()`), not at this process's clock: 0208's update guard already
+        // refuses a `spent_at` outside the grant's own window, so a spend made
+        // with a caller-supplied timestamp would be rejected by its own trigger.
+        // And the file's own row is re-checked in the same statement, so a file
+        // that stopped being 'stored' cannot be downloaded on a live link.
+        const spent = (await db.query<{ grant_id: string; content_digest: string; size_bytes: string;
+          display_name: string; detected_media_type: string }>(`UPDATE control_result_file_download_grants g
+          SET spent_at=pg_catalog.now()
+          FROM control_result_files f
+          WHERE g.tenant_id=$1 AND g.grant_id=$2 AND g.issued_to_token_digest=$3
+            AND g.set_id=$4 AND g.file_id=$5 AND g.project_id=$6
+            AND g.spent_at IS NULL AND g.expires_at>pg_catalog.now()
+            AND g.content_digest=$7 AND g.size_bytes=$8
+            AND f.tenant_id=g.tenant_id AND f.set_id=g.set_id AND f.file_id=g.file_id AND f.state='stored'
+            RETURNING g.grant_id, g.content_digest, g.size_bytes, f.display_name, f.detected_media_type`,
+        [scope.tenantId, claims.grantId, sessionDigestOf(identity), setId, fileId, scope.projectId,
+          claims.contentDigest, claims.sizeBytes])).rows;
+        // One row, or a refusal. Every way this can come back empty is a refusal
+        // and not a download: a spent grant, an expired one, another session's,
+        // a file that is no longer stored, or a catalog row whose digest moved.
+        if (spent.length !== 1) throw new WebAccessError("not_found");
+        const grant = spent[0]!;
+        const bytes = await store.read({ tenantId: scope.tenantId, projectId: scope.projectId,
           fileId, contentDigest: grant.content_digest });
         // The store re-proves the digest on read; a missing or altered file is
-        // a 404 here rather than a download of whatever is on disk.
+        // a 404 here rather than a download of whatever is on disk. The grant is
+        // already spent at this point, which is the honest accounting: the link
+        // was used and the bytes could not be served, and a retry mints a new one.
         if (!bytes || bytes.byteLength !== Number(grant.size_bytes)) {
           throw new WebAccessError("not_found");
         }
-        // The spend is a conditional UPDATE whose result is read back. It is
-        // belt to the grant lookup's braces: the lookup above already refuses a
-        // row that is spent, but that check and this UPDATE are not one
-        // transaction on a real database, so two downloads that both read an
-        // unspent row would both proceed without it. `RETURNING` means exactly
-        // one of them sees a row; the other sees none and is refused here.
-        //
-        // The assertion that follows is the honest one: the COUNT of spends,
-        // not which guard answered.
-        const spent = (await db.query<{ grant_id: string }>(
-          `UPDATE control_result_file_download_grants SET spent_at=$2
-           WHERE tenant_id=$1 AND grant_id=$3 AND spent_at IS NULL RETURNING grant_id`,
-        [scope.tenantId, new Date(clock()).toISOString(), grant.grant_id])).rows;
-        if (spent.length !== 1) throw new WebAccessError("not_found");
         // Parsed, not cast: the media type comes from the database as a string
         // and the response says `application/octet-stream` whatever it is, but
         // the owner-facing catalog still reports it. A row carrying a type the

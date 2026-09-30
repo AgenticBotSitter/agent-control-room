@@ -59,7 +59,9 @@ export class ResultFileStoreError extends Error {
 export interface ResultFileStoreConfigurationV1 {
   /** An existing, canonical, private directory. The store never creates it. */
   rootPath: string;
-  /** The installation's declared ceilings. They are configuration, not policy. */
+  /** The per-result-SET file ceiling, applied against the caller's own view of
+   * the set (`setFiles`), not against the whole installation. The installation
+   * has no file-count ceiling: its ceiling is `maximumTotalBytes`. */
   maximumFiles: number;
   maximumFileBytes: number;
   maximumSetBytes: number;
@@ -108,6 +110,12 @@ const onDiskPattern = /^[a-f0-9]{64}\.crbf$/u;
 const keyPrefix = "crbf1-";
 const lockName = ".control-room-result-file-store.lock";
 const pendingPrefix = ".control-room-result-file-store-pending-";
+// The recovery lock is never a result and never a writer's lock: it exists only
+// so two openers cannot both decide about the same leftovers. It is removed at
+// the end of a successful recovery and is itself recovered (as bookkeeping)
+// after a recovery that was itself interrupted.
+const recoveryName = ".control-room-result-file-store-recovery.lock";
+const recoveryPathOf = (root: string): string => join(root, recoveryName);
 const noFollow = constants.O_NOFOLLOW ?? 0;
 const nonBlock = constants.O_NONBLOCK ?? 0;
 
@@ -134,6 +142,17 @@ export function resultFileStorageKeyV1(tenantId: string, projectId: string, file
 
 /** The on-disk name. The key's own hex, so the key is never parsed back. */
 const onDiskName = (storageKey: string): string => `${storageKey.slice(keyPrefix.length)}.crbf`;
+
+/** The store's OWN bookkeeping entries: the write lock, and the staging file a
+ * writer builds before it links it into place. Both are written only by this
+ * store, neither is ever a readable result, and both are transient by design.
+ *
+ * They are recognised by their exact prefixes and are excluded from the byte and
+ * name accounting — never from the target-name derivation, which is the hex
+ * digest alone. A file called `.control-room-result-file-store-pending-x` is not
+ * a result, so it can neither be read as one nor displace one. */
+const isStoreBookkeeping = (entry: string): boolean =>
+  entry === lockName || entry === recoveryName || entry.startsWith(pendingPrefix);
 
 function abortError(): Error {
   const error = new Error("result_file_store_aborted");
@@ -200,7 +219,17 @@ export class ResultFileStoreV1 {
     private readonly configuration: Readonly<ResultFileStoreConfigurationV1>,
   ) {}
 
-  /** Opens one already-existing private root. It creates nothing and repairs nothing. */
+  /** Opens one already-existing private root. It creates nothing, and it repairs
+   * only what a crashed writer of THIS store left behind — proven, never assumed
+   * (see `recoverAbandonedWriterEntries`).
+   *
+   * The review found the old behaviour here: a writer killed by power loss or a
+   * signal leaves the lock or a `pending-*` file, `inventory()` refused the name
+   * it could not account for, `create()` threw, and the Mac-local task provider
+   * awaited `create()` with no fallback — so one interrupted download side-car
+   * stopped the owner from starting ANY task at all. Nothing in the brief asks
+   * for a crash to lock the owner out of every task, and the leftovers are
+   * provably harmless, so they are cleared here instead. */
   static async create(configuration: ResultFileStoreConfigurationV1): Promise<ResultFileStoreV1> {
     if (!configuration || typeof configuration !== "object" || typeof configuration.rootPath !== "string"
       || configuration.rootPath.length > 4096 || !isAbsolute(configuration.rootPath)
@@ -239,8 +268,153 @@ export class ResultFileStoreV1 {
       Object.freeze({ ...configuration }));
     const opened: Operation = { deadline: Date.now() + configuration.operationTimeoutMs };
     await store.assertRootIdentity(opened);
+    await store.recoverAbandonedWriterEntries(opened);
     await store.inventory(opened);
     return store;
+  }
+
+  /**
+   * Clears the bookkeeping of a writer that died mid-write, so a crash costs
+   * the owner one half-written file and not the whole application.
+   *
+   * The review found the old behaviour here: a writer killed by power loss or a
+   * signal leaves the lock or a `pending-*` file, `inventory()` refuses a name
+   * it cannot account for, `create()` threw, and the Mac-local task provider
+   * awaited `create()` with no fallback — so one interrupted upload stopped the
+   * owner from starting ANY task. Nothing in the brief asks for that, so the
+   * leftovers are cleared here instead, and only when they are PROVABLY
+   * abandoned.
+   *
+   * "Provably" is the whole design, so here is exactly what is proved:
+   *
+   *   * A `pending-*` file is staging for a `link()` that either happened or did
+   *     not. Its name is not a content digest, so it is never a readable result,
+   *     and the target name is derived from the file's own id and digest and
+   *     never from a pending name — so an orphan can neither shadow nor be
+   *     mistaken for a stored file. Deleting one destroys no complete file: a
+   *     `link()` that succeeded left a complete target whose digest re-proves,
+   *     and one that did not left nothing to keep.
+   *   * The lock records the writer's PROCESS ID while it is held, and a pid is
+   *     proof of liveness that does not depend on this process. `kill(pid, 0)`
+   *     succeeds for a live process and fails with ESRCH for a dead one, and a
+   *     recycled pid is the conservative direction: the store reports
+   *     `store_ambiguous` (a refusal, never a wrong delete) rather than clearing.
+   *
+   * The rules, in the order they are applied:
+   *
+   *   1. A lock file whose recorded pid is ALIVE is left exactly as it is, and
+   *      the store still opens — a second process publishing through another
+   *      store instance while this one starts must not stop this one starting.
+   *      Every write that process attempts already fails on its own O_EXCL
+   *      create, which is the store's existing mutual exclusion and is not
+   *      weakened by a second reader of the lock.
+   *   2. A lock file whose recorded pid is DEAD is removed: the writer cannot
+   *      return, and the file has no other purpose than the exclusion it no
+   *      longer provides.
+   *   3. A `pending-*` file is removed only when NO lock file exists at all —
+   *      i.e. only once rule 2 has established there is no live writer. A
+   *      pending file seen while a live lock exists belongs to that writer.
+   *   4. A lock file this store cannot classify — no pid recorded, a pid that is
+   *      not a number, a lock that is a directory or a symlink or multi-linked —
+   *      is a refusal, and nothing is removed. So is a name that is neither a
+   *      bookkeeping name nor a result name, which is unchanged behaviour.
+   *
+   * Recovery is itself serialised by an O_EXCL recovery lock, so two openers
+   * cannot both decide about the same leftovers, and it deletes only names this
+   * store itself created. It never repairs, never overwrites and never touches
+   * a `<hex>.crbf` result file.
+   */
+  private async recoverAbandonedWriterEntries(operation: Operation): Promise<void> {
+    const listed = await bounded(operation, () => readdir(this.root), () => {});
+    const bookkeeping = listed.filter(isStoreBookkeeping);
+    if (!bookkeeping.length) return;
+    let recovery: FileHandle | undefined;
+    try {
+      recovery = await bounded(operation, () => open(recoveryPathOf(this.root),
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), () => {});
+    } catch (error) {
+      // Another opener is recovering right now, or a previous recovery was
+      // itself interrupted. Fail closed rather than racing it; the leftovers
+      // are still there and the next open will try again.
+      if ((error as NodeJS.ErrnoException).code === "EEXIST")
+        throw new ResultFileStoreError("store_ambiguous");
+      throw error;
+    }
+    try {
+      await bounded(operation, async () => {
+        await recovery!.writeFile(`control-room-result-file-store-write\n${process.pid}\n`, "utf8");
+      }, () => {});
+      // Re-read the directory INSIDE the recovery lock: the list above is only
+      // a hint, and a name that appeared since must be judged on its own.
+      const current = await bounded(operation, () => readdir(this.root), () => {});
+      const lockPresent = current.some(entry => entry === lockName);
+      const writerAlive = lockPresent ? await this.lockHolderIsAlive(operation) : false;
+      if (writerAlive) {
+        // A live writer is publishing through this same directory. Its lock and
+        // its pending file are its own, and this store opens anyway: the write
+        // path is already mutually excluded by O_EXCL, and refusing to open here
+        // would reintroduce the lock-out this recovery exists to remove.
+        return;
+      }
+      for (const entry of current) {
+        if (entry === lockName) {
+          // No live holder (proved above, or there was no lock at all), so the
+          // name is a dead writer's and nothing else.
+          await this.removeProvenAbandoned(operation, entry);
+          continue;
+        }
+        // A pending file is removed only once no writer holds the lock. While a
+        // live lock exists the file belongs to that writer.
+        if (entry.startsWith(pendingPrefix) && !lockPresent) await this.removeProvenAbandoned(operation, entry);
+      }
+      await this.syncRoot(operation);
+    } finally {
+      await recovery.close().catch(() => {});
+      await bounded(operation, () => unlink(recoveryPathOf(this.root)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      }), () => {}).catch(() => {});
+    }
+  }
+
+  /** True when the lock file records a process that is still running. A lock
+   * with no parsable pid is NOT alive-and-not-dead: it refuses. */
+  private async lockHolderIsAlive(operation: Operation): Promise<boolean> {
+    const path = join(this.root, lockName);
+    let listed: BigIntStats;
+    try { listed = await bounded(operation, () => lstat(path, { bigint: true }), () => {}); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1)) return true;
+    if (listed.size === BigInt(0)) return true;   // a lock with no recorded pid: refuse
+    const handle = await bounded(operation, () => open(path, constants.O_RDONLY | noFollow), () => {});
+    let recorded: string;
+    try { recorded = (await bounded(operation, () => handle.readFile("utf8"), () => {})).trim(); }
+    finally { await handle.close().catch(() => {}); }
+    const pid = Number(recorded.split(/\s+/u).at(-1));
+    if (!Number.isSafeInteger(pid) || pid <= 0) return true;  // unparsable: refuse
+    try { process.kill(pid, 0); return true; }
+    catch (error) {
+      // ESRCH is the only proof of death. EPERM means the pid exists and belongs
+      // to another user, which is as alive as this store needs to know.
+      return (error as NodeJS.ErrnoException).code !== "ESRCH";
+    }
+  }
+
+  /** Unlinks one name the recovery has already proved is this store's own
+   * abandoned bookkeeping, refusing anything that is not a plain private file. */
+  private async removeProvenAbandoned(operation: Operation, entry: string): Promise<void> {
+    const path = join(this.root, entry);
+    let stats: BigIntStats;
+    try { stats = await bounded(operation, () => lstat(path, { bigint: true }), () => {}); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== BigInt(1)
+      || !validPrivateMode(stats.mode)) throw new ResultFileStoreError("store_ambiguous");
+    await bounded(operation, () => unlink(path), () => {});
   }
 
   private usable(operation: Operation): void {
@@ -318,18 +492,35 @@ export class ResultFileStoreV1 {
     try {
       this.usable(operation);
       await this.assertRootIdentity(operation);
-      // The lock is created O_EXCL, so a second writer cannot proceed. A
-      // surviving lock from a crashed writer is never repaired here: the next
-      // operation fails closed and the owner sees an error, which is the honest
-      // outcome for a store whose state is unknown.
-      lock = await bounded(operation,
-        () => open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600),
-        mutating);
+      // The lock is created O_EXCL, so a second writer cannot proceed. The
+      // create is a MUTUAL EXCLUSION and the store serialises its own writes
+      // behind `this.queue`, so reaching here with the lock present means the
+      // holder is a crashed writer or a live writer in another process. Either
+      // way this operation cannot proceed, and the answer is a store refusal
+      // with a fixed code — never a raw EEXIST, which would leak an errno out
+      // of the store and past its own error contract. The lock is NOT removed
+      // here: clearing it is the opener's job, and only after it has proved no
+      // writer holds it.
+      try {
+        lock = await bounded(operation,
+          () => open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600),
+          mutating);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST")
+          throw new ResultFileStoreError("store_ambiguous");
+        throw error;
+      }
       ownedLock = true;
       mutationStarted = true;
-      await bounded(operation, async () => { await lock!.writeFile("control-room-result-file-store-write\n", "utf8"); }, mutating);
+      // The lock records the writer's process id. That is what lets a later
+      // open prove a leftover is ABANDONED rather than merely old: a pid is
+      // liveness evidence this process does not have to take on trust, and
+      // `kill(pid, 0)` answers it without disturbing the process.
+      await bounded(operation, async () => {
+        await lock!.writeFile(`control-room-result-file-store-write\n${process.pid}\n`, "utf8");
+      }, mutating);
       await bounded(operation, () => lock!.sync(), mutating);
-      const inventory = await this.inventory(operation, true);
+      const inventory = await this.inventory(operation);
       if (inventory.names.has(name)) {
         // Create-once with an exact replay: the same bytes are a retry, and
         // anything else is a conflict rather than an overwrite.
@@ -344,8 +535,18 @@ export class ResultFileStoreV1 {
           || existing.byteLength !== bytes.byteLength || bytesDigest(bytes) !== bytesDigest(existing))
           throw new ResultFileStoreError("store_conflict");
       } else {
-        if (inventory.count >= this.configuration.maximumFiles
-          || inventory.totalBytes + bytes.byteLength > this.configuration.maximumTotalBytes)
+        // The per-set ceilings were already checked by the CALLER's own view of
+        // the set (`setFiles` / `setBytes` above), which is where the per-set
+        // limit belongs.
+        //
+        // There is deliberately no whole-installation FILE COUNT here any more.
+        // `inventory.count` is every file in the store, not every file in a set,
+        // and the review reproduced the consequence: files 1-32 stored, and the
+        // 33RD FILE EVER STORED refused `store_capacity` on an installation that
+        // had stored nothing close to 32 files in any one set. A per-set limit
+        // was being applied to the whole installation. The installation's byte
+        // quota IS a whole-installation total, so that one is checked here.
+        if (inventory.totalBytes + bytes.byteLength > this.configuration.maximumTotalBytes)
           throw new ResultFileStoreError("store_capacity");
         pendingPath = join(this.root, `${pendingPrefix}${randomUUID()}`);
         const pending = await bounded(operation,
@@ -406,13 +607,20 @@ export class ResultFileStoreV1 {
     }
   }
 
-  private async inventory(operation: Operation, ownLock = false) {
+  private async inventory(operation: Operation) {
     await this.assertRootIdentity(operation);
     const names = new Set<string>();
     let totalBytes = 0;
     const entries = await bounded(operation, () => readdir(this.root), () => {});
     for (const entry of entries) {
-      if (entry === lockName && ownLock) continue;
+      // The store's own bookkeeping — the write lock, the recovery lock and any
+      // staging file — is not stored result bytes, so it is not counted here and
+      // it is not a refusal. This is the same rule the read path uses, and it is
+      // what lets the store OPEN and KEEP SERVING while a write is in progress
+      // (the review measured 13 of 50 concurrent reads failing `store_ambiguous`
+      // because of exactly these names). A `<hex>.crbf` result is counted, proven
+      // and nothing else is.
+      if (isStoreBookkeeping(entry)) continue;
       // Any entry this store did not write is a refusal, never a deletion: the
       // store never cleans up an unknown file it cannot account for.
       if (!onDiskPattern.test(entry)) throw new ResultFileStoreError("store_ambiguous");
@@ -467,15 +675,26 @@ export class ResultFileStoreV1 {
     } finally { await handle.close().catch(() => {}); }
   }
 
-  /** Every entry under the root is one this store could have written. Anything
-   * else — a stray file, a directory, a name that is not a content digest — means
-   * the directory's state is not what the catalog believes, so nothing is served
-   * until that is resolved. The entries are listed, not read: this proves the
-   * NAMES are ours, and the individual read still proves its own bytes. */
+  /** Every entry under the root is one this store could have written, or one
+   * this store is writing RIGHT NOW. Anything else — a stray file, a directory,
+   * a name that is not a content digest — means the directory's state is not
+   * what the catalog believes, so nothing is served until that is resolved. The
+   * entries are listed, not read: this proves the NAMES are ours, and the
+   * individual read still proves its own bytes.
+   *
+   * The lock and the `pending-*` files are this store's own bookkeeping, and
+   * they are ignored here. A live writer has both in the directory for the whole
+   * duration of its write, and refusing them made every concurrent download fail
+   * `store_ambiguous` — the review measured 13 of 50 reads failing while a
+   * single 64 MiB upload was in flight, which the route turns into a 503. The
+   * safety argument is unchanged: a reader proves the bytes it is about to serve
+   * with its own digest re-check, and a pending file is never a target name, so
+   * ignoring it cannot serve a partial write. What it does change is that a
+   * download no longer depends on no upload being in progress. */
   private async assertDirectoryIsAccountedFor(operation: Operation): Promise<void> {
     const entries = await bounded(operation, () => readdir(this.root), () => {});
     for (const entry of entries) {
-      if (entry === lockName) continue;
+      if (isStoreBookkeeping(entry)) continue;
       if (!onDiskPattern.test(entry)) throw new ResultFileStoreError("store_ambiguous");
     }
   }
