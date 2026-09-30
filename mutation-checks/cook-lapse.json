@@ -7,11 +7,11 @@
     "why": "reconcileStalled reads effect intents to decide whether an outcome is uncertain; without the grant it fails 42501 for every eligible candidate on real PostgreSQL"
   },
   {
-    "file": "db/roles/task_coordinator_roles.sql",
-    "find": "GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;",
-    "replace": "GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;\nGRANT SELECT ON control_effect_intents TO PUBLIC;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
-    "why": "an installation provisioned before the role file existed converges on the same grant through migration 0224, and the role file keeps granting it"
+    "file": "src/web/v1/private-database-preflight.ts",
+    "find": "coordinatorReads.push(\"control_effect_intents\");",
+    "replace": "// MUTATED: the effect-intent read is undeclared, so the preflight and the role file disagree",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/private-web-role-preflight-declaration.test.ts",
+    "why": "the startup preflight declares exactly the coordinator grants the role files confer; dropping the declaration makes a correctly installed database fail its own preflight"
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
@@ -42,18 +42,18 @@
     "why": "the revoked lease releases its derived ownership scope, so later work in that project is not blocked"
   },
   {
-    "file": "src/supervisor/v1/reconciler.ts",
-    "find": "      WHERE a.tenant_id=$1 AND a.state IN ('leased','running','waiting') AND j.state IN ('leased','running')\n        AND l.state='active' AND l.expires_at<=$2",
-    "replace": "      WHERE a.tenant_id=$1 AND a.state IN ('leased','running','waiting') AND j.state IN ('leased','running')\n        AND l.expires_at<=$2",
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      WHERE fc.tenant_id=$1 AND fc.worker_id=$2 AND l.state='active' ORDER BY fc.claimed_at LIMIT 50`,",
+    "replace": "      WHERE fc.tenant_id=$1 AND fc.worker_id=$2 ORDER BY fc.claimed_at LIMIT 50`,",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
-    "why": "the candidate scan never selects a non-active lease, so a revoked worker's lease is not a lapse even once it has also elapsed"
+    "why": "a revocation pass only considers leases that are still active, so an already-terminal lease is never re-moved on a repeated or racing reconcile"
   },
   {
     "file": "src/supervisor/v1/reconciler.ts",
     "find": "        WHERE a.tenant_id=$1 AND a.id=$2 AND a.state IN ('leased','running','waiting')\n          AND j.state IN ('leased','running') AND l.state='active' AND l.expires_at<=$3",
-    "replace": "        WHERE a.tenant_id=$1 AND a.id=$2 AND a.state IN ('leased','running','waiting','cancelled')\n          AND j.state IN ('leased','running','orphaned') AND l.expires_at<=$3",
+    "replace": "        WHERE a.tenant_id=$1 AND a.id=$2 AND a.state IN ('leased','running','waiting','cancelled')\n          AND j.state IN ('leased','running','orphaned') AND l.state='active' AND l.expires_at<=$3",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
-    "why": "reconcileAttempt re-checks the same three states under FOR UPDATE, so a revoked lease cannot be reconciled by a concurrent sweep either"
+    "why": "reconcileAttempt re-checks the attempt and job states under FOR UPDATE, so a concurrent sweep cannot reconcile an attempt a revocation already cancelled"
   },
   {
     "file": "src/persistence/database.ts",
