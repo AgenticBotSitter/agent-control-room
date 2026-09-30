@@ -206,11 +206,18 @@ export class ResultFileStoreV1 {
       || configuration.rootPath.length > 4096 || !isAbsolute(configuration.rootPath)
       || resolve(configuration.rootPath) !== configuration.rootPath
       || !Number.isSafeInteger(configuration.maximumFiles) || configuration.maximumFiles < 1
+ // The per-set file ceiling is a v1 limit (32), not a free parameter: a
+ // configuration may go lower, never higher, exactly as for the byte
+ // ceilings below.
+ || configuration.maximumFiles > RESULT_FILE_LIMITS_V1.maximumFilesPerSet
       || !Number.isSafeInteger(configuration.maximumFileBytes) || configuration.maximumFileBytes < 1
       || configuration.maximumFileBytes > RESULT_FILE_LIMITS_V1.maximumFileBytes
       || !Number.isSafeInteger(configuration.maximumSetBytes) || configuration.maximumSetBytes < 1
       || configuration.maximumSetBytes > RESULT_FILE_LIMITS_V1.maximumSetBytes
       || !Number.isSafeInteger(configuration.maximumTotalBytes) || configuration.maximumTotalBytes < 1
+ // The installation quota is a v1 limit too (10 GiB). A configuration may
+ // go lower so an operator can shrink it, never higher.
+ || configuration.maximumTotalBytes > RESULT_FILE_LIMITS_V1.maximumTotalBytes
       || !Number.isSafeInteger(configuration.operationTimeoutMs) || configuration.operationTimeoutMs < 1
       || configuration.operationTimeoutMs > 30_000) throw new ResultFileStoreError("store_invalid");
     const operation: Operation = { deadline: Date.now() + configuration.operationTimeoutMs };
@@ -269,6 +276,13 @@ export class ResultFileStoreV1 {
     try {
       this.usable(operation);
       await this.assertRootIdentity(operation);
+      // The whole directory is accounted for before any byte is served, not just
+      // the one file being read. A store that read its own path and ignored what
+      // else was in the directory could not tell "this file is missing" from
+      // "something else replaced this store's contents", and would serve the
+      // first as an empty result. An entry the store cannot account for is a
+      // refusal — and never a deletion, because the store cleans up nothing.
+      await this.assertDirectoryIsAccountedFor(operation);
       const bytes = await this.readRecord(join(this.root, onDiskName(key)), operation, true);
       if (!bytes) return undefined;
       // The digest is re-proved on every read. A store that returned bytes it
@@ -429,6 +443,19 @@ export class ResultFileStoreV1 {
         || current.ctimeNs !== listed.ctimeNs) throw new ResultFileStoreError("store_ambiguous");
       return allocation;
     } finally { await handle.close().catch(() => {}); }
+  }
+
+  /** Every entry under the root is one this store could have written. Anything
+   * else — a stray file, a directory, a name that is not a content digest — means
+   * the directory's state is not what the catalog believes, so nothing is served
+   * until that is resolved. The entries are listed, not read: this proves the
+   * NAMES are ours, and the individual read still proves its own bytes. */
+  private async assertDirectoryIsAccountedFor(operation: Operation): Promise<void> {
+    const entries = await bounded(operation, () => readdir(this.root), () => {});
+    for (const entry of entries) {
+      if (entry === lockName) continue;
+      if (!onDiskPattern.test(entry)) throw new ResultFileStoreError("store_ambiguous");
+    }
   }
 
   private async assertRootIdentity(operation: Operation): Promise<void> {
