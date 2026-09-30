@@ -15,6 +15,7 @@ import { loadFleetConnectorReleaseV1 } from "../scripts/run-fleet-gateway";
 import { generateInstallationReleaseKeyV1, releaseKeyIdV1, signConnectorReleaseAdvertisementV1,
   signReleaseArtifactsV1 } from "../scripts/release-signing.mjs";
 import { recordInstallerInstalledReleaseV1 } from "../src/installer/v1/signed-release-verifier.mjs";
+import { FLEET_WORKING_AGREEMENT_METADATA_V1 } from "../src/fleet/v1/working-agreement";
 
 const uid = process.geteuid?.() ?? 0;
 const BUILT_FROM = "a".repeat(40);
@@ -30,7 +31,7 @@ async function signedRelease(root: string, version: string, connectorBytes: Buff
   const updaterPath = join(root, `updater-${version}.tgz`), webManifestPath = join(root, "web-build-manifest.json");
   await writeFile(updaterPath, `updater ${version}\n`); await writeFile(webManifestPath, "{\"files\":[]}\n");
   await signReleaseArtifactsV1({ releaseDirectory: root, version, configPath: installed.configPath,
-    connectorPath, connectorManifestPath: manifestPath, connectorMinVersion: "0.4.0",
+    connectorPath, connectorManifestPath: manifestPath, connectorMinVersion: "0.5.0",
     updaterPath, webManifestPath }, { expectedUid: uid });
   return loadFleetConnectorReleaseV1(root, installed.trust);
 }
@@ -44,7 +45,7 @@ async function startGateway(release: Awaited<ReturnType<typeof loadFleetConnecto
       authentication.credentials.set(workerId, String(body.credentialDigest));
       return { workerId, displayName: "Signing E2E", projectIds: ["project:e2e"],
         workerKind: body.workerKind, capabilities: ["writing"], credentialExpiresAt: "2099-01-01T00:00:00.000Z",
-        replayed: false };
+        replayed: false, workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 };
     },
     async authenticate(input: { bearer?: string; declaredWorkerId?: string }) {
       const digest = `sha256:${createHash("sha256").update(input.bearer ?? "").digest("hex")}`;
@@ -52,8 +53,10 @@ async function startGateway(release: Awaited<ReturnType<typeof loadFleetConnecto
         throw new Error("unauthenticated");
       return { workerId: input.declaredWorkerId };
     },
-    me() { return { credentialExpiresAt: "2099-01-01T00:00:00.000Z" }; },
-    async heartbeat() { return { displayName: "Signing E2E", operationsMode: "running" }; },
+    me() { return { credentialExpiresAt: "2099-01-01T00:00:00.000Z",
+      workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }; },
+    async heartbeat() { return { displayName: "Signing E2E", operationsMode: "running",
+      workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }; },
   } as unknown as FleetGatewayStoreV1;
   const handler = createFleetGatewayHandlerV1({ store, releaseTrust: releaseTrust as never,
     connectorRelease: release, onUnexpectedError: () => {} });
@@ -87,20 +90,20 @@ test("generated trust signs install, recorded floor, new joins and self-update e
   await writeFile(gatewayConfigPath, "{\"schema\":\"control-room.fleet-gateway/v1\"}\n", { mode: 0o640 });
   await chmod(gatewayConfigPath, 0o640);
   const installed = await generateInstallationReleaseKeyV1({ protectedRoot, gatewayConfigPath,
-    versionFloor: "0.4.0" }, { expectedUid: uid });
+    versionFloor: "0.5.0" }, { expectedUid: uid });
 
   const bundleRoot = join(root, "embedded-bundle");
   const built = await buildFleetConnectorReleaseForTestV1({ root: bundleRoot, builtFrom: BUILT_FROM,
     releaseTrust: installed.trust });
   const initialBytes = await readFile(join(bundleRoot, built.manifest.file));
-  const initialRelease = await signedRelease(join(root, "release-0.4.0"), "0.4.0", initialBytes, installed);
-  const versionMarker = 'CONNECTOR_VERSION = "0.4.0"';
+  const initialRelease = await signedRelease(join(root, "release-0.5.0"), "0.5.0", initialBytes, installed);
+  const versionMarker = 'CONNECTOR_VERSION = "0.5.0"';
   assert.equal(initialBytes.toString("utf8").split(versionMarker).length - 1, 1,
     "the E2E changes only the connector version declaration");
   const updateBytes = Buffer.from(initialBytes.toString("utf8").replace(versionMarker,
-    'CONNECTOR_VERSION = "0.5.0"'), "utf8");
-  const updateRoot = join(root, "release-0.5.0");
-  await signedRelease(updateRoot, "0.5.0", updateBytes, installed);
+    'CONNECTOR_VERSION = "0.6.0"'), "utf8");
+  const updateRoot = join(root, "release-0.6.0");
+  await signedRelease(updateRoot, "0.6.0", updateBytes, installed);
 
   const authentication = { credentials: new Map<string, string>(), nextWorker: 1, enrollments: 0 };
   let gateway = await startGateway(initialRelease, installed.trust, 0, authentication);
@@ -114,10 +117,10 @@ test("generated trust signs install, recorded floor, new joins and self-update e
   let config = await bundled.loadConfig(joined.paths.configPath);
 
   await stopGateway(gateway.server);
-  await recordInstallerInstalledReleaseV1({ trustPath: installed.trustPath, installedVersion: "0.5.0" },
+  await recordInstallerInstalledReleaseV1({ trustPath: installed.trustPath, installedVersion: "0.6.0" },
     { expectedUid: uid });
   const raisedTrust = JSON.parse(await readFile(installed.trustPath, "utf8"));
-  assert.equal(raisedTrust.versionFloor, "0.5.0");
+  assert.equal(raisedTrust.versionFloor, "0.6.0");
   const updateRelease = await loadFleetConnectorReleaseV1(updateRoot, raisedTrust);
   gateway = await startGateway(updateRelease, raisedTrust, stablePort, authentication);
 
@@ -132,9 +135,9 @@ test("generated trust signs install, recorded floor, new joins and self-update e
     params: { protocolVersion: "2025-06-18" } })}\n`);
   const currentPath = join(joined.paths.installRoot, "current.json");
   const machineTrustPath = join(joined.paths.installRoot, "release-trust.json");
-  await waitFor(async () => JSON.parse(await readFile(currentPath, "utf8")).version === "0.5.0",
+  await waitFor(async () => JSON.parse(await readFile(currentPath, "utf8")).version === "0.6.0",
     "the stock-HOME MCP shim did not self-update current.json");
-  await waitFor(async () => JSON.parse(await readFile(machineTrustPath, "utf8")).versionFloor === "0.5.0",
+  await waitFor(async () => JSON.parse(await readFile(machineTrustPath, "utf8")).versionFloor === "0.6.0",
     "the self-update did not raise the machine floor");
   shim.stdin.end();
   const shimCode = await new Promise<number | null>((resolveClose, reject) => {
@@ -142,29 +145,29 @@ test("generated trust signs install, recorded floor, new joins and self-update e
   });
   assert.equal(shimCode, 0, shimError); assert.match(shimOutput, /"control-room"/u);
 
-  const servedPath = join(root, "served-connector-0.5.0.mjs");
+  const servedPath = join(root, "served-connector-0.6.0.mjs");
   const servedResponse = await fetch(`${gateway.origin}/fleet/v1/connector.mjs`);
   assert.equal(servedResponse.status, 200);
   await writeFile(servedPath, Buffer.from(await servedResponse.arrayBuffer()), { mode: 0o700 });
   const served = await import(`${pathToFileURL(servedPath).href}?served=${Date.now()}`);
-  assert.equal(served.CONNECTOR_VERSION, "0.5.0");
+  assert.equal(served.CONNECTOR_VERSION, "0.6.0");
 
   const newHome = join(root, "new-worker-home"); await mkdir(newHome, { mode: 0o700 });
   const newMachine = await served.installConnector({ server: gateway.origin, code: `crj_${"N".repeat(43)}`,
     bot: "cursor", name: "new-machine", homeDir: newHome, platform: "linux", env: {}, sourcePath: servedPath,
     runner: async () => ({ stdout: "", stderr: "" }) });
-  assert.equal((await served.loadConfig(newMachine.paths.configPath)).installation.updates.floorVersion, "0.5.0",
+  assert.equal((await served.loadConfig(newMachine.paths.configPath)).installation.updates.floorVersion, "0.6.0",
     "a newly joined machine receives the recorded floor even though the served bundle embedded the earlier floor");
 
   const secondBot = await served.installConnector({ server: gateway.origin, code: `crj_${"S".repeat(43)}`,
     bot: "cursor", name: "second-bot", homeDir, platform: "linux", env: {}, sourcePath: servedPath,
     runner: async () => ({ stdout: "", stderr: "" }) });
-  assert.equal((await served.loadConfig(secondBot.paths.configPath)).installation.updates.floorVersion, "0.5.0");
+  assert.equal((await served.loadConfig(secondBot.paths.configPath)).installation.updates.floorVersion, "0.6.0");
   assert.equal(authentication.enrollments, 3);
 
   config = await bundled.loadConfig(joined.paths.configPath);
   await assert.rejects(checkForConnectorUpdateV1({ installRoot: joined.paths.installRoot,
-    configPath: joined.paths.configPath, config, advertised: initialRelease.advertisement, currentVersion: "0.5.0",
+    configPath: joined.paths.configPath, config, advertised: initialRelease.advertisement, currentVersion: "0.6.0",
     healthCheck: async () => true }), /version_floor/u);
   await stopGateway(gateway.server);
 

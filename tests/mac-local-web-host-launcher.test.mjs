@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseMacLocalWebHostArguments, readPinnedMacExecutableVersion, startMacLocalTaskHost,
-  startHostWithOptionalIntake, startMacLocalWebHost, verifyPinnedMacModelPolicy } from "../scripts/mac-local/start-web-host.mjs";
+import { parseMacLocalWebHostArguments, startHostWithOptionalIntake,
+  startMacLocalTaskHost, startMacLocalWebHost } from "../scripts/mac-local/start-web-host.mjs";
+// The service host must never import bot executable inspection; it lives in
+// its own module so the launcher's own module graph stays spawn-free.
+import { readPinnedMacExecutableVersion, verifyPinnedMacModelPolicy }
+  from "../scripts/mac-local/bot-executable-inspection.mjs";
+import { startMacLocalFleetGateway } from "../scripts/mac-local/start-fleet-gateway.mjs";
 
 test("Mac local web host launcher accepts only the owner-attended fixed protected root", () => {
   assert.deepEqual(parseMacLocalWebHostArguments(["--owner-attended", "--protected-root", "/Library/Application Support/Agent Control Room"]),
@@ -13,7 +18,7 @@ test("Mac local web host launcher accepts only the owner-attended fixed protecte
   }
 });
 
-test("Mac local web host reads a bounded exact executable version without shell expansion", async () => {
+test("owner-attended setup reads a bounded exact executable version without shell expansion", async () => {
   const seen = [];
   const version = await readPinnedMacExecutableVersion("/usr/local/bin/example", { execFile: async (...args) => {
     seen.push(args); return { stdout: "example 1.2.3\n" };
@@ -25,7 +30,7 @@ test("Mac local web host reads a bounded exact executable version without shell 
     /mac_local_executable_version_unavailable/);
 });
 
-test("startup validates an explicit model allowlist against the pinned CLI surface", async () => {
+test("owner-attended setup validates an explicit model allowlist against the pinned CLI surface", async () => {
   const worker = { kind: "codex", executablePath: "/usr/local/bin/codex", modelPolicy: {
     models: ["gpt-build"], defaultModel: "gpt-build", efforts: ["high"], defaultEffort: "high",
   } };
@@ -49,12 +54,14 @@ test("web host validates and prepares optional intake before listeners and clean
       async loadWorkIntakeServerConfigurationFromRootV1() { calls.push("load-intake"); return {
         port:3211,integrityKey:"y".repeat(43),database:{},credentials:[{workerId:"worker:test",workerKind:"codex"}]}; },
       async loadMacLocalProtectedConfigurationFromRootV1() { return {enablement:{workers:[{workerId:"worker:test",kind:"codex"}]}}; },
+      async loadMacLocalDatabaseRolesFromRootV1() { calls.push("load-roles"); return {}; },
       async loadOwnerWebPushConfigFromRootV1() { calls.push("load-owner-web-push"); return ownerWebPush; },
     };
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1(input) {
       assert.equal(input.workBatchIntegrityKey instanceof Uint8Array, true);
       assert.equal(input.workBatchIntegrityKey.length, 32);
       assert.equal(input.ownerWebPush, ownerWebPush);
+      assert.ok(input.fleet);
       calls.push("prepare-web"); return {
       async start() { calls.push("start-web"); return { async close() { calls.push("close-web"); } }; },
     }; } };
@@ -62,6 +69,9 @@ test("web host validates and prepares optional intake before listeners and clean
       calls.push("prepare-intake"); return { async start() { calls.push("start-intake"); throw new Error("fixture"); },
         async close() { calls.push("close-intake"); } };
     } };
+    if (name === "macLocalFleet.js") return { async loadMacLocalFleetReleaseTrustV1() { return {}; },
+      async loadMacLocalFleetConnectorReleaseV1() { return undefined; },
+      prepareMacLocalFleetOwnerV1() { return { fleet: { ownerAuthority: {} }, async close() { calls.push("close-fleet"); } }; } };
     if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
     if (name === "serving.js") return { async loadPrivateClientAssets() { return {}; } };
     if (name === "index.js") return { default() {} };
@@ -70,8 +80,8 @@ test("web host validates and prepares optional intake before listeners and clean
   await assert.rejects(startMacLocalWebHost({ protectedRoot: "/protected" }, {
     load, loadHealthProbeKey: async () => Buffer.alloc(32, 7), hostReleaseIdentity: async () => "dev",
   }), /fixture/);
-  assert.deepEqual(calls, ["load-intake", "load-owner-web-push", "prepare-web", "prepare-intake", "start-web", "start-intake",
-    "close-intake", "close-web"]);
+  assert.deepEqual(calls, ["load-intake", "load-owner-web-push", "load-roles", "prepare-web", "prepare-intake", "start-web", "start-intake",
+    "close-intake", "close-web", "close-fleet"]);
 });
 
 test("optional intake preserves the web host readiness signal", async () => {
@@ -87,49 +97,48 @@ test("optional intake preserves the web host readiness signal", async () => {
   await result.close(); assert.equal(closes, 2);
 });
 
-test("task host requires the fixed release provider and does not accept a caller callback", async () => {
+test("task host is connector-only and loads neither a task provider nor a native queue worker", async () => {
   const loaded = [];
-  let providerInput;
   const task = { async close() {}, isReady: () => true };
   const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, {
-    readVersion: async () => "pinned",
+    readVersion: async () => assert.fail("connector-only host must not inspect a bot CLI"),
     loadHealthProbeKey: async () => Buffer.alloc(32, 7), hostReleaseIdentity: async () => "dev",
     load: async path => {
       loaded.push(path.split("/").at(-1));
       if (path.endsWith("macLocalHost.js")) return { createMacLocalProtectedHostV1: input => ({
         async start() {
-          if (!input.startQueueWorker) assert.fail("task callbacks missing");
-          await input.createTaskApplication({ workerReadiness: {}, configuration: {}, database: {}, databaseRoles: {} });
+          assert.equal(input.connectorOnly, true);
+          assert.equal(input.createTaskApplication, undefined);
+          assert.equal(input.startQueueWorker, undefined);
+          assert.equal(input.readVersion, undefined);
+          assert.ok(input.fleet);
           return task;
         },
       }) };
       if (path.endsWith("macLocalProtectedLoader.js")) return {
         loadMacLocalProtectedConfigurationFromRootV1: async () => ({ localOwnerSession: { tenantId: "tenant:fixture" },
-          workspaceId: "workspace:fixture",enablement:{workers:[]} }), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
+          workspaceId: "workspace:fixture",enablement:{workers:[]} }),
         loadWorkIntakeServerConfigurationFromRootV1: async()=>undefined,
+        loadMacLocalDatabaseRolesFromRootV1: async()=>({}),
         loadOwnerWebPushConfigFromRootV1: async()=>undefined,
       };
-      if (path.endsWith("macLocalTaskProvider.js")) return { loadMacLocalTaskProviderFromRootV1: async () => ({
-        workerKinds: ["hermes", "claude-code", "codex"], createTaskApplication: async input => { providerInput = input; return {}; },
-      }), requireMacLocalThreeAgentReadinessV1() {} };
       if (path.endsWith("privatePostgres.js")) return { createPrivatePostgresDatabase: () => ({
         client: { query: async () => ({ rows: [{ id: "project:fixture" }] }) }, async close() {},
       }) };
-      if (path.endsWith("nativeQueueFactories.js")) return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
       if (path.endsWith("serving.js")) return { loadPrivateClientAssets: async () => ({ respond() {} }) };
       if (path.endsWith("index.js")) return { default() {} };
       if(path.endsWith("workIntakePrivateService.js"))return{prepareWorkIntakePrivateServiceV1(){}};
+      if(path.endsWith("macLocalFleet.js"))return{loadMacLocalFleetReleaseTrustV1:async()=>({}),loadMacLocalFleetConnectorReleaseV1:async()=>undefined,
+        prepareMacLocalFleetOwnerV1:()=>({fleet:{ownerAuthority:{}},async close(){}})};
       throw new Error(`unexpected ${path}`);
     },
   });
-  assert.equal(result, task);
-  assert.equal(providerInput.protectedRoot, "/protected");
+  assert.equal(result.isReady(), true);
   assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js",
-    "macLocalTaskProvider.js", "nativeQueueFactories.js", "privatePostgres.js", "serving.js",
-    "workIntakePrivateService.js"].sort());
+    "privatePostgres.js", "serving.js", "workIntakePrivateService.js", "macLocalFleet.js"].sort());
 });
 
-test("a zero-project first start loads the live task provider without requiring a restart", async () => {
+test("a zero-project connector-only start remains website/intake-only", async () => {
   const loaded = [];
   const site = { async close() {}, isReady: () => true };
   const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, { loadHealthProbeKey: async () => Buffer.alloc(32, 7),
@@ -137,24 +146,50 @@ test("a zero-project first start loads the live task provider without requiring 
     const name = path.split("/").at(-1); loaded.push(name);
     if (name === "macLocalProtectedLoader.js") return {
       loadMacLocalProtectedConfigurationFromRootV1: async () => ({enablement:{workers:[]}}),
-      loadMacLocalDatabaseRolesFromRootV1: async () => ({}),loadWorkIntakeServerConfigurationFromRootV1:async()=>undefined,
+      loadWorkIntakeServerConfigurationFromRootV1:async()=>undefined,
+      loadMacLocalDatabaseRolesFromRootV1:async()=>({}),
       loadOwnerWebPushConfigFromRootV1:async()=>undefined,
     };
     if (name === "privatePostgres.js") return { createPrivatePostgresDatabase: () => ({}) };
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1: input => ({ async start() {
-      await input.createTaskApplication({ workerReadiness: {}, configuration: {}, database: {}, databaseRoles: {} });
-      return site;
+      assert.equal(input.connectorOnly, true); return site;
     } }) };
-    if (name === "macLocalTaskProvider.js") return { loadMacLocalTaskProviderFromRootV1: async () => ({
-      workerKinds: ["hermes", "claude-code", "codex"], createTaskApplication: async () => ({}),
-    }), requireMacLocalThreeAgentReadinessV1() {} };
-    if (name === "nativeQueueFactories.js") return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
     if (name === "serving.js") return { loadPrivateClientAssets: async () => ({ respond() {} }) };
     if (name === "index.js") return { default() {} };
     if(name==="workIntakePrivateService.js")return{prepareWorkIntakePrivateServiceV1(){}};
+    if(name==="macLocalFleet.js")return{loadMacLocalFleetReleaseTrustV1:async()=>({}),loadMacLocalFleetConnectorReleaseV1:async()=>undefined,
+      prepareMacLocalFleetOwnerV1:()=>({fleet:{ownerAuthority:{}},async close(){}})};
     throw new Error(`unexpected ${name}`);
   } });
-  assert.equal(result, site);
-  assert.equal(loaded.includes("macLocalTaskProvider.js"), true);
-  assert.equal(loaded.includes("nativeQueueFactories.js"), true);
+  assert.equal(result.isReady(), true);
+  assert.equal(loaded.includes("macLocalTaskProvider.js"), false);
+  assert.equal(loaded.includes("nativeQueueFactories.js"), false);
+});
+
+test("the Mac fleet gateway launcher composes one separate loopback service from protected roles", async () => {
+  const loaded = [], calls = [], service = { origin: "http://127.0.0.1:3212", async start() { calls.push("start"); },
+    async close() { calls.push("close"); } };
+  const active = await startMacLocalFleetGateway({ protectedRoot: "/protected" }, { load: async path => {
+    const name = path.split("/").at(-1); loaded.push(name);
+    if (name === "macLocalProtectedLoader.js") return {
+      loadMacLocalProtectedConfigurationFromRootV1: async () => ({ localOwnerSession: { tenantId: "tenant:test" } }),
+      loadMacLocalDatabaseRolesFromRootV1: async () => ({ fleetGateway: {}, fleetOwner: {} }),
+      loadWorkIntakeServerConfigurationFromRootV1: async () => ({ integrityKey: "k".repeat(43) }),
+    };
+    if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
+    if (name === "macLocalFleet.js") return {
+      loadMacLocalFleetReleaseTrustV1: async () => ({ keyId: "test" }),
+      loadMacLocalFleetConnectorReleaseV1: async () => ({ manifest: {} }),
+      async prepareMacLocalFleetGatewayV1(input) {
+        assert.equal(input.configuration.localOwnerSession.tenantId, "tenant:test");
+        assert.ok(input.databaseRoles.fleetGateway); assert.ok(input.connectorRelease); assert.equal(input.releaseTrust.keyId, "test"); return service;
+      },
+    };
+    throw new Error(`unexpected ${name}`);
+  } });
+  assert.equal(active, service);
+  assert.deepEqual(calls, ["start"]);
+  assert.deepEqual(loaded.sort(), ["macLocalFleet.js", "macLocalProtectedLoader.js", "privatePostgres.js"].sort());
+  await active.close();
+  assert.deepEqual(calls, ["start", "close"]);
 });

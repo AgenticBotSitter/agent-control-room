@@ -31,6 +31,7 @@ export default defineConfig({
       privateLocalInstallationOperatorCli: "src/installer/v1/private-local-installation-operator-cli.ts",
       macLocalProtectedLoader: "src/web/v1/mac-local-protected-loader.ts",
       macLocalHost: "src/web/v1/mac-local-host.ts",
+      macLocalFleet: "src/fleet/v1/mac-local-composition.ts",
       privatePostgres: "src/web/v1/private-postgres.ts",
       macLocalTaskProvider: "src/web/v1/mac-local-task-provider.ts",
       macLocalDefaultTaskProvider: "src/web/v1/mac-local-default-task-provider.ts",

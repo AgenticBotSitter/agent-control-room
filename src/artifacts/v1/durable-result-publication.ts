@@ -9,7 +9,7 @@ import { appendAuditWith } from "../../audit/audit-store";
 import { checkedResultBytes, resultBytesHash } from "./native-results";
 import { createResultWriteReservationMachine, resultBytesVerificationDigestV1 } from "./result-write-reservation";
 import type { NeutralReservationPort, NeutralReservationRowV1 } from "./neutral-reservation-port";
-import { durableResultArtifactIdV1, durableResultReceiptSchemaV1, durableResultReceiptTagV1,
+import { durableResultArtifactIdV1, durableResultRunArtifactIdV1, durableResultReceiptSchemaV1, durableResultReceiptTagV1,
   type DurableResultReceiptV1 } from "./durable-result-receipt";
 import { durableResultReviewPlanSchemaV1, durableResultReviewPlanTagV1, durableReviewTargetV1 } from "../../completion-gate/v1/durable-result-review-plan";
 import type { CompletionReviewTargetV1 } from "../../completion-gate/v1/types";
@@ -173,8 +173,14 @@ export const durableResultReservationSchemaV1 = durableReservationMaterialSchema
 }).strict().superRefine((value, context) => {
   const { contractDigest, ...material } = value;
   const identityDigest = sha256Digest(value.identity);
-  const expectedArtifact = durableResultArtifactIdV1(value.identity.contentHash);
-  if (value.identity.artifactId !== expectedArtifact
+  // Identity is RUN-SCOPED. The artifact a run writes belongs to that run, so
+  // the id must be reproducible from (runId, contentHash) alone. A stored
+  // reservation written before run-scoped ids carried the content-derived form;
+  // that is still accepted so an in-flight replay is not stranded, but no new
+  // reservation may mint one (see `durableResultRunArtifactIdV1`).
+  const runArtifact = durableResultRunArtifactIdV1({ runId: value.identity.runId, contentHash: value.identity.contentHash });
+  const legacyArtifact = durableResultArtifactIdV1(value.identity.contentHash);
+  if (value.identity.artifactId !== runArtifact && value.identity.artifactId !== legacyArtifact
     || value.identityDigest !== identityDigest
     || value.reservationId !== `reservation:durable:${identityDigest.slice(7)}`
     || value.contractDigest !== sha256Digest(material)) {
@@ -586,7 +592,10 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
   if (bytes.byteLength > 65_536) unavailable();
   const contentHash = resultBytesHash(bytes);
   checkedResultBytes(bytes, { contentHash, sizeBytes: bytes.byteLength });
-  const artifactId = durableResultArtifactIdV1(contentHash);
+  // Run-scoped, not content-scoped: two runs whose results are byte-identical
+  // must remain two artifacts, or the second one's reservation insert collides
+  // on the content-derived id and its delivery can never complete.
+  const artifactId = durableResultRunArtifactIdV1({ runId: input.binding.runId, contentHash });
   const identity = buildNeutralIdentity(input.binding, artifactId, contentHash, bytes.byteLength);
   const binding = input.binding;
 
@@ -620,7 +629,13 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
       if (!row) unavailable();
     }
     const reservation = verifyNeutralReservationRow(row!, key);
-    if (reservation.identityDigest !== sha256Digest(identity)) conflict();
+    // A reservation written before run-scoped ids carries the content-form id. The
+    // identity digest covers every field and the row already passed its HMAC check,
+    // so accepting the content-form digest matches only an otherwise-identical
+    // replay of the same run. New reservations are still minted run-scoped only.
+    if (reservation.identityDigest !== sha256Digest(identity)
+      && reservation.identityDigest !== sha256Digest(buildNeutralIdentity(binding,
+        durableResultArtifactIdV1(contentHash), contentHash, bytes.byteLength))) conflict();
     if (reservation.state !== "metadata_committed") throw new Error("durable_result_manual_reconciliation_required");
     const resultRow = (await tx.query<NeutralReceiptRow>(`SELECT ${neutralSelection}
       WHERE r.tenant_id=$1 AND r.run_id=$2`, [identity.tenantId, identity.runId])).rows[0];

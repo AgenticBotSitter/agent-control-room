@@ -15,11 +15,22 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
+// Generated from public migrations through 0230 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
+// including generic external-content migrations 0025/0026, by the controlled
+// PGlite digest script. Recomputed for the fix round after 0206's quota guard
+// gained its per-tenant advisory lock, 0207's producer guard was corrected, and
+// 0207's acceptance guard gained the owner check on discarding a set; then again
+// after 0230 gave the acceptance guard a NAMED rejection arm and the plan's
+// 90-day sweep, which closed the review's S3 (an unaccepted set was previously
+// undisposable by anyone, the superuser included). The pre-0230 digest was
+// re-derived with 0230 removed and matched the previous value exactly, so this
+// change is 0230's and only 0230's; catalog query below; not a mutable database
+// marker.
 // Generated from public migrations through 0196 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162, 0186 and 0115),
 // including generic external-content migrations 0025/0026, plus MIG-I's owner push attempt heads 0224-0226 and the push-endpoint
 // allow list 0227, read from a real PostgreSQL 17 cluster installed the production way and built from these migrations. Catalog
 // query below; not a mutable database marker.
-export const privateWebSchemaDigest = "a4cadc0cc4feda19a13a5a8b51d0b7f8527b4b2b0e5c9a20da02b5d5ddd978f5";
+export const privateWebSchemaDigest = "10f1bc5beb5f65aacfdac818d7d690b35c8bc4f884e5034d451913ec621e980c";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -61,7 +72,15 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // against this list -- a grant the preflight does not know about is a
   // preflight failure, not a lenient pass.
   "control_owner_push_attempt_heads",
-  "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals"] as const;
+  // 0155-0157: the operations-mode revisions and the mode they resolve to. The
+  // web login reads them and inserts its own revision, which is why the table is
+  // in the read list AND `privateWebInsertTables`; an audit that listed only one
+  // side would refuse a correct database.
+  "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals",
+  // 0206-0208: the result-file catalog and its download grants. Read only; the
+  // preflight's column audit is what proves the web login cannot write a
+  // catalog row, cannot quarantine a file and cannot rewrite a producer.
+  "control_result_file_sets", "control_result_files", "control_result_file_download_grants"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -89,9 +108,12 @@ privateWebInsertTables.add("pipeline_installation_allowances"); privateWebInsert
 privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
+// 0208: the owner-facing download grant for one exact file. Insert and spend
+// only; the catalog itself is never written by the web login.
+privateWebInsertTables.add("control_result_file_download_grants");
+// cook/v1 (recurring + skills): the owner's rules and reusable skills.
 for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
   privateWebInsertTables.add(table);
-
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -143,6 +165,12 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
   control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
+  // 0206-0208: the owner's two retention decisions and the one-time spend of a
+  // download grant. Every other catalog column is read-only to the web login,
+  // which is what makes "a worker or a reader cannot mark bytes stored" a
+  // statement about the live ACL rather than about application code.
+  control_result_file_sets: ["retention_state", "accepted_at", "accepted_by_identity_id", "retained_until"],
+  control_result_file_download_grants: ["spent_at"],
   control_skills: ["current_version", "state", "updated_at"],
   control_recurring_rules: ["state", "plain_schedule", "cron_expression", "timezone", "task_template", "version",
     "updated_by_identity_id", "updated_at"],
@@ -296,15 +324,27 @@ const resultReads = ["workspaces", "control_identities", "control_role_grants", 
   "control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_native_review_plans",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records",
   "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding", "control_idea_sessions",
-  "control_idea_canonical_task_links", "control_idea_contributions", "control_idea_decisions"];
+  "control_idea_canonical_task_links", "control_idea_contributions", "control_idea_decisions",
+  // 0206: the publisher records the catalog for the attempt it just published,
+  // and 0206's deferred completeness trigger counts its own rows as the invoker.
+  "control_result_file_sets", "control_result_files"];
 const resultInserts = new Set(["control_native_review_plans", "control_completion_gate_records", "audit_events", "control_audit_chain_heads",
   "control_idea_contributions"]);
+// 0206-0208: the publisher may record a set and its files, and may move them
+// to stored once the bytes are on disk. It may NOT accept, quarantine, delete,
+// or touch a download grant — the web login alone mints those.
+resultInserts.add("control_result_file_sets"); resultInserts.add("control_result_files");
 const resultUpdates: Record<string, readonly string[]> = {
   control_jobs: ["result_lock"], control_harness_runs: ["coordinator_lock"], projects: ["coordinator_lock"],
   control_completion_gate_records: ["web_lock"],
   control_native_review_plans: ["results_lock"], control_native_artifact_receipts: ["results_lock"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+  // The publisher's two catalog state moves. `manifest_digest` is listed because
+  // 0206 refuses a set that does not match the digest it recomputes, so the
+  // publisher must be able to write the one it computed — and nothing else.
+  control_result_files: ["state", "stored_at"],
+  control_result_file_sets: ["state", "stored_at", "manifest_digest"],
 };
 const evidenceReads = ["workspaces", "control_identities", "control_role_grants", "projects", "control_manual_project_heads",
   "control_jobs", "control_attempts", "control_leases", "control_nodes", "control_node_keys", "control_harness_runs", "control_harness_run_events",

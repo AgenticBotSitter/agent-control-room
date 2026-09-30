@@ -17,11 +17,16 @@ export function runtimePaths(root) {
   const runtime = join(root, "runtime");
   return Object.freeze({ runtime, provider: join(runtime, "task-provider.mjs"),
     hostPid: join(runtime, "task-host.pid"), hostLog: join(runtime, "task-host.log"),
-    hostState: join(runtime, "task-host-state.json"), upgradePrevious: join(runtime, "upgrade-previous.json") });
+    hostState: join(runtime, "task-host-state.json"),
+    fleetGatewayPid: join(runtime, "fleet-gateway.pid"), fleetGatewayLog: join(runtime, "fleet-gateway.log"),
+    upgradePrevious: join(runtime, "upgrade-previous.json") });
 }
 
 export const taskHostCommand = root => [process.execPath, "scripts/mac-local/start-task-host.mjs", "--owner-attended", "--protected-root", root];
 export const hostCommand = root => [process.execPath, "scripts/mac-local/task-host-supervisor.mjs", "--protected-root", root];
+export const FLEET_GATEWAY_PORT = 3212;
+export const fleetGatewayCommand = root => [process.execPath, "scripts/mac-local/start-fleet-gateway.mjs",
+  "--owner-attended", "--protected-root", root];
 
 /** Selects only this release's supervisor or the exact pre-supervisor direct host for the same root. */
 export function recordedHostCommand(pid, root, isAlive = alive) {

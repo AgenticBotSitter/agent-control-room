@@ -63,7 +63,7 @@ export class SecurityStore {
       throw new Error("Owner bootstrap requires a currently valid verified authentication");
     }
     await this.db.transaction(async (tx) => {
-      await tx.query(`SELECT id FROM tenants WHERE id=$1 FOR UPDATE`, [input.tenantId]);
+      await tx.query(`SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE`, [input.tenantId]);
       const existing = await tx.query<{ count: string }>(
         `SELECT count(*)::text AS count FROM control_identities WHERE tenant_id=$1`,
         [input.tenantId],

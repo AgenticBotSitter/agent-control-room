@@ -309,6 +309,28 @@
 }
 @keyframes private-state-spin { to { transform: rotate(360deg); } }
 
+/* Connect-a-bot stays one narrow reading column so the install line and its
+ * expiry remain ahead of inventory/help at phone width. */
+.connect-bot-form, .connect-bot-inventory, .connect-bot-help, .connect-bot-result { max-width: 52rem; margin-bottom: 1rem; }
+.connect-bot-form select { width: 100%; min-height: 44px; padding: .6rem; border: 1px solid var(--border-strong);
+  border-radius: .5rem; color: var(--text); background: var(--surface); font: inherit; }
+.connect-bot-form fieldset { display: grid; gap: .65rem; border: 1px solid var(--border); border-radius: .6rem; padding: 1rem; }
+.connect-bot-form fieldset > label { display: flex; align-items: center; gap: .55rem; min-height: 44px; }
+.connect-bot-form input[type="checkbox"], .connect-bot-form input[type="radio"] { width: 1.15rem; height: 1.15rem; flex: none; }
+.connect-bot-choice-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; }
+.connect-bot-choice-grid label { display: flex; align-items: center; gap: .55rem; min-height: 52px; padding: .55rem;
+  border: 1px solid var(--border); border-radius: .5rem; }
+.connect-bot-choice-grid span { display: grid; }
+.connect-bot-choice-grid small { color: var(--muted); }
+.connect-bot-result h2 { margin-block: .3rem; }
+.connect-bot-result pre { max-height: 16rem; overflow: auto; padding: .85rem; border: 1px solid var(--border);
+  border-radius: .5rem; background: var(--surface); }
+.connect-bot-result.is-expired { border-color: var(--red); background: var(--red-soft); }
+@media (max-width: 560px) {
+  .connect-bot-choice-grid { grid-template-columns: 1fr; }
+  .connect-bot-form, .connect-bot-inventory, .connect-bot-help, .connect-bot-result { padding: 1rem; }
+}
+
 /* A panel heading with an optional trailing count, so a list can be scanned
  * without counting rows by eye. */
 .private-panel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }

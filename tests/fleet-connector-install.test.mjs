@@ -5,9 +5,11 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, symli
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
 import { connectorReleaseSignatureMaterialV1, releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
+import { buildFleetConnectorReleaseForTestV1 } from "../scripts/build-fleet-connector.mjs";
 
 const SOURCE = resolve("scripts/fleet/connector.mjs");
 const WORKER_ID = `fleet-worker:${"a".repeat(32)}`;
@@ -16,6 +18,21 @@ const RELEASE_PUBLIC_KEY = RELEASE_KEYS.publicKey.export({ format: "der", type: 
 const RELEASE_TRUST = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
   keyId: releaseKeyIdV1(RELEASE_PUBLIC_KEY), publicKey: RELEASE_PUBLIC_KEY,
   versionFloor: connector.CONNECTOR_VERSION, revokedKeyIds: [] });
+// Unattended worker installation is refused unless this exact connector build
+// carries its own harness adapter, so the worker tests exercise the real
+// bundled release rather than a source checkout.
+let bundledRoot, bundledSource, bundledConnector;
+
+test.before(async () => {
+  bundledRoot = await mkdtemp(join(tmpdir(), "connector-install-bundle-"));
+  const release = await buildFleetConnectorReleaseForTestV1({ root: bundledRoot, builtFrom: "7".repeat(40),
+    releaseTrust: RELEASE_TRUST });
+  bundledSource = join(bundledRoot, release.manifest.file);
+  bundledConnector = await import(`${pathToFileURL(bundledSource).href}?install-tests=1`);
+});
+test.after(async () => { if (bundledRoot) await rm(bundledRoot, { recursive: true, force: true }); });
+const WORKING_AGREEMENT = Object.freeze({ version: connector.WORKING_AGREEMENT.version,
+  digest: connector.WORKING_AGREEMENT.digest, startsWork: false, grantsAuthority: false });
 
 function code(character) { return `crj_${character.repeat(43)}`; }
 
@@ -25,12 +42,13 @@ function json(ok, result, status = ok ? 200 : 409) {
   });
 }
 
-function fakeGateway({ rotateDelayMs = 0, resultWorkerKind, releaseTrust = RELEASE_TRUST, releaseKeys = RELEASE_KEYS } = {}) {
+function fakeGateway({ rotateDelayMs = 0, resultWorkerKind, releaseTrust = RELEASE_TRUST, releaseKeys = RELEASE_KEYS,
+  sourcePath = SOURCE } = {}) {
   const workerKinds = new Set(["codex", "claude-code", "hermes", "claude-desktop", "cursor", "mcp-agent"]);
   const used = new Set();
   const bindings = new Map();
   const state = { enrollments: 0, rotations: 0, digest: null, dropAfterEnroll: false, dropAfterRotate: false };
-  const connectorRelease = readFile(SOURCE).then(bytes => {
+  const connectorRelease = readFile(sourcePath).then(bytes => {
     const unsigned = { version: connector.CONNECTOR_VERSION, file: `connector-${connector.CONNECTOR_VERSION}.mjs`,
       sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length, builtFrom: "0".repeat(40),
       minVersion: connector.CONNECTOR_VERSION };
@@ -55,7 +73,7 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind, releaseTrust = RELEA
       return json(true, { workerId: WORKER_ID, displayName: "Fixture bot", projectIds: ["project:test"],
         workerKind: resultWorkerKind ?? body.workerKind, capabilities: ["writing"],
         credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust,
-        connector: await connectorRelease }, 201);
+        connector: await connectorRelease, workingAgreement: WORKING_AGREEMENT }, 201);
     }
     if (!authenticated) return json(false, "unauthenticated", 401);
     if (path === "/fleet/v1/rotate") {
@@ -65,10 +83,11 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind, releaseTrust = RELEA
       if (state.dropAfterRotate) { state.dropAfterRotate = false; throw new Error("connection dropped"); }
       return json(true, { credentialExpiresAt: "2099-02-01T00:00:00.000Z" });
     }
-    if (path === "/fleet/v1/heartbeat") return json(true, { displayName: "Fixture bot", operationsMode: "running" });
+    if (path === "/fleet/v1/heartbeat") return json(true, { displayName: "Fixture bot", operationsMode: "running",
+      workingAgreement: WORKING_AGREEMENT });
     if (path === "/fleet/v1/me") return json(true, { displayName: "Fixture bot",
       credentialExpiresAt: "2099-02-01T00:00:00.000Z", releaseTrust,
-      connector: await connectorRelease });
+      connector: await connectorRelease, workingAgreement: WORKING_AGREEMENT });
     throw new Error(`unexpected request ${path}`);
   };
   return { fetcher, state };
@@ -146,6 +165,66 @@ test("spawned bot CLIs receive only paths derived from the injected home", async
   assert.equal(childEnv.CLAUDE_CONFIG_DIR, join(homeDir, ".claude"));
   assert.equal(childEnv.XDG_CONFIG_HOME, join(homeDir, ".config"));
   assert.equal(childEnv.XDG_CUSTOM_HOME, undefined);
+});
+
+test("macOS unattended install writes a per-bot harness profile and hashed owner LaunchAgent, then removes both", async t => {
+  const homeDir = await temporary(t, "connector-mac-worker-"), gateway = fakeGateway({ sourcePath: bundledSource }), commands = recorder();
+  const input = { server: "https://control.example", code: code("W"), bot: "codex", name: "local-codex",
+    homeDir, platform: "darwin", env: {}, fetcher: gateway.fetcher, runner: commands.runner, sourcePath: bundledSource,
+    unattended: true, workerExecutable: "/fixture/bin/codex", workerDeadlineMs: 120_000,
+    ownerUid: 501, nodePath: "/fixture/bin/node" };
+  const installed = await bundledConnector.installConnector(input);
+  const harnesses = JSON.parse(await readFile(installed.paths.harnessesPath, "utf8"));
+  assert.deepEqual(harnesses, { schema: "control-room.fleet-harnesses/v1", harnesses: { codex: {
+    enabled: true, executablePath: "/fixture/bin/codex", workingDirectory: installed.paths.workspace, deadlineMs: 120_000,
+  } } });
+  const plist = await readFile(installed.paths.servicePath, "utf8");
+  assert.match(plist, /<string>run<\/string>/u);
+  assert.match(plist, /<string>--profile<\/string>\s*<string>local-codex<\/string>/u);
+  assert.match(plist, /<string>--harnesses<\/string>/u);
+  assert.equal(plist.includes(installed.paths.harnessesPath), true,
+    "the service must read this profile's validated harness settings, not a shared default");
+  assert.equal(plist.includes((await bundledConnector.loadConfig(installed.paths.configPath)).secret), false);
+  assert.equal(plist.includes("HOME"), false, "the plist must not carry an environment block");
+  assert.equal((await stat(installed.paths.servicePath)).mode & 0o777, 0o600);
+  assert.deepEqual(commands.calls.filter(call => call[0] === "/bin/launchctl").map(call => call[1][0]),
+    ["print", "bootout", "bootstrap"]);
+  assert.equal((await bundledConnector.loadConfig(installed.paths.configPath)).installation.unattended, true);
+
+  const installedCopy = await import(`${pathToFileURL(installed.paths.connectorPath).href}?installed-round-trip=1`);
+  const accepted = await installedCopy.loadHarnessSettings(installed.paths.harnessesPath);
+  assert.equal(accepted.adapterModule, null);
+  assert.equal(typeof (await installedCopy.loadHarnessAdapter(accepted, "codex")).execute, "function");
+
+  await bundledConnector.installConnector({ ...input, unattended: false });
+  assert.equal((await bundledConnector.loadConfig(installed.paths.configPath)).installation.unattended, true,
+    "an ordinary retry must not orphan an already-running worker service");
+
+  await bundledConnector.uninstallConnector({ bot: input.bot, name: input.name, homeDir, platform: "darwin", env: {},
+    runner: commands.runner, realHomeDir: homeDir, ownerUid: 501 });
+  await assert.rejects(stat(installed.paths.configPath), error => error.code === "ENOENT");
+  await assert.rejects(stat(installed.paths.harnessesPath), error => error.code === "ENOENT");
+  await assert.rejects(stat(installed.paths.servicePath), error => error.code === "ENOENT");
+});
+
+test("worker install retries safely after launchctl stops halfway without a second enrollment", async t => {
+  const homeDir = await temporary(t, "connector-worker-retry-"), gateway = fakeGateway({ sourcePath: bundledSource }), commands = recorder();
+  let failBootstrap = true;
+  const runner = async (...args) => {
+    if (args[0] === "/bin/launchctl" && args[1][0] === "bootstrap" && failBootstrap) {
+      failBootstrap = false; throw new Error("launchctl stopped with exit 5: fixture failure");
+    }
+    return commands.runner(...args);
+  };
+  const input = { server: "https://control.example", code: code("X"), bot: "claude-code", name: "retry-worker",
+    homeDir, platform: "darwin", env: {}, fetcher: gateway.fetcher, runner, sourcePath: bundledSource, unattended: true,
+    workerExecutable: "/fixture/bin/claude", ownerUid: 501, nodePath: "/fixture/bin/node" };
+  await assert.rejects(bundledConnector.installConnector(input), /fixture failure/u);
+  assert.equal((await bundledConnector.loadConfig(bundledConnector.connectorInstallPaths(input).configPath)).installation.state, "registering");
+  const installed = await bundledConnector.installConnector(input);
+  assert.equal(gateway.state.enrollments, 1);
+  assert.equal((await bundledConnector.loadConfig(installed.paths.configPath)).installation.state, "installed");
+  assert.equal((await bundledConnector.loadConfig(installed.paths.configPath)).installation.unattended, true);
 });
 
 test("real-home installs honor explicit bot profile directories and refuse invalid ones before enrollment", async t => {
@@ -396,6 +475,166 @@ test("the test guard refuses agent CLIs before even an injected spawner is calle
     spawnProcess: () => { spawned = true; throw new Error("must not spawn"); },
   }), /Test guard refused/u);
   assert.equal(spawned, false);
+  await assert.rejects(connector.runCommand("codex", ["mcp", "list"], {
+    env: { CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", CONTROL_ROOM_TEST_AGENT_CLI_DIR: "relative" },
+    spawnProcess: () => { spawned = true; throw new Error("must not spawn"); },
+  }), /Test guard refused/u);
+  assert.equal(spawned, false);
+  await assert.rejects(connector.runCommand("systemctl", ["--user", "status"], {
+    env: { CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+    spawnProcess: () => { spawned = true; throw new Error("must not spawn"); },
+  }), /Test guard refused to spawn the real systemctl service manager/u);
+  assert.equal(spawned, false);
+});
+
+test("macOS, Linux and Windows definitions install one per-user service and uninstall only that profile", async t => {
+  for (const platform of ["darwin", "linux", "win32"]) await t.test(platform, async t => {
+    const root = await temporary(t, `connector-service-${platform}-`), homeDir = join(root, "home with space & sign");
+    await mkdir(homeDir, { recursive: true });
+    const env = { APPDATA: join(homeDir, "AppData", "Roaming"), LOCALAPPDATA: join(homeDir, "AppData", "Local"),
+      XDG_CONFIG_HOME: join(homeDir, ".config"), XDG_DATA_HOME: join(homeDir, ".local", "share"),
+      XDG_STATE_HOME: join(homeDir, ".local", "state") };
+    const paths = connector.connectorInstallPaths({ homeDir, env, platform, name: "night-codex" });
+    assert.match(paths.serviceName, /[a-f0-9]{16}/u);
+    assert.equal(paths.serviceName.includes("night-codex"), false, "service-manager identity is a fixed profile digest");
+    const active = new Set(), calls = [];
+    const runner = async (command, args) => {
+      calls.push([command, args]);
+      if (command.endsWith("launchctl")) {
+        if (args[0] === "print" && !active.has(args[1])) throw new Error("not found");
+        if (args[0] === "bootstrap") active.add(`${args[1]}/${paths.serviceName}`);
+        if (args[0] === "bootout") active.delete(args[1]);
+      } else if (command === "systemctl") {
+        if (args[1] === "is-enabled" && !active.has(args[2])) throw new Error("not found");
+        if (args[1] === "enable") active.add(args.at(-1));
+        if (args[1] === "disable") active.delete(args.at(-1));
+      } else if (command === "schtasks") {
+        const name = args[args.indexOf("/TN") + 1];
+        if (args[0] === "/Query" && !active.has(name)) throw new Error("not found");
+        if (args[0] === "/Create") active.add(name);
+        if (args[0] === "/Delete") active.delete(name);
+      }
+      return { stdout: "", stderr: "" };
+    };
+    await connector.installConnectorService(paths, { platform, env, runner, ownerUid: 501,
+      nodePath: join(homeDir, "Node Runtime", "node") });
+    await connector.installConnectorService(paths, { platform, env, runner, ownerUid: 501,
+      nodePath: join(homeDir, "Node Runtime", "node") });
+    assert.deepEqual([...active], [platform === "darwin" ? `gui/501/${paths.serviceName}` : paths.serviceName],
+      "reinstall replaces the same service identity");
+    const encoding = platform === "win32" ? "utf16le" : "utf8";
+    const definition = await readFile(paths.servicePath, encoding);
+    assert.match(definition, /control-room-owned-connector-service\/v1/u);
+    assert.match(definition, /launcher\.mjs/u);
+    assert.match(definition,
+      /(?:<string>launch<\/string>\s*<string>run<\/string>|"launch"\s+"run"|(?:^|[>\s;])launch\s+run\b)/su);
+    assert.match(definition, /(?:--profile|&quot;--profile&quot;).*night-codex/su);
+    assert.match(definition, /(?:--harnesses|&quot;--harnesses&quot;).*harnesses\.json/su);
+    assert.match(definition, /(?:--service-log|&quot;--service-log&quot;)/u);
+    if (platform === "darwin") {
+      assert.match(definition, /<key>KeepAlive<\/key><dict><key>SuccessfulExit<\/key><false\/><\/dict>/u);
+      assert.match(definition, /<key>ThrottleInterval<\/key><integer>30<\/integer>/u);
+      assert.ok(paths.servicePath.startsWith(join(homeDir, "Library", "LaunchAgents")));
+    } else if (platform === "linux") {
+      assert.match(definition, /Restart=on-failure\nRestartSec=30s/u);
+      assert.match(definition, /WantedBy=default\.target/u);
+      assert.ok(calls.filter(call => call[0] === "systemctl").every(call => call[1][0] === "--user"));
+    } else {
+      assert.match(definition, /<LogonTrigger>/u);
+      assert.match(definition, /<RestartOnFailure><Interval>PT1M<\/Interval><Count>3<\/Count>/u);
+      assert.doesNotMatch(JSON.stringify(calls), /\/RU|SYSTEM/iu);
+    }
+    const foreign = join(dirname(paths.servicePath), platform === "win32" ? "UnrelatedTask.xml" : "unrelated.service");
+    await writeFile(foreign, "not ours\n");
+    await mkdir(dirname(paths.serviceLogPath), { recursive: true });
+    await writeFile(paths.serviceLogPath, "ours\n");
+    await connector.uninstallConnectorService(paths, { platform, env, runner, ownerUid: 501 });
+    assert.equal(active.size, 0);
+    assert.equal(await readFile(foreign, "utf8"), "not ours\n", "another service definition is untouched");
+    await assert.rejects(stat(paths.servicePath), error => error.code === "ENOENT");
+    await assert.rejects(stat(paths.serviceLogPath), error => error.code === "ENOENT");
+  });
+});
+
+test("service identities stay stable and distinct for profile names that service managers might normalize", () => {
+  for (const platform of ["darwin", "linux", "win32"]) {
+    const first = connector.connectorInstallPaths({ homeDir: "/fixture/home", platform, env: {}, name: "A.B" });
+    const retry = connector.connectorInstallPaths({ homeDir: "/fixture/home", platform, env: {}, name: "A.B" });
+    const other = connector.connectorInstallPaths({ homeDir: "/fixture/home", platform, env: {}, name: "a-b" });
+    assert.equal(first.serviceName, retry.serviceName);
+    assert.notEqual(first.serviceName, other.serviceName);
+    assert.notEqual(first.servicePath, other.servicePath);
+  }
+});
+
+test("revocation makes run exit successfully and bounded worker logs rotate", async t => {
+  const root = await temporary(t, "connector-revoked-service-"), configPath = join(root, "bot.json");
+  await writeFile(configPath, `${JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: WORKER_ID, secret: `crf_${"R".repeat(43)}`, credentialExpiresAt: "2099-01-01T00:00:00.000Z",
+    workerKind: "codex" })}\n`, { mode: 0o600 });
+  const fetcher = async () => json(false, "unauthenticated", 401), output = [], errors = [];
+  const code = await connector.main(["run", "--config", configPath, "--once"],
+    { out: { write: value => output.push(value) }, err: { write: value => errors.push(value) } }, { fetcher });
+  assert.equal(code, 0, `revocation is a clean terminal state, so a failure-only service does not restart it: ${errors.join("")}`);
+  assert.match(errors.join(""), /revoked.*stopping cleanly/iu);
+
+  const logPath = join(root, "logs", "profile.log");
+  for (let index = 0; index < 40; index += 1)
+    await connector.appendBoundedServiceLog(logPath, `${index} ${"x".repeat(100)}`, 1024);
+  assert.ok((await stat(logPath)).size <= 1024);
+  assert.ok((await stat(`${logPath}.1`)).size <= 1024);
+});
+
+test("service ownership and manager errors fail closed without deleting another file", async t => {
+  const homeDir = await temporary(t, "connector-service-refusal-"), paths = connector.connectorInstallPaths({
+    homeDir, platform: "linux", env: {}, name: "guarded" });
+  await mkdir(dirname(paths.servicePath), { recursive: true });
+  await writeFile(paths.servicePath, "unrelated user unit\n");
+  let called = false;
+  await assert.rejects(connector.installConnectorService(paths, { platform: "linux", ownerUid: 501,
+    runner: async () => { called = true; return { stdout: "", stderr: "" }; } }), /Refusing to replace the unrecognized/u);
+  assert.equal(called, false, "an unowned target is refused before the service manager is called");
+  assert.equal(await readFile(paths.servicePath, "utf8"), "unrelated user unit\n");
+
+  await rm(paths.servicePath);
+  await connector.installConnectorService(paths, { platform: "linux", ownerUid: 501,
+    runner: async () => ({ stdout: "", stderr: "" }) });
+  await assert.rejects(connector.uninstallConnectorService(paths, { platform: "linux", ownerUid: 501,
+    runner: async (_command, args) => {
+      if (args[1] === "is-enabled") throw new Error("permission denied");
+      return { stdout: "", stderr: "" };
+    } }), /permission denied/u);
+  assert.equal((await stat(paths.servicePath)).isFile(), true, "an unknown manager failure keeps our definition for a safe retry");
+});
+
+test("a service-manager failure leaves a retryable profile and never redeems the code twice", async t => {
+  const homeDir = await temporary(t, "connector-service-retry-"), gateway = fakeGateway({ sourcePath: bundledSource });
+  let failEnable = true, enabled = false;
+  const runner = async (command, args) => {
+    if (command === "systemctl" && args[1] === "enable") {
+      if (failEnable) { failEnable = false; throw new Error("service enable stopped halfway"); }
+      enabled = true;
+    }
+    if (command === "systemctl" && args[1] === "is-enabled" && !enabled) throw new Error("not found");
+    if (command === "systemctl" && args[1] === "disable") enabled = false;
+    return { stdout: "", stderr: "" };
+  };
+  const input = { server: "https://control.example", code: code("S"), bot: "codex", name: "service-retry", homeDir,
+    platform: "linux", env: {}, fetcher: gateway.fetcher, runner, sourcePath: bundledSource, unattended: true,
+    workerExecutable: "/fixture/bin/codex", ownerUid: 501 };
+  await assert.rejects(bundledConnector.installConnector(input), /service enable stopped halfway/u);
+  const paths = bundledConnector.connectorInstallPaths(input);
+  assert.deepEqual((await bundledConnector.loadConfig(paths.configPath)).installation,
+    { bot: "codex", name: "service-retry", workspace: paths.workspace, state: "registering", unattended: true,
+      updates: { releasePublicKey: RELEASE_PUBLIC_KEY, floorVersion: connector.CONNECTOR_VERSION,
+        keyId: RELEASE_TRUST.keyId, epoch: 1, revokedKeyIds: [], paused: false } });
+  const installed = await bundledConnector.installConnector(input);
+  assert.equal(installed.unattended, true);
+  assert.equal(enabled, true);
+  assert.equal(gateway.state.enrollments, 1, "retry reuses the saved enrollment rather than consuming another code");
+  await bundledConnector.uninstallConnector({ bot: "codex", name: "service-retry", homeDir, platform: "linux", env: {},
+    runner, ownerUid: 501 });
+  assert.equal(enabled, false);
 });
 
 test("Claude Desktop and Cursor JSON merges preserve other servers, back up first, and uninstall only their entry", async t => {
@@ -427,6 +666,26 @@ test("Claude Desktop and Cursor JSON merges preserve other servers, back up firs
       assert.equal((await stat(installed.paths.workspace)).isDirectory(), true, "uninstall preserves user work");
     });
   }
+});
+
+test("Generic MCP writes and removes an importable per-bot entry on macOS, Linux and Windows fixtures", async t => {
+  for (const [index, platform] of ["darwin", "linux", "win32"].entries()) await t.test(platform, async t => {
+    const homeDir = await temporary(t, `connector-generic-${platform}-`), gateway = fakeGateway();
+    const name = `generic-${platform}`, env = platform === "win32"
+      ? { APPDATA: join(homeDir, "AppData", "Roaming"), LOCALAPPDATA: join(homeDir, "AppData", "Local"), USERNAME: "fixture" }
+      : { XDG_CONFIG_HOME: join(homeDir, ".config"), XDG_DATA_HOME: join(homeDir, ".local", "share") };
+    const installed = await connector.installConnector({ server: "https://control.example",
+      code: code(String.fromCharCode(54 + index)), bot: "mcp-agent", name, homeDir, env, platform,
+      fetcher: gateway.fetcher, runner: recorder().runner, sourcePath: SOURCE });
+    const hostConfig = platform === "win32" ? join(env.APPDATA, "control-room", "generic-mcp.json")
+      : join(env.XDG_CONFIG_HOME, "control-room", "generic-mcp.json");
+    const server = `control-room-${name}`, saved = JSON.parse(await readFile(hostConfig, "utf8"));
+    assert.deepEqual(saved.mcpServers[server].args,
+      ["--profile", name, "--config", installed.paths.configPath, "--workspace", installed.paths.workspace]);
+    await connector.uninstallConnector({ bot: "mcp-agent", name, homeDir, env, platform, runner: recorder().runner });
+    assert.deepEqual(JSON.parse(await readFile(hostConfig, "utf8")).mcpServers, {});
+    await assert.rejects(stat(installed.paths.configPath), error => error.code === "ENOENT");
+  });
 });
 
 test("desktop configuration updates serialize across profiles and preserve a symlinked target", async t => {
@@ -603,6 +862,7 @@ test("uninstall tolerates an already-missing CLI entry and removes credential te
 
 test("bad install input and real-home CLI use fail before enrollment", async t => {
   const homeDir = await temporary(t, "connector-refusal-");
+  await assert.rejects(connector.validateWorkspaceBoundary("relative", { homeDir }), /absolute directory/u);
   await assert.rejects(connector.join({ server: "https://control.example", code: code("A"), configPath: join(homeDir, "join.json"),
     fetcher: async () => { throw new Error("must not call"); } }), /worker kind is required/u);
   await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "other",
@@ -623,7 +883,8 @@ test("bad install input and real-home CLI use fail before enrollment", async t =
     { out: { write: () => {} }, err: { write: value => { err += value; } } }, { homeDir, realHomeDir: homeDir });
   assert.equal(mcpStatus, 1);
   assert.match(err, /explicit --workspace/u);
-  for (const [workspace, message] of [["relative", /absolute directory/u], [join(homeDir, "missing"), /must exist/u]]) {
+  for (const [workspace, message] of [["relative", /absolute directory/u],
+    [join(homeDir, "missing"), /could not be checked safely/u]]) {
     err = "";
     const invalidWorkspaceStatus = await connector.main(["mcp", "--profile", "real", "--workspace", workspace],
       { out: { write: () => {} }, err: { write: value => { err += value; } } }, { homeDir, realHomeDir: homeDir });
@@ -639,6 +900,31 @@ test("bad install input and real-home CLI use fail before enrollment", async t =
   assert.match(err, /must exist and be a directory/u);
 });
 
+test("bad worker-install input is refused before enrollment", async t => {
+  const homeDir = await temporary(t, "connector-worker-refusal-"), gateway = fakeGateway();
+  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "codex",
+    name: "other-worker", homeDir, platform: "aix", unattended: true }), /macOS, Windows and Linux/u);
+  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "codex",
+    name: "source-worker", homeDir, platform: "darwin", unattended: true, workerExecutable: "/fixture/bin/codex",
+    ownerUid: 501, fetcher: gateway.fetcher }), /requires the bundled Control Room connector release/u);
+  await assert.rejects(bundledConnector.installConnector({ server: "https://control.example", code: code("A"),
+    bot: "cursor", name: "desktop-worker", homeDir, platform: "darwin", unattended: true, ownerUid: 501 }), /only for Claude Code/u);
+  await assert.rejects(bundledConnector.installConnector({ server: "https://control.example", code: code("A"),
+    bot: "hermes", name: "hermes-worker", homeDir, platform: "darwin", unattended: true, ownerUid: 501 }), /requires --worker-profile/u);
+  const workerBase = { server: "https://control.example", code: code("A"), bot: "codex", name: "invalid-worker",
+    homeDir, platform: "darwin", unattended: true, ownerUid: 501, fetcher: gateway.fetcher };
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "relative" }), /absolute path/u);
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "/fixture/bin/codex",
+    workerDeadlineMs: 99 }), /worker deadline/u);
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "/fixture/bin/codex",
+    workerModel: "gpt-build" }), /model selection/u);
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "/fixture/bin/codex",
+    nodePath: "relative" }), /Node executable/u);
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "/fixture/bin/codex",
+    ownerUid: 0 }), /non-root signed-in user/u);
+  assert.equal(gateway.state.enrollments, 0, "all worker input refusals happen before enrollment");
+});
+
 test("an explicit credential path overrides profile-derived lookup", async t => {
   const homeDir = await temporary(t, "connector-explicit-config-"), configPath = join(homeDir, "chosen.json");
   const secret = `crf_${"V".repeat(43)}`;
@@ -649,7 +935,7 @@ test("an explicit credential path overrides profile-derived lookup", async t => 
     { out: { write: value => { out += value; } }, err: { write: () => {} } },
     { homeDir, realHomeDir: homeDir, fetcher: async url => {
       assert.equal(new URL(url).pathname, "/fleet/v1/heartbeat");
-      return json(true, { displayName: "Chosen" });
+      return json(true, { displayName: "Chosen", workingAgreement: WORKING_AGREEMENT });
     } });
   assert.equal(status, 0);
   assert.match(out, /Chosen/u);
@@ -661,7 +947,7 @@ test("install refuses unsafe workspace roots and preserves an existing workspace
     homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher, runner: recorder().runner, sourcePath: SOURCE };
   const paths = connector.connectorInstallPaths(base);
   for (const workspace of [homeDir, paths.configRoot, dirname(paths.configRoot)]) {
-    await assert.rejects(connector.installConnector({ ...base, workspace }), /workspace cannot be/u);
+    await assert.rejects(connector.installConnector({ ...base, workspace }), /workspace (?:cannot be|must be separate)/u);
   }
   assert.equal(gateway.state.enrollments, 0);
 
@@ -856,14 +1142,16 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
       await new Promise(done => setTimeout(done, 100));
       state.digest = body.newCredentialDigest;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z" } }));
+      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z",
+        workingAgreement: WORKING_AGREEMENT } }));
       state.activeRotations -= 1;
       blockedRequestFinished?.();
       return;
     }
     if (request.url === "/fleet/v1/me") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z" } }));
+      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z",
+        workingAgreement: WORKING_AGREEMENT } }));
       return;
     }
     response.writeHead(404, { "content-type": "application/json" });
@@ -1129,8 +1417,8 @@ test("a losing stale cleaner cannot remove a new winner before owner publication
   assert.equal(cleanerElections, 1);
 });
 
-test("ten concurrent installs of one profile serialize and all succeed", async t => {
-  const homeDir = await temporary(t, "connector-install-race-"), gateway = fakeGateway(), commands = recorder();
+test("twenty concurrent unattended installs serialize onto one profile service", async t => {
+  const homeDir = await temporary(t, "connector-install-race-"), gateway = fakeGateway({ sourcePath: bundledSource }), commands = recorder();
   let activeRegistrations = 0, maximumRegistrations = 0;
   const serialRunner = async (...args) => {
     activeRegistrations += 1;
@@ -1141,12 +1429,32 @@ test("ten concurrent installs of one profile serialize and all succeed", async t
     } finally { activeRegistrations -= 1; }
   };
   const input = { server: "https://control.example", code: code("K"), bot: "codex", name: "racer", homeDir,
-    platform: "linux", env: {}, fetcher: gateway.fetcher, runner: serialRunner, sourcePath: SOURCE };
-  const results = await Promise.all(Array.from({ length: 10 }, () => connector.installConnector(input)));
-  assert.equal(results.length, 10);
+    platform: "linux", env: {}, fetcher: gateway.fetcher, runner: serialRunner, sourcePath: bundledSource,
+    unattended: true, workerExecutable: "/fixture/bin/codex", ownerUid: 501 };
+  const paths = bundledConnector.connectorInstallPaths(input);
+  await mkdir(paths.botsDir, { recursive: true, mode: 0o700 });
+  const releaseHeldProfile = await bundledConnector.acquireRotationLock(`${paths.configPath}.rotate.lock`, {});
+  const first = bundledConnector.installConnector(input);
+  let earlyFailure;
+  try {
+    await new Promise(done => setTimeout(done, 75));
+    assert.equal(gateway.state.enrollments, 0, "install waits for the same-profile lock before touching shared machine state");
+  } catch (error) {
+    earlyFailure = error;
+  } finally { await releaseHeldProfile(); }
+  const firstResult = await first;
+  if (earlyFailure) throw earlyFailure;
+  const results = [firstResult, ...await Promise.all(Array.from({ length: 19 }, () => bundledConnector.installConnector(input)))];
+  assert.equal(results.length, 20);
   assert.equal(gateway.state.enrollments, 1);
   assert.equal(maximumRegistrations, 1);
-  assert.equal((await connector.loadConfig(results[0].paths.configPath)).installation.state, "installed");
+  assert.deepEqual((await bundledConnector.loadConfig(results[0].paths.configPath)).installation,
+    { bot: "codex", name: "racer", workspace: results[0].paths.workspace, state: "installed", unattended: true,
+      updates: { releasePublicKey: RELEASE_PUBLIC_KEY, floorVersion: connector.CONNECTOR_VERSION,
+        keyId: RELEASE_TRUST.keyId, epoch: 1, revokedKeyIds: [], paused: false } });
+  assert.equal((await stat(results[0].paths.servicePath)).isFile(), true);
+  assert.equal(new Set(commands.calls.filter(call => call[0] === "systemctl" && call[1][1] === "enable")
+    .map(call => call[1].at(-1))).size, 1, "every retry targets the same systemd user unit");
   assert.equal((await readdir(results[0].paths.botsDir)).filter(file => file.includes(".tmp")).length, 0);
 });
 

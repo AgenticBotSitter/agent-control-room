@@ -89,7 +89,7 @@ export class FleetOwnerServiceV1 {
       safeMetadata: { codeId, workerKind: input.workerKind, projectIds: [...input.projectIds],
         capabilities: [...input.capabilities], expiresAt } });
     return Object.freeze({ codeId, code, workerId: input.workerId, workerKind: input.workerKind,
-      expiresAt, purpose: input.purpose });
+      displayName: input.displayName, expiresAt, purpose: input.purpose });
   }
 
   /** "New key": a single-use code that replaces the machine's credential. The

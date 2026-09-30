@@ -37,6 +37,9 @@ import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1,
   startOwnerPushLoopV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { FleetOwnerServiceV1 } from "../../fleet/v1";
 import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
+import { createResultFileHttpHandlerV1 } from "./result-file-http";
+import type { ResultFileStoreV1 } from "../../artifacts/v1/result-file-store";
+import { composeResultFileService } from "./result-file-composition";
 import type { FleetConnectorReleaseManifestV1 } from "../../fleet/v1/connector-release";
 import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
@@ -54,6 +57,13 @@ export interface MacLocalWebProcessOptionsV1 {
   localOwnerSessionStore?: LocalOwnerSessionStoreV1;
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
+  /** The one database client, and its lifecycle. `isAvailable` is REQUIRED, not
+   * optional: a permanently closed client must make this process report NOT
+   * ready, because every page it serves will fail and nothing else notices.
+   * Making it optional was tried on this branch so a test double could omit it,
+   * and the honest result is that a double which omits it is a double that
+   * cannot say "the database went away" -- so the type stays strict and a
+   * double says so. */
   database: { client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean };
   /** The existing task service from the Mac task application. This keeps
    * owner-review follow-up creation and browser task routes on one service. */
@@ -70,6 +80,9 @@ export interface MacLocalWebProcessOptionsV1 {
   /** Read capabilities from the same host-owned task application as the
    * submission operations. Without them, a published result looks absent. */
   taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey" | "usagePriceTable">;
+  /** The protected result-file byte store. Omitted means the download route
+   * does not exist, which is honest: there is nothing to download from. */
+  resultFileStore?: ResultFileStoreV1;
   /** Same protected installation key used by proposal intake. Omission keeps
    * the Pipelines owner module absent. */
   workBatchIntegrityKey?: Uint8Array;
@@ -211,11 +224,22 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     localOwnerSession: sessions, service: improvementDesk, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
     channel: createWebPushChannelV1(options.ownerWebPush) } : undefined;
-  const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
-    service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
-      clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
-    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}),
-    ...(options.fleet.connectorRelease ? { connectorRelease: options.fleet.connectorRelease } : {}) }) : undefined;
+  // "Save to my Mac" (plan v4.3 2.6). Absent without a download key, and then
+  // the route simply does not exist rather than answering an empty catalog.
+  const resultFiles = options.resultFileStore && options.taskReadKeys?.harnessIntegrityKey
+    ? composeResultFileService({ database: options.database.client, tasks, tenantId: profile.tenantId,
+      downloadKey: options.taskReadKeys.harnessIntegrityKey, store: options.resultFileStore, clock })
+    : undefined;
+  const resultFileHttp = resultFiles ? createResultFileHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: resultFiles, clock }) : undefined;
+  const fleet = options.fleet;
+  const fleetOwner = fleet ? new FleetOwnerServiceV1(fleet.ownerAuthority,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId, clock,
+      ...(fleet.afterDecision ? { afterDecision: fleet.afterDecision } : {}) }) : undefined;
+  const fleetHttp = fleetOwner ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
+    service: fleetOwner,
+    ...(fleet?.gatewayOrigin ? { gatewayOrigin: fleet.gatewayOrigin } : {}),
+    ...(fleet?.connectorRelease ? { connectorRelease: fleet.connectorRelease } : {}) }) : undefined;
   // One service, never two: a supplied instance and a key together are refused
   // rather than silently preferring one, because two instances would each hold
   // their own view of the same installation-wide state.
@@ -386,13 +410,18 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/local-workers") {
-        if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");
-        sessions.verify(request, clock());
-        return Response.json({ taskWorkersStarted: options.taskWorkersStarted === true,
-          ...(options.taskWorkersStarted === true ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
+        if (request.method !== "GET" || url.search || !options.workerReadiness && !fleetOwner) throw new WebAccessError("not_found");
+        const identity = sessions.verify(request, clock());
+        const connectorWorkers = !options.workerReadiness && fleetOwner
+          ? (await fleetOwner.listWorkers(identity)).workers.map(worker => ({ kind: worker.workerKind,
+            state: worker.status === "connected" || worker.status === "working" ? "ready" as const : "unavailable" as const,
+            proof: "not_proven" as const })) : undefined;
+        const taskWorkersStarted = options.taskWorkersStarted === true || connectorWorkers !== undefined;
+        return Response.json({ taskWorkersStarted,
+          ...(taskWorkersStarted ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
           projectSections: ["overview", "inbox", "work", ...(workBatches ? ["pipelines"] : []), "agents", "reviews", "activity", "automations",
             ...(options.taskReadKeys?.results ? ["files"] : []), "settings"],
-          workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
+          workers: connectorWorkers ?? options.workerReadiness!.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       const identity = sessions.verify(request, clock());
@@ -532,6 +561,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname)) return reusableSkillHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
       if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
+      if (resultFileHttp && /^\/api\/v1\/projects\/[^/]+\/result-files(?:\/|$)/.test(url.pathname))
+        return resultFileHttp(request);
       if (operationsModeHttp && url.pathname === "/api/v1/operations-mode") return operationsModeHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
@@ -552,5 +583,17 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     }
   }
 
-  return Object.freeze({ handle, isReady, close: () => closed ??= options.database.close() });
+  // Readiness folds in the database. It used to be `closed === undefined`, which
+  // is true for the entire life of a process whose database client has been
+  // closed underneath it: `bindPrivatePgPool` quarantines a client PERMANENTLY
+  // on an uncertain outcome, and the process keeps answering `/ready` while
+  // every page it serves fails. The review's N1 was invisible for exactly this
+  // reason -- the host was told the app was ready, so nothing restarted it.
+  //
+  // `isAvailable` is called unconditionally, because the type above requires it.
+  // An optional call here would be a guard that could silently do nothing, which
+  // is the failure this whole branch is about.
+  return Object.freeze({ handle,
+    isReady: () => closed === undefined && options.database.isAvailable(),
+    close: () => closed ??= options.database.close() });
 }

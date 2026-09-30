@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -16,6 +16,9 @@ import { captureFleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connecto
 import { FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1 } from "../src/web/v1/fleet-owner-http";
 import { connectorReleaseSignatureMaterialV1, releaseKeyIdV1,
   RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
+import { FLEET_WORKING_AGREEMENT_METADATA_V1 } from "../src/fleet/v1/working-agreement";
+import { loadMacLocalFleetConnectorReleaseV1,
+  loadMacLocalFleetReleaseTrustV1 } from "../src/fleet/v1/mac-local-composition";
 
 const builtFrom = "1".repeat(40);
 let sandbox: string, firstRoot: string, secondRoot: string;
@@ -83,20 +86,52 @@ test("connector build is byte-identical and its manifest binds version, size, di
   } }), /fleet_connector_build_refused/u);
 });
 
+test("Mac-local release loading pins one protected trust and refuses a substituted trust file", async t => {
+  const protectedRoot = join(sandbox, "protected-release-trust"), configRoot = join(protectedRoot, "config");
+  await mkdir(configRoot, { recursive: true, mode: 0o700 });
+  await chmod(protectedRoot, 0o700); await chmod(configRoot, 0o700);
+  const trustPath = join(configRoot, "release-trust.json");
+  await writeFile(trustPath, `${JSON.stringify(releaseTrust)}\n`, { mode: 0o640 }); await chmod(trustPath, 0o640);
+  const loadedTrust = await loadMacLocalFleetReleaseTrustV1(protectedRoot);
+  assert.deepEqual(loadedTrust, releaseTrust);
+  const loadedRelease = await loadMacLocalFleetConnectorReleaseV1(firstRoot, loadedTrust);
+  assert.equal(loadedRelease?.advertisement.sha256, release.manifest.sha256);
+  const otherKeys = generateKeyPairSync("ed25519");
+  const otherKey = otherKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const otherTrust = { ...releaseTrust, keyId: releaseKeyIdV1(otherKey), publicKey: otherKey };
+  const mismatchedRoot = join(sandbox, "mismatched-embedded-key"); await mkdir(mismatchedRoot);
+  await copyFile(join(firstRoot, "manifest.json"), join(mismatchedRoot, "manifest.json"));
+  await copyFile(join(firstRoot, release.manifest.file), join(mismatchedRoot, release.manifest.file));
+  const unsigned = { version: release.manifest.version, file: release.manifest.file, sha256: release.manifest.sha256,
+    size: release.manifest.size, builtFrom: release.manifest.builtFrom, minVersion: "0.4.0" };
+  const mismatchedAdvertisement = { ...unsigned,
+    signature: sign(null, connectorReleaseSignatureMaterialV1(unsigned), otherKeys.privateKey).toString("base64url") };
+  await writeFile(join(mismatchedRoot, "connector-release.json"), `${JSON.stringify(mismatchedAdvertisement)}\n`);
+  await assert.rejects(loadMacLocalFleetConnectorReleaseV1(mismatchedRoot, otherTrust), /fleet_connector_release_refused/u);
+
+  const realTrustPath = join(configRoot, "real-release-trust.json");
+  await writeFile(realTrustPath, `${JSON.stringify(releaseTrust)}\n`, { mode: 0o640 });
+  await unlink(trustPath); await symlink(realTrustPath, trustPath);
+  await assert.rejects(loadMacLocalFleetReleaseTrustV1(protectedRoot), /mac_local_fleet_release_trust_refused/u);
+  t.after(() => rm(trustPath, { force: true }));
+});
+
 test("standalone bundle runs help and an MCP handshake from a repo-free directory with a fake gateway", async t => {
-  const runRoot = join(sandbox, "empty-machine");
-  await mkdir(runRoot);
+  const runRoot = join(sandbox, "empty-machine"), injectedHome = join(sandbox, "injected-home");
+  await mkdir(runRoot); await mkdir(injectedHome);
   const bundle = join(runRoot, release.manifest.file);
   await copyFile(join(firstRoot, release.manifest.file), bundle);
   const help = await child(process.execPath, [bundle, "--help"], { cwd: runRoot,
-    env: { PATH: process.env.PATH, HOME: join(sandbox, "injected-home"), NODE_ENV: "test" } });
+    env: { PATH: process.env.PATH, HOME: injectedHome, NODE_ENV: "test" } });
   assert.equal(help.code, 0, help.stderr); assert.match(help.stdout, /Control Room worker connector/u);
 
   let requests = 0;
   const gateway: Server = createServer((_request, response) => { requests += 1; response.writeHead(500); response.end(); });
   await new Promise<void>(done => gateway.listen(0, "127.0.0.1", done));
   t.after(() => new Promise<void>(done => gateway.close(() => done())));
-  const config = join(sandbox, "connector.json");
+  const credentialDirectory = join(sandbox, "credentials");
+  await mkdir(credentialDirectory);
+  const config = join(credentialDirectory, "connector.json");
   await writeFile(config, JSON.stringify({ schema: "control-room.fleet-connector/v1",
     server: `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`,
     workerId: `fleet-worker:${"a".repeat(32)}`, secret: `crf_${"A".repeat(43)}` }), { mode: 0o600 });
@@ -106,7 +141,7 @@ test("standalone bundle runs help and an MCP handshake from a repo-free director
   // round 2 section 4 requires this explicit, absolute, existing check.
   const handshake = await child(process.execPath,
     [bundle, "mcp", "--config", config, "--workspace", runRoot], { cwd: runRoot,
-    env: { PATH: process.env.PATH, HOME: join(sandbox, "injected-home"), NODE_ENV: "test" },
+    env: { PATH: process.env.PATH, HOME: injectedHome, NODE_ENV: "test" },
     input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })}\n` });
   assert.equal(handshake.code, 0, handshake.stderr);
   const reply = JSON.parse(handshake.stdout.trim());
@@ -121,9 +156,12 @@ test("a default-home install runs its registered MCP shim end to end", async t =
     for await (const _chunk of request) { /* drain request */ }
     const result = path === "/fleet/v1/enroll" ? { workerId: `fleet-worker:${"a".repeat(32)}`,
       displayName: "Default home", projectIds: ["project:test"], workerKind: "cursor", capabilities: ["writing"],
-      credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust, connector: advertisement }
-      : path === "/fleet/v1/heartbeat" ? { displayName: "Default home", operationsMode: "running", connector: advertisement }
-        : path === "/fleet/v1/me" ? { displayName: "Default home", connector: advertisement, releaseTrust }
+      credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust, connector: advertisement,
+      workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }
+      : path === "/fleet/v1/heartbeat" ? { displayName: "Default home", operationsMode: "running", connector: advertisement,
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }
+        : path === "/fleet/v1/me" ? { displayName: "Default home", connector: advertisement, releaseTrust,
+          workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }
           : null;
     response.writeHead(result ? 200 : 404, { "content-type": "application/json" });
     response.end(JSON.stringify(result ? { ok: true, result } : { ok: false, error: "not_found" }));
@@ -188,8 +226,10 @@ test("a connector from another Control Room is refused before its join code is r
     if (path === "/fleet/v1/enroll") enrollments += 1;
     const result = path === "/fleet/v1/enroll" ? { workerId: `fleet-worker:${"c".repeat(32)}`,
       displayName: "First Control Room", projectIds: [], workerKind: "cursor", capabilities: [],
-      credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust, connector: advertisement }
-      : path === "/fleet/v1/heartbeat" ? { displayName: "First Control Room", operationsMode: "running" } : null;
+      credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust, connector: advertisement,
+      workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }
+      : path === "/fleet/v1/heartbeat" ? { displayName: "First Control Room", operationsMode: "running",
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 } : null;
     response.writeHead(result ? 200 : 404, { "content-type": "application/json" });
     response.end(JSON.stringify(result ? { ok: true, result } : { ok: false, error: "not_found" }));
   });

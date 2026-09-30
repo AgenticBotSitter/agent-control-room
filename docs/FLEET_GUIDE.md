@@ -20,13 +20,16 @@ database password and never gets your login.
    ```
 
    On Windows, use the PowerShell line shown under **Windows** on the same page.
-5. For an installed unattended worker, use the `launcher.mjs launch run` command
-   printed by the installer. The launcher relaunches the selected connector after
-   a healthy update. The machine shows as **Connected** on the Workers page within
-   a minute.
+5. The verified line runs `install` for every bot kind. To keep an unattended
+   bot connected, select **Let this bot pick up approved work on its own**. The
+   installer adds `--unattended` and creates one profile-scoped per-user login
+   service on macOS, Windows or Linux. That service starts `launcher.mjs launch
+   run`, so a healthy signed update is relaunched safely. The task host never
+   starts the bot. The machine shows as **Connected** within a minute.
 
-The machine keeps its own key in a private file (`~/.config/control-room/connector.json`,
-readable only by you). The key renews itself every few weeks while `run` is going.
+Each installed bot keeps its own key in a private file
+(`~/.config/control-room/bots/<name>.json`, readable only by you). The key
+renews itself every few weeks while `run` is going.
 
 **If something goes wrong**
 
@@ -70,8 +73,9 @@ time, gives it to that bot on the machine, and sends the answer back to you
 for review.
 
 It only does this when the person at that machine has switched the bot on.
-Write a settings file next to the key file
-(`~/.config/control-room/harnesses.json`) that only you can change:
+The per-bot installer writes a private settings file beside that bot's key
+(`~/.config/control-room/bots/<name>.harnesses.json`). A manual connector can
+use the same schema with `run --harnesses <path>`:
 
 ```json
 {
@@ -83,11 +87,19 @@ Write a settings file next to the key file
 }
 ```
 
-Then use the `launcher.mjs launch run` command printed by `install`. Its reviewed
-Codex, Claude Code and Hermes adapters are inside the same file; the machine
-needs no Control Room checkout and the settings cannot select a replacement
-adapter module. Starting a downloaded connector directly with `run` does not
-self-update.
+Then use the `launcher.mjs launch run` command printed by `install`, or select
+**Let this bot pick up approved work on its own** on the Connect a bot page to
+install a per-user login worker that uses that launcher for this profile. Its
+reviewed Codex, Claude Code and Hermes adapters are inside the same file; the
+machine needs no Control Room checkout and the settings cannot select a
+replacement adapter module. The login worker re-reads this file, so it is safe
+to enable or disable the harness after installation. Starting a downloaded
+connector directly with `run` does not self-update.
+
+Hermes unattended setup asks for its local profile, model and provider before
+creating the join code. Invalid or missing worker choices, executable paths,
+deadlines, service platforms and per-user identities are refused before the
+single-use code can be redeemed.
 
 - `deadlineMs` is the longest one task may run (at most one hour).
 - Codex and Claude Code can also take `"model"` and `"effort"`

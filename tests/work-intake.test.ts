@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { readFile, readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import { downRungBefore, readMigrationGraph } from "./helpers/down-migration-order";
 import { AuditStore, auditPartition } from "../src/audit/audit-store";
 import { adaptPglite } from "../src/persistence/database";
 import { sha256Digest, type AuthenticatedPrincipal } from "../src/security";
@@ -185,16 +186,21 @@ test("the executable down migration refuses records and removes every owned obje
   const empty = new PGlite(); t.after(() => void empty.close());
   for (const file of (await readdir("db/migrations")).filter(file => file.endsWith(".sql")).sort())
     await empty.exec(await readFile(`db/migrations/${file}`, "utf8"));
-  // Every policy that reads the intake binding must be dropped first, newest
-  // migration first: 0155's operations-mode tenant policy, then the
-  // unattended-advance one from 0109, then the build-publication one from 0108.
-  // 0110 adds a table with a foreign key onto work_batches, so its down must
-  // run before 0093's down can drop that table.
-  await empty.exec(await readFile("db/down/0155_installation_operations_modes.sql", "utf8"));
-  await empty.exec(await readFile("db/down/0109_pipeline_unattended_advance.sql", "utf8"));
-  await empty.exec(await readFile("db/down/0108_pipeline_build_publications.sql", "utf8"));
-  await empty.exec(await readFile("db/down/0110_work_batch_intake_flag_dismissals.sql", "utf8"));
-  await empty.exec(queueDown); await empty.exec(ownerDown); await empty.exec(down);
+  // The rung is DERIVED from the SQL, not listed by hand. Every policy that
+  // reads the intake binding has to be dropped before the binding goes, every
+  // table with a foreign key onto work_batches has to go before the table it
+  // points at, and 0151/0153 build their append-only triggers on a function
+  // 0109 owns -- which is why 0109's down refuses to run before them. A
+  // hand-maintained list went stale on exactly that last edge and the
+  // executable down migration was never tested against a cluster carrying it.
+  const graph = await readMigrationGraph(".");
+  const rung = downRungBefore(graph, "0093_work_batch_intake.sql");
+  assert.ok(rung.files.includes("0109_pipeline_unattended_advance.sql"),
+    "the rung must carry 0109, whose down guards the history guard 0151 and 0153 still build on");
+  assert.ok(rung.files.includes("0110_work_batch_intake_flag_dismissals.sql"),
+    "the rung must carry 0110, whose table has a foreign key onto work_batches");
+  for (const file of [...rung.files, "0093_work_batch_intake.sql"])
+    await empty.exec(await readFile(`db/down/${file}`, "utf8"));
   const objects = await empty.query<{ batches: string | null; revisions: string | null; first_guard: string | null; second_guard: string | null }>(
     `SELECT to_regclass('work_batches')::text batches,to_regclass('work_batch_revisions')::text revisions,
       to_regprocedure('guard_proposal_only_work_batch_insert()')::text first_guard,

@@ -65,6 +65,14 @@ GRANT UPDATE (coordinator_lock) ON tenants, control_manual_project_heads, projec
 -- operations mode as whoever inserts the attempt, so a claim login must be able
 -- to read the mode or every claim it makes is refused, running included.
 GRANT SELECT ON installation_operations_mode_revisions TO control_room_fleet_gateway;
+-- Project Settings `eligible_worker_kinds` is a POLICY the claim path enforces,
+-- so the gateway must be able to read it to refuse an ineligible worker kind.
+-- SELECT only, on the three columns the policy read needs -- the two key
+-- columns it filters on plus the list itself -- so the gateway can read which
+-- kinds a project admits and can never widen that list or reach any other
+-- setting (the owner's default model / effort / concurrency cap).
+GRANT SELECT (tenant_id, project_id, eligible_worker_kinds)
+  ON control_project_settings TO control_room_fleet_gateway;
 
 -- The ordinary web login can present fleet data but cannot write any owner
 -- decision. A separate protected login inherits only the owner-authority role

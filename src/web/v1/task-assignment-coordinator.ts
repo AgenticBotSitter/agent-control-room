@@ -668,7 +668,7 @@ export class TaskAssignmentCoordinator {
     if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
       || ref.tenantId !== this.scope.tenantId) conflict();
     const kind = await this.db.transaction(async tx => {
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const job = await this.job(tx, ref.projectId, ref.jobId);
@@ -710,7 +710,7 @@ export class TaskAssignmentCoordinator {
     if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
       || ref.tenantId !== this.scope.tenantId) conflict();
     const remote = await this.db.transaction(async tx => {
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const job = await this.job(tx, ref.projectId, ref.jobId);
@@ -734,7 +734,7 @@ export class TaskAssignmentCoordinator {
     if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
       || ref.tenantId !== this.scope.tenantId) conflict();
     return this.db.transaction(async tx => {
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const job = await this.job(tx, ref.projectId, ref.jobId);
@@ -918,7 +918,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE", [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (project.origin !== "ordinary") conflict();
@@ -993,7 +993,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1128,7 +1128,7 @@ export class TaskAssignmentCoordinator {
       readQueueIntentInSession: store.readQueueIntentInSession.bind(store),
     }, this.clock).authenticated(ref, async (tx, actor) => {
       actor.require("tasks.read", ref.projectId); actor.require("tasks.approve", ref.projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const project = await this.projects.getViewInSession(tx, actor, ref.projectId);
@@ -1205,7 +1205,7 @@ export class TaskAssignmentCoordinator {
     if (!this.approvalStore || !this.nativeTaskSubmission) conflict();
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1228,7 +1228,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1269,7 +1269,7 @@ export class TaskAssignmentCoordinator {
       readQueueIntentInSession: store.readQueueIntentInSession.bind(store),
     }, this.clock).authenticated(ref, async (tx, actor) => {
       actor.require("tasks.read", ref.projectId); actor.require("tasks.approve", ref.projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, ref.projectId]);
       const project = await this.projects.getViewInSession(tx, actor, ref.projectId);
@@ -1336,7 +1336,7 @@ export class TaskAssignmentCoordinator {
     if (!this.approvalStore || !this.nativeTaskSubmission) conflict();
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1358,7 +1358,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1393,7 +1393,7 @@ export class TaskAssignmentCoordinator {
     return new NativeQueueAuthority(this.db, this.scope, { readQueueIntentInSession: store.readQueueIntentInSession.bind(store) }, this.clock)
       .authenticated(ref, async (tx, actor) => {
         actor.require("tasks.read", ref.projectId); actor.require("tasks.approve", ref.projectId, true);
-        await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+        await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
         await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
           [this.scope.tenantId, ref.projectId]);
         const project = await this.projects.getViewInSession(tx, actor, ref.projectId);
@@ -1456,7 +1456,7 @@ export class TaskAssignmentCoordinator {
     if (!this.approvalStore || !this.nativeTaskSubmission) conflict();
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1476,7 +1476,7 @@ export class TaskAssignmentCoordinator {
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1513,7 +1513,7 @@ export class TaskAssignmentCoordinator {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
@@ -1558,7 +1558,7 @@ export class TaskAssignmentCoordinator {
     return new NativeQueueAuthority(this.db, this.scope, { readQueueIntentInSession: store.readQueueIntentInSession.bind(store) }, this.clock)
       .authenticated(ref, async (tx, actor) => {
         actor.require("tasks.read", ref.projectId); actor.require("tasks.approve", ref.projectId, true);
-        await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+        await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
         await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
           [this.scope.tenantId, ref.projectId]);
         const project = await this.projects.getViewInSession(tx, actor, ref.projectId);
@@ -1800,7 +1800,7 @@ export class TaskAssignmentCoordinator {
       }) };
     const operation = async (tx: DatabaseSession, actor: WebActor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -1922,7 +1922,7 @@ export class TaskAssignmentCoordinator {
     const operation = async (tx: DatabaseSession, actor: WebActor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
       // Match reservation/expiry lock order, keeping the complete canonical snapshot in one transaction.
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE", [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
@@ -2162,7 +2162,7 @@ export class TaskAssignmentCoordinator {
     authority: LockedAssignmentAuthority) {
       const { projectId, jobId, nodeId, expectedInputDigest } = input;
       // Match canonical ready-transition lock order and serialize capacity selection across owners.
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const project = await authority.project();
@@ -2325,7 +2325,7 @@ export class TaskAssignmentCoordinator {
     if (holder.tenantId !== this.scope.tenantId) conflict();
     return this.db.transactionWithPreCommitCheck(async tx => {
       try { holder.assertCurrent(); } catch { conflict(); }
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       const job = await this.job(tx, projectId, jobId), stored = await this.stored(tx, job);
@@ -2397,7 +2397,7 @@ export class TaskAssignmentCoordinator {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       await this.projects.getViewInSession(tx, actor, projectId);
@@ -2468,7 +2468,7 @@ export class TaskAssignmentCoordinator {
     for (const id of [input.projectId, input.jobId, input.attemptId, input.leaseId]) localId.parse(id);
     if (!Number.isSafeInteger(input.leaseEpoch) || input.leaseEpoch < 1) conflict();
     return this.db.transaction(async tx => {
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, input.projectId]);
       const leaseRow = (await tx.query<{ payload: LeaseRecord }>("SELECT payload FROM control_leases WHERE tenant_id=$1 AND id=$2",
@@ -2517,7 +2517,7 @@ export class TaskAssignmentCoordinator {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
       await this.projects.getViewInSession(tx, actor, projectId);
@@ -2568,7 +2568,7 @@ export class TaskAssignmentCoordinator {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       await this.projects.getViewInSession(tx, actor, projectId);
       const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
       if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || job.inputDigest !== expectedInputDigest) conflict();

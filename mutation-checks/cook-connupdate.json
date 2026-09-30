@@ -43,7 +43,7 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "if (config.installation?.updates && env.CONTROL_ROOM_CONNECTOR_LAUNCHED !== \"1\")",
+    "find": "if (current.installation?.updates && env.CONTROL_ROOM_CONNECTOR_LAUNCHED !== \"1\")",
     "replace": "if (false)",
     "test": "node --test --test-name-pattern \"run mode checks\" tests/fleet-connector-update.test.mjs",
     "why": "an installed unattended worker refuses direct run because only the launcher can relaunch an update"
@@ -110,5 +110,26 @@
     "replace": "if (false) throw new Error(\"fleet_connector_release_refused\");",
     "test": "node --import tsx --test --test-name-pattern \"gateway serves only\" tests/fleet-connector-bundle.test.ts",
     "why": "gateway startup refuses a signed bundle that embeds another installation key"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "return [nodePath, paths.connectorPath, \"launch\", \"run\", \"--profile\", basename(paths.configPath, \".json\"),",
+    "replace": "return [nodePath, paths.connectorPath, \"run\", \"--profile\", basename(paths.configPath, \".json\"),",
+    "test": "node --test --test-name-pattern \"macOS, Linux and Windows definitions\" tests/fleet-connector-install.test.mjs",
+    "why": "every unattended service enters through the verified update launcher before run mode"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "await writePrivate(paths.configPath, { ...config, installation: { ...config.installation,\n        bot, name, workspace: paths.workspace, state: \"registering\", unattended: true } });",
+    "replace": "await writePrivate(paths.configPath, { ...config, installation: {\n        bot, name, workspace: paths.workspace, state: \"registering\", unattended: true } });",
+    "test": "node --test --test-name-pattern \"service-manager failure leaves\" tests/fleet-connector-install.test.mjs",
+    "why": "adding unattended service state preserves the joined release-update trust and floor"
+  },
+  {
+    "file": "src/fleet/v1/mac-local-composition.ts",
+    "find": "if (embeddedKeyId !== trust.keyId) throw new Error();",
+    "replace": "if (false) throw new Error();",
+    "test": "node --import tsx --test --test-name-pattern \"Mac-local release loading\" tests/fleet-connector-bundle.test.ts",
+    "why": "the Mac-local web and gateway paths refuse a connector that embeds another release key"
   }
 ]
