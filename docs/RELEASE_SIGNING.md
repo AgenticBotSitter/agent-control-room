@@ -92,8 +92,12 @@ Signing and verification reject symbolic links, non-regular or multiply linked f
 These records support release-trust administration, but connector machines do
 not apply key rotation in v1. A machine refuses a rotation record before changing
 its pinned trust, so its already-installed connector remains runnable. To change
-the release key, reinstall the connector on every machine through the trusted
-owner installation path. An ordinary installed-release record changes only the
+the release key, uninstall every connector profile on each machine through the
+trusted owner installation path, then install the connector signed by the new
+key. The last `uninstall --bot <kind> --name <label>` clears that machine's
+trust, versions, launcher and current pointer. If profiles were removed by an
+older connector, run `reset-machine --i-am-the-installer` before using a new
+join code. An ordinary installed-release record changes only the
 version floor; it never changes the pinned key identity, and both gateway and
 machine floors are merged upward.
 

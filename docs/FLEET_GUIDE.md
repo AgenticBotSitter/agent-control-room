@@ -187,8 +187,12 @@ files at startup.
 The release-key identity is pinned to each connector machine. Version floors may
 only rise and do not change that identity. Control Room v1 does not rotate the
 release key on an enrolled machine: changing the installation release key
-requires reinstalling the connector on every machine. A connector that sees a
-rotation record refuses it and keeps the last runnable version and key pin.
+requires reinstalling the connector on every machine. On each machine,
+uninstall every profile with `uninstall --bot <kind> --name <label>` before
+installing the connector signed by the new key; the last uninstall clears the
+machine trust, installed versions, launcher and current pointer. If every profile was removed by an older connector, run
+`reset-machine --i-am-the-installer` before retrying the new join code. A connector that sees a rotation record refuses it
+and keeps the last runnable version and key pin.
 The gateway config names its own database login (`control_room_fleet`), which
 can only do fleet work. Owner enrollment, offer, review and revocation records use a
 different protected login in `control_room_fleet_owner_authority`; the normal

@@ -146,9 +146,9 @@ function inside(root, path) {
   return part !== "" && part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part);
 }
 
-function commandOutput(command, args) {
+function commandOutput(command, args, options = {}) {
   return new Promise(resolveOutput => {
-    const child = spawn(command, args, { shell: false, stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn(command, args, { shell: false, stdio: ["ignore", "pipe", "ignore"], ...options });
     let output = "", settled = false;
     const finish = value => { if (settled) return; settled = true; clearTimeout(timer); resolveOutput(value); };
     const timer = setTimeout(() => { child.kill("SIGKILL"); finish(""); }, 2_000);
@@ -157,7 +157,12 @@ function commandOutput(command, args) {
   });
 }
 
-async function processIdentity(pid, platform = process.platform) {
+export function connectorProcessIdentityEnvironmentV1(env = process.env) {
+  return Object.freeze({ PATH: typeof env.PATH === "string" ? env.PATH : "", LC_ALL: "C", LANG: "C" });
+}
+
+export async function connectorProcessIdentityForLockV1(pid, { platform = process.platform,
+  commandOutput: runCommandOutput = commandOutput } = {}) {
   try {
     if (platform === "linux") {
       const raw = await readFile(`/proc/${pid}/stat`, "utf8");
@@ -165,17 +170,19 @@ async function processIdentity(pid, platform = process.platform) {
       return fields[19] ? `linux-start-ticks:${fields[19]}` : null;
     }
     if (platform === "win32") {
-      const value = await commandOutput("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      const value = await runCommandOutput("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
         `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CreationDate.ToFileTimeUtc()`]);
       return value ? `windows-start-filetime:${value}` : null;
     }
-    const value = await commandOutput("ps", ["-o", "lstart=", "-p", String(pid)]);
+    const value = await runCommandOutput("ps", ["-o", "lstart=", "-p", String(pid)], {
+      env: connectorProcessIdentityEnvironmentV1(),
+    });
     return value ? `posix-start:${value.replace(/\s+/gu, " ").trim()}` : null;
   } catch { return null; }
 }
 
 function currentProcessIdentity() {
-  ownProcessIdentity ??= processIdentity(process.pid);
+  ownProcessIdentity ??= connectorProcessIdentityForLockV1(process.pid);
   return ownProcessIdentity;
 }
 
@@ -251,7 +258,7 @@ async function withUpdateLock(path, work, { clock = Date.now, sleep = ms => new 
       let alive = false;
       if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) try { process.kill(owner.pid, 0); alive = true; } catch (e) { alive = e?.code !== "ESRCH"; }
       if (alive && typeof owner?.identity === "string") {
-        const observed = await processIdentity(owner.pid);
+        const observed = await connectorProcessIdentityForLockV1(owner.pid);
         if (observed !== null && observed !== owner.identity) alive = false;
       }
       let oldEnough = false;

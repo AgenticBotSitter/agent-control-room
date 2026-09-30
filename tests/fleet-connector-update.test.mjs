@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { checkForConnectorUpdateV1, compareConnectorVersionsV1, connectorReleaseSignatureMaterialV1,
-  connectorInstallRootFromConfigPathV1, connectorUpdatePathsV1, connectorUpdatesPausedV1, installConnectorLauncherV1,
+  connectorInstallRootFromConfigPathV1, connectorProcessIdentityForLockV1, connectorUpdatePathsV1, connectorUpdatesPausedV1, installConnectorLauncherV1,
   launchCurrentConnectorV1, pinConnectorReleaseTrustV1, recoverPendingConnectorUpdateV1, setConnectorUpdatesPausedV1,
   verifyConnectorReleaseAdvertisementV1 } from "../scripts/fleet/connector-update.mjs";
 import { applyReleaseKeyRevocationsV1, applyReleaseKeyRotationV1, createReleaseKeyRevocationsV1,
@@ -210,6 +210,17 @@ test("two concurrent updaters on one machine coalesce behind one download", asyn
   assert.deepEqual(calls.map(value => value.state).sort(), ["coalesced", "updated"]);
 });
 
+test("POSIX lock identities run ps with a locale-independent environment", async () => {
+  let observed;
+  const identity = await connectorProcessIdentityForLockV1(42, { platform: "darwin", commandOutput: async (...args) => {
+    observed = args;
+    return "Sun Sep 27 15:52:16 2026";
+  } });
+  assert.equal(identity, "posix-start:Sun Sep 27 15:52:16 2026");
+  assert.deepEqual(observed, ["ps", ["-o", "lstart=", "-p", "42"],
+    { env: { PATH: typeof process.env.PATH === "string" ? process.env.PATH : "", LC_ALL: "C", LANG: "C" } }]);
+});
+
 test("a second process never breaks a live update lock during a health check longer than 30 seconds", async t => {
   const f = await fixture(t, "connector-cross-process-lock-"), bytes = Buffer.from("export default 'slow';\n");
   const release = advertised(bytes), inputPath = join(f.root, "child-input.json"); let downloads = 0;
@@ -229,9 +240,10 @@ test("a second process never breaks a live update lock during a health check lon
   const childInput = { installRoot: f.installRoot, configPath: f.configPath, advertised: release,
     currentVersion: "1.0.0", healthDelayMs: 35_000 };
   await writeFile(inputPath, `${JSON.stringify(childInput)}\n`, { mode: 0o600 });
-  const runChild = () => {
+  const runChild = locale => {
     const child = spawn(process.execPath, ["tests/support/fleet-connector-update-child.mjs", inputPath], {
-      cwd: process.cwd(), env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" }, stdio: ["ignore", "pipe", "pipe"],
+      cwd: process.cwd(), env: { ...process.env, LC_ALL: locale, LANG: locale,
+        CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" }, stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "", stderr = "";
     child.stdout.on("data", chunk => { stdout += chunk; }); child.stderr.on("data", chunk => { stderr += chunk; });
@@ -240,14 +252,14 @@ test("a second process never breaks a live update lock during a health check lon
     });
     return { child, complete };
   };
-  const owner = runChild();
+  const owner = runChild("en_GB.UTF-8");
   const pendingDeadline = Date.now() + 5_000;
   while (Date.now() < pendingDeadline) {
     try { await readFile(f.paths.pending); break; } catch (error) { if (error?.code !== "ENOENT") throw error; }
     await new Promise(done => setTimeout(done, 20));
   }
   assert.ok(await readFile(f.paths.pending), "the first process reached its slow health check");
-  const contenderStarted = Date.now(), contender = runChild();
+  const contenderStarted = Date.now(), contender = runChild("de_DE.UTF-8");
   const contenderResult = await contender.complete;
   assert.equal(contenderResult.code, 0, contenderResult.stderr);
   assert.deepEqual(JSON.parse(contenderResult.stdout), { ok: false, message: "connector_update_refused:busy" });

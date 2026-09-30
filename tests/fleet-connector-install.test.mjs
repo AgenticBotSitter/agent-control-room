@@ -25,7 +25,7 @@ function json(ok, result, status = ok ? 200 : 409) {
   });
 }
 
-function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
+function fakeGateway({ rotateDelayMs = 0, resultWorkerKind, releaseTrust = RELEASE_TRUST, releaseKeys = RELEASE_KEYS } = {}) {
   const workerKinds = new Set(["codex", "claude-code", "hermes", "claude-desktop", "cursor", "mcp-agent"]);
   const used = new Set();
   const bindings = new Map();
@@ -35,13 +35,14 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
       sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length, builtFrom: "0".repeat(40),
       minVersion: connector.CONNECTOR_VERSION };
     return Object.freeze({ ...unsigned,
-      signature: sign(null, connectorReleaseSignatureMaterialV1(unsigned), RELEASE_KEYS.privateKey).toString("base64url") });
+      signature: sign(null, connectorReleaseSignatureMaterialV1(unsigned), releaseKeys.privateKey).toString("base64url") });
   });
   const fetcher = async (url, init = {}) => {
     const path = new URL(url).pathname;
     const body = init.body ? JSON.parse(init.body) : {};
     const bearer = String(init.headers?.authorization ?? "").replace(/^Bearer /u, "");
     const authenticated = state.digest && connector.sha256(bearer) === state.digest;
+    if (path === "/fleet/v1/connector-manifest.json") return new Response("not found", { status: 404 });
     if (path === "/fleet/v1/enroll") {
       if (!workerKinds.has(body.workerKind)) return json(false, "invalid", 400);
       const prior = bindings.get(body.code);
@@ -53,7 +54,7 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
       }
       return json(true, { workerId: WORKER_ID, displayName: "Fixture bot", projectIds: ["project:test"],
         workerKind: resultWorkerKind ?? body.workerKind, capabilities: ["writing"],
-        credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust: RELEASE_TRUST,
+        credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust,
         connector: await connectorRelease }, 201);
     }
     if (!authenticated) return json(false, "unauthenticated", 401);
@@ -66,7 +67,7 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
     }
     if (path === "/fleet/v1/heartbeat") return json(true, { displayName: "Fixture bot", operationsMode: "running" });
     if (path === "/fleet/v1/me") return json(true, { displayName: "Fixture bot",
-      credentialExpiresAt: "2099-02-01T00:00:00.000Z", releaseTrust: RELEASE_TRUST,
+      credentialExpiresAt: "2099-02-01T00:00:00.000Z", releaseTrust,
       connector: await connectorRelease });
     throw new Error(`unexpected request ${path}`);
   };
@@ -194,6 +195,35 @@ test("join refuses a gateway that omits or changes the installation release key"
   }
 });
 
+test("join takes epoch and revocations from embedded trust while retaining the gateway floor", async t => {
+  const homeDir = await temporary(t, "connector-embedded-trust-"), configPath = join(homeDir, "bot.json");
+  const revokedPublicKey = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const gatewayTrust = { ...RELEASE_TRUST, epoch: 7, revokedKeyIds: [releaseKeyIdV1(revokedPublicKey)] };
+  const gateway = fakeGateway({ releaseTrust: gatewayTrust });
+  await connector.join({ server: "https://control.example", code: code("T"), workerKind: "codex", configPath,
+    fetcher: gateway.fetcher, expectedReleaseTrust: RELEASE_TRUST });
+  const config = await connector.loadConfig(configPath);
+  assert.deepEqual(config.updates, { releasePublicKey: RELEASE_TRUST.publicKey, floorVersion: RELEASE_TRUST.versionFloor,
+    keyId: RELEASE_TRUST.keyId, epoch: RELEASE_TRUST.epoch, revokedKeyIds: RELEASE_TRUST.revokedKeyIds, paused: false });
+  assert.equal(gateway.state.enrollments, 1);
+});
+
+test("a newer public manifest refuses before a join code is redeemed", async t => {
+  const homeDir = await temporary(t, "connector-newer-manifest-"), configPath = join(homeDir, "bot.json");
+  let enrollments = 0;
+  const fetcher = async (url, init = {}) => {
+    if (new URL(url).pathname === "/fleet/v1/connector-manifest.json") return new Response(JSON.stringify({
+      schema: "control-room.fleet-connector-release/v1", version: "99.0.0" }), { status: 200,
+      headers: { "content-type": "application/json" } });
+    if (new URL(url).pathname === "/fleet/v1/enroll") enrollments += 1;
+    throw new Error(`unexpected ${init.method} ${url}`);
+  };
+  await assert.rejects(connector.join({ server: "https://control.example", code: code("V"), workerKind: "codex", configPath,
+    fetcher }), /requires connector 99\.0\.0/u);
+  assert.equal(enrollments, 0);
+  await assert.rejects(stat(configPath), error => error.code === "ENOENT");
+});
+
 test("the fake gateway refuses an unknown worker kind instead of echoing it", async t => {
   const homeDir = await temporary(t, "connector-unknown-kind-"), configPath = join(homeDir, "unknown.json");
   await assert.rejects(connector.join({ server: "https://control.example", code: code("u"),
@@ -205,7 +235,8 @@ test("a definitive enrollment refusal is cleanly retryable and a transport-pendi
   const homeDir = await temporary(t, "connector-refused-enrollment-"), pathsInput = { homeDir, platform: "linux", env: {}, name: "refused" };
   let refuse = true;
   const valid = fakeGateway();
-  const fetcher = async (...args) => refuse ? (refuse = false, json(false, "code_expired", 410)) : valid.fetcher(...args);
+  const fetcher = async (...args) => new URL(args[0]).pathname === "/fleet/v1/connector-manifest.json"
+    ? valid.fetcher(...args) : refuse ? (refuse = false, json(false, "code_expired", 410)) : valid.fetcher(...args);
   const input = { server: "https://control.example", code: code("x"), bot: "cursor", name: "refused", homeDir,
     platform: "linux", env: {}, fetcher, runner: recorder().runner, sourcePath: SOURCE };
   await assert.rejects(connector.installConnector(input), /code_expired/u);
@@ -231,6 +262,7 @@ test("rate limits and timeout responses preserve pending enrollment for an exact
       const homeDir = await temporary(t, `connector-transient-${status}-${index}-`), gateway = fakeGateway();
       let first = true;
       const fetcher = async (...args) => {
+        if (new URL(args[0]).pathname === "/fleet/v1/connector-manifest.json") return gateway.fetcher(...args);
         if (!first) return gateway.fetcher(...args);
         first = false;
         return new Response(JSON.stringify(errorCode ? { ok: false, error: errorCode } : { ok: false }), {
@@ -309,9 +341,9 @@ test("Claude Desktop and Cursor JSON merges preserve other servers, back up firs
       const restored = JSON.parse(await readFile(configPath, "utf8"));
       assert.deepEqual(restored, { theme: "dark", mcpServers: { existing: { command: "existing" } } });
       assert.equal((await readdir(dirname(configPath))).filter(file => file.includes(".backup-")).length, 2);
-      assert.equal(removed.shimRemoved, false);
+      assert.equal(removed.shimRemoved, true);
       await assert.rejects(stat(installed.paths.configPath), error => error.code === "ENOENT");
-      assert.equal((await stat(installed.paths.shimPath)).isFile(), true);
+      await assert.rejects(stat(installed.paths.shimPath), error => error.code === "ENOENT");
       assert.equal((await stat(installed.paths.workspace)).isDirectory(), true, "uninstall preserves user work");
     });
   }
@@ -416,9 +448,60 @@ test("CLI-backed uninstall removes each registration and keeps the graceful shar
     platform: "linux", env: {}, runner: commands.runner });
   const last = await connector.uninstallConnector({ bot: "hermes", name: "hermes-remove", homeDir,
     platform: "linux", env: {}, runner: commands.runner });
-  assert.equal(last.shimRemoved, false);
-  assert.equal((await stat(firstPaths.shimPath)).isFile(), true);
+  assert.equal(last.shimRemoved, true);
+  assert.equal(last.machineReset, true);
+  await assert.rejects(stat(firstPaths.shimPath), error => error.code === "ENOENT");
   assert.deepEqual(commands.calls.filter(call => call[1][1] === "remove").map(call => call[0]), ["claude", "codex", "hermes"]);
+});
+
+test("last uninstall clears shared state so a new release key can install", async t => {
+  const homeDir = await temporary(t, "connector-key-reinstall-"), commands = recorder();
+  const first = fakeGateway();
+  const input = { server: "https://control.example", code: code("Y"), bot: "codex", name: "first", homeDir,
+    platform: "linux", env: {}, fetcher: first.fetcher, runner: commands.runner, sourcePath: SOURCE };
+  const installed = await connector.installConnector(input);
+  const nextKeys = generateKeyPairSync("ed25519");
+  const nextPublicKey = nextKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const nextTrust = { ...RELEASE_TRUST, keyId: releaseKeyIdV1(nextPublicKey), publicKey: nextPublicKey };
+  const removed = await connector.uninstallConnector({ bot: "codex", name: "first", homeDir, platform: "linux", env: {},
+    runner: commands.runner });
+  assert.equal(removed.machineReset, true);
+  for (const path of [join(installed.paths.installRoot, "release-trust.json"), installed.paths.versionDir,
+    installed.paths.connectorPath, installed.paths.currentPointerPath])
+    await assert.rejects(stat(path), error => error.code === "ENOENT");
+  const second = fakeGateway({ releaseTrust: nextTrust, releaseKeys: nextKeys });
+  const reinstalled = await connector.installConnector({ ...input, code: code("Z"), name: "second", fetcher: second.fetcher });
+  assert.equal((await connector.loadConfig(reinstalled.paths.configPath)).installation.updates.keyId, nextTrust.keyId);
+  assert.equal(JSON.parse(await readFile(join(reinstalled.paths.installRoot, "release-trust.json"), "utf8")).keyId, nextTrust.keyId);
+});
+
+test("concurrent final-profile uninstalls leave no shared machine state", async t => {
+  const homeDir = await temporary(t, "connector-concurrent-final-uninstall-"), gateway = fakeGateway(), commands = recorder();
+  const base = { server: "https://control.example", bot: "codex", homeDir, platform: "linux", env: {},
+    fetcher: gateway.fetcher, runner: commands.runner, sourcePath: SOURCE };
+  const first = await connector.installConnector({ ...base, code: code("1"), name: "first" });
+  await connector.installConnector({ ...base, code: code("2"), name: "second" });
+  const removed = await Promise.all(["first", "second"].map(name => connector.uninstallConnector({ bot: "codex", name,
+    homeDir, platform: "linux", env: {}, runner: commands.runner })));
+  assert.equal(removed.filter(result => result.machineReset).length, 1);
+  await assert.rejects(stat(first.paths.installRoot), error => error.code === "ENOENT");
+});
+
+test("reset-machine refuses profiles and clears legacy shared state once they are absent", async t => {
+  const homeDir = await temporary(t, "connector-reset-machine-"), gateway = fakeGateway(), commands = recorder();
+  const input = { server: "https://control.example", code: code("R"), bot: "codex", name: "reset", homeDir,
+    platform: "linux", env: {}, fetcher: gateway.fetcher, runner: commands.runner, sourcePath: SOURCE };
+  const installed = await connector.installConnector(input);
+  await assert.rejects(connector.resetConnectorMachine({ homeDir, platform: "linux", env: {} }), /profiles remain/u);
+  assert.equal((await stat(installed.paths.currentPointerPath)).isFile(), true);
+  await connector.uninstallConnector({ bot: "codex", name: "reset", homeDir, platform: "linux", env: {}, runner: commands.runner });
+  await mkdir(join(installed.paths.installRoot, "versions", "0.4.0"), { recursive: true });
+  await Promise.all([writeFile(join(installed.paths.installRoot, "release-trust.json"), "{}\n"),
+    writeFile(join(installed.paths.installRoot, "versions", "0.4.0", "connector.mjs"), "legacy\n"),
+    writeFile(installed.paths.connectorPath, "legacy\n"), writeFile(installed.paths.currentPointerPath, "{}\n")]);
+  const reset = await connector.resetConnectorMachine({ homeDir, platform: "linux", env: {} });
+  assert.deepEqual(reset, { machineReset: true });
+  await assert.rejects(stat(installed.paths.installRoot), error => error.code === "ENOENT");
 });
 
 test("uninstall tolerates an already-missing CLI entry and removes credential temp files", async t => {
