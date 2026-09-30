@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn as nodeSpawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -217,10 +218,16 @@ writeFileSync(process.argv[3] + "/result.txt", readFileSync(process.argv[2]));`)
 
 test("overflow terminates once, an escaped pipe holder is bounded, and same-group children die", { timeout: 20_000 }, async t => {
   const dir = await workspace(t);
-  const overflow = await executable(dir, "for (;;) process.stdout.write('x'.repeat(4096));");
+  const overflow = await executable(dir, "process.exit(0)");
   const kills = [];
   const overflowRunner = connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
-    [entry(overflow, { maxOutputBytes: 1024, timeoutMs: 1_000 })], 1, "overflow.json")), { killProcess: (child, signal = "SIGTERM") => {
+    [entry(overflow, { maxOutputBytes: 1024, timeoutMs: 1_000 })], 1, "overflow.json")), { spawner: () => {
+      const child = new EventEmitter(); child.pid = 43210; child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+      child.stdout.destroy = () => {}; child.stderr.destroy = () => {};
+      queueMicrotask(() => { child.stdout.emit("data", Buffer.alloc(4096)); child.stdout.emit("data", Buffer.alloc(4096));
+        child.stdout.emit("data", Buffer.alloc(4096)); child.emit("exit", 0, null); });
+      return child;
+    }, killProcess: (child, signal = "SIGTERM") => {
       kills.push(signal); try { child.kill(signal); } catch {} } });
   await assert.rejects(overflowRunner.execute(input()), error => error?.code === "tool_adapter_output_too_large");
   assert.equal(kills.filter(signal => signal === "SIGTERM").length, 1, "overflow has one termination attempt");
