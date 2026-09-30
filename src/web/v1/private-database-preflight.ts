@@ -541,9 +541,23 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
                   OR pg_get_userbyid(a.grantee)<>'control_room_fleet_gateway')))
+            /* The owner is checked for EVERY kind, not only the reviewer. The
+               rest of this branch (SECURITY DEFINER, the pinned search_path, the
+               volatility of each signature) describes what these two functions
+               must be on a correct database; none of it says who may own them.
+               Leaving the owner test inside the $2 disjunct made the whole shape
+               conditional, so on a database where the functions exist with the
+               right properties but are owned by anyone other than
+               control_room_schema_owner, every non-reviewer kind exempted them on
+               the strength of the web login merely lacking EXECUTE - which is
+               exactly the state a SECURITY DEFINER function an operator can
+               re-create, or a fixture that replays migrations without SET ROLE,
+               is in. redeem_fleet_enrollment above checks its owner
+               unconditionally for the same reason. */
             OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-              AND (($2 AND p.prosecdef AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND (($2 AND p.prosecdef
                 AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
                 AND NOT p.proleakproof AND p.proparallel='u'
                 AND p.provolatile=CASE WHEN p.oid='read_agent_review_plan(text)'::regprocedure THEN 's' ELSE 'v' END)
