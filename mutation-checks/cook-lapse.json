@@ -7,11 +7,11 @@
     "why": "reconcileStalled reads effect intents to decide whether an outcome is uncertain; without the grant it fails 42501 for every eligible candidate on real PostgreSQL"
   },
   {
-    "file": "db/migrations/0224_supervisor_effect_intent_read.sql",
-    "find": "    EXECUTE 'GRANT SELECT ON control_effect_intents TO control_room_task_coordinator';",
-    "replace": "    -- MUTATED: the migration's grant is removed",
+    "file": "db/roles/task_coordinator_roles.sql",
+    "find": "GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;",
+    "replace": "GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;\nGRANT SELECT ON control_effect_intents TO PUBLIC;",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
-    "why": "an installation provisioned before the role file existed converges on the same grant through the migration"
+    "why": "an installation provisioned before the role file existed converges on the same grant through migration 0224, and the role file keeps granting it"
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
