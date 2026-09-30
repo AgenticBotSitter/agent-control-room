@@ -6,6 +6,7 @@ import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema, requestRecordSchema, workflo
 import { sha256Digest } from "../../security";
 import { moveFleetEntityV1, readFleetEntityV1, type Entity, type FleetActorV1 } from "./canonical-transitions";
 import { fleetFail, FleetErrorV1 } from "./errors";
+import { FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1, FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1 } from "./database-failure";
 import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_PATTERN_V1,
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
@@ -436,7 +437,7 @@ export class FleetGatewayStoreV1 {
         // caller, whose transaction cannot enforce the ceiling for ANY claim;
         // answering that with `conflict` would send the connector back to the
         // next offer in the same unusable transaction.
-        if (databaseSqlStateIsAnyV1(error, ["54000", "P0001", "23505", "23503"])) return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1)) return fleetFail("conflict");
         throw error;
       }
       const claimed = await canonical.claimReadyTaskJob({ tenantId: this.#tenantId, jobId: job.id,
@@ -459,7 +460,7 @@ export class FleetGatewayStoreV1 {
         // its OWN set rather than the claim insert's. A 23514 on the CLAIM row
         // means the gateway built a row the schema forbids, which is a bug to
         // report, not a busy worker to move past.
-        if (databaseSqlStateIsAnyV1(error, ["23P01", "23514"])) return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1)) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-claim:${suffix}`, tenantId: this.#tenantId, projectId: offer.project_id,
