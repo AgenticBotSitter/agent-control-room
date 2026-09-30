@@ -4,10 +4,12 @@ const RUN_STATES_V1 = new Set(["approved", "prechecked", "staged", "quick_backup
   "backup_verified", "preimage_taken", "migrating", "migrated", "switched", "restarted", "healthy",
   "succeeded", "rollback_started", "restore_started", "db_restored", "code_restored", "rolled_back",
   "needs_attention", "uncertain", "attended_upgrade_required", "refused"]);
+const UPDATER_LEASE_LOCK_V1 = Object.freeze([1128354389, 1431323730]);
 
 /** Typed adapter over item 7's fixed updater schema. The client is the
  * production peer-authenticated control_room_deployer login. */
 export class PostgresUpdaterStoreV1 {
+  #leaseHeld = false;
   constructor(client) { this.client = client; }
 
   async initialize() {
@@ -37,6 +39,31 @@ export class PostgresUpdaterStoreV1 {
     return result.rows[0];
   }
 
+  /** Hold the singleton updater lease for this PostgreSQL session. A fresh
+   * process may reuse a live run's durable token only after the old session's
+   * advisory lock has disappeared; the token itself is never rewritten. */
+  async acquire(requestedLeaseToken) {
+    assertSafeIdV1(requestedLeaseToken);
+    if (!this.#leaseHeld) {
+      const result = await this.client.query(`SELECT pg_catalog.pg_try_advisory_lock($1::integer,$2::integer)
+        AS acquired`, UPDATER_LEASE_LOCK_V1);
+      if (result.rows[0]?.acquired !== true)
+        return Object.freeze({ status: "busy", run: await this.liveRun() });
+      this.#leaseHeld = true;
+    }
+    const run = await this.liveRun();
+    return Object.freeze({ status: "acquired", run,
+      leaseToken: run?.lease_token ?? requestedLeaseToken,
+      resumed: Boolean(run && run.lease_token !== requestedLeaseToken) });
+  }
+
+  async release() {
+    if (!this.#leaseHeld) return;
+    await this.client.query(`SELECT pg_catalog.pg_advisory_unlock($1::integer,$2::integer)`,
+      UPDATER_LEASE_LOCK_V1);
+    this.#leaseHeld = false;
+  }
+
   async transition(runId, leaseToken, state, detail = {}, { terminal = false } = {}) {
     assertSafeIdV1(leaseToken);
     if (typeof runId !== "string" || !/^run:[0-9a-f-]{36}$/u.test(runId) || !RUN_STATES_V1.has(state))
@@ -59,8 +86,14 @@ export class PostgresUpdaterStoreV1 {
   async events(runId) {
     if (typeof runId !== "string" || !/^run:[0-9a-f-]{36}$/u.test(runId))
       throw updaterRefuseV1("updater_event_refused");
+    // run_events.ordinal is bigint: node-pg returns int8 as a string, and `"1" + 1` is "11".
+    // Convert here, and refuse anything that is not a safe integer, so callers only ever see numbers.
     return (await this.client.query(`SELECT ordinal,state,detail,recorded_at FROM updater.run_events
-      WHERE run_id=$1 ORDER BY ordinal`, [runId])).rows;
+      WHERE run_id=$1 ORDER BY ordinal`, [runId])).rows.map(row => {
+      const ordinal = typeof row.ordinal === "string" && /^[1-9][0-9]{0,15}$/u.test(row.ordinal) ? Number(row.ordinal) : row.ordinal;
+      if (!Number.isSafeInteger(ordinal) || ordinal < 1) throw updaterRefuseV1("updater_event_refused");
+      return { ...row, ordinal };
+    });
   }
 
   async unhandledOwnerRequests(limit = 50) {

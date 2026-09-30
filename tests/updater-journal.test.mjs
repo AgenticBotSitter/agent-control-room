@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -30,6 +30,9 @@ test("journal rejects every torn boundary sampled from a complete append and a f
   await journal.done({ runId: "run-torn", ordinal: 1, state: "succeeded", detail: { message: "complete" } });
   const complete = await readFile(join(root, "updater-state/journal.jsonl"), "utf8");
   const line = complete.trimEnd();
+  await writeFile(join(root, "updater-state/journal.jsonl"), `${line} `, { mode: 0o600 });
+  await assert.rejects(journal.validate(), /updater_journal_short/u,
+    "a complete line with a trailing non-newline byte is torn, not an accepted JSON value");
   // Every byte boundary of this realistic line exercises a kill during append.
   for (let cut = 1; cut < Buffer.byteLength(line); cut += 1) {
     await writeFile(join(root, "updater-state/journal.jsonl"), Buffer.from(line).subarray(0, cut), { mode: 0o600 });
@@ -70,9 +73,20 @@ test("append and compaction disk-full/crash points retain a valid old authority 
   for (const point of ["compact_before_temp", "compact_before_temp_sync", "compact_after_temp_sync", "compact_after_marker", "compact_after_rename"]) {
     const crash = async seen => { if (seen === point) { const error = new Error(`crash-${point}`); error.code = "EIO"; throw error; } };
     await assert.rejects(journal.compact({ checkpoint: crash }), /crash-/u);
+    const temporary = (await readdir(join(root, "updater-state"))).find(name => /^journal\.compact\.[0-9a-f]{32}$/u.test(name));
+    if (temporary) {
+      const candidate = await readFile(join(root, "updater-state", temporary), "utf8");
+      const corrupt = point === "compact_after_marker"
+        ? candidate.replace('"state":"succeeded"', '"state":"refused"') : "corrupt\n";
+      await writeFile(join(root, "updater-state", temporary), corrupt, { mode: 0o600 });
+    }
     await journal.recoverCompaction();
-    assert.ok((await journal.validate()).entries.length > 0, point);
+    if (point === "compact_after_rename") assert.ok((await journal.validate()).entries.length > 0, point);
+    else assert.equal(await readFile(join(root, "updater-state/journal.jsonl"), "utf8"), original,
+      `${point} retains the old authority when its replacement is corrupt`);
     await writeFile(join(root, "updater-state/journal.jsonl"), original, { mode: 0o600 });
+    for (const name of await readdir(join(root, "updater-state")))
+      if (/^journal\.compact\.[0-9a-f]{32}$/u.test(name)) await rm(join(root, "updater-state", name), { force: true });
   }
   // A marker is cleaned after each recovery; compaction remains possible and shrinks the authority.
   const result = await journal.compact(); assert.equal(result.compacted, true);

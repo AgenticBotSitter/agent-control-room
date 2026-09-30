@@ -23,9 +23,9 @@ const plainFailureV1 = Object.freeze({
  */
 export class UpdaterRunnerV1 {
   #running = false;
-  constructor({ store, effects, journal, mode, stateFiles, referee }) {
+  constructor({ store, effects, journal, mode, stateFiles, referee, onHeartbeatState = () => {} }) {
     this.store = store; this.effects = effects; this.journal = journal; this.mode = mode;
-    this.stateFiles = stateFiles; this.referee = referee;
+    this.stateFiles = stateFiles; this.referee = referee; this.onHeartbeatState = onHeartbeatState;
   }
 
   async #record(run, state, detail = {}, options = {}) {
@@ -140,18 +140,49 @@ export class UpdaterRunnerV1 {
     }
   }
 
+  async #journalUncertain(run, reason) {
+    if (run.state === "uncertain") return { status: "uncertain", run,
+      message: "The updater journal is damaged. Tap Check and continue." };
+    const uncertain = await this.store.transition(run.run_id, run.lease_token, "uncertain", { reason });
+    return { status: "uncertain", code: reason, run: uncertain,
+      message: "The updater journal is damaged. Tap Check and continue." };
+  }
+
+  #outcomeHeartbeat(outcome, run) {
+    if (["waiting", "uncertain", "attended_upgrade_required"].includes(outcome.status))
+      this.onHeartbeatState({ state: "awaiting_approval", step: outcome.run?.state ?? run.state });
+    else if (outcome.status === "rolled_back") this.onHeartbeatState({ state: "rolled_back", step: null });
+    else if (outcome.status === "needs_attention") this.onHeartbeatState({ state: "uncertain", step: null });
+    else this.onHeartbeatState({ state: "idle", step: null });
+    return outcome;
+  }
+
   async runOnce() {
-    if (this.#running === true) return { status: "busy", message: "Another updater call is active." };
+    if (this.#running) return { status: "busy", message: "Another updater call is active." };
     this.#running = true;
+    let run;
     try {
-      const run = await this.store.liveRun();
-      if (!run) return { status: "idle", message: "No approved update is active." };
-      if (this.stateFiles.journalUncertain?.()) return { status: "uncertain",
-        message: "Control Room isn't sure the journal and its display agree. Tap Check and continue." };
-      if (run.lease_token !== this.stateFiles.leaseToken) return { status: "busy",
-        message: "An updater with another boot lease owns the active run." };
-      return await this.#advance(run);
+      const acquisition = this.store.acquire
+        ? await this.store.acquire(this.stateFiles.leaseToken)
+        : { status: "acquired", run: await this.store.liveRun(), leaseToken: this.stateFiles.leaseToken };
+      if (acquisition.status === "busy") return { status: "busy", liveRun: Boolean(acquisition.run),
+        message: "An updater with another live database session owns the active run." };
+      run = acquisition.run;
+      if (!run) {
+        this.onHeartbeatState({ state: "idle", step: null });
+        return { status: "idle", message: "No approved update is active." };
+      }
+      if (run.lease_token !== acquisition.leaseToken) return { status: "busy", liveRun: true,
+        message: "The active run lease could not be acquired." };
+      this.onHeartbeatState({ state: "running", step: run.state });
+      const reason = await this.stateFiles.refreshJournalHealth?.() ?? this.stateFiles.journalUncertain?.();
+      if (reason) return this.#outcomeHeartbeat(await this.#journalUncertain(run, reason), run);
+      return this.#outcomeHeartbeat(await this.#advance(run), run);
     } catch (error) {
+      if (run && typeof error?.code === "string" && error.code.startsWith("updater_journal_")) {
+        try { return this.#outcomeHeartbeat(await this.#journalUncertain(run, error.code), run); }
+        catch (uncertainError) { error = uncertainError; }
+      }
       return { status: "error", code: typeof error?.code === "string" ? error.code : "updater_runner_error",
         message: "The updater hit an error and will retry from its durable step." };
     } finally { this.#running = false; }
@@ -165,19 +196,27 @@ export class UpdaterRunnerV1 {
     this.#running = true;
     try {
       const run = await this.store.liveRun();
-      if (!run || run.lease_token !== this.stateFiles.leaseToken || !await this.stateFiles.hasRescueMarker())
+      const rescued = await this.stateFiles.hasRescueMarker(), journalUncertain = await this.stateFiles.journalUncertain?.();
+      const journalRecoveryPending = await this.stateFiles.journalRecoveryPending?.();
+      if (!run || run.lease_token !== this.stateFiles.leaseToken || (!rescued && !journalUncertain && !journalRecoveryPending))
         throw updaterRefuseV1("updater_check_continue_refused");
       if (run.state !== "uncertain") throw updaterRefuseV1("updater_check_continue_refused");
+      if (journalUncertain && !await this.stateFiles.repairJournalUncertain?.())
+        throw updaterRefuseV1("updater_check_continue_refused");
       const measurement = await this.effects.measure(run);
       if (measurement?.state === "rollback_required") {
         const rollback = await this.#rollback(run, "updater_measurement_inconsistent");
-        if (rollback.status === "rolled_back") await this.stateFiles.removeRescueMarker();
+        if (rollback.status === "rolled_back") {
+          if (rescued) await this.stateFiles.removeRescueMarker();
+          this.stateFiles.settleJournalRecovery?.();
+        }
         return rollback;
       }
       if (!measurement || !["succeeded", "rolled_back"].includes(measurement.state))
         throw updaterRefuseV1("updater_measurement_refused");
       const settled = await this.#record(run, measurement.state, { measured: true, ...measurement.detail }, { terminal: true });
-      await this.stateFiles.removeRescueMarker();
+      if (rescued) await this.stateFiles.removeRescueMarker();
+      this.stateFiles.settleJournalRecovery?.();
       return { status: measurement.state, run: settled, message: "The measured update state is recorded." };
     } finally { this.#running = false; }
   }

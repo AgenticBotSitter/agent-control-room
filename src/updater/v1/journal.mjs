@@ -63,7 +63,7 @@ async function syncDirectoryV1(root, relativePath) {
 export class FileStepJournalV1 {
   #tail = Promise.resolve();
   constructor(root, { ownerUid = process.getuid?.() === 0 ? 0 : undefined, checkpoint = async () => {} } = {}) {
-    this.root = root; this.path = JOURNAL_PATH_V1; this.ownerUid = ownerUid; this.checkpoint = checkpoint;
+    this.root = root; this.ownerUid = ownerUid; this.checkpoint = checkpoint;
   }
   async #serialized(work) {
     const next = this.#tail.then(work, work);
@@ -99,10 +99,10 @@ export class FileStepJournalV1 {
       return this.#key();
     }
   }
-  async #read({ missingOk = true } = {}) {
-    await this.#assertOwned(JOURNAL_PATH_V1, { allowMissing: missingOk });
+  async #read({ missingOk = true, relativePath = JOURNAL_PATH_V1 } = {}) {
+    await this.#assertOwned(relativePath, { allowMissing: missingOk });
     let text;
-    try { text = await readFileNoFollowV1(this.root, JOURNAL_PATH_V1, { maxBytes: CAP_BYTES_V1 + MAX_LINE_BYTES_V1 }); }
+    try { text = await readFileNoFollowV1(this.root, relativePath, { maxBytes: CAP_BYTES_V1 + MAX_LINE_BYTES_V1 }); }
     catch (error) { if (missingOk && error?.code === "ENOENT") return { entries: [], tail: GENESIS_MAC_V1, bytes: 0 }; throw error; }
     if (!text.endsWith("\n")) throw journalErrorV1("updater_journal_short");
     const key = await this.#key(); let previous = GENESIS_MAC_V1; const entries = [];
@@ -130,8 +130,15 @@ export class FileStepJournalV1 {
         if (error?.code === "ENOENT") temporaryExists = false; else throw error;
       }
       if (temporaryExists) {
-        const original = this.path; this.path = temporary;
-        try { await this.#read({ missingOk: false }); } finally { this.path = original; }
+        try { await this.#read({ missingOk: false, relativePath: temporary }); }
+        catch (error) {
+          // The old authority remains intact until this point. A replacement
+          // that cannot prove its own chain is discarded, never adopted.
+          await rm(join(this.root, temporary), { force: true });
+          await unlink(join(this.root, COMPACTION_PATH_V1));
+          await syncDirectoryV1(this.root, COMPACTION_PATH_V1);
+          return false;
+        }
         await rename(join(this.root, temporary), join(this.root, JOURNAL_PATH_V1)); await syncDirectoryV1(this.root, JOURNAL_PATH_V1);
       } else await this.#read({ missingOk: false }); // rename committed before the crash
       await unlink(join(this.root, COMPACTION_PATH_V1)); await syncDirectoryV1(this.root, COMPACTION_PATH_V1);
@@ -139,6 +146,20 @@ export class FileStepJournalV1 {
     });
   }
   validate() { return this.#serialized(() => this.#read()); }
+  async quarantineCorrupt() {
+    return this.#serialized(async () => {
+      try { await this.#read({ missingOk: false }); return false; }
+      catch (error) {
+        if (!['updater_journal_short', 'updater_journal_line_refused', 'updater_journal_mac_refused',
+          'updater_journal_canonical_refused'].includes(error?.code)) throw error;
+      }
+      await this.#assertOwned(JOURNAL_PATH_V1, { allowMissing: false });
+      const poisoned = `${JOURNAL_PATH_V1}.poisoned-${Date.now()}-${randomBytes(8).toString("hex")}`;
+      await rename(join(this.root, JOURNAL_PATH_V1), join(this.root, poisoned));
+      await syncDirectoryV1(this.root, JOURNAL_PATH_V1);
+      return true;
+    });
+  }
   health(bytes) { return Object.freeze({ alert: bytes >= ALERT_AT_BYTES_V1, cap: bytes >= CAP_BYTES_V1 }); }
   async #append(kind, record) {
     return this.#serialized(async () => {

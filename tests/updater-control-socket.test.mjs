@@ -54,6 +54,28 @@ test("a 50-request burst is serviced and the caller beyond the limit is refused 
   assert.equal(results.length, 50); assert.equal(new Set(results).size, 50);
 });
 
+test("an absolute request deadline evicts a slowloris that keeps sending bytes", async t => {
+  let handled = 0;
+  const root = await rootV1(t), server = new UpdaterControlServerV1({ root, requestTimeoutMs: 60,
+    handler: async request => { handled += 1; return request.requestId; } });
+  const path = await server.start(); t.after(() => server.stop());
+  const socket = createConnection(path); await new Promise((resolve, reject) => {
+    socket.once("connect", resolve); socket.once("error", reject);
+  });
+  const drip = setInterval(() => { if (!socket.destroyed) socket.write("{"); }, 10);
+  try {
+    await new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error("slowloris_not_evicted")), 500);
+      socket.once("close", () => { clearTimeout(deadline); resolve(); });
+    });
+  } finally { clearInterval(drip); }
+  for (let tries = 0; server.activeConnections !== 0 && tries < 50; tries += 1)
+    await new Promise(resolve => setTimeout(resolve, 2));
+  assert.equal(server.activeConnections, 0); assert.equal(handled, 0);
+  assert.equal(await sendControlRequestV1(path, requestV1("after-slowloris")), "request-after-slowloris");
+  assert.equal(handled, 1);
+});
+
 test("a planted socket symlink or ordinary file is refused without removing its target", async t => {
   const root = await rootV1(t), target = join(root, "target"); await writeFile(target, "keep");
   const path = join(root, "updater-state/control.sock"); await symlink(target, path);

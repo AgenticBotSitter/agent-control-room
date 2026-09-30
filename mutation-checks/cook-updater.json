@@ -43,8 +43,8 @@
   },
   {
     "file": "src/updater/v1/runner.mjs",
-    "find": "if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };",
-    "replace": "if (false) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "find": "if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };\n    this.#running = true;\n    let run;",
+    "replace": "if (false) return { status: \"busy\", message: \"Another updater call is active.\" };\n    this.#running = true;\n    let run;",
     "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
     "why": "the updater has one in-process actor under a 50-caller burst"
   },
@@ -206,21 +206,112 @@
     "file": "src/updater/v1/runner.mjs",
     "find": "if (!measurement || ![\"succeeded\", \"rolled_back\"].includes(measurement.state))",
     "replace": "if (false)",
-    "test": "node --test --test-name-pattern='explicit check-and-continue' tests/updater-skeleton.test.mjs",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
     "why": "check-and-continue removes uncertainty only after an explicit valid measured terminal state"
   },
   {
     "file": "src/updater/v1/runner.mjs",
-    "find": "if (this.stateFiles.journalUncertain?.()) return { status: \"uncertain\",",
-    "replace": "if (false) return { status: \"uncertain\",",
-    "test": "node --test --test-name-pattern='journal/display disagreement' tests/updater-skeleton.test.mjs",
+    "find": "?? this.stateFiles.journalUncertain?.();",
+    "replace": "?? false;",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
     "why": "a disagreement between the authoritative file and database display blocks automatic effects"
   },
   {
     "file": "src/updater/v1/runner.mjs",
     "find": "if (measurement?.state === \"rollback_required\") {",
     "replace": "if (false) {",
-    "test": "node --test --test-name-pattern='inconsistent check-and-continue' tests/updater-skeleton.test.mjs",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
     "why": "an inconsistent measured state must run the rollback port rather than resume forward"
+  },
+  {
+    "file": "src/updater/v1/store.mjs",
+    "find": "if (result.rows[0]?.acquired !== true)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
+    "why": "a second live PostgreSQL session must not acquire the singleton updater lease"
+  },
+  {
+    "file": "src/updater/v1/store.mjs",
+    "find": "leaseToken: run?.lease_token ?? requestedLeaseToken,",
+    "replace": "leaseToken: requestedLeaseToken,",
+    "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
+    "why": "a replacement session resumes with the immutable durable token instead of rewriting it"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (run.lease_token !== acquisition.leaseToken) return { status: \"busy\", liveRun: true,",
+    "replace": "if (false) return { status: \"busy\", liveRun: true,",
+    "test": "node --test --test-name-pattern='runner refuses an acquired result' tests/updater-skeleton.test.mjs",
+    "why": "the runner never advances a live run without the acquired durable token"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (acquisition.status !== \"acquired\") {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='startup refuses when another database session' tests/updater-skeleton.test.mjs",
+    "why": "startup refuses while another PostgreSQL session owns the updater lease"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "let heartbeatState = acquisition.run",
+    "replace": "let heartbeatState = false",
+    "test": "node --test --test-name-pattern='startup reports a live run' tests/updater-skeleton.test.mjs",
+    "why": "the first heartbeat reports a live run instead of contradicting it as idle"
+  },
+  {
+    "file": "src/updater/v1/attended-flip.mjs",
+    "find": "if (plan?.planId !== planId || confirmation.planDigest !== planDigest)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='rechecks the confirmed digest' tests/updater-cli-flip.test.mjs",
+    "why": "the attended flip rechecks the exact plan bytes immediately before staging"
+  },
+  {
+    "file": "src/updater/v1/fs-safety.mjs",
+    "find": "constants.O_RDONLY | constants.O_NONBLOCK",
+    "replace": "constants.O_RDONLY",
+    "test": "node --test --test-name-pattern='planted FIFO' tests/updater-skeleton.test.mjs",
+    "why": "a root-owned FIFO cannot block the updater's state-file reader"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "const deadline = setTimeout(() => socket.destroy(), this.requestTimeoutMs);",
+    "replace": "const deadline = setTimeout(() => {}, this.requestTimeoutMs);",
+    "test": "node --test --test-name-pattern='absolute request deadline' tests/updater-control-socket.test.mjs",
+    "why": "a byte-dribbling client cannot hold a control socket slot indefinitely"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "return [0, 1, 2, 3, 4, 5].map(index => WORDS_V1[bytes[index] & 63]);",
+    "replace": "return [0, 1, 2, 3].map(index => WORDS_V1[bytes[index] & 63]);",
+    "test": "node --test --test-name-pattern='CLI keeps status' tests/updater-cli-flip.test.mjs",
+    "why": "the owner confirmation retains six 6-bit words rather than the old offline-guessable four"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": ": [\"busy\", \"needs_attention\", \"error\"].includes(this.lastOutcome.status) ? \"needs_attention\"",
+    "replace": ": [\"needs_attention\", \"error\"].includes(this.lastOutcome.status) ? \"needs_attention\"",
+    "test": "node --test --test-name-pattern='busy result with a live run' tests/updater-skeleton.test.mjs",
+    "why": "a busy live run is visible as needs attention instead of idle"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "needsYou: [\"busy\", \"uncertain\", \"attended_upgrade_required\", \"needs_attention\", \"error\"]",
+    "replace": "needsYou: [\"uncertain\", \"attended_upgrade_required\", \"needs_attention\", \"error\"]",
+    "test": "node --test --test-name-pattern='busy result with a live run' tests/updater-skeleton.test.mjs",
+    "why": "a busy live run explicitly tells the owner attention is needed"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "await this.#read({ missingOk: false, relativePath: temporary });",
+    "replace": "await this.#read({ missingOk: false, relativePath: JOURNAL_PATH_V1 });",
+    "test": "node --test --test-name-pattern='append and compaction disk-full' tests/updater-journal.test.mjs",
+    "why": "compaction validates the replacement file itself before it can replace the old authority"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "journalRecoveryPending = repaired && !fileJournalUncertain;",
+    "replace": "journalRecoveryPending = false;",
+    "test": "node --test --test-name-pattern='torn live file journal' tests/updater-skeleton.test.mjs",
+    "why": "Check and continue only settles a poisoned journal after it is explicitly archived and revalidated"
   }
 ]
