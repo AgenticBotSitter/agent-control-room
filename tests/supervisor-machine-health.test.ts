@@ -44,3 +44,24 @@ test("the loop starts immediately, refuses overlap, survives a failed cycle, and
   assert.equal(cycles,3);assert.equal(reported,1);callback?.();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(cycles,4);await handle.close();assert.equal(cleared,true);
 });
+
+test("a failed first cycle is reported, not thrown, only when the caller opts in, so host startup cannot be blocked by it", async () => {
+  let callback: (()=>void)|undefined,cycles=0,reported=0;
+  const timer={unref(){}} as ReturnType<typeof setInterval>;
+  const handle=await startSupervisorLoopV1({intervalMs:1_000,toleratesFirstCycleFailure:true,
+    service:{async cycle(){cycles++;
+    if(cycles===1)throw new Error("machine_unhealthy_fixture");}},runtime:{setInterval(run){callback=run;return timer;},
+      clearInterval(){},report(){reported++;}}});
+  assert.equal(cycles,1);assert.equal(reported,1);
+  callback?.();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(cycles,2,"the loop must keep ticking after a failed first cycle");
+  await handle.close();
+});
+
+test("without that opt-in, a failed first cycle still rejects -- a one-shot caller's cycle IS its unit of work", async () => {
+  const timer={unref(){}} as ReturnType<typeof setInterval>;
+  await assert.rejects(startSupervisorLoopV1({intervalMs:1_000,
+    service:{async cycle(){throw new Error("synthetic_worker_failure_fixture");}},
+    runtime:{setInterval(run){return timer;},clearInterval(){},report(){}}}),
+  /synthetic_worker_failure_fixture/u);
+});

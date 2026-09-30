@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0195 (filename order, including assigned gaps, 0155-0157 and 0160),
+// Generated from public migrations through 0196 (filename order, including assigned gaps, 0155-0157 and 0160),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "247472b45fbd066478387c49019d8e1e36f6f1f7ceb85b3f56a1c0b1f8bc724a";
+export const privateWebSchemaDigest = "cb4b00ccfa16f91ff7aa2b1ed3a5c32119454827f39ae1624941820aa6ed0df7";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
