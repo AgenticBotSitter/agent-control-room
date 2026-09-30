@@ -1,6 +1,6 @@
 import { createHash, createPublicKey, sign, verify, type KeyObject } from "node:crypto";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
-import { assertNoPortablePrototypePollutionV1 } from "../../security/inert-portable-input";
+import { PORTABLE_PRINTABLE_TEXT_V1, assertNoPortablePrototypePollutionV1 } from "../../security/inert-portable-input";
 import { isModuleSemverV1, parseModuleManifestV1, type ModuleManifestV1 } from "./manifest";
 
 /**
@@ -31,8 +31,34 @@ const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const MODULE_ID_PATTERN = /^[a-z][A-Za-z0-9.-]{2,63}$/;
 /** Extensions a DECLARATIVE bundle may carry: configuration, templates, and prompts as text. */
 const DECLARATIVE_EXTENSIONS = new Set(["json", "md", "txt"]);
-// eslint-disable-next-line no-control-regex
-const DECLARATIVE_TEXT = /^[^\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]*$/u;
+/** Windows device names, reserved with or without an extension. */
+const RESERVED_SEGMENT = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/;
+/**
+ * Invisible and direction-changing characters: bidi embeddings, overrides and
+ * isolates ("trojan source"), zero-width characters, the byte order mark,
+ * Unicode tag characters (invisible text an agent still reads), and any lone
+ * surrogate a JSON escape could produce. A reviewer must see every character
+ * a prompt consumer will read.
+ */
+const HIDDEN_TEXT = /[\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFB\u{E0000}-\u{E007F}]|\p{Cs}/u;
+/**
+ * Markup or shell that would execute if any later renderer or consumer failed
+ * to escape it. Renderers must still escape: this is a second line, so it is
+ * deliberately broad about markup (entity-obfuscated URLs, whitespace inside
+ * `javascript:`, active tags). It follows the shared portable-input
+ * executable guard, except that `on*=` counts only inside a tag or straight
+ * after a quote, so prose such as "once = twice" stays shareable.
+ */
+const DECLARATIVE_EXECUTABLE_PATTERNS: readonly RegExp[] = [
+  /<\s*\/?\s*(script|iframe|frame|frameset|object|embed|applet|base|meta|link|style|form|svg|math|template)\b/i,
+  /j\s*a\s*v\s*a\s*s\s*c\s*r\s*i\s*p\s*t\s*:/i,
+  /v\s*b\s*s\s*c\s*r\s*i\s*p\s*t\s*:/i,
+  /data\s*:\s*text\/html/i,
+  /&#x?[0-9a-f]+|&(colon|tab|newline);/i,
+  /["'`][\s/]*on[a-z]+\s*=/i,
+  /\$\(/,
+];
+const EVENT_HANDLER = /[\s/"'`]on[a-z]+\s*=/i;
 
 export interface ModuleBundleFileInputV1 { readonly path: string; readonly contentBase64: string }
 export interface ModuleBundleInputV1 {
@@ -125,7 +151,9 @@ function decodeStrictBase64(value: unknown): Buffer {
 function assertBundlePath(path: unknown): string {
   if (typeof path !== "string" || path.length === 0 || path.length > MAX_PATH_LENGTH) fail("module_bundle_path_invalid");
   const segments = (path as string).split("/");
-  if (segments.length > MAX_PATH_DEPTH || !segments.every(segment => PATH_SEGMENT.test(segment))) {
+  // A trailing dot is dropped by Windows (so `a.` would collide with `a`), and device names open devices.
+  if (segments.length > MAX_PATH_DEPTH || !segments.every(segment => PATH_SEGMENT.test(segment)
+    && !segment.endsWith(".") && !RESERVED_SEGMENT.test(segment))) {
     fail("module_bundle_path_invalid");
   }
   return path as string;
@@ -137,11 +165,74 @@ function extensionOf(path: string): string {
   return dot <= 0 ? "" : name.slice(dot + 1);
 }
 
+function assertInertText(text: string): void {
+  // C0 and C1 controls (tab, LF and CR aside), then invisible or direction-changing characters.
+  if (!PORTABLE_PRINTABLE_TEXT_V1.test(text) || HIDDEN_TEXT.test(text)) fail("module_bundle_declarative_file_not_text");
+  if (DECLARATIVE_EXECUTABLE_PATTERNS.some(pattern => pattern.test(text))
+    // An event handler inside a still-open tag: the text after the last `<` of each `>`-separated piece.
+    // One linear pass, so a megabyte of `<` cannot make the check slow.
+    || text.split(">").some(piece => { const open = piece.lastIndexOf("<"); return open >= 0 && EVENT_HANDLER.test(piece.slice(open)); })) {
+    fail("module_bundle_declarative_file_executable_content");
+  }
+}
+
+/**
+ * Refuses a repeated key in any object. JSON.parse keeps the last one, so a
+ * reviewer and a later reader could otherwise see different values in the same
+ * bytes. `text` has already parsed, so a light scan of its tokens suffices;
+ * keys are compared after their escapes are decoded.
+ */
+function assertNoDuplicateJsonKeys(text: string): void {
+  const objects: (Set<string> | null)[] = [];
+  let expectKey = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === "\"") {
+      let end = index + 1;
+      while (text[end] !== "\"") end += text[end] === "\\" ? 2 : 1;
+      if (expectKey) {
+        const key = JSON.parse(text.slice(index, end + 1)) as string, seen = objects.at(-1)!;
+        if (seen.has(key)) fail("module_bundle_declarative_json_duplicate_key");
+        seen.add(key);
+        expectKey = false;
+      }
+      index = end;
+    } else if (character === "{") { objects.push(new Set()); expectKey = true; }
+    else if (character === "[") { objects.push(null); expectKey = false; }
+    else if (character === "}" || character === "]") { objects.pop(); expectKey = false; }
+    else if (character === ",") expectKey = objects.at(-1) instanceof Set;
+  }
+}
+
+function assertInertJsonValue(value: unknown): void {
+  if (typeof value === "string") { assertInertText(value); return; }
+  if (Array.isArray(value)) { for (const item of value) assertInertJsonValue(item); return; }
+  if (value !== null && typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) { assertInertText(key); assertInertJsonValue(item); }
+  }
+}
+
+/**
+ * DECLARATIVE means inert and shareable by anyone, so every file is checked as
+ * a reviewer would read it: an allowed extension, strict UTF-8, no control,
+ * invisible or direction-changing characters, and no embedded script or shell.
+ * `.json` files must also be strict JSON with no duplicate keys or prototype
+ * keys, and their decoded strings and keys get the same text checks, so a
+ * `\u003c` escape cannot hide a tag. Credential- and authority-shaped wording
+ * is not refused here: prompt prose legitimately says "role: reviewer".
+ */
 function assertDeclarativeFile(path: string, bytes: Buffer): void {
-  if (!DECLARATIVE_EXTENSIONS.has(extensionOf(path))) fail("module_bundle_declarative_file_not_allowed");
+  const extension = extensionOf(path);
+  if (!DECLARATIVE_EXTENSIONS.has(extension)) fail("module_bundle_declarative_file_not_allowed");
   let text: string;
-  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return fail("module_bundle_declarative_file_not_text"); }
-  if (!DECLARATIVE_TEXT.test(text)) fail("module_bundle_declarative_file_not_text");
+  try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return fail("module_bundle_declarative_file_not_text"); }
+  assertInertText(text);
+  if (extension !== "json") return;
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return fail("module_bundle_declarative_json_invalid"); }
+  assertNoDuplicateJsonKeys(text);
+  assertNoPortablePrototypePollutionV1("module_bundle_declarative_file", value, 64);
+  assertInertJsonValue(value);
 }
 
 /** Decodes a bounded SPKI and refuses every key type but Ed25519. */
@@ -233,6 +324,12 @@ export function canonicalModuleBundleV1(value: unknown): {
     total += bytes.length;
     if (total > MAX_TOTAL_BYTES) fail("module_bundle_oversized");
     contents.set(path, bytes);
+  }
+  // Once staged, a file cannot also be a directory holding another file.
+  for (const path of contents.keys()) {
+    for (let slash = path.indexOf("/"); slash >= 0; slash = path.indexOf("/", slash + 1)) {
+      if (contents.has(path.slice(0, slash))) fail("module_bundle_path_collision");
+    }
   }
   const files = [...contents.entries()]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))

