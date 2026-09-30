@@ -69,7 +69,8 @@ REVOKE ALL ON work_batches, work_batch_revisions, work_batch_items, work_batch_q
   work_batch_effective_queue_admissions, work_batch_agent_queue_heads FROM control_room_application,
   control_room_reader, control_room_schedule_admissions, control_room_github_broker;
 REVOKE ALL ON pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs,
-  pipeline_unattended_transitions, pipeline_advance_receipts
+  pipeline_unattended_transitions, pipeline_advance_receipts,
+  pipeline_installation_allowances, pipeline_machine_capacity_observations, pipeline_stage_loop_counts
   FROM control_room_application, control_room_reader, control_room_schedule_admissions,
   control_room_github_broker, control_room_work_intake;
 REVOKE ALL ON control_agent_review_plans FROM control_room_application, control_room_reader,

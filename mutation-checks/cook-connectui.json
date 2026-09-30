@@ -1,0 +1,16 @@
+[
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "    || !FLEET_WORKER_KINDS_V1.includes(body.botKind as never)\n    || !(connectOperatingSystems as readonly string[]).includes(body.operatingSystem as string))",
+    "replace": "    || !FLEET_WORKER_KINDS_V1.includes(body.botKind as never)\n    || false)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
+    "why": "the connect-code route accepts only a declared bot kind and one of the three owner-visible operating systems"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "    || !(FLEET_WORKER_KINDS_V1 as readonly string[]).includes(workerKind)) throw new WebAccessError(\"invalid_request\");",
+    "replace": "    || false) throw new WebAccessError(\"invalid_request\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
+    "why": "a displayed join command is never emitted for a bot kind the connector service does not support"
+  }
+]

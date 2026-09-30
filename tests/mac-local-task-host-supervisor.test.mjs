@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +30,13 @@ const statusModule = join(repoRoot, "scripts/mac-local/status.mjs");
  * earlier per-test copies of this line were one missed guard away from the same crash, so the
  * handler is written once here and every fixture uses it. */
 const ACK_SERVER_SOURCE = `const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); });\n`;
+
+function fakeHealthResponse(healthProbeKey, nonce, pid) {
+  const releaseId = "dev", startedAt = "2026-09-30T00:00:00.000Z";
+  const material = JSON.stringify({ nonce, pid, purpose: "local-host-health/v1", ready: true, releaseId, startedAt });
+  const tag = `hmac-sha256:${createHmac("sha256", healthProbeKey).update(material, "utf8").digest("hex")}`;
+  return { schema: "control-room.local-host-health/v1", ready: true, pid, nonce, releaseId, startedAt, tag };
+}
 
 const ownedPids = new Map();
 
@@ -426,6 +435,29 @@ test("the task host marks an unhandled rejection failed before asynchronous clea
   assert.deepEqual(cleared, scheduled);
 });
 
+test("the task host exits unsuccessfully when application readiness becomes false", async () => {
+  const runtime = new EventEmitter(), output = [], exits = [];
+  runtime.stderr = { write: value => output.push(value) };
+  runtime.exit = code => exits.push(code);
+  let ready = true, closes = 0, readinessCallback, readinessCleared = false;
+  const active = { isReady: () => ready, async close() { closes += 1; } };
+  const timers = {
+    setInterval: callback => { readinessCallback = callback; return { unref() {} }; },
+    clearInterval: () => { readinessCleared = true; },
+    setTimeout: () => ({ forced: true }),
+    clearTimeout() {},
+  };
+  monitorActiveTaskHost(active, runtime, timers);
+  readinessCallback();
+  assert.equal(closes, 0); assert.equal(runtime.exitCode, undefined);
+  ready = false;
+  readinessCallback();
+  assert.equal(runtime.exitCode, 1, "launchd only restarts a supervised child that exits unsuccessfully");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(closes, 1); assert.deepEqual(exits, [1]); assert.equal(readinessCleared, true);
+  assert.match(output.join(""), /application readiness failed/u);
+});
+
 test("real uncaught exceptions and unhandled rejections reach the rotating crash log", async t => {
   for (const [name, source] of [
     ["uncaught", "throw new Error('fixture uncaught')"],
@@ -612,12 +644,25 @@ test("mac:up's start-failure path stops a process that is alive but not serving"
   const root = await rootFixture(t), paths = runtimePaths(root);
   const source = "setInterval(() => {}, 1000);";
   const command = [process.execPath, "-e", source];
+  const stopOwned = async pidPath => {
+    const pid = await readPid(pidPath);
+    if (pid) {
+      try { process.kill(pid, "SIGTERM"); } catch {}
+      await waitFor(() => !pidAlive(pid), `owned fixture process ${pid} survived SIGTERM`);
+    }
+    await rm(pidPath, { force: true });
+    return "stopped";
+  };
   try {
     await assert.rejects(
-      startAndWait(command, paths.hostLog, paths.hostPid, async () => false, 1, "task host"),
+      startAndWait(command, paths.hostLog, paths.hostPid, async () => false, 1, "task host",
+        { alive: pidAlive, stopRecorded: stopOwned }),
       /task host did not start within 1s/u,
     );
-  } finally { await killProcessGroup(Number((await readPid(paths.hostPid).catch(() => 0)) ?? 0)); }
+  } finally {
+    const recorded = await readPid(paths.hostPid).catch(() => undefined);
+    if (recorded) await killProcessGroup(recorded);
+  }
   await assert.rejects(readFile(paths.hostPid, "utf8"), error => error.code === "ENOENT");
 });
 
@@ -629,10 +674,141 @@ test("mac:up reports a successful start instead of treating a ready host as a fa
   const command = [process.execPath, "-e", source];
   const started = [];
   t.after(async () => { for (const pid of started) await killProcessGroup(pid); });
-  const pid = await startAndWait(command, paths.hostLog, paths.hostPid, () => portOpen(port), 5, "task host");
+  const pid = await startAndWait(command, paths.hostLog, paths.hostPid, () => portOpen(port), 5, "task host",
+    { alive: pidAlive });
   started.push(pid);
   assert.equal(await readPid(paths.hostPid), pid);
   assert.equal(await readFile(paths.hostPid, "utf8"), `${pid}\n`);
+});
+
+test("mac:up readiness follows the private host record after a supervisor replacement", async t => {
+  const { authenticatedHostReady } = await import(upModule);
+  assert.equal(typeof authenticatedHostReady, "function",
+    "readiness needs the host-written pid/state record instead of launchd's sampled pid");
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  const healthProbeKey = Buffer.alloc(32, 5);
+  await mkdir(join(root, "service"), { mode: 0o700 });
+  await writeFile(join(root, "service", "health-probe.key"), `${healthProbeKey.toString("base64url")}\n`, { mode: 0o600 });
+  await assert.rejects(readFile(join(root, "config", "owner-sign-in.txt"), "utf8"), { code: "ENOENT" },
+    "readiness must not require an owner-code file");
+  const supervisorPid = 4_242, childPid = 4_243;
+  await writeFile(paths.hostPid, `${supervisorPid}\n`, { mode: 0o600 });
+  await writeFile(paths.hostState, `${JSON.stringify({ schema: "control-room.mac-local-host-state/v1",
+    state: "running", pid: supervisorPid, childPid, at: "2026-09-29T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  let requests = 0;
+  const server = createHttpServer((request, response) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", chunk => { body += chunk; });
+    request.on("end", () => {
+      requests += 1;
+      assert.equal(request.method, "POST");
+      assert.equal(request.url, "/api/v1/local-host-health");
+      assert.equal(request.headers.origin, `http://127.0.0.1:${server.address().port}`);
+      const parsed = JSON.parse(body);
+      assert.deepEqual(Object.keys(parsed), ["nonce"]);
+      assert.match(parsed.nonce, /^[A-Za-z0-9_-]{43}$/u);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(fakeHealthResponse(healthProbeKey, parsed.nonce, childPid)));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const port = server.address().port;
+  const exactAlive = (pid, command) => pid === supervisorPid && command.join(" ") === hostCommand(root).join(" ")
+    || pid === childPid && command.join(" ") === taskHostCommand(root).join(" ");
+  assert.equal(await authenticatedHostReady(root, port, { alive: exactAlive }), supervisorPid,
+    "the independent protected key permits readiness without an owner-code file");
+  assert.equal(await authenticatedHostReady(root, port, { alive: exactAlive, healthProbeKey: Buffer.alloc(32, 6) }), undefined,
+    "a different probe key cannot authenticate readiness");
+  assert.equal(requests, 2);
+});
+
+test("mac:up readiness refuses a dead host before contacting its port", async t => {
+  const { authenticatedHostReady } = await import(upModule);
+  const root = await rootFixture(t), paths = runtimePaths(root), supervisorPid = 4_252, childPid = 4_253;
+  await writeFile(paths.hostPid, `${supervisorPid}\n`, { mode: 0o600 });
+  await writeFile(paths.hostState, `${JSON.stringify({ schema: "control-room.mac-local-host-state/v1",
+    state: "running", pid: supervisorPid, childPid, at: "2026-09-29T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  let contacted = false;
+  assert.equal(await authenticatedHostReady(root, 32_110, {
+    alive: () => false, transport: async () => { contacted = true; throw new Error("must not contact"); },
+    healthProbeKey: Buffer.alloc(32, 5),
+  }), undefined);
+  assert.equal(contacted, false);
+});
+
+test("mac:up readiness refuses a different process occupying the configured port", async t => {
+  const { authenticatedHostReady } = await import(upModule);
+  const root = await rootFixture(t), paths = runtimePaths(root), supervisorPid = 4_262, childPid = 4_263;
+  await writeFile(paths.hostPid, `${supervisorPid}\n`, { mode: 0o600 });
+  await writeFile(paths.hostState, `${JSON.stringify({ schema: "control-room.mac-local-host-state/v1",
+    state: "running", pid: supervisorPid, childPid, at: "2026-09-29T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  const server = createHttpServer(async (request, response) => {
+    const raw = await new Promise(resolve => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", chunk => { body += chunk; });
+      request.on("end", () => resolve(body));
+    });
+    const { nonce } = JSON.parse(raw);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ schema: "control-room.local-host-health/v1", ready: true,
+      pid: childPid, nonce, tag: `hmac-sha256:${"0".repeat(64)}` }));
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  assert.equal(await authenticatedHostReady(root, server.address().port, {
+    alive: () => true,
+    healthProbeKey: Buffer.alloc(32, 5),
+  }), undefined);
+});
+
+test("mac:up authenticated readiness is bounded under a burst, drop, slow response, and mid-probe restart", async t => {
+  const { authenticatedHostReady } = await import(upModule);
+  const root = await rootFixture(t), paths = runtimePaths(root), supervisorPid = 4_272, childPid = 4_273;
+  const healthProbeKey = Buffer.alloc(32, 5);
+  const record = (pid = supervisorPid, child = childPid) => Promise.all([
+    writeFile(paths.hostPid, `${pid}\n`, { mode: 0o600 }),
+    writeFile(paths.hostState, `${JSON.stringify({ schema: "control-room.mac-local-host-state/v1",
+      state: "running", pid, childPid: child, at: "2026-09-29T00:00:00.000Z" })}\n`, { mode: 0o600 }),
+  ]);
+  await record();
+  let mode = "ready", requests = 0;
+  const server = createHttpServer(async (request, response) => {
+    const raw = await new Promise(resolve => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", chunk => { body += chunk; });
+      request.on("end", () => resolve(body));
+    });
+    const { nonce } = JSON.parse(raw);
+    requests += 1;
+    if (mode === "drop") { request.socket.destroy(); return; }
+    if (mode === "slow") return;
+    if (mode === "restart") await record(supervisorPid + 10, childPid + 10);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(fakeHealthResponse(healthProbeKey, nonce, childPid)));
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+  const port = server.address().port;
+  const exactAlive = (pid, command) => [supervisorPid, supervisorPid + 10].includes(pid)
+    ? command.join(" ") === hostCommand(root).join(" ")
+    : [childPid, childPid + 10].includes(pid) && command.join(" ") === taskHostCommand(root).join(" ");
+  const probe = () => authenticatedHostReady(root, port, { alive: exactAlive, timeoutMs: 50, healthProbeKey });
+
+  const burst = await Promise.all(Array.from({ length: 50 }, probe));
+  assert.deepEqual(new Set(burst), new Set([supervisorPid]), "all 50 parallel authenticated probes agree");
+  assert.equal(requests, 50);
+  mode = "drop";
+  assert.equal(await probe(), undefined, "a dropped connection is not ready");
+  mode = "ready";
+  assert.equal(await probe(), supervisorPid, "a retry after the dropped connection can succeed");
+  mode = "slow";
+  assert.equal(await probe(), undefined, "a slow response stops at the probe deadline");
+  mode = "restart";
+  assert.equal(await probe(), undefined, "a restart halfway through cannot mix two host generations");
 });
 
 test("mac:up binds every stack helper its start-failure cleanup calls", async t => {
@@ -662,6 +838,13 @@ test("mac:up binds every stack helper its start-failure cleanup calls", async t 
       `up.mjs uses ${name} and must bind it from ./stack.mjs`);
   }
   assert.ok(stackNames.length > 0, "stack.mjs must export its helpers for the binding check to mean anything");
+  assert.match(source, /if \(service\) return startService\(root, paths, mac\.port, hostReady\)/u,
+    "launchd startup must use the same authenticated host-record probe as direct startup");
+  const serviceStart = /async function startService[\s\S]*?\n\}/u.exec(source)?.[0] ?? "";
+  assert.match(serviceStart, /waitFor\(hostReady, 90\)/u,
+    "launchd readiness must follow the host-written record, not launchd's sampled pid");
+  assert.doesNotMatch(serviceStart, /writePrivate\(paths\.hostPid/u,
+    "mac:up must not overwrite the pid file written by the supervisor");
 });
 
 test("mac:up's whole preflight survives a host state file it cannot read", async t => {
@@ -884,8 +1067,15 @@ test("alive is an exact command-line match, not a substring one", async t => {
   t.after(async () => { if (pidAlive(impostor.pid)) impostor.kill("SIGKILL"); await waitFor(() => !pidAlive(impostor.pid), "impostor survived cleanup"); });
   await waitFor(() => pidAlive(impostor.pid), "impostor fixture did not start");
 
-  const reported = execFileSync("/bin/ps", ["-ww", "-o", "command=", "-p", String(impostor.pid)],
-    { encoding: "utf8" }).trim();
+  let reported;
+  try {
+    reported = execFileSync("/bin/ps", ["-ww", "-o", "command=", "-p", String(impostor.pid)],
+      { encoding: "utf8" }).trim();
+  } catch (error) {
+    if (error?.code !== "EPERM") throw error;
+    t.skip("sandbox refused the process-table read needed to verify exact argv");
+    return;
+  }
   assert.ok(reported.includes(expected),
     `the fixture must contain the expected command for this test to mean anything: ${reported}`);
   assert.notEqual(reported, expected, "the fixture must not be an exact match");
@@ -1218,6 +1408,10 @@ test("a replacement supervisor signals the process group, so a non-detached gran
   // The grandchild must really be in the child's process group, and really be alive. Otherwise this
   // test would pass for a reason that has nothing to do with the signal target.
   const childGroup = processGroupOf(state.childPid);
+  if (childGroup === undefined) {
+    t.skip("sandbox refused the process-group read needed to verify group membership");
+    return;
+  }
   assert.equal(childGroup, state.childPid, "the supervised child is spawned detached and leads its own group");
   assert.equal(processGroupOf(grandchildPid.value), childGroup,
     "a non-detached grandchild shares the child's group, which is what the group signal reaches");

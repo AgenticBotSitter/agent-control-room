@@ -1,17 +1,12 @@
 import { appendAuditWith } from "../../audit/audit-store";
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateIsAnyV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { WebSessionAuthority, type WebActor } from "../../web/v1/session-authority";
 import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { fleetFail } from "./errors";
 import { FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_LIFETIME_MS_V1, FLEET_ENTITY_ID_PATTERN_V1,
   FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1, FLEET_WORKER_KIND_PATTERN_V1, newFleetCodeV1,
-  plainSha256V1, randomHexV1 } from "./identifiers";
+  FLEET_WORKER_KINDS_V1, plainSha256V1, randomHexV1 } from "./identifiers";
 
-/** Worker kinds offered in the owner form. "mcp-agent" is any other agent
- * that connects only through the MCP tools. */
-export const FLEET_WORKER_KINDS_V1 = Object.freeze([
-  "codex", "claude-code", "hermes", "claude-desktop", "cursor", "mcp-agent",
-] as const);
 /** Plain capability labels an owner can grant and an offer can require. */
 export const FLEET_CAPABILITIES_V1 = Object.freeze(["code.change", "code.review", "research", "writing", "testing"] as const);
 
@@ -93,7 +88,8 @@ export class FleetOwnerServiceV1 {
       targetType: "fleet_worker", targetId: input.workerId, occurredAt: createdAt,
       safeMetadata: { codeId, workerKind: input.workerKind, projectIds: [...input.projectIds],
         capabilities: [...input.capabilities], expiresAt } });
-    return Object.freeze({ codeId, code, workerId: input.workerId, expiresAt, purpose: input.purpose });
+    return Object.freeze({ codeId, code, workerId: input.workerId, workerKind: input.workerKind,
+      expiresAt, purpose: input.purpose });
   }
 
   /** "New key": a single-use code that replaces the machine's credential. The
@@ -222,7 +218,7 @@ export class FleetOwnerServiceV1 {
           offered_by_identity_id,state,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'open',$8)`,
         [this.#tenantId, offerId, projectId, jobId, capability, allowed, actor.id, actor.now]);
       } catch (error) {
-        if (["P0001", "23503", "23505"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["P0001", "23503", "23505"])) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-offer:${offerId.slice(12)}`, tenantId: this.#tenantId, projectId,
@@ -335,7 +331,7 @@ export class FleetOwnerServiceV1 {
         await tx.query(`INSERT INTO fleet_result_reviews(tenant_id,review_id,result_id,decision,note,reviewed_by_identity_id,reviewed_at)
           VALUES($1,$2,$3,$4,$5,$6,$7)`, [this.#tenantId, reviewId, resultId, decision, note, actor.id, actor.now]);
       } catch (error) {
-        if (["P0001", "23505"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["P0001", "23505"])) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-review:${reviewId.slice(13)}`, tenantId: this.#tenantId,

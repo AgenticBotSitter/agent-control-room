@@ -10,10 +10,14 @@ test("real PostgreSQL persists one delivery reservation and cascades a removed s
     const admin = new Client(postgres.admin()); await admin.connect();
     try {
       await admin.query("INSERT INTO tenants(id,display_name) VALUES('tenant:push-real','Push test')");
+      // A REAL push-service host, because 0227 holds this table to the endpoint
+      // allow list. A `push.example.invalid` fixture would be refused by the
+      // CHECK, and the test would be measuring the constraint rather than the
+      // retention and ledger behaviour it is named for.
       await admin.query(`INSERT INTO owner_web_push_subscriptions(id,tenant_id,endpoint,p256dh,auth,expires_at,created_at,updated_at)
-        VALUES('push:${"a".repeat(64)}','tenant:push-real','https://push.example.invalid/device','A','B',NULL,now(),now())`);
+        VALUES('push:${"a".repeat(64)}','tenant:push-real','https://fcm.googleapis.com/fcm/send/device','A','B',NULL,now(),now())`);
       await admin.query(`INSERT INTO owner_web_push_subscriptions(id,tenant_id,endpoint,p256dh,auth,expires_at,created_at,updated_at)
-        VALUES('push:${"b".repeat(64)}','tenant:push-real','https://push.example.invalid/expired','A','B',now()-interval '1 second',now(),now())`);
+        VALUES('push:${"b".repeat(64)}','tenant:push-real','https://fcm.googleapis.com/fcm/send/expired','A','B',now()-interval '1 second',now(),now())`);
       const active = await new PostgresOwnerPushStoreV1(admin as never).list("tenant:push-real");
       assert.equal(active.length, 1, "an expired browser endpoint is removed before delivery");
       const first = await admin.query(`INSERT INTO owner_web_push_deliveries(tenant_id,subscription_id,dedupe_key,state,attempted_at)

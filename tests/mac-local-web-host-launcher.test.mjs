@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseMacLocalWebHostArguments, readPinnedMacExecutableVersion, startMacLocalTaskHost,
-  startMacLocalWebHost, verifyPinnedMacModelPolicy } from "../scripts/mac-local/start-web-host.mjs";
+  startHostWithOptionalIntake, startMacLocalWebHost, verifyPinnedMacModelPolicy } from "../scripts/mac-local/start-web-host.mjs";
 
 test("Mac local web host launcher accepts only the owner-attended fixed protected root", () => {
   assert.deepEqual(parseMacLocalWebHostArguments(["--owner-attended", "--protected-root", "/Library/Application Support/Agent Control Room"]),
@@ -67,9 +67,24 @@ test("web host validates and prepares optional intake before listeners and clean
     if (name === "index.js") return { default() {} };
     throw new Error(`unexpected ${name}`);
   };
-  await assert.rejects(startMacLocalWebHost({ protectedRoot: "/protected" }, { load }), /fixture/);
+  await assert.rejects(startMacLocalWebHost({ protectedRoot: "/protected" }, {
+    load, loadHealthProbeKey: async () => Buffer.alloc(32, 7), hostReleaseIdentity: async () => "dev",
+  }), /fixture/);
   assert.deepEqual(calls, ["load-intake", "load-owner-web-push", "prepare-web", "prepare-intake", "start-web", "start-intake",
     "close-intake", "close-web"]);
+});
+
+test("optional intake preserves the web host readiness signal", async () => {
+  let ready = true, intakeStarts = 0, closes = 0;
+  const result = await startHostWithOptionalIntake({ async start() { return {
+    isReady: () => ready, async close() { closes += 1; },
+  }; } }, { integrityKey: "y".repeat(43) }, { async prepareWorkIntakePrivateServiceV1() { return {
+    async start() { intakeStarts += 1; }, async close() { closes += 1; },
+  }; } });
+  assert.equal(intakeStarts, 1); assert.equal(result.isReady(), true);
+  ready = false;
+  assert.equal(result.isReady(), false, "the task-host monitor must see database-backed web readiness through intake");
+  await result.close(); assert.equal(closes, 2);
 });
 
 test("task host requires the fixed release provider and does not accept a caller callback", async () => {
@@ -78,6 +93,7 @@ test("task host requires the fixed release provider and does not accept a caller
   const task = { async close() {}, isReady: () => true };
   const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, {
     readVersion: async () => "pinned",
+    loadHealthProbeKey: async () => Buffer.alloc(32, 7), hostReleaseIdentity: async () => "dev",
     load: async path => {
       loaded.push(path.split("/").at(-1));
       if (path.endsWith("macLocalHost.js")) return { createMacLocalProtectedHostV1: input => ({
@@ -116,7 +132,8 @@ test("task host requires the fixed release provider and does not accept a caller
 test("a zero-project first start loads the live task provider without requiring a restart", async () => {
   const loaded = [];
   const site = { async close() {}, isReady: () => true };
-  const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, { load: async path => {
+  const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, { loadHealthProbeKey: async () => Buffer.alloc(32, 7),
+    hostReleaseIdentity: async () => "dev", load: async path => {
     const name = path.split("/").at(-1); loaded.push(name);
     if (name === "macLocalProtectedLoader.js") return {
       loadMacLocalProtectedConfigurationFromRootV1: async () => ({enablement:{workers:[]}}),

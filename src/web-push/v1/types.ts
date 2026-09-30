@@ -25,12 +25,27 @@ export type OwnerPushSubscriptionRecordV1 = Readonly<{
   expiresAt: string | null;
 }>;
 
+export type OwnerPushReserveOutcomeV1 = "reserved" | "already_delivered" | "previous_attempt_failed";
+
 export interface OwnerPushStoreV1 {
   subscribe(input: OwnerPushSubscriptionRecordV1): Promise<void>;
   unsubscribe(tenantId: string, endpoint: string): Promise<boolean>;
   list(tenantId: string): Promise<readonly OwnerPushSubscriptionRecordV1[]>;
-  /** False means the same subscription already received this event. */
-  reserve(tenantId: string, subscriptionId: string, dedupeKey: string, now: string): Promise<boolean>;
+  /**
+   * Take the send reservation for one (subscription, event).
+   *
+   * The three outcomes are distinct on purpose. A boolean cannot express the
+   * difference between "this browser was already handed this event" -- the event
+   * is done, and the caller must not resend it -- and "an earlier attempt at this
+   * event failed and left a row behind" -- nothing was delivered, and the caller
+   * is entitled to try again. Collapsing the second into the first makes a
+   * permanently failing push endpoint look exactly like a successfully delivered
+   * notification, and the bounded retry then gives up while reporting success.
+   *
+   * `previously_failed` is therefore re-sendable: a failed row is evidence that
+   * a send was attempted, not that one landed.
+   */
+  reserve(tenantId: string, subscriptionId: string, dedupeKey: string, now: string): Promise<OwnerPushReserveOutcomeV1>;
   delivered(tenantId: string, subscriptionId: string, dedupeKey: string, now: string): Promise<void>;
   failed(tenantId: string, subscriptionId: string, dedupeKey: string, statusCode: number | undefined, now: string): Promise<void>;
 }

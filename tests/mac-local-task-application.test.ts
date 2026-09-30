@@ -125,7 +125,7 @@ test("the Mac-local owner route records accepted-with-exceptions, creates follow
   const process = createMacLocalWebProcessV1({ origin, workspaceId: f.scope.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: f.scope.tenantId,
       provider: f.identity.provider, subject: "test-owner", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: f.db, close: async () => {} }, taskService: f.tasks, taskReadKeys: f.taskKeys,
+    database: { client: f.db, close: async () => {}, isAvailable: () => true }, taskService: f.tasks, taskReadKeys: f.taskKeys,
     ownerReviews: f.reviews, clock: () => instant + 6000 });
   t.after(process.close);
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
@@ -169,6 +169,6 @@ test("the Mac-local web process refuses an owner-review composition without its 
   assert.throws(() => createMacLocalWebProcessV1({ origin, workspaceId: f.scope.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: f.scope.tenantId,
       provider: f.identity.provider, subject: "test-owner", ownerCodeDigest: sha256Digest({ ownerCode: "a sufficiently long owner code" }), sessionSeconds: 900 },
-    database: { client: f.db, close: async () => {} }, taskReadKeys: f.taskKeys, ownerReviews: f.reviews,
+    database: { client: f.db, close: async () => {}, isAvailable: () => true }, taskReadKeys: f.taskKeys, ownerReviews: f.reviews,
     clock: () => instant + 6000 }), /mac_local_web_process_config_invalid/);
 });

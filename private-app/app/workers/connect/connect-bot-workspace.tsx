@@ -4,16 +4,17 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { PrivateHeader } from "../../private-header";
 import { LoadingState, StateChip, UnavailableState, type ChipTone } from "../../owner-ui";
 
-type BotKind = "claude-code" | "codex" | "hermes" | "claude-desktop" | "cursor";
+type BotKind = "claude-code" | "codex" | "hermes" | "claude-desktop" | "cursor" | "mcp-agent";
 type OperatingSystem = "macos" | "windows" | "linux";
 type Project = { projectId: string; title: string };
 type FleetWorker = { workerId: string; displayName: string; workerKind: string; status: string; lastSeenAt: string | null };
-type Board = { workers: FleetWorker[]; connectBot: { available: boolean; manifest?: { path: string; sha256: string } } };
+type ConnectorRelease = { version: string; file: string; sha256: string; size: number; builtFrom: string };
+type Board = { workers: FleetWorker[]; connectBot: { available: boolean; release?: ConnectorRelease } };
 export type ConnectBotInstallResult = { codeId: string; workerId: string; expiresAt: string;
-  operatingSystem: OperatingSystem; manifest: { path: string; sha256: string }; installLine: string };
+  operatingSystem: OperatingSystem; release: ConnectorRelease; installLine: string };
 
 const bots: readonly [BotKind, string][] = [["claude-code", "Claude Code"], ["codex", "Codex"],
-  ["hermes", "Hermes"], ["claude-desktop", "Claude Desktop"], ["cursor", "Cursor"]];
+  ["hermes", "Hermes"], ["cursor", "Cursor"], ["claude-desktop", "Claude Desktop"], ["mcp-agent", "Generic MCP"]];
 const systems: readonly [OperatingSystem, string, string][] = [["macos", "macOS", "Terminal (zsh)"],
   ["windows", "Windows", "PowerShell"], ["linux", "Linux", "Terminal (bash)"]];
 const capabilities = [["code.change", "Change code"], ["code.review", "Review code"], ["research", "Research"],
@@ -53,9 +54,9 @@ export function InstallLine({ result }: { result: ConnectBotInstallResult }) {
     <div className="private-actions"><button type="button" disabled={expired} onClick={() => {
       void navigator.clipboard?.writeText(result.installLine).then(() => setCopied(true), () => setCopied(false));
     }}>{expired ? "Expired" : copied ? "Copied" : "Copy line"}</button></div>
-    <p className="private-note">The line downloads the connector, checks its SHA-256 fingerprint before running it,
+    <p className="private-note">The line downloads the connector, checks its release manifest and SHA-256 fingerprint before running it,
       then uses the code once. The code is an install argument, never part of a download address.</p>
-    <p className="private-note">Served connector SHA-256: <code>{result.manifest.sha256}</code></p>
+    <p className="private-note">Connector release {result.release.version} SHA-256: <code>{result.release.sha256}</code></p>
   </section>;
 }
 
@@ -78,7 +79,7 @@ export function ConnectBotWorkspace() {
     ((catalog as { projects?: Project[] }).projects ?? []).map(project => ({ projectId: project.projectId, title: project.title }))),
   () => setProjects("unavailable")); }, [load]);
   const connected = board && board !== "unavailable" ? board.workers.filter(worker => worker.status !== "revoked") : [];
-  const validName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(name);
+  const validName = /^[^\u0000-\u001F\u007F]{1,80}$/u.test(name.trim());
   const canCreate = board !== undefined && board !== "unavailable" && board.connectBot.available && validName
     && Array.isArray(projects) && projectIds.length > 0 && chosenCapabilities.length > 0 && !busy;
 
@@ -95,24 +96,24 @@ export function ConnectBotWorkspace() {
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <a className="private-back" href="/workers">← Workers</a>
     <div className="private-heading"><p className="private-eyebrow">Private setup</p><h1>Connect a bot</h1>
-      <p>Choose the bot and this computer’s operating system. Control Room makes one short-lived install line.</p></div>
+      <p>Choose the bot and computer. Control Room gives you one short-lived line to copy and paste.</p></div>
     {result ? <InstallLine result={result} /> : null}
     {message ? <p role="status">{message}</p> : null}
     {board === undefined ? <LoadingState>Checking connector setup…</LoadingState>
       : board === "unavailable" ? <UnavailableState urgent>Connector setup could not be checked. No code was created.</UnavailableState>
-        : !board.connectBot.available ? <UnavailableState>The connector download manifest is not configured. No code can be created from this page.</UnavailableState>
+          : !board.connectBot.available ? <UnavailableState>The verified connector release is not ready. No code can be created from this page.</UnavailableState>
           : null}
     <form className="private-create connect-bot-form" aria-label="Connect a bot" onSubmit={submit}>
-      <h2>1. Choose the bot</h2>
-      <label>Name for this bot<input name="bot-name" value={name} maxLength={64} autoComplete="off"
-        pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" aria-describedby="connect-bot-name-help"
+      <h2>1. Name and choose the bot</h2>
+      <label>Name for this bot<input name="bot-name" value={name} maxLength={80} autoComplete="off"
+        aria-describedby="connect-bot-name-help"
         onChange={event => setName(event.target.value)} required /></label>
-      <p className="private-note" id="connect-bot-name-help">Use 1–64 letters, numbers, dots, dashes or underscores, such as desktop-codex.</p>
+      <p className="private-note" id="connect-bot-name-help">Use a short name you will recognize, such as desktop-codex. New lines are not allowed.</p>
       <label>Bot<select name="bot-kind" value={botKind} onChange={event => setBotKind(event.target.value as BotKind)}>
         {bots.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <fieldset><legend>Computer operating system</legend><div className="connect-bot-choice-grid">
         {systems.map(([value, label, terminal]) => <label key={value}><input type="radio" name="operating-system"
-          checked={operatingSystem === value} onChange={() => setOperatingSystem(value)} /><span><strong>{label}</strong><small>{terminal}</small></span></label>)}
+          value={value} checked={operatingSystem === value} onChange={() => setOperatingSystem(value)} /><span><strong>{label}</strong><small>{terminal}</small></span></label>)}
       </div></fieldset>
       <h2>2. Limit what it can reach</h2>
       <fieldset><legend>Projects</legend>{projects === undefined ? <LoadingState>Loading projects…</LoadingState>
@@ -147,7 +148,7 @@ export function ConnectBotWorkspace() {
     </section>
     <section className="private-panel connect-bot-help" aria-labelledby="connect-bot-help-title"><h2 id="connect-bot-help-title">What happens next</h2>
       <ol><li>Paste the line only into the named terminal on the computer where the bot runs.</li>
-        <li>The line downloads one connector file and checks it against the SHA-256 shown by this signed-in Control Room.</li>
+        <li>The line downloads the current connector release and checks its manifest, file size and SHA-256 shown by this signed-in Control Room.</li>
         <li>The bot gets its own removable credential. The one-time code expires after 10 minutes.</li></ol>
       <p>Claude Desktop and Cursor need to be restarted after the line finishes. If the fingerprint does not match,
         nothing is installed. Create a fresh code instead of editing the line.</p>

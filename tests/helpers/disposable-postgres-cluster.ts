@@ -111,6 +111,7 @@ export function stopUnfinishedRunsSync(): void {
  * could not observe anything in the state this hook exists to detect, so its
  * precondition would be circular. */
 export type PostmasterLaunchHook = (inFlight: Cluster) => void | Promise<void>;
+type RunDirectoryRegisteredHook = (inFlight: Cluster) => void | Promise<void>;
 
 /**
  * PG_BIN is how the repo's own live-cluster tests (package.json
@@ -427,6 +428,10 @@ function withLog(error: unknown, log: string): unknown {
  * that need isolation should use separate worktrees.
  */
 export interface StartClusterOptions {
+  /** Runs after the run is registered but before the socket directory or any
+   * PostgreSQL child exists. Used only by the acceptance test that delivers a
+   * signal in that exact pre-start window. */
+  afterRunDirectoryRegistered?: RunDirectoryRegisteredHook;
   /** Runs inside the start, after the postmaster has been launched and before
    * the returned promise resolves. Used only by the acceptance test that drives
    * a signal through that window; a lane has no reason to pass it. */
@@ -457,6 +462,20 @@ export async function startCluster(prefix = "journey-cluster-",
     const started: Cluster = { run, data: join(run, "data"), socket: "", port, pgCtl: join(PG_BIN!, "pg_ctl"),
       fixturePassword: FIXTURE_PASSWORD };
     inProgressRuns.set(run, started);
+    // This deliberately runs before even beginning the socket-directory
+    // operation. The early-signal acceptance scenario used to discover `run`
+    // by polling the filesystem, which only proved that the signal arrived
+    // sometime after creation; on a busy full lane startup could already be in
+    // initdb, whose child can still be changing the directory while synchronous
+    // signal cleanup removes it. This checkpoint makes the asserted window
+    // exact and leaves no child to race directory cleanup.
+    try {
+      if (options.afterRunDirectoryRegistered) await options.afterRunDirectoryRegistered(started);
+    } catch (error) {
+      inProgressRuns.delete(run);
+      await rm(run, { recursive: true, force: true });
+      throw error;
+    }
     let socket: string;
     try {
       socket = await mkdtemp(join(tmpdir(), SOCKET_PREFIX));

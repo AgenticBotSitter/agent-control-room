@@ -68,7 +68,9 @@ export function UpdateCandidatesPanel({ state, pending, message, onDecide, onRet
             <span>Revision: {candidate.baseRevision.slice(0, 12)} → {candidate.candidateRevision.slice(0, 12)}</span>
             <span>Tests: {candidate.testResults.map(result => `${result.profile} ${result.status.replaceAll("_", " ")} · ${result.runner.kind.replaceAll("_", " ")}${result.testCount === null ? "" : ` · ${result.testCount} tests`}`).join(" | ")}</span>
             <span>Database: {candidate.databaseChanges.kind === "none" ? "No database changes declared"
-              : `${candidate.databaseChanges.migrationIds.join(", ")} · ${candidate.databaseChanges.summary}`}</span>
+              : candidate.databaseChanges.kind === "migrations"
+                ? `${candidate.databaseChanges.migrationIds.join(", ")} · ${candidate.databaseChanges.summary}`
+                : `${candidate.databaseChanges.summary} ${candidate.databaseChanges.changedPaths.join(", ")}`}</span>
             <span>Risk review: {candidate.riskFlags.length === 0 ? "No independent-review flag"
               : `${candidate.riskFlags.map(flag => flag.kind).join(", ")} · independent review verified`}</span>
             <ConfiguredTimestamp value={candidate.createdAt} prefix="Signed off" />
