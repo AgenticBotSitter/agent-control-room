@@ -73,6 +73,11 @@ export const projectOrchestrationDescribeResultSchemaV1 = z.discriminatedUnion("
    * announcement that says "Needs-you" when no item exists is a label for
    * something that did not happen. */
   z.object({ status: z.literal("failed"), needsYou: z.boolean(), message: z.string().min(1).max(400),
+    /** Whether a durable owner-retry record is composed, so the panel can offer
+     * the one control that clears an escalation -- and can stay silent about it
+     * where there is none. The `message` already reflects it; this is what the
+     * panel reads to decide whether to render the button. */
+    retryAvailable: z.boolean().optional(),
     startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict(),
   /** The planner run was refused before it started, because no allowance is
    * configured or this project's allowance is spent. `allowanceRefused` is true
@@ -84,6 +89,20 @@ export const projectOrchestrationDescribeResultSchemaV1 = z.discriminatedUnion("
     startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict(),
 ]);
 export type ProjectOrchestrationDescribeResultV1 = z.infer<typeof projectOrchestrationDescribeResultSchemaV1>;
+
+/** The owner's deliberate retry of an escalated description.
+ *
+ * `granted` is the whole answer, and it is deliberately a boolean rather than a
+ * count: the owner needs to know whether a run was authorised, not how many
+ * counters were touched. It is false where the description had not escalated --
+ * nothing to retry -- which is a different sentence from "granted" and is the
+ * case a second press of the retry button lands in. */
+export const projectOrchestrationRetrySchemaV1 = z.object({
+  projectId: catalogProjectIdSchema,
+  granted: z.boolean(),
+  startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false),
+}).strict();
+export type ProjectOrchestrationRetryResultV1 = z.infer<typeof projectOrchestrationRetrySchemaV1>;
 
 export const projectOrchestrationSuggestionSchemaV1 = z.object({
   suggestionId: id, batchId: id, projectId: catalogProjectIdSchema, baseRevision: z.number().int().positive(),

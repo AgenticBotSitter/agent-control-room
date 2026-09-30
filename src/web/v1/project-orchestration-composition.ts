@@ -2,6 +2,7 @@ import type { DatabaseClient } from "../../persistence/database";
 import type { AuthenticatedPrincipal } from "../../security";
 import type { IntakeCoordinatorResultV1, IntakeSuggestionStoreV1 } from
   "../../work-intake/v1/intake-coordinator";
+import { PostgresIntakeOwnerRetryStoreV1 } from "../../work-intake/v1/intake-coordinator-store";
 import type { WorkBatchQueueCatalogV1 } from "../../work-intake/v1/queue-catalog";
 import { createProjectOrchestrationOwnerAdapterV1, type ProjectOrchestrationOwnerPortV1 } from
   "./project-orchestration-owner";
@@ -66,6 +67,18 @@ export interface ProjectOrchestrationDismissalHostV1 {
  * prefill read is what "Use this" calls and it must work the moment a suggestion
  * exists -- it needs no planner at all. What a missing planner costs is only the
  * describe run itself, which `describeAvailable: false` reports honestly. */
+/** The durable place an owner's deliberate retry is recorded.
+ *
+ * It is its own type for the same reason the dismissal host is: 0202 gives the
+ * owner's web login no privilege at all on the failure counters, so the retry has
+ * to be a separate granted operation rather than a method on a store. The default
+ * is 0205's SECURITY DEFINER function, and the returned count is what lets the
+ * panel say "nothing was granted" instead of silently doing nothing. */
+export interface ProjectOrchestrationRetryHostV1 {
+  grant(input: Readonly<{ tenantId: string; projectId: string; requestKey: string;
+    ownerRequest: string }>): Promise<number>;
+}
+
 export function createProjectOrchestrationServiceV1(options: Readonly<{ db: DatabaseClient;
   tenantId: string; workspaceId: string; queueCatalog: WorkBatchQueueCatalogV1;
   /** The proposal-integrity key the work-intake login signs split suggestions
@@ -73,7 +86,13 @@ export function createProjectOrchestrationServiceV1(options: Readonly<{ db: Data
    * was written is refused rather than handed to the owner as a plan. */
   integrityKey: Uint8Array; coordinator: ProjectOrchestrationCoordinatorHostV1;
   planner?: ProjectOrchestrationPlannerHostV1; dismissals?: ProjectOrchestrationDismissalHostV1;
-  clock?: () => number }>): ProjectOrchestrationOwnerPortV1 {
+  /** The durable owner-retry grant. The default is 0205's
+   * `control_room_planner_grant_owner_retry`, which needs no privilege on the
+   * counters beyond EXECUTE on that one function -- so the owner can ask for one
+   * more run of an escalated description without the web login ever holding
+   * UPDATE on the table. Supply `undefined` to compose a service that does not
+   * offer the gesture at all, which is how a partial install behaves. */
+  retry?: ProjectOrchestrationRetryHostV1 | false; clock?: () => number }>): ProjectOrchestrationOwnerPortV1 {
   const clock = options.clock ?? Date.now, scope = { tenantId: options.tenantId, workspaceId: options.workspaceId };
   const describeAvailable = !!options.planner?.available;
   if (options.planner && (options.planner.principal.tenantId !== options.tenantId
@@ -105,5 +124,11 @@ export function createProjectOrchestrationServiceV1(options: Readonly<{ db: Data
     access: new PostgresProjectOrchestrationAccessV1(options.db, scope, clock),
     batches: new PostgresProjectOrchestrationBatchRevisionsV1(options.db, options.tenantId),
     queueCatalog: options.queueCatalog, describeAvailable,
-    ...(options.dismissals ? { dismissals: options.dismissals } : {}), clock }));
+    ...(options.dismissals ? { dismissals: options.dismissals } : {}),
+    // `false` is an explicit "no retry record here", and is honoured as such: a
+    // default that cannot be switched off would offer a button whose call
+    // 404s, which is the F8 dead end this feature exists to close.
+    ...(options.retry === false ? {}
+      : { retry: options.retry ?? new PostgresIntakeOwnerRetryStoreV1(options.db) }),
+    clock }));
 }

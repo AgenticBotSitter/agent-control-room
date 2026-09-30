@@ -24,6 +24,13 @@ export function ProjectOrchestrationPanel({ projectId, client: suppliedClient }:
   const [pending, setPending] = useState(false), [error, setError] = useState<BrowserRequestError>();
   const [retained, setRetained] = useState(false);
   const [result, setResult] = useState<ProjectOrchestrationDescribeResultV1>();
+  const [retrying, setRetrying] = useState(false), [retryNote, setRetryNote] = useState<string>();
+  // Narrowed ONCE, because the retry gesture belongs to exactly one outcome: an
+  // escalation the owner can clear. Reading `result.retryAvailable` off the union
+  // directly does not typecheck, and a cast would hide exactly the case that
+  // matters -- a `failed` result from a composition with no durable retry record.
+  const escalated = result?.status === "failed" && result.needsYou && result.retryAvailable === true
+    ? result : undefined;
   useEffect(() => {
     let live = true;
     void client.readSettings(projectId).then(value => { if (live) { setSettings(value); setError(undefined); } }, reason => {
@@ -40,7 +47,7 @@ export function ProjectOrchestrationPanel({ projectId, client: suppliedClient }:
   if (settings.choice.mode === "none" || settings.choiceStale) return null;
   const submit = async (retry = false) => {
     if (pending || (!retry && !description.trim())) return;
-    setPending(true); setError(undefined); setResult(undefined);
+    setPending(true); setError(undefined); setResult(undefined); setRetryNote(undefined);
     try {
       // Any CONFIRMED outcome releases the hold. The client has cleared its retained
       // request by then, so leaving Prepare disabled would strand the owner on a
@@ -51,6 +58,26 @@ export function ProjectOrchestrationPanel({ projectId, client: suppliedClient }:
       const failure = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
       setError(failure); setRetained(failure.code === "uncertain");
     } finally { setPending(false); }
+  };
+  // THE OWNER'S WAY OUT of an escalation. Before this, a description that failed
+  // twice was dead in that project and the panel offered nothing: the two things
+  // the message used to suggest (press again, change the chief of staff) were both
+  // no-ops, because the counter is keyed on the description and neither touches it.
+  // One button, in plain words, that records a deliberate retry -- not a loop:
+  // the grant authorises exactly one more run, and the run consumes it.
+  const retryEscalated = async () => {
+    if (pending || retrying || !escalated) return;
+    setRetrying(true); setRetryNote(undefined);
+    try {
+      const value = await client.retryEscalated(projectId, description);
+      // "Nothing was granted" is stated, not swallowed: the description may have
+      // been fixed already, or the grant may already be spent, and in both cases
+      // the owner pressing Prepare proposal is the right next move.
+      setRetryNote(value.granted ? "Asking the chief of staff to try this description once more. Prepare proposal will run it."
+        : "There is nothing to retry now. Press Prepare proposal to try this description again.");
+    } catch (reason) {
+      setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"));
+    } finally { setRetrying(false); }
   };
   return <section className="private-panel private-orchestration" aria-labelledby="describe-job-heading">
     <h2 id="describe-job-heading">Describe a job</h2>
@@ -70,6 +97,11 @@ export function ProjectOrchestrationPanel({ projectId, client: suppliedClient }:
     {pending && <p role="status">Chief of staff is preparing a proposal. No work has started.</p>}
     {result?.status === "proposal" && <p role="status">Proposal ready. <a href={result.href}>Review the proposal on its batch page</a>.</p>}
     {result && result.status !== "proposal" && <p role={announced(result) ? "alert" : "status"}>{result.message}</p>}
+    {escalated && <div className="private-actions">
+      <button type="button" disabled={pending || retrying} onClick={() => { void retryEscalated(); }}>
+        {retrying ? "Asking…" : "Ask it to try this once more"}</button>
+    </div>}
+    {retryNote && <p role="status">{retryNote}</p>}
     {error && <div className="private-notice"><p role="alert">{orchestrationErrorMessage[error.code]}</p>
       {error.code === "uncertain" && <div className="private-actions">
         <button type="button" disabled={pending} onClick={() => { void submit(true); }}>Check this exact request again</button>

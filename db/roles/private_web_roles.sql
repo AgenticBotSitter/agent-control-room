@@ -112,6 +112,22 @@ GRANT SELECT ON work_batch_current_split_suggestions, control_planner_open_needs
 -- the owner's read is unchanged by 0203.
 GRANT EXECUTE ON FUNCTION work_intake_split_suggestion_visible(text, text, text)
   TO control_room_private_web;
+-- MIG-A 0205: the ONE thing the owner may do to a planner failure counter, and
+-- deliberately that and nothing else. The comment above this file says the web
+-- login must "never be able to clear a failure counter or raise an item", and both
+-- still hold: this function cannot lower a count, cannot invent an escalation, and
+-- cannot touch a counter that is not one of the four scopes the requesting
+-- request itself computed. What it does is set a one-shot LATCH on a counter that
+-- is live at 2 or more, which lets the owner's next press run the planner once --
+-- the deliberate way out of an escalation that was otherwise permanent (N-B3).
+--
+-- It is SECURITY DEFINER and takes the scope keys as an argument rather than
+-- deriving them, so it is not a window onto the table: it is a single UPDATE with
+-- no other caller-controlled predicate, guarded by 0205's trigger. EXECUTE alone
+-- grants no SELECT on control_planner_failure_counters, and the preflight's
+-- function allowlist pins this one to the web and coordinator logins.
+GRANT EXECUTE ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[])
+  TO control_room_private_web;
 -- Project coordination page (attentionList, readDependencies): exactly the
 -- read, filter and join columns the composer names. No payload, deep_link or
 -- source columns and no writes; tenant scoping is the composer's WHERE clause.

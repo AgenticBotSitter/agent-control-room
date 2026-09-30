@@ -50,6 +50,18 @@ export function createProjectOrchestrationHttpHandlerV1(options: Readonly<{ orig
         throw new WebAccessError("invalid_request");
       }
       const describe = /^\/api\/v1\/projects\/([^/]+)\/orchestration$/.exec(url.pathname);
+      // The retry is its own path rather than a field of the describe body: it is a
+      // different authority (it records a grant) on a different schedule (only
+      // after an escalation), and a body field would let a describe carry it by
+      // accident. 200 for every outcome, like describe: it creates no resource the
+      // owner then owns, it answers a question about the grant.
+      const retry = /^\/api\/v1\/projects\/([^/]+)\/orchestration-retry$/.exec(url.pathname);
+      if (retry) {
+        if (request.method !== "POST") throw new WebAccessError("invalid_request");
+        return Response.json(await options.service.retryEscalated(identity, decode(retry[1]!),
+          await body(request), request.headers.get("idempotency-key") ?? ""),
+        { status: 200, headers: privateResponseHeaders });
+      }
       if (describe) {
         if (request.method !== "POST") throw new WebAccessError("invalid_request");
         // 200 for every outcome. The route has no resource of its own to create:

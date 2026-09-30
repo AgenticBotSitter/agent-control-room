@@ -136,7 +136,13 @@ GRANT SELECT ON work_intake_tenant_binding TO control_room_task_coordinator;
 -- ledger. It holds NO UPDATE or DELETE on either table, so a recorded escalation
 -- cannot be edited afterwards, and no privilege on either of the owner views.
 GRANT SELECT, INSERT ON control_planner_failure_counters TO control_room_task_coordinator;
-GRANT UPDATE (failure_count, last_failure_at, cleared_at, version, updated_at)
+-- The sixth column is 0205's `owner_retry_cleared_at`, and it is the SPEND, not
+-- the grant: the retry latch is cleared by the run it authorised, so a granted
+-- retry cannot authorise a second one. The coordinator can therefore UNSET a latch
+-- and never SET one -- setting it is 0205's SECURITY DEFINER function, which
+-- refuses anything but a live counter at >= 2 -- and the guard trigger admits
+-- exactly that one transition.
+GRANT UPDATE (failure_count, last_failure_at, cleared_at, version, updated_at, owner_retry_cleared_at)
   ON control_planner_failure_counters TO control_room_task_coordinator;
 GRANT SELECT, INSERT ON control_planner_needs_you_items TO control_room_task_coordinator;
 -- MIG-A 0204: EXECUTE on the failure-scope key helper. 0204's guard trigger calls
@@ -152,4 +158,14 @@ GRANT SELECT, INSERT ON control_planner_needs_you_items TO control_room_task_coo
 -- The helper is IMMUTABLE and a pure function of a kind plus a jsonb preimage the
 -- caller already holds, so EXECUTE discloses nothing the login could not compute.
 GRANT EXECUTE ON FUNCTION planner_failure_scope_key(text, jsonb) TO control_room_task_coordinator;
+
+-- MIG-A 0205: EXECUTE on the owner's deliberate retry. The coordinator READS the
+-- latch through its own SELECT and never sets it, so this grant is not a way to
+-- manufacture a retry: the function itself refuses a counter that is not live at
+-- >= 2 or that already holds a latch, and the trigger behind it refuses the write
+-- outright. The owner web login is the actor that normally calls it (see
+-- private_web_roles.sql); the coordinator holds it so a press can be answered
+-- honestly when the owner retries from a second device.
+GRANT EXECUTE ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[])
+  TO control_room_task_coordinator;
 COMMIT;

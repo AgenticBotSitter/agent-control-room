@@ -21,7 +21,7 @@ type SuggestionRow = { id: string; tenant_id: string; project_id: string; batch_
   request_key: string; base_revision: string | number; base_revision_digest: string;
   proposed_by_identity_id: string; proposal: unknown; proposal_digest: string;
   suggestion_digest: string; auth_tag: string; created_at: string | Date };
-type CounterRow = { failure_count: string | number; cleared_at: string | Date | null };
+type CounterRow = { failure_count: string | number; cleared_at: string | Date | null; scope_key?: string };
 
 const iso = (value: string | Date) => new Date(value).toISOString();
 const json = (value: unknown) => JSON.stringify(value);
@@ -264,19 +264,43 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
     return row ? Number(row.failure_count) : 0;
   }
 
+  /** Whether 0205's latch is set on this scope. Read-only, and deliberately not a
+   * reset: the count is the evidence the Needs-you item and the guard rest on.
+   *
+   * The column is only READ here. The web login and the coordinator hold no
+   * UPDATE on it (0202's grant is a five-column list that does not name it, and
+   * the preflight's column audit enforces exactly that), so the only way to set
+   * the latch is 0205's SECURITY DEFINER function, which is what makes "the owner
+   * asked once" something a grant rather than a guess. */
+  async ownerRetryGranted(scopeKey: string): Promise<boolean> {
+    const { tenantId, projectId } = this.scope(scopeKey);
+    const row = (await this.db.query<{ owner_retry_cleared_at: string | Date | null }>(
+      `SELECT owner_retry_cleared_at FROM control_planner_failure_counters
+       WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3`,
+    [tenantId, projectId, scopeKey])).rows[0];
+    return !!row?.owner_retry_cleared_at;
+  }
+
   async record(scopeKey: string): Promise<number> {
     const { tenantId, projectId } = this.scope(scopeKey);
     const at = this.now();
     // $4 is CAST to timestamptz in every position it appears. Without the cast
     // PostgreSQL cannot infer its type where it is only compared, and raises
     // 42P08 ("could not determine data type of parameter") instead of counting.
+    //
+    // The statement does NOT mention `owner_retry_cleared_at`, and that is the
+    // point: 0205's guard requires the latch to be UNCHANGED by an increment, so a
+    // granted retry survives a failed run and is spent only by the `clear()`. The
+    // escalation bound therefore reads exactly as intended -- one extra run per
+    // escalation -- and a retry that fails again lands at count 1 of a new
+    // escalation rather than straight back at 2.
     const row = (await this.db.query<{ failure_count: string | number }>(
       `INSERT INTO control_planner_failure_counters AS c
          (tenant_id,project_id,scope_key,failure_count,last_failure_at,cleared_at,version,updated_at,created_at)
        VALUES($1,$2,$3,1,$4::timestamptz,NULL,1,$4::timestamptz,$4::timestamptz)
        ON CONFLICT (tenant_id,project_id,scope_key) DO UPDATE
          SET failure_count=c.failure_count+1, last_failure_at=$4::timestamptz, cleared_at=NULL,
-           version=c.version+1, updated_at=$4::timestamptz
+           version=c.version+1, updated_at=GREATEST(c.updated_at,$4::timestamptz)
        RETURNING failure_count`,
     [tenantId, projectId, scopeKey, at])).rows[0];
     return Number(row?.failure_count ?? 0);
@@ -285,17 +309,50 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
   async clear(scopeKey: string): Promise<void> {
     const { tenantId, projectId } = this.scope(scopeKey);
     const at = this.now();
+    // `owner_retry_cleared_at=NULL` is part of this statement, and it is what
+    // SPENDS an owner-retry latch. That is deliberate: 0205's trigger admits a
+    // clear only when the latch goes to NULL, so a granted retry is consumed by
+    // the run it authorised and cannot authorise a second one. Without the column
+    // in this UPDATE the trigger refuses the clear on a latched counter, which is
+    // how the bound is enforced rather than merely intended.
+    //
+    // The coordinator holds UPDATE on exactly five columns plus this one, so this
+    // is a sixth named column in the role grant (task_coordinator_roles.sql) --
+    // without it the statement fails with permission denied, not with a trigger
+    // error, which is the more confusing of the two.
+    //
+    // GREATEST is on both statements, and it is load-bearing rather than
+    // defensive. 0202's guard requires `NEW.updated_at >= OLD.updated_at`, and
+    // THREE writers share this column with three different clocks: this store
+    // stamps an INJECTED `now` (which is what makes it testable), 0205's
+    // `control_room_planner_grant_owner_retry` can only use the server's, and the
+    // two are independent. Without GREATEST the write after a grant fails with
+    // "planner failure counter update rejected" whenever the injected clock is
+    // behind the server's -- measured, and it reads as a broken guard rather than
+    // as two clocks. GREATEST keeps the column monotonic whichever clock wrote
+    // last, which is the only property the guard asks for.
     await this.db.query(`UPDATE control_planner_failure_counters SET failure_count=0, cleared_at=$4::timestamptz,
-      version=version+1, updated_at=$4::timestamptz
+      owner_retry_cleared_at=NULL, version=version+1, updated_at=GREATEST(updated_at,$4::timestamptz)
       WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3 AND failure_count<>0`,
     [tenantId, projectId, scopeKey, at]);
   }
 }
 
-/** The append-only Needs-you ledger behind 0202's control_planner_needs_you_items.
- * Idempotent by (tenant, project, request key): the second raise of the same
- * request is the same row, and the action-inbox item is inserted with the same
- * deterministic id, so a repeat is a no-op rather than a second Needs-you. */
+/** The append-only Needs-you ledger behind 0202's control_planner_needs_you_items,
+ * keyed in 0205 on the SCOPE THAT ESCALATED.
+ *
+ * The key change is measured, not stylistic. The identity used to be the request
+ * key, and the browser mints a FRESH `orchestrator:<uuid>` key on every press, so
+ * six presses of one description against a broken planner produced FIVE Needs-you
+ * items and five open inbox items for one failure. The id is now a digest of
+ * (tenant, project, scope) -- the same scope the counter that earned the
+ * escalation lives on -- so any number of presses of one description converge on
+ * one row and one inbox item, while two DIFFERENT descriptions in one project
+ * still get two items, which is the property the project scope exists to protect.
+ *
+ * The request key is still STORED, because it is the honest evidence of which
+ * request hit the second failure and the owner-facing view still names it. It
+ * stops being the identity. */
 export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV1 {
   constructor(private readonly db: DatabaseClient,
     private readonly principal: () => Readonly<{ identityId: string }>,
@@ -327,11 +384,22 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
     // $3 is the array. The parameters are numbered without a gap so PostgreSQL can
     // infer every type: an unused placeholder is not allowed in a parameter list,
     // and `= ANY($N::text[])` needs the array itself, not a joined string.
+    //
+    // THE ESCALATING SCOPE ITSELF IS SELECTED, not just its count, because 0205
+    // made the scope the ledger's identity. A single `LIMIT 1` over a count was
+    // not enough to build the row: the id, the action-item id and the ON CONFLICT
+    // target all have to name the scope that earned the escalation, and a second
+    // press of the same description reaches this with a DIFFERENT request key, so
+    // the two candidate scopes are different strings and picking either one
+    // blindly would let a raise be filed against a counter that did not earn it.
+    // The ORDER BY is deterministic on purpose: `failure_count DESC` then
+    // `scope_key` ascending, so two equally-escalated scopes resolve to the same
+    // row every time rather than alternating between presses.
     const counter = (await this.db.query<CounterRow>(
-      `SELECT failure_count FROM control_planner_failure_counters
+      `SELECT failure_count, scope_key FROM control_planner_failure_counters
        WHERE tenant_id=$1 AND project_id=$2 AND failure_count>=2 AND cleared_at IS NULL
          AND scope_key = ANY($3::text[])
-       ORDER BY failure_count DESC LIMIT 1`,
+       ORDER BY failure_count DESC, scope_key ASC LIMIT 1`,
     [tenantId, projectId, counters])).rows[0];
     if (!counter) throw new Error("planner_needs_you_not_escalated");
     // The description DIGEST, never the description: 0204's guard recomputes the
@@ -339,32 +407,84 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
     // as 0202's header promised. sha256Digest is the same sha256 over the same
     // canonical JSON the SQL helper computes, which the production test proves by
     // requiring this INSERT to be accepted.
+    //
+    // The identity is sha256 over (tenant, project, scope) TRUNCATED to the 32
+    // hex characters 0202's id CHECK allows, and the trigger recomputes it from
+    // the row's own values -- so the digest is a shape both sides derive rather
+    // than a string only this adapter can produce.
     await this.db.query(`INSERT INTO control_planner_needs_you_items
       (id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at,
-        action_item_id,owner_request_digest)
-      VALUES('planner-needs-you:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32),
-        $1,$2,$3,'orchestrator_failed_twice',$4::bigint,$5,$6::timestamptz,
-        'attention:planner:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32),$7)
-      ON CONFLICT (tenant_id,project_id,request_key) DO NOTHING`,
-    [tenantId, projectId, input.requestKey, Number(counter.failure_count), id, input.now,
-      sha256Digest({ ownerRequest: input.ownerRequest })]);
+        action_item_id,owner_request_digest,scope_key)
+      VALUES('planner-needs-you:' || substring(encode(sha256(convert_to($1 || '/' || $2 || '/' || $4,'UTF8')),'hex') from 1 for 32),
+        $1,$2,$3,'orchestrator_failed_twice',$5::bigint,$6,$7::timestamptz,
+        'attention:planner:' || substring(encode(sha256(convert_to($1 || '/' || $2 || '/' || $4,'UTF8')),'hex') from 1 for 32),
+        $8,$4)
+      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING`,
+    [tenantId, projectId, input.requestKey, String(counter.scope_key),
+      Number(counter.failure_count), id, input.now, sha256Digest({ ownerRequest: input.ownerRequest })]);
+    // ONE inbox item per escalating scope, and the id is the SAME digest, so a
+    // repeat of the same escalation re-uses the row and the payload below -- which
+    // is why `work_item_id` names the request key that FIRST escalated rather
+    // than whichever request happened to be pressed last. Six presses of one
+    // description therefore leave one open item, not six.
+    const first = (await this.db.query<{ request_key: string }>(
+      `SELECT request_key FROM control_planner_needs_you_items
+       WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3`,
+    [tenantId, projectId, String(counter.scope_key)])).rows[0];
+    const requestKey = first?.request_key ?? input.requestKey;
     await this.db.query(`INSERT INTO control_action_inbox
       (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
-      VALUES('attention:planner:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32),
-        $1,$2,'planner:' || $3,'failure','open','delivered',$4::timestamptz,NULL,
-        json_build_object('id','attention:planner:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32),
+      VALUES('attention:planner:' || substring(encode(sha256(convert_to($1 || '/' || $2 || '/' || $4,'UTF8')),'hex') from 1 for 32),
+        $1,$2,'planner:' || $3,'failure','open','delivered',$5::timestamptz,NULL,
+        json_build_object('id','attention:planner:' || substring(encode(sha256(convert_to($1 || '/' || $2 || '/' || $4,'UTF8')),'hex') from 1 for 32),
           'tenantId',$1,'projectId',$2,'workItemId','planner:' || $3,'kind','failure','state','open',
           'requestedAction','Review the orchestrator failure','reasonCode','orchestrator_failed_twice',
           'blockedWorkItemIds','[]'::jsonb,
           'legalResponses',json_build_array(json_build_object('id','open:' || $3,'kind','open_source',
             'label','Open the failed request','requiresConfirmation',false,'available',true)),
-          'evidence','[]'::jsonb,'deliveryState','delivered','createdAt',$4::timestamptz))
+          'evidence','[]'::jsonb,'deliveryState','delivered','createdAt',$5::timestamptz))
       -- The action inbox's key is (tenant_id, id), not (id) alone: 0019 declares
       -- it that way, and naming only the id column raises 42P10 ("no unique or
       -- exclusion constraint matching the ON CONFLICT specification") -- measured,
       -- and it reads as a missing index rather than a wrong conflict target.
       ON CONFLICT (tenant_id,id) DO NOTHING`,
-    [tenantId, projectId, input.requestKey, input.now]);
+    [tenantId, projectId, requestKey, String(counter.scope_key), input.now]);
+  }
+}
+
+/** The owner's deliberate retry, over 0205's `control_room_planner_grant_owner_retry`.
+ *
+ * The owner's web login holds NO privilege on control_planner_failure_counters --
+ * 0202 says so in terms and the private-web preflight's column audit enforces it
+ * for every column -- so this is the only way the owner can ask for one more run
+ * of a description that escalated. It cannot clear the counter itself, and it
+ * cannot lower the count: the trigger behind the function admits exactly one
+ * transition, and only on a live counter at 2 or more that has not already been
+ * granted a retry.
+ *
+ * It is a SEPARATE class rather than a method on the failure store on purpose.
+ * The failure store runs on the COORDINATOR login and the retry is the OWNER's
+ * act, so the two are different authorities and a composition that supplied the
+ * wrong one would be granting retries nobody asked for. The scope keys are the
+ * caller's OWN keys -- the same `plannerNeedsYouScopeKeysV1` the raise used -- so
+ * this cannot touch a counter outside the scopes this request computed.
+ */
+export class PostgresIntakeOwnerRetryStoreV1 {
+  constructor(private readonly db: DatabaseClient) {}
+
+  /** Grant a retry on every scope of this request that is live at >= 2.
+   *
+   * Returns how many counters were granted, so "nothing was granted" is
+   * observable rather than silent: that is what lets the owner path tell "you
+   * already have a retry waiting, press again" from "there was nothing to
+   * retry", which are different sentences for the owner. */
+  async grant(input: Readonly<{ tenantId: string; projectId: string; requestKey: string;
+    ownerRequest: string }>): Promise<number> {
+    const keys = plannerNeedsYouScopeKeysV1(input.tenantId, input.projectId, input.requestKey, input.ownerRequest);
+    const row = (await this.db.query<{ granted: number }>(
+      `SELECT control_room_planner_grant_owner_retry($1,$2,$3::text[])::int AS granted`,
+    [input.tenantId, input.projectId, keys])).rows[0];
+    return Number(row?.granted ?? 0);
   }
 }
 
@@ -402,14 +522,41 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
 export class PostgresIntakeCompletionLookupV1 implements IntakeCompletionLookupPortV1 {
   constructor(private readonly db: DatabaseClient) {}
 
-  async completed(input: Readonly<{ tenantId: string; projectId: string; identityId: string; requestKey: string }>):
-    Promise<IntakeCoordinatorResultV1 | null> {
+  async completed(input: Readonly<{ tenantId: string; projectId: string; identityId: string;
+    requestKey: string; ownerRequest?: string }>): Promise<IntakeCoordinatorResultV1 | null> {
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u.test(input.requestKey)) return null;
-    const row = (await this.db.query<{ result: unknown }>(`SELECT result FROM control_idempotency
+    const row = (await this.db.query<{ result: unknown; request_digest: string }>(`SELECT result, request_digest
+      FROM control_idempotency
       WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3 AND status='completed'`,
     [input.tenantId, `work-batches.propose/v1:${input.identityId}`, input.requestKey])).rows[0];
     const receipt = workBatchReceiptSchemaV1.safeParse(row?.result);
     if (!row || !receipt.success) return null;
+    // A COMPLETED key must not answer a DIFFERENT description (N8), and the fix
+    // is to refuse rather than to guess.
+    //
+    // The key alone says nothing about what was asked. Measured in review round 2:
+    // the same key with a DIFFERENT description returned the OLD receipt,
+    // `submitted` with `replayed: true`, no run and no refusal -- so a caller that
+    // reused a key for a new job was told that job had been prepared, and the
+    // answer to it was never computed. The browser cannot reach this (its retry
+    // always resends the retained body, and its describe mints a fresh key),
+    // which is exactly why a direct API caller could and nothing noticed.
+    //
+    // WHY THIS REFUSES RATHER THAN COMPARES. The stored `request_digest` is
+    // `sha256Digest({ identityId, idempotencyKey, proposalDigest })` -- a digest
+    // of the PLANNER'S OUTPUT. The owner cannot recompute it before the planner
+    // has run, so a description can never win that comparison, and comparing
+    // anything else would be comparing something that is not what the key
+    // identified. So a caller that supplies a description gets NO answer from
+    // storage, which is the direction this store already takes for everything it
+    // cannot establish, and the safe one: a repeat may cost a run, but it can never
+    // be answered with a receipt for work nobody asked for. The submission's own
+    // replay comparison then refuses a differing body under a used key, so the
+    // caller is told "conflict" rather than handed the wrong batch.
+    //
+    // The port therefore does NOT take a description. It cannot use one, and an
+    // optional parameter that is ignored is a promise the type does not keep.
+    if (input.ownerRequest !== undefined) return null;
     // The stored receipt is re-parsed, never passed through: `result` is a jsonb
     // column, and a row that does not parse is not a receipt this adapter is
     // willing to hand the owner. It is also scoped to the project that was asked

@@ -167,6 +167,26 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "updated_by_identity_id", "updated_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
+/** Every view that must carry `security_barrier = true`, and the reason each one
+ * is on the list.
+ *
+ * The first four are the exposure N-B1 measured: a view owned by the schema owner
+ * over a table a shared login can reach, whose WHERE clause is a tenant filter
+ * rather than a convenience. Without the reloption, a filter the CALLER adds is
+ * evaluated on every row the view produces before the view's own qual runs, so a
+ * cast or a 1/0 in it turns another tenant's row into an error message.
+ *
+ * The last two are DEFENSIVE ONLY and the distinction is load-bearing, so it is
+ * stated here rather than left to a reader of the list to infer: neither carries a
+ * tenant predicate, so there are no quals for the reloption to order, and adding
+ * one to them would be a different change with a different proof. They are on the
+ * list because the property costs nothing and means the next migration does not
+ * have to re-derive the argument for each view, not because the reloption fixes a
+ * read of these two. */
+const barrierViews = Object.freeze(["work_batch_current_split_suggestions",
+  "work_batch_effective_queue_admissions", "pipeline_ordered_stage_runs",
+  "installation_effective_operations_mode", "control_planner_open_needs_you",
+  "control_project_planner_selections"]);
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
   "control_idea_sessions", "control_idea_bot_run_events", "control_idea_contributions", "control_idea_syntheses",
   "control_idea_decisions", "control_idea_owner_authorizations", "control_policy_decisions", "projects",
@@ -303,10 +323,17 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_provider_waits: ["state", "released_at"],
   control_recurring_proposals: ["state", "attempt_count", "batch_id", "safe_reason_code", "updated_at"],
   control_recurring_rules: ["last_evaluated_at"],
-  // MIG-A (0202): the failure counter's two admitted transitions and nothing else.
-  // The guard trigger refuses any other move, so a caller cannot set the count to
-  // 2 by hand and raise an escalation it never earned, nor reset a live failure.
-  control_planner_failure_counters: ["failure_count", "last_failure_at", "cleared_at", "version", "updated_at"],
+  // MIG-A (0202, widened by 0205): the failure counter's admitted transitions and
+  // nothing else. The guard trigger refuses any other move, so a caller cannot set
+  // the count to 2 by hand and raise an escalation it never earned, nor reset a
+  // live failure. `owner_retry_cleared_at` is here because 0205's clear SPENDS an
+  // owner-retry latch by setting it to NULL -- the coordinator can therefore
+  // UNSET a latch and never SET one, and setting it is 0205's SECURITY DEFINER
+  // function alone. This list and the role file's are deliberately identical: a
+  // column in one and not the other fails the column audit rather than passing
+  // quietly.
+  control_planner_failure_counters: ["failure_count", "last_failure_at", "cleared_at", "version", "updated_at",
+    "owner_retry_cleared_at"],
   // An incident is opened with a bounded column set and then corrected in
   // place; the head's generation counter is the only service-registry write.
   control_service_incident_heads: ["next_generation"],
@@ -609,6 +636,30 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
                   OR pg_get_userbyid(a.grantee) NOT IN ('control_room_work_intake','control_room_private_web'))))
+            /* MIG-A 0205: the owner's deliberate retry. It is SECURITY DEFINER
+               because the whole point is that the owner's web login holds NO
+               privilege at all on control_planner_failure_counters -- 0202 states
+               that in terms and the column audit above enforces it for every
+               column, so granting the web login an UPDATE would mean weakening a
+               reviewed invariant. One pinned function is the smaller change.
+
+               It is pinned the same way as every other entry: owner, SECURITY
+               DEFINER, VOLATILE, a pinned search_path, no grant to PUBLIC, and an
+               ACL that admits exactly the two logins 0205 grants it to -- the
+               owner's web login, which calls it, and the coordinator, which runs
+               the presses. A grant to a third party fails this preflight rather
+               than passing quietly, and a function re-created with a different
+               body or a missing search_path fails it too. */
+            OR (p.oid='control_room_planner_grant_owner_retry(text,text,text[])'::regprocedure
+              AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND p.prorettype='integer'::regtype
+              AND p.pronargs=3 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND p.proname='control_room_planner_grant_owner_retry'
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee) NOT IN ('control_room_task_coordinator','control_room_private_web'))))
             OR (p.oid='redeem_fleet_enrollment(text,text,text,text,timestamptz)'::regprocedure
               AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND NOT p.proleakproof AND p.proparallel='u'
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
@@ -727,6 +778,38 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
         : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
       if (!columns.length) fail();
+      // The `security_barrier` reloption, on every view whose WHERE clause is a
+      // defence rather than a convenience.
+      //
+      // WHY IT NEEDS ITS OWN CHECK. A view runs with its OWNER's rights, so a
+      // tenant filter in a view's WHERE clause is the ONLY thing standing
+      // between a shared login and every tenant's rows -- and a plain view is not
+      // a security barrier: PostgreSQL evaluates the CALLER's own qual before the
+      // view's, so a cheap filter the caller adds runs first, on rows the view
+      // would have excluded, and a cast or a 1/0 in it turns another tenant's
+      // row into an error message. Measured as N-B1: a `::int` cast on one
+      // column, and a `CASE ... THEN 1/0`, both leaked the other tenant's full
+      // proposal text through the error, with the plain row count still 0.
+      //
+      // WHY IT IS NOT IN THE DIGEST. `readPrivateWebSchemaDigest` records
+      // columns, constraints, indexes, triggers, policies and functions. A
+      // view's reloptions are none of those, so dropping the barrier changed no
+      // digest at all and a correct-looking install would have started up. This
+      // is the only place the property is visible, so it is read from the server
+      // rather than from a constant.
+      //
+      // The list is the six views 0205 sets. The first FOUR are the ones where
+      // the barrier changes what a caller can observe; the last two have no
+      // tenant predicate at all, so the reloption orders no quals and is
+      // defensive only -- 0205's header says so rather than implying the fix
+      // covers a cross-tenant read of those two, which it does not.
+      const barriers = await tx.query<{ view: string; barrier: boolean }>(`SELECT c.relname AS view,
+        coalesce((SELECT true FROM unnest(coalesce(c.reloptions,'{}'::text[])) o
+          WHERE o='security_barrier=true'),false) AS barrier
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND c.relname=ANY($1::text[])`, [barrierViews]);
+      if (barriers.rows.length !== barrierViews.length
+        || barriers.rows.some(row => row.barrier !== true)) fail();
       // Fleet tables are granted to the web login by fleet_gateway_roles.sql, which the
       // Mac-local install never runs, so where the fleet gateway is absent the web login
       // must hold nothing on any fleet table. The expectation follows the install; the

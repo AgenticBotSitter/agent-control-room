@@ -38,7 +38,8 @@ function enter(window: Window & typeof globalThis, textarea: HTMLTextAreaElement
 }
 
 type Client = ReturnType<typeof createProjectOrchestrationBrowserClient>;
-type Calls = { describe: number; retry: number; save: number; use: number; dismiss: number; list: number };
+type Calls = { describe: number; retry: number; retryEscalated: number; save: number;
+  use: number; dismiss: number; list: number };
 function recordingClient(readValue: ProjectOrchestrationSettingsV1, calls: Calls,
   describe: Client["describe"] = async () => ({ status: "proposal", batchId,
     href: `/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}`,
@@ -49,6 +50,8 @@ function recordingClient(readValue: ProjectOrchestrationSettingsV1, calls: Calls
     saveSettings: async () => { calls.save += 1; return readValue; },
     async describe(...args) { calls.describe += 1; return describe(...args); },
     async retryDescription() { calls.retry += 1; return describe(projectId, "retry"); },
+    async retryEscalated() { calls.retryEscalated += 1; return { projectId, granted: true,
+      startsWork: false as const, grantsExecutionAuthority: false as const }; },
     listSuggestions: async () => { calls.list += 1; return { projectId, batchId, suggestions: [],
       dismissAvailable: readValue.dismissAvailable, startsWork: false as const,
       grantsExecutionAuthority: false as const }; },
@@ -56,7 +59,7 @@ function recordingClient(readValue: ProjectOrchestrationSettingsV1, calls: Calls
       grantsExecutionAuthority: false as const, savesRevision: false as const }; },
     async dismissSuggestion() { calls.dismiss += 1; } });
 }
-const noCalls = (): Calls => ({ describe: 0, retry: 0, save: 0, use: 0, dismiss: 0, list: 0 });
+const noCalls = (): Calls => ({ describe: 0, retry: 0, retryEscalated: 0, save: 0, use: 0, dismiss: 0, list: 0 });
 
 async function mount(element: ReactElement, environment: { fetch?: typeof fetch } = {}) {
   const { JSDOM } = await import("jsdom"), React = await import("react");

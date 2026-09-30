@@ -12,7 +12,8 @@ import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { workBatchProposalDigestV1, PostgresIntakePlannerFailureStoreV1,
-  PostgresIntakeNeedsYouStoreV1, PostgresIntakeSuggestionStoreV1, IntakeSuggestionStoreErrorV1,
+  PostgresIntakeNeedsYouStoreV1, PostgresIntakeOwnerRetryStoreV1, PostgresIntakeSuggestionStoreV1,
+  IntakeSuggestionStoreErrorV1,
   UnwiredPlannerAllowanceV1, intakeProjectScopeV1, intakeRequestScopeV1,
   type WorkBatchProposalV1 } from "../src/work-intake/v1";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
@@ -367,6 +368,191 @@ test("the current-suggestion VIEW is tenant-bound: the intake login bound to A c
       assert.equal(oneBoolean.rows[0]!.n, 1, "the predicate is a single boolean projection, not a row source");
     } finally { await intake.end(); await admin.end(); }
   }, { port: PORT + 8, allowedPorts: ALLOWED, boundMs: 180_000 });
+});
+
+test("the tenant-bound VIEW leaks nothing through an ERROR: a cast or a division in the caller's own filter", async t => {
+  // N-B1, and the reason the `security_barrier` reloption exists.
+  //
+  // The tenant-bound test above proves the plain read returns zero rows. It did
+  // not prove the read was SAFE, and it was not: a plain view is not a security
+  // barrier, so PostgreSQL evaluates the CALLER's qual before the view's own. A
+  // cheap filter the intake login adds therefore ran on every row the view
+  // produced -- including tenant B's -- and a filter that FAILS turned B's row
+  // into an error message carrying B's content. Measured on the round-2 tree,
+  // with the intake login bound to tenant A and tenant B holding one suggestion:
+  //
+  //   (proposal->'tasks'->0->>'title')::int = 0    ERROR ... "SECRET-B-TENANT-ONLY"
+  //   (proposal::text)::int = 0                    ERROR ... the whole proposal
+  //   request_key::int = 0                         ERROR ... "orchestrator-tenant-b-1"
+  //   1 / (CASE WHEN proposal::text LIKE '%SECRET%' THEN 0 ELSE 1 END) = 1
+  //                                                    ERROR: division by zero
+  //
+  // Every one of those is built-ins only, so the attack needs no function the
+  // caller may create, and TEMP is revoked from this login so it could not make
+  // one either. The same cast on the BASE table is safe, because an RLS qual is a
+  // security barrier by construction -- which is what makes the reloption the
+  // difference rather than a stylistic choice.
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    const intake = new Client(postgres.connection("control_room_work_intake_agent")); await intake.connect();
+    try {
+      await seedTenant(admin, scope, { withBinding: true });
+      await seedTenant(admin, other);
+      await seedIdentities(admin, scope, "");
+      await seedIdentities(admin, other, "-other");
+      const foreignBatch = await seedBatch(admin, other, "batch:orch-tenant-b", "identity:orch-agent-other");
+      const secret = "SECRET-B-TENANT-ONLY";
+      const foreign = { ...proposal(2), projectId: other.projectId, tasks: proposal(2).tasks.map(task =>
+        ({ ...task, title: secret })) } as WorkBatchProposalV1;
+      await insertSuggestion(admin, { id: `split-suggestion:${"7".repeat(32)}`,
+        tenantId: other.tenantId, projectId: other.projectId, batchId: "batch:orch-tenant-b",
+        requestKey: "orchestrator-tenant-b-1", revision: 1, revisionDigest: foreignBatch.digest,
+        proposer: "identity:orch-agent-other", proposal: foreign, createdAt: NOW });
+      await seedBatch(admin, scope, "batch:orch-tenant-a");
+      const ownBatch = await seedBatch(admin, scope, "batch:orch-tenant-a-2");
+      await insertSuggestion(admin, { id: `split-suggestion:${"8".repeat(32)}`,
+        tenantId: scope.tenantId, projectId: scope.projectId, batchId: "batch:orch-tenant-a-2",
+        requestKey: "orchestrator-tenant-a-1", revision: 1, revisionDigest: ownBatch.digest,
+        proposer: "identity:orch-agent", proposal: proposal(2), createdAt: NOW });
+
+      // THE RELOPTION IS THE THING UNDER TEST, so it is asserted as a FACT before
+      // the behaviour is measured. A green run on a view that is not a barrier
+      // would otherwise be indistinguishable from a fix.
+      const reloptions = await admin.query<{ reloptions: string[] | null }>(
+        "SELECT reloptions FROM pg_class WHERE relname='work_batch_current_split_suggestions'");
+      assert.deepEqual(reloptions.rows[0]!.reloptions, ["security_barrier=true"],
+        "the tenant-bound view IS a security barrier, which is the whole fix");
+
+      // WHAT THE BARRIER PROMISES, stated before the assertions because it is the
+      // thing that is easy to assert wrongly. It does NOT make the caller's filter
+      // silent: a filter that fails on the caller's OWN row still raises, and it
+      // should -- that row is the caller's to read. What it promises is that a row
+      // the view EXCLUDES is never evaluated by the caller's filter at all, so it
+      // can never appear in an error message.
+      //
+      // So the two groups are kept separate, because they prove different things.
+      //
+      // GROUP ONE, THE CASTS. These raise on the caller's own row, and the only
+      // thing that may appear in the message is the caller's OWN content. The
+      // round-2 leak was exactly B's content appearing here.
+      const casts: ReadonlyArray<readonly [string, string]> = [
+        ["a cast of the first task title", "SELECT 1 FROM work_batch_current_split_suggestions WHERE (proposal->'tasks'->0->>'title')::int = 0"],
+        ["a cast of the whole proposal", "SELECT 1 FROM work_batch_current_split_suggestions WHERE (proposal::text)::int = 0"],
+        ["a cast of the request key", "SELECT 1 FROM work_batch_current_split_suggestions WHERE request_key::int = 0"],
+        ["a cast of the integrity tag", "SELECT 1 FROM work_batch_current_split_suggestions WHERE auth_tag::int = 0"],
+      ];
+      // The caller's OWN material, which an error MAY name -- and whose appearing is
+      // in fact the proof that the filter really was evaluated on a row.
+      const ownMaterial = ["Bounded part 0", "orchestrator-tenant-a-1", "hmac-sha256", "tasks"];
+      for (const [label, sql] of casts) {
+        let error: string | undefined;
+        try { await intake.query(sql); } catch (reason) { error = String((reason as Error).message); }
+        // THE LEAK. Neither B's title nor B's request key may appear.
+        assert.equal(error?.includes(secret) ?? false, false,
+          `${label} revealed the other tenant's title in its error: ${error ?? ""}`);
+        assert.equal(error?.includes("orchestrator-tenant-b-1") ?? false, false,
+          `${label} revealed the other tenant's request key in its error: ${error ?? ""}`);
+        // And the error, if any, is about the caller's OWN row.
+        if (error !== undefined) assert.ok(ownMaterial.some(own => error!.includes(own)),
+          `${label} raised about something that is neither the caller's own row nor a leak: ${error}`);
+      }
+
+      // GROUP TWO, THE ORACLES. These are the real test, because each is a
+      // yes/no CHANNEL: it raises if and only if the caller's filter is ever
+      // evaluated against a row satisfying the predicate. The form is a division
+      // by a value that is ZERO only on tenant B's row, so on the caller's own row
+      // the divisor is 1 and nothing raises, and if B's row ever reached the filter
+      // the divisor would be 0 and the query would raise.
+      //
+      // A `CASE ... THEN 1/0` is deliberately NOT used, and the reason is measured
+      // rather than theoretical: PostgreSQL does not promise CASE short-circuits
+      // constant arms, so `1/0` was evaluated for the ELSE branch too and the
+      // oracle fired on the caller's own row -- a false positive that made this
+      // test pass for the wrong reason, then fail on a different plan. Putting the
+      // zero in the DIVISOR makes the outcome depend only on a per-row quantity
+      // the planner has no constant to fold.
+      const zeroOnlyFor = (predicate: string) =>
+        "SELECT 1 FROM work_batch_current_split_suggestions WHERE 1/(CASE WHEN "
+        + `${predicate} THEN 0 ELSE 1 END) = 1`;
+      const bId = `split-suggestion:${"7".repeat(32)}`;
+      const oracles: ReadonlyArray<readonly [string, string]> = [
+        ["the other tenant's request key", zeroOnlyFor("request_key='orchestrator-tenant-b-1'")],
+        ["the other tenant's id", zeroOnlyFor(`id='${bId}'`)],
+        ["the other tenant's revision digest", zeroOnlyFor(`base_revision_digest='${foreignBatch.digest}'`)],
+        ["the other tenant's proposal text", zeroOnlyFor(`proposal::text LIKE '%${secret}%'`)],
+        ["the other tenant's tenant id", zeroOnlyFor(`tenant_id='${other.tenantId}'`)],
+      ];
+      for (const [label, sql] of oracles) {
+        await assert.doesNotReject(intake.query(sql),
+          `an oracle on ${label} raised, which answers "does that row exist" -- the exact channel the barrier removes`);
+      }
+      // THE CONTROL, and it is the same expression keyed on the CALLER's own
+      // request key. It raises, which is what proves the five above are a real
+      // answer rather than a filter that never runs on this login.
+      await assert.rejects(intake.query(zeroOnlyFor("request_key='orchestrator-tenant-a-1'")),
+        /division by zero/u,
+        "the same oracle DOES fire on the caller's own row, so the clean results above are a real answer and not a filter that never ran");
+
+      // The same oracle on the BASE table was always safe, and must stay safe: it
+      // is the control that shows the difference is the reloption and not the
+      // shape of the expression.
+      for (const [label, sql] of oracles) {
+        const base = sql.replace("work_batch_current_split_suggestions", "work_batch_split_suggestions");
+        await assert.doesNotReject(intake.query(base),
+          `the base table's RLS qual is a barrier by construction, so an oracle on ${label} cannot fire there either`);
+      }
+      // The login's own row is still reachable, and the filters above must
+      // therefore have run over a real row -- otherwise "no oracle fired" could
+      // mean "no rows reached the filter at all", which would make this test pass
+      // on a view that simply returns nothing.
+      const own = await intake.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM work_batch_current_split_suggestions");
+      assert.equal(own.rows[0]!.n, "1", "the bound tenant's own row is still there to be filtered");
+      const evaluated = await intake.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM work_batch_current_split_suggestions WHERE proposal IS NOT NULL");
+      assert.equal(evaluated.rows[0]!.n, "1",
+        "a plain filter still sees the row, so the barrier is what stops the OTHER tenant's, not an empty view");
+
+      // THE PLAN, asserted as a SHAPE, because the shape is the mechanism and the
+      // two groups above are only its consequences. Measured on the fixed tree:
+      //
+      //   Subquery Scan on work_batch_current_split_suggestions
+      //     Filter: (1 / (CASE WHEN ... THEN 0 ELSE 1 END) = 1)
+      //     -> Nested Loop
+      //          -> Index Scan ... on work_batch_split_suggestions s
+      //               Filter: ((b.version = s.base_revision)
+      //                        AND work_intake_split_suggestion_visible(...))
+      //
+      // The caller's filter is a qualifier on the view's OUTPUT, applied after the
+      // view produced a row. The view's tenant predicate is a Filter on the inner
+      // scan, so it decides WHICH rows exist at all. On the round-2 tree these were
+      // the same Filter in the other order, which is why the caller's cheap
+      // predicate ran first and could see B's row.
+      //
+      // EXPLAIN does not execute the qual, but it DOES constant-fold, so a literal
+      // `1/0` is evaluated while the plan is BUILT and the EXPLAIN itself raises --
+      // measured, and it reads as a broken barrier. The division is therefore driven
+      // by a column, so the folding has nothing to work with.
+      const plan = await intake.query<{ "QUERY PLAN": string }>(`EXPLAIN (COSTS OFF, VERBOSE)
+        SELECT 1 FROM work_batch_current_split_suggestions
+        WHERE 1/(CASE WHEN proposal::text LIKE '%${secret}%' THEN 0 ELSE 1 END) = 1`);
+      const planText = plan.rows.map(row => row["QUERY PLAN"]).join("\n");
+      assert.match(planText, /work_intake_split_suggestion_visible/u,
+        `the view's tenant predicate is in the plan at all:\n${planText}`);
+      // The outer block is the Subquery Scan's header plus its own Filter lines,
+      // which is exactly the caller's qual and nothing else. Its `->` children
+      // belong to the view's own plan, so the block stops at the first child.
+      const outerBlock = planText.slice(0, planText.search(/\s*->\s/) === -1
+        ? undefined : planText.search(/\s*->\s/));
+      assert.match(outerBlock, /Subquery Scan on work_batch_current_split_suggestions/u,
+        `the view is a Subquery Scan, so the caller's filter is a qualifier on its OUTPUT rather than on its rows:\n${planText}`);
+      assert.match(outerBlock, /Filter:[\s\S]*SECRET-B-TENANT-ONLY/u,
+        `the caller's own filter is the outer one, above the tenant predicate:\n${planText}`);
+      assert.match(planText, /Index Scan[\s\S]*?Filter:[\s\S]*?work_intake_split_suggestion_visible/u,
+        `the tenant predicate is on the inner scan, which is what excludes B's row before the caller's filter runs:\n${planText}`);
+    } finally { await intake.end(); await admin.end(); }
+  }, { port: PORT + 9, allowedPorts: ALLOWED, boundMs: 180_000 });
 });
 
 test("the write guard refuses: no propose grant, a foreign batch, a stale revision, a wrong digest, a decided batch, another tenant", async t => {
@@ -1061,6 +1247,217 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       } finally { await web.end(); }
     } finally { await coordinator.end(); await admin.end(); }
   }, { port: PORT + 6, allowedPorts: ALLOWED, boundMs: 180_000 });
+});
+
+test("one description gives one Needs-you item however many times it is pressed, and the owner can ask for one retry", async t => {
+  // N-B3, both halves, against the real coordinator and the real stores.
+  //
+  // HALF ONE, the flood. The ledger's identity used to be the request key, and
+  // the browser mints a fresh `orchestrator:<uuid>` key on every press, so six
+  // presses of ONE description against a broken planner produced FIVE Needs-you
+  // rows and FIVE open inbox items. The identity is now the scope that actually
+  // escalated -- (project, description) -- so any number of presses converge on
+  // one row and one inbox entry.
+  //
+  // HALF TWO, the lockout. `count(scope) >= 2` was checked BEFORE the planner, and
+  // the only thing that ever cleared the counter was a success on the same
+  // description -- which could never happen, because the description was refused
+  // before the planner ran. Nothing else touched the counter, so a description
+  // that hit one transient fault was dead in that project for good, and the copy
+  // the owner saw ("try again, or choose another chief of staff") named two
+  // things that did not work.
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    const coordinator = new Client(postgres.connection("coordinator")); await coordinator.connect();
+    const web = new Client(postgres.connection("web")); await web.connect();
+    try {
+      await seedTenant(admin, scope, { withBinding: true });
+      await seedIdentities(admin, scope, "");
+      const db = database(coordinator), scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
+      const failures = new PostgresIntakePlannerFailureStoreV1(db, scopeOf, () => LATER);
+      const needsYou = new PostgresIntakeNeedsYouStoreV1(db, () => ({ identityId: "identity:orch-agent" }), () => LATER);
+      const retry = new PostgresIntakeOwnerRetryStoreV1(db);
+      const description = "Make the release notes match the shipped behaviour.";
+      const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
+
+      // THE FAILURE THAT ESCALATES, twice, through the real adapter. A fresh
+      // request key on the second press is the case the flood lived in, so it is
+      // the case built here rather than a convenient single key.
+      assert.equal(await failures.record(projectScope), 1);
+      assert.equal(await failures.record(projectScope), 2);
+      // SIX PRESSES, a fresh key each -- the measured flood, reproduced.
+      for (let press = 0; press < 6; press += 1) {
+        await needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
+          requestKey: `orchestrator:press-${press}`, reasonCode: "orchestrator_failed_twice",
+          ownerRequest: description, now: LATER });
+      }
+      const rows = await admin.query<{ n: string; scope_key: string; request_key: string }>(
+        `SELECT count(*)::text AS n, min(scope_key) AS scope_key, min(request_key) AS request_key
+         FROM control_planner_needs_you_items WHERE tenant_id=$1`, [scope.tenantId]);
+      assert.equal(rows.rows[0]!.n, "1",
+        "six presses of ONE description leave ONE Needs-you item, not five");
+      assert.equal(rows.rows[0]!.scope_key, projectScope,
+        "and it is keyed on the description's own scope");
+      assert.equal(rows.rows[0]!.request_key, "orchestrator:press-0",
+        "the request key that FIRST escalated is kept as the evidence");
+      const inbox = await admin.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM control_action_inbox WHERE kind='failure'");
+      assert.equal(inbox.rows[0]!.n, "1", "and one open inbox item, not five");
+
+      // TWO DESCRIPTIONS IN ONE PROJECT ARE STILL TWO ITEMS. The project scope
+      // exists to keep one description's failures from escalating another, and
+      // the de-duplication must not collapse them into one.
+      const second = "Add a migration guide for the orchestrator tables.";
+      const secondScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, second);
+      assert.notEqual(secondScope, projectScope);
+      assert.equal(await failures.record(secondScope), 1);
+      assert.equal(await failures.record(secondScope), 2);
+      await needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:second-description", reasonCode: "orchestrator_failed_twice",
+        ownerRequest: second, now: LATER });
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items"))
+        .rows[0]!.n, 2, "a different description in the same project is still its own Needs-you item");
+
+      // THE OWNER'S WAY OUT. The grant is refused while the description has NOT
+      // escalated, so it cannot be used to pre-authorise a run.
+      const neverFailed = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, "Never pressed.");
+      assert.equal(await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:never-0001", ownerRequest: "Never pressed." }), 0,
+      "a description that has not escalated has nothing to retry");
+
+      // And the grant is the OWNER's act, on the owner's own login.
+      assert.equal(await failures.ownerRetryGranted(projectScope), false,
+        "no retry is granted until the owner asks for one");
+      const granted = await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:owner-retry-1", ownerRequest: description });
+      assert.equal(granted, 1, "the owner's retry is granted for the escalated description");
+      assert.equal(await failures.ownerRetryGranted(projectScope), true,
+        "and the coordinator can see it, which is what lets the next press run");
+      assert.equal(await failures.count(projectScope), 2,
+        "the grant does NOT lower the count: the evidence survives");
+      // The latch is ONE-SHOT. A second ask before the run is refused, so the
+      // gesture cannot be pressed into a run loop.
+      assert.equal(await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:owner-retry-2", ownerRequest: description }), 0,
+      "a retry is granted once, not once per press");
+
+      // THE BOUND THAT MAKES IT NOT A LOOP. The run the grant authorised consumes
+      // it through the ordinary clear, and a cleared counter carries no latch --
+      // so a third failure after that is a NEW escalation, not a free run.
+      await failures.clear(projectScope);
+      assert.equal(await failures.count(projectScope), 0);
+      assert.equal(await failures.ownerRetryGranted(projectScope), false,
+        "the grant is spent by the run it authorised");
+      assert.equal(await failures.record(projectScope), 1);
+      assert.equal(await failures.ownerRetryGranted(projectScope), false,
+        "and a new failure does not inherit the spent grant");
+      assert.equal(await failures.record(projectScope), 2);
+      assert.equal(await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:owner-retry-3", ownerRequest: description }), 1,
+      "a new escalation earns a new retry");
+
+      // THE GRANT IS NOT A WAY TO CLEAR A COUNTER. The owner's web login holds no
+      // privilege on the table itself, and 0205's function refuses anything that
+      // is not a live counter at >= 2, so neither the login nor the function can
+      // lower a count or reach a counter outside the caller's own scopes.
+      await assert.rejects(web.query("UPDATE control_planner_failure_counters SET failure_count=0"),
+        /permission denied/u, "the owner web login still holds no UPDATE on the counters");
+      assert.equal(await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:owner-retry-4", ownerRequest: "A description that never failed." }), 0,
+      "the function grants only scopes this request computed, and a live counter at 2");
+      // The coordinator's own hand-written grant is refused by the trigger, which
+      // is the layer the function does not decide. The counter has to EXIST and be
+      // below the escalation point, or the UPDATE matches no rows and asserts
+      // nothing -- so it is given one real failure first.
+      assert.equal(await failures.record(neverFailed), 1);
+      await assert.rejects(coordinator.query(
+        `UPDATE control_planner_failure_counters SET owner_retry_cleared_at=now(), version=version+1,
+           updated_at=GREATEST(updated_at, now()) WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3`,
+      [scope.tenantId, scope.projectId, neverFailed]), /planner failure counter update rejected/u,
+      "a counter at 1 cannot carry a retry grant: it never escalated");
+      // And a hand-written grant that also LOWERED the count is refused on the
+      // same statement, so the latch cannot be used to reset a live failure.
+      const live = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, "Two live failures.");
+      assert.equal(await failures.record(live), 1);
+      assert.equal(await failures.record(live), 2);
+      await assert.rejects(coordinator.query(
+        `UPDATE control_planner_failure_counters SET failure_count=0, owner_retry_cleared_at=now(),
+           version=version+1, updated_at=GREATEST(updated_at, now())
+         WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3`,
+      [scope.tenantId, scope.projectId, live]), /planner failure counter update rejected/u,
+      "a retry grant cannot lower the count it is stamped on");
+      // A CLEAR on an unlatched counter is the ordinary admitted transition, and
+      // it is asserted here so the two are not confused: the guard refuses a
+      // GRANT that lowers the count, not a clear.
+      await coordinator.query(
+        `UPDATE control_planner_failure_counters SET failure_count=0, cleared_at=now(), version=version+1,
+           updated_at=GREATEST(updated_at, now()) WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3`,
+      [scope.tenantId, scope.projectId, live]);
+      assert.equal(await failures.count(live), 0);
+      // A clear that CARRIES A LATCH FORWARD is refused, which is what makes the
+      // latch a one-shot rather than a standing permission: the run it authorised
+      // spends it, and only the store's own clear -- which names the column -- can
+      // do that.
+      const spent = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, "Latched then cleared.");
+      assert.equal(await failures.record(spent), 1);
+      assert.equal(await failures.record(spent), 2);
+      assert.equal(await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:owner-retry-5", ownerRequest: "Latched then cleared." }), 1);
+      await assert.rejects(coordinator.query(
+        `UPDATE control_planner_failure_counters SET failure_count=0, cleared_at=now(), version=version+1,
+           updated_at=GREATEST(updated_at, now()) WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3`,
+      [scope.tenantId, scope.projectId, spent]), /planner failure counter update rejected/u,
+      "clearing a counter while leaving the latch set is refused, so the latch is spent only by naming it");
+      // The store's own clear names the column, so it is the one that works.
+      await failures.clear(spent);
+      assert.equal(await failures.count(spent), 0);
+      assert.equal(await failures.ownerRetryGranted(spent), false,
+        "and the latch is gone: the grant cannot authorise a second run");
+
+      // N9: a `resplit` raise is now accepted. 0204 recomputed only the
+      // `initial` project scope, so a re-split escalation passed the adapter's own
+      // check and was then refused by the trigger -- measured as "planner
+      // needs-you insert rejected" on a raise whose counter was at 2. The
+      // application accepts both kinds (plannerNeedsYouScopeKeysV1), so the guard
+      // does too.
+      // A resplit raise with NO initial counter at all, so the only scope that can
+      // license it is the resplit one. That isolates N9: on the round-2 tree the
+      // guard recomputed only the `initial` project scope, so this raise passed the
+      // adapter's own check and was then refused by the trigger -- measured as
+      // "planner needs-you insert rejected" -- and the re-split path could never
+      // escalate anything.
+      const resplitOnly = "Re-split this batch along the storage boundary.";
+      const resplitScope = intakeProjectScopeV1("resplit", scope.tenantId, scope.projectId, resplitOnly);
+      const resplitRequest = intakeRequestScopeV1("resplit", scope.tenantId, scope.projectId, "orchestrator:resplit-0001");
+      assert.equal(await failures.count(resplitScope), 0, "precondition: no counter for this resplit description");
+      assert.equal(await failures.record(resplitScope), 1);
+      assert.equal(await failures.record(resplitScope), 2);
+      await needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:resplit-0001", reasonCode: "orchestrator_failed_twice",
+        ownerRequest: resplitOnly, now: LATER });
+      assert.equal((await admin.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM control_planner_needs_you_items WHERE scope_key=$1",
+      [resplitScope])).rows[0]!.n, "1",
+      "a resplit raise is accepted: the guard recomputes the resplit project scope too");
+      assert.notEqual(resplitScope, resplitRequest);
+
+      // The owner can find the item by the scope that escalated, and the view is
+      // a security barrier like every other one 0205 touches.
+      const seen = await web.query<{ scope_key: string }>(
+        "SELECT scope_key FROM control_planner_open_needs_you WHERE tenant_id=$1 AND project_id=$2 ORDER BY scope_key",
+      [scope.tenantId, scope.projectId]);
+      // The exact set, not a count: a count cannot tell "one per description" from
+      // "one per press, with the right total by luck", and that distinction is the
+      // whole fix.
+      assert.deepEqual(seen.rows.map(row => row.scope_key).sort(),
+        [projectScope, secondScope, resplitScope].sort(),
+        "one Needs-you row per escalating description scope, and no others");
+      const barrier = await admin.query<{ reloptions: string[] | null }>(
+        "SELECT reloptions FROM pg_class WHERE relname='control_planner_open_needs_you'");
+      assert.deepEqual(barrier.rows[0]!.reloptions, ["security_barrier=true"]);
+    } finally { await web.end(); await coordinator.end(); await admin.end(); }
+  }, { port: PORT + 7, allowedPorts: ALLOWED, boundMs: 240_000 });
 });
 
 test("twenty concurrent failure records produce one counter with twenty, and twenty claims of 'first'", async t => {

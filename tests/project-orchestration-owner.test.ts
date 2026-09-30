@@ -432,6 +432,9 @@ test("owner HTTP routes keep description, settings and suggestion gestures separ
     async saveSettings(_identity, value) { calls.push(`settings:save:${value}`); return fixture().service.readSettings(identity, value); },
     async describe(_identity, value, body, key) { calls.push(`describe:${value}:${key}:${(body as { description: string }).description}`);
       return { status: "proposal", batchId, href: "/batch", startsWork: false, grantsExecutionAuthority: false }; },
+    async retryEscalated(_identity, value, body, key) {
+      calls.push(`retry:${value}:${key}:${(body as { description: string }).description}`);
+      return { projectId: value, granted: true, startsWork: false, grantsExecutionAuthority: false }; },
     async listSuggestions(_identity, value, batch) { calls.push(`suggestions:list:${value}:${batch}`);
       return { projectId: value, batchId: batch, suggestions: [], dismissAvailable: true, startsWork: false,
         grantsExecutionAuthority: false }; },
@@ -454,6 +457,12 @@ test("owner HTTP routes keep description, settings and suggestion gestures separ
   // on `status: "failed"` claimed a proposal existed when none did.
   assert.equal((await request(`/api/v1/projects/${encodeURIComponent(projectId)}/orchestration`, "POST",
     { description: "Prepare it" }, "request:http-0001")).status, 200);
+  // The retry is its own path, POST, and 200 for its outcome -- the same rule
+  // describe follows: it creates no resource the owner then owns.
+  assert.equal((await request(`/api/v1/projects/${encodeURIComponent(projectId)}/orchestration-retry`, "POST",
+    { description: "Prepare it" }, "request:http-0002")).status, 200);
+  assert.equal(calls.at(-1), `retry:${projectId}:request:http-0002:Prepare it`);
+  assert.equal((await request(`/api/v1/projects/${encodeURIComponent(projectId)}/orchestration-retry`, "GET")).status, 404);
   const base = `/api/v1/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}/suggestions`;
   assert.equal((await request(base)).status, 200);
   assert.equal((await request(`${base}/${encodeURIComponent("suggestion:test")}/use`, "POST", { expectedRevision: 2 })).status, 200);

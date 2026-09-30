@@ -6,10 +6,11 @@ import type { IntakeCoordinatorResultV1, IntakePlannerSelectionPortV1, IntakeSug
   IntakeSuggestionStoreV1 } from "../../work-intake/v1/intake-coordinator";
 import type { VerifiedWebIdentity } from "./access-verifier";
 import { WebAccessError } from "./access-verifier";
-import { projectOrchestrationDescribeSchemaV1,
+import { projectOrchestrationDescribeSchemaV1, projectOrchestrationRetrySchemaV1,
   projectOrchestrationSettingsDraftSchemaV1, projectOrchestrationSettingsSchemaV1,
   projectOrchestrationSuggestionPageSchemaV1, projectOrchestrationSuggestionPrefillSchemaV1,
-  type ProjectOrchestrationDescribeResultV1, type ProjectOrchestrationSettingsV1,
+  type ProjectOrchestrationDescribeResultV1, type ProjectOrchestrationRetryResultV1,
+  type ProjectOrchestrationSettingsV1,
   type ProjectOrchestratorChoiceV1, type ProjectOrchestratorOptionV1,
   type ProjectOrchestrationSuggestionPageV1, type ProjectOrchestrationSuggestionPrefillV1 } from "./project-orchestration-wire";
 
@@ -55,11 +56,27 @@ export interface ProjectOrchestrationStoreV1 extends IntakePlannerSelectionPortV
     Promise<readonly string[]> | readonly string[];
 }
 
+/** The durable place an owner's deliberate retry is recorded.
+ *
+ * It is NOT a method on the coordinator or the failure store: 0202 gives the
+ * owner's web login no privilege at all on the failure counters, so the retry is a
+ * separate SECURITY DEFINER call (0205's `control_room_planner_grant_owner_retry`)
+ * and a composition has to supply it explicitly. Without it the retry gesture is
+ * not offered, exactly as `dismissAvailable` works below. */
+export interface ProjectOrchestrationRetryPortV1 {
+  grant(input: Readonly<{ tenantId: string; projectId: string; requestKey: string;
+    ownerRequest: string }>): Promise<number>;
+}
+
 export interface ProjectOrchestrationOwnerPortV1 {
   readSettings(identity: VerifiedWebIdentity, projectId: string): Promise<ProjectOrchestrationSettingsV1>;
   saveSettings(identity: VerifiedWebIdentity, projectId: string, value: unknown): Promise<ProjectOrchestrationSettingsV1>;
   describe(identity: VerifiedWebIdentity, projectId: string, value: unknown, idempotencyKey: string,
     signal?: AbortSignal): Promise<ProjectOrchestrationDescribeResultV1>;
+  /** Record that the owner wants to try an escalated description again, and say
+   * whether anything was actually granted. */
+  retryEscalated(identity: VerifiedWebIdentity, projectId: string, value: unknown, idempotencyKey: string):
+    Promise<ProjectOrchestrationRetryResultV1>;
   listSuggestions(identity: VerifiedWebIdentity, projectId: string, batchId: string): Promise<ProjectOrchestrationSuggestionPageV1>;
   useSuggestion(identity: VerifiedWebIdentity, projectId: string, batchId: string, suggestionId: string,
     expectedRevision: number): Promise<ProjectOrchestrationSuggestionPrefillV1>;
@@ -217,7 +234,8 @@ export function createProjectOrchestrationOwnerAdapterV1(options: Readonly<{ ten
   access: ProjectOrchestrationAccessPortV1; batches: ProjectOrchestrationBatchRevisionPortV1;
   queueCatalog: WorkBatchQueueCatalogV1; /** Whether a planner host is composed. False makes
    * describing a job unavailable rather than failing it; see F6. */
-  describeAvailable: boolean; dismissals?: ProjectOrchestrationDismissalPortV1; clock?: () => number }>):
+  describeAvailable: boolean; dismissals?: ProjectOrchestrationDismissalPortV1;
+  retry?: ProjectOrchestrationRetryPortV1; clock?: () => number }>):
   ProjectOrchestrationOwnerPortV1 {
   if (options.coordinatorPrincipal.actorType !== "agent" || options.coordinatorPrincipal.tenantId !== options.tenantId)
     throw new Error("project_orchestration_configuration_invalid");
@@ -270,9 +288,19 @@ export function createProjectOrchestrationOwnerAdapterV1(options: Readonly<{ ten
       // owner reads on every single press, forever, with no item behind it. The
       // two states get different sentences and different roles, so the panel
       // announces only the one that raised something.
+      // The `needs_you` copy now NAMES THE WAY OUT, because the two things it
+      // used to suggest did not work. It said "try again, or choose another chief
+      // of staff" on a description the coordinator refuses before the planner
+      // runs, so neither was true: a third press was refused at the same count,
+      // and a new selection does not touch a counter keyed on (project,
+      // description). The sentence below says what is actually true and points at
+      // the one control that exists. `retryAvailable` is false where no durable
+      // retry record is composed, and then the copy does not offer it.
       if (result.status === "needs_you") return Object.freeze({ ...common, status: "failed" as const,
-        needsYou: true as const,
-        message: "Needs-you: the chief of staff failed twice on this description, so it has stopped and raised an item for you. Your description is still here." });
+        needsYou: true as const, retryAvailable: typeof options.retry?.grant === "function",
+        message: typeof options.retry?.grant === "function"
+          ? "Needs-you: the chief of staff failed twice on this description, so it has stopped and raised an item for you. Your description is still here. You can ask it to try this description once more."
+          : "Needs-you: the chief of staff failed twice on this description, so it has stopped and raised an item for you. Your description is still here." });
       if (result.status === "planner_failed") return Object.freeze({ ...common, status: "failed" as const,
         needsYou: false as const,
         message: "The chief of staff could not prepare a proposal this time. Your description is still here; try again, or choose another chief of staff." });
@@ -290,6 +318,25 @@ export function createProjectOrchestrationOwnerAdapterV1(options: Readonly<{ ten
       if (result.status === "suggested") throw new WebAccessError("invalid_request");
       return Object.freeze({ ...common, status: "refused" as const, allowanceRefused: false as const,
         message: describeRefusedMessage(result.reasonCode) });
+    },
+    async retryEscalated(identity, projectId, value, idempotencyKey) {
+      const actor = await owner(identity, projectId, "describe");
+      // The same three refusals the press itself has, so a retry cannot be a
+      // wider door than the thing it retries: an unconnected service, a malformed
+      // key, a malformed description, or a body that is not one description.
+      if (!options.describeAvailable) throw new WebAccessError("not_found");
+      if (typeof options.retry?.grant !== "function") throw new WebAccessError("not_found");
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u.test(idempotencyKey)) throw new WebAccessError("invalid_request");
+      const input = projectOrchestrationDescribeSchemaV1.safeParse(value);
+      if (!input.success) throw new WebAccessError("invalid_request");
+      // The grant is scoped to THIS request's own scopes, so it can only clear a
+      // counter this description reached. Zero grants is not an error: it is the
+      // "there was nothing to retry" case, and it is reported as such rather than
+      // as a success, so the panel does not promise a run that was not authorised.
+      const granted = await options.retry.grant({ tenantId: actor.tenantId, projectId,
+        requestKey: idempotencyKey, ownerRequest: input.data.description });
+      return deepFreeze(projectOrchestrationRetrySchemaV1.parse({ projectId,
+        granted: Number.isSafeInteger(granted) && granted > 0, ...common }));
     },
     async listSuggestions(identity, projectId, batchId) {
       const actor = await owner(identity, projectId, "suggestion"); id.parse(batchId);

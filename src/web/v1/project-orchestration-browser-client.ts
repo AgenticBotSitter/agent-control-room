@@ -2,9 +2,9 @@ import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
 import { readBrowserJson } from "./browser-json";
 import { catalogProjectIdSchema } from "./project-wire";
 import { projectOrchestrationDescribeResultSchemaV1, projectOrchestrationDescribeSchemaV1,
-  projectOrchestrationSettingsDraftSchemaV1, projectOrchestrationSettingsSchemaV1,
-  projectOrchestrationSuggestionPageSchemaV1, projectOrchestrationSuggestionPrefillSchemaV1 } from
-  "./project-orchestration-wire";
+  projectOrchestrationRetrySchemaV1, projectOrchestrationSettingsDraftSchemaV1,
+  projectOrchestrationSettingsSchemaV1, projectOrchestrationSuggestionPageSchemaV1,
+  projectOrchestrationSuggestionPrefillSchemaV1 } from "./project-orchestration-wire";
 
 const failure = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required",
   403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
@@ -76,6 +76,22 @@ export function createProjectOrchestrationBrowserClient(transport: typeof fetch 
       return commitDescription();
     },
     retryDescription: commitDescription,
+    /** Ask for one more run of a description that escalated.
+     *
+     * It sends the DESCRIPTION, not the retained request, because the grant is
+     * keyed on (tenant, project, description) rather than on a request key -- and
+     * that is the point: the browser mints a fresh key per press, so keying the
+     * grant on one would make every press a different thing to retry. A new key is
+     * minted for the call, because this is a different request from the describe it
+     * follows. */
+    async retryEscalated(projectId: string, description: string) {
+      if (!catalogProjectIdSchema.safeParse(projectId).success) throw new BrowserRequestError("invalid_request");
+      const value = projectOrchestrationDescribeSchemaV1.safeParse({ description });
+      if (!value.success) throw new BrowserRequestError("invalid_request");
+      return projectOrchestrationRetrySchemaV1.parse(await read(await call(
+        `/api/v1/projects/${encodeURIComponent(projectId)}/orchestration-retry`, "POST",
+        JSON.stringify(value.data), makeKey())));
+    },
     async listSuggestions(projectId: string, batchId: string) {
       return projectOrchestrationSuggestionPageSchemaV1.parse(await read(await call(
         `/api/v1/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}/suggestions`, "GET")));

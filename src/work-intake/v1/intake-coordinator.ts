@@ -44,6 +44,21 @@ export interface IntakePlannerFailureStoreV1 {
   count(scopeKey: string): Promise<number> | number;
   record(scopeKey: string): Promise<number> | number;
   clear(scopeKey: string): Promise<void> | void;
+  /** Whether the owner has been GRANTED one more run of this scope, which is how
+   * a description that escalated stops being dead.
+   *
+   * It is deliberately a read of a grant and not a reset of the count. The
+   * failure count is the evidence the Needs-you item and the guard both rest on,
+   * so lowering it would erase the fact that this description failed twice. The
+   * grant is instead CONSUMED by the `clear()` the successful or re-failed run
+   * performs, so at most one retry exists per escalation and the next escalation
+   * (two fresh failures) is what earns the next one.
+   *
+   * A store that does not support the retry returns FALSE, which is the old
+   * behaviour: the escalation check refuses the press, exactly as it did before
+   * this method existed. An unconfigured composition therefore cannot issue a
+   * free run by accident. */
+  ownerRetryGranted?(scopeKey: string): Promise<boolean> | boolean;
 }
 
 export interface IntakePlannerNeedsYouPortV1 {
@@ -137,13 +152,24 @@ export const common = Object.freeze({ startsWork: false, grantsExecutionAuthorit
 
 export class InMemoryIntakePlannerFailureStoreV1 implements IntakePlannerFailureStoreV1 {
   readonly #counts = new Map<string, number>();
+  readonly #retries = new Set<string>();
   count(scopeKey: string): number { return this.#counts.get(scopeKey) ?? 0; }
   record(scopeKey: string): number {
     const count = this.count(scopeKey) + 1;
     this.#counts.set(scopeKey, count);
     return count;
   }
-  clear(scopeKey: string): void { this.#counts.delete(scopeKey); }
+  clear(scopeKey: string): void { this.#counts.delete(scopeKey); this.#retries.delete(scopeKey); }
+  ownerRetryGranted(scopeKey: string): boolean { return this.#retries.has(scopeKey); }
+  /** The owner's deliberate retry, for tests and for an in-process composition.
+   * The real durable grant is 0205's `control_room_planner_grant_owner_retry`,
+   * which the database constrains; this double has no database to constrain it,
+   * so it takes the same precondition as an argument rather than assuming it. */
+  grantOwnerRetry(scopeKey: string, { atLeast = 2 }: { atLeast?: number } = {}): boolean {
+    if (this.count(scopeKey) < atLeast || this.#retries.has(scopeKey)) return false;
+    this.#retries.add(scopeKey);
+    return true;
+  }
 }
 
 function deepFreeze<T>(value: T): T {
@@ -364,6 +390,33 @@ export class IntakeCoordinatorV1 {
     return promise;
   }
 
+  /** Is this request one the escalation has already stopped?
+   *
+   * Either scope at 2 means the same thing, and both are checked because they are
+   * counted independently: the project scope is the one the owner's repeat shares,
+   * and the request scope is what escalates one stuck request on its own.
+   *
+   * THE OWNER'S DELIBERATE RETRY IS THE WAY OUT, and it is the only one. A
+   * description that hit a transient planner fault used to be dead in that
+   * project forever: this check runs BEFORE the allowance and the planner, so
+   * nothing could ever clear the count, the description could never succeed, and
+   * the copy the owner was shown ("try again, or choose another chief of staff")
+   * named two things that did not work. A grant -- issued by 0205's
+   * `control_room_planner_grant_owner_retry`, on the owner's own web login, for
+   * this request's own scopes -- lets exactly one more press through, and the run
+   * that follows CONSUMES it through the existing `clear()`. So the bound holds:
+   * one extra run per escalation, never a loop, and only for an owner who asked.
+   *
+   * The grant is checked only when the count HAS escalated, so an unconfigured
+   * store (one with no `ownerRetryGranted`) answers the same way it always did. */
+  async #escalated(input: Readonly<{ projectScope: string; failureScope: string }>) {
+    for (const scope of [input.projectScope, input.failureScope]) {
+      if (await this.failures.count(scope) < 2) continue;
+      if (!(await this.failures.ownerRetryGranted?.(scope))) return true;
+    }
+    return false;
+  }
+
   async #coordinate(input: (InitialInput & { requestKind: "initial"; requestKey: string; failureScope: string; projectScope: string })
     | (ResplitInput & { requestKind: "resplit"; failureScope: string; projectScope: string })): Promise<IntakeCoordinatorResultV1> {
     if (input.signal?.aborted) return stopped();
@@ -399,8 +452,7 @@ export class IntakeCoordinatorV1 {
     // press mints a fresh idempotency key. The request scope is kept alongside so
     // one stuck request still escalates on its own second attempt, which is the
     // case the counter was originally built for.
-    if (await this.failures.count(input.projectScope) >= 2
-      || await this.failures.count(input.failureScope) >= 2) return this.#raiseNeedsYou(input);
+    if (await this.#escalated(input)) return this.#raiseNeedsYou(input);
     if (input.requestKind === "resplit") {
       const authority = await this.submissions.authorizeBeforeBody(input.principal, input.projectId, input.now);
       if (!authority.allowed) return Object.freeze({ ...common, status: "refused" as const,
