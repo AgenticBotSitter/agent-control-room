@@ -53,10 +53,69 @@ const BOT_KINDS = Object.freeze(["claude-code", "codex", "hermes", "claude-deskt
 const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const ROTATION_LOCK_STALE_MS = 5 * 60_000;
 const INSTALL_LOCK_DEADLINE_MS = 10 * 60_000;
+let ownProcessIdentity;
 
 export const sha256 = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 export const newSecret = () => `crf_${randomBytes(32).toString("base64url")}`;
 export const newEnrollmentNonce = () => `crn_${randomBytes(32).toString("base64url")}`;
+
+function commandOutput(command, args) {
+  return new Promise(resolveOutput => {
+    const child = spawn(command, args, { shell: false, stdio: ["ignore", "pipe", "ignore"] });
+    let output = "", settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveOutput(value);
+    };
+    const timer = setTimeout(() => { child.kill("SIGKILL"); finish(""); }, 2_000);
+    child.stdout.on("data", chunk => { output += chunk; });
+    child.once("error", () => finish(""));
+    child.once("close", code => finish(code === 0 ? output.trim() : ""));
+  });
+}
+
+async function processIdentity(pid, platform = process.platform) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return null;
+  try {
+    if (platform === "linux") {
+      const raw = await readFile(`/proc/${pid}/stat`, "utf8");
+      const fields = raw.slice(raw.lastIndexOf(") ") + 2).trim().split(/\s+/u);
+      return fields[19] ? `linux-start-ticks:${fields[19]}` : null;
+    }
+    if (platform === "win32") {
+      const value = await commandOutput("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+        `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CreationDate.ToFileTimeUtc()`]);
+      return value ? `windows-start-filetime:${value}` : null;
+    }
+    const value = await commandOutput("ps", ["-o", "lstart=", "-p", String(pid)]);
+    return value ? `posix-start:${value.replace(/\s+/gu, " ").trim()}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function currentProcessIdentity() {
+  ownProcessIdentity ??= processIdentity(process.pid);
+  return ownProcessIdentity;
+}
+
+async function sameProcess(pid, expectedIdentity, isPidAlive, getProcessIdentity) {
+  if (!isPidAlive(pid)) return false;
+  if (typeof expectedIdentity !== "string" || expectedIdentity.length === 0) return true;
+  const currentIdentity = await getProcessIdentity(pid);
+  return currentIdentity === null || currentIdentity === expectedIdentity;
+}
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return error?.code !== "ESRCH"; }
+}
+
+function getProcessIdentity(pid) {
+  return pid === process.pid ? currentProcessIdentity() : processIdentity(pid);
+}
 
 export function platformName(value = process.platform) {
   return value === "darwin" ? "macos" : value === "win32" ? "windows" : value === "linux" ? "linux" : "other";
@@ -260,14 +319,13 @@ export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_ST
   deadlineMs = 10_000, clock = Date.now, sleep = ms => new Promise(done => setTimeout(done, ms)),
   beforeDeadOwnerCleanup = async () => {}, afterDirectoryElection = async () => {},
   afterOwnerPublication = async () => {},
-  isPidAlive = pid => {
-    try { process.kill(pid, 0); return true; }
-    catch (error) { return error?.code !== "ESRCH"; }
-  } } = {}) {
+  getProcessIdentity: inspectProcessIdentity = getProcessIdentity,
+  isPidAlive = pidAlive } = {}) {
   const started = clock(), token = randomBytes(16).toString("hex");
   const contenderPath = `${lockPath}.${process.pid}.${token}.tmp`;
   const ownerPath = joinPath(lockPath, `owner-${token}.json`);
-  const owner = { pid: process.pid, acquiredAt: new Date(clock()).toISOString(), token };
+  const owner = { pid: process.pid, processIdentity: await inspectProcessIdentity(process.pid),
+    acquiredAt: new Date(clock()).toISOString(), token };
   const handle = await open(contenderPath, "wx", 0o600);
   try { await handle.writeFile(`${JSON.stringify(owner)}\n`); await handle.sync(); }
   finally { await handle.close(); }
@@ -294,7 +352,7 @@ export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_ST
         };
       } catch (error) {
         if (error?.code !== "EEXIST") throw error;
-        let age = 0, ownerPid = null, ownerToken = "", lockIsDirectory = false, ownerMissing = false;
+        let age = 0, ownerPid = null, ownerIdentity = null, ownerToken = "", lockIsDirectory = false, ownerMissing = false;
         let observedOwnerPath = null, lockInfo;
         try {
           lockInfo = await stat(lockPath);
@@ -317,7 +375,10 @@ export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_ST
             try {
               const parsed = JSON.parse(raw);
               if (Number.isSafeInteger(parsed?.pid) && parsed.pid > 0
-                && (!lockIsDirectory || parsed.token === ownerToken)) ownerPid = parsed.pid;
+                && (!lockIsDirectory || parsed.token === ownerToken)) {
+                ownerPid = parsed.pid;
+                ownerIdentity = typeof parsed.processIdentity === "string" ? parsed.processIdentity : null;
+              }
             } catch {
               // Older connector versions exposed the lock before writing its JSON.
               // A fresh partial record is retried; a stale one still fails closed.
@@ -332,7 +393,7 @@ export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_ST
         // A dead owner can never release its lock, even if the file is fresh. A
         // live owner is never displaced merely because its work took longer
         // than expected. Malformed locks fail closed instead of guessing.
-        if (ownerPid !== null && !isPidAlive(ownerPid)) {
+        if (ownerPid !== null && !await sameProcess(ownerPid, ownerIdentity, isPidAlive, inspectProcessIdentity)) {
           await beforeDeadOwnerCleanup({ lockPath, observedOwnerPath });
           const generation = lockGeneration(lockInfo, ownerToken);
           if (!await electGenerationCleaner(lockPath, generation, clock)) continue;
@@ -343,7 +404,9 @@ export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_ST
               if (removeError?.code === "ENOENT") continue;
               throw removeError;
             }
-            if (current?.token !== ownerToken || current?.pid !== ownerPid || isPidAlive(ownerPid)) continue;
+            if (current?.token !== ownerToken || current?.pid !== ownerPid
+              || (typeof current?.processIdentity === "string" ? current.processIdentity : null) !== ownerIdentity
+              || await sameProcess(ownerPid, ownerIdentity, isPidAlive, inspectProcessIdentity)) continue;
             await unlink(observedOwnerPath);
             try { await rmdir(lockPath); } catch (removeError) {
               if (removeError?.code !== "ENOENT" && removeError?.code !== "ENOTEMPTY") throw removeError;
@@ -353,7 +416,9 @@ export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_ST
             if (String(currentInfo.dev) !== String(lockInfo.dev) || String(currentInfo.ino) !== String(lockInfo.ino)) continue;
             let current;
             try { current = JSON.parse(await readFile(lockPath, "utf8")); } catch { continue; }
-            if (current?.pid !== ownerPid || isPidAlive(ownerPid)) continue;
+            if (current?.pid !== ownerPid
+              || (typeof current?.processIdentity === "string" ? current.processIdentity : null) !== ownerIdentity
+              || await sameProcess(ownerPid, ownerIdentity, isPidAlive, inspectProcessIdentity)) continue;
             await unlink(lockPath);
           }
           continue;
@@ -373,6 +438,65 @@ export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_ST
   } catch (error) {
     try { await unlink(contenderPath); } catch (removeError) { if (removeError?.code !== "ENOENT") throw removeError; }
     throw error;
+  }
+}
+
+export async function unlockConnector({ name, homeDir, env = process.env, platform = process.platform,
+  staleMs = ROTATION_LOCK_STALE_MS, clock = Date.now, isPidAlive = pidAlive,
+  getProcessIdentity: inspectProcessIdentity = getProcessIdentity, beforeRemovalCheck = async () => {} } = {}) {
+  const paths = connectorInstallPaths({ homeDir, env, platform, name });
+  const lockPath = `${paths.configPath}.rotate.lock`;
+  let observed;
+  try { observed = await stat(lockPath); }
+  catch (error) {
+    if (error?.code === "ENOENT") throw new Error(`No credential lock exists for ${name}.`);
+    throw error;
+  }
+  if (!observed.isDirectory()) throw new Error(`The credential lock for ${name} is not an empty lock directory.`);
+  if (clock() - observed.mtimeMs < staleMs)
+    throw new Error(`The credential lock for ${name} is not stale yet. Wait before trying unlock again.`);
+  const unlockMarker = `${lockPath}.unlock-${lockGeneration(observed)}`;
+  let marker;
+  try { marker = await open(unlockMarker, "wx", 0o600); }
+  catch (error) {
+    if (error?.code === "EEXIST") throw new Error(`Another unlock check is already running for ${name}.`);
+    throw error;
+  }
+  try {
+    await marker.writeFile(`${JSON.stringify({ pid: process.pid, processIdentity: await inspectProcessIdentity(process.pid) })}\n`);
+    await marker.sync();
+    if ((await readdir(lockPath)).length !== 0)
+      throw new Error(`The credential lock for ${name} has an owner record. Use unlock only for an empty stale lock directory.`);
+
+    const directory = dirname(lockPath), prefix = `${basename(lockPath)}.`, suffix = ".tmp";
+    const deadContenders = [];
+    for (const entry of await readdir(directory)) {
+      if (!entry.startsWith(prefix) || !entry.endsWith(suffix)) continue;
+      const match = /^(\d+)\.([a-f0-9]{32})$/u.exec(entry.slice(prefix.length, -suffix.length));
+      if (!match) continue;
+      const contenderPath = joinPath(directory, entry), contenderPid = Number(match[1]);
+      let contenderIdentity = null;
+      try {
+        const contender = JSON.parse(await readFile(contenderPath, "utf8"));
+        if (contender?.pid === contenderPid && contender?.token === match[2]
+          && typeof contender.processIdentity === "string") contenderIdentity = contender.processIdentity;
+      } catch (error) { if (error?.code === "ENOENT") continue; }
+      if (await sameProcess(contenderPid, contenderIdentity, isPidAlive, inspectProcessIdentity))
+        throw new Error(`A connector for ${name} is still running. Stop it before using unlock.`);
+      deadContenders.push(contenderPath);
+    }
+
+    await beforeRemovalCheck({ lockPath });
+    const current = await stat(lockPath);
+    if (String(current.dev) !== String(observed.dev) || String(current.ino) !== String(observed.ino)
+      || !current.isDirectory() || (await readdir(lockPath)).length !== 0)
+      throw new Error(`The credential lock for ${name} changed while unlock was checking it. Try again.`);
+    await rmdir(lockPath);
+    await Promise.all(deadContenders.map(path => rm(path, { force: true })));
+    return Object.freeze({ unlocked: name });
+  } finally {
+    try { await marker.close(); }
+    finally { await rm(unlockMarker, { force: true }); }
   }
 }
 
@@ -1236,6 +1360,7 @@ const usage = `Control Room worker connector ${CONNECTOR_VERSION}
   install --server <address> --code <code> --bot <kind> --name <label>
           [--workspace <dir>]            Connect one bot with its own credential
   uninstall --bot <kind> --name <label> Remove one bot registration and credential
+  unlock --name <label>                 Remove one stale empty credential-lock directory
   join --server <address> --code <code> --bot <kind>
                                           Join this machine (code from the Workers page)
   status                                  Show this worker and its credential
@@ -1264,7 +1389,7 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   try {
     if (values.profile && !values.config) configPath = connectorInstallPaths({ homeDir, env, platform, name: values.profile }).configPath;
     if (!command || command === "--help" || command === "help") { print(usage); return 0; }
-    if (command === "install" || command === "uninstall") {
+    if (command === "install" || command === "uninstall" || command === "unlock") {
       if (resolve(homeDir) === resolve(realHomeDir) && values["i-am-the-installer"] !== true)
         throw new Error("Refusing to change a real home. Re-run this owner-approved command with --i-am-the-installer.");
       if (command === "install") {
@@ -1274,11 +1399,14 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
         print(`Connected as ${values.name}. Open ${values.bot} and ask it to list Control Room work.`);
         if (["claude-desktop", "cursor"].includes(values.bot)) print(`Restart ${values.bot}.`);
         print(installed.status);
-      } else {
+      } else if (command === "uninstall") {
         const removed = await uninstallConnector({ bot: values.bot, name: values.name, homeDir, env, platform,
           runner: runtime.runner, clock: runtime.clock, realHomeDir });
         print(removed);
         print(removed.ownerAction);
+      } else {
+        print(await unlockConnector({ name: values.name, homeDir, env, platform, staleMs: runtime.staleMs,
+          clock: runtime.clock, isPidAlive: runtime.isPidAlive, getProcessIdentity: runtime.getProcessIdentity }));
       }
       return 0;
     }

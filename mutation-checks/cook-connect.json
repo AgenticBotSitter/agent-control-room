@@ -8,15 +8,15 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "      if (ownerPid !== null && !isPidAlive(ownerPid)) {",
-    "replace": "      if (false && ownerPid !== null && !isPidAlive(ownerPid)) {",
+    "find": "        if (ownerPid !== null && !await sameProcess(ownerPid, ownerIdentity, isPidAlive, inspectProcessIdentity)) {",
+    "replace": "        if (false) {",
     "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
     "why": "a lock whose recorded owner process is dead is recovered without waiting for an arbitrary age"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "      if (ownerPid !== null && !isPidAlive(ownerPid)) {",
-    "replace": "      if (ownerPid !== null) {",
+    "find": "        if (ownerPid !== null && !await sameProcess(ownerPid, ownerIdentity, isPidAlive, inspectProcessIdentity)) {",
+    "replace": "        if (ownerPid !== null) {",
     "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
     "why": "a live lock owner is never displaced even when the lock file is old"
   },
@@ -134,15 +134,15 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    const ownerPath = joinPath(lockPath, `owner-${token}.json`);",
-    "replace": "    const ownerPath = joinPath(lockPath, `owner-${\"0\".repeat(32)}.json`);",
+    "find": "  const ownerPath = joinPath(lockPath, `owner-${token}.json`);",
+    "replace": "  const ownerPath = joinPath(lockPath, `owner-${\"0\".repeat(32)}.json`);",
     "test": "node --test --test-name-pattern \"two dead-owner cleaners\" tests/fleet-connector-install.test.mjs",
     "why": "dead-owner cleanup targets one observed generation and cannot unlink a later winner"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "          } catch {\n            // Older connector versions exposed the lock before writing its JSON.\n            // A fresh partial record is retried; a stale one still fails closed.\n            ownerPid = null;\n          }",
-    "replace": "          } catch (parseError) {\n            throw parseError;\n          }",
+    "find": "            } catch {\n              // Older connector versions exposed the lock before writing its JSON.\n              // A fresh partial record is retried; a stale one still fails closed.\n              ownerPid = null;\n            }",
+    "replace": "            } catch (parseError) {\n              throw parseError;\n            }",
     "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
     "why": "malformed legacy lock contents reach the stale-lock refusal instead of leaking a parser failure"
   },
@@ -190,21 +190,21 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    if (typeof error?.code === \"string\" && !/^http_5\\d\\d$/u.test(error.code)) await removeConfigArtifacts(configPath);",
+    "find": "    if (typeof error?.code === \"string\" && !transient) await removeConfigArtifacts(configPath);",
     "replace": "    if (false) await removeConfigArtifacts(configPath);",
     "test": "node --test --test-name-pattern \"definitive enrollment refusal\" tests/fleet-connector-install.test.mjs",
     "why": "a final enrollment refusal removes the pending secret so a fresh code can be used"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "            continue;\n          }\n          try { await rmdir(lockPath); }",
-    "replace": "          }\n          try { await rmdir(lockPath); }",
+    "find": "          if (!await electGenerationCleaner(lockPath, generation, clock)) continue;",
+    "replace": "          if (false) continue;",
     "test": "node --test --test-name-pattern \"losing stale cleaner\" tests/fleet-connector-install.test.mjs",
     "why": "only the cleaner that removed the observed owner generation may remove its directory"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "        throw new Error(\"The credential lock is stale but has no owner record. Remove it only after checking that no connector is running.\");",
+    "find": "          throw new Error(`The credential lock ${lockPath} is stale but has no owner record. Remove that exact directory only after checking that no connector is running for this profile.`);",
     "replace": "        return async () => {};",
     "test": "node --test --test-name-pattern \"stale locks recover\" tests/fleet-connector-install.test.mjs",
     "why": "stale empty lock directories fail closed because they cannot be conditionally removed"
@@ -257,6 +257,55 @@
     "replace": "  } catch (error) { failure = error; throw error; }\n  finally { await release(); }\n}\n\n/** @param {{ configPath: string, fetcher?: typeof fetch, lock?: object }} options */",
     "test": "node --test --test-name-pattern \"release failure does not hide\" tests/fleet-connector-install.test.mjs",
     "why": "lock cleanup errors do not replace the protected operation's real failure"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  return currentIdentity === null || currentIdentity === expectedIdentity;",
+    "replace": "  return true;",
+    "test": "node --test --test-name-pattern \"reused live PID\" tests/fleet-connector-install.test.mjs",
+    "why": "a reused PID is not mistaken for the process generation that originally owned the lock"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (error?.code === \"EEXIST\") throw new Error(`Another unlock check is already running for ${name}.`);",
+    "replace": "    if (false) throw new Error(`Another unlock check is already running for ${name}.`);",
+    "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
+    "why": "concurrent unlock callers lose through one explicit election instead of racing directory removal"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (clock() - observed.mtimeMs < staleMs)\n    throw new Error(`The credential lock for ${name} is not stale yet. Wait before trying unlock again.`);",
+    "replace": "  if (false)\n    throw new Error(`The credential lock for ${name} is not stale yet. Wait before trying unlock again.`);",
+    "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
+    "why": "unlock never removes the fresh publication or release gap of a running connector"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if ((await readdir(lockPath)).length !== 0)\n      throw new Error(`The credential lock for ${name} has an owner record. Use unlock only for an empty stale lock directory.`);",
+    "replace": "    if (false)\n      throw new Error(`The credential lock for ${name} has an owner record. Use unlock only for an empty stale lock directory.`);",
+    "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
+    "why": "unlock refuses a lock directory that still names an owner"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (await sameProcess(contenderPid, contenderIdentity, isPidAlive, inspectProcessIdentity))\n        throw new Error(`A connector for ${name} is still running. Stop it before using unlock.`);",
+    "replace": "      if (false)\n        throw new Error(`A connector for ${name} is still running. Stop it before using unlock.`);",
+    "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
+    "why": "unlock refuses while the elected connector contender is still alive"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (String(current.dev) !== String(observed.dev) || String(current.ino) !== String(observed.ino)\n      || !current.isDirectory() || (await readdir(lockPath)).length !== 0)",
+    "replace": "    if (false)",
+    "test": "node --test --test-name-pattern \"unlock removes only\" tests/fleet-connector-install.test.mjs",
+    "why": "unlock rechecks the exact empty directory generation immediately before removal"
+  },
+  {
+    "file": "scripts/fleet/stress-connector-lock.mjs",
+    "find": "      if (Date.now() - lastProgressAt >= noProgressTimeoutMs)\n        reject(new Error(`stress probe made no progress for ${noProgressTimeoutMs} ms`));",
+    "replace": "      if (false)\n        reject(new Error(`stress probe made no progress for ${noProgressTimeoutMs} ms`));",
+    "test": "node --test --test-name-pattern \"stress probe stops\" tests/fleet-connector-install.test.mjs",
+    "why": "the stress probe times out only after sustained lack of progress and reaps its own children"
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
