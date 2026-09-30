@@ -129,9 +129,18 @@ export interface IntakeCompletionLookupPortV1 {
    * `identityId` is part of the lookup because the durable key is per-identity:
    * 0093 scopes control_idempotency to `work-batches.propose/v1:<identityId>`,
    * so the same request key under a different identity is a different request and
-   * must not be answered from the first one's receipt. */
-  completed(input: Readonly<{ tenantId: string; projectId: string; identityId: string; requestKey: string }>):
-    Promise<IntakeCoordinatorResultV1 | null> | IntakeCoordinatorResultV1 | null;
+   * must not be answered from the first one's receipt.
+   *
+   * `ownerRequest` is OPTIONAL and is NOT passed by the coordinator. It exists so
+   * a caller that has a description can say "this receipt may not be yours" (N8),
+   * and an implementation answers null when it is present rather than guessing
+   * that a completed key means the same question is being asked again. The stored
+   * digest is over the planner's OUTPUT, so a description cannot be compared to it;
+   * refusing is the only honest answer. A caller with no description -- the
+   * coordinator's own retry path, which resends the retained body -- is answered
+   * as before. */
+  completed(input: Readonly<{ tenantId: string; projectId: string; identityId: string; requestKey: string;
+    ownerRequest?: string }>): Promise<IntakeCoordinatorResultV1 | null> | IntakeCoordinatorResultV1 | null;
 }
 
 type InitialInput = Readonly<{ principal: AuthenticatedPrincipal; projectId: string; ownerRequest: string;

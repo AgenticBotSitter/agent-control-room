@@ -1157,14 +1157,29 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       // pass. E1's mutation (the membership check replaced by `OR false`) escaped
       // until this assertion existed -- measured, which is the only reason it is here.
       //
-      // Every other arm of the guard is satisfied on purpose: a live counter at 2
-      // exists (the one just recorded), the id and action_item_id are the correct
-      // digests OF THE FORGED SCOPE, the reason code is right, and the raiser is a
-      // real active agent. So the only thing that can refuse this row is the
-      // membership check, and the only thing that can admit it is its absence.
+      // EVERY OTHER ARM IS SATISFIED ON PURPOSE, including the one that masked
+      // this test's first version: the forged scope has a LIVE COUNTER OF ITS OWN
+      // at 2. Without it the guard's final `NOT EXISTS` refuses the row and the
+      // membership check is never reached -- the mutation E1 makes then passes,
+      // which is how a test that looks right measures nothing.
+      //
+      // So the counter is built on the forged scope, the id and action_item_id are
+      // the correct digests OF THAT SCOPE, the reason code is right and the raiser
+      // is a real active agent. Every arm is satisfied except the membership one,
+      // and that is the only thing left that can refuse it.
       const forged = intakeRequestScopeV1("initial", scope.tenantId, scope.projectId, "forged-scope-0001");
       const forgedDigest = (value: string) => 'planner-needs-you:' + createHash("sha256")
         .update(`${scope.tenantId}/${scope.projectId}/${value}`, "utf8").digest("hex").slice(0, 32);
+      await admin.query(`INSERT INTO control_planner_failure_counters(tenant_id,project_id,scope_key,failure_count,
+        last_failure_at,cleared_at,version,updated_at,created_at) VALUES($1,$2,$3,1,$4,NULL,1,$4,$4)`,
+      [scope.tenantId, scope.projectId, forged, LATER]);
+      await admin.query(`UPDATE control_planner_failure_counters SET failure_count=2, version=version+1, updated_at=$4
+        WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3`, [scope.tenantId, scope.projectId, forged, LATER]);
+      // Asserted, not assumed: if this counter is not live the test below proves
+      // nothing, and the failure would read as a passing guard.
+      assert.equal((await admin.query<{ failure_count: string }>(
+        "SELECT failure_count::text FROM control_planner_failure_counters WHERE scope_key=$1", [forged]))
+        .rows[0]!.failure_count, "2", "precondition: the forged scope's OWN counter is live at 2");
       await assert.rejects(admin.query(`INSERT INTO control_planner_needs_you_items
         (id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at,
           owner_request_digest,scope_key,action_item_id)
@@ -1173,7 +1188,7 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
         sha256Digest({ ownerRequest: description }), forged,
         'attention:planner:' + forgedDigest(forged).slice("planner-needs-you:".length)]),
       /planner needs-you insert rejected/u,
-      "a raise naming a scope the trigger did not recompute is refused, even with a live counter at 2");
+      "a raise naming a scope the trigger did not recompute is refused, even though that scope has its OWN live counter at 2");
       // The CONTROL, and it is the row the refused one is only meaningful against.
       // Every arm is the same except the scope: this one names a scope the trigger
       // DID recompute, and it is accepted. Without it the refusal above could be a

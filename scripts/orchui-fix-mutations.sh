@@ -160,9 +160,11 @@ mutate B2b-lookup-always-null "$STORE" \
 # B2c: the lookup answers for a request that has NOT completed, because the
 # 'completed' status filter is dropped. This is the fabricated-receipt direction:
 # a receipt nobody stored would hand the owner a batch id that does not exist.
+# Round 3 added N8's refusal, so this anchor moved: the SELECT now names
+# `request_digest` as well, and the status filter is on the next line.
 mutate B2c-lookup-ignores-status "$STORE" \
-  "      WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3 AND status='completed'\`," \
-  "      WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3\`," \
+  " WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3 AND status='completed'\`," \
+  " WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3\`," \
   --lane coord --pattern "B2:"
 
 # ---------------------------------------------------------------------------
@@ -171,19 +173,21 @@ mutate B2c-lookup-ignores-status "$STORE" \
 # ---------------------------------------------------------------------------
 # B3a: count only the per-REQUEST scope, which is what the browser's fresh key
 # per press never repeats. This is the exact bug the review found.
+# Round 3 moved the check into #escalated(), so the old inline anchor is stale and
+# this reported SETUP-ERROR rather than a result. The anchor below is the live one,
+# and mutating it proves the PROJECT scope is still the arm that makes the rule
+# reachable from the panel -- which is the whole point of 0204.
 mutate B3a-project-scope-not-counted "$COORD" \
-  "    if (await this.failures.count(input.projectScope) >= 2
-      || await this.failures.count(input.failureScope) >= 2) return this.#raiseNeedsYou(input);" \
-  "    if (await this.failures.count(input.failureScope) >= 2) return this.#raiseNeedsYou(input);" \
-  --lane unit --pattern "B3:"
+  "    for (const scope of [input.projectScope, input.failureScope]) {" \
+  "    for (const scope of [input.failureScope]) {" \
+  --lane unit --pattern "B3: a fresh idempotency key per press still reaches"
 
 # B3b: the escalation check runs AFTER the allowance and the planner, so the
 # third press costs a run before it is refused.
 mutate B3b-escalation-check-moved-after-run "$COORD" \
-  "    if (await this.failures.count(input.projectScope) >= 2
-      || await this.failures.count(input.failureScope) >= 2) return this.#raiseNeedsYou(input);" \
-  "    if (false) return this.#raiseNeedsYou(input);" \
-  --lane unit --pattern "B3:"
+  "      if (!(await this.failures.ownerRetryGranted?.(scope))) return true;" \
+  "      return false;" \
+  --lane unit --pattern "escalated description is refused"
 
 # B3c: a success clears only one scope, leaving the project counter live so a
 # later unrelated failure escalates on a counter that already saw a recovery.
@@ -427,11 +431,17 @@ mutate F5a-adapter-keys-the-item-on-the-request-key "$STORE" \
   '      ON CONFLICT (tenant_id,project_id,request_key) DO NOTHING`,' \
   --lane db --pattern "$RETRY_PATTERN"
 
-# The completion lookup's N8 refusal.
-mutate F6-completion-lookup-answers-a-different-description "$STORE" \
+# The completion lookup's N8 refusal, and the status predicate that round 3 dropped
+# by accident. Both are proved by the same test, which is why it exists.
+mutate F6a-completion-lookup-answers-a-different-description "$STORE" \
   "    if (input.ownerRequest !== undefined) return null;" \
   "    // removed" \
-  --lane coord --pattern "retry|completed"
+  --lane coord --pattern "completion lookup answers only a COMPLETED request"
+
+mutate F6b-completion-lookup-answers-an-unfinished-request "$STORE" \
+  " AND status='completed'\`," \
+  " \`," \
+  --lane coord --pattern "completion lookup answers only a COMPLETED request"
 
 echo
 echo "round-3 summary: $pass caught / $fail escaped  (failures:${failures:- none})"

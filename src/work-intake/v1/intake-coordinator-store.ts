@@ -534,9 +534,15 @@ export class PostgresIntakeCompletionLookupV1 implements IntakeCompletionLookupP
   async completed(input: Readonly<{ tenantId: string; projectId: string; identityId: string;
     requestKey: string; ownerRequest?: string }>): Promise<IntakeCoordinatorResultV1 | null> {
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u.test(input.requestKey)) return null;
+    // `status='completed'` IS STILL HERE, and it is not optional. Only a COMPLETED
+    // row counts: a 'processing' row is a submission that was in flight when the
+    // process died, and answering from it would hand the owner a receipt for a
+    // batch that may never have been committed. Round 3 rewrote this SELECT to add
+    // `request_digest` and dropped the predicate by accident; the B2c mutation's
+    // anchor then no longer existed, which is what surfaced it.
     const row = (await this.db.query<{ result: unknown; request_digest: string }>(`SELECT result, request_digest
       FROM control_idempotency
-      WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3`,
+      WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3 AND status='completed'`,
     [input.tenantId, `work-batches.propose/v1:${input.identityId}`, input.requestKey])).rows[0];
     const receipt = workBatchReceiptSchemaV1.safeParse(row?.result);
     if (!row || !receipt.success) return null;

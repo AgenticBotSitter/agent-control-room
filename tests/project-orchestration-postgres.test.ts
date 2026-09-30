@@ -976,3 +976,97 @@ test("STRESS: 20 concurrent presses and owner retries of ONE description stay on
     } finally { for (const client of coordinators) await client.end(); await admin.end(); }
   }, { port: PORT + 5, allowedPorts: ALLOWED, boundMs: 240_000 });
 });
+
+
+test("the completion lookup answers only a COMPLETED request, and never a different description", async t => {
+  // Two properties of the same read, both of which round 3 nearly broke by accident.
+  //
+  // ONE: only a COMPLETED row counts. A 'processing' row is a submission that was
+  // in flight when the process died, and answering from it hands the owner a
+  // receipt for a batch that may never have been committed. Round 3 rewrote this
+  // SELECT to add `request_digest` and dropped `status='completed'` without
+  // noticing; the mutation suite's B2c anchor stopped existing, which is how it
+  // was found. This assertion is here so the next rewrite of this query is caught
+  // by a TEST rather than by a missing anchor.
+  //
+  // TWO (N8): a completed key must not answer a DIFFERENT description. The stored
+  // request_digest is over the planner's OUTPUT, which the owner cannot recompute
+  // before a run, so the honest answer is to refuse rather than guess.
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    const intake = new Client(postgres.connection("control_room_work_intake_agent")); await intake.connect();
+    try {
+      await seedTenant(admin, scope);
+      await seedIdentities(admin, scope, "");
+      // The intake login needs a binding to write at all (0093's policy), and this
+      // file's `seedTenant` takes no options, so the binding is set here.
+      await admin.query("DELETE FROM work_intake_tenant_binding");
+      await admin.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)", [scope.tenantId]);
+      const db = database(intake), identityId = "identity:chief-agent";
+      const scopeName = `work-batches.propose/v1:${identityId}`;
+      const requestKey = "completion-lookup-0001";
+      const lookup = new PostgresIntakeCompletionLookupV1(db);
+
+      // A 'processing' row: in flight, never finished.
+      await intake.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,
+        request_digest,status) VALUES($1,$2,$3,$4,'processing')`,
+      [scope.tenantId, scopeName, requestKey, sha256Digest({ inFlight: true })]);
+      assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
+        identityId, requestKey }), null,
+      "a 'processing' row is not a completed request, so nothing is answered from it");
+      assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
+        identityId, requestKey, ownerRequest: "Any description at all." }), null,
+      "and a description does not make it completable");
+
+      // Complete it with a real receipt, and it IS answered. 0093's own guard
+      // refuses an UPDATE that does not name a real proposed batch matching the
+      // receipt, so the batch is seeded first -- as the schema owner, because
+      // seeding a batch is not what this test is about and the guard would (rightly)
+      // refuse a hand-written shortcut. A receipt the database will not accept is
+      // not a receipt the owner could ever be shown.
+      const value = { schema: "control-room.work-batch-receipt/v1", batchId: "batch:completion-0001",
+        projectId: scope.projectId, state: "proposed", proposalDigest: `sha256:${"a".repeat(64)}`,
+        revision: 1, replayed: false, startsWork: false, grantsExecutionAuthority: false };
+      const stored = { schema: "control-room.work-batch-proposal/v1", projectId: scope.projectId,
+        tasks: [{ localId: "only", title: "Do the bounded thing", instructions: "Implement exactly it.",
+          requiredCapability: "code.change", role: "builder",
+          acceptanceCriteria: "It matches the contract.", acceptanceTests: "Run the focused tests." }], edges: [] };
+      const agentId = `identity:chief-agent`;
+      await admin.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+        auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'agent','Fixture','work-intake',$3,'active',$4,$4)
+        ON CONFLICT DO NOTHING`, [agentId, scope.tenantId, sha256Digest({ agentId }), NOW]);
+      await admin.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+        risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+        VALUES($1,$2,$3,'work_batch_proposer','["work_batches.propose"]'::jsonb,'["*"]'::jsonb,'low',false,false,$4,$4)
+        ON CONFLICT DO NOTHING`, [`grant:${agentId}`, scope.tenantId, agentId, NOW]);
+      await admin.query(`INSERT INTO work_batches(id,tenant_id,project_id,proposed_by_identity_id,
+        proposed_by_actor_type,proposed_at,state,proposal,queue_depth_limit,batch_digest,auth_tag,version,
+        created_at,updated_at) VALUES($1,$2,$3,$4,'agent',$5,'proposed',$6::jsonb,10,$7,$8,1,$5,$5)
+        ON CONFLICT DO NOTHING`,
+      ["batch:completion-0001", scope.tenantId, scope.projectId, agentId, NOW, JSON.stringify(stored),
+        `sha256:${"a".repeat(64)}`, `hmac-sha256:${"0".repeat(64)}`]);
+      await intake.query(`UPDATE control_idempotency SET status='completed', result=$4::jsonb, completed_at=$5
+        WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3`,
+      [scope.tenantId, scopeName, requestKey, JSON.stringify(value), LATER]);
+      const replayed = await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
+        identityId, requestKey });
+      assert.equal(replayed?.status, "submitted", "a completed request is answered from storage");
+      assert.equal(replayed?.status === "submitted" ? replayed.submission.batchId : null, "batch:completion-0001");
+      // N8: the SAME key, a DIFFERENT description. This used to return the old
+      // receipt -- `submitted`, `replayed: true`, no run and no refusal -- so a
+      // caller that reused a key for a new job was told that job had been prepared.
+      assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
+        identityId, requestKey, ownerRequest: "A completely different description." }), null,
+      "a completed key does not answer a different description");
+      // A receipt for a DIFFERENT project is also not an answer, unchanged by
+      // round 3 and asserted so it stays that way.
+      assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: "project:elsewhere",
+        identityId, requestKey }), null, "a receipt for another project is not this project's proposal");
+      // And a key under a different identity is a different request entirely,
+      // because 0093 scopes the ledger per identity.
+      assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
+        identityId: "identity:somebody-else", requestKey }), null);
+    } finally { await intake.end(); await admin.end(); }
+  }, { port: PORT + 3, allowedPorts: ALLOWED, boundMs: 180_000 });
+});
