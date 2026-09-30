@@ -201,7 +201,7 @@ test("an absolute symlink target is refused as symlink_escape", () => {
 
 test("a non-UTF-8 raw-diff header is unreadable", () => {
   const input = candidate([pathRow("M", "docs/file.ts")]);
-  input.raw[1] = 0xff;
+  input.raw[1] = 0xb1;
   assert.deepEqual(refusalIds(classify(policies, input)), ["diff_unreadable"]);
 });
 

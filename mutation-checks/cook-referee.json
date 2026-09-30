@@ -127,8 +127,8 @@
   },
   {
     "file": "src/updater/v1/referee/index.ts",
-    "find": "path.startsWith(\"/\") || ",
-    "replace": "",
+    "find": "function safePath(path: string): boolean {\n  if (path.length === 0 || path.startsWith(\"/\") || path.includes(\"\\\\\")) return false;\n  if ([...encoder.encode(path)].some(byte => byte < 0x21 || byte > 0x7e)) return false;\n  const segments = path.split(\"/\");",
+    "replace": "function safePath(path: string): boolean {\n  if (path.length === 0 || path.includes(\"\\\\\")) return false;\n  if ([...encoder.encode(path)].some(byte => byte < 0x21 || byte > 0x7e)) return false;\n  const segments = path.startsWith(\"/\") ? path.slice(1).split(\"/\") : path.split(\"/\");",
     "test": "node --import tsx --test --test-name-pattern='leading slash' tests/updater-referee.test.ts",
     "why": "an absolute diff path must not be interpreted as a repository-relative path"
   },
@@ -155,8 +155,8 @@
   },
   {
     "file": "src/updater/v1/referee/index.ts",
-    "find": "if ([...buffer].some(byte => byte < 0x20 || byte > 0x7e)) throw new Error(\"diff_unreadable\");",
-    "replace": "if ([...buffer].some(byte => byte < 0x20)) throw new Error(\"diff_unreadable\");",
+    "find": "  if ([...buffer].some(byte => byte < 0x20 || byte > 0x7e)) throw new Error(\"diff_unreadable\");\n  return String.fromCharCode(...buffer);",
+    "replace": "  return String.fromCharCode(...buffer.map(byte => byte & 0x7f));",
     "test": "node --import tsx --test --test-name-pattern='non-UTF-8 raw-diff header' tests/updater-referee.test.ts",
     "why": "raw diff headers are strict ASCII and cannot admit undecodable bytes"
   },
