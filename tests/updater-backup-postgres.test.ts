@@ -968,10 +968,20 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
       /by more than one/u,
       "but a two-step move in one statement is refused, which is what the guard is for");
       // The failure pair cannot be half-cleared, which is how "failed" would
-      // otherwise become "healthy" by clearing one column.
-      assert.match(await refuses(client, "UPDATE updater.backup_state SET last_failure_code='x'"), /together/u);
+      // otherwise become "healthy" by clearing one column. The code is a LEGAL
+      // one (`^[a-z][a-z0-9_]{1,63}$`): the first version used `'x'`, which fails
+      // that CHECK first, so the assertion passed without ever reaching the pair
+      // guard — the wrong refusal entirely.
+      assert.match(await refuses(client,
+        "UPDATE updater.backup_state SET last_failure_code='updater_backup_dump_failed'"), /together/u,
+      "a failure code cannot be set without its timestamp");
       assert.match(await refuses(client, "UPDATE updater.backup_state SET last_failure_at=pg_catalog.now()"),
-        /together/u);
+        /together/u, "nor a timestamp without its code");
+      // And a code that is not the bounded grammar is refused by the column
+      // itself, which is a different boundary worth naming.
+      assert.match(await refuses(client, "UPDATE updater.backup_state SET last_failure_code='x', "
+        + "last_failure_at=pg_catalog.now()"), /check constraint|violated/u,
+      "a one-character code never reaches the pair guard, because the column's own CHECK refuses it first");
       // A second policy row is impossible, and the bounds hold so the freshness
       // rule cannot be made vacuous or unbounded.
       assert.match(await refuses(client, "INSERT INTO updater.backup_state(singleton,max_age_seconds,kept_generations)"
