@@ -17,7 +17,8 @@ import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, fleetGatewayClientAddressV1,
   fleetGatewayClientNetworkV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetGatewayAdmissionV1 } from "../src/fleet/v1";
 import { captureFleetGatewayConfigurationV1, FLEET_GATEWAY_CONFIGURATION_V1,
-  fleetGatewayAdmissionFromConfigurationV1, prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
+  FLEET_GATEWAY_SERVER_OPTIONS_V1, fleetGatewayAdmissionFromConfigurationV1,
+  prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
@@ -48,9 +49,17 @@ test("gateway client identity defaults to the socket and trusts one configured p
 
 test("gateway unauthenticated identities use IPv4 /24 and IPv6 /64 networks", () => {
   assert.equal(fleetGatewayClientNetworkV1("192.0.2.199"), "192.0.2.0/24");
+  assert.equal(fleetGatewayClientNetworkV1("::ffff:102:304"), "1.2.3.0/24");
+  assert.equal(fleetGatewayClientNetworkV1("0:0:0:0:0:ffff:1.2.3.4"), "1.2.3.0/24");
+  assert.equal(fleetGatewayClientNetworkV1("::FFFF:192.0.2.199"), "192.0.2.0/24");
   assert.equal(fleetGatewayClientNetworkV1("2001:0db8:0001:0002::99"), "2001:db8:1:2::/64");
   assert.equal(fleetGatewayClientNetworkV1("2001:db8:1:2:ffff::1"), "2001:db8:1:2::/64");
   assert.equal(fleetGatewayClientNetworkV1("unknown"), "unknown");
+});
+
+test("fleet gateway checks slow request timeouts every second", () => {
+  assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.requestTimeout, 15_000);
+  assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.connectionsCheckingInterval, 1_000);
 });
 
 test("gateway protected configuration defaults to no proxy trust and validates explicit trust", () => {
@@ -308,6 +317,50 @@ test("one IPv6 /64 cannot rotate addresses to lock out an enrolled machine", asy
   assert.equal((healthy.body.result as { workerId: string }).workerId, worker.joined.workerId);
 });
 
+test("one IPv6 /48 cannot rotate /64s to spend the global failure budget", () => {
+  const admission = createFleetGatewayAdmissionV1({ authenticatePerIp: 2, authenticatePerIpv6_48: 3,
+    authenticateGlobal: 4, maxConcurrent: 1 });
+  for (const address of ["2001:db8:1:1::1", "2001:db8:1:1::2", "2001:db8:1:2::1"])
+    admission.enter(requestFrom(address), "authenticate").completeAuthentication(null);
+  assert.throws(() => admission.enter(requestFrom("2001:db8:1:2::2"), "authenticate"), /fleet_rate_limited/u,
+    "three failures across one /48 exhaust its allocation budget");
+  assert.doesNotThrow(() => admission.enter(requestFrom("2001:db8:2:1::1"), "authenticate")
+    .completeAuthentication(null), "a /48 refusal spends neither another allocation nor the global budget");
+
+  const enroll = createFleetGatewayAdmissionV1({ enrollPerIp: 2, enrollPerIpv6_48: 3,
+    enrollGlobal: 4, maxConcurrent: 1 });
+  for (const address of ["2001:db8:1:1::1", "2001:db8:1:1::2", "2001:db8:1:2::1"])
+    enroll.enter(requestFrom(address), "enroll").release();
+  assert.throws(() => enroll.enter(requestFrom("2001:db8:1:2::2"), "enroll"), /fleet_rate_limited/u);
+  assert.doesNotThrow(() => enroll.enter(requestFrom("2001:db8:2:1::1"), "enroll").release(),
+    "enrollment rotation is bounded per /48 without spending the remaining global slot");
+});
+
+test("four IPv6 /64s holding enrollment slots cannot consume known-worker concurrency", () => {
+  const admission = createFleetGatewayAdmissionV1({ enrollPerIp: 8, enrollPerIpv6_48: 32, enrollGlobal: 80,
+    maxConcurrent: 16, maxConcurrentEnroll: 4, maxConcurrentKnown: 16 });
+  const workerId = "fleet-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const secret = `crf_${"A".repeat(43)}`;
+  admission.registerCredential(workerId, connector.sha256(secret));
+  const held = [];
+  let refused = 0;
+  for (let network = 1; network <= 4; network += 1) {
+    for (let request = 1; request <= 4; request += 1) {
+      try { held.push(admission.enter(requestFrom(`2001:db8:1:${network.toString(16)}::${request}`), "enroll")); }
+      catch (error) { assert.match(String(error), /fleet_rate_limited/u); refused += 1; }
+    }
+  }
+  assert.equal(held.length, 4, "slow enrollment bodies have a separate four-request ceiling");
+  assert.equal(refused, 12);
+  const known = admission.enter(requestFrom("2001:db8:2::1", { authorization: `Bearer ${secret}`,
+    "x-control-room-worker": workerId }), "authenticate");
+  assert.doesNotThrow(() => known.completeAuthentication(workerId),
+    "the enrolled machine is admitted while the enrollment lane is full");
+  for (const lease of held) lease.release();
+  assert.doesNotThrow(() => admission.enter(requestFrom("2001:db8:1:5::1"), "enroll").release(),
+    "stopping every slow caller releases the enrollment lane");
+});
+
 test("exhausted failed-authentication budget and source tracking never consume the worker reserve", async t => {
   const admission = createFleetGatewayAdmissionV1({ enrollPerIp: 2, enrollGlobal: 20,
     authenticatePerIp: 10, authenticateGlobal: 3, authenticatedPerWorker: 3, authenticatedGlobal: 3,
@@ -366,20 +419,67 @@ test("default proxy policy prevents header rotation from manufacturing authentic
     /fleet_rate_limited/u);
 });
 
-test("authenticated worker reserve has its own per-worker and global ceilings and recovers", () => {
+test("known workers are refused before database admission when their window is spent", () => {
   let now = 10_000;
   const admission = createFleetGatewayAdmissionV1({ clock: () => now, windowMs: 1_000,
     authenticatePerIp: 1, authenticateGlobal: 1, authenticatedPerWorker: 2, authenticatedGlobal: 2,
-    maxConcurrent: 1 });
-  const request = requestFrom("192.0.2.1");
+    maxConcurrent: 4 });
+  const workerId = "fleet-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const secret = `crf_${"A".repeat(43)}`;
+  admission.registerCredential(workerId, connector.sha256(secret));
+  const request = requestFrom("192.0.2.1", { authorization: `Bearer ${secret}`,
+    "x-control-room-worker": workerId });
   for (let index = 0; index < 2; index += 1)
-    admission.enter(request, "authenticate").completeAuthentication("fleet-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-  const limited = admission.enter(request, "authenticate");
-  assert.throws(() => limited.completeAuthentication("fleet-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-    /fleet_rate_limited/u);
+    admission.enter(request, "authenticate").completeAuthentication(workerId);
+  assert.throws(() => admission.enter(request, "authenticate"), /fleet_rate_limited/u,
+    "the exhausted known worker is refused before receiving a lease for database work");
   now += 1_001;
-  assert.doesNotThrow(() => admission.enter(request, "authenticate")
-    .completeAuthentication("fleet-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+  assert.doesNotThrow(() => admission.enter(request, "authenticate").completeAuthentication(workerId));
+
+  const global = createFleetGatewayAdmissionV1({ authenticatedPerWorker: 2, authenticatedGlobal: 2,
+    maxConcurrent: 4 });
+  for (const suffix of ["a", "b", "c"]) global.registerCredential(`fleet-worker:${suffix.repeat(32)}`,
+    connector.sha256(`crf_${suffix.toUpperCase().repeat(43)}`));
+  for (const suffix of ["a", "b"]) global.enter(requestFrom("192.0.2.1", {
+    authorization: `Bearer crf_${suffix.toUpperCase().repeat(43)}`,
+    "x-control-room-worker": `fleet-worker:${suffix.repeat(32)}`,
+  }), "authenticate").completeAuthentication(`fleet-worker:${suffix.repeat(32)}`);
+  assert.throws(() => global.enter(requestFrom("192.0.2.1", {
+    authorization: `Bearer crf_${"C".repeat(43)}`, "x-control-room-worker": `fleet-worker:${"c".repeat(32)}`,
+  }), "authenticate"), /fleet_rate_limited/u, "the spent known-worker global window is also checked before DB work");
+  assert.throws(() => createFleetGatewayAdmissionV1({ maxConcurrentEnroll: 0 }), /fleet_admission_invalid/u);
+});
+
+test("one known worker cannot occupy every known-worker concurrency slot", () => {
+  const admission = createFleetGatewayAdmissionV1({ authenticatedPerWorker: 120, authenticatedGlobal: 1_000,
+    maxConcurrentKnown: 16, maxConcurrentKnownPerWorker: 4 });
+  const workerA = "fleet-worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const workerB = "fleet-worker:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const secretA = `crf_${"A".repeat(43)}`, secretB = `crf_${"B".repeat(43)}`;
+  admission.registerCredential(workerA, connector.sha256(secretA));
+  admission.registerCredential(workerB, connector.sha256(secretB));
+  const held = Array.from({ length: 4 }, () => admission.enter(requestFrom("192.0.2.1", {
+    authorization: `Bearer ${secretA}`, "x-control-room-worker": workerA,
+  }), "authenticate"));
+  assert.throws(() => admission.enter(requestFrom("192.0.2.1", { authorization: `Bearer ${secretA}`,
+    "x-control-room-worker": workerA }), "authenticate"), /fleet_rate_limited/u);
+  const other = admission.enter(requestFrom("192.0.2.2", { authorization: `Bearer ${secretB}`,
+    "x-control-room-worker": workerB }), "authenticate");
+  assert.doesNotThrow(() => other.completeAuthentication(workerB),
+    "a second enrolled worker retains known-worker concurrency");
+  for (const lease of held) lease.release();
+
+  const global = createFleetGatewayAdmissionV1({ maxConcurrentKnown: 2, maxConcurrentKnownPerWorker: 2 });
+  for (const suffix of ["a", "b", "c"]) global.registerCredential(`fleet-worker:${suffix.repeat(32)}`,
+    connector.sha256(`crf_${suffix.toUpperCase().repeat(43)}`));
+  const globalHeld = ["a", "b"].map(suffix => global.enter(requestFrom("192.0.2.1", {
+    authorization: `Bearer crf_${suffix.toUpperCase().repeat(43)}`,
+    "x-control-room-worker": `fleet-worker:${suffix.repeat(32)}`,
+  }), "authenticate"));
+  assert.throws(() => global.enter(requestFrom("192.0.2.1", {
+    authorization: `Bearer crf_${"C".repeat(43)}`, "x-control-room-worker": `fleet-worker:${"c".repeat(32)}`,
+  }), "authenticate"), /fleet_rate_limited/u, "the known-worker lane retains its own global ceiling");
+  for (const lease of globalHeld) lease.release();
 });
 
 test("successful or interrupted cold authentication refunds its provisional failure charge", () => {
@@ -535,6 +635,29 @@ test("a revoked worker is refused at once and its lease cannot be used", async t
   const node = await f.query<{ state: string }>("SELECT state FROM control_nodes WHERE id LIKE 'node:fleet:%'");
   assert.deepEqual(node, [{ state: "revoked" }]);
   await assert.rejects(f.owner.issueRekeyCode(ownerIdentity(), worker.joined.workerId), /conflict/u);
+});
+
+test("a spent failure charge cannot replace a refused MCP audit with rate limiting", async t => {
+  const admission = createFleetGatewayAdmissionV1({ authenticatePerIp: 1, authenticateGlobal: 1,
+    maxConcurrent: 2 });
+  const f = await fixture({ admission }); t.after(() => f.close());
+  const worker = await joinWorker(f, "Audited refusal");
+  const spent = await rawCall(f, "GET", "/fleet/v1/me", {
+    authorization: "Bearer invalid", "x-control-room-worker": "fleet-worker:00000000000000000000000000000000",
+  });
+  assert.equal(spent.status, 401);
+  await f.owner.revokeWorker(ownerIdentity(), worker.joined.workerId);
+  const callId = `mcp-call:${"a".repeat(32)}`;
+  const refused = await rawCall(f, "POST", "/fleet/v1/mcp/calls", {
+    authorization: `Bearer ${worker.config.secret}`, "x-control-room-worker": worker.joined.workerId,
+    "x-control-room-mcp-call": callId, "x-control-room-mcp-tool": "list_eligible_work",
+    "content-type": "application/json",
+  }, JSON.stringify({ callId, toolName: "list_eligible_work" }));
+  assert.deepEqual([refused.status, refused.body.error], [401, "unauthenticated"],
+    "the original authentication refusal survives a failed failure-lane charge");
+  const audits = await f.query<{ safe_metadata: { toolName: string; reasonCode: string } }>(
+    "SELECT safe_metadata FROM audit_events WHERE action='fleet.mcp.authentication_refused'");
+  assert.deepEqual(audits, [{ safe_metadata: { reasonCode: "unauthenticated", toolName: "list_eligible_work" } }]);
 });
 
 test("revoking the worker row alone is enough: its still-active credential is refused everywhere", async t => {

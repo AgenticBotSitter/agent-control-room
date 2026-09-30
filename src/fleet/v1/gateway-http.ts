@@ -35,18 +35,14 @@ export type FleetGatewayAdmissionV1 = Readonly<{
 }>;
 export type FleetGatewayAdmissionOptionsV1 = Readonly<{ clock?: () => number; windowMs?: number;
   enrollPerIp?: number; enrollGlobal?: number; authenticatePerIp?: number; authenticateGlobal?: number;
+  enrollPerIpv6_48?: number; authenticatePerIpv6_48?: number;
   authenticatedPerWorker?: number; authenticatedGlobal?: number;
-  maxConcurrent?: number; maxTrackedIps?: number; maxTrackedWorkers?: number;
+  maxConcurrent?: number; maxConcurrentEnroll?: number; maxConcurrentKnown?: number;
+  maxConcurrentKnownPerWorker?: number; maxTrackedIps?: number; maxTrackedWorkers?: number;
   trustedProxyAddresses?: readonly string[]; trustedClientHeader?: FleetGatewayTrustedClientHeaderV1 }>;
 
-function normalizedAddress(value: string | undefined) {
-  if (!value) return "unknown";
-  const trimmed = value.trim().toLowerCase();
-  const address = trimmed.startsWith("::ffff:") && isIP(trimmed.slice(7)) === 4 ? trimmed.slice(7) : trimmed;
-  return isIP(address) ? address : "unknown";
-}
-
-function ipv6Network64(address: string) {
+function ipv6Words(address: string): number[] | undefined {
+  if (isIP(address) !== 6) return undefined;
   const embedded = /(?:^|:)(\d{1,3}(?:\.\d{1,3}){3})$/u.exec(address)?.[1];
   if (embedded) {
     const octets = embedded.split(".").map(Number);
@@ -54,10 +50,33 @@ function ipv6Network64(address: string) {
       ((octets[2]! << 8) | octets[3]!).toString(16)}`;
   }
   const halves = address.split("::");
+  if (halves.length > 2) return undefined;
   const left = halves[0] ? halves[0].split(":") : [];
   const right = halves[1] ? halves[1].split(":") : [];
-  const words = halves.length === 1 ? left : [...left, ...Array(8 - left.length - right.length).fill("0"), ...right];
-  return `${words.slice(0, 4).map(word => Number.parseInt(word, 16).toString(16)).join(":")}::/64`;
+  const wordStrings = halves.length === 1 ? left : [...left, ...Array(8 - left.length - right.length).fill("0"), ...right];
+  if (wordStrings.length !== 8) return undefined;
+  return wordStrings.map(word => Number.parseInt(word, 16));
+}
+
+function normalizedAddress(value: string | undefined) {
+  if (!value) return "unknown";
+  const trimmed = value.trim().toLowerCase();
+  if (isIP(trimmed) === 4) return trimmed;
+  const words = ipv6Words(trimmed);
+  if (!words) return "unknown";
+  if (words.slice(0, 5).every(word => word === 0) && words[5] === 0xffff)
+    return `${words[6]! >>> 8}.${words[6]! & 0xff}.${words[7]! >>> 8}.${words[7]! & 0xff}`;
+  return trimmed;
+}
+
+function ipv6Network64(address: string) {
+  const words = ipv6Words(address)!;
+  return `${words.slice(0, 4).map(word => word.toString(16)).join(":")}::/64`;
+}
+
+function ipv6Network48(address: string) {
+  const words = ipv6Words(address)!;
+  return `${words.slice(0, 3).map(word => word.toString(16)).join(":")}::/48`;
 }
 
 /** Coarsens unauthenticated source identities so address rotation within one
@@ -87,13 +106,19 @@ export function fleetGatewayClientAddressV1(request: IncomingMessage,
 export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOptionsV1 = {}): FleetGatewayAdmissionV1 {
   const clock = options.clock ?? Date.now, windowMs = options.windowMs ?? 60_000;
   const perIp = { enroll: options.enrollPerIp ?? 8, authenticate: options.authenticatePerIp ?? 120 };
+  const perIpv6_48 = { enroll: options.enrollPerIpv6_48 ?? perIp.enroll * 3,
+    authenticate: options.authenticatePerIpv6_48 ?? perIp.authenticate * 3 };
   const globalLimit = { enroll: options.enrollGlobal ?? 80, authenticate: options.authenticateGlobal ?? 1_000 };
   const authenticatedPerWorker = options.authenticatedPerWorker ?? 120;
   const authenticatedGlobal = options.authenticatedGlobal ?? 1_000;
   const maxConcurrent = options.maxConcurrent ?? 16, maxTrackedIps = options.maxTrackedIps ?? 4_096;
+  const maxConcurrentEnroll = options.maxConcurrentEnroll ?? Math.min(4, maxConcurrent);
+  const maxConcurrentKnown = options.maxConcurrentKnown ?? maxConcurrent;
+  const maxConcurrentKnownPerWorker = options.maxConcurrentKnownPerWorker ?? Math.min(4, maxConcurrentKnown);
   const maxTrackedWorkers = options.maxTrackedWorkers ?? 4_096;
-  if (![windowMs, perIp.enroll, perIp.authenticate, globalLimit.enroll, globalLimit.authenticate,
-    authenticatedPerWorker, authenticatedGlobal, maxConcurrent, maxTrackedIps, maxTrackedWorkers]
+  if (![windowMs, perIp.enroll, perIp.authenticate, perIpv6_48.enroll, perIpv6_48.authenticate,
+    globalLimit.enroll, globalLimit.authenticate, authenticatedPerWorker, authenticatedGlobal, maxConcurrent,
+    maxConcurrentEnroll, maxConcurrentKnown, maxConcurrentKnownPerWorker, maxTrackedIps, maxTrackedWorkers]
     .every(value => Number.isSafeInteger(value) && value > 0)) throw new Error("fleet_admission_invalid");
   const selectedHeader = options.trustedClientHeader ?? "none";
   const trustedProxies = options.trustedProxyAddresses ?? [];
@@ -107,10 +132,15 @@ export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOpti
     authenticate: { startedAt: 0, count: 0, touchedAt: 0 },
     authenticated: { startedAt: 0, count: 0, touchedAt: 0 },
   };
-  let active = 0;
-  const tick = (state: AdmissionStateV1, now: number, limit: number) => {
+  const active = { enroll: 0, authenticate: 0, known: 0 };
+  const activeKnownWorkers = new Map<string, number>();
+  type ChargeV1 = { state: AdmissionStateV1; window: number };
+  const refresh = (state: AdmissionStateV1, now: number) => {
     if (now < state.startedAt || now - state.startedAt >= windowMs) { state.startedAt = now; state.count = 0; }
     state.touchedAt = now;
+  };
+  const tick = (state: AdmissionStateV1, now: number, limit: number) => {
+    refresh(state, now);
     if (state.count >= limit) return false;
     state.count += 1;
     return true;
@@ -124,6 +154,26 @@ export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOpti
     map.set(key, state);
     return state;
   };
+  const refund = (charges: readonly ChargeV1[]) => {
+    for (const charge of charges) if (charge.state.startedAt === charge.window && charge.state.count > 0)
+      charge.state.count -= 1;
+  };
+  const charge = (budgets: readonly { state: AdmissionStateV1; limit: number }[], now: number) => {
+    const charges: ChargeV1[] = [];
+    for (const budget of budgets) {
+      if (!tick(budget.state, now, budget.limit)) { refund(charges); return undefined; }
+      charges.push({ state: budget.state, window: budget.state.startedAt });
+    }
+    return charges;
+  };
+  const sourceBudgets = (kind: AdmissionKindV1, address: string, network: string, now: number) => {
+    const budgets = [{ state: stateFor(sources, `${kind}:${network}`, now, maxTrackedIps), limit: perIp[kind] }];
+    if (isIP(address) === 6) budgets.push({
+      state: stateFor(sources, `${kind}:${ipv6Network48(address)}`, now, maxTrackedIps), limit: perIpv6_48[kind],
+    });
+    budgets.push({ state: global[kind], limit: globalLimit[kind] });
+    return budgets;
+  };
   return Object.freeze({
     registerCredential(authenticatedWorkerId: string, credentialDigest: string) {
       if (!FLEET_WORKER_ID_PATTERN_V1.test(authenticatedWorkerId) || !FLEET_DIGEST_PATTERN_V1.test(credentialDigest))
@@ -135,44 +185,50 @@ export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOpti
       if (!Number.isSafeInteger(now)) return fleetFail("unavailable");
       const address = fleetGatewayClientAddressV1(request, options);
       const network = fleetGatewayClientNetworkV1(address);
-      if (active >= maxConcurrent) return fleetFail("rate_limited");
       const authorization = header(request, "authorization");
       const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
       const declaredWorkerId = header(request, "x-control-room-worker");
       const presentedDigest = bearer === undefined ? undefined : plainSha256V1(bearer);
       const knownCredential = kind === "authenticate" && declaredWorkerId !== undefined && presentedDigest !== undefined
         && credentials.get(declaredWorkerId) === presentedDigest;
-      let provisionalSource: AdmissionStateV1 | undefined;
-      let provisionalSourceWindow: number | undefined, provisionalGlobalWindow: number | undefined;
+      let provisionalCharges: readonly ChargeV1[] | undefined;
+      let lane: keyof typeof active;
       if (kind === "enroll") {
-        const state = stateFor(sources, `enroll:${network}`, now, maxTrackedIps);
-        // Refusals from one source must not spend the shared budget.
-        if (!tick(state, now, perIp.enroll) || !tick(global.enroll, now, globalLimit.enroll))
+        lane = "enroll";
+        if (active.enroll >= maxConcurrentEnroll) return fleetFail("rate_limited");
+        if (!charge(sourceBudgets(kind, address, network, now), now)) return fleetFail("rate_limited");
+      } else if (knownCredential && declaredWorkerId !== undefined) {
+        lane = "known";
+        const worker = stateFor(workers, declaredWorkerId, now, maxTrackedWorkers);
+        refresh(worker, now); refresh(global.authenticated, now);
+        if (worker.count >= authenticatedPerWorker || global.authenticated.count >= authenticatedGlobal
+          || active.known >= maxConcurrentKnown
+          || (activeKnownWorkers.get(declaredWorkerId) ?? 0) >= maxConcurrentKnownPerWorker)
           return fleetFail("rate_limited");
-      } else if (!knownCredential) {
-        provisionalSource = stateFor(sources, `authenticate:${network}`, now, maxTrackedIps);
-        if (!tick(provisionalSource, now, perIp.authenticate)) return fleetFail("rate_limited");
-        if (!tick(global.authenticate, now, globalLimit.authenticate)) {
-          provisionalSource.count -= 1;
-          return fleetFail("rate_limited");
-        }
-        provisionalSourceWindow = provisionalSource.startedAt;
-        provisionalGlobalWindow = global.authenticate.startedAt;
+      } else {
+        lane = "authenticate";
+        if (active.authenticate >= maxConcurrent) return fleetFail("rate_limited");
+        provisionalCharges = charge(sourceBudgets(kind, address, network, now), now);
+        if (!provisionalCharges) return fleetFail("rate_limited");
       }
-      active += 1;
+      active[lane] += 1;
+      if (lane === "known" && declaredWorkerId !== undefined)
+        activeKnownWorkers.set(declaredWorkerId, (activeKnownWorkers.get(declaredWorkerId) ?? 0) + 1);
       let settled = false;
       const refundProvisionalFailure = () => {
-        if (!provisionalSource) return;
-        if (provisionalSource.startedAt === provisionalSourceWindow && provisionalSource.count > 0)
-          provisionalSource.count -= 1;
-        if (global.authenticate.startedAt === provisionalGlobalWindow && global.authenticate.count > 0)
-          global.authenticate.count -= 1;
-        provisionalSource = undefined;
+        if (!provisionalCharges) return;
+        refund(provisionalCharges);
+        provisionalCharges = undefined;
       };
       const settle = () => {
         if (settled) return false;
         settled = true;
-        active -= 1;
+        active[lane] -= 1;
+        if (lane === "known" && declaredWorkerId !== undefined) {
+          const remaining = (activeKnownWorkers.get(declaredWorkerId) ?? 1) - 1;
+          if (remaining === 0) activeKnownWorkers.delete(declaredWorkerId);
+          else activeKnownWorkers.set(declaredWorkerId, remaining);
+        }
         return true;
       };
       return Object.freeze({
@@ -189,12 +245,10 @@ export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOpti
             return;
           }
           if (knownCredential && declaredWorkerId !== undefined) credentials.delete(declaredWorkerId);
-          if (provisionalSource) return;
-          const state = stateFor(sources, `authenticate:${network}`, now, maxTrackedIps);
+          if (provisionalCharges) return;
           // Failed credentials alone spend this lane. They can neither charge
           // nor occupy the independently tracked authenticated-worker reserve.
-          if (!tick(state, now, perIp.authenticate)
-            || !tick(global.authenticate, now, globalLimit.authenticate)) return fleetFail("rate_limited");
+          if (!charge(sourceBudgets("authenticate", address, network, now), now)) return fleetFail("rate_limited");
         },
       });
     },
@@ -267,7 +321,15 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       lease.completeAuthentication(principal.workerId);
       return principal;
     } catch (error) {
-      if (error instanceof FleetErrorV1 && error.code === "unauthenticated") lease.completeAuthentication(null);
+      if (error instanceof FleetErrorV1 && error.code === "unauthenticated") {
+        // A spent failure budget must not replace the authentication refusal;
+        // the MCP route still needs the original error to record its audit.
+        try { lease.completeAuthentication(null); }
+        catch (chargeError) {
+          if (!(chargeError instanceof FleetErrorV1 && chargeError.code === "rate_limited"))
+            options.onUnexpectedError?.(chargeError);
+        }
+      }
       else lease.release();
       throw error;
     }

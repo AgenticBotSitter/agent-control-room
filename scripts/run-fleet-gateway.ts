@@ -19,6 +19,8 @@ import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, FleetGatewa
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 
 export const FLEET_GATEWAY_CONFIGURATION_V1 = "control-room.fleet-gateway/v1";
+export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 15_000, headersTimeout: 5_000,
+  connectionsCheckingInterval: 1_000, maxHeaderSize: 8192, highWaterMark: 8 * 1024 });
 type Configuration = Readonly<{ schema: typeof FLEET_GATEWAY_CONFIGURATION_V1; tenantId: string; port: number;
   database: PrivatePostgresConfiguration; workIntake?: Readonly<{ database: PrivatePostgresConfiguration; integrityKey: string }>;
   trustedProxyAddresses: readonly string[]; trustedClientHeader: FleetGatewayTrustedClientHeaderV1 }>;
@@ -83,8 +85,7 @@ async function main(path: string | undefined) {
     admission: await prepareFleetGatewayAdmissionV1(config, store),
     connectorScript: { body: script, digest: `sha256:${createHash("sha256").update(script).digest("hex")}` },
     onUnexpectedError: error => { process.stderr.write(`fleet gateway: ${error instanceof Error ? error.name : "error"} ${(error as { code?: string }).code ?? ""}\n`); } });
-  const server = createServer({ requestTimeout: 15_000, headersTimeout: 5_000, maxHeaderSize: 8192,
-    highWaterMark: 8 * 1024 },
+  const server = createServer(FLEET_GATEWAY_SERVER_OPTIONS_V1,
     (request, response) => { void handler.handle(request, response); });
   server.listen(config.port, "127.0.0.1");
   // Owner decisions and elapsed leases are applied on a steady timer as well
