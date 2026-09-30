@@ -66,6 +66,33 @@ test("does not open the database when the pinned worker changes", async () => {
   assert.equal(opened, false);
 });
 
+test("connector-only host refuses direct task factories and starts without bot executable inspection", async () => {
+  assert.throws(() => createMacLocalProtectedHostV1({ connectorOnly: true,
+    async loadConfiguration() { return configuration; },
+    openDatabase() { return {} as never; },
+    async loadDatabaseRoles() { return {} as never; },
+    createTaskApplication: async () => ({ operations: {}, isReady: () => true, async close() {} }),
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+  }), /mac_local_host_configuration_invalid/);
+
+  const trace: string[] = [];
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const host = createMacLocalProtectedHostV1({ connectorOnly: true,
+    async loadConfiguration() { trace.push("load"); return configuration; },
+    async readVersion() { assert.fail("connector-only host must not inspect a bot CLI"); },
+    openDatabase() { trace.push("database"); return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("close"); } }; },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+  });
+  const running = await host.start();
+  assert.deepEqual(trace, ["load", "database"]);
+  await running.close();
+});
+
 test("protected Mac startup creates the shared task lifecycle only after worker verification and owns its shutdown", async () => {
   const trace: string[] = [];
   const server = new EventEmitter() as Server;

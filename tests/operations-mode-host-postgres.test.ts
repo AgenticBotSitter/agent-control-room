@@ -9,7 +9,8 @@
 // through the Mac-local web process's own route table, as the production
 // login, so a regression in the wiring fails here.
 //
-// Reserved disposable-cluster lane for this file: 58710-58719.
+// The reserved disposable-cluster lane for this file is 58710-58719 by
+// default and moves with CONTROL_ROOM_PG_TEST_PORT_BASE.
 import assert from "node:assert/strict";
 import { Client, Pool } from "pg";
 import test from "node:test";
@@ -29,7 +30,8 @@ import type { DatabaseClient } from "../src/persistence/database";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { sha256Digest } from "../src/security";
 
-const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) => 58710 + index));
+const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) =>
+  Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58710) + index));
 const PG = requiresRealPostgres();
 const needsPg = () => (PG ? undefined : { skip: realPostgresSkipMessage() });
 
@@ -45,8 +47,8 @@ const OWNER = "identity:operations-host-owner";
 /** Two tests bind a real listener, so each takes its own port on the reserved
  * disposable lane. The origin is derived from the port because the local owner
  * session's token digest binds to its own profile origin. */
-const PORT = 58715;
-const SUPERVISOR_PORT = 58716;
+const PORT = PORTS[5];
+const SUPERVISOR_PORT = PORTS[6];
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const OWNER_CODE_DIGEST = `sha256:${"b".repeat(64)}`;
 const TOKEN = "a".repeat(43);
@@ -573,7 +575,7 @@ test("an owner grant without operations.set_mode does not authorize a pause",
       assert.equal((await admin.query(
         "SELECT count(*)::int AS n FROM installation_operations_mode_revisions")).rows[0]!.n, 0);
     } finally { await close(); await admin.end(); }
-  }, { port: 58712, allowedPorts: PORTS, boundMs: 180_000 });
+  }, { port: PORTS[2], allowedPorts: PORTS, boundMs: 180_000 });
 });
 
 test("two live owners refuse the installation pause rather than choosing one",

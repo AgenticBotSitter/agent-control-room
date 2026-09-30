@@ -1,9 +1,32 @@
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { databaseOperationSignal, withDatabaseOperationSignal } from "../../persistence/operation-signal";
 
 export const privateDatabaseLimits = Object.freeze({ connections: 8, checkoutMs: 5000,
   statementMs: 5000, transactionMs: 10000, closeMs: 5000 });
-export type PrivateDatabaseRollbackSqlState = "40P01" | "40001";
+/** Server-aborted transactions whose outcome is fully known: the statement was
+ * rejected, the transaction is already aborted, and the lease stays reusable.
+ * 40P01 (deadlock) and 40001 (serialization failure) are two transactions
+ * colliding. 55P03 (lock_not_available) is the pool's own deliberate
+ * `lock_timeout` firing under the same contention — the production setting is a
+ * 2 second wait, and twenty bots claiming on one project genuinely exceed it.
+ * All three rolled back whole, so the operation did nothing and may be replayed;
+ * none of them is an outage. */
+export type PrivateDatabaseRollbackSqlState = "40P01" | "40001" | "55P03";
+/** The one rollback set. It lives next to the reader because the reader and the
+ * set it is compared against must never drift apart: every caller reads through
+ * `databaseSqlStateIsAnyV1` against this literal, so a second copy elsewhere is
+ * a second reader by another name and is refused by the one-reader guard. */
+export const ROLLBACK_SQL_STATES_V1: readonly PrivateDatabaseRollbackSqlState[] =
+  Object.freeze(["40P01", "40001", "55P03"] as const);
+/** Which rollback state a refusal carries, for the operator log ONLY. It goes
+ * through the one reader rather than re-reading the error, so it is not a
+ * second reader; callers that must MAP a refusal use
+ * `databaseSqlStateIsAnyV1` against the set above instead. */
+export function rollbackSqlStateNameV1(error: unknown): string | undefined {
+  const sqlState = databaseSqlStateV1(error);
+  return sqlState !== undefined && ROLLBACK_SQL_STATES_V1.includes(sqlState as PrivateDatabaseRollbackSqlState)
+    ? sqlState : undefined;
+}
 export class PrivateDatabaseError extends Error {
   constructor(readonly code: "database_unavailable" | "database_outcome_uncertain" | "database_close_uncertain",
     /** PostgreSQL's sanitized five-character SQLSTATE. It proves that the
@@ -11,7 +34,8 @@ export class PrivateDatabaseError extends Error {
      * is known and must not quarantine every connection in the pool. */
     readonly sqlState?: string) { super(code); }
   get rollbackSqlState(): PrivateDatabaseRollbackSqlState | undefined {
-    return this.sqlState === "40P01" || this.sqlState === "40001" ? this.sqlState : undefined;
+    return this.sqlState !== undefined && ROLLBACK_SQL_STATES_V1.includes(this.sqlState as PrivateDatabaseRollbackSqlState)
+      ? this.sqlState as PrivateDatabaseRollbackSqlState : undefined;
   }
 }
 export interface PrivateDatabaseLease extends DatabaseSession { release(): void }
@@ -159,9 +183,12 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         // PostgreSQL has already aborted the transaction for these statement-time failures.
         // The successful ROLLBACK above proves this lease is reusable; keep the pool serving
         // other requests while returning one sanitized, retryable refusal to this caller.
-        // The SQLSTATE is carried across: it is the only thing that distinguishes a
-        // deadlock (40P01) from a serialization failure (40001) to whoever reads the
-        // operator log, and dropping it made both indistinguishable from a timeout.
+        //
+        // The SQLSTATE travels with the refusal. It is the only thing that lets a
+        // caller tell a claim-level collision (40P01/40001 — another transaction
+        // won, move on to the next offer) apart from a genuine outage, and
+        // discarding it here is what turned a five-bot deadlock into a terminal
+        // refusal that ended the worker's whole pass.
         if (error instanceof PrivateDatabaseError && error.rollbackSqlState)
           throw new PrivateDatabaseError("database_unavailable", error.rollbackSqlState);
         throw error;

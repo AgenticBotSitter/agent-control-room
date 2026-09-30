@@ -325,23 +325,16 @@ test("a bot can build Control Room through Control Room, end to end, as the prod
       // a decision is only legitimate with its signed digest and tag, and the
       // web login has no path to write one for a batch it never decided.
       (error: unknown) => ["42501", "P0001", "42883"].includes(sqlState(error) ?? ""));
-      // The gateway must log no unexpected error for anything a single bot does,
-      // except the ONE known 40P01 deadlock between two bots' claim path and
-      // the MCP audit append. That is not a slow write and not a throughput
-      // ceiling: it reproduces with two bots, it fires in recordMcpCall, and
-      // it is being fixed at the root by the tenant-mutex lock order (the
-      // tenant row taken FOR NO KEY UPDATE everywhere) on cook/connonly. So
-      // the bound here is exact, named, and zero-tolerated-above: a second
-      // occurrence, or a different SQLSTATE, fails this test. When the lock
-      // order lands, this count goes to zero and the filter goes with it.
+      // The gateway must log no unexpected error for anything the bots do. The
+      // two-bot 40P01 (claim path vs the MCP audit append) is fixed at the root
+      // by the tenant-mutex lock order (FOR NO KEY UPDATE, mutex before row
+      // locks) from cook/connonly, so any deadlock now fails this test.
       const faults = unexpected.map(error => `${(error as { code?: string }).code ?? "unknown"}`
         + `[${(error as { sqlState?: string }).sqlState ?? "-"}]`);
       const KNOWN_LOCK_ORDER_DEADLOCK = /database_unavailable\[40P01\]/u;
       const knownDeadlocks = faults.filter(code => KNOWN_LOCK_ORDER_DEADLOCK.test(code));
-      assert.deepEqual(faults.filter(code => !KNOWN_LOCK_ORDER_DEADLOCK.test(code)), [],
-        "the gateway logged no unexpected error beyond the known lock-order deadlock");
-      assert.ok(knownDeadlocks.length <= 1,
-        `at most one known 40P01 per run, saw ${knownDeadlocks.length}`);
+      assert.deepEqual(faults, [], "the gateway logged no unexpected error");
+      assert.deepEqual(knownDeadlocks, [], "no lock-order deadlock (40P01) may surface");
       process.stderr.write(`dogfood known lock-order deadlocks (40P01): ${knownDeadlocks.length} of ${faults.length}`
         + ` faults\n`);
       const audit = await asAdmin("SELECT action, count(*)::int AS count FROM audit_events"

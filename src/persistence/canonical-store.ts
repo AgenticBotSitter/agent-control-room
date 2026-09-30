@@ -671,7 +671,7 @@ export class CanonicalStore {
       };
       let requireFreshAtPreCommit = true;
       const result = await this.#transactionWithPreCommitCheck(async (tx) => {
-      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [input.tenantId]);
+      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [input.tenantId]);
       if (!tenant.rows[0]) throw new Error("Ready frontier tenant not found");
       const priorRequest = await tx.query<{ request_digest: string; status: string; result: {
         receiptDigest?: string; jobId?: string; reservationId?: string; handoffId?: string } }>(
@@ -1460,7 +1460,7 @@ export class CanonicalStore {
   }
 
   async #lockTenantProjectV1(tx: DatabaseSession, tenantId: string, projectId: string): Promise<void> {
-    const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+    const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [tenantId]);
     if (!tenant.rows[0]) failProjectCoordinationV1("invalid_input");
     const project = (await tx.query<{ lifecycle: string }>(
       `SELECT h.lifecycle FROM projects p
@@ -2721,7 +2721,7 @@ export class CanonicalStore {
 
     // Every new ready transition shares this tenant lock so policy-bound ready counts cannot race a generic canonical transition.
     if (input.kind === "job" && input.toState === "ready") {
-      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [input.tenantId]);
+      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [input.tenantId]);
       if (!tenant.rows[0]) throw new Error("Ready transition tenant not found");
     }
 

@@ -73,6 +73,8 @@ export function ConnectBotWorkspace() {
   const [name, setName] = useState(""), [botKind, setBotKind] = useState<BotKind>("claude-code");
   const [operatingSystem, setOperatingSystem] = useState<OperatingSystem>("macos");
   const [unattended, setUnattended] = useState(false);
+  const [workerProfile, setWorkerProfile] = useState(""), [workerModel, setWorkerModel] = useState("");
+  const [workerProvider, setWorkerProvider] = useState("");
   const [projectIds, setProjectIds] = useState<string[]>([]), [chosenCapabilities, setChosenCapabilities] = useState<string[]>(["writing"]);
   const [result, setResult] = useState<ConnectBotInstallResult>(), [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
@@ -86,8 +88,10 @@ export function ConnectBotWorkspace() {
   const connected = board && board !== "unavailable" ? board.workers.filter(worker => worker.status !== "revoked") : [];
   const validName = /^[^\u0000-\u001F\u007F]{1,80}$/u.test(name.trim());
   const supportsUnattended = unattendedBots.includes(botKind);
+  const validWorkerSelection = botKind !== "hermes" || !unattended
+    || [workerProfile, workerModel, workerProvider].every(value => /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/u.test(value));
   const canCreate = board !== undefined && board !== "unavailable" && board.connectBot.available && validName
-    && (!unattended || supportsUnattended) && Array.isArray(projects) && projectIds.length > 0
+    && (!unattended || supportsUnattended) && validWorkerSelection && Array.isArray(projects) && projectIds.length > 0
     && chosenCapabilities.length > 0 && !busy;
 
   function submit(event: FormEvent) {
@@ -95,7 +99,7 @@ export function ConnectBotWorkspace() {
     if (!canCreate) return;
     setBusy(true); setMessage(undefined); setResult(undefined);
     void request("/api/v1/fleet/connect-codes", { botKind, name, operatingSystem, projectIds, capabilities: chosenCapabilities,
-      unattended })
+      unattended, workerModel, workerProfile, workerProvider })
       .then(value => { setResult(value as ConnectBotInstallResult); setMessage("Code created. Copy the line before it expires."); void load(); })
       .catch(() => setMessage("The code was not created. Nothing changed. Check the choices and try again."))
       .finally(() => setBusy(false));
@@ -118,7 +122,9 @@ export function ConnectBotWorkspace() {
         onChange={event => setName(event.target.value)} required /></label>
       <p className="private-note" id="connect-bot-name-help">Use a short name you will recognize, such as desktop-codex. New lines are not allowed.</p>
       <label>Bot<select name="bot-kind" value={botKind} onChange={event => {
-        const next = event.target.value as BotKind; setBotKind(next); if (!unattendedBots.includes(next)) setUnattended(false);
+        const next = event.target.value as BotKind; setBotKind(next);
+        if (!unattendedBots.includes(next)) setUnattended(false);
+        if (next !== "hermes") { setWorkerProfile(""); setWorkerModel(""); setWorkerProvider(""); }
       }}>
         {bots.map(({ kind, label }) => <option key={kind} value={kind}>{label}</option>)}</select></label>
       <fieldset><legend>Computer operating system</legend><div className="connect-bot-choice-grid">
@@ -131,6 +137,15 @@ export function ConnectBotWorkspace() {
         computer account—not as root or a system service. It checks for approved work after you sign in and runs only a bot harness
         you enabled in <code>harnesses.json</code>. Run the uninstall command shown after setup to turn it off.
         {!supportsUnattended ? " Unattended work is available for Claude Code, Codex and Hermes; this kind uses MCP interactively." : ""}</p>
+      {unattended && botKind === "hermes" ? <fieldset><legend>Hermes worker selection</legend>
+        <p className="private-note">These protected local choices are required before a Hermes enrollment code is created.</p>
+        <label>Profile<input name="worker-profile" value={workerProfile} maxLength={128} autoComplete="off"
+          onChange={event => setWorkerProfile(event.target.value)} required /></label>
+        <label>Model<input name="worker-model" value={workerModel} maxLength={128} autoComplete="off"
+          onChange={event => setWorkerModel(event.target.value)} required /></label>
+        <label>Provider<input name="worker-provider" value={workerProvider} maxLength={128} autoComplete="off"
+          onChange={event => setWorkerProvider(event.target.value)} required /></label>
+      </fieldset> : null}
       <h2>2. Limit what it can reach</h2>
       <fieldset><legend>Projects</legend>{projects === undefined ? <LoadingState>Loading projects…</LoadingState>
         : projects === "unavailable" ? <UnavailableState>Projects could not be checked. No code can be created.</UnavailableState>

@@ -232,11 +232,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     : undefined;
   const resultFileHttp = resultFiles ? createResultFileHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: resultFiles, clock }) : undefined;
-  const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
-    service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
-      clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
-    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}),
-    ...(options.fleet.connectorRelease ? { connectorRelease: options.fleet.connectorRelease } : {}) }) : undefined;
+  const fleet = options.fleet;
+  const fleetOwner = fleet ? new FleetOwnerServiceV1(fleet.ownerAuthority,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId, clock,
+      ...(fleet.afterDecision ? { afterDecision: fleet.afterDecision } : {}) }) : undefined;
+  const fleetHttp = fleetOwner ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
+    service: fleetOwner,
+    ...(fleet?.gatewayOrigin ? { gatewayOrigin: fleet.gatewayOrigin } : {}),
+    ...(fleet?.connectorRelease ? { connectorRelease: fleet.connectorRelease } : {}) }) : undefined;
   // One service, never two: a supplied instance and a key together are refused
   // rather than silently preferring one, because two instances would each hold
   // their own view of the same installation-wide state.
@@ -407,13 +410,18 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/local-workers") {
-        if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");
-        sessions.verify(request, clock());
-        return Response.json({ taskWorkersStarted: options.taskWorkersStarted === true,
-          ...(options.taskWorkersStarted === true ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
+        if (request.method !== "GET" || url.search || !options.workerReadiness && !fleetOwner) throw new WebAccessError("not_found");
+        const identity = sessions.verify(request, clock());
+        const connectorWorkers = !options.workerReadiness && fleetOwner
+          ? (await fleetOwner.listWorkers(identity)).workers.map(worker => ({ kind: worker.workerKind,
+            state: worker.status === "connected" || worker.status === "working" ? "ready" as const : "unavailable" as const,
+            proof: "not_proven" as const })) : undefined;
+        const taskWorkersStarted = options.taskWorkersStarted === true || connectorWorkers !== undefined;
+        return Response.json({ taskWorkersStarted,
+          ...(taskWorkersStarted ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
           projectSections: ["overview", "inbox", "work", ...(workBatches ? ["pipelines"] : []), "agents", "reviews", "activity", "automations",
             ...(options.taskReadKeys?.results ? ["files"] : []), "settings"],
-          workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
+          workers: connectorWorkers ?? options.workerReadiness!.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       const identity = sessions.verify(request, clock());

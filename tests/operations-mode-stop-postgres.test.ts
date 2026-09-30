@@ -7,7 +7,8 @@
 // succeed — and this file is where that separation is measured, including the
 // case where the coordinator login is not composed at all.
 //
-// Reserved disposable-cluster lane for this file: 58710-58719.
+// The reserved disposable-cluster lane for this file is 58710-58719 by
+// default and moves with CONTROL_ROOM_PG_TEST_PORT_BASE.
 import assert from "node:assert/strict";
 import { Client, Pool } from "pg";
 import test from "node:test";
@@ -21,7 +22,8 @@ import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 
-const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) => 58710 + index));
+const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) =>
+  Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58710) + index));
 const PG = requiresRealPostgres();
 const needsPg = () => (PG ? undefined : { skip: realPostgresSkipMessage() });
 

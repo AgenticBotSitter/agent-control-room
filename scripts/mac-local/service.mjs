@@ -9,6 +9,11 @@ import { join } from "node:path";
 import { hostCommand, repoRoot } from "./stack.mjs";
 
 export const SERVICE_LABEL = "xyz.agentcontrolroom.mac-local-host";
+// COOK_DAEMONS_ITEM_5_HANDOFF: this launchd definition intentionally owns
+// only the task-host supervisor. cook/daemons item 5 must add the separate
+// start-fleet-gateway.mjs process, stop/status ownership, and restart policy
+// before production service mode can report the connector gateway healthy.
+export const FLEET_GATEWAY_LAUNCHD_HANDOFF = "cook/daemons item 5: add the separate Mac-local fleet gateway LaunchAgent";
 // The host drains its queue worker on SIGTERM for up to 45 s (see mac:down), so launchd waits as long.
 const EXIT_TIMEOUT_SECONDS = 45;
 const xmlEscape = value => value.replace(/[&<>"']/gu, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[char]);

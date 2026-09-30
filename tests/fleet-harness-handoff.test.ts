@@ -223,6 +223,29 @@ test("two machines racing for one offered task: exactly one runs it", async t =>
     [task.jobId]))[0]!.count, 1);
 });
 
+test("stress: three bots make ten passes, drain ten same-project tasks, and never abandon on claim conflicts", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const bots = await Promise.all(["BurstOne", "BurstTwo", "BurstThree"].map(name => joinWorker(f, name)));
+  const tasks = [];
+  for (let index = 0; index < 10; index += 1) tasks.push(await offer(f, `burst-${index + 1}`));
+  const path = await settings(f, "burst", fakeCodex("success", { delayMs: 75 }));
+  const passes = [];
+  for (let round = 0; round < 10; round += 1)
+    passes.push(...await Promise.all(bots.map(bot => runOnce(f, bot, path).then(result => result.pass))));
+  assert.equal(passes.filter(pass => pass.outcome === "submitted").length, 10, JSON.stringify(passes));
+  assert.equal(passes.filter(pass => pass.state === "unreachable" || pass.outcome === "abandoned").length, 0,
+    `no bot abandons its pass: ${JSON.stringify(passes)}`);
+  const taskIds = tasks.map(task => task.jobId);
+  assert.deepEqual(await f.query(`SELECT job_id,count(*)::int AS claims FROM fleet_claims
+    WHERE job_id=ANY($1::text[]) GROUP BY job_id HAVING count(*) > 1`, [taskIds]), [], "zero double claims");
+  const awaiting = (await f.owner.listResults(ownerIdentity(), { awaitingOnly: true }))
+    .filter(row => taskIds.includes(row.jobId));
+  assert.equal(awaiting.length, 10, "every job reaches owner review");
+  for (const row of awaiting) await f.owner.review(ownerIdentity(), { resultId: row.resultId, decision: "accepted" });
+  assert.deepEqual(await f.query(`SELECT state,count(*)::int AS count FROM control_jobs
+    WHERE id=ANY($1::text[]) GROUP BY state`, [taskIds]), [{ state: "succeeded", count: 10 }]);
+});
+
 test("not enabled: a machine runs only the harness its owner enabled locally", async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Careful");

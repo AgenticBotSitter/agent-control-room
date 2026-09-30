@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -128,9 +129,11 @@ test("exact macOS lines install all registrations and one idempotent worker for 
     await mkdir(home, { recursive: true });
     const identity = bindings.get(joinCode(index));
     const optedIn = ["claude-code", "codex", "hermes"].includes(bot);
-    const commands = fleetJoinCommandsV1(service.origin, joinCode(index), bot, release.manifest, identity, optedIn);
+    const selection = bot === "hermes" ? { profile: "fixture", model: "hermes-3", provider: "local" } : {};
+    const commands = fleetJoinCommandsV1(service.origin, joinCode(index), bot, release.manifest, identity, optedIn, selection);
     const serviceState = join(root, "service-state.json");
-    const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: xdg,
+    const env = { ...process.env, PATH: `${stubs}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+      HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: xdg,
       XDG_DATA_HOME: join(home, ".local", "share"), XDG_CACHE_HOME: join(home, ".cache"),
       XDG_STATE_HOME: join(home, ".local", "state"), XDG_RUNTIME_DIR: join(home, ".runtime"),
       CLAUDE_CONFIG_DIR: join(home, ".claude"), CODEX_HOME: join(home, ".codex"), HERMES_HOME: join(home, ".hermes"),
@@ -147,7 +150,12 @@ test("exact macOS lines install all registrations and one idempotent worker for 
     assert.equal((await stat(credential.installation.workspace)).isDirectory(), true);
     if (optedIn) {
       const agents = await readdir(join(home, "Library", "LaunchAgents"));
-      assert.deepEqual(agents, [`com.agentcontrolroom.connector.${profile}.plist`], "one LaunchAgent belongs to this profile");
+      const serviceKey = createHash("sha256").update(profile).digest("hex").slice(0, 16);
+      assert.deepEqual(agents, [`xyz.agentcontrolroom.connector.${serviceKey}.plist`], "one hashed LaunchAgent belongs to this profile");
+      const harnesses = await readJson(join(xdg, "control-room", "bots", `${profile}.harnesses.json`));
+      assert.equal(harnesses.harnesses[bot].enabled, true);
+      if (bot === "hermes") assert.deepEqual({ profile: harnesses.harnesses.hermes.profile,
+        model: harnesses.harnesses.hermes.model, provider: harnesses.harnesses.hermes.provider }, selection);
     }
     const serverName = `control-room-${profile}`;
     if (["claude-code", "codex", "hermes"].includes(bot)) {
@@ -172,7 +180,7 @@ test("exact macOS lines install all registrations and one idempotent worker for 
     "retries replace the same three profile labels instead of adding duplicate agents");
 });
 
-test("Windows and Linux command fixtures install the same profile and give kind-specific next steps", () => {
+test("six bot kinds produce the reviewed unattended choice and next step on every OS fixture", () => {
   const manifest = { schema: "control-room.fleet-connector-release/v1", version: "0.5.0",
     file: "connector-0.5.0.mjs", sha256: "b".repeat(64), size: 1234, builtFrom: "c".repeat(40) };
   for (const [index, bot] of botKinds.entries()) {
@@ -180,20 +188,24 @@ test("Windows and Linux command fixtures install the same profile and give kind-
     const commands = fleetJoinCommandsV1("https://control.example", joinCode(index), bot, manifest, identity);
     assert.match(commands.unix, new RegExp(`install .*--bot ${bot} --name ${commands.profileName} --workspace "\\$w" --i-am-the-installer$`, "u"));
     assert.match(commands.windows, new RegExp(`install .*--bot ${bot} --name ${commands.profileName} --workspace \\$w --i-am-the-installer$`, "u"));
-    if (["claude-code", "codex", "hermes"].includes(bot)) {
-      const unattended = fleetJoinCommandsV1("https://control.example", joinCode(index), bot, manifest, identity, true);
-      assert.match(unattended.unix, /--unattended --i-am-the-installer$/u);
-      assert.match(unattended.windows, /--unattended --i-am-the-installer$/u);
-    } else assert.throws(() => fleetJoinCommandsV1("https://control.example", joinCode(index), bot, manifest, identity, true));
     for (const os of ["macos", "windows", "linux"]) {
+      const command = os === "windows" ? "windows" : "unix";
       const next = fleetConnectorOwnerNextStepV1(bot, os, commands.profileName);
       if (bot === "mcp-agent") assert.match(next, os === "windows" ? /%APPDATA%\\control-room/u : /\$XDG_CONFIG_HOME.*~\/\.config\/control-room/u);
       else if (["cursor", "claude-desktop"].includes(bot)) assert.match(next, /Close and reopen.*no background service/u);
       else assert.match(next, /registered now.*no background service or restart/u);
-      if (["claude-code", "codex", "hermes"].includes(bot)) assert.match(
-        fleetConnectorOwnerNextStepV1(bot, os, commands.profileName, true),
-        /per-user background worker.*checks for approved work.*harnesses\.json.*uninstall/isu);
-      else assert.throws(() => fleetConnectorOwnerNextStepV1(bot, os, commands.profileName, true));
+      if (["claude-code", "codex", "hermes"].includes(bot)) {
+        const selection = bot === "hermes" ? { profile: "fixture", model: "hermes-3", provider: "local" } : {};
+        const unattended = fleetJoinCommandsV1("https://control.example", joinCode(index), bot, manifest, identity, true, selection);
+        assert.match(unattended[command], /--unattended --i-am-the-installer$/u, `${bot} ${os}`);
+        if (bot === "hermes") assert.match(unattended[command],
+          /--worker-profile fixture --worker-model hermes-3 --worker-provider local --unattended/u);
+        assert.match(fleetConnectorOwnerNextStepV1(bot, os, commands.profileName, true),
+          /per-user background worker.*checks for approved work.*harnesses\.json.*uninstall/isu);
+      } else {
+        assert.throws(() => fleetJoinCommandsV1("https://control.example", joinCode(index), bot, manifest, identity, true));
+        assert.throws(() => fleetConnectorOwnerNextStepV1(bot, os, commands.profileName, true));
+      }
     }
   }
   assert.throws(() => fleetConnectorOwnerNextStepV1("unknown", "macos", "safe-profile"));

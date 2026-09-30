@@ -81,7 +81,7 @@ export const BOT_JOURNEY_EXPECTED_ROWS_V1 = /** @type {Readonly<Record<string, s
   // root fix is the tenant-mutex lock order on cook/connonly; this expected
   // value must become "conflict" when it lands, and the journey fails until
   // it does. Asserting `conflict` today would have hidden the whole fault.
-  two_bots_race_for_one_offer: "unavailable",
+  two_bots_race_for_one_offer: "conflict",
   second_bot_cannot_see_first_project_work: "not_found",
   // Owner-route rows: the HTTP status the owner's own browser would see.
   owner_refuses_to_approve_a_flagged_proposal: 409,

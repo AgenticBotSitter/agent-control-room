@@ -61,6 +61,12 @@ test("gateway unauthenticated identities use IPv4 /24 and IPv6 /64 networks", ()
   assert.equal(fleetGatewayClientNetworkV1("unknown"), "unknown");
 });
 
+test("database refusals prefer the production wrapper SQLSTATE over its public availability code", () => {
+  assert.equal(databaseSqlStateV1({ sqlState: "23P01", code: "database_unavailable" }), "23P01");
+  assert.equal(databaseSqlStateV1({ code: "23P01" }), "23P01", "PGlite exposes the same refusal through code");
+  assert.equal(databaseSqlStateV1({ sqlState: 23, code: null }), undefined);
+});
+
 test("fleet gateway checks slow request timeouts every second", () => {
   assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.requestTimeout, 15_000);
   assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.headersTimeout, 5_000);
@@ -460,9 +466,11 @@ test("one SQLSTATE reader serves every refusal site, with both refusal sets inta
   for (const [file, expected] of sites) {
     const source = await readFile(file, "utf8");
     for (const line of source.split("\n").filter(row => row.includes("databaseSqlStateIsAnyV1(error")
-      && !row.trimStart().startsWith("import")))
-      assert.ok(line.trimStart().startsWith("if (databaseSqlStateIsAnyV1(error"),
-        `${file}: every site maps a refusal through the one 'is any of' helper`);
+      && !row.trimStart().startsWith("import") && !row.trimStart().startsWith("*")
+      && !row.trimStart().startsWith("//")))
+      assert.match(line.trimStart(), /^if \((!?)databaseSqlStateIsAnyV1\(error/u,
+        `${file}: every site maps a refusal through the one 'is any of' helper in an if — ${
+          line.trim()}`);
     for (const states of expected)
       assert.ok(source.includes(`databaseSqlStateIsAnyV1(error, ${states})`),
         `${file}: the refusal set ${states} must survive the merge`);
@@ -472,6 +480,73 @@ test("one SQLSTATE reader serves every refusal site, with both refusal sets inta
     const source = await readFile(file, "utf8");
     for (const row of source.split("\n")) if (/sqlState|\(error as \{ code/.test(row))
       assert.ok(row.includes("databaseSqlStateIsAnyV1("), `${file}: a raw SQLSTATE read survived: ${row.trim()}`);
+  }
+});
+
+test("no source may lock the tenant row with FOR UPDATE: the mutex must stay FOR NO KEY UPDATE", async () => {
+  // The lock order IS the fix for the 40P01 that deadlocked the fleet, and a
+  // single new `FROM tenants ... FOR UPDATE` silently reintroduces it.
+  //
+  // `FOR NO KEY UPDATE` still conflicts with itself, so the mutex serialises
+  // exactly as before; it does NOT conflict with the `FOR KEY SHARE` every
+  // foreign-key check takes. `FOR UPDATE` DOES, which closes the cycle with any
+  // audit-first writer (`recordMcpCall` takes the audit chain head, then its
+  // `INSERT INTO audit_events` checks `tenants(id)`), and PostgreSQL then kills
+  // a worker transaction per collision.
+  //
+  // So: zero `tenants ... FOR UPDATE` anywhere in src/, and at least one real
+  // mutex site, so this cannot pass by finding nothing at all.
+  const root = resolve("src");
+  const offenders: string[] = [];
+  let mutexSites = 0;
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) { await walk(path); continue; }
+      if (!entry.name.endsWith(".ts")) continue;
+      const source = await readFile(path, "utf8");
+      for (const [index, row] of source.split("\n").entries()) {
+        // Match a tenant lock that is NOT already the NO KEY UPDATE form.
+        if (/FROM\s+tenants\b/iu.test(row) && /FOR\s+UPDATE\b/iu.test(row)
+          && !/FOR\s+NO\s+KEY\s+UPDATE/iu.test(row)) offenders.push(`${path}:${index + 1}: ${row.trim()}`);
+        if (/FROM\s+tenants\b/iu.test(row) && /FOR\s+NO\s+KEY\s+UPDATE/iu.test(row)) mutexSites += 1;
+      }
+    }
+  };
+  await walk(root);
+  assert.deepEqual(offenders, [],
+    "the tenant mutex must be FOR NO KEY UPDATE everywhere; FOR UPDATE reintroduces the audit deadlocks");
+  assert.ok(mutexSites > 0, "the guard must find the real mutex sites, or it is guarding nothing");
+});
+
+test("every fleet move to ready takes the tenant mutex explicitly", async () => {
+  // The release path used to be serialised against mutex holders only by
+  // accident: a foreign-key wait against a `FOR UPDATE` holder. Once the mutex
+  // weakens to NO KEY UPDATE that accident disappears, so every fleet `-> ready`
+  // move must take the mutex itself or two releases can race a policy-bound
+  // ready count.
+  const source = await readFile("src/fleet/v1/gateway-store.ts", "utf8");
+  const readyMoves = [...source.matchAll(/moveFleetEntityV1\(tx, job, "ready"/gu)];
+  assert.ok(readyMoves.length >= 2,
+    `the guard must find the fleet -> ready moves, or it is guarding nothing (found ${readyMoves.length})`);
+  // Scope the search to the ENCLOSING transaction, not a fixed window: a fixed
+  // window lets one mutex satisfy a later move that has none. Each move belongs
+  // to the nearest preceding `this.db.transaction(`.
+  for (const move of readyMoves) {
+    const before = source.slice(0, move.index ?? 0);
+    const transactionStart = before.lastIndexOf("this.db.transaction(");
+    assert.ok(transactionStart >= 0, "a fleet -> ready move must live inside a transaction");
+    const body = source.slice(transactionStart, move.index ?? 0);
+    const mutexAt = body.search(/#tenantMutex\(tx\)/u);
+    assert.ok(mutexAt >= 0,
+      "a fleet -> ready move must take the tenant mutex in ITS OWN transaction; the release path lost its "
+      + "(accidental) serialisation");
+    // Mutex FIRST, rows second — the order every coordinator mutex holder uses.
+    // Taking it after a job/attempt/lease row lock closes a deadlock cycle with a
+    // coordinator that holds the mutex and waits on that row.
+    const firstRowLock = body.search(/readFleetEntityV1\(tx,/u);
+    assert.ok(firstRowLock < 0 || mutexAt < firstRowLock,
+      "the tenant mutex must be taken BEFORE the first job/attempt/lease row lock in the same transaction");
   }
 });
 
@@ -562,6 +637,31 @@ test("database pressure during authentication and ordinary routes is a retryable
     assert.deepEqual([response.status, response.body.error, response.headers["retry-after"]], [503, "unavailable", "1"]);
     assert.deepEqual(unexpected, [failure]);
   });
+});
+
+test("an uncertain database outcome is NOT the retryable 503 -- it may have committed", async t => {
+  // `database_unavailable` is a promise: the server rejected the statement, so
+  // a replay is safe and the connector's transient path retries it.
+  // `database_outcome_uncertain` is the opposite -- COMMIT may already have
+  // landed, so replaying could duplicate work. It must stay a distinct code
+  // and must NOT be mapped to a retryable 503 that invites exactly that.
+  const uncertain = Object.assign(new Error("database_outcome_uncertain"),
+    { code: "database_outcome_uncertain", sqlState: undefined });
+  assert.equal(uncertain.code === "database_unavailable", false,
+    "an uncertain outcome must never satisfy the retryable-unavailable check");
+  const principal = fakePrincipal();
+  const unexpected: unknown[] = [];
+  const handler = createFleetGatewayHandlerV1({
+    store: { async authenticate() { return principal; }, async myClaims() { throw uncertain; } } as unknown as FleetGatewayStoreV1,
+    onUnexpectedError: error => unexpected.push(error) });
+  const server = createServer((request, response) => { void handler.handle(request, response); });
+  await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => server.close(() => done())));
+  const response = await nodeJsonRequest(`http://127.0.0.1:${(server.address() as AddressInfo).port}/fleet/v1/claims`,
+    { headers: { authorization: "Bearer fake", "x-control-room-worker": principal.workerId } });
+  assert.notEqual(response.status, 503,
+    `an uncertain commit must not invite a blind replay: ${JSON.stringify(response)}`);
+  assert.deepEqual([response.status, response.body.error], [400, "refused"]);
 });
 
 test("stress: 80 parked waits cap and jitter DB polling while a burst of claims completes", { timeout: 10_000 }, async t => {

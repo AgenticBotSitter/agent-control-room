@@ -70,7 +70,8 @@ test("the connect-code route binds the chosen kind and returns only the current 
   const post = (body: unknown) => handler(new Request("https://control.example/api/v1/fleet/connect-codes", { method: "POST",
     headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
   const body = { botKind: "cursor", name: "<desktop> Ω", operatingSystem: "windows",
-    projectIds: ["project:alpha"], capabilities: ["writing"], unattended: false };
+    projectIds: ["project:alpha"], capabilities: ["writing"], unattended: false,
+    workerModel: "", workerProfile: "", workerProvider: "" };
   const response = await post(body);
   assert.equal(response.status, 201);
   const value = await response.json() as { installLine: string; profileName: string; ownerNextStep: string;
@@ -81,14 +82,21 @@ test("the connect-code route binds the chosen kind and returns only the current 
   assert.equal(value.installLine, expected.windows);
   assert.equal(value.profileName, "desktop-bbbbbbbbbbbb");
   assert.match(value.ownerNextStep, /Cursor is registered.*Close and reopen Cursor.*no background service/u);
-  assert.deepEqual(issued, [{ displayName: "<desktop> Ω", workerKind: "cursor", operatingSystem: "windows",
-    projectIds: ["project:alpha"], capabilities: ["writing"], unattended: false }]);
+  assert.deepEqual(issued, [{ displayName: "<desktop> Ω", workerKind: "cursor",
+    projectIds: ["project:alpha"], capabilities: ["writing"] }]);
+  const missingHermesSelection = await post({ ...body, botKind: "hermes", unattended: true });
+  assert.equal(missingHermesSelection.status, 400, "Hermes model choices are refused before an enrollment code is created");
+  const hermes = await post({ ...body, botKind: "hermes", unattended: true,
+    workerProfile: "night", workerModel: "hermes-3", workerProvider: "local" });
+  assert.equal(hermes.status, 201);
+  assert.match((await hermes.json() as { installLine: string }).installLine,
+    /--worker-profile night --worker-model hermes-3 --worker-provider local --unattended/u);
   for (const refused of [{ ...body, botKind: "other" }, { ...body, operatingSystem: "android" }, { ...body, extra: true },
     { ...body, unattended: true }]) {
     const invalid = await post(refused);
     assert.equal(invalid.status, 400);
   }
-  assert.equal(issued.length, 1, "invalid page choices are refused before an enrollment code is created");
+  assert.equal(issued.length, 2, "invalid page choices are refused before an enrollment code is created");
 });
 
 test("the result says plainly when a code expired and disables copying it", async () => {
@@ -137,6 +145,9 @@ test("at a 375px viewport, every picker is present and hostile display names rem
     await act(async () => unattended.click());
     assert.equal(unattended.checked, true);
     const botPicker = dom.window.document.querySelector('select[name="bot-kind"]') as HTMLSelectElement;
+    await act(async () => { botPicker.value = "hermes"; botPicker.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    assert.equal(dom.window.document.querySelectorAll('input[name^="worker-"]').length, 3,
+      "Hermes unattended setup asks for its protected profile, model and provider before creating a code");
     await act(async () => { botPicker.value = "cursor"; botPicker.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
     assert.equal(unattended.checked, false);
     assert.equal(unattended.disabled, true, "interactive MCP-only kinds cannot promise unattended work");

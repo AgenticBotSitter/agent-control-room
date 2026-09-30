@@ -6,35 +6,52 @@ import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void>; isAvailable(): boolean }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
-
-/** Explicit Mac-local startup bridge. It verifies the owner-pinned executables
- * before opening its supplied database and transfers cleanup to the service
- * only after construction succeeds. It has no file or environment access. */
-export function createMacLocalStartupV1(input: Readonly<{
+type ServiceInput = Readonly<{ configuration: MacLocalProtectedConfigurationV1; database: OpenedDatabase;
+  workerReadiness?: MacLocalWorkerReadinessV1; databaseRoles?: MacLocalDatabaseRolesV1 }>;
+type StartupCommon = Readonly<{
   openDatabase(configuration: MacLocalProtectedConfigurationV1["database"]): OpenedDatabase;
-  readVersion(executablePath: string): Promise<string>;
   verifyModelPolicy?: Parameters<typeof verifyOwnerTrustedLocalEnablementV1>[2];
-  createService(input: Readonly<{ configuration: MacLocalProtectedConfigurationV1; database: OpenedDatabase;
-    workerReadiness: MacLocalWorkerReadinessV1; databaseRoles?: MacLocalDatabaseRolesV1 }>): LocalService | Promise<LocalService>;
-}>) {
-  if (!input || typeof input.openDatabase !== "function" || typeof input.readVersion !== "function" || typeof input.createService !== "function")
+  createService(input: ServiceInput): LocalService | Promise<LocalService>;
+}>;
+type DirectStartupInput = StartupCommon & Readonly<{ connectorOnly?: false;
+  readVersion(executablePath: string): Promise<string> }>;
+type ConnectorStartupInput = StartupCommon & Readonly<{ connectorOnly: true;
+  readVersion?: (executablePath: string) => Promise<string> }>;
+type Started = Readonly<{ close(): Promise<void>; isReady(): boolean }>;
+
+export function createMacLocalStartupV1(input: DirectStartupInput): Readonly<{
+  start(configuration: MacLocalProtectedConfigurationV1, databaseRoles?: MacLocalDatabaseRolesV1):
+    Promise<Started & Readonly<{ workerReadiness: MacLocalWorkerReadinessV1 }>>;
+}>;
+export function createMacLocalStartupV1(input: ConnectorStartupInput): Readonly<{
+  start(configuration: MacLocalProtectedConfigurationV1, databaseRoles?: MacLocalDatabaseRolesV1): Promise<Started>;
+}>;
+
+/** Explicit Mac-local startup bridge. Legacy direct mode verifies owner-pinned
+ * executables; connector-only service mode performs no bot process access.
+ * Both transfer cleanup only after service construction succeeds. */
+export function createMacLocalStartupV1(input: DirectStartupInput | ConnectorStartupInput) {
+  if (!input || typeof input.openDatabase !== "function" || typeof input.createService !== "function"
+    || (input.connectorOnly !== true && typeof input.readVersion !== "function"))
     throw new Error("mac_local_startup_invalid");
   let attempted = false;
   return Object.freeze({ async start(configuration: MacLocalProtectedConfigurationV1, databaseRoles?: MacLocalDatabaseRolesV1) {
     if (attempted) throw new Error("mac_local_startup_already_attempted");
     attempted = true;
-    const verified = await verifyOwnerTrustedLocalEnablementV1(configuration.enablement, input.readVersion, input.verifyModelPolicy);
-    const workerReadiness = createMacLocalWorkerReadinessV1(configuration.enablement, verified);
+    const workerReadiness = input.connectorOnly === true ? undefined : createMacLocalWorkerReadinessV1(configuration.enablement,
+      await verifyOwnerTrustedLocalEnablementV1(configuration.enablement, input.readVersion!, input.verifyModelPolicy));
     let database: OpenedDatabase | undefined, service: LocalService | undefined;
     try {
       database = input.openDatabase(configuration.database);
       if (!database || !database.client || typeof database.close !== "function"
         || typeof database.isAvailable !== "function") throw new Error();
-      service = await input.createService({ configuration, database, workerReadiness, ...(databaseRoles ? { databaseRoles } : {}) });
+      service = await input.createService({ configuration, database, ...(workerReadiness ? { workerReadiness } : {}),
+        ...(databaseRoles ? { databaseRoles } : {}) });
       if (!service || typeof service.start !== "function" || typeof service.close !== "function"
         || typeof service.isReady !== "function") throw new Error();
       await service.start();
-      return Object.freeze({ close: service.close.bind(service), isReady: service.isReady.bind(service), workerReadiness });
+      return Object.freeze({ close: service.close.bind(service), isReady: service.isReady.bind(service),
+        ...(workerReadiness ? { workerReadiness } : {}) });
     } catch (error) {
       // Keep a bounded, non-secret diagnostic when the composed host refuses
       // startup. Raw driver messages can contain connection details.

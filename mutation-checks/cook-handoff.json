@@ -29,8 +29,8 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (anyEnabled && !bundledHarnessAdapterFactory) await refuseSharedWrite(value.adapterModule, \"The harness adapter module\");",
-    "replace": "",
+    "find": "    if (sourcePath) await refuseSharedWrite(value.adapterModule, \"The harness adapter module\");",
+    "replace": "    if (false) await refuseSharedWrite(value.adapterModule, \"The harness adapter module\");",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"refused unless the machine owner\" tests/fleet-harness-handoff.test.ts",
     "why": "an adapter module another user can change is refused"
   },

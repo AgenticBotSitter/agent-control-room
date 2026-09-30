@@ -27,8 +27,10 @@ import type { AccessTrust, VerifiedWebIdentity } from "../src/web/v1/access-veri
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 
-// Reserved disposable-cluster lane for this file: 58710-58719.
-const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) => 58710 + index));
+// This lane is 58710-58719 by default and moves with CONTROL_ROOM_PG_TEST_PORT_BASE so
+// bots running this lane in parallel never contend for the same socket.
+const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) =>
+  Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58710) + index));
 const PORT = PORTS[0];
 const PG = requiresRealPostgres();
 const needsPg = () => (PG ? undefined : { skip: realPostgresSkipMessage() });

@@ -30,19 +30,27 @@ an unattended command for those kinds rather than promising work it cannot
 run.
 
 When selected, the same verified line adds `--unattended` and installs exactly
-one login-scoped worker for that profile:
+one login-scoped worker for that profile. Its service identity is a stable
+16-character SHA-256 prefix of the validated profile, so platform name
+normalization cannot make two profiles collide:
 
-- macOS: `~/Library/LaunchAgents/com.agentcontrolroom.connector.<profile>.plist`
-- Windows: a least-privilege `AgentControlRoomConnector-<profile>` scheduled
+- macOS: `~/Library/LaunchAgents/xyz.agentcontrolroom.connector.<digest>.plist`
+- Windows: a least-privilege `AgentControlRoomConnector-<digest>` scheduled
   task with a logon trigger
-- Linux: `~/.config/systemd/user/control-room-connector-<profile>.service`,
+- Linux: `~/.config/systemd/user/control-room-connector-<digest>.service`,
   enabled with `systemctl --user`
 
 It is never a root, machine or system service. Failure restarts are delayed;
 a successful exit is not restarted. Logs are kept under the user's local
 state directory and rotated to one bounded backup. The worker runs
 `connector run` for the exact profile and re-reads the owner-controlled
-`harnesses.json` beside the profile credentials before taking work.
+`<profile>.harnesses.json` beside the profile credentials before taking work.
+The installer writes that file through the same parser used at startup.
+
+Hermes unattended setup requires the local profile, model and provider on the
+Connect a bot page before a join code is created. Codex and Claude Code may use
+their local defaults; the installer also retains the reviewed model, effort,
+deadline and executable inputs for deliberate command-line configuration.
 
 ## Registration and the owner's next action
 
@@ -73,5 +81,5 @@ The standing worker takes one task at a time. That is within every worker's
 authoritative ceiling if another connector process is started manually. Pause,
 Drain and Stop prevent new claims; Stop also cancels the active harness. A
 revoked credential makes the worker exit successfully, so failure-only restart
-policies do not crash-loop it. A broken or missing `harnesses.json` takes no
+policies do not crash-loop it. A broken or missing harness settings file takes no
 work and is checked again on the next pass.
