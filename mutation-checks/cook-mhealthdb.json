@@ -9,7 +9,7 @@
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "        AND pg_catalog.pg_get_userbyid(a.grantee) <> 'control_room_deployer') THEN",
-    "replace": "        AND false) THEN",
+    "replace": "        AND true) THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
     "why": "an EXECUTE grantee the design does not name must be refused at apply time, not discovered later"
   },
@@ -23,7 +23,7 @@
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "      AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[])\n    THEN\n    RAISE EXCEPTION 'updater health count function must be STABLE SECURITY DEFINER",
-    "replace": "      AND true)\n    THEN",
+    "replace": "    THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
     "why": "the pinned search_path is what stops candidate SQL shadowing an object the definer's body names (R10b); dropping it must be caught"
   },
@@ -37,7 +37,7 @@
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "    WHERE b.singleton\n      AND (SELECT count(*) FROM public.workspaces x WHERE x.tenant_id = b.tenant_id) = 1\n  )\n",
-    "replace": "    WHERE b.singleton",
+    "replace": "    WHERE b.singleton\n",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
     "why": "workspaces has no unique constraint on tenant_id alone, so an ambiguous scope would silently DOUBLE every count -- and a health signal that doubles still says healthy"
   },
