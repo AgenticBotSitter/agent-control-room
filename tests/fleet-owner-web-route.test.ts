@@ -7,10 +7,14 @@ import { sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
+import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1, type FleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 
 after(closePrivateOwnerBootstrapConformanceDatabase);
+
+const connectorRelease: FleetConnectorReleaseManifestV1 = Object.freeze({ schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1,
+  version: "0.3.0", file: "connector-0.3.0.mjs", sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) });
 
 test("owner fleet routes: add a worker returns a one-time join command; foreign origins and signed-out calls are refused", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "fleet-owner-web" }); t.after(fixture.close);
@@ -19,11 +23,12 @@ test("owner fleet routes: add a worker returns a one-time join command; foreign 
   });
   const origin = "http://127.0.0.1:3210", ownerCode = "mac-local-owner-code-long-enough";
   // The fleet tables enforce expiry with the database clock, so this route uses real time.
-  const make = (fleet?: { gatewayOrigin: string; ownerAuthority: typeof fixture.client }) => createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
+  const make = (fleet?: { gatewayOrigin: string; connectorRelease: FleetConnectorReleaseManifestV1;
+    ownerAuthority: typeof fixture.client }) => createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, ...(fleet ? { fleet } : {}) });
-  const app = make({ gatewayOrigin: "https://control.example.ts.net", ownerAuthority: fixture.client });
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, ...(fleet ? { fleet } : {}) });
+  const app = make({ gatewayOrigin: "https://control.example.ts.net", connectorRelease, ownerAuthority: fixture.client });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const unused = () => new Response("unused");
   assert.equal((await app.handle(request("/api/v1/fleet"), unused)).status, 401);
@@ -47,7 +52,9 @@ test("owner fleet routes: add a worker returns a one-time join command; foreign 
   assert.equal(issued.status, 201, await issued.clone().text());
   const value = await issued.json() as { code: string; commands: { unix: string } };
   assert.match(value.code, /^crj_[A-Za-z0-9_-]{43}$/u);
-  assert.ok(value.commands.unix.startsWith("curl -fsSL https://control.example.ts.net/fleet/v1/connector.mjs"));
+  assert.match(value.commands.unix, /connector-0\.3\.0\.mjs/u);
+  assert.match(value.commands.unix, /connector-manifest\.json/u);
+  assert.match(value.commands.unix, /--bot codex$/u);
   const board = await app.handle(request("/api/v1/fleet", { headers: { cookie } }), unused);
   assert.equal(board.status, 200);
   const listed = await board.json() as { pendingCodes: { displayName: string }[]; workers: unknown[] };

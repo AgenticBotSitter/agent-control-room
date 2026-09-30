@@ -19,9 +19,10 @@ const statusWords: Record<string, [string, ChipTone]> = {
   working: ["Working", "busy"], connected: ["Connected", "good"], offline: ["Offline", "warn"],
   revoked: ["Removed", "neutral"], needs_new_key: ["Needs a new key", "bad"],
 };
-const kinds = [["codex", "Codex"], ["claude-code", "Claude Code"], ["hermes", "Hermes"], ["mcp-agent", "Any agent (MCP)"]] as const;
+const kinds = [["codex", "Codex"], ["claude-code", "Claude Code"], ["hermes", "Hermes"], ["mcp-agent", "Any agent (MCP)"],
+  ["tool", "Local tool adapter"]] as const;
 const capabilities = [["code.change", "Change code"], ["code.review", "Review code"], ["research", "Research"],
-  ["writing", "Writing"], ["testing", "Testing"]] as const;
+  ["writing", "Writing"], ["testing", "Testing"], ["tool.whisper", "Whisper transcription"]] as const;
 
 async function call(path: string, body?: unknown) {
   const response = await fetch(path, { method: body === undefined ? "GET" : "POST", credentials: "same-origin",

@@ -91,12 +91,31 @@ function ResultFileRow({ projectId, set, file }: { projectId: string; set: Resul
     </details>
     {problem && <p role="alert" className="private-notice">{problem}</p>}
   </div><div>
-    {file.state === "stored"
+    {downloadable(set, file)
       ? <button type="button" className="private-action-link" disabled={pending} onClick={() => { void download(); }}>
         {pending ? "Starting…" : "Download"}
       </button>
-      : <p className="private-note">No download available.</p>}
+      // A trashed set is still LISTED — the owner may want to see what they are
+      // about to lose — but the bytes are no longer reachable, and "No download
+      // available" on its own would read as a fault rather than a decision.
+      : <p className="private-note">{set.retentionState === "trash" ? "In the trash. Not downloadable."
+        : set.retentionState === "purged" ? "Purged. Not downloadable."
+        : "No download available."}</p>}
   </div></li>;
+}
+
+/** Whether this file can actually be fetched right now.
+ *
+ * The catalog only carries a link for a file that passes this test, so the two
+ * must agree exactly — a Download button that mints nothing is worse than no
+ * button. Two conditions, and the second is the one the review found missing: a
+ * set the owner has trashed is still LISTED (so they can see what they are about
+ * to lose) but its bytes are gone from the owner's reach. The service refuses
+ * both the mint and the spend, so a button here would be a promise it cannot keep.
+ */
+function downloadable(set: ResultFileSet, file: ResultFileItem): boolean {
+  return file.state === "stored"
+    && (set.retentionState === "provisional" || set.retentionState === "retained");
 }
 
 function ResultFileSetPanel({ projectId, set }: { projectId: string; set: ResultFileSet }) {
@@ -111,6 +130,8 @@ function ResultFileSetPanel({ projectId, set }: { projectId: string; set: Result
       The files below did arrive and can be downloaded; the rest are not on the Mac.</p>}
     {set.state === "quarantined" && <p className="private-notice">This set was held back and will not be offered
       for download. Its catalog record is kept.</p>}
+    {set.retentionState === "trash" && <p className="private-notice">This set is in the trash. Its files are
+      listed but no longer downloadable.</p>}
     <ul className="private-result-list">{set.files.map(file =>
       <ResultFileRow key={file.fileId} projectId={projectId} set={set} file={file} />)}</ul>
     {set.additionalFilesOmitted && <p className="private-note">More files remain in this set than are shown here.</p>}

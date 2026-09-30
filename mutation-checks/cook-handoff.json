@@ -8,8 +8,8 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "if (!HANDOFF_HARNESSES.includes(harness) || entry?.enabled !== true || !settings.adapterModule) return null;",
-    "replace": "if (!settings.adapterModule) return null;",
+    "find": "  if (!HANDOFF_HARNESSES.includes(harness) || entry?.enabled !== true) return null;",
+    "replace": "  if (false) return null;",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"refused unless the machine owner\" tests/fleet-harness-handoff.test.ts",
     "why": "a disabled or unknown harness is never loaded"
   },
@@ -29,7 +29,7 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (anyEnabled) await refuseSharedWrite(value.adapterModule, \"The harness adapter module\");",
+    "find": "  if (anyEnabled && !bundledHarnessAdapterFactory) await refuseSharedWrite(value.adapterModule, \"The harness adapter module\");",
     "replace": "",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"refused unless the machine owner\" tests/fleet-harness-handoff.test.ts",
     "why": "an adapter module another user can change is refused"
@@ -43,7 +43,7 @@
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
-    "find": "      if (await this.operationsMode() !== \"running\") return fleetFail(\"paused\");",
+    "find": "      if (mode !== \"running\") return fleetFail(\"paused\");",
     "replace": "",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^pause\" tests/fleet-harness-handoff.test.ts",
     "why": "the gateway refuses new claims unless Control Room is running"

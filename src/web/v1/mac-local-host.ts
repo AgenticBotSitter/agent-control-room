@@ -25,9 +25,10 @@ import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
  * own incident. */
 export const MAC_LOCAL_SUPERVISOR_ID_V1 = "supervisor:mac-local";
 
-type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
+type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void>; isAvailable(): boolean }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
-type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "resultFileStore" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">;
+type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "resultFileStore" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">
+  & Partial<Pick<MacLocalTaskApplicationV1, "taskService">>;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
 
 /** The protected enablement is the only Mac-local source of exact worker and
@@ -69,6 +70,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   workBatchQueueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
   ownerWebPush?: OwnerWebPushConfigV1;
+  hostProcessId?: number;
+  healthProbeKey?: Uint8Array;
+  healthReleaseId?: string;
+  healthStartedAt?: string;
   /** Remote-worker owner section, present only when the host also runs the
    * fleet gateway on its own database login. */
   fleet?: MacLocalWebProcessOptionsV1["fleet"];
@@ -79,6 +84,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
+    || typeof input.database.isAvailable !== "function"
     || !input.assets || typeof input.assets.respond !== "function" || typeof input.render !== "function")
     throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.taskApplication) throw new Error("mac_local_host_configuration_invalid");
@@ -95,6 +101,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     workspaceId: configuration.workspaceId,
     database: input.database,
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
+    ...(taskApplication?.taskService ? { taskService: taskApplication.taskService } : {}),
     ...(taskApplication?.taskReadKeys ? { taskReadKeys: taskApplication.taskReadKeys } : {}),
     // "Save to my Mac" (plan v4.3 2.6). Without this the download route does
     // not exist on a real installation, which is the exact failure mode the
@@ -109,6 +116,8 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
       ?? createMacLocalWorkBatchQueueCatalogV1(configuration) } : {}),
     ...(input.workBatchQueueAdmissionAuthority ? { workBatchQueueAdmissionAuthority: input.workBatchQueueAdmissionAuthority } : {}),
     ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+    ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
+      healthStartedAt: input.healthStartedAt } : {}),
     ...(input.fleet ? { fleet: input.fleet } : {}),
     // The installation-wide mode. This forwarding is the whole fix: without it
     // the endpoint exists in the web process but is never mounted, and it 404s
@@ -125,8 +134,14 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     start: service.start.bind(service),
     isReady: () => service.isReady() && taskApplication.isReady(),
     close: () => close ??= (async () => {
-      const results = await Promise.allSettled([service.close(), taskApplication.close()]);
-      if (results.some(result => result.status === "rejected")) throw new Error("mac_local_host_cleanup_uncertain");
+      // The task application owns the restricted controller/result pools. It
+      // first refuses new operations and drains active saves, so it must finish
+      // before the web composition closes the database beneath the host. Keep
+      // the later close best-effort even when the drain reports uncertainty.
+      const task = await Promise.allSettled([taskApplication.close()]);
+      const site = await Promise.allSettled([service.close()]);
+      if ([...task, ...site].some(result => result.status === "rejected"))
+        throw new Error("mac_local_host_cleanup_uncertain");
     })(),
   });
 }
@@ -169,10 +184,17 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   /** The identity the health loop reports under. Defaults to the one fixed
    * Mac-local supervisor; supplied only where a distinct id is needed. */
   supervisorId?: string;
+  hostProcessId?: number;
+  healthProbeKey?: Uint8Array;
+  healthReleaseId?: string;
+  healthStartedAt?: string;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
     || typeof input.render !== "function") throw new Error("mac_local_host_configuration_invalid");
+  if (input.hostProcessId !== undefined
+    && (!Number.isSafeInteger(input.hostProcessId) || input.hostProcessId <= 1))
+    throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.createTaskApplication) throw new Error("mac_local_host_configuration_invalid");
   if (input.createTaskApplication && typeof input.loadDatabaseRoles !== "function") throw new Error("mac_local_host_configuration_invalid");
   if (input.startQueueWorker && (!input.createTaskApplication || typeof input.startQueueWorker !== "function"))
@@ -254,6 +276,9 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
           ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+          ...(input.hostProcessId ? { hostProcessId: input.hostProcessId } : {}),
+          ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
+            healthStartedAt: input.healthStartedAt } : {}),
           ...(service ? { operationsMode: service } : {}),
         });
         if (!input.startQueueWorker) return web;

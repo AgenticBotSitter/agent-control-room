@@ -181,13 +181,31 @@ CREATE TRIGGER control_result_publications_no_truncate BEFORE TRUNCATE ON contro
 --
 -- The check is deliberately one-directional — every publication has a stored
 -- set (the insert guard above, and the set's own foreign key), and every stored
--- FLEET set has exactly one publication. A native-text set is not this path and
--- is excluded, as it is in the insert guard: it was published by its own receipt
--- in 0206 and carries no store bytes.
+-- FLEET set has exactly one publication.
+--
+-- The predicate is `producer_kind='fleet'`, NOT `source_kind='file-store'`, and
+-- that is load-bearing. `source_kind` answers WHERE THE BYTES CAME FROM and says
+-- nothing about WHO published; `producer_kind` answers who. A `file-store` set is
+-- written by BOTH producers — the native results login publishes its own
+-- artifacts through the byte store (0206 requires an attempt in a producing
+-- state for exactly that shape), and so does a fleet worker uploading chunks.
+-- Keying this guard on `source_kind` therefore demanded a publication receipt —
+-- which `guard_result_publication_insert` refuses to issue for anything but a
+-- fleet producer — from the NATIVE publisher, so there was no honest way to
+-- comply and the ordinary results path was simply refused. Measured on the
+-- merged tree: part 1's own download lane failed its quota race with
+-- `result file set stored without a publication receipt` on the very first
+-- racer.
+--
+-- So the rule is stated the way the insert guard above and both sibling file
+-- guards already state it: a stored FLEET set has a receipt. A native producer's
+-- `file-store` set is published by its own attempt, exactly as before this
+-- migration, and a native-TEXT set was never this path (0206 gave it its
+-- receipt).
 CREATE FUNCTION enforce_result_set_published() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF NEW.state='stored' AND OLD.state IS DISTINCT FROM 'stored' AND NEW.source_kind='file-store'
+  IF NEW.state='stored' AND OLD.state IS DISTINCT FROM 'stored' AND NEW.producer_kind='fleet'
     AND NOT EXISTS (SELECT 1 FROM public.control_result_publications p
       WHERE p.tenant_id=NEW.tenant_id AND p.set_id=NEW.set_id
         AND p.manifest_digest=NEW.manifest_digest AND p.file_count=NEW.file_count

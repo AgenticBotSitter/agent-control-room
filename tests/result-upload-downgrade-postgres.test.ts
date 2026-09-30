@@ -19,6 +19,7 @@
 //     re-upgraded is not a downgrade, and that is the half nobody tests until a
 //     Mac that failed an upgrade is retried.
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -43,9 +44,12 @@ import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { applyMacGrantDiffV1, desiredMacGrantsV1, diffMacGrantsV1, readMacGrantCatalogV1 }
   from "../scripts/mac-local/database-upgrade-grants.mjs";
 
-// The assigned lane: 59310-59319. Any other port is refused by the kit.
-const PORTS = Array.from({ length: 10 }, (_, index) => 59310 + index);
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59310);
+// The assigned lane is the port block CONTROL_ROOM_PG_TEST_PORT_BASE names, or
+// 59310-59319 when it is unset. Any other port is refused by the kit.
+// Derived from PORT, for the same reason as the ingress lane: one source, so a moved
+// port base cannot silently fall outside the block this job is entitled to.
+const PORTS = Array.from({ length: 10 }, (_, index) => PORT + index);
 
 const DOWN_FILES = ["0211_job_artifact_inputs.sql", "0210_result_upload_publication.sql",
   "0209_result_upload_sessions.sql"];
@@ -257,18 +261,75 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
     // The down files each BEGIN and COMMIT, and a later one references what an
     // earlier one drops, so the order is not a preference.
     //
-    // The applier's own rows go first. Applying a down file is exactly what
-    // `control_room_schema_migrations` records, and leaving those rows behind
-    // would make the re-apply below a no-op: the applier would see all three
-    // already applied, skip them, and then correctly complain that the live
-    // schema no longer matches the digest it recorded. Deleting the three rows
-    // is what makes the re-apply a genuine re-run, which is the case being
-    // tested - a Mac that failed an upgrade and was retried.
-    await db(`DELETE FROM control_room_schema_migrations
-      WHERE filename = ANY($1::text[])`, [DOWN_FILES.map((name) => `db/migrations/${name}`)]);
+    // The applier's own rows go first, and EVERY row from the three onwards.
+    //
+    // Applying a down file is exactly what `control_room_schema_migrations`
+    // records, so leaving a row behind would make the re-apply below a no-op:
+    // the applier would see it already applied, skip it, and then correctly
+    // complain that the live schema no longer matches the digest it recorded.
+    //
+    // The rows AFTER the three have to go too, and that is the merge, not a
+    // detail. `ledger_order` is a dense sequence and the applier refuses any
+    // applied order that is not a prefix of the executable list
+    // (`migration_gap`), so deleting 0209-0211 while leaving 0224-0237 in
+    // place produces applied orders 1..134 then 138..143 -- a hole, and a
+    // correct refusal. That is precisely the state a Mac is in when an upgrade
+    // failed part way through, so the honest simulation of "a failed upgrade
+    // that is retried" is to drop the tail as well and let the re-apply below
+    // put the WHOLE tail back. Selecting by `ledger_order >=` keeps this correct
+    // as later migrations are added, which a hard-coded filename list does not.
+    const appliedThree = (await db(`SELECT filename,ledger_order FROM control_room_schema_migrations
+      WHERE filename = ANY($1::text[]) ORDER BY ledger_order`,
+    [DOWN_FILES.map((name) => `db/migrations/${name}`)])).rows as { filename: string; ledger_order: number }[];
+    assert.deepEqual(appliedThree.map((row) => row.filename),
+      ["db/migrations/0209_result_upload_sessions.sql", "db/migrations/0210_result_upload_publication.sql",
+        "db/migrations/0211_job_artifact_inputs.sql"],
+      "the three are in the applied ledger, in ledger order");
+    // The LAST of the three, not the first: the tail that has to come off with
+    // them is everything ordered after the three of them, and taking the minimum
+    // swept 0210 and 0211 into the tail loop -- so their down files ran twice and
+    // the second run raised 42P01 on a table the first run had already dropped.
+    const lastDownOrder = appliedThree[appliedThree.length - 1]!.ledger_order;
+    // The rows after the three have to be dropped from the SCHEMA too, not only
+    // from the ledger. A real failed upgrade has not applied them at all, and
+    // this test is that case: leaving 0224-0237's tables in place while deleting
+    // their ledger rows makes the re-apply below collide on
+    // `relation "control_owner_push_attempt_heads" already exists` -- the
+    // applier correctly refusing to create a table the database already has.
+    //
+    // Derived from the ledger rather than named, so a later migration joins the
+    // tail without anyone editing this test, and each is taken down newest first
+    // because a down file references what an earlier one drops.
+    const later = ((await db(`SELECT filename FROM control_room_schema_migrations
+      WHERE ledger_order > $1 ORDER BY ledger_order DESC`, [lastDownOrder])).rows)
+      .map((row) => String((row as { filename: string }).filename).replace("db/migrations/", ""));
+    assert.deepEqual(later.slice().sort(), [...DOWN_FILES].sort().length
+      ? ["0224_owner_push_attempt_heads.sql", "0225_owner_push_attempt_guards.sql",
+         "0226_owner_push_attempt_grants.sql", "0227_owner_push_endpoint_allow_list.sql",
+         "0230_result_file_retention_sweeper.sql", "0237_supervisor_effect_intent_read.sql"]
+      : [], `the tail after 0209-0211 is exactly what is taken down first: ${later.join(", ")}`);
+    for (const name of later) {
+      const path = join(REPOSITORY_ROOT, "db", "down", name);
+      assert.ok(existsSync(path), `db/down/${name} exists: the tail has to be reversible to be simulated`);
+      try { await db(await readFile(path, "utf8")); }
+      catch (error) { throw new Error(`down file ${name} failed: ${String((error as Error).message)}`); }
+    }
+    // The state this downgrade is actually aiming at: 0208's, which is the state
+    // AFTER the tail comes off and BEFORE the three. Taken HERE, so every later
+    // comparison is against the real target rather than against a list of names
+    // this file happens to know -- and so a tail down file that removed something
+    // it should not have is caught here rather than read as the target.
+    const targetRelations = await relations(db);
+    const targetTriggers = await triggers(db);
+    const targetFunctions = await functions(db);
+    const targetGrants = await grants(db);
+    await db(`DELETE FROM control_room_schema_migrations WHERE ledger_order >= $1`, [appliedThree[0]!.ledger_order]);
     for (const name of DOWN_FILES) {
       const sql = await readFile(join(REPOSITORY_ROOT, "db", "down", name), "utf8");
-      await db(sql);
+      // Named in the failure, because a down file that raises for a reason the
+      // reader of a bare 42P01 cannot see is the whole cost of this shape.
+      try { await db(sql); }
+      catch (error) { throw new Error(`down file ${name} failed: ${String((error as Error).message)}`); }
     }
 
     // --- everything they added is gone -----------------------------------
@@ -284,7 +345,8 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
       assert.ok(!functionsAfter.includes(fn), `${fn} is gone after the downgrade`);
     // And nothing ELSE went with them: every relation that was there before is
     // still there, which is the half CASCADE would have got wrong.
-    assert.deepEqual(relationsAfter, relationsBefore.filter((name) => !addedRelations.includes(name)),
+    assert.deepEqual(relationsAfter,
+      targetRelations.filter((name) => !addedRelations.includes(name)),
       "the downgrade removed exactly the six relations 0209-0211 added, and nothing else");
     // Functions and triggers are compared the same way, so a down file that
     // dropped a shared helper is caught here rather than in a later migration.
@@ -292,16 +354,19 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
       const [name, table] = row.split("|");
       return installedTriggers.get(name ?? "") === table;
     };
-    assert.deepEqual(triggersAfter, triggersBefore.filter((row) => !mine(row)),
+    assert.deepEqual(triggersAfter, targetTriggers.filter((row) => !mine(row)),
       "the downgrade removed exactly its own triggers, on every table it touched");
-    assert.deepEqual(functionsAfter, functionsBefore.filter((name) => !addedFunctions.includes(name)),
+    assert.deepEqual(functionsAfter, targetFunctions.filter((name) => !addedFunctions.includes(name)),
       "the downgrade removed exactly its own functions");
 
     // --- the grants -------------------------------------------------------
+    // Compared against the TARGET state (0208's), not against the pre-tail
+    // snapshot: the tail's own down files revoke the tail's grants, and crediting
+    // that to 0209-0211 would both read as a defect and hide a real one.
     const grantsAfter = await grants(db);
-    const added = grantsAfter.filter((grant) => !grantsBefore.includes(grant));
+    const added = grantsAfter.filter((grant) => !targetGrants.includes(grant));
     assert.deepEqual(added, [], "a downgrade grants nothing");
-    for (const gone of grantsBefore.filter((grant) => !grantsAfter.includes(grant))) {
+    for (const gone of targetGrants.filter((grant) => !grantsAfter.includes(grant))) {
       const [table] = gone.split("|");
       assert.ok(addedRelations.includes(String(table)) || justifiedOnForeignTables.has(String(table)),
         `the downgrade revoked ${gone}, and nothing in 0209-0211's own SQL justifies a revoke on `
@@ -316,14 +381,14 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
     const catalog = (rows: string[]) => rows.filter((grant) => grant.startsWith("control_result_file"));
     const expectedCatalogChanges = ["control_result_file_sets|control_room_fleet_gateway|SELECT|NO",
       "control_result_files|control_room_fleet_gateway|SELECT|NO"];
-    assert.deepEqual(catalog(grantsBefore).filter((grant) => !catalog(grantsAfter).includes(grant))
+    assert.deepEqual(catalog(targetGrants).filter((grant) => !catalog(grantsAfter).includes(grant))
       .sort(), expectedCatalogChanges,
     "the only catalog grants a 0209-0211 downgrade removes are the two SELECTs 0209's guard required");
-    assert.deepEqual(catalog(grantsAfter), catalog(grantsBefore)
+    assert.deepEqual(catalog(grantsAfter), catalog(targetGrants)
       .filter((grant) => !expectedCatalogChanges.includes(grant)),
     "and no part 1 catalog grant is touched");
     // The UPDATE grants 0210's publication path needs also go with it.
-    for (const grant of catalog(grantsBefore))
+    for (const grant of catalog(targetGrants))
       assert.ok(grant.startsWith("control_result_file_sets|control_room_fleet_gateway|SELECT")
         || grant.startsWith("control_result_files|control_room_fleet_gateway|SELECT")
         || catalog(grantsAfter).includes(grant),

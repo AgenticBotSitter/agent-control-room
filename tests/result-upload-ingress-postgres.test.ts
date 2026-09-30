@@ -24,7 +24,7 @@ import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyPrivateDataba
   from "../src/web/v1/private-database-preflight";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { FleetGatewayStoreV1, FleetOwnerServiceV1, scanForSecretsV1 } from "../src/fleet/v1";
-import { WebOperationsModeServiceV1 } from "../src/web/v1/operations-mode-service";
+import { WebOperationsModeServiceV1, readInstallationOperationsModeV1 } from "../src/web/v1/operations-mode-service";
 import { FLEET_TENANT, FLEET_WORKSPACE, PROJECT_A, PROJECT_B, ownerIdentity, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
@@ -33,10 +33,19 @@ import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
  * tripped it would be testing the wrong thing. */
 const PROJECT_C = "project:upload-gamma";
 const PROJECT_D = "project:upload-delta";
+/** A fifth project, for the one negative case below that needs its own claimed
+ * attempt: 0100 refuses a second worker's root-tree scope in one project, and
+ * `control_result_file_sets` is unique on (tenant, attempt). */
+const PROJECT_E = "project:upload-epsilon";
 
-// The assigned lane: 59310-59319. Any other port is refused by the kit.
-const PORTS = Array.from({ length: 10 }, (_, index) => 59310 + index);
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59310);
+// The assigned lane is the port block CONTROL_ROOM_PG_TEST_PORT_BASE names, or
+// 59310-59319 when it is unset. Any other port is refused by the kit.
+// Derived from the same PORT the cluster actually starts on, never a second
+// hard-coded base: a moved CONTROL_ROOM_PG_TEST_PORT_BASE would otherwise fail the
+// boundary guard (`attack_kit_port_outside_block`) on every run under a different
+// block, which reads as a broken test rather than as a moved port.
+const PORTS = Array.from({ length: 10 }, (_, index) => PORT + index);
 const PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => { if (PG) { required += 1; return undefined; } return { skip: realPostgresSkipMessage() }; };
@@ -127,14 +136,24 @@ test("upload sessions, chunks, publication and combine bindings hold their refus
     const fleetPool = await poolFor(postgres, "fleet");
     const fleetOwnerPool = await poolFor(postgres, "fleetOwner");
     const webPoolForMode = await poolFor(postgres, "web");
-    const gateway = new FleetGatewayStoreV1(fleetPool.client, { tenantId: FLEET_TENANT });
+    // The operations-mode reader is the AUTHENTICATED JOURNAL, read with the same
+    // integrity key the mode service below writes with -- the reader
+    // `scripts/run-fleet-gateway.ts` builds for the real gateway. Without it
+    // `operationsMode()` fails closed to "unknown" and every claim is refused
+    // `paused`, which is correct behaviour and a misleading fixture: the test
+    // would be measuring the missing reader rather than the upload path.
+    const modeKey = new Uint8Array(32).fill(9);
+    const gateway = new FleetGatewayStoreV1(fleetPool.client, { tenantId: FLEET_TENANT,
+      operationsMode: async () => (await readInstallationOperationsModeV1(
+        { query: fleetPool.client.query.bind(fleetPool.client) } as DatabaseSession,
+        FLEET_TENANT, modeKey)).mode });
     const owner = new FleetOwnerServiceV1(fleetOwnerPool.client, { tenantId: FLEET_TENANT,
       workspaceId: FLEET_WORKSPACE });
     try {
       assert.equal(await readPrivateWebSchemaDigest(db), privateWebSchemaDigest,
         "the recorded private web schema digest matches a live cluster with 0209-0211 applied");
       await seedFleetTenant((sql, params) => db.query(sql, params));
-      for (const project of [PROJECT_C, PROJECT_D]) {
+      for (const project of [PROJECT_C, PROJECT_D, PROJECT_E]) {
         await db.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,
           title,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
           VALUES($1,$2,$3,'adapter:fleet',$1,'1',$1,'running','fixture','healthy','control_room_native',$4,'{}',$4)`,
@@ -487,7 +506,7 @@ test("upload sessions, chunks, publication and combine bindings hold their refus
       // goes through the real service on the web login. That is also the honest
       // thing to test: 0209's guard reads what the service wrote.
       const modeService = new WebOperationsModeServiceV1(webPoolForMode.client,
-        { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE }, new Uint8Array(32).fill(9));
+        { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE }, modeKey);
       // A worker may not void with the `stopped` reason while the installation
       // is running, so this is not a worker's way to free a slot it failed to
       // fill. Only Stop itself may.
@@ -621,6 +640,154 @@ test("upload sessions, chunks, publication and combine bindings hold their refus
         [FLEET_TENANT]))[0]!.n >= 1, "the gateway reads the bindings");
       assert.ok((await fleet<{ n: number }>("SELECT count(*)::int AS n FROM control_task_declared_outputs WHERE tenant_id=$1",
         [FLEET_TENANT]))[0]!.n >= 2, "the gateway reads the declared outputs");
+      // ---- the boundary 0210 draws, and where it must NOT be drawn --------
+      // 0210's deferred set guard exists to refuse a stored FLEET set with no
+      // publication receipt. The predicate is `producer_kind='fleet'`, and the
+      // regression is the OTHER producer: a NATIVE publisher's `file-store` set
+      // is written by the same results login and has no upload session behind it,
+      // so demanding a receipt of it makes the ordinary results path
+      // unpublishable rather than safer.
+      //
+      // The first version of this guard keyed on `source_kind='file-store'`,
+      // which answers WHERE THE BYTES CAME FROM and not WHO published. That
+      // demanded a receipt the insert guard refuses to issue for a non-fleet
+      // producer, so the native publisher had no compliant statement at all --
+      // and part 1's own download lane failed on it. Both halves are proved here:
+      // the native set STORES (the path still works) and the fleet set without a
+      // receipt is still REFUSED (the guarantee survived the fix).
+      const nativeSet = "result-set:" + hex32(0xfeed);
+      const nativeFile = "result-file:" + hex32(0xbeef);
+      const nativeBytes = text("native file-store body\n");
+      const nativeHash = digestOf(nativeBytes);
+      // Its OWN job and attempt. `control_result_file_sets` is unique on
+      // (tenant, attempt) -- one result set per attempt -- so reusing the
+      // producing job's attempt collides with the set already standing for it.
+      const nativeJob = await seedProposedTask(db, PROJECT_C, "upload-native");
+      const nativeAttempt = "attempt:native-store";
+      const nativeRun = "run:native-store";
+      const nativeNode = `node:${hex32(0xabcd).slice(0, 12)}`;
+      await admin(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
+        VALUES($1,$2,'active',0,$3,
+          jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','active','version',0,
+            'identityKeyId',$3::text),$4,$4) ON CONFLICT (id) DO NOTHING`,
+        [nativeNode, FLEET_TENANT, `key:${hex32(0xabcd).slice(0, 12)}`, issuedAt]);
+      await admin(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,
+        payload,created_at,updated_at) VALUES($1,$2,$3,1,'running',0,NULL,$4,
+        jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','running','version',0,
+          'jobId',$3::text,'attemptNumber',1,'workerId',NULL::text,'nodeId',$4::text),$5,$5)`,
+        [nativeAttempt, FLEET_TENANT, nativeJob.jobId, nativeNode, issuedAt]);
+      // 0206 requires an attempt in a producing state behind a `file-store` set,
+      // and 0207 requires a published native receipt for this exact project, job
+      // and attempt -- so the node, the attempt, the run, the artifact and the
+      // receipt are all written rather than skipped. Skipping any of them would
+      // make this half of the regression test 0206/0207 instead.
+      // The receipt names a run, and 0020's foreign key is on the run's exact
+      // `(tenant, attempt, job, node)` tuple -- which is why the node above is the
+      // one the attempt carries, rather than a name invented here.
+      await admin(`INSERT INTO control_harness_runs(tenant_id,id,project_id,job_id,attempt_id,node_id,adapter_id,
+        harness,native_session_key_digest,state,last_sequence,run_digest,run_auth_tag,payload,created_at,
+        updated_at,last_observed_at) VALUES($1,$2,$3,$4,$5,$6,$7,'other',
+          $8,'running',0,$9,$10,'{}',$11,$11,$11)`,
+        [FLEET_TENANT, nativeRun, PROJECT_C, nativeJob.jobId, nativeAttempt, nativeNode, "adapter:fleet",
+          `sha256:${"f".repeat(64)}`, `sha256:${"e".repeat(64)}`, `hmac-sha256:${"e".repeat(64)}`, issuedAt]);
+      // And the receipt names an artifact, which is a real
+      // `control_artifact_manifests` row (0042's foreign key) -- the published
+      // native artifact the set is allowed to stand for.
+      const nativeArtifactId = "artifact:result:" + hex32(0xc0de);
+      await admin(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,
+        content_hash,state,version,payload,created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,'uploaded',1,
+          jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','uploaded','version',1,'projectId',$3::text,
+            'workflowId',$4::text,'jobId',$5::text,'attemptId',$6::text,'contentHash',$7::text),$8,$8)`,
+        [nativeArtifactId, FLEET_TENANT, PROJECT_C, "workflow:upload-native", nativeJob.jobId,
+          nativeAttempt, nativeHash, issuedAt]);
+      await admin(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,
+        artifact_id,receipt,auth_tag) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [FLEET_TENANT, PROJECT_C, nativeJob.jobId, nativeAttempt, nativeRun,
+          nativeArtifactId, JSON.stringify({ schema: "control-room.native-result-receipt/v1" }),
+          `hmac-sha256:${"e".repeat(64)}`]);
+      // ONE transaction for the whole publication, on a DEDICATED client.
+      //
+      // Both halves of that are load-bearing. 0206's completeness trigger is a
+      // DEFERRED constraint trigger that fires on INSERT as well as on the move
+      // into 'stored', so a set declared in one statement and its file in the
+      // next is exactly the half-finished publication it refuses -- the statements
+      // must share a transaction. And `pg` sends a parameterised query as a
+      // PREPARED statement, which PostgreSQL will not put several commands into,
+      // so they must share a connection rather than being one multi-statement
+      // string. `admin` opens a fresh client per call and so can do neither.
+      const publishClient = new Client(postgres.admin({ database: postgres.database }));
+      await publishClient.connect();
+      try {
+        await publishClient.query("BEGIN");
+        await publishClient.query(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,
+          attempt_id,producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,
+          retention_state,created_at) VALUES($1,$2,$3,$4,$5,'native','control-room-native','declared',
+          'file-store',1,$6,$7,'provisional',$8)`,
+        [FLEET_TENANT, nativeSet, PROJECT_C, nativeJob.jobId, nativeAttempt, nativeBytes.byteLength,
+          ZERO, issuedAt]);
+        await publishClient.query(`INSERT INTO control_result_files(tenant_id,set_id,project_id,job_id,ordinal,
+          file_id,display_name,declared_media_type,detected_media_type,size_bytes,content_digest,storage_key,
+          state,created_at) VALUES($1,$2,$3,$4,1,$5,'native.txt','text/plain','text/plain',$6,$7,$8,
+          'declared',$9)`,
+        [FLEET_TENANT, nativeSet, PROJECT_C, nativeJob.jobId, nativeFile, nativeBytes.byteLength, nativeHash,
+          ZERO, issuedAt]);
+        await publishClient.query(
+          "UPDATE control_result_files SET state='stored',stored_at=$3 WHERE tenant_id=$1 AND set_id=$2",
+          [FLEET_TENANT, nativeSet, issuedAt]);
+        await publishClient.query(`UPDATE control_result_file_sets SET state='stored',stored_at=$3,manifest_digest=
+          (SELECT 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(string_agg(
+            ordinal::text || ':' || storage_key || ':' || content_digest || ':' || size_bytes::text,
+            E'\\n' ORDER BY ordinal), 'UTF8')), 'hex') FROM control_result_files
+            WHERE tenant_id=$1 AND set_id=$2 AND state='stored') WHERE tenant_id=$1 AND set_id=$2`,
+        [FLEET_TENANT, nativeSet, issuedAt]);
+        await publishClient.query("COMMIT");
+      } catch (error) {
+        await publishClient.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally { await publishClient.end(); }
+      assert.equal((await admin<{ state: string }>("SELECT state FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
+        [FLEET_TENANT, nativeSet]))[0]!.state, "stored",
+        "a native producer's file-store set still stores without an upload receipt (0210's guard is fleet-only)");
+      // And the guarantee itself: a FLEET set that skips the receipt is refused.
+      // A set of its OWN, because `set` is already published by this point and a
+      // published set cannot move back into 'stored' -- so reusing it would prove
+      // nothing about the receipt guard.
+      const unreceiptedSet = setIdOf(9);
+      // Its own claimed job and attempt, in PROJECT_D: `control_result_file_sets`
+      // is unique on (tenant, attempt), so reusing `plannedB`'s attempt collides
+      // with the expiry set already standing for it -- and a second claiming
+      // worker in one project is 0100's ownership-lease collision, which is
+      // correct and is not what this file is about.
+      const unreceiptedTask = await seedProposedTask(db, PROJECT_E, "upload-unreceipted");
+      const unreceiptedJob = await enrollAndClaim(db, owner, gateway, postgres, PROJECT_E, "upload-unreceipted");
+      await db.transaction(async tx => {
+        await tx.query(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,attempt_id,
+          producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,created_at)
+          VALUES($1,$2,$3,$4,$5,'fleet',$6,'declared','file-store',1,$7,$8,'provisional',$9)`,
+          [FLEET_TENANT, unreceiptedSet, PROJECT_E, unreceiptedJob.jobId, unreceiptedJob.attemptId,
+            unreceiptedJob.workerId, bytes.byteLength, ZERO, issuedAt]);
+        await tx.query(`INSERT INTO control_result_files(tenant_id,set_id,project_id,job_id,ordinal,file_id,
+          display_name,declared_media_type,detected_media_type,size_bytes,content_digest,storage_key,state,created_at)
+          VALUES($1,$2,$3,$4,1,$5,'unreceipted.txt','text/plain','text/plain',$6,$7,$8,'declared',$9)`,
+          [FLEET_TENANT, unreceiptedSet, PROJECT_E, unreceiptedJob.jobId, fileIdOf(9), bytes.byteLength,
+            hash, ZERO, issuedAt]);
+      });
+      await assert.rejects(admin(`UPDATE control_result_files SET state='stored',stored_at='${issuedAt}'
+          WHERE tenant_id='${FLEET_TENANT}' AND set_id='${unreceiptedSet}';
+        UPDATE control_result_file_sets SET state='stored',stored_at='${issuedAt}',manifest_digest=
+          (SELECT 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(string_agg(
+            ordinal::text || ':' || storage_key || ':' || content_digest || ':' || size_bytes::text,
+            E'\\n' ORDER BY ordinal), 'UTF8')), 'hex') FROM control_result_files
+            WHERE tenant_id='${FLEET_TENANT}' AND set_id='${unreceiptedSet}' AND state='stored')
+          WHERE tenant_id='${FLEET_TENANT}' AND set_id='${unreceiptedSet}'`), (error: unknown) => {
+        const detail = String((error as { detail?: string; message?: string }).detail
+          ?? (error as { message?: string }).message ?? "");
+        assert.match(detail, /publication receipt/,
+          `a fleet set with no receipt is refused for the receipt reason: ${detail}`);
+        return true;
+      }, "a fleet set stored with no publication receipt is refused");
+
       // The native publisher is not on this path at all: 0209 is fleet-only by
       // construction, and the login is refused even for a hand-written insert.
       await guard(results, { sql: insertSession, params: [FLEET_TENANT, uploadIdOf(12), PROJECT_C, producing.jobId,
@@ -707,7 +874,7 @@ async function enrollAndClaim(db: DatabaseClient, owner: FleetOwnerServiceV1, ga
   const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "Uploader " + name,
     workerKind: "mcp-agent", projectIds: [projectId], capabilities: ["writing"], maxConcurrent: 1 });
   const secret = `crf_${randomUUID().replace(/-/gu, "").padEnd(43, "x").slice(0, 43)}`;
-  const joined = await gateway.enroll({ code: code.code,
+  const joined = await gateway.enroll({ code: code.code, workerKind: "mcp-agent",
     credentialDigest: `sha256:${createHash("sha256").update(secret, "utf8").digest("hex")}`,
     platform: "macos", architecture: "arm64", connectorVersion: "1.0.0",
     clientNonce: `crn_${randomUUID().replace(/-/gu, "").padEnd(43, "y").slice(0, 43)}` });
