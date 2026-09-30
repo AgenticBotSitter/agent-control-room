@@ -4,6 +4,8 @@ import { canTransitionHarnessRun, isTerminalHarnessRunState } from "./lifecycle"
 import { harnessRunEventSchemaV1, harnessRunSchemaV1 } from "./schemas";
 import type { HarnessRunEventV1, HarnessRunState, HarnessRunV1 } from "./types";
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "./native-observation";
+import type { UsageRollupGroupV1 } from "../../usage/v1/usage-cost";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
 
 export interface StoredHarnessRunEventRowV1 {
   tenant_id: string; run_id: string; sequence: number | string; occurred_at: string | Date; source: string;
@@ -64,8 +66,10 @@ export function verifyStoredHarnessRunV1(row: StoredHarnessRunRowV1, integrityKe
 }
 
 export class HarnessRunStoreV1 {
+  private readonly projectEventKey: Uint8Array;
   constructor(private readonly db: DatabaseClient, private readonly integrityKey: Uint8Array) {
     hmacSha256Tag(integrityKey,{ purpose:"harness-run-store-key-check" });
+    this.projectEventKey = deriveProjectEventIntegrityKeyV1(integrityKey);
   }
 
   async create(input: HarnessRunV1): Promise<{ run: HarnessRunV1; replayed: boolean }> {
@@ -169,6 +173,18 @@ export class HarnessRunStoreV1 {
       await tx.query(`INSERT INTO control_harness_run_events (tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)`, [event.tenantId,event.runId,event.sequence,event.occurredAt,event.source,event.sourceEventKeyDigest,eventDigest,eventAuthTag,JSON.stringify(event),event.occurredAt]);
       const updatedDigest=sha256Digest(updated); const runAuthTag=hmacSha256Tag(this.integrityKey,runAuthMaterial({...row,payload:updated,last_sequence:event.sequence,run_digest:updatedDigest,state:updated.state,updated_at:event.occurredAt,last_observed_at:event.occurredAt}));
       await tx.query(`UPDATE control_harness_runs SET state=$1,last_sequence=$2,run_digest=$3,run_auth_tag=$4,payload=$5::jsonb,updated_at=$6,last_observed_at=$6 WHERE tenant_id=$7 AND id=$8`, [updated.state,event.sequence,updatedDigest,runAuthTag,JSON.stringify(updated),event.occurredAt,event.tenantId,event.runId]);
+      const action = nextState === "running" ? "task_started" : nextState === "succeeded" ? "task_finished"
+        : nextState === "failed" ? "task_failed" : undefined;
+      if (action && nextState !== run.state) {
+        const project = (await tx.query<{ workspace_id: string }>(
+          "SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2", [run.tenantId, run.projectId])).rows[0];
+        if (!project) throw new Error("harness run project unavailable");
+        const projectEvents = new TaskProjectEventWriterV1(
+          new ProjectEventStoreV1(this.db, this.projectEventKey, () => event.occurredAt));
+        await projectEvents.appendInSession(tx, { tenantId: run.tenantId, workspaceId: project.workspace_id,
+          projectId: run.projectId, subjectId: run.jobId, action, sourceId: event.runId,
+          sourceVersion: `run-event-${event.sequence}`, occurredAt: event.occurredAt });
+      }
       return { run: updated, replayed: false };
   }
 
@@ -257,17 +273,169 @@ export class HarnessRunStoreV1 {
     return output;
   }
 
-  /** Exact authenticated usage aggregation source. Presentation limits are
-   * applied elsewhere; this read deliberately includes every run in scope. */
-  async inspectUsageScope(tenantId: string, projectId: string, jobId?: string): Promise<readonly {
-    run: HarnessRunV1; events: HarnessRunEventV1[] }[]> {
+  /** Bounded, exact usage aggregation source for a whole scope.
+   *
+   * The page displays a bounded number of runs, but its TOTALS must cover every
+   * run in scope, so the totals cannot be summed from a bounded row set — and
+   * reading every run to sum them is exactly the unbounded read this replaces
+   * (see the #412 review). So the summation happens in PostgreSQL and the
+   * application receives one row per distinct pricing shape, never one row per
+   * run.
+   *
+   * The grouping key is every value that decides a run's pricing BRANCH:
+   * attempt, harness, model, the nullness of each token field, whether any
+   * cached tokens were reported, and whether any billable input count is
+   * negative (which forces the `partial_token_usage` refusal the per-run path
+   * returns). Token MAGNITUDES are deliberately NOT in the key: within a group
+   * the cost is linear in the sums, so pricing one representative branch and
+   * applying its rates to the group's sums is exact rather than an average
+   * multiplied back by a count. See `rollupUsageGroupsV1`.
+   *
+   * The bound is therefore a function of the priceable shapes, not of history.
+   * Without a set of attempt ids it is `4 harnesses x the project's models x
+   * 2^5 shape flags`. With a set, as the task-detail read passes, it is
+   * `|ids| x` that product, where `ids` is the page's own attempt display bound.
+   * Neither grows as runs accumulate.
+   *
+   * Two details of the stored shape this has to respect, both measured on a real
+   * cluster rather than assumed:
+   *   - `control_harness_run_events.payload` holds the WHOLE event record, so the
+   *     event's own `category` is at `payload->'payload'->>'category'`;
+   *   - `EXTRACT(EPOCH FROM ...)` needs the timestamp DIFFERENCE parenthesised,
+   *     not each operand, or the statement is a syntax error.
+   *
+   * Read amplification is what this defends, so the rows it returns carry no
+   * event payload and are not digest-verified here: verified rows stay on the
+   * presentation path (`inspectAttempts`), which is unchanged.
+   */
+  async inspectUsageRollup(tenantId: string, projectId: string, jobId?: string,
+    attemptIds?: readonly string[]): Promise<readonly UsageRollupGroupV1[]> {
     const parameters: unknown[] = [tenantId, projectId];
-    const job = jobId === undefined ? "" : ` AND r.job_id=$${parameters.push(jobId)}`;
-    const rows = (await this.db.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()}
-      FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.project_id=$2${job}
-      ORDER BY r.attempt_id COLLATE "C",r.created_at DESC,r.id COLLATE "C" DESC`, parameters)).rows;
-    return rows.map(row => ({ run: verifyStoredHarnessRunV1(row, this.integrityKey),
-      events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) }));
+    const job = jobId === undefined ? "" : ` AND r.job_id=$${parameters.push(jobId)} `;
+    // Per-attempt grouping is requested only by the job-scoped task-detail read,
+    // and it is bound by the ATTEMPT IDS the page passes, not by the job's whole
+    // attempt history. The page renders ten attempts (`LIMIT 11`, then
+    // `slice(0, 10)`), so it passes those ten: the aggregate then covers exactly
+    // what the page shows, and the group count is at most
+    // `10 x priceable shapes` however many attempts the job has accumulated.
+    //
+    // Passing the set rather than merely asking to group by attempt is the whole
+    // fix. Grouping by `attempt_id` over the JOB's history would return one
+    // group per attempt ever recorded, which grows with retries and is the
+    // unbounded read this replaces, one level down — measured on a real cluster
+    // at exactly one row per attempt from 1 to 500 attempts. The project-wide
+    // read passes no ids and so does not group by attempt at all: a project
+    // spans every job's retries, and its row count must track the number of
+    // priceable shapes, never project age.
+    //
+    // A supplied set also keeps the two read paths consistent by construction:
+    // the runs `inspectAttempts` displays and the per-attempt rollup totals are
+    // read over the same attempt ids, so a rollup can never describe an attempt
+    // the page does not show, nor omit one it does.
+    const attemptIds_ = attemptIds === undefined ? undefined : [...new Set(attemptIds)];
+    // An empty set means the page displays no attempts, so there is nothing to
+    // group. An `= ANY('{}')` would be the same answer, but this returns without
+    // a statement at all rather than issuing one that must return no rows.
+    if (attemptIds_?.length === 0) return [];
+    const attempt = attemptIds_ === undefined ? "" : "attempt_id,";
+    const scoped = attemptIds_ === undefined
+      ? ""
+      : ` AND r.attempt_id=ANY($${parameters.push(attemptIds_)}::text[])`;
+    const rows = (await this.db.query<{ attempt_id: string | undefined; harness: string; model: string | null;
+      runs: string | number; input_tokens: string | null;
+      billable_input_tokens: string | null; output_tokens: string | null; total_tokens: string | null;
+      wall_time_ms: string | null; cached_input_tokens: string | null; negative_billable_runs: string | number }>(
+      `WITH resolved AS (
+         SELECT r.attempt_id,r.harness,r.payload->'modelSelection'->>'model' AS model,
+           -- The run's OWN observed duration, for EVERY run. It is computed here
+           -- rather than inside the event lookups because the per-run evidence reader falls
+           -- back to it when an event reports no wall time AND reports it alone
+           -- for a run that has no usage event at all; a lateral would have
+           -- dropped it for exactly those runs, turning a real wall-time total
+           -- into null.
+           (CASE WHEN r.payload->>'startedAt' IS NOT NULL AND r.payload->>'finishedAt' IS NOT NULL
+             THEN (EXTRACT(EPOCH FROM ((r.payload->>'finishedAt')::timestamptz
+                   -(r.payload->>'startedAt')::timestamptz))*1000)::bigint END) AS duration_ms,
+           -- The per-run evidence reader's precedence, in full: the LAST usage event;
+           -- LAST native snapshot's usage; else wall time alone; else nothing.
+           --
+           -- Three details are load-bearing and each was a wrong-number bug before
+           -- it was pinned by a test:
+           --   1. Neither lookup filters on which of an event's fields are
+           --      non-null. That reader takes the LAST event it finds and
+           --      reports whatever that one says, nulls included, so a later
+           --      native snapshot whose usage is null is the ANSWER and not an
+           --      event to skip past in favour of an earlier one that had usage.
+           --   2. The input+output fallback for a MISSING totalTokens applies to
+           --      usage events only. A native snapshot reports the total it
+           --      reported, and the application never derives one for it.
+           --   3. A native snapshot's wall time is the run's duration, never a
+           --      figure taken from the event, which carries none.
+           CASE WHEN u.run_id IS NOT NULL THEN (u.payload->'payload'->>'inputTokens')::bigint
+             ELSE (n.payload->'payload'->'snapshot'->'usage'->>'inputTokens')::bigint END AS input_tokens,
+           CASE WHEN u.run_id IS NOT NULL THEN (u.payload->'payload'->>'outputTokens')::bigint
+             ELSE (n.payload->'payload'->'snapshot'->'usage'->>'outputTokens')::bigint END AS output_tokens,
+           CASE WHEN u.run_id IS NOT NULL
+             THEN COALESCE((u.payload->'payload'->>'totalTokens')::bigint,
+                 CASE WHEN (u.payload->'payload'->>'inputTokens')::bigint IS NOT NULL
+                     AND (u.payload->'payload'->>'outputTokens')::bigint IS NOT NULL
+                   THEN (u.payload->'payload'->>'inputTokens')::bigint
+                      +(u.payload->'payload'->>'outputTokens')::bigint END)
+             ELSE (n.payload->'payload'->'snapshot'->'usage'->>'totalTokens')::bigint END AS total_tokens,
+           CASE WHEN u.run_id IS NOT NULL
+             THEN COALESCE((u.payload->'payload'->>'wallTimeMs')::bigint,
+                 (CASE WHEN r.payload->>'startedAt' IS NOT NULL AND r.payload->>'finishedAt' IS NOT NULL
+                   THEN (EXTRACT(EPOCH FROM ((r.payload->>'finishedAt')::timestamptz
+                         -(r.payload->>'startedAt')::timestamptz))*1000)::bigint END))
+             ELSE (CASE WHEN r.payload->>'startedAt' IS NOT NULL AND r.payload->>'finishedAt' IS NOT NULL
+                   THEN (EXTRACT(EPOCH FROM ((r.payload->>'finishedAt')::timestamptz
+                         -(r.payload->>'startedAt')::timestamptz))*1000)::bigint END) END AS wall_time_ms,
+           CASE WHEN u.run_id IS NOT NULL
+             THEN COALESCE((u.payload->'payload'->>'cachedInputTokens')::bigint,0)
+             ELSE 0 END AS cached_input_tokens
+         FROM control_harness_runs r
+         LEFT JOIN LATERAL (
+           SELECT e.run_id,e.payload FROM control_harness_run_events e
+           WHERE e.tenant_id=r.tenant_id AND e.run_id=r.id
+             AND e.payload->'payload'->>'category'='usage'
+           ORDER BY e.sequence DESC LIMIT 1
+         ) u ON true
+         LEFT JOIN LATERAL (
+           -- The LAST native snapshot. Deliberately NOT filtered on whether its
+           -- usage is null: the last snapshot is the current observation, and a
+           -- null usage is the ANSWER rather than a reason to reach back to a
+           -- superseded one. Measured on PostgreSQL 17, a JSON-null usage still
+           -- satisfies IS NOT NULL, so adding such a filter would not
+           -- change today's answer either — the correctness here rests on the
+           -- ORDER BY, and the absence of the filter keeps it true for an
+           -- ABSENT key as well.
+           SELECT e.run_id,e.payload FROM control_harness_run_events e
+           WHERE e.tenant_id=r.tenant_id AND e.run_id=r.id
+             AND e.payload->'payload'->>'category'='native_snapshot'
+           ORDER BY e.sequence DESC LIMIT 1
+         ) n ON true
+         WHERE r.tenant_id=$1 AND r.project_id=$2${job}${scoped}
+       )
+       SELECT ${attempt}harness,model,count(*)::text AS runs,
+         CASE WHEN count(*) FILTER (WHERE input_tokens IS NULL)=0 THEN sum(input_tokens)::text END AS input_tokens,
+         CASE WHEN count(*) FILTER (WHERE input_tokens IS NULL)=0 THEN
+           sum(input_tokens-(CASE WHEN harness='codex' THEN cached_input_tokens ELSE 0 END))::text END AS billable_input_tokens,
+         CASE WHEN count(*) FILTER (WHERE output_tokens IS NULL)=0 THEN sum(output_tokens)::text END AS output_tokens,
+         CASE WHEN count(*) FILTER (WHERE total_tokens IS NULL)=0 THEN sum(total_tokens)::text END AS total_tokens,
+         CASE WHEN count(*) FILTER (WHERE wall_time_ms IS NULL)=0 THEN sum(wall_time_ms)::text END AS wall_time_ms,
+         sum(cached_input_tokens)::text AS cached_input_tokens,
+         count(*) FILTER (WHERE harness='codex' AND input_tokens-cached_input_tokens<0)::text AS negative_billable_runs
+       FROM resolved GROUP BY ${attempt}harness,model,input_tokens IS NULL,output_tokens IS NULL,
+         total_tokens IS NULL,wall_time_ms IS NULL,cached_input_tokens>0,
+         (harness<>'codex' OR input_tokens IS NULL OR input_tokens-cached_input_tokens>=0)`,
+      parameters)).rows;
+    return rows.map(row => ({
+      attemptId: row.attempt_id,
+      harness: row.harness as UsageRollupGroupV1["harness"],
+      model: row.model, runs: Number(row.runs), inputTokens: row.input_tokens,
+      billableInputTokens: row.billable_input_tokens,
+      outputTokens: row.output_tokens, totalTokens: row.total_tokens, wallTimeMs: row.wall_time_ms,
+      cachedInputTokens: row.cached_input_tokens ?? "0", negativeBillableRuns: Number(row.negative_billable_runs) }));
   }
 
   async events(tenantId: string, runId: string, limit = 200): Promise<HarnessRunEventV1[]> {

@@ -8,6 +8,7 @@ import { LinearPipelineServiceV1 } from "../../pipelines/v1";
 import { createInstalledPipelineCodexWorkerCompositionV1,
   type InstalledPipelineCodexWorkerCompositionInputV1 } from "../../node-bridge/codex-worker-composition";
 import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1 } from "../../project-events/v1";
+import { DatabaseWorkerBoardReadSourceV1 } from "./worker-board-read";
 
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
@@ -56,6 +57,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   }) => (await operatorSurfaceService.read({
     scope: { tenantId: input.tenantId, actorId: input.actorId, grantedAt: input.grantedAt }, now: input.now,
   })).snapshot });
+  const workerBoard = new DatabaseWorkerBoardReadSourceV1(coordinator.database.client);
   const actionInboxSource = Object.freeze({ read: async (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string; state: "open";
   }) => {
@@ -74,9 +76,11 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, actionInboxSource,
-    ...(web.workBatches && tasks.workBatchAuthority ? { workBatches: { ...web.workBatches,
-      queueAdmissionAuthority: tasks.workBatchAuthority } } : {}),
+  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, workerBoard, actionInboxSource,
+    // The web login gets only the coordinator snapshot; the transaction-bound
+    // authority stays with the controller-side pipeline service above.
+    ...(web.workBatches && tasks.workBatchView ? { workBatches: { ...web.workBatches,
+      queueAdmissionAuthority: tasks.workBatchView } } : {}),
     ...(web.projectEvents ? {} : web.tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
       deriveProjectEventIntegrityKeyV1(web.tasks.harnessIntegrityKey), () => new Date(web.clock?.() ?? Date.now()).toISOString()) } : {}),
     planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission,

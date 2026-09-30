@@ -17,6 +17,10 @@ class ControlledStorage implements ArtifactStoragePortV1, ArtifactReadPortV1 {
   throwAfterPut = false;
   missingReadback = false;
   timeoutPut = false;
+  // Synchronous busy-wait inside `put`, in ms. Starves the event loop so the
+  // publisher's `setTimeout(storageIoMs)` cannot fire until the write has
+  // already settled, reproducing a CI scheduler stall deterministically.
+  stallPutMs = 0;
   private enteredResolve!: () => void;
   private releaseResolve!: () => void;
   readonly entered = new Promise<void>(resolve => { this.enteredResolve = resolve; });
@@ -27,6 +31,11 @@ class ControlledStorage implements ArtifactStoragePortV1, ArtifactReadPortV1 {
   async put(input: { artifactId: string; bytes: Uint8Array; signal?: AbortSignal }) {
     this.putCalls++;
     this.enteredResolve();
+    if (this.stallPutMs > 0) {
+      // Synchronous: no await, so the timer phase cannot run until this returns.
+      const until = performance.now() + this.stallPutMs;
+      while (performance.now() < until) { /* starve the event loop on purpose */ }
+    }
     if (this.timeoutPut) {
       await new Promise<never>((_resolve, reject) => input.signal?.addEventListener("abort",
         () => reject(new Error("synthetic_aborted_put")), { once: true }));
@@ -114,6 +123,30 @@ test("a timed-out write and missing exact readback both persist storage uncertai
     second.input.body, second.input.bytes, second.receivedAt), /result_storage_uncertain/);
   assert.equal((await reservationState(second.f.db)).state, "storage_uncertain");
   assert.equal(missing.putCalls, 1);
+});
+
+test("a storage stall that lets the write settle after its bound still commits, and does not poison a later read", async t => {
+  // The regression this suite must catch: `durableStorageIo()` (the shared
+  // helper both `NativeResultStore.io()` and the durable publisher delegate
+  // to) used to re-check elapsed wall-clock time AFTER the race settled, so a
+  // write that genuinely succeeded and verified was reported as
+  // `result_storage_uncertain` whenever a scheduler/GC stall made the elapsed
+  // time exceed the bound. Deterministic reproduction: a SYNCHRONOUS
+  // busy-wait inside `put` starves the event loop, so `setTimeout(storageIoMs)`
+  // cannot fire until the operation has already settled - the race is won by
+  // the operation even though wall-clock time exceeds the bound.
+  const storage = new ControlledStorage(); storage.stallPutMs = 40;
+  const x = await prepared("Stalled but verified native write.", storage, 5); t.after(x.f.close);
+  const captured = await x.store.capture(binding.tenantId, binding.nodeId, x.input.body, x.input.bytes, x.receivedAt);
+  assert.equal(captured.replayed, false);
+  assert.equal((await reservationState(x.f.db)).state, "metadata_committed");
+  // `NativeResultStore` additionally copies the shared helper's flag back
+  // onto the instance in a `finally` (native-results.ts), making it a sticky,
+  // cross-call latch. Prove the slow-but-successful write above did not set
+  // it: a later read through the SAME store instance must still succeed
+  // rather than failing closed with `result_storage_uncertain`.
+  const read = await x.f.db.transaction(tx => x.store.read(tx, binding.tenantId, binding.projectId, binding.jobId, captured.receipt.artifactId));
+  assert.equal(read?.text, "Stalled but verified native write.");
 });
 
 function failingMetadataDatabase(base: DatabaseClient): DatabaseClient {

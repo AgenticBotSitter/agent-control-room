@@ -11,6 +11,31 @@ import { InstallationTopologyProvider } from "../private-app/app/installation-to
 import { WorkersWorkspace } from "../private-app/app/workers/workers-workspace";
 import { PRODUCT_CONFIGURATION_SCHEMA_V1 } from "../src/config/v1/product-configuration";
 
+/** A Mac-local host serves `/api/v1/needs-me/tasks` unconditionally
+ * (src/web/v1/mac-local-web-process.ts:291 — unlike the action-inbox and
+ * pipelines siblings, it has no host-option gate), so the header's "Needs
+ * you" badge read is legitimate in every configuration this file exercises.
+ *
+ * The truncated form is deliberately honest about the wire contract:
+ * readTaskAttention only accepts a `nextCursor` when the page reports
+ * `examined: 25` and every returned jobId sorts at or before the cursor, so a
+ * shorter cursor page is rejected by the client rather than shown as a
+ * confident exact count. */
+const attentionPage = (items, nextCursor = null) => ({ items, nextCursor,
+  examined: nextCursor === null ? items.length : 25,
+  observedAt: "2026-09-29T07:00:00.000Z", startsWork: false,
+  planningSource: "not_configured", deliverySource: "not_configured",
+  sources: { ordinary: "included", ideas: "not_configured" } });
+const attentionItem = (jobId) => ({ task: { jobId, projectId: "project:alpha", requestId: `request-${jobId}`,
+  title: `Saved task ${jobId}`, state: "succeeded", version: 1,
+  createdAt: "2026-09-29T06:00:00.000Z", updatedAt: "2026-09-29T06:30:00.000Z" },
+  inputDigest: `sha256:${"a".repeat(64)}`, reasons: ["review"] });
+/** The badge read is deferred by a zero-delay timer (private-header.tsx's
+ * useNeedsAttentionBadge, so StrictMode's double mount issues one request).
+ * Every act() in this file must therefore flush a macrotask turn before it
+ * asserts on request order, or the assertion races the timer. */
+const flushBadgeRead = async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
+
 const profile = (displayName, enabled) => ({
   schema: PRODUCT_CONFIGURATION_SCHEMA_V1,
   displayName,
@@ -38,8 +63,25 @@ test("one client shell binds truthful links to two distinct sanitized configurat
     for (const [configuration, optionalLinks] of [[profile("Research Room", true), true],
       [profile("Operations Room", false), false]]) {
       let respond;
-      globalThis.fetch = path => path === "/api/v1/local-workers" ? Promise.resolve(new Response(null, { status: 404 }))
-        : new Promise(resolve => { respond = resolve; });
+      // Per-path routing, not a single shared responder: the mounted
+      // PrivateHeader issues its own deferred badge read for
+      // /api/v1/needs-me/tasks, so a one-slot `respond` would hand that
+      // response to the configuration read (leaving the brand on the neutral
+      // "Control Room" shell) or starve the badge. Each path is answered by
+      // the read that owns it; anything else is an error, so an unexpected
+      // request cannot pass unnoticed as a silent 404.
+      const attentionReads = [];
+      globalThis.fetch = path => {
+        if (path === "/api/v1/local-workers") return Promise.resolve(new Response(null, { status: 404 }));
+        if (path === "/api/v1/needs-me/tasks") {
+          // No saved work needs the owner here, so this configuration's badge
+          // stays absent — the truthful state, asserted below.
+          attentionReads.push(path);
+          return Promise.resolve(Response.json(attentionPage([])));
+        }
+        if (path === "/api/v1/product-configuration") return new Promise(resolve => { respond = resolve; });
+        throw new Error(`unsupported shell fetch: ${path}`);
+      };
       await act(async () => root.render(React.createElement(LocalRuntimeProvider, null,
         React.createElement(ProductConfigurationProvider, null,
         React.createElement(PrivateHeader),
@@ -50,11 +92,18 @@ test("one client shell binds truthful links to two distinct sanitized configurat
       assert.equal(dom.window.document.querySelector('a[href="/projects/project%3Aalpha/news"]'), null);
 
       await act(async () => { respond(Response.json(configuration)); await Promise.resolve(); });
+      // The badge read is deferred by a macrotask; flush it before asserting
+      // on the finished shell, or this asserts on a half-rendered header.
+      await flushBadgeRead();
+      assert.deepEqual(attentionReads, ["/api/v1/needs-me/tasks"],
+        "the header reads the served needs-you page exactly once per mount");
+      assert.equal(dom.window.document.querySelector(".private-nav-badge"), null,
+        "a served but empty attention page is reported as no badge, not a 0");
       assert.equal(dom.window.document.querySelector(".private-brand")?.textContent, configuration.displayName);
       const workspaceLinks = [...dom.window.document.querySelectorAll("#private-workspace-navigation a")]
         .map(link => [link.textContent?.replaceAll(/\s+/g, " ").trim(), link.getAttribute("href")]);
-      assert.deepEqual(workspaceLinks.slice(0, 8), [["Home", "/"], ["Projects", "/projects"], ["Workers", "/workers"],
-        ["Session watch", "/session-watch"], ["Setup", "/setup"], ["Control Room", "/workboard"],
+      assert.deepEqual(workspaceLinks.slice(0, 9), [["Home", "/"], ["Morning summary", "/morning"], ["Projects", "/projects"],
+        ["Workers", "/workers"], ["Session watch", "/session-watch"], ["Setup", "/setup"], ["Control Room", "/workboard"],
         ["Action Inbox", "/needs-me"], ["Settings", "/settings"]]);
       assert.equal(dom.window.document.querySelector('a[href="/ideas"]') !== null, optionalLinks);
       assert.equal(dom.window.document.querySelector('a[href="/projects/project%3Aalpha/news"]')?.textContent === "News", optionalLinks);
@@ -80,6 +129,8 @@ test("local client shell exposes only reachable routes and reads only local work
   const reads = [];
   globalThis.fetch = path => {
     reads.push(path);
+    if (path === "/api/v1/needs-me/tasks") return Promise.resolve(Response.json(attentionPage([])));
+    if (path === "/api/v1/product-configuration") return Promise.resolve(Response.json(profile("Control Room", false)));
     if (path !== "/api/v1/local-workers") throw new Error(`unsupported local fetch: ${path}`);
     return Promise.resolve(Response.json({ taskWorkersStarted: true,
       projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "files"], workers: [
@@ -94,9 +145,15 @@ test("local client shell exposes only reachable routes and reads only local work
         React.createElement(InstallationTopologyProvider, null,
           React.createElement(WorkersWorkspace),
           React.createElement(ProjectNavigation, { projectId: "project:alpha", current: "overview" }))))));
-    assert.deepEqual(reads, ["/api/v1/local-workers"]);
+    // WorkersWorkspace mounts the shared PrivateHeader, and the Mac-local
+    // host serves both the sanitized product configuration and
+    // /api/v1/needs-me/tasks, so those are legitimate reads here. What must
+    // stay bounded is that no hosted-only route is contacted.
+    await flushBadgeRead();
+    assert.deepEqual(reads, ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks"]);
     const links = [...dom.window.document.querySelectorAll("a[href]")].map(link => link.getAttribute("href"));
     assert.ok(links.includes("/workers"));
+    assert.ok(links.includes("/morning"));
     assert.ok(links.includes("/session-watch"));
     assert.ok(links.includes("/needs-me"));
     assert.ok(links.includes("/projects/project%3Aalpha/tasks"));
@@ -113,6 +170,58 @@ test("local client shell exposes only reachable routes and reads only local work
     dom.window.close();
     for (const [key, descriptor] of Object.entries(saved)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+    }
+  }
+});
+
+/** The "Needs you" badge is the one header read that is allowed to fail
+ * without degrading the page, so it gets its own test: a Mac-local host
+ * serves the endpoint, and a host that does not — or whose read fails — must
+ * leave the nav exactly as it was, with no badge and no error. A count is
+ * only ever shown when it was actually read. */
+test("the header needs-you badge counts only what it read, and a failed or absent page is simply not badged", async () => {
+  const cases = [
+    { name: "exact count", response: () => Response.json(attentionPage([attentionItem("job-a"), attentionItem("job-b")])),
+      expected: "2" },
+    { name: "truncated count", response: () => Response.json(attentionPage([attentionItem("job-a")], "job-z")),
+      expected: "1+" },
+    { name: "no work needs the owner", response: () => Response.json(attentionPage([])), expected: null },
+    { name: "endpoint absent", response: () => new Response(null, { status: 404 }), expected: null },
+    { name: "read fails outright", response: () => { throw new Error("host unreachable"); }, expected: null },
+    // A body that is not a valid attention page is refused, never half-read
+    // into a count.
+    { name: "malformed page", response: () => Response.json({ items: "not-a-list" }), expected: null },
+  ];
+  for (const { name, response, expected } of cases) {
+    const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true, url: "http://127.0.0.1:3210/" });
+    const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
+      .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+    Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+    const root = createRoot(dom.window.document.getElementById("root"));
+    try {
+      globalThis.fetch = path => {
+        if (path === "/api/v1/needs-me/tasks") return Promise.resolve().then(response);
+        return Promise.resolve(new Response(null, { status: 404 }));
+      };
+      await act(async () => root.render(React.createElement(LocalRuntimeProvider, null,
+        React.createElement(ProductConfigurationProvider, null, React.createElement(PrivateHeader)))));
+      await flushBadgeRead();
+      const badge = dom.window.document.querySelector(".private-nav-badge");
+      assert.equal(badge?.textContent?.replaceAll(/\s+/g, " ").trim().replace(/ needing you$/, "") ?? null,
+        expected, name);
+      // Whatever the read did, the nav still works and the brand is intact: a
+      // failed badge read must not cost the owner the page.
+      const inbox = dom.window.document.querySelector('a[href="/needs-me"]');
+      assert.ok(inbox, `${name}: the Action Inbox link survives a failed badge read`);
+      assert.equal(dom.window.document.querySelector(".private-brand")?.textContent, "Control Room", name);
+      assert.doesNotMatch(dom.window.document.body.textContent ?? "", /error|failed|could not read/i, name);
+      await act(async () => root.render(React.createElement(React.Fragment)));
+    } finally {
+      await act(async () => root.unmount());
+      dom.window.close();
+      for (const [key, descriptor] of Object.entries(saved)) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+      }
     }
   }
 });

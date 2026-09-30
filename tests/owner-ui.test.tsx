@@ -389,8 +389,11 @@ test("the real Home panels announce loading politely and a failed read as its ow
   // renders them.
   const loading = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data: allLoading })));
   const loadingRegions = liveRegions(loading);
-  assert.equal(loadingRegions.length, 5,
-    `every one of the five Home panels is loading and each announces: ${JSON.stringify(loadingRegions)}`);
+  // Six panels: "Stuck, blocked or offline" shares the `connections` state with
+  // "Worker status". "Update ready" stays hidden until a candidate waits (its
+  // own tests cover it), so its read never adds a loading region to Home.
+  assert.equal(loadingRegions.length, 6,
+    `every one of the six Home panels is loading and each announces: ${JSON.stringify(loadingRegions)}`);
   for (const region of loadingRegions) {
     assert.equal(region.role, "status", "a load in progress is new but not urgent");
     assert.ok(region.text.length > 0, "a status region with no text announces nothing");
@@ -401,7 +404,7 @@ test("the real Home panels announce loading politely and a failed read as its ow
 
   const failed = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data: allUnavailable })));
   const failedRegions = liveRegions(failed);
-  assert.equal(failedRegions.length, 5, `each failed panel announces once: ${JSON.stringify(failedRegions)}`);
+  assert.equal(failedRegions.length, 6, `each failed panel announces once: ${JSON.stringify(failedRegions)}`);
   for (const region of failedRegions) {
     assert.equal(region.role, "status", "one unread section is a polite report, not an interruption");
     // Each carries its OWN sentence, so an owner can tell which read failed and
@@ -410,11 +413,12 @@ test("the real Home panels announce loading politely and a failed read as its ow
       `the unavailable treatment must name the failure and refuse an all-clear: ${region.text}`);
   }
   const unavailable = failed.querySelectorAll(".private-state-unavailable");
-  assert.equal(unavailable.length, 5, "a failed read is visibly distinct from an empty one");
-  // The four different sentences, so a glance can tell which panel failed.
+  assert.equal(unavailable.length, 6, "a failed read is visibly distinct from an empty one");
+  // The six different sentences, so a glance can tell which panel failed.
   const texts = new Set([...unavailable].map(node => (node.textContent ?? "").split(" No zero")[0]));
   assert.deepEqual([...texts].sort(), ["Attention items are unavailable.", "Projects are unavailable.",
-    "Running work is unavailable.", "Verified result records are unavailable.", "Worker status is unavailable."],
+    "Running work is unavailable.", "Verified result records are unavailable.", "Worker signals are unavailable.",
+    "Worker status is unavailable."],
     "each Home panel must name its own failed read");
 });
 

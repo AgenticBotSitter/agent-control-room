@@ -30,7 +30,7 @@ CREATE TABLE control_pipeline_build_publications (
   attempt_id text NOT NULL,
   harness_run_id text NOT NULL,
   artifact_id text NOT NULL,
-  result_revision bigint NOT NULL CHECK(result_revision>0),
+  result_revision bigint NOT NULL CHECK(result_revision>=0),
   delivery_digest text NOT NULL CHECK(delivery_digest ~ '^sha256:[a-f0-9]{64}$'),
   retained_result_digest text NOT NULL CHECK(retained_result_digest ~ '^sha256:[a-f0-9]{64}$'),
   plan_digest text NOT NULL CHECK(plan_digest ~ '^sha256:[a-f0-9]{64}$'),

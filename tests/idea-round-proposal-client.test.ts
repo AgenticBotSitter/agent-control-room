@@ -35,9 +35,11 @@ test("the idea-round browser client binds the selected later round into its rout
     calls.push({ input: String(input), init });
     return Response.json({ ...receipt, round: 2 }, { status: 201 });
   });
-  const result = await client.propose(sessionId, { sessionDigest: digest, projectId, round: 2 });
+  const result = await client.propose(sessionId, { sessionDigest: digest, projectId, round: 2,
+    followUp: "Which disagreement matters most?" });
   assert.equal(result.round, 2);
   assert.equal(calls[0].input, `/api/v1/ideas/${encodeURIComponent(sessionId)}/rounds/2/proposals`);
+  assert.equal(JSON.parse(String(calls[0].init?.body)).followUp, "Which disagreement matters most?");
 });
 
 test("the idea-round browser client preserves an uncertain result instead of retrying", async () => {

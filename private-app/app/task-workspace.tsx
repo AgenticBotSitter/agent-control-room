@@ -11,6 +11,8 @@ import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/w
 import { createTaskVerificationWorkspace, type TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
 import { PrivateTaskPlanning } from "./task-planning";
 import { PrivateTaskAssignment } from "./task-assignment";
+import { FleetOfferControl } from "./workers/fleet-offer";
+import { PrivateTaskCancel } from "./task-cancel";
 import { PrivateTaskApproval } from "./task-approval";
 import { TaskWorkflowGuide } from "./task-workflow-guide";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
@@ -58,10 +60,12 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
   }, []);
   const preparedFromSource = preparedContinuation?.sourceJobId === detail.task.jobId ? preparedContinuation.task : undefined;
   if (mode === "checking") return <p className="private-note">Checking this installation’s task workflow…</p>;
+  const fleet = <FleetOfferControl projectId={detail.task.projectId} jobId={detail.task.jobId} state={detail.task.state} />;
   if (mode === "hosted") return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
     <PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
-    <PrivateTaskApproval detail={detail} workspace={workspace} /></>;
-  if (!detail.preparedFor) return <><PrivateTaskPlanning detail={detail} client={workspace.planning} onPreparedTask={recordPreparedTask} />
+    <PrivateTaskCancel detail={detail} client={workspace.cancel} onRecorded={onRecorded} />
+    <PrivateTaskApproval detail={detail} workspace={workspace} />{fleet}</>;
+  if (!detail.preparedFor) return <>{fleet}<PrivateTaskPlanning detail={detail} client={workspace.planning} onPreparedTask={recordPreparedTask} />
     {preparedFromSource ? null : <>
     <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
       <p>Prepare this saved proposal before choosing a configured machine. Assignment will reserve capacity without starting work.</p>
@@ -70,7 +74,8 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
       <p>Execution approval follows preparation and assignment. No permission has been granted and no agent starts from this page automatically.</p>
       <button type="button" disabled>Approve after assignment</button></section></>}</>;
   return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} runOnAssign />
-    <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
+    <PrivateTaskCancel detail={detail} client={workspace.cancel} onRecorded={onRecorded} />
+    <PrivateTaskApproval detail={detail} workspace={workspace} local />{fleet}</>;
 }
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
@@ -188,6 +193,16 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       </section>}{experimentNotice && <p role="status">{experimentNotice}</p>}
         <TaskProposalForm draft={draft} setDraft={setDraft} modelOptions={page.modelOptions} pending={pending} preparing={preparing} uncertain={uncertain} onSave={() => { void save(); }} /></div>
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
+    {/* TaskDetailPanel's own first section is the status lead: state chip,
+        title and an explicit "Assigned to" line (owner-ux-feedback-2026-09-27.md
+        item 4). Its later sections — Prepared worker, Local task route,
+        Ownership leases, Agent progress — are now collapsed behind <details>,
+        so "What happens next" (TaskStateGuidance) is reached after one status
+        section and a run of one-line collapsed headings, not a wall of
+        evidence text. Splitting TaskDetailPanel to put guidance literally
+        between its first section and the rest would duplicate the status line
+        for no owner-visible gain, since every later section is already
+        collapsed by default. */}
     {detail && <TaskDetailPanel detail={detail} />}
     {detail && <TaskStateGuidance detail={detail} refreshing={loading} onRefresh={refreshSaved} />}
     {detail && runtime.mode !== "checking" && <TaskWorkflowGuide local={runtime.mode === "local"} prepared={!!detail.preparedFor} />}

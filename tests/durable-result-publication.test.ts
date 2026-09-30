@@ -51,16 +51,34 @@ class ControlledStorage implements ArtifactStoragePortV1, ArtifactReadPortV1 {
    *  enforced by the public storage adapters and the publisher's
    *  `durableStorageIo`. Cleared only when a fresh storage port is constructed. */
   isStorageUncertain = false;
+  // Synchronous busy-wait inside `put`, in ms. Starves the event loop so the
+  // publisher's `setTimeout(storageIoMs)` cannot fire until the write has
+  // already settled, reproducing a CI scheduler stall deterministically.
+  stallPutMs = 0;
+  hangPutUntilAbort = false;
+  abortObserved = false;
   private enteredResolve!: () => void;
   private releaseResolve!: () => void;
   readonly entered = new Promise<void>(resolve => { this.enteredResolve = resolve; });
   private readonly released = new Promise<void>(resolve => { this.releaseResolve = resolve; });
   release(): void { this.releaseResolve(); }
+  private untilAbort(signal?: AbortSignal): Promise<never> {
+    return new Promise((_, reject) => {
+      const aborted = () => { this.abortObserved = true; reject(new Error("synthetic_storage_aborted")); };
+      if (signal?.aborted) aborted(); else signal?.addEventListener("abort", aborted, { once: true });
+    });
+  }
   async put(input: { artifactId: string; bytes: Uint8Array; signal?: AbortSignal }) {
     if (this.isStorageUncertain) throw new Error("synthetic_storage_uncertain");
     input.signal?.throwIfAborted();
     this.putCalls++;
     this.enteredResolve();
+    if (this.stallPutMs > 0) {
+      // Synchronous: no await, so the timer phase cannot run until this returns.
+      const until = performance.now() + this.stallPutMs;
+      while (performance.now() < until) { /* starve the event loop on purpose */ }
+    }
+    if (this.hangPutUntilAbort) await this.untilAbort(input.signal);
     if (this.waitForRelease) await this.released;
     const bytes = Uint8Array.from(input.bytes);
     this.artifacts.set(input.artifactId, bytes);
@@ -314,6 +332,59 @@ test("revoked authority refuses before any reservation or byte write", async t =
   /authority_revoked/);
   assert.ok(calls >= 1);
   assert.equal(storage.putCalls, 0);
+});
+
+test("a storage stall that lets the write settle after its bound still commits the verified durable result", async t => {
+  // The regression this file's shared `durableStorageIo()` helper used to
+  // have: `io()` re-checked elapsed wall-clock time AFTER the race settled
+  // and re-poisoned the port, so a write that genuinely succeeded and
+  // verified was reported as `durable_result_storage_uncertain` whenever a
+  // scheduler/GC stall made the elapsed time exceed the bound.
+  //
+  // Deterministic reproduction, no timing luck required: a SYNCHRONOUS
+  // busy-wait inside `put` starves the event loop, so the
+  // `setTimeout(storageIoMs)` timer cannot fire until the operation has
+  // already settled. The race is therefore won by the operation even though
+  // wall-clock time exceeds the bound.
+  const f = await setupWithProvision("run:durable-stall"); t.after(f.close);
+  const storage = new ControlledStorage();
+  storage.stallPutMs = 40;
+  const runId = "run:durable-stall";
+  const receivedAt = at(9550);
+  const captured = await publishDurableResultV1({ ...configOf(f, storage), storageIoMs: 5 },
+    { binding: nativeBinding(runId), bytes: bytesOf("stall"), receivedAt, assertAuthority: () => {} });
+  assert.equal(captured.replayed, false);
+  assert.equal(storage.putCalls, 1);
+  // No live abort listener existed when the write finished, so the port was
+  // never aborted - proof this is not the timer branch.
+  assert.equal(storage.abortObserved, false);
+  const row = f.restartReservations.peek(binding.tenantId, runId);
+  assert.equal(row?.state, "metadata_committed");
+});
+
+test("a genuine storage hang through publishDurableResultV1 still poisons terminally and is never retried", async t => {
+  // The other half of the guarantee the stall case above must not weaken: a
+  // real hang still times out, still aborts, and still records terminal
+  // uncertainty so no later caller can retry the write.
+  const f = await setupWithProvision("run:durable-hang"); t.after(f.close);
+  const storage = new ControlledStorage();
+  storage.hangPutUntilAbort = true;
+  const runId = "run:durable-hang";
+  const receivedAt = at(9560);
+  const config = { ...configOf(f, storage), storageIoMs: 5 };
+  await assert.rejects(() => publishDurableResultV1(config,
+    { binding: nativeBinding(runId), bytes: bytesOf("hang"), receivedAt, assertAuthority: () => {} }),
+  /durable_result_storage_uncertain/);
+  assert.equal(storage.abortObserved, true);
+  const row = f.restartReservations.peek(binding.tenantId, runId);
+  assert.equal(row?.state, "storage_uncertain");
+  // Terminal: the poisoned reservation refuses before touching storage again,
+  // so the ambiguous write is never retried against the same bytes.
+  const callsBefore = storage.putCalls;
+  await assert.rejects(() => publishDurableResultV1(config,
+    { binding: nativeBinding(runId), bytes: bytesOf("hang"), receivedAt, assertAuthority: () => {} }),
+  /durable_result_manual_reconciliation_required/);
+  assert.equal(storage.putCalls, callsBefore);
 });
 
 test("oversize, non-UTF8 and tampered readback all fail closed", async t => {

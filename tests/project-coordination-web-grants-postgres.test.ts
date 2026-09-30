@@ -30,7 +30,7 @@ import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { sha256Digest } from "../src/security";
 
 // Reserved disposable-cluster lane: 58290-58299.
-const PORT = 58290;
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58290);
 const PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => {

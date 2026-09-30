@@ -457,7 +457,7 @@ async function main() {
     // the expected cost is fixed regardless of mode: 3*1000 + 5*2000 = 13000.
     const taskDetail = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin),
       { headers: { cookie } }), 200, `${agent.kind} task detail for price table wiring`) as { priceTable: { state: string };
-        attempts: { runs: { cost: { kind: string; nanoUsd?: string } }[] }[] };
+        attempts: { runs: { runId: string; cost: { kind: string; nanoUsd?: string } }[] }[] };
     assert.equal(taskDetail.priceTable.state, "recorded",
       `${agent.kind}: the task detail page must show the rehearsal owner price table as recorded`);
     const runCost = taskDetail.attempts[0]?.runs[0]?.cost;
@@ -586,6 +586,140 @@ async function main() {
       assert.equal(taskState, "succeeded",
         `${agent.kind}: the received successful attempt must display complete independently of its changes-requested review`);
       assert.equal(after.reviews[0]?.status, "changes_requested");
+
+      // LOCAL-003 requires the "linked-correction journey", not only plain
+      // acceptance: close the loop by preparing the revision this exact review
+      // recorded, running it through the same fake pinned executable, and
+      // accepting the revised attempt. The revision receipt IS an already-
+      // planned task (task-revision-wire.ts extends taskPlanningReceiptSchema),
+      // so it skips straight to assignment — there is no separate plan step.
+      const revisionRunId = taskDetail.attempts[0]?.runs[0]?.runId;
+      assert.ok(revisionRunId, `${agent.kind}: a run id is required to prepare a revision`);
+      const revisionRequestBody = { runId: revisionRunId, targetId: target.targetId, targetDigest: target.targetDigest,
+        contentHash: artifact.contentHash, reviewId: recorded.receipt.reviewId, feedback };
+      const revisionPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/revisions`;
+      // The revisions route refuses any idempotency-key header (task-http.ts):
+      // replay is determined by matching request content against the recorded
+      // plan (reviewId/targetDigest/contentHash/feedbackDigest), not a client key.
+      const revisionPrepared = await require5xxOr201(await fetch(new URL(revisionPath, origin), {
+        method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+        body: JSON.stringify(revisionRequestBody),
+      }), `${agent.kind} prepare revision`) as { receipt: { jobId: string; inputDigest: string; revisionNumber: number; sourceJobId: string } };
+      const revisionReceipt = revisionPrepared.receipt;
+      assert.equal(revisionReceipt.sourceJobId, jobId, `${agent.kind}: revision must record its exact source task`);
+      assert.equal(revisionReceipt.revisionNumber, 1, `${agent.kind}: first revision must be numbered 1`);
+      assert.notEqual(revisionReceipt.jobId, jobId, `${agent.kind}: a revision must be a new, related work item, not the same task`);
+
+      // Replay: the identical revision request must return the same receipt, not prepare a second one.
+      const revisionReplay = await require5xxOr201(await fetch(new URL(revisionPath, origin), {
+        method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+        body: JSON.stringify(revisionRequestBody),
+      }), `${agent.kind} revision replay`) as { receipt: { jobId: string }; replayed: boolean };
+      assert.equal(revisionReplay.replayed, true, `${agent.kind}: an identical revision request must replay`);
+      assert.equal(revisionReplay.receipt.jobId, revisionReceipt.jobId);
+
+      const revisedJobId = revisionReceipt.jobId;
+      // The source task's own lease still holds its declared (whole-tree, for
+      // this pre-0091-shaped legacy job) scope for up to route.leaseSeconds
+      // after completion -- nothing releases it automatically just because the
+      // attempt succeeded. A revision job has no declared-scope row of its own
+      // (task-execution-planner.ts's revise() writes none), so the assignment
+      // coordinator conservatively requires the whole tree for it too, and
+      // that would otherwise conflict with the still-active source lease. The
+      // real owner UI exposes exactly this as the "Revoke ownership lease"
+      // button (task-assignment.tsx); the journey does the same thing here.
+      const revokedSource = await require5xxOr201(await fetch(new URL(
+        `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/assignment`, origin), {
+        method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+        body: JSON.stringify({ action: "revoke", expectedInputDigest: assignedInputDigest }),
+      }), `${agent.kind} revoke source lease before revision assignment`) as { receipt: { leaseState: string } };
+      assert.equal(revokedSource.receipt.leaseState, "revoked", `${agent.kind}: source lease must be revoked, not left active`);
+
+      // The revised task is a distinct, separately assignable and approvable
+      // work item (RES-004): it needs its own assignment and submission.
+      const revisedNodeId = `${config.enablement.nodeId}.${agent.node}`;
+      const revisedAssigned = await require5xxOr201(await fetch(new URL(
+        `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(revisedJobId)}/assignment`, origin), {
+        method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+        body: JSON.stringify({ action: "assign", nodeId: revisedNodeId, expectedInputDigest: revisionReceipt.inputDigest }),
+      }), `${agent.kind} revision assignment`) as { receipt: { inputDigest: string } };
+      const revisedInputDigest = revisedAssigned.receipt.inputDigest;
+
+      const revisedDetail = await requireOk(await fetch(new URL(
+        `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(revisedJobId)}`, origin), { headers: { cookie } }),
+      200, `${agent.kind} revised task detail`) as { preparedFor: string | null;
+        revisionLinks?: { previousJobId: string | null; nextJobId: string | null; revisionNumber: number } };
+      assert.equal(revisedDetail.preparedFor, agent.kind, `${agent.kind}: revised task must also be prepared for the same worker`);
+      assert.equal(revisedDetail.revisionLinks?.previousJobId, jobId, `${agent.kind}: revised task must link back to its source`);
+      assert.equal(revisedDetail.revisionLinks?.revisionNumber, 1);
+
+      const revisedPreview = await requireOk(await fetch(new URL(
+        `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(revisedJobId)}/submission?inputDigest=${revisedInputDigest}`, origin),
+        { headers: { cookie } }), 200, `${agent.kind} revised submission preview`) as { preview?: { packetDigest: string } };
+      assert.ok(revisedPreview.preview, `${agent.kind}: revised task must have its own submission preview`);
+      const revisedPacketDigest = revisedPreview.preview!.packetDigest;
+
+      const revisedSubmitted = await require5xxOr201(await fetch(new URL(
+        `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(revisedJobId)}/submission`, origin), {
+        method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+        body: JSON.stringify({ expectedInputDigest: revisedInputDigest, expectedPacketDigest: revisedPacketDigest }),
+      }), `${agent.kind} revised submit`) as { queueId: string; replayed: boolean };
+      assert.equal(revisedSubmitted.replayed, false, `${agent.kind}: the revised task's first submit must not be a replay`);
+
+      let revisedItems = 0, revisedReviewStatus: string | undefined;
+      let revisedPendingPage: typeof pendingPage;
+      const revisedPolled = await waitFor(async () => {
+        const results = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(revisedJobId)}/results`, origin), { headers: { cookie } });
+        if (results.status !== 200) return false;
+        const body = await results.json() as NonNullable<typeof pendingPage>;
+        revisedItems = body.items.length;
+        revisedReviewStatus = body.reviews[0]?.status;
+        if (revisedItems === 1 && revisedReviewStatus === "pending") revisedPendingPage = body;
+        return revisedItems === 1 && revisedReviewStatus === "pending";
+      }, 135);
+      assert.ok(revisedPolled, `${agent.kind}: the revised task must also reach pending review (items=${revisedItems}, reviewStatus=${revisedReviewStatus})`);
+      const revisedPage = revisedPendingPage!;
+      const revisedArtifact = revisedPage.items[0]!, revisedTarget = revisedPage.reviews[0]!;
+      const revisedReviewPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(revisedJobId)}/results/${idOf(revisedArtifact.artifactId)}/reviews/${idOf(revisedTarget.targetId)}`;
+      const revisedOptionsResponse = await fetch(new URL(revisedReviewPath, origin), { headers: { cookie } });
+      const revisedExpectedAuthentication = { actorId: revisedOptionsResponse.headers.get("x-control-room-authenticated-actor"),
+        sessionEpoch: revisedOptionsResponse.headers.get("x-control-room-session-epoch") };
+      const revisedOptions = await requireOk(revisedOptionsResponse, 200, `${agent.kind} revised review options`) as
+        { canReview: boolean; targetDigest: string; contentHash: string;
+          acceptanceAttestation?: null | { scenarioId: string; instructionsDigest: string } };
+      assert.equal(revisedOptions.canReview, true, `${agent.kind}: owner must be able to review the revised result`);
+      assert.ok(revisedOptions.acceptanceAttestation, `${agent.kind}: revised acceptance must also expose its attestation`);
+      const revisedDraft = { artifactId: revisedArtifact.artifactId, targetId: revisedTarget.targetId,
+        targetDigest: revisedOptions.targetDigest, contentHash: revisedOptions.contentHash, decision: "accepted" as const, feedback: "",
+        acceptanceAttestation: { scenarioId: revisedOptions.acceptanceAttestation!.scenarioId,
+          instructionsDigest: revisedOptions.acceptanceAttestation!.instructionsDigest, confirmed: true as const } };
+      const revisedRecorded = await require5xxOr201(await fetch(new URL(revisedReviewPath, origin), { method: "POST",
+        headers: { origin, cookie, "content-type": "application/json", "idempotency-key": `journey-${agent.kind}-owner-revision-review-0001` },
+        body: JSON.stringify({ review: revisedDraft, expectedAuthentication: revisedExpectedAuthentication }) }),
+        `${agent.kind} revised owner review`) as { receipt: { decision: string } };
+      assert.equal(revisedRecorded.receipt.decision, "accepted", `${agent.kind}: the revised attempt must be accepted`);
+
+      const revisedCompleted = await waitFor(async () => {
+        const taskResponse = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(revisedJobId)}`, origin), { headers: { cookie } });
+        if (taskResponse.status !== 200) return false;
+        const taskBody = await taskResponse.json() as { task: { state: string } };
+        return taskBody.task.state === "succeeded";
+      }, 55);
+      assert.ok(revisedCompleted, `${agent.kind}: the revised task must complete after acceptance`);
+
+      // Attempt history: the original task's own review stays exactly as
+      // recorded, and the source task now links forward to its revision.
+      const originalAfterRevision = await requireOk(await fetch(taskUrl, { headers: { cookie } }), 200,
+        `${agent.kind} original task after revision`) as { revisionLinks?: { nextJobId: string | null } };
+      assert.equal(originalAfterRevision.revisionLinks?.nextJobId, revisedJobId,
+        `${agent.kind}: the source task must link forward to its revision`);
+      const originalResultsAfterRevision = await requireOk(await fetch(new URL(
+        `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin), { headers: { cookie } }),
+      200, `${agent.kind} original result after revision`) as NonNullable<typeof pendingPage>;
+      assert.equal(originalResultsAfterRevision.reviews[0]?.status, "changes_requested",
+        `${agent.kind}: the original attempt's review must remain exactly as recorded`);
+      outcomes[`${agent.kind}Revision`] = { revisedJobId: revisedJobId.slice(0, 24), revisionNumber: revisionReceipt.revisionNumber,
+        accepted: revisedRecorded.receipt.decision === "accepted" };
     }
     outcomes[agent.kind] = { jobId: jobId.slice(0, 24), packetDigest: packetDigest.slice(0, 19),
       queueId: submittedBody.queueId.slice(0, 24), items, reviewStatus: after.reviews[0]?.status,

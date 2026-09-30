@@ -7,7 +7,8 @@ import { WorkBatchOwnerServiceV1, WorkBatchStoreV1, workBatchProposalDigestV1,
 import { taskFixture } from "./helpers/web-task";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import { createWorkBatchOwnerHttpHandlerV1 } from "../src/web/v1/work-batch-owner-http";
-import type { WorkBatchQueueAdmissionAuthorityV1, WorkBatchQueueCatalogV1 } from "../src/work-intake/v1";
+import type { WorkBatchQueueAcceptedResultPortV1, WorkBatchQueueAcceptedResultSelectionV1,
+  WorkBatchQueueCatalogV1 } from "../src/work-intake/v1";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection";
 import { workBatchQueueItemSchemaV1 } from "../src/work-intake/v1/owner-schemas";
@@ -28,7 +29,7 @@ function proposal(projectId: string): WorkBatchProposalV1 {
 }
 
 async function ownerFixture(queueCatalog: WorkBatchQueueCatalogV1 = [],
-  queueAdmissionAuthority: WorkBatchQueueAdmissionAuthorityV1 | null | undefined = queueCatalog.length
+  queueAdmissionAuthority: WorkBatchQueueAcceptedResultPortV1 | null | undefined = queueCatalog.length
     ? { assertCurrent: () => true, isAcceptedResultCurrent: () => false } : undefined) {
   const f = await taskFixture();
   await f.db.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
@@ -239,14 +240,27 @@ test("queue view reports running only for the exact admitted worker and model", 
   assert.equal((await wrong.owner.view(wrong.identity, wrong.project.projectId, wrongBatch.batchId)).queue[0]!.state, "uncertain");
 });
 
-test("queued unfinished admissions still consume the recorded per-agent depth", async t => {
+// The owner service runs on the web login, so production hands it the
+// coordinator snapshot, which takes no session. A transaction-bound authority
+// must still work for callers that hold one. Both forms count the same depth.
+for (const binding of ["caller_transaction", "coordinator_snapshot"] as const)
+test(`queued unfinished admissions still consume the recorded per-agent depth (${binding})`, async t => {
   const accepted = new Set<string>();
   let acceptanceCheckFails = false;
-  const f = await ownerFixture(codexCatalog(), { assertCurrent: () => true,
-    isAcceptedResultCurrent: (_tx, selection) => {
-      if (acceptanceCheckFails) throw new Error("acceptance authority unavailable");
-      return selection.workerId === "worker:codex-one" && selection.nodeId === "node:mac.codex"
-        && accepted.has(selection.sourceJobId);
+  const acceptedNow = (selection: WorkBatchQueueAcceptedResultSelectionV1) => {
+    if (acceptanceCheckFails) throw new Error("acceptance authority unavailable");
+    return selection.workerId === "worker:codex-one" && selection.nodeId === "node:mac.codex"
+      && accepted.has(selection.sourceJobId);
+  };
+  const f = await ownerFixture(codexCatalog(), binding === "coordinator_snapshot"
+    ? { binding, assertCurrent: () => true, acceptedResultProof: async () => null,
+      isAcceptedResultCurrent: async (...args: unknown[]) => {
+        assert.equal(args.length, 1, "the snapshot is never handed the web session");
+        return acceptedNow(args[0] as WorkBatchQueueAcceptedResultSelectionV1);
+      } }
+    : { assertCurrent: () => true, isAcceptedResultCurrent: (tx, selection) => {
+      assert.equal(typeof tx.query, "function", "the transaction-bound form runs on the caller's session");
+      return acceptedNow(selection);
     } });
   t.after(() => void f.db.close());
   const firstValue = proposal(f.project.projectId);

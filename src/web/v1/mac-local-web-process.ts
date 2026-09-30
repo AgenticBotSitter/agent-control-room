@@ -2,7 +2,7 @@ import type { DatabaseClient } from "../../persistence/database";
 import { WebAccessError } from "./access-verifier";
 import { privateResponseHeaders, webFailure } from "./http-common";
 import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, readLocalOwnerCodeV1,
-  renderLocalOwnerSignInPageV1, type LocalOwnerSessionProfileV1 } from "./local-owner-session";
+  renderLocalOwnerSignInPageV1, renderLocalOwnerSignOutPageV1, type LocalOwnerSessionProfileV1 } from "./local-owner-session";
 import { WebProjectService } from "./project-service";
 import { createProjectHttpHandler } from "./project-http";
 import { WebTaskService, type WebTaskKeys } from "./task-service";
@@ -17,7 +17,7 @@ import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import type { ActionInboxItemV1 } from "../../operator-surfaces/v1";
-import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
+import { WorkBatchOwnerServiceV1, type WorkBatchQueueAcceptedResultPortV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { LinearPipelineServiceV1 } from "../../pipelines/v1";
@@ -28,10 +28,20 @@ import { SessionWatchServiceV1 } from "./session-watch-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { sessionWatchIdSchema } from "./session-watch-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
+import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
+import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
+import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
+import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
+import { FleetOwnerServiceV1 } from "../../fleet/v1";
+import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
+  /** The one remote origin behind Cloudflare Access, if configured. Its
+   * transport gate already verified the Access token; sign-out there also
+   * ends the Access session at Cloudflare's fixed logout path. */
+  cloudflareAccessOrigin?: string;
   localOwnerSessionStore?: LocalOwnerSessionStoreV1;
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
@@ -55,7 +65,7 @@ export interface MacLocalWebProcessOptionsV1 {
    * admit approved batch items to the existing per-agent queue. */
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   /** The same protected authority captured by the coordinator lifecycle. */
-  workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+  workBatchQueueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
   /** Host-owned append-only projection; this wrapper receives no writer. */
   projectEvents?: ProjectEventReadSourceV1;
   /** Host-generation display state built only after pinned executable
@@ -68,6 +78,12 @@ export interface MacLocalWebProcessOptionsV1 {
   actionInboxSource?: Readonly<{ read(input: { tenantId: string; actorId: string; grantedAt: string; now: string }): Promise<{
     observedAt: string; items: ActionInboxItemV1[]; truncated: boolean;
   }> }>;
+  /** Optional private VAPID credentials. Omission leaves push unavailable. */
+  ownerWebPush?: OwnerWebPushConfigV1;
+  /** Remote workers (T2-F). Owner decisions use a distinct restricted
+   * database login; neither the ordinary web login nor the gateway can write
+   * those tables. The hook only asks the gateway to reconcile afterward. */
+  fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string; afterDecision?: () => Promise<unknown> }>;
   clock?: () => number;
 }
 
@@ -89,9 +105,19 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
     throw new Error("mac_local_web_process_config_invalid");
   const clock = options.clock ?? Date.now;
+  const allowedOrigins = new Set([options.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : []),
+    ...(profile.remoteOrigins ?? [])]);
+  if (options.cloudflareAccessOrigin !== undefined && !profile.remoteOrigins?.includes(options.cloudflareAccessOrigin))
+    throw new Error("mac_local_web_process_config_invalid");
   const sessions = new LocalOwnerSessionServiceV1(profile, options.localOwnerSessionStore, options.initialLocalOwnerSessions);
+  const productConfiguration = parseProductConfigurationV1({ schema: "control-room.product-configuration/v1",
+    displayName: "Control Room", defaultTimezone: "UTC",
+    modules: { ideaLab: false, news: false, sessionObservations: false },
+    limits: { maxProjects: 24, maxTasksPerProject: 200, maxResultsPerTask: 20, maxArticleSources: 0, maxIdeaParticipants: 0 },
+    projectTemplates: [{ id: "control-room", displayName: "Control Room", enabledModules: [] }] });
   const projects = new WebProjectService(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined, productConfiguration,
+    options.taskReadKeys?.harnessIntegrityKey);
   const tasks = new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
   const projectActivity = new ProjectActivityServiceV1(options.database.client,
@@ -118,6 +144,16 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     options.workBatchQueueAdmissionAuthority, clock) : undefined;
   const pipelineHttp = pipelines ? createLinearPipelineHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: pipelines, clock }) : undefined;
+  const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
+  const improvementHttp = improvementDesk ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: improvementDesk, clock }) : undefined;
+  const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
+    channel: createWebPushChannelV1(options.ownerWebPush) } : undefined;
+  const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
+    service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
+      clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
+    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}) }) : undefined;
   let closed: Promise<void> | undefined;
 
   function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
@@ -154,6 +190,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.search) throw new WebAccessError("invalid_request");
       return render();
     }
+    if (url.pathname === "/morning") {
+      if (url.search) throw new WebAccessError("invalid_request");
+      return render();
+    }
     if (url.pathname === "/needs-me") {
       if (url.search) throw new WebAccessError("invalid_request");
       await tasks.authorizeAttentionPage(identity);
@@ -186,7 +226,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       await sessionWatch.authorize(identity);
       return render();
     }
-    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings)$/.exec(url.pathname);
+    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings|improvements)$/.exec(url.pathname);
     if (projectSection) {
       if ([...url.searchParams.keys()].some(name => name !== "after")
         || url.searchParams.getAll("after").length > 1 || !["inbox", "reviews"].includes(projectSection[2]) && url.search)
@@ -226,11 +266,17 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   async function handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
     try {
       const url = new URL(request.url);
-      if (url.origin !== options.origin && url.origin !== profile.trustedOrigin) throw new WebAccessError("access_denied");
+      if (!allowedOrigins.has(url.origin)) throw new WebAccessError("access_denied");
       if (url.pathname === "/session") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         sessions.assertLocalRequest(request);
         return renderLocalOwnerSignInPageV1();
+      }
+      if (url.pathname === "/sign-out") {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        sessions.assertLocalRequest(request);
+        return renderLocalOwnerSignOutPageV1(url.origin === options.cloudflareAccessOrigin
+          ? "/cdn-cgi/access/logout" : "/session");
       }
       if (url.pathname === "/api/v1/local-owner-session") {
         if (url.search) throw new WebAccessError("invalid_request");
@@ -257,6 +303,37 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       const identity = sessions.verify(request, clock());
+      if (url.pathname === "/api/v1/product-configuration") {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        await projects.authorizeCatalog(identity);
+        return Response.json(productConfiguration, { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/owner-web-push") {
+        if (!ownerPush) throw new WebAccessError("not_found");
+        if (request.method === "GET" && !url.search) {
+          return Response.json({ enabled: true, publicKey: options.ownerWebPush!.publicKey, subscribed: false,
+            message: "This browser can subscribe to phone notifications." }, { headers: privateResponseHeaders });
+        }
+        if (request.method === "POST" && !url.search && request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() === "application/json") {
+          const subscription = parseWebPushSubscriptionV1(await request.json());
+          await ownerPush.store.subscribe({ id: "", tenantId: profile.tenantId, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh,
+            auth: subscription.keys.auth, expiresAt: subscription.expirationTime === null ? null : new Date(subscription.expirationTime).toISOString() });
+          return new Response(null, { status: 204, headers: privateResponseHeaders });
+        }
+        if (request.method === "DELETE" && !url.search && request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() === "application/json") {
+          const body = await request.json(); if (!body || typeof body !== "object" || typeof (body as { endpoint?: unknown }).endpoint !== "string") throw new WebAccessError("invalid_request");
+          await ownerPush.store.unsubscribe(profile.tenantId, (body as { endpoint: string }).endpoint);
+          return new Response(null, { status: 204, headers: privateResponseHeaders });
+        }
+        throw new WebAccessError("invalid_request");
+      }
+      if (url.pathname === "/api/v1/owner-web-push/test") {
+        if (!ownerPush || request.method !== "POST" || url.search || request.body) throw new WebAccessError("invalid_request");
+        const now = new Date(clock()).toISOString();
+        await deliverOwnerPushV1({ tenantId: profile.tenantId, kind: "test", link: "/settings", dedupeKey: `test:${clock().toString(36)}`,
+          now, store: ownerPush.store, channel: ownerPush.channel });
+        return new Response(null, { status: 204, headers: privateResponseHeaders });
+      }
       const activity = /^\/api\/v1\/projects\/([^/]+)\/(activity|events)$/.exec(url.pathname);
       if (activity) {
         if (request.method !== "GET" || [...url.searchParams.keys()].some(key =>
@@ -351,8 +428,12 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
+      if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
+      if (improvementHttp && (url.pathname === "/api/v1/update-candidates"
+        || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
+        || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname))) return improvementHttp(request);
       if (request.method !== "GET") throw new WebAccessError("invalid_request");
       const response = await renderProductRoute(identity, url, render);
       for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);

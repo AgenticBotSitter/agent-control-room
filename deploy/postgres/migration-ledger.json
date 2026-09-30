@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "b77db6cac8cdbc14592f0aa2db78d8067fec610fb23c808ad9964d565de1dfbc",
+  "digest": "1cc3b375ecea1f5de18b602916de278a41e2e861cdff0d07b3b61008179f0935",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -597,68 +597,152 @@
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0108_pipeline_build_publications.sql",
+      "file": "db/migrations/0107_task_project_activity_events.sql",
       "order": 100,
-      "sha256": "54c4a54a8ab75a47fcef0ce47566603345e664d4d6433cc175cd53361c29d1c7",
+      "sha256": "36b2993d78b512f3f1d7a19f63141e458a06241cad31fdee4d4506381ca0961b",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0108_pipeline_build_publications.sql",
+      "order": 101,
+      "sha256": "3f7f3a97de3b50dc73932f6f78ca690959b8b884d03dfbc866a062c672fd6202",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0109_pipeline_unattended_advance.sql",
-      "order": 101,
+      "order": 102,
       "sha256": "2d453a1308435fc66cedb43cd8ff180170af51873cf6bdbbd18310a505aabd9e",
       "kind": "migrate"
     },
     {
+      "file": "db/migrations/0135_control_project_settings.sql",
+      "order": 103,
+      "sha256": "82b3a23c46fcc1e86982860e7bc74452ff7d44ce584dac69adbb760e3f08d547",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0140_fleet_worker_connector.sql",
+      "order": 104,
+      "sha256": "76b579acb5585c429ae2049cb79e132f1329ab89b1c550024ea14116ab9e48b6",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0141_fleet_owner_authority.sql",
+      "order": 105,
+      "sha256": "c09934ec360234e967c53a5ffe38c90dda09c2821f811acff0b57b4cc16dc574",
+      "kind": "migrate"
+    },
+    {
       "file": "db/migrations/0150_pipeline_installation_allowances.sql",
-      "order": 102,
+      "order": 106,
       "sha256": "21d89c7af8c6ece4173578df7d2fedcd9967fdfface9b5a4f2b665e6fe1df2ea",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0151_pipeline_stage_loop_counts.sql",
-      "order": 103,
+      "order": 107,
       "sha256": "3511c5aa69e383ee4b5f100ad8ce14fc245bb4a3553d23584fed0d165ead7d24",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0152_pipeline_advance_unknown_cost.sql",
-      "order": 104,
+      "order": 108,
       "sha256": "4e0c09fd02fbc1696aa30c379e22d11fb38a96c2b78e61006af57a805868ac72",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0153_pipeline_machine_capacity_observations.sql",
-      "order": 105,
+      "order": 109,
       "sha256": "952ea8d3bff4d8df1c378bed03508ae3f5b0b679bcbcc0ae07a3766e47d7c47f",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0154_pipeline_advance_round_receipts.sql",
-      "order": 106,
+      "order": 110,
       "sha256": "cfc55f35b64d7a3566512ee4a81cbc85c759dc1a4f051a750b010393483217a9",
       "kind": "migrate"
     },
     {
+      "file": "db/migrations/0160_improve_control_room_desk.sql",
+      "order": 111,
+      "sha256": "38ecf365e222c50bca814b103c3159607e24cc99b70cd929ddb6688823822b8d",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0173_owner_web_push_subscriptions.sql",
+      "order": 112,
+      "sha256": "db167e9858d1e229202e6a72df105c9bcd947dac0d7cc7ee81721b6f7068d100",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0174_owner_web_push_delivery_ledger.sql",
+      "order": 113,
+      "sha256": "cfe71fa0f86af24a1c5cdabd733a5123494c04e76b9aea4239eba8ddb601961b",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0175_owner_web_push_tenant_isolation.sql",
+      "order": 114,
+      "sha256": "32dac31f73e8b58f4dc87f2e462ddb5a996220ad8c05989f150ded864c883e1b",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0176_owner_web_push_retention.sql",
+      "order": 115,
+      "sha256": "71ad26a9a7192fcc682d416d6e3960e0f7897e1fea68143c73820e24dc5dd19c",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0177_supervisor_reconciliation.sql",
+      "order": 116,
+      "sha256": "35a67d9adfc50d699b66e6fdb97967b4ab9a4a85fbce8656e5131d0fda81152d",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0178_supervisor_machine_health.sql",
+      "order": 117,
+      "sha256": "723b85cf066043f8a30c62f7182f1c4663e3e137debe028aa07fb615287a7e0f",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0179_provider_wait_states.sql",
+      "order": 118,
+      "sha256": "8c42f57ee21f5a05da8caa539ec8c75ed5cc6df98eaa85b174687588e54d41f5",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0185_idea_promotion_task_links.sql",
+      "order": 119,
+      "sha256": "fa283a10b0c3a315c450d5f2a0d024798618609b443add11bd28f4f83793d9cc",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0190_news_task_proposal_links.sql",
+      "order": 120,
+      "sha256": "6c63b8143c1e6a31311dec9bfbc76ef6063a418187a640dc7a5f5046cfb836d0",
+      "kind": "migrate"
+    },
+    {
       "file": "db/roles/production_roles.sql",
-      "order": 107,
+      "order": 121,
       "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 108,
-      "sha256": "dc31871e4a1971f5aca102ee85754bb2d0906b67e1ff3cdf9355bb077682e194",
+      "order": 122,
+      "sha256": "a64109f4b115aee16d61e9cd486e08f155861d7f87e980ea98622a8b7fd3b3cd",
       "kind": "grants"
     },
     {
       "file": "db/roles/agent_reviewer_roles.sql",
-      "order": 109,
+      "order": 123,
       "sha256": "69a199a5dc16a7263e7037c47bb86b2908bdbbf3d741d2d948c4889781b5d5f9",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 110,
+      "order": 124,
       "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }

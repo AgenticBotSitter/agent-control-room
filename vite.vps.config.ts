@@ -53,6 +53,10 @@ export default defineConfig({
       // Preserve the required local icon; this does not establish publication rights.
       this.emitFile({ type: "asset", fileName: "favicon.svg",
         source: await readFile(new URL("./public/favicon.svg", import.meta.url)) });
+      // The PWA is explicitly allowlisted. No general public directory is served.
+      for (const file of ["service-worker.js", "manifest.webmanifest"])
+        this.emitFile({ type: "asset", fileName: file,
+          source: await readFile(new URL(`./private-app/app/${file}`, import.meta.url)) });
     },
   }],
 });

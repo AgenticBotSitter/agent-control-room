@@ -60,6 +60,15 @@ export function createProjectHttpHandler(options: {
         return Response.json(await options.service.transitionIdea(identity, projectId, await readBody(request), request.headers.get("idempotency-key") ?? ""),
           { headers: responseHeaders });
       }
+      const settings = /^\/api\/v1\/projects\/([^/]+)\/settings$/.exec(path);
+      if (settings) {
+        let projectId: string;
+        try { projectId = decodeURIComponent(settings[1]); } catch { throw new WebAccessError("invalid_request"); }
+        if (request.method === "GET") return Response.json(await options.service.readSettings(identity, projectId),
+          { headers: responseHeaders });
+        if (request.method === "POST") return Response.json(await options.service.updateSettings(identity, projectId, await readBody(request)),
+          { headers: responseHeaders });
+      }
       const detail = /^\/api\/v1\/projects\/([^/]+)$/.exec(path);
       if (detail && request.method === "GET") {
         let projectId: string;

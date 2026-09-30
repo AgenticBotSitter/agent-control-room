@@ -78,6 +78,9 @@ REVOKE ALL ON control_agent_review_plans FROM control_room_application, control_
 REVOKE ALL ON control_pipeline_build_publications
   FROM control_room_application, control_room_reader, control_room_schedule_admissions,
   control_room_github_broker, control_room_work_intake;
+REVOKE ALL ON control_improvement_requests, control_update_candidates, control_update_candidate_decisions
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake;
 GRANT SELECT ON control_identities, control_role_grants, projects, work_batches,
   work_batch_revisions, work_batch_items, control_idempotency, audit_events, control_audit_chain_heads
   TO control_room_work_intake;

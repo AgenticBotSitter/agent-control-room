@@ -18,10 +18,12 @@ import { LocalWorkerRouteStatus, type TaskWorkerReadState } from "./local-worker
 import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
 import { localWorkerStateLabel, useLocalRuntime, type LocalStatus } from "./local-runtime";
 import { useVisiblePolling } from "./use-visible-polling";
+import { OperationsControlPanel } from "./operations-control";
 import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount, workerChipToneV1 } from "./owner-ui";
+import { UpdateCandidatesHome } from "./update-candidates-home";
 
-type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
-function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
+export type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
+export function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
   return "source" in value && value.source === "local";
 }
 
@@ -70,8 +72,46 @@ function Unavailable({ children }: { children: React.ReactNode }) {
   return <UnavailableState>{children} No zero count or all-clear is inferred.</UnavailableState>;
 }
 
+/** Workers whose current signal means the owner should look: offline,
+ * unreachable, or a local route that failed its startup check. This is a
+ * narrow, honestly-derived subset of the same connection data "Worker status"
+ * already reads — not a second data source and not a guess about a worker
+ * this view has no signal for. */
+export function stuckWorkerCount(value: WorkerRead): number {
+  return isLocalWorkerRead(value) ? value.value.workers.filter(worker => worker.state === "unavailable").length
+    : value.projection.summary.staleSignalCount + value.projection.summary.missingSignalCount;
+}
+
 export function HomeDashboard({ data }: { data: HomeDashboardState }) {
   return <><a className="private-action-link" href="/projects">New task</a><div className="private-dashboard-grid">
+    {/* Needs attention leads the dashboard and is visually loud (red), per
+        owner-ux-feedback-2026-09-27.md items 1-3: "a clear list 'This needs
+        you → why → one button to act'", a red box, and an empty state that is
+        one short line. Caveats about page limits move to a details toggle
+        instead of sitting in the main flow. The panel keeps its exact heading
+        text "Needs attention" (asserted by tests/mac-local-real-pages.test.tsx)
+        and its id/aria-labelledby (asserted by
+        tests/owner-home-reading-order.test.tsx); only its position, styling
+        and item markup change. */}
+    <section className={`private-panel private-attention-box${data.attention.state === "ready" && data.attention.value.items.length ? " has-items" : ""}`}
+      aria-labelledby="home-attention"><PanelHeading id="home-attention">Needs attention
+      {data.attention.state === "ready" ? <PrivateCount value={data.attention.value.items.length} /> : null}</PanelHeading>
+      {data.attention.state === "loading" ? <LoadingState>Loading saved attention items…</LoadingState>
+        : data.attention.state === "unavailable" ? <Unavailable>Attention items are unavailable.</Unavailable>
+          : data.attention.value.items.length ? <ul className="private-dashboard-list private-attention-list">{data.attention.value.items.slice(0, 5).map(item => <li key={item.task.jobId}>
+            <StateChip label={item.reasons.join(" · ").replaceAll("_", " ")} tone="bad" state="attention" />
+            <p className="private-attention-what">{item.task.title}</p>
+            <a className="private-action-link" href={taskHref(item.task.projectId, item.task.jobId)}>Open task</a></li>)}</ul>
+            : <EmptyState>Nothing needs you right now.</EmptyState>}
+      {data.attention.state === "ready" && (data.attention.value.items.length > 5 || data.attention.value.nextCursor)
+        ? <details><summary>Details</summary><p className="private-note">More attention items may be available than the five shown here.</p></details> : null}
+      {data.attention.state === "ready" && !data.attention.value.items.length
+        ? <details><summary>Details</summary><p className="private-note">This reflects a checked page of saved task attention. It is not a fleet-wide all-clear.</p></details> : null}
+      <a className="private-action-link" href="/needs-me">Open Action Inbox</a>
+    </section>
+
+    <UpdateCandidatesHome />
+
     <section className="private-panel" aria-labelledby="home-active"><PanelHeading id="home-active">Running work
       {data.activity.state === "ready" ? <PrivateCount value={data.activity.value.active.length} /> : null}</PanelHeading>
       {data.activity.state === "loading" ? <LoadingState>Loading saved work…</LoadingState>
@@ -84,20 +124,12 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
       <a className="private-action-link" href="/projects">Open projects</a>
     </section>
 
-    <section className="private-panel" aria-labelledby="home-attention"><PanelHeading id="home-attention">Needs attention
-      {data.attention.state === "ready" ? <PrivateCount value={data.attention.value.items.length} /> : null}</PanelHeading>
-      {data.attention.state === "loading" ? <LoadingState>Loading saved attention items…</LoadingState>
-        : data.attention.state === "unavailable" ? <Unavailable>Attention items are unavailable.</Unavailable>
-          : data.attention.value.items.length ? <ul className="private-dashboard-list">{data.attention.value.items.slice(0, 5).map(item => <li key={item.task.jobId}>
-            <a href={taskHref(item.task.projectId, item.task.jobId)}>{item.task.title}</a>
-            <StateChip label={item.reasons.join(" · ").replaceAll("_", " ")} tone="warn" state="attention" /></li>)}</ul>
-            : <EmptyState>No matching task attention items were found in this checked page. This is not a fleet-wide all-clear.</EmptyState>}
-      {data.attention.state === "ready" && (data.attention.value.items.length > 5 || data.attention.value.nextCursor)
-        ? <p className="private-note">More attention items may be available.</p> : null}
-      <a className="private-action-link" href="/needs-me">Open Action Inbox</a>
-    </section>
-
-    <section className="private-panel" aria-labelledby="home-results"><PanelHeading id="home-results">Recent results
+    {/* "Finished since you last looked" per owner-ux-feedback and the Tango
+        recommendations (research/tango/03-recommendations.md row 15). This
+        reuses the exact same verified result records the former "Recent
+        results" panel read; only the heading and framing change, so every
+        result link and its acceptance/byte/received copy is unchanged. */}
+    <section className="private-panel" aria-labelledby="home-results"><PanelHeading id="home-results">Finished since you last looked
       {data.activity.state === "ready" && data.activity.value.resultSource === "configured"
         ? <PrivateCount value={data.activity.value.recentResults.length} /> : null}</PanelHeading>
       {data.activity.state === "loading" ? <LoadingState>Loading verified result records…</LoadingState>
@@ -106,9 +138,33 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
           : data.activity.value.recentResults.length ? <ul className="private-dashboard-list">{data.activity.value.recentResults.slice(0, 5).map(({ task, artifact }) =>
             <li key={artifact.artifactId}><a href={taskResultHrefV1(task.projectId, task.jobId, artifact.artifactId)}>{task.title}</a>
               <span>{task.state === "succeeded" ? `Completed${task.qualityStatus === "accepted" ? " · Accepted" : ""} · ` : ""}{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></span></li>)}</ul>
-            : <EmptyState>No verified result records are available yet.</EmptyState>}
+            : <EmptyState>Nothing has finished since your last visit.</EmptyState>}
       {data.activity.state === "ready" && data.activity.value.additionalResultsOmitted
         ? <p className="private-note">More recent results exist. Open the affected projects to inspect them.</p> : null}
+    </section>
+
+    {/* Stuck, blocked or offline: the worker-side counterpart to "Needs
+        attention" (which is task-side). It reads the same connection signals
+        "Worker status" below already fetched — a stale or missing signal in
+        hosted mode, an unavailable startup check in Mac-local mode — and
+        never invents a state this app has no signal for. */}
+    <section className="private-panel" aria-labelledby="home-stuck"><PanelHeading id="home-stuck">Stuck, blocked or offline
+      {data.connections.state === "ready" ? <PrivateCount value={stuckWorkerCount(data.connections.value)} /> : null}</PanelHeading>
+      {data.connections.state === "loading" ? <LoadingState>Loading saved worker signals…</LoadingState>
+        : data.connections.state === "unavailable" ? <Unavailable>Worker signals are unavailable.</Unavailable>
+          : isLocalWorkerRead(data.connections.value)
+            ? (() => { const stuck = data.connections.value.value.workers.filter(worker => worker.state === "unavailable");
+              return stuck.length
+                ? <ul className="private-dashboard-list">{stuck.map(worker => <li key={worker.kind}>
+                  <span>{worker.kind}</span><StateChip state={worker.state} tone="bad" /></li>)}</ul>
+                : <EmptyState>No worker route is reporting stuck, blocked or offline.</EmptyState>; })()
+            : stuckWorkerCount(data.connections.value) > 0
+              ? <p>{data.connections.value.projection.summary.staleSignalCount} stale worker signal{data.connections.value.projection.summary.staleSignalCount === 1 ? "" : "s"} ·
+                {" "}{data.connections.value.projection.summary.missingSignalCount} missing.</p>
+              : <EmptyState>No worker is reporting a stale or missing signal.</EmptyState>}
+      {data.connections.state === "ready" ? <details><summary>Details</summary><p className="private-note">A stale or missing signal means this Control Room has not recently heard from that worker.
+        It does not by itself mean the worker's task failed, and a fresh signal is not proof of capacity to take more work.</p></details> : null}
+      <a className="private-action-link" href="/workers">Open workers</a>
     </section>
 
     <section className="private-panel" aria-labelledby="home-workers"><PanelHeading id="home-workers">Worker status</PanelHeading>
@@ -241,6 +297,8 @@ export function PrivateHome() {
         second one is the only check that would have caught the original defect
         on a real page. */}
     <HomeDashboard data={data} />
+    <p className="private-note"><a href="/morning">Open morning summary</a> — finished, waiting for you, stalled and PRs opened since Control Room last checked.</p>
+    <OperationsControlPanel />
     {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />
       : <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />}
     {runtime.mode === "hosted" && <PrivateOperatorCapacityWorkspace />}

@@ -1,6 +1,7 @@
 import { captureOwnerTrustedLocalEnablementV1, type OwnerTrustedLocalEnablementV1 } from "../../harness/v1/owner-trusted-local-enablements";
 import { captureLocalOwnerSessionProfileV1, type LocalOwnerSessionProfileV1 } from "./local-owner-session";
 import { validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
+import { captureMacLocalRemoteAccessV1, macLocalRemoteOriginsV1, type MacLocalRemoteAccessV1 } from "./mac-local-remote-access";
 
 export const MAC_LOCAL_PROTECTED_CONFIGURATION_V1 = "control-room.mac-local-protected-configuration/v1" as const;
 
@@ -12,6 +13,8 @@ export type MacLocalProtectedConfigurationV1 = Readonly<{
   database: PrivatePostgresConfiguration;
   enablement: OwnerTrustedLocalEnablementV1;
   workIntakeProjectIds: readonly string[];
+  /** Normalised remote-access paths; absent means loopback only. */
+  remoteAccess?: MacLocalRemoteAccessV1;
 }>;
 
 /**
@@ -26,7 +29,7 @@ export function captureMacLocalProtectedConfigurationV1(value: unknown): MacLoca
       throw new Error();
     const record = value as Record<string, unknown>;
     const requiredKeys = ["schema", "port", "workspaceId", "localOwnerSession", "database", "enablement"];
-    const keys = [...requiredKeys, "workIntakeProjectIds"];
+    const keys = [...requiredKeys, "workIntakeProjectIds", "remoteAccess"];
     const workIntakeProjectIds = record.workIntakeProjectIds ?? [];
     if (requiredKeys.some(key => !(key in record)) || Object.keys(record).some(key => !keys.includes(key))
       || record.schema !== MAC_LOCAL_PROTECTED_CONFIGURATION_V1 || !Number.isSafeInteger(record.port)
@@ -37,12 +40,21 @@ export function captureMacLocalProtectedConfigurationV1(value: unknown): MacLoca
         || !/^(?:\*|[A-Za-z0-9][A-Za-z0-9._:-]{0,179})$/.test(projectId))
       || new Set(workIntakeProjectIds).size !== workIntakeProjectIds.length
       || (workIntakeProjectIds.includes("*") && workIntakeProjectIds.length !== 1)) throw new Error();
-    const localOwnerSession = captureLocalOwnerSessionProfileV1(record.localOwnerSession);
-    if (new URL(localOwnerSession.origin).port !== String(record.port)) throw new Error();
+    // remoteOrigins is derived below from remoteAccess, never written directly.
+    if (record.localOwnerSession && typeof record.localOwnerSession === "object"
+      && "remoteOrigins" in (record.localOwnerSession as object)) throw new Error();
+    const ownerSession = captureLocalOwnerSessionProfileV1(record.localOwnerSession);
+    if (new URL(ownerSession.origin).port !== String(record.port)) throw new Error();
+    const remoteAccess = record.remoteAccess === undefined && ownerSession.trustedOrigin === undefined ? undefined
+      : captureMacLocalRemoteAccessV1(record.remoteAccess, ownerSession.origin, ownerSession.trustedOrigin);
+    const { trustedOrigin: _legacy, ...sessionWithoutLegacy } = ownerSession;
+    const localOwnerSession = remoteAccess ? captureLocalOwnerSessionProfileV1({ ...sessionWithoutLegacy,
+      remoteOrigins: macLocalRemoteOriginsV1(remoteAccess) }) : ownerSession;
     const database = validatePrivatePostgresConfiguration(record.database as PrivatePostgresConfiguration);
     const enablement = captureOwnerTrustedLocalEnablementV1(record.enablement);
     return Object.freeze({ schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: record.port as number,
       workspaceId: record.workspaceId, localOwnerSession, database, enablement,
-      workIntakeProjectIds: Object.freeze([...(workIntakeProjectIds as string[])]) });
+      workIntakeProjectIds: Object.freeze([...(workIntakeProjectIds as string[])]),
+      ...(remoteAccess ? { remoteAccess } : {}) });
   } catch { throw new Error("mac_local_protected_configuration_invalid"); }
 }

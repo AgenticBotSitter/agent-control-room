@@ -12,6 +12,7 @@ import { taskPlanningDraftSchema, taskPlanningCommandSchema, taskPlanningOptions
 import { catalogProjectIdSchema } from "./project-wire";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import { taskAssignmentDraftSchema, taskAssignmentCommandSchema, taskAssignmentOptionsSchema } from "./task-assignment-wire";
+import { taskCancelDraftSchema, taskCancelCommandSchema } from "./task-cancel-wire";
 import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import { taskSubmissionDraftSchema, taskSubmissionReceiptSchema, taskSubmissionReadSchema } from "./task-submission-wire";
 import { approvalDigestSchema } from "./task-approval-wire";
@@ -196,6 +197,26 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
           || draft.data.action === "assign" && result.receipt.nodeId !== draft.data.nodeId
           || draft.data.action === "expire" && result.receipt.leaseState !== "expired"
           || draft.data.action === "revoke" && result.receipt.leaseState !== "revoked") throw new Error("assignment_scope_mismatch");
+        return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+      }
+      const cancelRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/cancel$/.exec(url.pathname);
+      if (cancelRoute) {
+        if (url.search) throw new WebAccessError("invalid_request");
+        let projectId: string, jobId: string;
+        try { projectId = decodeURIComponent(cancelRoute[1]); jobId = decodeURIComponent(cancelRoute[2]); }
+        catch { throw new WebAccessError("invalid_request"); }
+        if (!catalogProjectIdSchema.safeParse(projectId).success || !catalogProjectIdSchema.safeParse(jobId).success)
+          throw new WebAccessError("invalid_request");
+        await options.service.authorize(identity, projectId);
+        if (!options.assignment) throw new Error("assignment_not_configured");
+        if (request.method !== "POST") throw new WebAccessError("not_found");
+        if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body) throw new WebAccessError("invalid_request");
+        const draft = taskCancelDraftSchema.safeParse(await readBoundedJson(request.body, 256));
+        if (!draft.success) throw new WebAccessError("invalid_request");
+        const result = taskCancelCommandSchema.parse(
+          await options.assignment.cancel(identity, projectId, jobId, draft.data.expectedInputDigest));
+        if (result.receipt.projectId !== projectId || result.receipt.jobId !== jobId
+          || result.receipt.inputDigest !== draft.data.expectedInputDigest) throw new Error("cancel_scope_mismatch");
         return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
       }
       const planningRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/plan$/.exec(url.pathname);

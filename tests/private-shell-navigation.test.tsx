@@ -292,6 +292,16 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
     React.createElement(PrivateHome)));
   const tick = async () => { await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
   const counts = () => Object.fromEntries(paths.map(path => [path, requests.filter(item => item === path).length]));
+  // PrivateHeader (mounted by PrivateHome on every page) reads the same
+  // needs-me/tasks endpoint once, on mount only, for its "Needs you" nav
+  // badge (owner-ux-feedback-2026-09-27.md item 2). It does not re-poll on
+  // focus, visibility or the dashboard's own manual refresh, so it adds a
+  // flat +1 to that one path from the moment Home first mounts, and the
+  // other two paths are unaffected. See private-header.tsx's
+  // useNeedsAttentionBadge for why this is one request and not two despite
+  // StrictMode's double mount.
+  const expected = (base: number, headerMounted: boolean) => Object.fromEntries(paths.map(path =>
+    [path, base + (headerMounted && path === "/api/v1/needs-me/tasks" ? 1 : 0)]));
   const settle = async () => {
     const reads = pending.splice(0);
     await React.act(async () => { for (const read of reads) read.resolve(responseFor(read.path)); });
@@ -300,10 +310,10 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
   try {
     await React.act(async () => { root.render(render("checking")); });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 0])));
+    assert.deepEqual(counts(), expected(0, false));
     await React.act(async () => { root.render(render("local")); });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 1])), "StrictMode starts one dashboard batch");
+    assert.deepEqual(counts(), expected(1, true), "StrictMode starts one dashboard batch");
     assert.equal(requests.includes("/api/v1/connections"), false, "local Home never requests the hosted connection route");
     await React.act(async () => {
       dom.window.dispatchEvent(new dom.window.Event("focus"));
@@ -313,23 +323,23 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
       assert.ok(button); button.click();
     });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 1])), "in-flight refreshes are coalesced");
+    assert.deepEqual(counts(), expected(1, true), "in-flight refreshes are coalesced");
     await settle();
     await React.act(async () => {
       dom.window.dispatchEvent(new dom.window.Event("focus"));
       dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
     });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "settled batch permits one refresh");
+    assert.deepEqual(counts(), expected(2, true), "settled batch permits one refresh");
     await settle();
     hidden = true;
     await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "hidden Home pauses polling");
+    assert.deepEqual(counts(), expected(2, true), "hidden Home pauses polling");
     hidden = false;
     await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
     await tick();
-    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 3])), "visible Home resumes one saved-state refresh");
+    assert.deepEqual(counts(), expected(3, true), "visible Home resumes one saved-state refresh");
     await settle();
   } finally {
     await React.act(async () => { root.unmount(); });

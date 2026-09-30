@@ -82,6 +82,10 @@ test("Mac-local task composition reuses the canonical operations without startin
   assert.equal(app.queueDelivery, undefined, "constructing the local website must not start or imply a queue worker");
   assert.equal(typeof app.workBatchAuthority?.acceptedResultProof, "function",
     "production composition must expose the owner authority that projects authenticated predecessor provenance");
+  assert.equal(app.workBatchAuthority?.binding, "caller_transaction",
+    "the controller-side authority must resolve on its caller's transaction");
+  assert.equal(app.workBatchView?.binding, "coordinator_snapshot",
+    "the web login must get the session-free coordinator snapshot");
   assert.ok(!f.trace.includes("queue-start"));
 
   await app.close();

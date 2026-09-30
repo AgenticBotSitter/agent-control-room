@@ -56,6 +56,8 @@ const ROLE_PASSWORDS = Object.freeze({
   control_room_queue_worker: randomBytes(24).toString("base64url"),
   control_room_intake: randomBytes(24).toString("base64url"),
   control_room_news: randomBytes(24).toString("base64url"),
+  control_room_fleet: randomBytes(24).toString("base64url"),
+  control_room_fleet_owner: randomBytes(24).toString("base64url"),
 });
 
 /**
@@ -78,6 +80,7 @@ const ROLE_FILES = Object.freeze([
   "native_queue_worker_roles.sql",
   "native_queue_recovery_roles.sql",
   "news_queue_producer_roles.sql",
+  "fleet_gateway_roles.sql",
 ]);
 
 const QUEUES = Object.freeze(["native-task-delivery", "news-feed-collection"]);
@@ -98,6 +101,8 @@ export const ROLE_LOGINS = Object.freeze({
   app: Object.freeze({ login: "control_room_app", group: "control_room_application" }),
   scheduler: Object.freeze({ login: "control_room_scheduler", group: "control_room_schedule_admissions" }),
   migrator: Object.freeze({ login: "control_room_migrator", group: "control_room_schema_owner" }),
+  fleet: Object.freeze({ login: "control_room_fleet", group: "control_room_fleet_gateway" }),
+  fleetOwner: Object.freeze({ login: "control_room_fleet_owner", group: "control_room_fleet_owner_authority" }),
   owner: Object.freeze({ login: "control_room_web", group: "control_room_private_web" }),
 });
 

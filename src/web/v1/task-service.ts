@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { newsResearchTaskDraft } from "./news-research-draft";
 import { parseNewsWorkOrderProposalV1 } from "../../project-adapters/news/v1/proposal";
+import { PostgresNewsTaskProposalLinksV1 } from "../../project-adapters/news/v1/task-proposal-links";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { CanonicalStore, type ProposedWorkBundle } from "../../persistence/canonical-store";
 import { DOMAIN_CONTRACT_VERSION, requestRecordSchema, workflowRecordSchema, jobRecordSchema,
@@ -42,9 +43,11 @@ import { readSavedTaskPlansInSessionV1, readTaskRevisionLinksV1, savedTaskPlanPr
   type SavedTaskPlanRowV1 } from "./task-execution-planner";
 import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
 import { projectTaskDisplayStateV1 } from "./task-display-state";
-import { costForUsageV1, rollupUsageV1, usageMeasurementSchemaV1, usagePriceTableSchemaV1,
-  type UsagePriceTableV1 } from "../../usage/v1/usage-cost";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
+import { costForUsageV1, rollupUsageGroupsV1, usageMeasurementSchemaV1, usagePriceTableSchemaV1,
+  type UsagePriceTableV1, type UsageRollupV1 } from "../../usage/v1/usage-cost";
 import type { HarnessRunEventV1, HarnessRunV1 } from "../../harness/v1/types";
+import type { ProductConfigurationV1 } from "../../config/v1/product-configuration";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -88,6 +91,10 @@ export interface WebTaskKeys {
   taskPlanIntegrityKey?: Uint8Array;
   harnessIntegrityKey?: Uint8Array;
   ideaIntegrityKey?: Uint8Array;
+  /** Retained-news provenance key. Without it the news-to-task endpoint is unavailable. */
+  newsIntegrityKey?: Uint8Array;
+  /** Trusted optional-module configuration, captured at process startup. */
+  productConfiguration?: Readonly<ProductConfigurationV1>;
   results?: NativeResultReadConfiguration;
   reviews?: { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 };
   ownerReviews?: WebTaskReviewConfiguration;
@@ -124,10 +131,14 @@ export class WebTaskService {
   private readonly taskPlanIntegrityKey?: Uint8Array;
   private readonly usagePriceTable?: UsagePriceTableV1;
   private readonly fileAccessKey?: Uint8Array;
+  private readonly projectEvents?: TaskProjectEventWriterV1;
+  private readonly newsIntegrityKey?: Uint8Array;
+  private readonly productConfiguration?: Readonly<ProductConfigurationV1>;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
     this.modelCatalog = keys?.modelCatalog;
+    this.productConfiguration = keys?.productConfiguration;
     this.usagePriceTable = keys?.usagePriceTable ? usagePriceTableSchemaV1.parse(keys.usagePriceTable) : undefined;
     if (keys?.taskPlanIntegrityKey !== undefined) {
       if (!(keys.taskPlanIntegrityKey instanceof Uint8Array) || keys.taskPlanIntegrityKey.length !== 32)
@@ -145,10 +156,16 @@ export class WebTaskService {
     if (keys?.ownerReviews && (!keys.results || !keys.reviews || !(keys.ownerReviews.integrityKey instanceof Uint8Array)
       || keys.ownerReviews.integrityKey.length !== 32 || keys.reviews.integrityKey.length !== 32
       || keys.ownerReviews.integrityKey.some((byte, index) => byte !== keys.reviews!.integrityKey[index]))) throw new Error("task_key_invalid");
-    this.projects = new WebProjectService(db, scope, clock, keys?.ideaIntegrityKey);
+    this.projects = new WebProjectService(db, scope, clock, keys?.ideaIntegrityKey, undefined, this.productConfiguration);
+    if (keys?.newsIntegrityKey !== undefined) {
+      if (!(keys.newsIntegrityKey instanceof Uint8Array) || keys.newsIntegrityKey.length !== 32) throw new Error("task_key_invalid");
+      this.newsIntegrityKey = Uint8Array.from(keys.newsIntegrityKey);
+    }
     if (keys?.harnessIntegrityKey !== undefined) {
       if (!(keys.harnessIntegrityKey instanceof Uint8Array) || keys.harnessIntegrityKey.length !== 32) throw new Error("task_key_invalid");
       this.harnessKey = new Uint8Array(keys.harnessIntegrityKey);
+      this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+        deriveProjectEventIntegrityKeyV1(this.harnessKey), () => new Date(this.clock()).toISOString()));
     }
     if (keys?.results) {
       if (!this.harnessKey) throw new Error("task_key_invalid");
@@ -257,9 +274,23 @@ export class WebTaskService {
     catch { throw new WebAccessError("invalid_request"); }
     if (proposal.tenantId !== this.scope.tenantId || proposal.workspaceId !== this.scope.workspaceId
       || proposal.projectId !== projectId) throw new WebAccessError("invalid_request");
+    const newsIntegrityKey = this.newsIntegrityKey;
+    if (!newsIntegrityKey) throw new WebAccessError("not_found");
     let draft: ReturnType<typeof newsResearchTaskDraft>;
     try { draft = newsResearchTaskDraft(proposal); } catch { throw new WebAccessError("invalid_request"); }
-    return this.propose(identity, projectId, draft, key);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (this.productConfiguration && !project.presentation?.availableModules.includes("news")) throw new WebAccessError("not_found");
+      const result = await this.proposeWithDependenciesInSession(tx, actor, projectId, draft, key, []);
+      try {
+        await new PostgresNewsTaskProposalLinksV1(joined(tx), { ...this.scope, projectId }, newsIntegrityKey)
+          .saveInSession(tx, result.receipt.jobId, proposal, actor.now);
+      } catch (error) {
+        if (error instanceof Error && error.message === "news_task_proposal_link_story_not_found") throw new WebAccessError("not_found");
+        throw error;
+      }
+      return result;
+    });
   }
 
   async propose(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
@@ -361,6 +392,8 @@ export class WebTaskService {
         safeMetadata: { inputDigest: bundle.job.inputDigest, state: "proposed" } });
       await tx.query(`INSERT INTO control_web_task_commands(tenant_id,identity_id,idempotency_key,project_id,job_id,request_digest,result,occurred_at)
         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`, [this.scope.tenantId, actor.id, key, projectId, jobId, digest, JSON.stringify(receipt), actor.now]);
+      if (this.projectEvents) await this.projectEvents.appendInSession(tx, { ...this.scope, projectId, subjectId: jobId,
+        action: "task_created", sourceId: jobId, sourceVersion: "task-created-v1", occurredAt: actor.now });
       return { receipt, replayed: false };
   }
 
@@ -402,11 +435,37 @@ export class WebTaskService {
       [this.scope.tenantId, jobId])).rows;
       const store = this.harnessKey ? new HarnessRunStoreV1(joined(tx), this.harnessKey) : undefined;
       const boundedAttempts = attemptRows.slice(0, 10);
-      const allInspectedRuns = store ? await store.inspectUsageScope(this.scope.tenantId, projectId, jobId) : [];
-      const inspectedRuns = new Map<string, typeof allInspectedRuns>();
-      for (const value of allInspectedRuns) inspectedRuns.set(value.run.attemptId,
-        [...(inspectedRuns.get(value.run.attemptId) ?? []), value]);
-      const allEvidence = allInspectedRuns.map(value => ({ attemptId: value.run.attemptId, ...this.usageEvidence(value.run, value.events) }));
+      // Two bounded reads, not one unbounded one. The rows the page displays come
+      // from the per-attempt reader (11 per attempt = 10 shown + 1 to detect
+      // `additionalRunsOmitted`), and the TOTALS come from a SQL aggregate over
+      // every run in the job — so the cost is bounded by the page's display
+      // bound and by the number of priceable shapes, never by run history.
+      const inspectedRuns = store ? await store.inspectAttempts(this.scope.tenantId, projectId, jobId,
+        boundedAttempts.map(attempt => attempt.id)) : new Map<string, readonly { run: HarnessRunV1;
+          events: HarnessRunEventV1[] }[]>();
+      // TWO aggregates, because they answer different questions about different
+      // sets. The page's headline total covers EVERY run the job has ever
+      // recorded, including the attempts it does not display, so it reads the
+      // whole job and does not group by attempt. Each displayed attempt's own
+      // rollup covers only that attempt, so it reads only the ten attempt ids the
+      // page renders. Reading one set and splitting it in the application could
+      // not give both: the per-attempt read would have to include every attempt
+      // to make the headline total exact, and a group per attempt ever recorded
+      // is a read that grows with retries.
+      //
+      // Both are still aggregates, so both are bounded by shapes rather than by
+      // runs; the second is additionally bounded by the page's attempt display
+      // bound, which is what makes it independent of the job's retry history.
+      const attemptIds = boundedAttempts.map(attempt => attempt.id);
+      const rollupGroups = store ? await store.inspectUsageRollup(this.scope.tenantId, projectId, jobId) : [];
+      const price = this.usagePriceTable;
+      const rollup = rollupUsageGroupsV1(rollupGroups, price);
+      const attemptGroups = store
+        ? await store.inspectUsageRollup(this.scope.tenantId, projectId, jobId, attemptIds) : [];
+      const rollupByAttempt = new Map<string, UsageRollupV1>();
+      for (const attempt of boundedAttempts)
+        rollupByAttempt.set(attempt.id, rollupUsageGroupsV1(
+          attemptGroups.filter(group => group.attemptId === attempt.id), price));
       const attempts = [];
       for (const a of boundedAttempts) {
         const attempt = attemptRecordSchema.parse(a.payload);
@@ -434,7 +493,7 @@ export class WebTaskService {
         }
         attempts.push({ attemptId: attempt.id, attemptNumber: attempt.attemptNumber, state: attempt.state,
           runs, additionalRunsOmitted: inspected.length > 10,
-          usageRollup: rollupUsageV1(allEvidence.filter(value => value.attemptId === attempt.id)) });
+          usageRollup: rollupByAttempt.get(attempt.id)! });
       }
       const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       const revisionLinks = this.taskPlanIntegrityKey
@@ -449,7 +508,7 @@ export class WebTaskService {
           model: modelRow.model, effort: modelRow.effort, provider: modelRow.provider, profile: modelRow.profile,
           inheritedFromJobId: modelRow.inherited_from_job_id } : null,
         ownershipLeases: [...leaseGroups.values()],
-        observedAt: actor.now, attempts, usageRollup: rollupUsageV1(allEvidence), priceTable: this.priceTableEvidence(),
+        observedAt: actor.now, attempts, usageRollup: rollup, priceTable: this.priceTableEvidence(),
         earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
         localRouteObservation: { state: "not_prepared", adapter: null },
         hermesDeliveryRecovery,
@@ -1019,9 +1078,10 @@ export class WebTaskService {
       const projectedReviews = this.applyDisplayEvidence(reviewSummaries, displayEvidence)
         .filter(task => task.state === "waiting_approval");
       const projectedRecent = this.applyDisplayEvidence(recentSummaries, displayEvidence);
-      const usageRuns = this.harnessKey ? await new HarnessRunStoreV1(joined(tx), this.harnessKey)
-        .inspectUsageScope(this.scope.tenantId, projectId) : [];
-      const usageRollup = rollupUsageV1(usageRuns.map(value => this.usageEvidence(value.run, value.events)));
+      const usageRollup = this.harnessKey ? rollupUsageGroupsV1(
+        await new HarnessRunStoreV1(joined(tx), this.harnessKey)
+          .inspectUsageRollup(this.scope.tenantId, projectId), this.usagePriceTable)
+        : rollupUsageGroupsV1([], this.usagePriceTable);
       return taskProjectOverviewSchema.parse({ projectId, current: projectedCurrent.slice(0, 10),
         awaitingReview: projectedReviews.slice(0, 5), recent: projectedRecent,
         additionalCurrentOmitted: projectedCurrent.length > 10 || currentRows.length > 250,
