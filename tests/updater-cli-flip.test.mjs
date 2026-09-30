@@ -38,6 +38,7 @@ test("the CLI keeps status unprivileged, sudo verbs root-only, and confirm bound
     /updater_install_needs_root/u);
 
   const fixture = await planFixtureV1(root); output.length = 0;
+  assert.equal(fixture.words.length, 6, "the owner confirmation carries 36 bits, not the old 24-bit code");
   const originalPlan = await readFile(join(root, "updater-state/plans/u2.json"), "utf8");
   await writeFile(join(root, "updater-state/plans/u2.json"), JSON.stringify({ ...fixture.plan,
     artifact: { releaseId: "swapped" } }));
@@ -60,6 +61,21 @@ test("the CLI keeps status unprivileged, sudo verbs root-only, and confirm bound
   assert.equal(sent.verb, "backup-now");
   await assert.rejects(runUpdaterCliV1(["owner-code"], { root, getuid: () => 0 }),
     /updater_cli_port_not_implemented/u, "later sudo verbs are explicit typed ports, never socket aliases");
+});
+
+test("attended flip rechecks the confirmed digest immediately before staging", async t => {
+  const root = await rootV1(t), fixture = await planFixtureV1(root), bundle = await bundleV1(root);
+  await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  await runUpdaterCliV1(["confirm", ...fixture.words], { root, getuid: () => 0, stdout: () => {} });
+  await writeFile(join(root, "updater-state/plans/u2.json"), JSON.stringify({ ...fixture.plan,
+    artifact: { releaseId: "swapped-after-confirmation" } }));
+  let staged = false;
+  const operations = { async stage() { staged = true; }, async restart() {}, async fullHealth() { return true; },
+    async waitForNextHeartbeat() {} };
+  await assert.rejects(new AttendedUpdaterFlipV1({ root, operations }).run({ planId: "u2", version: "updater-2",
+    bundleDirectory: bundle.directory, expectedBundleDigest: bundle.digest, links: [] }),
+  /updater_attended_plan_digest_mismatch/u);
+  assert.equal(staged, false, "mutated plan bytes are refused before candidate bytes are staged");
 });
 
 async function bundleV1(root) {

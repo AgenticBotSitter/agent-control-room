@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { chmod, link, lstat, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 import { atomicWriteNoFollowV1, lchownNoFollowV1, readFileNoFollowV1 } from "../src/updater/v1/fs-safety.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "../src/updater/v1/runner.mjs";
 import { UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1 } from "../src/updater/v1/runtime.mjs";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
+
+const execFileAsync = promisify(execFile);
 
 async function temporaryRoot(t) {
   const root = await mkdtemp(join(tmpdir(), "updater-skeleton-"));
@@ -42,6 +46,15 @@ test("R-FS helpers refuse symlink and hardlink swaps and atomically publish boun
     "a hard-linked state file is not trusted");
   await assert.rejects(lchownNoFollowV1(root, "lower/trap", process.getuid(), process.getgid()),
     /updater_symlink_refused/u, "ownership changes never follow a symlink");
+});
+
+test("R-FS reads refuse a planted FIFO without waiting for a writer", async t => {
+  const root = await temporaryRoot(t), path = join(root, "updater-state/self-update");
+  await execFileAsync("/usr/bin/mkfifo", [path]);
+  await assert.rejects(Promise.race([
+    readFileNoFollowV1(root, "updater-state/self-update", { maxBytes: 16 }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("fifo_read_blocked")), 250)),
+  ]), error => error?.code === "updater_file_refused", "a FIFO is rejected rather than blocking the updater");
 });
 
 const makeRun = () => ({ run_id: "run:00000000-0000-4000-8000-000000000001", plan_id: "plan-one", state: "approved",
@@ -187,6 +200,28 @@ test("a failed initial heartbeat closes the control socket before startup return
     "failed startup did not leave a listener or stale socket");
 });
 
+test("startup reports a live run before its first heartbeat and reuses its durable token", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const store = new MemoryStore(), effects = new Effects();
+  const updater = await startUpdaterV1({ root, store,
+    identity: { bootId: "boot-restarted", leaseToken: "lease-new" }, effects,
+    referee: { async assertPlanAllowed() {} } });
+  t.after(() => updater.stop());
+  assert.equal(updater.identity.leaseToken, "lease-one");
+  assert.deepEqual(store.heartbeats[0], { bootId: "boot-restarted", leaseToken: "lease-one",
+    state: "running", step: "approved" });
+  assert.deepEqual(store.heartbeats[1], { bootId: "boot-restarted", leaseToken: "lease-one",
+    state: "idle", step: null });
+  assert.equal(updater.loop.lastOutcome.status, "succeeded");
+});
+
+test("startup refuses when another database session still owns the updater lease", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const store = new MemoryStore(); store.acquire = async () => ({ status: "busy", run: store.run });
+  await assert.rejects(startUpdaterV1({ root, store }), /updater_live_session_busy/u);
+  await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u);
+});
+
 test("the main loop does not poll the runner while Off and rejects a risk-increasing request", async t => {
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
   await mkdir(join(root, "releases/r7"), { recursive: true }); await symlink("releases/r7", join(root, "current"));
@@ -207,6 +242,25 @@ test("the main loop does not poll the runner while Off and rejects a risk-increa
   assert.equal(runnerCalls, 1, "a rescued active run is measured, never advanced by the watcher/build path");
 });
 
+test("a busy result with a live run is published as needs_attention", async () => {
+  let written;
+  const loop = new UpdaterMainLoopV1({ runner: { async runOnce() { return { status: "busy", liveRun: true }; } },
+    store: new MemoryStore(undefined), stateFiles: { readSelfUpdate: async () => "On\n",
+      hasRescueMarker: async () => false, async writeStatus(value) { written = value; } },
+    mode: new UpdaterModeV1(), ownerActions: { async handle() {} } });
+  assert.equal((await loop.tick()).status, "busy");
+  assert.equal(written.state, "needs_attention"); assert.equal(written.needsYou, true);
+});
+
+test("the runner refuses an acquired result whose durable token does not match", async () => {
+  const store = new MemoryStore(); store.acquire = async () => ({ status: "acquired", run: store.run,
+    leaseToken: "lease-wrong" });
+  const fixture = makeRunner({ store });
+  const result = await fixture.runner.runOnce();
+  assert.equal(result.status, "busy"); assert.equal(result.liveRun, true);
+  assert.deepEqual(fixture.effects.calls, []);
+});
+
 test("the PostgreSQL adapter refuses a wrong production role and never transitions without the run lease", async () => {
   const roleClient = { async query(sql) {
     if (sql.startsWith("SET ")) return { rows: [] };
@@ -222,4 +276,18 @@ test("the PostgreSQL adapter refuses a wrong production role and never transitio
   const store = new PostgresUpdaterStoreV1(leaseClient);
   await assert.rejects(store.transition("run:00000000-0000-4000-8000-000000000001", "wrong", "prechecked"),
     /updater_run_lease_lost/u);
+
+  const acquisitionClient = acquired => ({ async query(sql) {
+    if (sql.includes("pg_try_advisory_lock")) return { rows: [{ acquired }] };
+    if (sql.includes("FROM updater.runs")) return { rows: [makeRun()] };
+    if (sql.includes("pg_advisory_unlock")) return { rows: [{ pg_advisory_unlock: true }] };
+    throw new Error(`unexpected query: ${sql}`);
+  } });
+  const busy = await new PostgresUpdaterStoreV1(acquisitionClient(false)).acquire("lease-new");
+  assert.equal(busy.status, "busy"); assert.equal(busy.run.lease_token, "lease-one");
+  const resumedStore = new PostgresUpdaterStoreV1(acquisitionClient(true));
+  const resumed = await resumedStore.acquire("lease-new");
+  assert.deepEqual({ status: resumed.status, leaseToken: resumed.leaseToken, resumed: resumed.resumed },
+    { status: "acquired", leaseToken: "lease-one", resumed: true });
+  await resumedStore.release();
 });

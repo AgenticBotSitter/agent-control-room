@@ -113,8 +113,15 @@ export class UpdaterMainLoopV1 {
         : await this.runner.runOnce();
       const mode = await this.mode.read();
       const publicFacts = this.stateFiles.publicFacts ? await this.stateFiles.publicFacts() : {};
-      await this.stateFiles.writeStatus({ ...publicFacts, state: this.lastOutcome.status === "uncertain" ? "uncertain"
-        : mode === "running" ? "idle" : mode, needsYou: ["uncertain", "needs_attention", "error"].includes(this.lastOutcome.status),
+      const publicState = this.lastOutcome.status === "uncertain" ? "uncertain"
+        : this.lastOutcome.status === "attended_upgrade_required" ? "attended_upgrade_required"
+        : this.lastOutcome.status === "waiting" ? "awaiting_approval"
+        : this.lastOutcome.status === "rolled_back" ? "rolled_back"
+        : ["busy", "needs_attention", "error"].includes(this.lastOutcome.status) ? "needs_attention"
+        : mode === "running" ? "idle" : mode;
+      await this.stateFiles.writeStatus({ ...publicFacts, state: publicState,
+        needsYou: ["busy", "uncertain", "attended_upgrade_required", "needs_attention", "error"]
+          .includes(this.lastOutcome.status),
       selfUpdate: flag });
       return this.lastOutcome;
     } finally { this.#ticking = false; }

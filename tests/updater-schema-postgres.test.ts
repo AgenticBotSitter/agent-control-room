@@ -28,12 +28,14 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { applyUpdaterSchemaV1, updaterDdlFilesV1, type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
+import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
 
 // CONTROL_ROOM_PG_TEST_PORT_BASE moves the disposable cluster, as in the module
 // approval lane. 59510 is the block this job was given.
@@ -873,6 +875,74 @@ test("the item-8 store runs every query as the production deployer login", async
       assert.equal(await store.finishOwnerRequest(requestId, "acted"), true);
       assert.equal((await store.unhandledOwnerRequests()).length, 0);
     } finally { await deployer.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("startUpdaterV1 boots with a live run and only one of 20 production sessions acquires it", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    const plan = planId("item8-live-boot");
+    await insertPlan(postgres, plan);
+    const seedClient = as(postgres, "deployer"); await seedClient.connect();
+    const runId = `run:${randomUUID()}`;
+    try {
+      await seedClient.query("UPDATE updater.plans SET state='approved' WHERE plan_id=$1", [plan]);
+      await seedClient.query("INSERT INTO updater.runs(run_id,plan_id,state,run_class,lease_token) "
+        + "VALUES($1,$2,'approved','code','lease-previous-session')", [runId, plan]);
+    } finally { await seedClient.end(); }
+
+    const contenders = await Promise.all(Array.from({ length: 20 }, async (_value, index) => {
+      const client = as(postgres, "deployer"); await client.connect();
+      const store = new PostgresUpdaterStoreV1(client); await store.initialize();
+      const result = await store.acquire(`lease-contender-${index}`);
+      return { client, store, result };
+    }));
+    try {
+      assert.equal(contenders.filter(item => item.result.status === "acquired").length, 1,
+        "exactly one production session owns the updater lease");
+      assert.equal(contenders.filter(item => item.result.status === "busy").length, 19);
+      const winner = contenders.find(item => item.result.status === "acquired");
+      if (!winner || winner.result.status !== "acquired") assert.fail("the lease winner was not retained");
+      assert.equal(winner.result.leaseToken, "lease-previous-session",
+        "the new session resumes with the immutable live-run token");
+      assert.equal(winner.result.resumed, true);
+      await winner.store.release();
+    } finally {
+      await Promise.all(contenders.map(async item => { await item.store.release(); await item.client.end(); }));
+    }
+
+    const root = await mkdtemp(join(tmpdir(), "updater-live-boot-"));
+    await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
+    await writeFile(join(root, "updater-state/self-update"), "On\n");
+    const deployer = as(postgres, "deployer"); await deployer.connect();
+    const store = new PostgresUpdaterStoreV1(deployer); await store.initialize();
+    const calls: string[] = [];
+    const effects = {
+      async precheck() { calls.push("precheck"); }, async stage() { calls.push("stage"); },
+      async quickBackup() { calls.push("quick_backup"); }, async drain() { calls.push("drain"); },
+      async switchPair() { calls.push("switch"); }, async restart() { calls.push("restart"); },
+      async health() { calls.push("health"); return true; }, async commitKnownGood() { calls.push("known_good"); },
+      async rollback() { calls.push("rollback"); }, async measure() { calls.push("measure"); },
+    };
+    let updater;
+    try {
+      updater = await startUpdaterV1({ root, store,
+        identity: { bootId: "boot-live-resume", leaseToken: "lease-new-session" }, effects,
+        referee: { async assertPlanAllowed() {} } });
+      assert.equal(updater.identity.leaseToken, "lease-previous-session");
+      assert.equal(updater.loop.lastOutcome.status, "succeeded");
+      assert.deepEqual(calls, ["precheck", "stage", "quick_backup", "drain", "switch", "restart", "health",
+        "known_good"]);
+      const heartbeat = await deployer.query("SELECT boot_id,lease_token,reported_state FROM updater.heartbeat");
+      assert.deepEqual(heartbeat.rows[0], { boot_id: "boot-live-resume", lease_token: "lease-previous-session",
+        reported_state: "idle" }, "the post-run heartbeat returns to idle without stranding the live run");
+      assert.equal((await store.liveRun()), undefined, "the resumed run is not stranded");
+    } finally {
+      await updater?.stop(); await deployer.end(); await rm(root, { recursive: true, force: true });
+    }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 

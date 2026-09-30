@@ -22,9 +22,9 @@ const plainFailureV1 = Object.freeze({
  */
 export class UpdaterRunnerV1 {
   #running = false;
-  constructor({ store, effects, journal, mode, stateFiles, referee }) {
+  constructor({ store, effects, journal, mode, stateFiles, referee, onHeartbeatState = () => {} }) {
     this.store = store; this.effects = effects; this.journal = journal; this.mode = mode;
-    this.stateFiles = stateFiles; this.referee = referee;
+    this.stateFiles = stateFiles; this.referee = referee; this.onHeartbeatState = onHeartbeatState;
   }
 
   async #record(run, state, detail = {}, options = {}) {
@@ -143,11 +143,26 @@ export class UpdaterRunnerV1 {
     if (this.#running) return { status: "busy", message: "Another updater call is active." };
     this.#running = true;
     try {
-      const run = await this.store.liveRun();
-      if (!run) return { status: "idle", message: "No approved update is active." };
-      if (run.lease_token !== this.stateFiles.leaseToken) return { status: "busy",
-        message: "An updater with another boot lease owns the active run." };
-      return await this.#advance(run);
+      const acquisition = this.store.acquire
+        ? await this.store.acquire(this.stateFiles.leaseToken)
+        : { status: "acquired", run: await this.store.liveRun(), leaseToken: this.stateFiles.leaseToken };
+      if (acquisition.status === "busy") return { status: "busy", liveRun: Boolean(acquisition.run),
+        message: "An updater with another live database session owns the active run." };
+      const run = acquisition.run;
+      if (!run) {
+        this.onHeartbeatState({ state: "idle", step: null });
+        return { status: "idle", message: "No approved update is active." };
+      }
+      if (run.lease_token !== acquisition.leaseToken) return { status: "busy", liveRun: true,
+        message: "The active run lease could not be acquired." };
+      this.onHeartbeatState({ state: "running", step: run.state });
+      const outcome = await this.#advance(run);
+      if (["waiting", "uncertain", "attended_upgrade_required"].includes(outcome.status))
+        this.onHeartbeatState({ state: "awaiting_approval", step: outcome.run?.state ?? run.state });
+      else if (outcome.status === "rolled_back") this.onHeartbeatState({ state: "rolled_back", step: null });
+      else if (outcome.status === "needs_attention") this.onHeartbeatState({ state: "uncertain", step: null });
+      else this.onHeartbeatState({ state: "idle", step: null });
+      return outcome;
     } catch (error) {
       return { status: "error", code: typeof error?.code === "string" ? error.code : "updater_runner_error",
         message: "The updater hit an error and will retry from its durable step." };

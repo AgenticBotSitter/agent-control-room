@@ -3,6 +3,7 @@ import { lstat, readFile, readdir, readlink, rename, symlink } from "node:fs/pro
 import { basename, dirname, join, relative } from "node:path";
 import { assertSafeIdV1, updaterRefuseV1 } from "./contracts.mjs";
 import { assertNoSymlinkBelowV1, atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
+import { canonicalJsonV1 } from "./cli.mjs";
 
 export const ATTENDED_LINKS_V1 = Object.freeze([
   "updater/current", "runtime/node-current", "runtime/pnpm-current", "runtime/pg-current", "runtime/esbuild-current",
@@ -71,6 +72,11 @@ export class AttendedUpdaterFlipV1 {
       `updater-state/confirmations/${planId}.json`, { maxBytes: 8192 }));
     if (confirmation?.planId !== planId || confirmation?.confirmed !== true)
       throw updaterRefuseV1("updater_mac_confirmation_missing");
+    const plan = JSON.parse(await readFileNoFollowV1(this.root,
+      `updater-state/plans/${planId}.json`, { maxBytes: 65_536 }));
+    const planDigest = sha256(Buffer.from(canonicalJsonV1(plan)));
+    if (plan?.planId !== planId || confirmation.planDigest !== planDigest)
+      throw updaterRefuseV1("updater_attended_plan_digest_mismatch");
     const manifest = JSON.parse(await readFile(join(bundleDirectory, "manifest.json"), "utf8"));
     const digest = await verifyBundleManifestV1(bundleDirectory, manifest);
     if (digest !== expectedBundleDigest) throw updaterRefuseV1("updater_bundle_digest_refused");

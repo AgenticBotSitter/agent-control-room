@@ -35,7 +35,23 @@ export async function startUpdaterV1(options = {}) {
       throw error;
     }
   }
-  const identity = options.identity ?? newUpdaterIdentityV1();
+  const requestedIdentity = options.identity ?? newUpdaterIdentityV1();
+  let acquisition;
+  try {
+    if (store.acquire) acquisition = await store.acquire(requestedIdentity.leaseToken);
+    else {
+      const run = await store.liveRun();
+      acquisition = { status: "acquired", run, leaseToken: run?.lease_token ?? requestedIdentity.leaseToken };
+    }
+  } catch (error) {
+    if (ownsClient) await client.end().catch(() => {});
+    throw error;
+  }
+  if (acquisition.status !== "acquired") {
+    if (ownsClient) await client.end().catch(() => {});
+    throw updaterRefuseV1("updater_live_session_busy");
+  }
+  const identity = Object.freeze({ ...requestedIdentity, leaseToken: acquisition.leaseToken });
   const stateFiles = new UpdaterStateFilesV1(root, identity.leaseToken), mode = new UpdaterModeV1();
   const unavailable = async () => { throw updaterRefuseV1("updater_actuator_port_unbound"); };
   const effects = options.effects ?? { precheck: unavailable, stage: unavailable, quickBackup: unavailable,
@@ -44,8 +60,12 @@ export async function startUpdaterV1(options = {}) {
   const referee = options.referee ?? { assertPlanAllowed: async () => {
     throw updaterRefuseV1("updater_referee_port_unbound");
   } };
+  let heartbeatState = acquisition.run
+    ? { state: "running", step: acquisition.run.state }
+    : { state: "idle", step: null };
+  const setHeartbeatState = value => { heartbeatState = value; };
   const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles,
-    journal: new FileStepJournalV1(root) });
+    journal: new FileStepJournalV1(root), onHeartbeatState: setHeartbeatState });
   const ownerActions = options.ownerActions ?? { handle: async request => {
     if (request.request_kind === "pause") mode.set("paused");
     else if (request.request_kind === "stop") mode.set("stopped");
@@ -56,7 +76,6 @@ export async function startUpdaterV1(options = {}) {
     process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
   });
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, onError: reportTimerError });
-  let heartbeatState = { state: "idle", step: null };
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportTimerError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
@@ -66,15 +85,17 @@ export async function startUpdaterV1(options = {}) {
       requires_passkey: request.verb === "rollback" });
   } });
   try {
-    await control.start(); await heartbeat.beat(); await loop.tick(); heartbeat.start(); loop.start();
+    await control.start(); await heartbeat.beat(); await loop.tick(); await heartbeat.beat(); heartbeat.start(); loop.start();
   } catch (error) {
     loop.stop(); await heartbeat.stop(); await control.stop();
+    if (store.release) await store.release().catch(() => {});
     if (ownsClient) await client.end();
     throw error;
   }
   return Object.freeze({ root, identity, store, runner, loop, heartbeat, control,
-    setHeartbeatState(value) { heartbeatState = value; },
-    async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); if (ownsClient) await client.end(); } });
+    setHeartbeatState,
+    async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
+      if (ownsClient) await client.end(); } });
 }
 
 const invoked = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
