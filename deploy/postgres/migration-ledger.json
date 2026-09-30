@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "60876202db0d4957e5d627e7bc20459d97dc44012db3617584cae797a16a3182",
+  "digest": "e2a515dafaef8b86ec9611c59ad502cf720adb3f93e81467072d92ede262b813",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -729,44 +729,50 @@
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0190_news_task_proposal_links.sql",
+      "file": "db/migrations/0186_recurring_rules_and_reusable_skills.sql",
       "order": 122,
+      "sha256": "ab0da4776b9c4e9bb277f69c03fec1aca82efd7da1cc04a6c71387f6d4dd4d29",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0190_news_task_proposal_links.sql",
+      "order": 123,
       "sha256": "6c63b8143c1e6a31311dec9bfbc76ef6063a418187a640dc7a5f5046cfb836d0",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0195_module_install_approvals.sql",
-      "order": 123,
+      "order": 124,
       "sha256": "24f348af037ed35308feb243edbb2553661c4dbcddd38a9ca4680193a005826e",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0196_supervisor_incident_outbox_guard.sql",
-      "order": 124,
+      "order": 125,
       "sha256": "15f0bbeedf0bc4f7404f93f5a45e2721873434dc00e4c41d035c4164dc61db00",
       "kind": "migrate"
     },
     {
       "file": "db/roles/production_roles.sql",
-      "order": 125,
+      "order": 126,
       "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 126,
+      "order": 127,
       "sha256": "435cdb989fcff2ee4820fa8b5cc9bd98968748a966a4298f0a8c6c4624ddbeeb",
       "kind": "grants"
     },
     {
       "file": "db/roles/agent_reviewer_roles.sql",
-      "order": 127,
+      "order": 128,
       "sha256": "69a199a5dc16a7263e7037c47bb86b2908bdbbf3d741d2d948c4889781b5d5f9",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 128,
+      "order": 129,
       "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }
