@@ -387,8 +387,13 @@ async function reenterStage(client, own, stageOrdinal, key) {
 /** A second run in an installation that already has one, with its OWN template
  * so the first run's owner consent does not move the pin out from under it.
  * Same tenant, same workspace and same policy, so both runs claim the same
- * ceilings. */
-async function seedSecondRun(client, own, key) {
+ * ceilings.
+ *
+ * `index` names the run within the installation. The template title and the
+ * instantiate request's idempotency key both come from it, so one installation
+ * can hold many runs; without it the second call is an exact replay of the first
+ * and the caller silently gets the SAME run back. */
+async function seedSecondRun(client, own, key, index = 1) {
   const pipelines = new LinearPipelineServiceV1(superuserDatabase(client), own.scope, key,
     { assertCurrent: () => true, isAcceptedResultCurrent: () => false }, () => webNow);
   const at = new Date(webNow).toISOString();
@@ -415,7 +420,8 @@ async function seedSecondRun(client, own, key) {
       provider: "openai", profile: "profile:openai", maxLoops: 0 }], maxTotalLoops: 6, maxDurationSeconds: 3600 };
   const saved = await pipelines.createTemplate(own.identity, own.project.projectId, template);
   const pipeline = await pipelines.instantiate(own.identity, own.project.projectId,
-    { templateId: saved.templateId, title: "Second capped run" }, `caps-second-${own.tenantId}-pipeline-0001`);
+    { templateId: saved.templateId, title: `Second capped run ${index}` },
+    `caps-second-${own.tenantId}-pipeline-${String(index).padStart(4, "0")}`);
   const attemptIds = new Map();
   for (const [index, job] of pipeline.jobIds.entries()) {
     await client.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
@@ -424,7 +430,7 @@ async function seedSecondRun(client, own, key) {
     // The node already exists from the first run's seed, so it is reused rather
     // than inserted again; the attempt is this run's own.
     const nodeId = atStage(index).node_id, workerId = atStage(index).worker_id;
-    const attemptId = `attempt:second:${tag}`;
+    const attemptId = `attempt:second:${index}:${tag}`;
     await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,
       lease_epoch,payload,created_at,updated_at) VALUES($1,$2,$3,1,'offered',1,$4,$5,1,$6::jsonb,$7,$7)`,
     [attemptId, own.tenantId, job, workerId, nodeId,
@@ -1389,6 +1395,152 @@ test("two concurrent advances cannot both take the last unit of a ceiling", need
   assert.equal(third.status, "fulfilled", "the first claim on the second run must not be refused");
   // The queue saw exactly the two permitted effects, never four.
   assert.equal(firstService.queuedCount() + secondService.queuedCount(), 2);
+
+  // A dedicated case for the boundary that 2 units for 2 runs cannot reach: two
+  // DIFFERENT runs racing for the ONE last unit. Two units for two runs lets
+  // each run take its own unit and never makes anyone contend, so the test above
+  // cannot tell a correct claim from a permissive one.
+  const last = await seedInstallation(admin, "lastunit", key, new Date(webNow).toISOString());
+  const lastSecond = await seedSecondRun(admin, last, key);
+  const lastA = advanceService(coordinator, last, key);
+  const lastB = advanceService(coordinator, lastSecond, key);
+  // Exactly ONE unit of runs-per-hour, and two DIFFERENT runs want it.
+  await ownerSetsUp(web, last, key, { runsPerHour: 1, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  await ownerConsents(web, lastSecond, key);
+  const raced = await Promise.allSettled([
+    lastA.service.advance(last.pipeline.runId, last.policyId),
+    lastB.service.advance(lastSecond.pipeline.runId, last.policyId),
+  ]);
+  const admitted = raced.filter(o => o.status === "fulfilled" && o.value.startsWork === true);
+  const refused = raced.filter(o => o.status === "rejected");
+  assert.equal(admitted.length, 1,
+    `exactly one run may take the last unit, got ${JSON.stringify(raced.map(o => o.status === "fulfilled"
+      ? ["ok", o.value.startsWork] : ["refused", o.reason?.safeReason]))}`);
+  assert.equal(refused.length, 1, "the loser is refused, not errored");
+  assert.equal(refused[0].reason.safeReason, "installation_runs_per_hour_exhausted",
+    `the one losing run must be refused by the ceiling it exhausted, got ${refused[0].reason.safeReason}`);
+  // One receipt, one queued job: the loser left no partial effect behind.
+  assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts WHERE tenant_id=$1",
+    [last.tenantId])).rows[0].count, 1, "the losing run claimed no receipt");
+  assert.equal(lastA.queuedCount() + lastB.queuedCount(), 1, "and queued nothing");
+});
+
+test("a burst of 40 concurrent advances holds every ceiling at once", needsPg, async t => {
+  // Self-test item 4: the existing race cases are 2-4 callers. This issues 40
+  // concurrent advances across 20 DISTINCT consented runs in one installation,
+  // so runs-per-hour, per-agent-per-day and the machine agent-process ceiling are
+  // all contended at once. It asserts invariants, not a specific winner.
+  //
+  // Two things shape the shape of the burst, both of them the product's own
+  // behaviour rather than test convenience:
+  //
+  // 1. The private database admits `connections` (8) concurrent sessions plus a
+  //    waiting queue of the same depth and refuses the rest with
+  //    `database_unavailable` rather than queueing without bound
+  //    (`bounded-database.ts`). 40 at once proves the pool is bounded, but most
+  //    callers never reach a pipeline ceiling, so the burst runs in two waves of
+  //    20 and the REFUSAL mix is asserted per wave.
+  // 2. A second caller on a run that already advanced must REPLAY, not open a
+  //    second round. So the contended callers are one per run per wave: a replay
+  //    is the product's answer, and to contend the ceiling the second wave has
+  //    to be different runs, not the same ones again.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(79);
+  const own = await seedInstallation(admin, "burst", key, new Date(webNow).toISOString(), { maxLoops: 1 });
+  const runs = [own];
+  for (let index = 1; index < 20; index += 1) {
+    const seeded = await seedSecondRun(admin, own, key, index);
+    assert.notEqual(seeded.pipeline.runId, runs.at(-1).pipeline.runId,
+      "each seeded run must be a DISTINCT run, or the burst is not a burst");
+    await ownerConsents(web, seeded, key);
+    runs.push(seeded);
+  }
+  // 24 agent processes is the product's own review ceiling
+  // (`PIPELINE_MACHINE_CEILING_V1`); `setAllowance` refuses anything above it, so
+  // the process ceiling is contended right at that boundary rather than wide open.
+  const RUNS_PER_HOUR = 12;
+  await ownerSetsUp(web, own, key, { runsPerHour: RUNS_PER_HOUR, runsPerAgentPerDay: 24,
+    machineMaxAgentProcesses: 24, machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const services = runs.map(run => advanceService(coordinator, run, key));
+
+  // Ten runs per wave, TWO callers each: one claims the round and the other must
+  // replay it. Twenty transactions are in flight per wave, well past the pool's
+  // eight slots, so the ceiling claim and the replay path contend for the same
+  // connections at the same moment. The second wave uses the other ten runs, so
+  // by then the runs-per-hour ceiling is half spent and has to bind.
+  // Indexed by position, not `indexOf`: each run's service object appears twice
+  // in the wave (the claimant and its replay), and `indexOf` would resolve both
+  // callers to the FIRST of them.
+  const wave = async (from, to) => Promise.allSettled(services.slice(from, to)
+    .flatMap((service, offset) => [0, 1].map(() =>
+      service.service.advance(runs[from + offset].pipeline.runId, own.policyId))));
+  const first = await wave(0, 10);
+  const second = await wave(10, 20);
+  const outcomes = [...first, ...second];
+
+  // `database_unavailable` is the bounded pool refusing BY DESIGN, not a
+  // pipeline bug: `bounded-database.ts` admits `connections` (8) concurrent
+  // sessions plus a waiting queue of the same depth and throws on the next
+  // arrival rather than queueing without bound. It is listed so the test fails if
+  // an UNEXPECTED reason ever appears.
+  const OVERLOAD_REFUSAL = "database_unavailable";
+  const PIPELINE_REFUSALS = ["installation_runs_per_hour_exhausted", "installation_agent_runs_per_day_exhausted",
+    "installation_agent_process_ceiling_reached", "policy_task_allowance_exhausted",
+    "policy_concurrency_exhausted", "advance_conflict"];
+  // A pipeline refusal is a `PipelineAdvanceErrorV1` and carries `safeReason`.
+  // Pool admission is a `PrivateDatabaseError` and does NOT: its code is the
+  // message. The two are different layers, so they are classified by what the
+  // error actually is rather than by a string match on a field one of them lacks.
+  const refusalCode = outcome => outcome.reason?.safeReason
+    ?? (outcome.reason?.code === OVERLOAD_REFUSAL || String(outcome.reason?.message) === OVERLOAD_REFUSAL
+      ? OVERLOAD_REFUSAL : undefined);
+  const unexpected = outcomes.filter(o => o.status === "rejected" && !refusalCode(o));
+  assert.deepEqual(unexpected.map(o => String(o.reason?.message ?? o.reason)), [],
+    `every refusal must be a pipeline or pool refusal: ${JSON.stringify(outcomes.map(o => o.status === "fulfilled"
+      ? ["ok", o.value.startsWork, o.value.replayed] : ["refused", refusalCode(o) ?? String(o.reason?.message)]))}`);
+
+  // THE INVARIANT: the installation never started more rounds than the owner
+  // allowed, however many callers arrived and however they interleaved.
+  const receipts = (await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts WHERE tenant_id=$1",
+    [own.tenantId])).rows[0].count;
+  assert.ok(receipts <= RUNS_PER_HOUR,
+    `a burst of ${outcomes.length} callers started ${receipts} rounds under a ceiling of ${RUNS_PER_HOUR}`);
+  // The per-round unique key is the database's own second opinion, and a
+  // duplicate would have thrown before this read.
+  const distinct = (await admin.query("SELECT count(DISTINCT (pipeline_run_id,stage_ordinal,loop_index))::int count"
+    + " FROM pipeline_advance_receipts WHERE tenant_id=$1", [own.tenantId])).rows[0].count;
+  assert.equal(distinct, receipts, "no round was counted twice");
+  // A CLAIMED round is exactly one receipt and exactly one queue effect. A
+  // REPLAY also reports `startsWork: true` (it re-issues the work the first
+  // caller already started), so `replayed` is what separates the two: a caller
+  // that neither claims nor replays has started nothing.
+  const replayed = outcomes.filter(o => o.status === "fulfilled" && o.value.replayed === true).length;
+  const started = outcomes.filter(o => o.status === "fulfilled" && o.value.startsWork === true
+    && o.value.replayed !== true).length;
+  const refused = outcomes.filter(o => o.status === "rejected").length;
+  const byCeiling = refused - outcomes.filter(o => refusalCode(o) === OVERLOAD_REFUSAL).length;
+  assert.equal(started, receipts, "every started round left exactly one receipt");
+  // The burst really did contend in both directions: rounds admitted, callers
+  // refused, and a second caller replayed rather than opening a second round.
+  assert.ok(started > 0, "some rounds were admitted, or nothing was raced");
+  assert.ok(replayed > 0, "a second caller for an admitted run must replay, not open a second round");
+  assert.ok(byCeiling > 0, `a PIPELINE ceiling must have refused someone, or only the pool was tested`);
+  // And the second wave is where the ceiling is proved: the first wave spent
+  // part of runs-per-hour, so this wave must be refused by a PIPELINE ceiling,
+  // not merely by pool admission, and refusing must cost nothing.
+  const secondRefusals = second.filter(o => o.status === "rejected");
+  assert.ok(secondRefusals.length > 0, "the second wave must be refused somewhere");
+  assert.ok(secondRefusals.some(o => PIPELINE_REFUSALS.includes(refusalCode(o))),
+    `the second wave must hit a pipeline ceiling, got ${JSON.stringify(secondRefusals.map(refusalCode))}`);
+  const queued = services.reduce((total, service) => total + service.queuedCount(), 0);
+  assert.equal(queued, receipts, "the queue saw exactly the admitted rounds, never a refused one");
+  console.error(`BURST: ${outcomes.length} callers over ${runs.length} runs, ${receipts} receipts, ${queued} queued, `
+    + `${byCeiling} refused by a pipeline ceiling, ${refused - byCeiling} by pool admission, ${replayed} replayed`);
 });
 
 test("a run ceiling of one admits exactly one run and refuses the second", needsPg, async t => {
