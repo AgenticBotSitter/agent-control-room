@@ -8,7 +8,7 @@ import { sendControlRequestV1 } from "./control-socket.mjs";
 const WORDS_V1 = Object.freeze(("amber anchor apple arch arrow atlas badge bamboo beacon birch blue bolt brave brick brook "
   + "cabin cedar circle cloud coral crane dawn delta dune ember fern field flame flint forest frost garden glass "
   + "gold grove harbor hazel hill iris ivory jade lake leaf light linen maple meadow mint moon north oak ocean olive "
-  + "onyx pine plum quartz rain reed river robin sage silver sky slate snow south star stone sun tide trail vale west").split(" "));
+  + "onyx pine plum quartz rain reed river robin sage silver sky").split(" "));
 
 export function canonicalJsonV1(value) {
   if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
@@ -30,7 +30,7 @@ export function confirmationWordsV1(planDigest) {
   if (typeof planDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(planDigest))
     throw updaterRefuseV1("updater_plan_digest_refused");
   const bytes = Buffer.from(planDigest.slice(7), "hex");
-  return [0, 1, 2, 3].map(index => WORDS_V1[bytes[index] & 63]);
+  return [0, 1, 2, 3, 4, 5].map(index => WORDS_V1[bytes[index] & 63]);
 }
 
 function requireRootV1(context, verb) {
@@ -44,7 +44,7 @@ function announceSudoV1(context, action) {
 async function confirmV1(root, words, context) {
   requireRootV1(context, "confirm");
   announceSudoV1(context, "confirm this updater plan");
-  if (words.length !== 4) throw updaterRefuseV1("updater_confirm_words_refused");
+  if (words.length !== 6) throw updaterRefuseV1("updater_confirm_words_refused");
   const index = JSON.parse(await readFileNoFollowV1(root, "updater-state/open-confirmation.json", { maxBytes: 4096 }));
   if (!index || typeof index.planId !== "string") throw updaterRefuseV1("updater_confirm_plan_refused");
   const plan = JSON.parse(await readFileNoFollowV1(root, `updater-state/plans/${index.planId}.json`, { maxBytes: 65536 }));
@@ -89,7 +89,7 @@ export async function runUpdaterCliV1(argv, options = {}) {
     announceSudoV1(context, `perform ${verb}`);
     throw updaterRefuseV1("updater_cli_port_not_implemented");
   }
-  context.stderr("Usage: control-room status | confirm <word word word word> | pause | resume | stop | backup-now | check-and-continue | repair-serve | rollback\n");
+  context.stderr("Usage: control-room status | confirm <six words> | pause | resume | stop | backup-now | check-and-continue | repair-serve | rollback\n");
   return 64;
 }
 

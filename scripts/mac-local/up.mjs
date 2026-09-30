@@ -115,8 +115,7 @@ async function requestAuthenticatedHostHealth(port, healthProbeKey, timeoutMs = 
       || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.tag !== "string") return undefined;
     const signed = { schema: value.schema, nonce: value.nonce, ready: value.ready, pid: value.pid,
       releaseId: value.releaseId, startedAt: value.startedAt };
-    if (!healthResponseTagMatchesV1(healthProbeKey, LOCAL_HOST_HEALTH_ENDPOINT_V1, signed, value.tag)) return undefined;
-    return value.pid;
+    if (!healthResponseTagMatchesV1(healthProbeKey, LOCAL_HOST_HEALTH_ENDPOINT_V1, signed, value.tag)) return undefined;    return value.pid;
   } catch { return undefined; }
 }
 

@@ -46,7 +46,6 @@ import { captureUpdaterHealthCountsV1, HealthNonceLedgerV1, healthResponseTagV1,
   LOCAL_HOST_HEALTH_ENDPOINT_V1, UPDATER_HEALTH_ENDPOINT_V1,
   verifyHealthRequestV1 } from "../../updater/v1/health-protocol.mjs";
 import type { UpdaterHealthWebReadPortV1 } from "../../updater/v1/health-ports";
-
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
@@ -57,7 +56,7 @@ export interface MacLocalWebProcessOptionsV1 {
   localOwnerSessionStore?: LocalOwnerSessionStoreV1;
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
-  database: { client: DatabaseClient; close: () => Promise<void> };
+  database: { client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean };
   /** The existing task service from the Mac task application. This keeps
    * owner-review follow-up creation and browser task routes on one service. */
   taskService?: WebTaskService;
@@ -129,8 +128,7 @@ export interface MacLocalWebProcessOptionsV1 {
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
-  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;
-}
+  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;}
 
 /** Existing controller operations supplied by the host.  This is deliberately
  * only a typed pass-through: the Mac-local web wrapper cannot construct a
@@ -147,7 +145,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const profile = captureLocalOwnerSessionProfileV1(options.localOwnerSession);
   const origin = new URL(options.origin);
   if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.origin !== options.origin
-    || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
+    || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function"
+    || typeof options.database.isAvailable !== "function")
     throw new Error("mac_local_web_process_config_invalid");
   // An owner review that can accept exceptions must use the task application's
   // same in-session proposal service. Refuse a partial composition instead of
@@ -241,6 +240,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const operationsModeHttp = operationsMode ? createOperationsModeHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: operationsMode, clock }) : undefined;
   let closed: Promise<void> | undefined;
+  const isReady = () => closed === undefined && options.database.isAvailable() === true;
 
   function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
     return new Response(null, { status: 303, headers: { ...privateResponseHeaders,
@@ -388,8 +388,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!;
         const response = { schema: "control-room.local-host-health/v1", nonce, ready: true, pid, releaseId, startedAt };
         const tag = healthResponseTagV1(options.healthProbeKey!, LOCAL_HOST_HEALTH_ENDPOINT_V1, response);
-        return Response.json({ ...response, tag },
-          { headers: privateResponseHeaders });
+        return Response.json({ ...response, tag },          { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/updater-health") {
         if (request.method !== "POST" || url.search || options.hostProcessId === undefined
@@ -415,6 +414,43 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       const identity = sessions.verify(request, clock());
+      if (url.pathname === "/api/v1/updater-owner-ui") {
+        if (request.method !== "GET" || url.search || !options.updaterOwnerUi) throw new WebAccessError("not_found");
+        return Response.json(await options.updaterOwnerUi.read({ tenantId: profile.tenantId, ownerSubject: identity.subject,
+          now: new Date(clock()).toISOString() }), { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/updater-owner-requests") {
+        sessions.assertLocalRequest(request, true);
+        if (request.method !== "POST" || url.search || !options.updaterOwnerUi || !request.body
+          || request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json")
+          throw new WebAccessError("invalid_request");
+        const parsed = updaterOwnerRequestSchemaV1.safeParse(await readBoundedJson(request.body, 512));
+        const key = request.headers.get("idempotency-key") ?? "";
+        if (!parsed.success || !/^[A-Za-z0-9:_-]{16,160}$/u.test(key)) throw new WebAccessError("invalid_request");
+        return Response.json(await options.updaterOwnerUi.request({ tenantId: profile.tenantId, ownerSubject: identity.subject,
+          action: parsed.data.action, planId: parsed.data.planId, idempotencyKey: key, now: new Date(clock()).toISOString() }),
+        { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/updater-owner-passkey") {
+        sessions.assertLocalRequest(request, true);
+        if (request.method !== "POST" || url.search || !options.updaterOwnerUi || !request.body
+          || request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json")
+          throw new WebAccessError("invalid_request");
+        const raw = await readBoundedJson(request.body, 256);
+        const parsed = raw && typeof raw === "object" && !Array.isArray(raw) && Object.getPrototypeOf(raw) === Object.prototype
+          && Object.keys(raw).length === 2 && ((raw as { action?: unknown }).action === "approve" || (raw as { action?: unknown }).action === "rollback")
+          && ((raw as { planId?: unknown }).planId === null || typeof (raw as { planId?: unknown }).planId === "string"
+            && /^[A-Za-z0-9:_-]{1,120}$/u.test((raw as { planId: string }).planId)) ? raw as { action: "approve" | "rollback"; planId: string | null } : undefined;
+        const key = request.headers.get("idempotency-key") ?? "";
+        if (!parsed || !/^[A-Za-z0-9:_-]{16,160}$/u.test(key)) throw new WebAccessError("invalid_request");
+        return Response.json(await options.updaterOwnerUi.beginPasskeyApproval({ tenantId: profile.tenantId,
+          ownerSubject: identity.subject, action: parsed.action, planId: parsed.planId, idempotencyKey: key, now: new Date(clock()).toISOString() }),
+        { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/updater-status") {
+        if (request.method !== "GET" || url.search || !options.updaterHomeStatus) throw new WebAccessError("not_found");
+        return Response.json(await options.updaterHomeStatus.read(), { headers: privateResponseHeaders });
+      }
       if (url.pathname === "/api/v1/product-configuration") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         await projects.authorizeCatalog(identity);
@@ -571,5 +607,5 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     }
   }
 
-  return Object.freeze({ handle, isReady: () => closed === undefined, close: () => closed ??= options.database.close() });
+  return Object.freeze({ handle, isReady, close: () => closed ??= options.database.close() });
 }

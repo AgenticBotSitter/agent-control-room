@@ -38,7 +38,7 @@ export async function openNoFollowV1(root, candidate, flags = constants.O_RDONLY
 }
 
 export async function readFileNoFollowV1(root, candidate, { maxBytes = 1024 * 1024 } = {}) {
-  const handle = await openNoFollowV1(root, candidate);
+  const handle = await openNoFollowV1(root, candidate, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
     const entry = await handle.stat();
     if (!entry.isFile() || entry.size > maxBytes || entry.nlink !== 1) throw updaterRefuseV1("updater_file_refused");

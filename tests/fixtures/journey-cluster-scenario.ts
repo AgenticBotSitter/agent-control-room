@@ -20,18 +20,15 @@
 //   early  — the pre-start window: signal this process the instant the run
 //            directory appears, before any socket directory or postmaster exists.
 //            The directories leak here if the helper has not registered the run
-//            by the time it is created, and there is no Cluster to stop, so only
-//            the registry-backed exit path can clean up.
+//            by the time it is created, and there is no returned Cluster to stop,
+//            so only the registry-backed process teardown can clean up.
 //
 // Prints one machine-readable line: `SCENARIO_DATA_DIR=<path>`.
 
 import assert from "node:assert/strict";
-import { existsSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
 import test, { after } from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
 
-import { PG_AVAILABLE, needsPg, startCluster, stopCluster, installProcessTeardown, TEST_TMP_DIRECTORY }
+import { PG_AVAILABLE, needsPg, startCluster, stopCluster, installProcessTeardown }
   from "../helpers/disposable-postgres-cluster";
 import type { Cluster } from "../helpers/disposable-postgres-cluster";
 
@@ -84,49 +81,26 @@ if (!PG_AVAILABLE) {
   // because the run was not registered until after the socket `mkdtemp`, an
   // `await` wide enough to be hit.
   //
-  // The start is kicked off but not awaited, while this branch watches the
-  // filesystem. The moment the run dir appears, the process signals itself: the
-  // earliest a signal can arrive after the directory exists, and before the
-  // socket dir has a chance to.
+  // The helper pauses at an explicit checkpoint immediately after registering
+  // the run and before it begins creating the socket directory. Filesystem
+  // polling used to make this timing-dependent: on a busy full lane it could
+  // observe the run only after initdb had started, so its child could race the
+  // synchronous signal cleanup while both changed the same directory.
   const removeTeardown = installProcessTeardown(() => undefined);
-  const root = resolve(process.cwd(), TEST_TMP_DIRECTORY);
-  // Only consider directories that appear AFTER this point. A previous run that
-  // leaked one would otherwise be matched first, and the test would then assert
-  // about a directory this process never created — passing or failing for
-  // reasons that have nothing to do with the code under test.
-  const preexisting = new Set(existsSync(root) ? readdirSync(root) : []);
-  startCluster(`journey-scenario-${mode}-`).catch(() => { /* the signal below ends this */ });
-  const deadline = Date.now() + 60_000;
-  for (;;) {
-    // The root may not exist yet either; an absent directory simply means the
-    // start has not reached its own `mkdir`.
-    const seen = existsSync(root)
-      ? readdirSync(root, { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && entry.name.startsWith(`journey-scenario-${mode}-`)
-          && !preexisting.has(entry.name))
-        .map(entry => join(root, entry.name))
-      : [];
-    if (seen.length > 0) {
-      console.log(`SCENARIO_RUN_DIR=${seen[0]}`);
-      console.log(`SCENARIO_DATA_DIR=${join(seen[0], "data")}`);
-      break;
-    }
-    if (Date.now() > deadline) { console.log("SCENARIO_EARLY_TIMEOUT=1"); process.exit(3); }
-    await delay(1);
-  }
-  // Signal this process itself, from a TIMER rather than synchronously here.
-  // A synchronous self-signal does not reach a handler installed with
-  // `process.on` — the signal is only dispatched once the current turn of the
-  // event loop ends, and the unsettled top-level await below means that turn
-  // never ends. The result was an exit code 13 ("unsettled top-level await") that
-  // skipped the handler entirely, so the run directory survived. A timer yields
-  // first, which lets the handler actually run.
-  setTimeout(() => { process.kill(process.pid, "SIGTERM"); }, 0);
-  // Stay alive until the signal lands, so the handler (and its cleanup) is the
-  // thing that ends this process rather than an abandoned top-level await.
-  await new Promise<void>(resolve => {
-    setTimeout(() => { removeTeardown(); resolve(); }, 60_000);
-  });
+  await startCluster(`journey-scenario-${mode}-`, { afterRunDirectoryRegistered: async inFlight => {
+    console.log(`SCENARIO_RUN_DIR=${inFlight.run}`);
+    console.log(`SCENARIO_DATA_DIR=${inFlight.data}`);
+    // Empty is an asserted precondition: the checkpoint must remain before the
+    // socket directory is assigned and before any PostgreSQL command starts.
+    console.log(`SCENARIO_SOCKET_DIR=${inFlight.socket}`);
+    // Keep the event loop referenced after the zero-delay kill timer fires.
+    // Without this, Node can classify the never-settling top-level await as
+    // exit 13 before it dispatches the queued signal; the generic `exit` hook
+    // then cleans the directory and gives a false-positive SIGTERM test.
+    const hold = setInterval(() => {}, 1_000);
+    setTimeout(() => { process.kill(process.pid, "SIGTERM"); }, 0);
+    await new Promise<void>(() => { void hold; /* only the signal ends this checkpoint */ });
+  } }).finally(removeTeardown);
 } else {
   let cluster = await startCluster(`journey-scenario-${mode}-`);
   const removeTeardown = installProcessTeardown(() => cluster);

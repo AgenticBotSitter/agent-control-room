@@ -4,7 +4,7 @@ import { PostgresUpdaterStoreV1 } from "./store.mjs";
 import { UpdaterControlServerV1 } from "./control-socket.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
 import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
-  newUpdaterIdentityV1 } from "./runtime.mjs";
+  newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
 
 // The fixed updater bundle exposes the item-13 actuator for composition with
@@ -42,7 +42,23 @@ export async function startUpdaterV1(options = {}) {
       throw error;
     }
   }
-  const identity = options.identity ?? newUpdaterIdentityV1();
+  const requestedIdentity = options.identity ?? newUpdaterIdentityV1();
+  let acquisition;
+  try {
+    if (store.acquire) acquisition = await store.acquire(requestedIdentity.leaseToken);
+    else {
+      const run = await store.liveRun();
+      acquisition = { status: "acquired", run, leaseToken: run?.lease_token ?? requestedIdentity.leaseToken };
+    }
+  } catch (error) {
+    if (ownsClient) await client.end().catch(() => {});
+    throw error;
+  }
+  if (acquisition.status !== "acquired") {
+    if (ownsClient) await client.end().catch(() => {});
+    throw updaterRefuseV1("updater_live_session_busy");
+  }
+  const identity = Object.freeze({ ...requestedIdentity, leaseToken: acquisition.leaseToken });
   const stateFiles = new UpdaterStateFilesV1(root, identity.leaseToken), mode = new UpdaterModeV1();
   const unavailable = async () => { throw updaterRefuseV1("updater_actuator_port_unbound"); };
   const effects = options.effects ?? { precheck: unavailable, stage: unavailable, quickBackup: unavailable,
@@ -51,21 +67,55 @@ export async function startUpdaterV1(options = {}) {
   const referee = options.referee ?? { assertPlanAllowed: async () => {
     throw updaterRefuseV1("updater_referee_port_unbound");
   } };
-  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles,
-    journal: new FileStepJournalV1(root) });
+  let heartbeatState = acquisition.run
+    ? { state: "running", step: acquisition.run.state }
+    : { state: "idle", step: null };
+  const setHeartbeatState = value => { heartbeatState = value; };
+  const journal = options.journal ?? new FileStepJournalV1(root);
+  await journal.recoverCompaction();
+  let fileJournalUncertain, displayJournalUncertain, journalRecoveryPending = false;
+  const refreshJournalHealth = async () => {
+    try { await journal.validate(); fileJournalUncertain = undefined; }
+    catch (error) { fileJournalUncertain = error?.code ?? "updater_journal_invalid"; }
+    return fileJournalUncertain;
+  };
+  await refreshJournalHealth();
+  if (!fileJournalUncertain && options.journalDisplay) {
+    const reconciliation = await reconcileJournalDisplayV1({ journal, display: options.journalDisplay,
+      rescued: await stateFiles.hasRescueMarker() });
+    displayJournalUncertain = reconciliation.state === "uncertain" ? reconciliation.reason : undefined;
+  }
+  stateFiles.refreshJournalHealth = refreshJournalHealth;
+  stateFiles.journalUncertain = () => fileJournalUncertain ?? displayJournalUncertain;
+  stateFiles.repairJournalUncertain = async () => {
+    if (!fileJournalUncertain) return false;
+    const repaired = await journal.quarantineCorrupt();
+    await refreshJournalHealth();
+    journalRecoveryPending = repaired && !fileJournalUncertain;
+    return journalRecoveryPending;
+  };
+  stateFiles.journalRecoveryPending = () => journalRecoveryPending;
+  stateFiles.settleJournalRecovery = () => { journalRecoveryPending = false; };
+  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles, journal,
+    onHeartbeatState: setHeartbeatState });
   const ownerActions = options.ownerActions ?? { handle: async request => {
     if (request.request_kind === "pause") mode.set("paused");
     else if (request.request_kind === "stop") mode.set("stopped");
     else if (request.request_kind === "resume") mode.set("running");
+    else if (request.request_kind === "check_and_continue") await runner.checkAndContinue();
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
   const reportTimerError = options.onTimerError ?? (error => {
     process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
   });
-  const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, onError: reportTimerError });
+  // `watcher` is updaterland's addition and is independent of the health
+  // contract: the main loop in runtime.mjs already accepts it (it merged
+  // cleanly), and the self-update Off flag suppresses its tick. Passing it
+  // here is what keeps that work alive through this merge.
+  const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions,
+    watcher: options.watcher ?? null, onError: reportTimerError });
   const scheduledHealth = options.scheduledHealth;
-  let heartbeatState = { state: "idle", step: null };
-  const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
+  let heartbeatState = { state: "idle", step: null };  const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportTimerError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
     const map = { pause: "paused", resume: "running", stop: "stopped" };
@@ -86,8 +136,7 @@ export async function startUpdaterV1(options = {}) {
   }
   return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, scheduledHealth,
     setHeartbeatState(value) { heartbeatState = value; },
-    async stop() { loop.stop(); await scheduledHealth?.stop(); await heartbeat.stop(); await control.stop();
-      if (ownsClient) await client.end(); } });
+    async stop() { loop.stop(); await scheduledHealth?.stop(); await heartbeat.stop(); await control.stop();      if (ownsClient) await client.end(); } });
 }
 
 const invoked = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { assertSafeIdV1, parseKnownGoodV1, updaterRefuseV1 } from "./contracts.mjs";
 import { assertNoSymlinkBelowV1, atomicSymlinkNoFollowV1, atomicWriteNoFollowV1,
   readFileNoFollowV1 } from "./fs-safety.mjs";
+import { clearStagedReleaseV1 } from "./staged-release.mjs";
 
 const SWITCH_SCHEMA_V1 = "control-room.pair-link-switch/v1";
 const PHASES_V1 = Object.freeze([
@@ -93,7 +94,7 @@ async function writeSwitchV1(root, value, phase, fault) {
   return next;
 }
 
-async function completeForwardV1(root, initial, fault) {
+async function completeForwardV1(root, initial, fault, beforeDatabaseMove) {
   let record = initial;
   if (["prepared", "previous_intent"].includes(record.phase)) {
     record = await writeSwitchV1(root, record, "previous_intent", fault);
@@ -103,6 +104,7 @@ async function completeForwardV1(root, initial, fault) {
   }
   if (["previous_done", "database_intent"].includes(record.phase)) {
     record = await writeSwitchV1(root, record, "database_intent", fault);
+    await beforeDatabaseMove?.(record.to.pgDataId, "forward");
     await atomicSymlinkNoFollowV1(root, "pg/current", `data-${record.to.pgDataId}`);
     await fault?.("after_database_effect");
     record = await writeSwitchV1(root, record, "database_done", fault);
@@ -115,16 +117,44 @@ async function completeForwardV1(root, initial, fault) {
   }
   if (record.phase === "release_done") record = await writeSwitchV1(root, record, "completed", fault);
   if (record.phase !== "completed") throw updaterRefuseV1("updater_link_switch_refused");
+  await clearStagedReleaseV1(root, record.to.releaseId);
   return record;
 }
 
-async function rollBackInterruptedV1(root, initial, fault) {
+async function rollBackInterruptedV1(root, initial, fault, beforeDatabaseMove) {
   let record = await writeSwitchV1(root, initial, "rollback_intent", fault);
+  await beforeDatabaseMove?.(record.from.pgDataId, "rollback");
   await atomicSymlinkNoFollowV1(root, "pg/current", `data-${record.from.pgDataId}`);
   await atomicSymlinkNoFollowV1(root, "current", `releases/${record.from.releaseId}`);
   await atomicSymlinkNoFollowV1(root, "previous", `releases/${record.previousReleaseId}`);
   record = await writeSwitchV1(root, record, "rolled_back", fault);
+  await clearStagedReleaseV1(root, record.to.releaseId);
   return record;
+}
+
+async function readCurrentPgDataIdV1(root) {
+  await assertNoSymlinkBelowV1(root, "pg");
+  const entry = await lstat(join(root, "pg/current"));
+  if (!entry.isSymbolicLink()) throw updaterRefuseV1("updater_pg_link_refused");
+  const target = await readlink(join(root, "pg/current"));
+  if (!/^data-[A-Za-z0-9._-]{1,80}$/u.test(target)) throw updaterRefuseV1("updater_pg_link_refused");
+  return target.slice("data-".length);
+}
+
+async function assertRecoveryDatabaseStoppedV1(root, record, nextPgDataId, direction, databaseStopped) {
+  let currentPgDataId;
+  try { currentPgDataId = await readCurrentPgDataIdV1(root); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; return; }
+  if (currentPgDataId === nextPgDataId) return;
+  try {
+    const pidPath = await assertNoSymlinkBelowV1(root, `pg/data-${currentPgDataId}/postmaster.pid`,
+      { allowMissingLeaf: true });
+    await lstat(pidPath);
+    throw updaterRefuseV1("updater_database_not_stopped");
+  } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  const move = Object.freeze({ operationId: record.operationId, direction, fromPgDataId: currentPgDataId,
+    toPgDataId: nextPgDataId });
+  if (await databaseStopped?.(move) !== true) throw updaterRefuseV1("updater_database_not_stopped");
 }
 
 /** Durable pair transaction adapted from cook/deploylinks. Previous is made
@@ -144,7 +174,10 @@ export async function switchPairLinksV1({ root, operationId, from, to, previousR
   if (existing?.operationId === operationId) {
     if (!samePairV1(existing.from, source) || !samePairV1(existing.to, target)
         || existing.previousReleaseId !== previousReleaseId) throw updaterRefuseV1("updater_link_switch_refused");
-    if (existing.phase === "completed") return { pair: target, replayed: true };
+    if (existing.phase === "completed") {
+      await clearStagedReleaseV1(root, existing.to.releaseId);
+      return { pair: target, replayed: true };
+    }
     if (existing.phase === "rolled_back") throw updaterRefuseV1("updater_link_switch_rolled_back");
     await completeForwardV1(root, existing, fault);
     return { pair: target, replayed: true };
@@ -157,22 +190,38 @@ export async function switchPairLinksV1({ root, operationId, from, to, previousR
 
 /** On startup, an incomplete record resumes only while both target members are
  * still valid. A missing/corrupt target restores the recorded source pair. */
-export async function recoverPairLinksV1(root, { fault } = {}) {
+export async function recoverPairLinksV1(root, { fault, databaseStopped } = {}) {
+  try {
+    await readFileNoFollowV1(root, "updater-state/rescued.json", { maxBytes: 16_384 });
+    return { status: "uncertain", reason: "rescue_marker" };
+  } catch (error) { if (error?.code !== "ENOENT") throw error; }
   const record = await readSwitchV1(root);
-  if (!record || ["completed", "rolled_back"].includes(record.phase)) return { status: record?.phase ?? "none" };
+  if (!record) return { status: "none" };
+  if (["completed", "rolled_back"].includes(record.phase)) {
+    await clearStagedReleaseV1(root, record.to.releaseId);
+    return { status: record.phase };
+  }
+  const beforeDatabaseMove = (nextPgDataId, direction) =>
+    assertRecoveryDatabaseStoppedV1(root, record, nextPgDataId, direction, databaseStopped);
   try {
     await assertPairTargetsV1(root, record.to);
-    await completeForwardV1(root, record, fault);
+    await completeForwardV1(root, record, fault, beforeDatabaseMove);
     return { status: "completed", pair: record.to };
   } catch (error) {
     if (!["updater_release_target_refused", "updater_pg_target_refused"].includes(error?.code)) throw error;
     await assertPairTargetsV1(root, record.from);
-    await rollBackInterruptedV1(root, record, fault);
+    await rollBackInterruptedV1(root, record, fault, beforeDatabaseMove);
     return { status: "rolled_back", pair: record.from, reason: error.code };
   }
 }
 
 export async function readKnownGoodPairsV1(root) {
-  return parseKnownGoodV1(JSON.parse(await readFileNoFollowV1(root, "updater-state/known-good",
-    { maxBytes: 32_768 }))).pairs;
+  try {
+    return parseKnownGoodV1(JSON.parse(await readFileNoFollowV1(root, "updater-state/known-good",
+      { maxBytes: 32_768 }))).pairs;
+  } catch (error) {
+    if (error?.code === "ENOENT") return Object.freeze([]);
+    if (error instanceof SyntaxError) throw updaterRefuseV1("updater_known_good_refused");
+    throw error;
+  }
 }

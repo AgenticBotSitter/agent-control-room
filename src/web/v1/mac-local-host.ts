@@ -19,6 +19,8 @@ import { captureWorkBatchQueueCatalogV1, createWorkBatchQueueSelectionAuthorityV
 import { WebOperationsModeServiceV1, operationsModeStopAuthorityV1 } from "./operations-mode-service";
 import { createOperationsModeSupervisorPortV1 } from "./operations-mode-supervisor-port";
 import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
+import { createUpdaterHomeStatusReaderV1, type UpdaterHomeStatusReaderV1 } from "./updater-home-status";
+import type { UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
 
 /** The installation's one supervisor identity. The Mac-local host runs a single
  * supervisor loop, so this is fixed rather than configurable: a second id would
@@ -26,7 +28,7 @@ import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
  * own incident. */
 export const MAC_LOCAL_SUPERVISOR_ID_V1 = "supervisor:mac-local";
 
-type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
+type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void>; isAvailable(): boolean }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
 type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">
   & Partial<Pick<MacLocalTaskApplicationV1, "taskService">>;
@@ -83,9 +85,15 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
    * already built, so the endpoint and the supervisor's health port are two
    * callers of one service rather than two services over one state. */
   operationsMode?: WebOperationsModeServiceV1;
+  /** Test/deployment seam for the updater's public, display-only status file. */
+  updaterHomeStatus?: UpdaterHomeStatusReaderV1;
+  /** Root-updater-owned read/request/passkey port. It is intentionally not
+   * built from the normal web database connection. */
+  updaterOwnerUi?: UpdaterOwnerUiPortV1;
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
+    || typeof input.database.isAvailable !== "function"
     || !input.assets || typeof input.assets.respond !== "function" || typeof input.render !== "function")
     throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.taskApplication) throw new Error("mac_local_host_configuration_invalid");
@@ -121,6 +129,8 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     // the endpoint exists in the web process but is never mounted, and it 404s
     // on a real installation while every service-level test passes.
     ...(input.operationsMode ? { operationsMode: input.operationsMode } : {}),
+    updaterHomeStatus: input.updaterHomeStatus ?? createUpdaterHomeStatusReaderV1(),
+    ...(input.updaterOwnerUi ? { updaterOwnerUi: input.updaterOwnerUi } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -132,8 +142,14 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     start: service.start.bind(service),
     isReady: () => service.isReady() && taskApplication.isReady(),
     close: () => close ??= (async () => {
-      const results = await Promise.allSettled([service.close(), taskApplication.close()]);
-      if (results.some(result => result.status === "rejected")) throw new Error("mac_local_host_cleanup_uncertain");
+      // The task application owns the restricted controller/result pools. It
+      // first refuses new operations and drains active saves, so it must finish
+      // before the web composition closes the database beneath the host. Keep
+      // the later close best-effort even when the drain reports uncertainty.
+      const task = await Promise.allSettled([taskApplication.close()]);
+      const site = await Promise.allSettled([service.close()]);
+      if ([...task, ...site].some(result => result.status === "rejected"))
+        throw new Error("mac_local_host_cleanup_uncertain");
     })(),
   });
 }
@@ -180,8 +196,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
-  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;
-}>) {
+  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;}>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
     || typeof input.render !== "function") throw new Error("mac_local_host_configuration_invalid");
@@ -274,6 +289,8 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             healthStartedAt: input.healthStartedAt } : {}),
           ...(input.updaterHealthReadPort ? { updaterHealthReadPort: input.updaterHealthReadPort } : {}),
           ...(service ? { operationsMode: service } : {}),
+          ...(input.updaterHomeStatus ? { updaterHomeStatus: input.updaterHomeStatus } : {}),
+          ...(input.updaterOwnerUi ? { updaterOwnerUi: input.updaterOwnerUi } : {}),
         });
         if (!input.startQueueWorker) return web;
         if (!taskApplication?.queueDelivery || !databaseRoles) throw new Error("mac_local_host_configuration_invalid");

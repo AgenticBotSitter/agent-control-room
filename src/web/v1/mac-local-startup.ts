@@ -4,8 +4,8 @@ import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-con
 import { createMacLocalWorkerReadinessV1, type MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
 
-type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
-type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void> }>;
+type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void>; isAvailable(): boolean }>;
+type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
 
 /** Explicit Mac-local startup bridge. It verifies the owner-pinned executables
  * before opening its supplied database and transfers cleanup to the service
@@ -28,11 +28,13 @@ export function createMacLocalStartupV1(input: Readonly<{
     let database: OpenedDatabase | undefined, service: LocalService | undefined;
     try {
       database = input.openDatabase(configuration.database);
-      if (!database || !database.client || typeof database.close !== "function") throw new Error();
+      if (!database || !database.client || typeof database.close !== "function"
+        || typeof database.isAvailable !== "function") throw new Error();
       service = await input.createService({ configuration, database, workerReadiness, ...(databaseRoles ? { databaseRoles } : {}) });
-      if (!service || typeof service.start !== "function" || typeof service.close !== "function") throw new Error();
+      if (!service || typeof service.start !== "function" || typeof service.close !== "function"
+        || typeof service.isReady !== "function") throw new Error();
       await service.start();
-      return Object.freeze({ close: service.close.bind(service), workerReadiness });
+      return Object.freeze({ close: service.close.bind(service), isReady: service.isReady.bind(service), workerReadiness });
     } catch (error) {
       // Keep a bounded, non-secret diagnostic when the composed host refuses
       // startup. Raw driver messages can contain connection details.

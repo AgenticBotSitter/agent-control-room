@@ -63,7 +63,8 @@ export class UpdaterControlServerV1 {
       }
       this.#active += 1;
       let input = "", settled = false, requestSeen = false;
-      const finish = () => { if (!settled) { settled = true; this.#active -= 1; } };
+      const deadline = setTimeout(() => socket.destroy(), this.requestTimeoutMs);
+      const finish = () => { clearTimeout(deadline); if (!settled) { settled = true; this.#active -= 1; } };
       socket.setEncoding("utf8"); socket.setTimeout(this.requestTimeoutMs);
       socket.on("data", chunk => {
         if (requestSeen) return;
