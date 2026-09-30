@@ -73,11 +73,23 @@ console.log(machineHealthResumes
 const catalogue = (await (await api("/api/v1/projects", { expect: [200] })).json()) as
   { projects?: { projectId: string }[] };
 if ((catalogue.projects?.length ?? 0) >= projectCount) {
-  // Seeded before: hand the load tool the same catalogue rather than creating a
-  // second copy of it, so a rerun of the test levels stays comparable.
-  if (existsSync(seedFile)) console.log(await readFile(seedFile, "utf8"));
-  else console.log(JSON.stringify({ schema: "control-room.site-load-seed/v1", seeded: false,
-    projects: catalogue.projects?.map(project => project.projectId) ?? [] }));
+  // Seeded before: reuse the same catalogue rather than creating a second copy
+  // of it, so a rerun of the test levels stays comparable. The file is written
+  // even when it is missing: the load tool reads THAT file, and an install
+  // seeded by an earlier run had a catalogue but no file to go with it.
+  if (!existsSync(seedFile)) {
+    let tasks = 0;
+    for (const project of catalogue.projects ?? []) {
+      const projectId = project.projectId;
+      const page = (await (await api(`/api/v1/projects/${idOf(projectId)}/tasks`, { expect: [200] })).json()) as
+        { tasks?: { jobId: string }[]; page?: { tasks?: { jobId: string }[] } };
+      tasks += (page.tasks ?? page.page?.tasks ?? []).length;
+    }
+    await writeFile(seedFile, `${JSON.stringify({ schema: "control-room.site-load-seed/v1", origin, seeded: true,
+      projects: (catalogue.projects ?? []).map(project => project.projectId), tasks, running: 0, delivered: 0,
+      refused: 0, machineHealthResumes, runningTasks: [] }, null, 2)}\n`, { mode: 0o600 });
+  }
+  console.log(await readFile(seedFile, "utf8"));
   process.exit(0);
 }
 
@@ -202,6 +214,18 @@ const lanes = workerKinds.map((worker, lane) => ({
   worker, delivered: 0, refused: 0,
   candidates: allTasks.filter((_task, index) => index % workerKinds.length === lane),
 }));
+// The catalogue is written before any delivery runs, so a run that is cut short
+// by a busy machine still leaves the load tool something to read. Delivery only
+// ADDS results and activity; nothing the pages read depends on this file being
+// rewritten afterwards.
+const writeSummary = async () => writeFile(seedFile, `${JSON.stringify({
+  schema: "control-room.site-load-seed/v1", origin, seeded: true,
+  projects: projects.map(project => project.projectId), tasks: allTasks.length,
+  running: lanes.reduce((total, lane) => total + lane.delivered, 0),
+  refused: lanes.reduce((total, lane) => total + lane.refused, 0),
+  machineHealthResumes, runningTasks }, null, 2)}\n`, { mode: 0o600 });
+await writeSummary();
+
 await Promise.all(lanes.map(async lane => {
   for (const task of lane.candidates) {
     if (lane.delivered >= runningCount) break;
@@ -220,19 +244,6 @@ await Promise.all(lanes.map(async lane => {
     else lane.refused += 1;
   }
 }));
-// The catalogue is written as soon as it exists, so a seeding run that is later
-// cut short still leaves the load tool something to read. The delivery phase
-// below only ADDS results and activity; nothing the pages read needs this file
-// to be rewritten afterwards, so a run that is interrupted mid-delivery is a
-// usable, slightly smaller dataset rather than a discarded one.
-const writeSummary = async () => writeFile(seedFile, `${JSON.stringify({
-  schema: "control-room.site-load-seed/v1", origin, seeded: true,
-  projects: projects.map(project => project.projectId), tasks: allTasks.length,
-  running: lanes.reduce((total, lane) => total + lane.delivered, 0),
-  refused: lanes.reduce((total, lane) => total + lane.refused, 0),
-  machineHealthResumes, runningTasks }, null, 2)}\n`, { mode: 0o600 });
-await writeSummary();
-
 const running = lanes.reduce((total, lane) => total + lane.delivered, 0);
 refused = lanes.reduce((total, lane) => total + lane.refused, 0);
 console.log(`load-test seed: ${running} tasks driven to a terminal state through the real queue`
