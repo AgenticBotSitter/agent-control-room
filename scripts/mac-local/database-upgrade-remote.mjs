@@ -11,7 +11,7 @@ import { connectTarget } from "../../deploy/postgres/evidence.mjs";
 import { applyMacGrantDiffV1, diffMacGrantsV1, macRolePlan, readDesiredMacGrantsV1,
   readMacGrantCatalogV1, macGrantRowsToSetV1, macGrantCatalogSqlV1 } from "./database-upgrade-grants.mjs";
 import { checkedPostgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
-import { databaseRoleAttributesV1, databaseRoleManifestV1 as manifest, databaseRoleNamesV1 as principals }
+import { databaseRoleAttributesV1, databaseRoleManifestV1 as manifest }
   from "./database-role-manifest.mjs";
 import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "./fixed-queue-schema.mjs";
 
@@ -19,6 +19,11 @@ const bootstrapTarget = "host=/var/run/postgresql dbname=control_room user=postg
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const logins = Object.keys(manifest.logins);
 const groups = manifest.groups;
+// The roles the upgrade creates: its own groups and logins, and nothing else.
+// `databaseRoleKnownButNotManagedV1` is deliberately NOT included — those roles
+// belong to an offline operator setup file, and a Mac-local cluster must not
+// acquire them just because the upgrade ran.
+const principals = Object.freeze([...groups, ...logins]);
 const newLogins = logins.filter(login => manifest.logins[login].newLogin);
 const macPrincipals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
 const migrationLedger = new URL("../../deploy/postgres/migration-ledger.json", import.meta.url);

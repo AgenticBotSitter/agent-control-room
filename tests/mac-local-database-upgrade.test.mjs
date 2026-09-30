@@ -145,9 +145,14 @@ test("a database already at main plans exactly the migrations this branch adds b
     ({ filename: entry.file, digest: `sha256:${entry.sha256}`, ledger_order: index + 1 }));
   assert.deepEqual(applied.at(-1), { filename: mainTip[0].file,
     digest: applied.at(-1).digest, ledger_order: onMain.length });
-  const { databaseRoleManifestV1: manifest, databaseRoleNamesV1 } =
+  // The roles the UPGRADE creates. The known-but-not-managed fleet roles are
+  // excluded on purpose: `roleState` refuses any role outside the managed set,
+  // and a Mac-local snapshot legitimately contains none of them, so seeding
+  // them here would assert a fleet the owner never installed.
+  const { databaseRoleManifestV1: manifest } =
     await import("../scripts/mac-local/database-role-manifest.mjs");
-  const roles = databaseRoleNamesV1.map(rolname => ({ rolname,
+  const managedRoles = [...manifest.groups, ...Object.keys(manifest.logins)];
+  const roles = managedRoles.map(rolname => ({ rolname,
     rolcanlogin: Object.hasOwn(manifest.logins, rolname), rolinherit: true, rolsuper: false, rolcreatedb: false,
     rolcreaterole: false, rolreplication: false, rolbypassrls: false }));
   const memberships = Object.entries(manifest.logins).map(([member, { group: parent }]) =>
@@ -350,10 +355,25 @@ test("queue fingerprint ignores which UTC days have queue_stats partitions but n
 
 test("the role manifest names every role the migrations, down files and schema files touch, with no dangerous attribute", async t => {
   const { databaseRoleManifestV1: manifest, databaseRoleAttributesV1, databaseRoleNamesInSqlV1,
-    unknownDatabaseRoleNamesV1 } = await import("../scripts/mac-local/database-role-manifest.mjs");
-  const logins = Object.keys(manifest.logins), known = new Set([...manifest.groups, ...logins]);
-  assert.equal(known.size, manifest.groups.length + logins.length, "a name is either a group or a login");
+    unknownDatabaseRoleNamesV1, databaseRoleKnownButNotManagedV1 } =
+    await import("../scripts/mac-local/database-role-manifest.mjs");
+  const logins = Object.keys(manifest.logins);
+  // "Known" is everything the manifest has heard of, which is wider than what
+  // it creates: the fleet roles are named by migrations but installed only by an
+  // offline operator file, so the manifest must recognise them without ever
+  // creating them. Both kinds are accepted here; only the managed ones are
+  // seeded into an upgrade snapshot further down.
+  const known = new Set([...manifest.groups, ...logins, ...databaseRoleKnownButNotManagedV1]);
+  assert.equal(known.size, manifest.groups.length + logins.length + databaseRoleKnownButNotManagedV1.length,
+    "a name is a group, a login, or a known-but-unmanaged role, and never two of those");
   for (const [login, { group }] of Object.entries(manifest.logins)) assert.ok(manifest.groups.includes(group), login);
+  // A role the manifest knows but does not create must still be a role it can
+  // describe, and must NOT be described as a LOGIN: the fleet roles are NOLOGIN
+  // groups whose logins are issued per connector, never by the Mac upgrade.
+  for (const role of databaseRoleKnownButNotManagedV1) {
+    assert.ok(!Object.hasOwn(manifest.logins, role), `${role} is known but must not be a login`);
+    assert.equal(databaseRoleAttributesV1(role), "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS");
+  }
   const named = new Set();
   for (const file of ["production_provision.sql", "production_roles.sql", "production_table_grants.sql",
     "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
@@ -395,10 +415,22 @@ test("the role manifest names every role the migrations, down files and schema f
   }
   assert.ok(onDisk.length > 100, "the scan sees the whole migration and down set");
   assert.deepEqual([...touched.keys()].filter(role => !known.has(role)).sort(), [], "no role is named outside the manifest");
+  // The roles the migrations name are pinned here explicitly. A restatement
+  // does go stale — this one had already lost two roles (the fleet gateway and
+  // the local result publisher) when 0140 landed, and the scan above still
+  // passed, because nothing compared the two. The pin below is the comparison,
+  // and a migration that starts naming a new manifest role fails here with the
+  // new name in the diff, so widening it is a deliberate act.
   assert.deepEqual([...touched.keys()].sort(),
-    ["control_room_agent_reviewer", "control_room_native_results", "control_room_private_web",
-      "control_room_task_coordinator", "control_room_work_intake"],
+    ["control_room_agent_reviewer", "control_room_fleet_gateway", "control_room_local_result_publisher",
+      "control_room_native_results", "control_room_private_web", "control_room_task_coordinator",
+      "control_room_work_intake"],
   "the migrations name these manifest roles and no others");
+  // Every one of them is a role the manifest can describe. It need NOT be one
+  // the Mac upgrade creates: the fleet gateway is named by 0141 and installed
+  // only by the offline operator file, so it is known-but-not-managed.
+  for (const role of touched.keys()) assert.ok(databaseRoleAttributesV1(role),
+    `${role} is named by the migrations but the manifest cannot describe it`);
 
   // The scanner reads what SQL actually means, so prove it on a temp copy of
   // the tree with a role the manifest has never heard of planted in each

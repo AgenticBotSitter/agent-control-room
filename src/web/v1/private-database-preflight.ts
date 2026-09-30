@@ -41,7 +41,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links"] as const;
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -60,6 +60,30 @@ privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTabl
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
 
+/** The web login's read-only fleet tables (0140/0141).
+ *
+ * These are NOT granted by db/roles/private_web_roles.sql. The only file that
+ * grants SELECT on them to control_room_private_web is
+ * db/roles/fleet_gateway_roles.sql, and a Mac-local cluster never installs it:
+ * scripts/mac-local/narrow-role-provision.mjs and
+ * scripts/mac-local/database-upgrade-grants.mjs both install the seven
+ * non-fleet role files only. So on Mac-local these eleven tables are absent
+ * from the web role's ACL, while a full production install (which does apply
+ * the fleet file) has them.
+ *
+ * The preflight compares the live ACL against a fixed declaration, so listing
+ * them unconditionally made a correct Mac-local database fail its own startup
+ * preflight with `private_database_preflight_failed` — the same shape of break
+ * the 0190 news grant caused after the fleet+MCP merge. They are therefore
+ * declared separately and required only when the fleet gateway role actually
+ * exists in the cluster, which is exactly the condition under which
+ * fleet_gateway_roles.sql was applied. Everything else about the declaration is
+ * unchanged: when the gateway is present the tables are still required, and
+ * when it is absent no extra privilege is accepted.
+ */
+export const privateWebFleetReadTables = ["fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials",
+  "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims",
+  "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -493,7 +517,17 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-              AND has_function_privilege('control_room_fleet_gateway',p.oid,'EXECUTE')
+              -- The gateway is the only role allowed to call this, so when it
+              -- exists it must hold EXECUTE. It may legitimately be ABSENT: a
+              -- Mac-local cluster never installs db/roles/fleet_gateway_roles.sql,
+              -- and has_function_privilege on a missing role raises 42704
+              -- rather than answering false, which would fail every Mac-local
+              -- preflight on a database that is in fact correct. When the role
+              -- is absent the ACL check below is the whole proof: no grantee can
+              -- be named control_room_fleet_gateway if it does not exist, so
+              -- any surviving non-owner EXECUTE grantee still fails here.
+              AND (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway')
+                OR has_function_privilege('control_room_fleet_gateway',p.oid,'EXECUTE'))
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
                   OR pg_get_userbyid(a.grantee)<>'control_room_fleet_gateway')))
@@ -542,7 +576,18 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           OR has_table_privilege(c.oid,'TRIGGER') OR has_table_privilege(c.oid,'MAINTAIN') AS extra
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
-      const reads: ReadonlySet<string> = new Set(allowedReads);
+      const reads: Set<string> = new Set(allowedReads);
+      // The web login's read-only fleet tables exist only where
+      // db/roles/fleet_gateway_roles.sql was applied, which is exactly when
+      // control_room_fleet_gateway is in the cluster. See
+      // `privateWebFleetReadTables`: demanding them unconditionally made every
+      // correct Mac-local database fail this preflight, and dropping them
+      // unconditionally would under-check a full production install. Nothing is
+      // granted by this: the live ACL is still read from the server, only the
+      // expected set follows the role file that was applied.
+      if (kind === "web" && (await tx.query<{ present: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') AS present`)).rows[0]?.present)
+        for (const table of privateWebFleetReadTables) reads.add(table);
       // Column-scoped INSERT grants (the web role's idempotency ledger and the
       // coordinator's incident appends): listed columns must carry INSERT,
       // unlisted must not.
