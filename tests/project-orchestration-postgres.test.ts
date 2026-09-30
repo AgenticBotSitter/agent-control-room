@@ -623,6 +623,28 @@ test("B2: retrying a describe that already succeeded returns the stored receipt,
           requestKey: "orchestrator:describe-crashed-0003" });
       assert.equal(crashed, null,
         "a 'processing' row is not a completed request, so no receipt is invented from it");
+      // ... and a row in 'processing' that DOES carry a real receipt is still not a
+      // completed request. This is the arm that the `status` filter alone holds:
+      // the schema check cannot catch it, because the result is a perfectly valid
+      // receipt. Without the filter, a submission that died after writing its
+      // result but before its transaction committed would answer the retry with a
+      // receipt for a batch that was never created -- the one way this lookup
+      // could fabricate a batch id. The receipt is copied from the row the
+      // describe above really wrote, so it is genuine content in the wrong state.
+      const realResult = (await admin.query<{ result: unknown }>(
+        "SELECT result FROM control_idempotency WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3",
+        [scope.tenantId, `work-batches.propose/v1:${agentId}`, key])).rows[0]!.result;
+      await intake.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status)
+        VALUES($1,$2,$3,$4,'processing') ON CONFLICT DO NOTHING`,
+        [scope.tenantId, `work-batches.propose/v1:${agentId}`, "orchestrator:describe-midflight-0005",
+          `sha256:${"f".repeat(64)}`]);
+      await admin.query("UPDATE control_idempotency SET result=$4::jsonb WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3",
+        [scope.tenantId, `work-batches.propose/v1:${agentId}`, "orchestrator:describe-midflight-0005",
+          JSON.stringify(realResult)]);
+      assert.equal(await new PostgresIntakeCompletionLookupV1(database(intake)).completed(
+        { tenantId: scope.tenantId, projectId: scope.projectId, identityId: agentId,
+          requestKey: "orchestrator:describe-midflight-0005" }), null,
+        "a valid receipt in a 'processing' row is not a completed request: the status is what decides");
       // ... and a 'completed' row whose result is NOT a receipt is unreachable
       // through this login, which is a stronger property than "the adapter would
       // refuse it": 0093's `guard_work_intake_idempotency_write` requires a
