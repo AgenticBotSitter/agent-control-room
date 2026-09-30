@@ -249,6 +249,73 @@ test("the fleet read tables come only from the fleet role file, and the prefligh
       `${table} is back in the unconditional read set`);
 });
 
+test("every SECURITY DEFINER function the preflight exempts is owned by the schema owner, unconditionally", async () => {
+  // The comparison above is about TABLES. The same preflight also exempts a
+  // fixed set of SECURITY DEFINER functions from its catalog scan, and that
+  // allowlist has its own drift: the owner test for the two agent-review
+  // boundary functions sat inside the agent-reviewer disjunct, so every other
+  // kind exempted them on "this login has no EXECUTE" alone, whatever owned
+  // them. Nothing here compared the allowlist with the migrations, so the gap
+  // was invisible until a fixture that replays db/migrations without SET ROLE
+  // produced it. The real-PostgreSQL lanes prove a correct install is accepted;
+  // this proves the allowlist tracks the migrations and keeps the owner test
+  // unconditional, both without a database.
+  const source = readFileSync(PREFLIGHT_SOURCE, "utf8");
+  const exempted = new Set<string>();
+  for (const match of source.matchAll(/'([a-z_0-9]+\([^']*?\))'::regprocedure/g))
+    exempted.add(match[1]!);
+  assert.ok(exempted.size >= 4,
+    `only ${exempted.size} exempted signature(s) found in the preflight; the read is too narrow to prove anything`);
+
+  // Every SECURITY DEFINER function a migration creates that a login could
+  // CALL must be an allowlist entry, and every allowlist entry must be one a
+  // migration creates: an unlisted one is flagged by the scan on a correct
+  // database, and a phantom one is a hole in it.
+  //
+  // Trigger functions are excluded, and deliberately so. A trigger function
+  // cannot be invoked directly — it has no SQL-callable signature — and it
+  // executes as the owner of the table it is attached to, so the web login can
+  // never reach it however its ACL reads. Only 0093, 0106, 0141 create
+  // SECURITY DEFINER functions a login can call, and those are exactly the four
+  // the scan names.
+  const shipped = new Map<string, string>();
+  for (const file of (await readdir(join(process.cwd(), "db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
+    const sql = await readFile(join(process.cwd(), "db/migrations", file), "utf8");
+    if (!/SECURITY\s+DEFINER/i.test(sql)) continue;
+    // `RETURNS trigger` is what marks a function as a trigger function.
+    const triggers = [...sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION[\s\S]*?RETURNS\s+trigger/gi)].length;
+    for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)RETURNS\s+([a-z ]+)/gi)) {
+      if (match[4]!.trim().toLowerCase() === "trigger") continue;
+      const args = match[2]!.split(",").map(argument => argument.trim().split(/\s+/)[0]!.toLowerCase())
+        .filter(argument => argument !== "");
+      shipped.set(`${match[1]!.toLowerCase()}(${args.join(",")})`, file);
+    }
+    void triggers;
+  }
+  // The shipped names carry SQL argument NAMES; the preflight carries TYPES.
+  // Compare on shape, so a rename of a parameter is not a finding and a new
+  // function is.
+  const shape = (signature: string) => signature.replace(/\(([^)]*)\)/u, (all, args: string) =>
+    `(${args.split(",").length})`);
+  const shapes = new Set([...shipped.keys()].map(shape));
+  assert.deepEqual([...shipped.keys()].filter(signature => !exempted.has(signature) && !shapes.has(shape(signature))).sort(), [],
+    "a SECURITY DEFINER function a migration creates is not on the preflight's allowlist, so a correct database is refused");
+  assert.deepEqual([...exempted].filter(signature => !shapes.has(shape(signature))).sort(), [],
+    "the preflight exempts a function no migration creates; a renamed or removed function is now a hole in the scan");
+
+  // The specific shape that broke: the owner check may not sit inside the
+  // reviewer-only disjunct, or these two functions are exempt for every kind.
+  const branch = /OR\s*\(p\.oid IN \('commit_agent_review[\s\S]*?NOT has_function_privilege\(p\.oid,'EXECUTE'\)\)\)\)\)/.exec(source);
+  assert.ok(branch, "the agent-review allowlist branch was not found in the preflight");
+  const owner = "pg_get_userbyid(p.proowner)='control_room_schema_owner'";
+  const reviewerDisjunct = "$2 AND p.prosecdef";
+  assert.ok(branch[0].includes(owner), "the agent-review allowlist branch no longer checks the owner at all");
+  assert.ok(branch[0].includes(reviewerDisjunct),
+    "the reviewer-only disjunct is gone; the ordering assertion below no longer means anything");
+  assert.ok(branch[0].indexOf(owner) < branch[0].indexOf(reviewerDisjunct),
+    "the owner test is inside the reviewer disjunct again, so every non-reviewer kind exempts these functions whatever owns them");
+});
+
 test("the comparison above reads role files it has to be able to read", () => {
   // A test of the test: a parser that silently matched nothing would make the
   // comparison above vacuously pass, so the grammar it must read is asserted
