@@ -127,16 +127,24 @@ while (submitted < target && index < projects.length * 12 && consecutiveMisses <
   // one task at a time. A 409 here is that ceiling, not a fault: wait for the
   // node to drain and try this same task again, bounded so a genuinely stuck
   // node cannot loop forever.
-  let assigned = await api(`${base}/assignment`, { method: "POST", expect: [200, 201, 409],
-    body: JSON.stringify({ action: "assign", nodeId, expectedInputDigest: receipt.inputDigest }) });
-  for (let wait = 0; assigned.status === 409 && wait < 6; wait += 1) {
+  const assignBody = JSON.stringify({ action: "assign", nodeId, expectedInputDigest: receipt.inputDigest });
+  // Two ordinary refusals, neither a tool fault:
+  //   409 -- the node is at maxConcurrentTasks: 1, so it must drain first;
+  //   503 -- the installation is paused by the machine-health check, which
+  //          refuses every new claim until an owner resumes it.
+  // Both clear on their own within the supervisor's 30s interval, so the tool
+  // waits and resumes rather than crashing on a machine-health decision.
+  let assigned = await api(`${base}/assignment`, { method: "POST", expect: [200, 201, 409, 503],
+    body: assignBody });
+  for (let wait = 0; (assigned.status === 409 || assigned.status === 503) && wait < 9; wait += 1) {
     await new Promise(done => setTimeout(done, 10_000));
-    byStatus["assign-409-retried"] = (byStatus["assign-409-retried"] ?? 0) + 1;
-    assigned = await api(`${base}/assignment`, { method: "POST", expect: [200, 201, 409],
-      body: JSON.stringify({ action: "assign", nodeId, expectedInputDigest: receipt.inputDigest }) });
+    byStatus[`assign-${assigned.status}-retried`] = (byStatus[`assign-${assigned.status}-retried`] ?? 0) + 1;
+    if (assigned.status === 503) await ensureRunning();
+    assigned = await api(`${base}/assignment`, { method: "POST", expect: [200, 201, 409, 503],
+      body: assignBody });
   }
   byStatus[`assign-${assigned.status}`] = (byStatus[`assign-${assigned.status}`] ?? 0) + 1;
-  if (assigned.status === 409) { counts.refused += 1; await ensureRunning(); continue; }
+  if (assigned.status === 409 || assigned.status === 503) { counts.refused += 1; await ensureRunning(); continue; }
   counts.assigned += 1;
   const submission = await (await api(`${base}/submission?inputDigest=${idOf(receipt.inputDigest)}`,
     { expect: [200] })).json();
@@ -148,10 +156,16 @@ while (submitted < target && index < projects.length * 12 && consecutiveMisses <
     byWorker[worker.kind] = (byWorker[worker.kind] ?? 0) + 1;
     continue;
   }
-  const sent = await api(`${base}/submission`, { method: "POST", expect: [200, 201, 409],
-    body: JSON.stringify({ expectedInputDigest: receipt.inputDigest, expectedPacketDigest: packetDigest }) });
+  const submitBody = JSON.stringify({ expectedInputDigest: receipt.inputDigest, expectedPacketDigest: packetDigest });
+  let sent = await api(`${base}/submission`, { method: "POST", expect: [200, 201, 409, 503], body: submitBody });
+  for (let wait = 0; (sent.status === 409 || sent.status === 503) && wait < 6; wait += 1) {
+    await new Promise(done => setTimeout(done, 10_000));
+    byStatus[`submit-${sent.status}-retried`] = (byStatus[`submit-${sent.status}-retried`] ?? 0) + 1;
+    if (sent.status === 503) await ensureRunning();
+    sent = await api(`${base}/submission`, { method: "POST", expect: [200, 201, 409, 503], body: submitBody });
+  }
   byStatus[`submit-${sent.status}`] = (byStatus[`submit-${sent.status}`] ?? 0) + 1;
-  if (sent.status === 409) { counts.refused += 1; await ensureRunning(); continue; }
+  if (sent.status === 409 || sent.status === 503) { counts.refused += 1; await ensureRunning(); continue; }
   submitted += 1;
   counts.submitted += 1;
   byWorker[worker.kind] = (byWorker[worker.kind] ?? 0) + 1;
