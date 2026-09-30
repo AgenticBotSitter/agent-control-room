@@ -473,7 +473,12 @@ test("an exact replay is idempotent, a differing replay is refused, and rows are
       await assert.rejects(admin.query("UPDATE work_batch_split_suggestions SET proposal_digest=$1",
         [`sha256:${"9".repeat(64)}`]), /append-only|append only|immutable/u);
       await assert.rejects(admin.query("DELETE FROM work_batch_split_suggestions"), /append-only|append only|immutable/u);
-      await assert.rejects(admin.query("TRUNCATE work_batch_split_suggestions"), /append-only|append only|immutable/u);
+      // TRUNCATE is a separate trigger from the row-level append-only one, and it
+      // is a separate refusal: a table can be emptied without touching a row. It
+      // needs its own assertion or deleting the trigger is invisible.
+      await assert.rejects(admin.query("TRUNCATE work_batch_split_suggestions"),
+        /append-only|append only|immutable/u,
+        "a table can be emptied without touching a row, so TRUNCATE needs its own guard");
       // A new request key on the same batch is a SECOND suggestion, not a conflict.
       await insertSuggestion(intake, { ...row, id: `split-suggestion:${"e".repeat(32)}`,
         requestKey: "orchestrator-replay-0002", proposal: other2 });
