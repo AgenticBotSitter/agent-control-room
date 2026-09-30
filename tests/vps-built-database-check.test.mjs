@@ -19,9 +19,14 @@ test('compiled database-only check closes its restricted pool without installing
 });
 
 // The fixture's database passes (above); each case below changes one function
-// fact as the migration superuser and the same check must refuse it. The fleet
-// redemption case is the shape PGlite produces before the fixture hands the
-// boundary to the production owner: a definer function running as a superuser.
+// fact as the migration superuser and the same check must refuse it. The
+// migration replay in tests/helpers/web-foundation.ts already applies each file
+// under SET ROLE control_room_schema_owner, exactly as the production applier
+// does, so the fixture's definer functions are owned by that role and the
+// passing case above is a real production-shaped database rather than one that
+// only passes because everything is owned by a superuser. The fleet redemption
+// case below then moves that one boundary back to the superuser and requires the
+// refusal.
 for (const [name, sql] of [
   ["an unknown definer-rights function",
     `CREATE FUNCTION public.stray_definer() RETURNS integer LANGUAGE sql SECURITY DEFINER

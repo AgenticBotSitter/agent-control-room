@@ -1,0 +1,37 @@
+[
+  {
+    "file": "src/web/v1/private-database-preflight.ts",
+    "find": "AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND NOT p.proleakproof AND p.proparallel='u'\n              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'\n",
+    "replace": "AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND NOT p.proleakproof AND p.proparallel='u'\n",
+    "test": "node --import tsx --test --test-name-pattern \"database-only check refuses the fleet redemption boundary owned by the migration superuser\" tests/vps-built-database-check.test.mjs",
+    "why": "the private-web preflight refuses a fleet redemption boundary that runs as anyone but the production schema owner"
+  },
+  {
+    "file": "src/web/v1/private-database-preflight.ts",
+    "find": "(has_function_privilege(p.oid,'EXECUTE') OR p.prosecdef) AND NOT (",
+    "replace": "FALSE AND NOT (",
+    "test": "node --import tsx --test --test-name-pattern \"database-only check refuses the (fleet redemption boundary executable|agent-review commit executable|agent-review plan read executable|unknown function the web role can execute)\" tests/vps-built-database-check.test.mjs",
+    "why": "the private-web preflight refuses any function grant beyond the shipped boundaries, including EXECUTE on the agent-review functions"
+  },
+  {
+    "file": "src/web/v1/private-database-preflight.ts",
+    "find": "OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)\n              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'\n",
+    "replace": "OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)\n",
+    "test": "node --import tsx --test --test-name-pattern \"database-only check refuses the (agent-review commit executable|agent-review plan read executable)\" tests/vps-built-database-check.test.mjs",
+    "why": "the agent-review boundary functions stay exempt only while they are owned by control_room_schema_owner for every login kind, not just the reviewer (cook/journey e27bfd68a)"
+  },
+  {
+    "file": "src/modules/v1/manifest.ts",
+    "find": "import { sha256Digest } from \"../../security/canonical-digest\";",
+    "replace": "import { sha256Digest } from \"../../security\";",
+    "test": "node --import tsx --test --test-name-pattern \"browser bundles never include server-only host-value security code\" tests/vps-built-assignment.test.mjs",
+    "why": "the module registry is reachable from the client graph, so importing the security barrel drags host-value's import-time throw into every browser chunk and blanks the page"
+  },
+  {
+    "file": "tests/helpers/web-foundation.ts",
+    "find": "    await db.exec(\"BEGIN\");\n    await db.exec(\"SET LOCAL ROLE control_room_schema_owner\");\n",
+    "replace": "    await db.exec(\"BEGIN\");\n",
+    "test": "node --import tsx --test --test-name-pattern \"compiled database-only check closes its restricted pool\" tests/vps-built-database-check.test.mjs",
+    "why": "PGlite fixtures must own their objects as control_room_schema_owner, exactly as the production applier does, or the preflight correctly refuses a superuser-owned definer function"
+  }
+]
