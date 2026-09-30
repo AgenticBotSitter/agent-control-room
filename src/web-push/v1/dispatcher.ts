@@ -43,11 +43,17 @@ import { deliverOwnerPushV1 } from "./delivery";
  * The cost of that ordering is a crash in the window between commit and
  * completion: the row is left 'reserved' with no `completed_at`. That is
  * recovered, not lost. `recoverStaleReservations` returns a reservation older
- * than RESERVATION_STALE_MS to 'pending' with its attempt already counted, so the
- * worst case is one extra send attempt, never a silent drop. The 0174 ledger's
- * own per-subscription dedupe key is what keeps that extra attempt from becoming
- * a second visible notification: the same item maps to the same dedupe key, so a
- * push service that already received it refuses the repeat.
+ * than RESERVATION_STALE_MS to 'pending' with its attempt already counted, so
+ * the worst case is one extra send attempt, never a silent drop.
+ *
+ * Whether that extra attempt becomes a SECOND NOTIFICATION is decided by the
+ * 0174 ledger, not by this table. If the crash happened after the push service
+ * accepted the send, the ledger already holds a 'delivered' row for this item's
+ * dedupe key, so the retry is refused at the reservation and this dispatcher
+ * records the item as delivered without ringing the phone again. If it
+ * happened before, the ledger holds a 'failed' row, which is re-sendable, and
+ * the retry is the first attempt that could actually land. Both cases converge
+ * on exactly one visible notification.
  */
 
 /** Attempts per item, ever. Mirrors the CHECK on attempt_count. */
@@ -104,7 +110,7 @@ export function ownerPushDedupeKeyV1(actionInboxId: string): string {
 
 export type OwnerPushDispatchOutcomeV1 = Readonly<{
   actionInboxId: string;
-  result: "delivered" | "no_subscription" | "retry_scheduled" | "exhausted" | "claimed_by_another";
+  result: "delivered" | "no_subscription" | "retry_scheduled" | "exhausted";
   attempt: number;
   nextAttemptAt: string;
 }>;
