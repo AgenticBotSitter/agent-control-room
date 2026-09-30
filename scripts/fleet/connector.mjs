@@ -21,12 +21,17 @@ import { basename, dirname, extname, join as joinPath, resolve, sep } from "node
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
-export const CONNECTOR_VERSION = "0.2.0";
+export const CONNECTOR_VERSION = "0.3.0";
 const CONFIG_SCHEMA = "control-room.fleet-connector/v1";
 const SECRET_PATTERN = /^crf_[A-Za-z0-9_-]{43}$/u;
 const CODE_PATTERN = /^crj_[A-Za-z0-9_-]{43}$/u;
 const WORKER_PATTERN = /^fleet-worker:[a-f0-9]{32}$/u;
 const ROTATE_BEFORE_MS = 7 * 86_400_000;
+/** Presence check-ins are independent of the work poll. The owner sees a machine
+ * as Online only inside a short window, so a connector that only checked in once
+ * per 60 s work poll would flap through "checking in" every minute. This is
+ * comfortably inside the server's window with room for one slow beat. */
+export const PRESENCE_CHECK_IN_MS = 15_000;
 const MEDIA_TYPES = Object.freeze({ ".txt": "text/plain", ".log": "text/plain", ".md": "text/markdown",
   ".csv": "text/csv", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg", ".pdf": "application/pdf" });
@@ -91,7 +96,7 @@ export async function loadConfig(path) {
   return config;
 }
 
-export function createClient(config, fetcher = globalThis.fetch) {
+export function createClient(config, fetcher = globalThis.fetch, presenceSessionId = `fleet-session:${randomBytes(16).toString("hex")}`) {
   async function call(method, path, body, secret = config.secret, extraHeaders = {}) {
     const response = await fetcher(`${config.server}${path}`, { method, redirect: "error",
       signal: AbortSignal.timeout(30_000),
@@ -112,11 +117,14 @@ export function createClient(config, fetcher = globalThis.fetch) {
   return Object.freeze({
     enroll: body => call("POST", "/fleet/v1/enroll", body, null),
     me: () => call("GET", "/fleet/v1/me"),
-    heartbeat: () => call("POST", "/fleet/v1/heartbeat", { connectorVersion: CONNECTOR_VERSION, platform: platformName() }),
+    heartbeat: (agents = []) => call("POST", "/fleet/v1/heartbeat", {
+      connectorVersion: CONNECTOR_VERSION, platform: platformName(), sessionId: presenceSessionId, agents }),
+    offline: () => call("POST", "/fleet/v1/offline", { sessionId: presenceSessionId }),
     rotate: (digest, secret) => call("POST", "/fleet/v1/rotate", { newCredentialDigest: digest }, secret),
     work: () => call("GET", "/fleet/v1/work"),
     claims: () => call("GET", "/fleet/v1/claims"),
-    claim: (offerId, idempotencyKey) => call("POST", "/fleet/v1/claims", { offerId, idempotencyKey }),
+    claim: (offerId, idempotencyKey, agentId) => call("POST", "/fleet/v1/claims",
+      { offerId, idempotencyKey, ...(agentId ? { agentId } : {}) }),
     progress: (claimId, message, idempotencyKey) => call("POST", `/fleet/v1/claims/${claimId}/progress`, { message, idempotencyKey }),
     blocker: (claimId, message, idempotencyKey, release) => call("POST", `/fleet/v1/claims/${claimId}/blocker`,
       { message, idempotencyKey, ...(release ? { release: true } : {}) }),
@@ -555,21 +563,39 @@ export async function runClaimedTask({ client, claim, adapter, progressIntervalM
  */
 export async function runWorker({ configPath, harnessesPath = defaultHarnessSettingsPath(configPath), fetcher, once = false,
   importer, progressIntervalMs = 60_000, pollMs = 60_000, log = message => process.stderr.write(`${message}\n`),
-  sleep = ms => new Promise(done => setTimeout(done, ms)), watchdogGraceMs = WATCHDOG_GRACE_MS }) {
+  sleep = ms => new Promise(done => setTimeout(done, ms)), watchdogGraceMs = WATCHDOG_GRACE_MS,
+  presenceIntervalMs = PRESENCE_CHECK_IN_MS }) {
   const settings = await loadHarnessSettings(harnessesPath);
+  const presenceSessionId = `fleet-session:${randomBytes(16).toString("hex")}`;
+  const roster = HANDOFF_HARNESSES.map(agentId => Object.freeze({ agentId, displayName: HARNESS_LABELS[agentId],
+    agentKind: agentId, enabled: settings?.harnesses?.[agentId]?.enabled === true }));
   const handedBack = new Set(); // tasks this machine could not finish; left for another worker
-  let adapter = null, said = "";
+  let adapter = null, said = "", currentClient;
   const say = message => { if (message !== said) { said = message; log(`${new Date().toISOString()} ${message}`); } };
-  for (;;) {
+  // The presence beat is separate from the work poll: a task can occupy this
+  // machine for hours, and the owner's light must stay accurate throughout.
+  // One in-flight check-in at a time, and a Stop is the only thing that ends it.
+  let presenceBusy = false, presenceTimerHandle = null;
+  const stopPresence = () => { if (presenceTimerHandle) { clearInterval(presenceTimerHandle); presenceTimerHandle = null; } };
+  try { for (;;) {
     let current = await recoverPending({ configPath, fetcher });
     if (current.credentialExpiresAt && Date.parse(current.credentialExpiresAt) - Date.now() < ROTATE_BEFORE_MS) {
       await rotate({ configPath, fetcher }); current = await loadConfig(configPath);
       log("Credential renewed.");
     }
-    const client = createClient(current, fetcher);
+    const client = createClient(current, fetcher, presenceSessionId);
+    currentClient = client;
+    const presenceBeat = async () => {
+      if (presenceBusy) return;
+      presenceBusy = true;
+      try { await client.heartbeat(roster); } catch { /* a failed check-in is not fatal here */ } finally { presenceBusy = false; }
+    };
+    const presenceTimer = once ? null : setInterval(() => { void presenceBeat(); }, presenceIntervalMs);
+    presenceTimerHandle = presenceTimer;
     let me;
-    try { me = await client.heartbeat(); }
+    try { me = await client.heartbeat(roster); }
     catch (error) {
+      stopPresence();
       if (error?.code === "unauthenticated") throw new Error("Control Room no longer accepts this machine's key. Ask the owner for a new key.");
       say(`Could not reach Control Room (${error?.code ?? "network"}); trying again.`);
       if (once) return Object.freeze({ state: "unreachable" });
@@ -596,7 +622,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       try {
         offers = (await client.work()).filter(item => !handedBack.has(item.jobId));
         for (const offer of offers) {
-          try { claim = await client.claim(offer.offerId, `handoff-claim-${randomBytes(16).toString("hex")}`); break; }
+          try { claim = await client.claim(offer.offerId, `handoff-claim-${randomBytes(16).toString("hex")}`, harness); break; }
           catch (error) {
             if (error?.code === "paused") { pass = { state: "paused", mode: "paused" }; break; }
             if (error?.code !== "conflict" && error?.code !== "not_found") throw error;
@@ -627,9 +653,10 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
           + "run has stopped taking work; check this machine before starting it again.");
       }
     }
-    if (once) return Object.freeze(pass);
+    if (once) { stopPresence(); return Object.freeze(pass); }
+    stopPresence();
     if (pass.state !== "ran") await sleep(pollMs);
-  }
+  } } finally { stopPresence(); await currentClient?.offline().catch(() => undefined); }
 }
 
 // ---------------------------------------------------------------------------

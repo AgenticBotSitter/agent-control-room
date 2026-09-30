@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createProjectBrowserClient } from "../../src/web/v1/browser-client";
 import { readPrivateConnections, type PrivateConnectionSnapshot } from "../../src/web/v1/connection-browser-client";
 import { readTaskAttention } from "../../src/web/v1/queue-attention-browser-client";
-import { readTaskHomeActivity } from "../../src/web/v1/task-home-browser-client";
+import { acknowledgeTaskHomeActivity, readTaskHomeActivity } from "../../src/web/v1/task-home-browser-client";
 import type { TaskAttentionPage } from "../../src/web/v1/task-attention-wire";
 import type { TaskHomeActivity } from "../../src/web/v1/task-home-wire";
 import type { ProjectCatalogPage } from "../../src/web/v1/project-wire";
@@ -82,7 +82,7 @@ export function stuckWorkerCount(value: WorkerRead): number {
     : value.projection.summary.staleSignalCount + value.projection.summary.missingSignalCount;
 }
 
-export function HomeDashboard({ data }: { data: HomeDashboardState }) {
+export function HomeDashboard({ data, onRecent }: { data: HomeDashboardState; onRecent?: () => void }) {
   return <><a className="private-action-link" href="/projects">New task</a><div className="private-dashboard-grid">
     {/* Needs attention leads the dashboard and is visually loud (red), per
         owner-ux-feedback-2026-09-27.md items 1-3: "a clear list 'This needs
@@ -141,6 +141,9 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
             : <EmptyState>Nothing has finished since your last visit.</EmptyState>}
       {data.activity.state === "ready" && data.activity.value.additionalResultsOmitted
         ? <p className="private-note">More recent results exist. Open the affected projects to inspect them.</p> : null}
+      {data.activity.state === "ready" && data.activity.value.cursor.firstVisit
+        ? <p className="private-note">This is your first visit, so changes start from now.{" "}
+          <a href="#recent" onClick={event => { if (onRecent) { event.preventDefault(); onRecent(); } }}>Recent</a></p> : null}
     </section>
 
     {/* Stuck, blocked or offline: the worker-side counterpart to "Needs
@@ -230,6 +233,7 @@ export function PrivateHome() {
   const ideaLab = useProductModule("ideaLab");
   const installationTopology = useInstallationTopology();
   const [data, setData] = useState<HomeDashboardState>(loadingState);
+  const [showRecent, setShowRecent] = useState(false);
   const [runtimeDetectionTimedOut, setRuntimeDetectionTimedOut] = useState(false);
   useEffect(() => {
     if (runtime.mode !== "checking") { setRuntimeDetectionTimedOut(false); return; }
@@ -250,10 +254,21 @@ export function PrivateHome() {
       if (!signal.aborted) setData(current => ({ ...current, [key]: { state: "ready", value } }));
     }, () => { if (!signal.aborted) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
     const reads = [settle(createProjectBrowserClient(transport).list(), "projects"),
-      settle(readTaskHomeActivity(transport), "activity"), settle(readTaskAttention(undefined, transport), "attention")];
+      settle(readTaskHomeActivity(transport, undefined, { surface: "home", recent: showRecent }), "activity"),
+      settle(readTaskAttention(undefined, transport), "attention")];
     if (runtime.mode === "hosted") reads.push(settle(readPrivateConnections(transport), "connections"));
     await Promise.all(reads);
-  }, [runtime.mode]);
+  }, [runtime.mode, showRecent]);
+  useEffect(() => {
+    if (data.activity.state !== "ready") return;
+    const cursor = data.activity.value.cursor;
+    const controller = new AbortController();
+    let second = 0;
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => {
+      void acknowledgeTaskHomeActivity(cursor, fetch, controller.signal).catch(() => undefined);
+    }); });
+    return () => { controller.abort(); cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, [data.activity]);
   const refresh = useVisiblePolling(load, pollingEnabled);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1} className="private-home-main">
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
@@ -296,7 +311,7 @@ export function PrivateHome() {
         controls in painted order. jsdom cannot measure painted order, so that
         second one is the only check that would have caught the original defect
         on a real page. */}
-    <HomeDashboard data={data} />
+    <HomeDashboard data={data} onRecent={() => setShowRecent(true)} />
     <p className="private-note"><a href="/morning">Open morning summary</a> — finished, waiting for you, stalled and PRs opened since Control Room last checked.</p>
     <OperationsControlPanel />
     {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />

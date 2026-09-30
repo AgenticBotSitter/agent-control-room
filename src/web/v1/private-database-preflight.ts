@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0196 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
+// Generated from public migrations through 0220 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162 and 0215-0220),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "8f5c39d0f69cc5ad729dce58dae52698ceaf772422d4cf8c737d3efbd83a67a2";
+export const privateWebSchemaDigest = "16b3bdbe786ea7bd9d458074bc9ce6f222092207a10a72efbfe93006bc99d5d4";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -26,7 +26,8 @@ export const privateWebSchemaDigest = "8f5c39d0f69cc5ad729dce58dae52698ceaf77242
  * because the column audit still compares every column against the live grant, so an
  * unexpected fleet grant is refused either way. */
 export const privateWebFleetReadTables = ["fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials",
-  "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events",
+  "fleet_worker_presence", "fleet_worker_agents", "fleet_presence_transitions", "fleet_work_offers",
+  "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events",
   "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
@@ -52,7 +53,8 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
-  "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals"] as const;
+  "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals",
+  "owner_surface_cursors"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -74,6 +76,7 @@ privateWebInsertTables.add("control_news_task_proposal_links");
 privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
+privateWebInsertTables.add("owner_surface_cursors");
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -91,6 +94,7 @@ export const privateWebReadColumns: Record<string, readonly string[]> = {
 export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
+  owner_surface_cursors: ["seen_through", "updated_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_completion_gate_records: ["web_lock"],
   control_jobs: ["web_lock", "stage_kind", "stage_ordinal", "pipeline_run_id"],
@@ -178,6 +182,8 @@ coordinatorReads.push("control_improvement_requests", "control_update_candidates
 // Scheduling reads each project's worker and concurrency settings (0135).
 coordinatorReads.push("control_project_settings");
 coordinatorReads.push("installation_operations_mode_revisions");
+coordinatorReads.push("fleet_workers", "fleet_worker_presence", "fleet_worker_agents", "fleet_presence_transitions");
+coordinatorInserts.add("fleet_presence_transitions");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
@@ -220,6 +226,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_project_delegation_policies: ["coordinator_lock"],
   control_project_coordination_operation_receipts: ["coordinator_lock"],
   control_project_coordination_operation_jobs: ["coordinator_lock"],
+  fleet_worker_presence: ["presence_state", "state_changed_at"],
+  fleet_worker_agents: ["presence_state", "state_changed_at"],
   control_work_resources: ["coordinator_lock"],
   control_attempt_resource_admissions: ["state", "version", "retired_at", "retirement_kind", "retirement_proof_digest"],
   control_attempt_resource_scopes: ["coordinator_lock"],

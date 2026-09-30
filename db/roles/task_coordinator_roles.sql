@@ -73,6 +73,11 @@ GRANT UPDATE (node_id,state,safe_reason_code,last_heartbeat_at,observed_at)
 GRANT UPDATE (version,last_started_at,last_completed_at,state)
   ON control_supervisor_loop_heads TO control_room_task_coordinator;
 GRANT UPDATE (state,released_at) ON control_provider_waits TO control_room_task_coordinator;
+GRANT SELECT ON fleet_workers, fleet_worker_presence, fleet_worker_agents, fleet_presence_transitions
+  TO control_room_task_coordinator;
+GRANT INSERT ON fleet_presence_transitions TO control_room_task_coordinator;
+GRANT UPDATE (presence_state,state_changed_at) ON fleet_worker_presence TO control_room_task_coordinator;
+GRANT UPDATE (presence_state,state_changed_at) ON fleet_worker_agents TO control_room_task_coordinator;
 GRANT INSERT (tenant_id,correlation_key), UPDATE (next_generation)
   ON control_service_incident_heads TO control_room_task_coordinator;
 GRANT INSERT (id,tenant_id,correlation_key,generation,service_id,severity,safe_reason_code,safe_remedy_code,state,opened_at,last_observed_at),

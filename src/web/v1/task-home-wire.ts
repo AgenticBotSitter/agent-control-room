@@ -13,6 +13,8 @@ export const taskHomeActivitySchema = z.object({
   additionalActiveOmitted: z.boolean(),
   additionalResultsOmitted: z.boolean(),
   resultSource: z.enum(["configured", "not_configured", "not_authorized"]),
+  cursor: z.object({ surface: z.enum(["home", "morning"]), mode: z.enum(["since_last_look", "recent"]),
+    firstVisit: z.boolean(), acknowledgeThrough: z.string().datetime() }).strict(),
   observedAt: z.string().datetime(),
   startsWork: z.literal(false),
 }).strict().superRefine((value, context) => {
@@ -28,3 +30,4 @@ export const taskHomeActivitySchema = z.object({
 });
 
 export type TaskHomeActivity = z.infer<typeof taskHomeActivitySchema>;
+export type OwnerSurfaceV1 = TaskHomeActivity["cursor"]["surface"];

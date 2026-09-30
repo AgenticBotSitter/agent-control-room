@@ -53,7 +53,14 @@ function entityId(value: unknown, prefix: string): string {
 type WorkerRow = { worker_id: string; node_id: string; identity_id: string; worker_kind: string; display_name: string;
   project_ids: string[]; capabilities: string[]; max_concurrent: number; state: string };
 type ClaimRow = { claim_id: string; offer_id: string; worker_id: string; node_id: string; project_id: string;
-  job_id: string; attempt_id: string; lease_id: string; idempotency_key: string; claimed_at: string | Date };
+  job_id: string; attempt_id: string; lease_id: string; agent_id: string | null;
+  idempotency_key: string; claimed_at: string | Date };
+type PresenceAgentV1 = Readonly<{ agentId: string; displayName: string; agentKind: string; enabled: boolean }>;
+type PresenceRowV1 = { session_id: string | null; presence_state: "online" | "offline" | "unreachable";
+  last_seen_at: string | Date };
+const sessionPattern = /^fleet-session:[a-f0-9]{32}$/u;
+const agentPattern = /^[a-z][a-z0-9._-]{0,63}$/u;
+const agentDisplayPattern = /^[^\u0000-\u001F\u007F]{1,80}$/u;
 
 /** The installation-wide Pause / Drain / Stop switch as the gateway reports
  * it to connectors. Only "running" admits a new claim. */
@@ -185,7 +192,8 @@ export class FleetGatewayStoreV1 {
         const worker = (await tx.query<{ state: string }>(`SELECT state FROM fleet_workers
           WHERE tenant_id=$1 AND worker_id=$2`, [this.#tenantId, row.worker_id])).rows[0];
         if (!credential || worker?.state !== "active") return fleetFail("unauthenticated");
-        await this.#presence(tx, row.worker_id, connectorVersion, platform, now);
+        // Enrollment is a join, not a check-in: it records no presence, so the
+        // machine is "never seen" until its connector heartbeats with a session.
         return Object.freeze({ workerId: row.worker_id, nodeId: linked.nodeId, displayName: row.display_name,
           workerKind: row.worker_kind, projectIds: row.project_ids, capabilities: row.capabilities,
           maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: iso(credential.expires_at), purpose: row.purpose,
@@ -232,7 +240,6 @@ export class FleetGatewayStoreV1 {
         if ((error as { code?: string }).code === "23505") return fleetFail("conflict");
         throw error;
       }
-      await this.#presence(tx, row.worker_id, connectorVersion, platform, now);
       await appendAuditWith(tx, { id: `audit:fleet-enroll:${row.id.slice(11)}`, tenantId: this.#tenantId,
         actorId: linked.identityId, actorType: "worker", action: row.purpose === "join" ? "fleet.worker.enrolled" : "fleet.worker.rekeyed",
         targetType: "fleet_worker", targetId: row.worker_id, occurredAt: now,
@@ -243,11 +250,64 @@ export class FleetGatewayStoreV1 {
     });
   }
 
-  async #presence(tx: DatabaseSession, workerId: string, connectorVersion: string, platform: string, now: string) {
-    await tx.query(`INSERT INTO fleet_worker_presence(tenant_id,worker_id,last_seen_at,connector_version,platform)
-      VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,worker_id) DO UPDATE SET last_seen_at=GREATEST(
-        fleet_worker_presence.last_seen_at,EXCLUDED.last_seen_at),connector_version=EXCLUDED.connector_version,
-        platform=EXCLUDED.platform`, [this.#tenantId, workerId, now, connectorVersion, platform]);
+  async #transition(tx: DatabaseSession, workerId: string, subjectKind: "machine" | "agent", agentId: string | null,
+    sessionId: string, fromState: PresenceRowV1["presence_state"] | null, toState: PresenceRowV1["presence_state"], now: string) {
+    if (fromState === toState) return;
+    await tx.query(`INSERT INTO fleet_presence_transitions(tenant_id,transition_id,worker_id,subject_kind,agent_id,
+      session_id,from_state,to_state,source,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'connector',$9)`,
+    [this.#tenantId, `fleet-presence:${randomHexV1()}`, workerId, subjectKind, agentId, sessionId, fromState, toState, now]);
+  }
+
+  /** Records the machine row and every rostered bot for one authenticated
+   * check-in. Only a heartbeat may declare a machine online, and only with the
+   * connector's own session id: enrollment is a join, not a check-in, so a
+   * machine that has just enrolled has no presence row at all and the owner
+   * sees it as never seen.
+   *
+   * A bot the roster no longer names is a clean offline, not a disappearance:
+   * it was disabled or removed on that machine. Only the supervisor may say
+   * unreachable. */
+  async #presence(tx: DatabaseSession, workerId: string, connectorVersion: string, platform: string, now: string,
+    sessionId: string, agents: readonly PresenceAgentV1[]) {
+    const prior = (await tx.query<PresenceRowV1>(`SELECT session_id,presence_state,last_seen_at FROM fleet_worker_presence
+      WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE`, [this.#tenantId, workerId])).rows[0];
+    await tx.query(`INSERT INTO fleet_worker_presence(tenant_id,worker_id,last_seen_at,connector_version,platform,session_id,
+      presence_state,state_changed_at,graceful_offline_at) VALUES($1,$2,$3,$4,$5,$6,'online',$3,NULL)
+      ON CONFLICT(tenant_id,worker_id) DO UPDATE SET last_seen_at=GREATEST(fleet_worker_presence.last_seen_at,EXCLUDED.last_seen_at),
+        connector_version=EXCLUDED.connector_version,platform=EXCLUDED.platform,session_id=EXCLUDED.session_id,
+        presence_state='online',state_changed_at=CASE WHEN fleet_worker_presence.presence_state<>'online'
+          OR fleet_worker_presence.session_id IS DISTINCT FROM EXCLUDED.session_id THEN EXCLUDED.state_changed_at
+          ELSE fleet_worker_presence.state_changed_at END,graceful_offline_at=NULL`,
+    [this.#tenantId, workerId, now, connectorVersion, platform, sessionId]);
+    await this.#transition(tx, workerId, "machine", null, sessionId, prior?.presence_state ?? null, "online", now);
+    const priorAgents = (await tx.query<{ agent_id: string; presence_state: PresenceRowV1["presence_state"] }>(
+      `SELECT agent_id,presence_state FROM fleet_worker_agents WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE`,
+    [this.#tenantId, workerId])).rows;
+    const byId = new Map(priorAgents.map(agent => [agent.agent_id, agent.presence_state]));
+    const reported = new Set<string>();
+    for (const agent of agents) {
+      reported.add(agent.agentId);
+      const nextState = agent.enabled ? "online" : "offline";
+      await tx.query(`INSERT INTO fleet_worker_agents(tenant_id,worker_id,agent_id,display_name,agent_kind,enabled,session_id,
+        presence_state,last_reported_at,state_changed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+        ON CONFLICT(tenant_id,worker_id,agent_id) DO UPDATE SET display_name=EXCLUDED.display_name,
+          agent_kind=EXCLUDED.agent_kind,enabled=EXCLUDED.enabled,session_id=EXCLUDED.session_id,
+          presence_state=EXCLUDED.presence_state,last_reported_at=GREATEST(fleet_worker_agents.last_reported_at,EXCLUDED.last_reported_at),
+          state_changed_at=CASE WHEN fleet_worker_agents.presence_state<>EXCLUDED.presence_state
+            OR fleet_worker_agents.session_id<>EXCLUDED.session_id THEN EXCLUDED.state_changed_at
+            ELSE fleet_worker_agents.state_changed_at END`,
+      [this.#tenantId, workerId, agent.agentId, agent.displayName, agent.agentKind, agent.enabled, sessionId, nextState, now]);
+      await this.#transition(tx, workerId, "agent", agent.agentId, sessionId, byId.get(agent.agentId) ?? null, nextState, now);
+    }
+    // A bot missing from this session's roster is no longer running here. The
+    // roster is reported whole every beat, so omission is an explicit signal.
+    for (const agent of priorAgents) {
+      if (reported.has(agent.agent_id) || agent.presence_state !== "online") continue;
+      await tx.query(`UPDATE fleet_worker_agents SET presence_state='offline',state_changed_at=$4
+        WHERE tenant_id=$1 AND worker_id=$2 AND agent_id=$3 AND presence_state='online'`,
+      [this.#tenantId, workerId, agent.agent_id, now]);
+      await this.#transition(tx, workerId, "agent", agent.agent_id, sessionId, "online", "offline", now);
+    }
   }
 
   /** Supplies the digest-only startup cache through the gateway's existing
@@ -285,14 +345,58 @@ export class FleetGatewayStoreV1 {
       maxConcurrent: Number(row.max_concurrent), credentialId: row.credential_id, credentialExpiresAt: iso(row.expires_at) });
   }
 
-  async heartbeat(principal: FleetWorkerPrincipalV1, input: Readonly<{ connectorVersion: unknown; platform: unknown }>) {
+  async heartbeat(principal: FleetWorkerPrincipalV1, input: Readonly<{ connectorVersion: unknown; platform: unknown;
+    sessionId: unknown; agents?: unknown }>) {
     const version = typeof input.connectorVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/u.test(input.connectorVersion)
       ? input.connectorVersion : fleetFail("invalid");
     const platform = platforms[input.platform as keyof typeof platforms] ?? "other";
+    const sessionId = typeof input.sessionId === "string" && sessionPattern.test(input.sessionId)
+      ? input.sessionId : fleetFail("invalid");
+    if (input.agents !== undefined && (!Array.isArray(input.agents) || input.agents.length > 16)) return fleetFail("invalid");
+    const agents = (input.agents ?? []).map((value: unknown) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return fleetFail("invalid");
+      const raw = value as Record<string, unknown>;
+      if (Object.keys(raw).some(name => !["agentId", "displayName", "agentKind", "enabled"].includes(name))
+        || typeof raw.agentId !== "string" || !agentPattern.test(raw.agentId)
+        || typeof raw.agentKind !== "string" || !agentPattern.test(raw.agentKind)
+        || typeof raw.displayName !== "string" || !agentDisplayPattern.test(raw.displayName.trim())
+        || typeof raw.enabled !== "boolean") return fleetFail("invalid");
+      return Object.freeze({ agentId: raw.agentId, displayName: raw.displayName.trim(), agentKind: raw.agentKind,
+        enabled: raw.enabled });
+    });
+    if (new Set(agents.map(agent => agent.agentId)).size !== agents.length) return fleetFail("invalid");
     const now = this.#now();
-    await this.db.transaction(tx => this.#presence(tx, principal.workerId, version, platform, now));
+    await this.db.transaction(tx => this.#presence(tx, principal.workerId, version, platform, now, sessionId, agents));
     const operationsMode = await this.operationsMode();
     return Object.freeze({ ...this.me(principal), operationsMode, claimsAllowed: operationsMode === "running" });
+  }
+
+  /** A clean connector stop is fenced to its session. A delayed stop from an
+   * older process cannot take a newer authenticated session offline. */
+  async gracefulOffline(principal: FleetWorkerPrincipalV1, input: Readonly<{ sessionId: unknown }>) {
+    const sessionId = typeof input.sessionId === "string" && sessionPattern.test(input.sessionId)
+      ? input.sessionId : fleetFail("invalid");
+    const now = this.#now();
+    return this.db.transaction(async tx => {
+      const prior = (await tx.query<PresenceRowV1>(`SELECT session_id,presence_state,last_seen_at FROM fleet_worker_presence
+        WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE`, [this.#tenantId, principal.workerId])).rows[0];
+      if (!prior || prior.session_id !== sessionId || prior.presence_state !== "online")
+        return Object.freeze({ offline: false, staleSession: true });
+      await tx.query(`UPDATE fleet_worker_presence SET presence_state='offline',state_changed_at=$3,graceful_offline_at=$3
+        WHERE tenant_id=$1 AND worker_id=$2 AND session_id=$4 AND presence_state='online'`,
+      [this.#tenantId, principal.workerId, now, sessionId]);
+      await this.#transition(tx, principal.workerId, "machine", null, sessionId, "online", "offline", now);
+      const agents = (await tx.query<{ agent_id: string; presence_state: PresenceRowV1["presence_state"] }>(
+        `SELECT agent_id,presence_state FROM fleet_worker_agents WHERE tenant_id=$1 AND worker_id=$2 AND session_id=$3 FOR UPDATE`,
+      [this.#tenantId, principal.workerId, sessionId])).rows;
+      for (const agent of agents.filter(agent => agent.presence_state === "online")) {
+        await tx.query(`UPDATE fleet_worker_agents SET presence_state='offline',state_changed_at=$4
+          WHERE tenant_id=$1 AND worker_id=$2 AND agent_id=$3 AND session_id=$5 AND presence_state='online'`,
+        [this.#tenantId, principal.workerId, agent.agent_id, now, sessionId]);
+        await this.#transition(tx, principal.workerId, "agent", agent.agent_id, sessionId, "online", "offline", now);
+      }
+      return Object.freeze({ offline: true, staleSession: false });
+    });
   }
 
   me(principal: FleetWorkerPrincipalV1) {
@@ -354,14 +458,16 @@ export class FleetGatewayStoreV1 {
   }
 
   /** Claims one offered task through the shared canonical claim path. */
-  async claim(principal: FleetWorkerPrincipalV1, input: Readonly<{ offerId: unknown; idempotencyKey: unknown }>) {
+  async claim(principal: FleetWorkerPrincipalV1, input: Readonly<{ offerId: unknown; idempotencyKey: unknown; agentId?: unknown }>) {
     const offerId = entityId(input.offerId, "offer"), idempotencyKey = key(input.idempotencyKey);
+    const agentId = input.agentId === undefined ? null
+      : typeof input.agentId === "string" && agentPattern.test(input.agentId) ? input.agentId : fleetFail("invalid");
     const now = this.#now();
     return this.db.transaction(async tx => {
       const prior = (await tx.query<ClaimRow>(`SELECT * FROM fleet_claims WHERE tenant_id=$1 AND worker_id=$2
         AND idempotency_key=$3`, [this.#tenantId, principal.workerId, idempotencyKey])).rows[0];
       if (prior) {
-        if (prior.offer_id !== offerId) return fleetFail("conflict");
+        if (prior.offer_id !== offerId || prior.agent_id !== agentId) return fleetFail("conflict");
         return this.#claimView(tx, prior, true);
       }
       // Pause, Drain and Stop all stop new claims; a replay above is not new.
@@ -410,9 +516,9 @@ export class FleetGatewayStoreV1 {
       if (Date.parse(expiresAt) <= Date.parse(now)) return fleetFail("conflict");
       try {
         await tx.query(`INSERT INTO fleet_claims(tenant_id,claim_id,offer_id,worker_id,node_id,project_id,job_id,attempt_id,
-          lease_id,idempotency_key,claimed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          lease_id,idempotency_key,claimed_at,agent_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [this.#tenantId, claimId, offerId, principal.workerId, principal.nodeId, offer.project_id, job.id, attemptId, leaseId,
-          idempotencyKey, now]);
+          idempotencyKey, now, agentId]);
       } catch (error) {
         // The database guard refuses revoked, out-of-scope, over-capacity and doubly-leased claims.
         if (["P0001", "23505", "23503"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");

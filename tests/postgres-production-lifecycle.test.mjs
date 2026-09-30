@@ -294,7 +294,9 @@ const AFTER_0135 = ["0140_fleet_worker_connector.sql", "0141_fleet_owner_authori
   "0161_update_candidate_evidence.sql", "0162_validate_update_candidate_evidence.sql", "0173_owner_web_push_subscriptions.sql",
   "0174_owner_web_push_delivery_ledger.sql", "0175_owner_web_push_tenant_isolation.sql", "0176_owner_web_push_retention.sql",
   "0177_supervisor_reconciliation.sql", "0178_supervisor_machine_health.sql", "0179_provider_wait_states.sql",
-  "0190_news_task_proposal_links.sql"];
+  "0190_news_task_proposal_links.sql", "0215_fleet_presence_sessions.sql", "0216_fleet_presence_guards.sql",
+  "0217_fleet_presence_grants.sql", "0218_owner_surface_cursors.sql", "0219_owner_surface_cursor_guards.sql",
+  "0220_owner_surface_cursor_grants.sql"];
 
 /** Splits a SQL file into its top-level statements, keeping each one's text.
  *

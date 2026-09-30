@@ -34,14 +34,18 @@ GRANT SELECT ON tenants, workspaces, projects, control_manual_project_heads, con
   control_leases, control_job_dependencies, control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes, control_transition_events, control_outbox, audit_events,
   control_audit_chain_heads, fleet_enrollment_codes, fleet_workers, fleet_worker_credentials,
-  fleet_enrollment_redemptions, fleet_worker_presence, fleet_work_offers, fleet_claims, fleet_worker_events, fleet_results,
+  fleet_enrollment_redemptions, fleet_worker_presence, fleet_worker_agents, fleet_presence_transitions,
+  fleet_work_offers, fleet_claims, fleet_worker_events, fleet_results,
   fleet_result_files, fleet_result_reviews TO control_room_fleet_gateway;
 -- Enrollment: one node, one proposal-only agent identity and grant, the worker
 -- row and its first credential, all in the code-consuming transaction.
 GRANT INSERT ON control_nodes, control_identities, control_role_grants, fleet_workers,
-  fleet_worker_credentials, fleet_worker_presence TO control_room_fleet_gateway;
+  fleet_worker_credentials, fleet_worker_presence, fleet_worker_agents, fleet_presence_transitions TO control_room_fleet_gateway;
 GRANT UPDATE (state, ended_at) ON fleet_worker_credentials TO control_room_fleet_gateway;
-GRANT UPDATE (last_seen_at, connector_version, platform) ON fleet_worker_presence TO control_room_fleet_gateway;
+GRANT UPDATE (session_id,presence_state,last_seen_at,connector_version,platform,state_changed_at,graceful_offline_at)
+  ON fleet_worker_presence TO control_room_fleet_gateway;
+GRANT UPDATE (display_name,agent_kind,enabled,session_id,presence_state,last_reported_at,state_changed_at)
+  ON fleet_worker_agents TO control_room_fleet_gateway;
 -- Revocation clean-up after the owner revoked the worker on the web path.
 GRANT UPDATE (state, version, payload, updated_at) ON control_nodes TO control_room_fleet_gateway;
 GRANT UPDATE (state, updated_at) ON control_identities TO control_room_fleet_gateway;
@@ -70,7 +74,8 @@ GRANT SELECT ON installation_operations_mode_revisions TO control_room_fleet_gat
 -- decision. A separate protected login inherits only the owner-authority role
 -- below; the browser never receives that login.
 GRANT SELECT ON fleet_enrollment_codes, fleet_workers, fleet_worker_credentials, fleet_worker_presence,
-  fleet_enrollment_redemptions, fleet_work_offers, fleet_claims, fleet_worker_events, fleet_results, fleet_result_files,
+  fleet_worker_agents, fleet_presence_transitions, fleet_enrollment_redemptions, fleet_work_offers, fleet_claims,
+  fleet_worker_events, fleet_results, fleet_result_files,
   fleet_result_reviews TO control_room_private_web;
 
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_fleet_owner_authority;
@@ -78,7 +83,7 @@ GRANT SELECT ON work_intake_tenant_binding, tenants, workspaces, projects, contr
   control_identities, control_role_grants, control_web_sessions, control_requests, control_workflows,
   control_jobs, control_attempts, control_leases, audit_events, control_audit_chain_heads,
   fleet_enrollment_codes, fleet_enrollment_redemptions, fleet_workers, fleet_worker_credentials,
-  fleet_worker_presence, fleet_work_offers, fleet_claims, fleet_worker_events, fleet_results,
+  fleet_worker_presence, fleet_worker_agents, fleet_presence_transitions, fleet_work_offers, fleet_claims, fleet_worker_events, fleet_results,
   fleet_result_files, fleet_result_reviews TO control_room_fleet_owner_authority;
 GRANT INSERT ON control_web_sessions, audit_events, control_audit_chain_heads,
   fleet_enrollment_codes, fleet_work_offers, fleet_result_reviews TO control_room_fleet_owner_authority;

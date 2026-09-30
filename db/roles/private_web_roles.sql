@@ -37,6 +37,8 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_revisions, work_batch_items, work_batch_intake_flag_dismissals,
   control_action_inbox TO control_room_private_web;
+GRANT SELECT, INSERT ON owner_surface_cursors TO control_room_private_web;
+GRANT UPDATE (seen_through,updated_at) ON owner_surface_cursors TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
   pipeline_ordered_stage_runs, pipeline_unattended_transitions,
   control_pipeline_build_publications, control_codex_result_publications

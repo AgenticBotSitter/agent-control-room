@@ -240,7 +240,10 @@ test("one-command join: a single-use code enrolls a machine whose secret never l
     "SELECT role_key,allowed_actions,project_ids FROM control_role_grants WHERE identity_id LIKE 'identity:fleet:%'");
   assert.deepEqual(grants, [{ role_key: "work_batch_proposer", allowed_actions: ["work_batches.propose"], project_ids: [PROJECT_A] }]);
   const workers = await f.owner.listWorkers(ownerIdentity());
-  assert.equal(workers.workers[0]!.status, "connected");
+  // Enrollment is a join, not a check-in: nothing has checked in from this
+  // machine yet, so it has missed no window and is not "Unreachable" either.
+  assert.equal(workers.workers[0]!.status, "never_seen");
+  assert.equal(workers.workers[0]!.lastSeenAt, null);
 });
 
 test("a lost enrollment response is recovered with the same pending secret and nonce", async t => {

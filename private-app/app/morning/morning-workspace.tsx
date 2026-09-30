@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { PrivateHeader } from "../private-header";
-import { readTaskHomeActivity } from "../../../src/web/v1/task-home-browser-client";
+import { acknowledgeTaskHomeActivity, readTaskHomeActivity } from "../../../src/web/v1/task-home-browser-client";
 import type { TaskHomeActivity } from "../../../src/web/v1/task-home-wire";
 import { readTaskAttention } from "../../../src/web/v1/queue-attention-browser-client";
 import type { TaskAttentionPage } from "../../../src/web/v1/task-attention-wire";
@@ -30,17 +30,30 @@ export function PrivateMorningSummary() {
   const [attention, setAttention] = useState<ReadState<TaskAttentionPage>>({ state: "loading" });
   const [connections, setConnections] = useState<ReadState<WorkerRead>>({ state: "loading" });
   const [generation, setGeneration] = useState(0);
+  const [showRecent, setShowRecent] = useState(false);
 
   useEffect(() => {
     let live = true;
     setActivity({ state: "loading" });
     setAttention({ state: "loading" });
-    void readTaskHomeActivity().then(value => { if (live) setActivity({ state: "ready", value }); },
+    void readTaskHomeActivity(fetch, undefined, { surface: "morning", recent: showRecent })
+      .then(value => { if (live) setActivity({ state: "ready", value }); },
       () => { if (live) setActivity({ state: "unavailable" }); });
     void readTaskAttention().then(value => { if (live) setAttention({ state: "ready", value }); },
       () => { if (live) setAttention({ state: "unavailable" }); });
     return () => { live = false; };
-  }, [generation]);
+  }, [generation, showRecent]);
+
+  useEffect(() => {
+    if (activity.state !== "ready") return;
+    const controller = new AbortController();
+    let second = 0;
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => {
+      if (activity.state === "ready") void acknowledgeTaskHomeActivity(activity.value.cursor, fetch, controller.signal)
+        .catch(() => undefined);
+    }); });
+    return () => { controller.abort(); cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, [activity]);
 
   useEffect(() => {
     if (runtime.mode === "checking") return;
@@ -71,6 +84,9 @@ export function PrivateMorningSummary() {
               <span>{task.state === "succeeded" ? `Completed${task.qualityStatus === "accepted" ? " · Accepted" : ""} · ` : ""}
                 <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></span></li>)}</ul>
             : <EmptyState>Nothing finished.</EmptyState>}
+      {activity.state === "ready" && activity.value.cursor.firstVisit
+        ? <p className="private-note">This is your first visit, so changes start from now.{" "}
+          <a href="#recent" onClick={event => { event.preventDefault(); setShowRecent(true); }}>Recent</a></p> : null}
     </section>
 
     <section className="private-panel" aria-labelledby="morning-waiting"><PanelHeading id="morning-waiting">Waiting for you

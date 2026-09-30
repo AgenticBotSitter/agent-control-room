@@ -364,8 +364,8 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     // Every other route: authenticate first, then read the body.
     const known = path === "/fleet/v1/me" || path === "/fleet/v1/heartbeat" || path === "/fleet/v1/rotate"
-      || path === "/fleet/v1/work" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
-      || claimRoute.test(path) || proposalRoute.test(path);
+      || path === "/fleet/v1/offline" || path === "/fleet/v1/work" || path === "/fleet/v1/claims"
+      || path === "/fleet/v1/mcp/calls" || claimRoute.test(path) || proposalRoute.test(path);
     if (!known) return fleetFail("not_found");
     let principal: FleetWorkerPrincipalV1;
     try { principal = await authenticated(request); }
@@ -389,8 +389,12 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       return send(response, 201, { ok: true, result: await options.store.recordMcpCall(principal, body as never) });
     }
     if (path === "/fleet/v1/heartbeat") {
-      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"]);
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform", "sessionId"], ["agents"]);
       return send(response, 200, { ok: true, result: await options.store.heartbeat(principal, body as never) });
+    }
+    if (path === "/fleet/v1/offline") {
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["sessionId"]);
+      return send(response, 200, { ok: true, result: await options.store.gracefulOffline(principal, body as never) });
     }
     if (path === "/fleet/v1/rotate") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["newCredentialDigest"]);
@@ -399,7 +403,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       return send(response, 200, { ok: true, result });
     }
     if (path === "/fleet/v1/claims") {
-      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["offerId", "idempotencyKey"]);
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["offerId", "idempotencyKey"], ["agentId"]);
       const result = await options.store.claim(principal, body as never);
       return send(response, result.replayed ? 200 : 201, { ok: true, result });
     }
