@@ -924,7 +924,9 @@ async function startWebHostOnRoster(t, protectedRoot) {
     if (name === "index.js") return { default() {} };
     throw new Error(`unexpected ${name}`);
   };
-  const active = await startMacLocalWebHost({ protectedRoot }, { load });
+  const active = await startMacLocalWebHost({ protectedRoot }, {
+    load, loadHealthProbeKey: async () => Buffer.alloc(32, 8), hostReleaseIdentity: async () => "dev",
+  });
   await active.close();
   t.diagnostic("the real roster check accepted the intake record");
 }

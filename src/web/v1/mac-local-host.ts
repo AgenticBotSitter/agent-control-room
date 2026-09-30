@@ -70,6 +70,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   workBatchQueueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
   ownerWebPush?: OwnerWebPushConfigV1;
+  hostProcessId?: number;
+  healthProbeKey?: Uint8Array;
+  healthReleaseId?: string;
+  healthStartedAt?: string;
   /** Remote-worker owner section, present only when the host also runs the
    * fleet gateway on its own database login. */
   fleet?: MacLocalWebProcessOptionsV1["fleet"];
@@ -107,6 +111,8 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
       ?? createMacLocalWorkBatchQueueCatalogV1(configuration) } : {}),
     ...(input.workBatchQueueAdmissionAuthority ? { workBatchQueueAdmissionAuthority: input.workBatchQueueAdmissionAuthority } : {}),
     ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+    ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
+      healthStartedAt: input.healthStartedAt } : {}),
     ...(input.fleet ? { fleet: input.fleet } : {}),
     // The installation-wide mode. This forwarding is the whole fix: without it
     // the endpoint exists in the web process but is never mounted, and it 404s
@@ -167,10 +173,17 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   /** The identity the health loop reports under. Defaults to the one fixed
    * Mac-local supervisor; supplied only where a distinct id is needed. */
   supervisorId?: string;
+  hostProcessId?: number;
+  healthProbeKey?: Uint8Array;
+  healthReleaseId?: string;
+  healthStartedAt?: string;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
     || typeof input.render !== "function") throw new Error("mac_local_host_configuration_invalid");
+  if (input.hostProcessId !== undefined
+    && (!Number.isSafeInteger(input.hostProcessId) || input.hostProcessId <= 1))
+    throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.createTaskApplication) throw new Error("mac_local_host_configuration_invalid");
   if (input.createTaskApplication && typeof input.loadDatabaseRoles !== "function") throw new Error("mac_local_host_configuration_invalid");
   if (input.startQueueWorker && (!input.createTaskApplication || typeof input.startQueueWorker !== "function"))
@@ -252,6 +265,9 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
           ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+          ...(input.hostProcessId ? { hostProcessId: input.hostProcessId } : {}),
+          ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
+            healthStartedAt: input.healthStartedAt } : {}),
           ...(service ? { operationsMode: service } : {}),
         });
         if (!input.startQueueWorker) return web;
