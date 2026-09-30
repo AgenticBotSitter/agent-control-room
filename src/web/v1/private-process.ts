@@ -113,6 +113,8 @@ export interface PrivateWebProcessOptions {
   }) => Promise<OperatorSurfaceSnapshotV1> };
   /** Bounded per-node task and terminal-result attribution from canonical records. */
   workerBoard?: { read: (input: { tenantId: string; now: string }) => Promise<unknown> };
+  /** Read-only per worker-kind/model pipeline build-stage outcomes over trailing windows. */
+  workerScorecard?: { read: (input: { tenantId: string; now: string }) => Promise<unknown> };
   /** Owner-only canonical attention reader supplied by trusted composition.
    * It is intentionally separate from the full operator snapshot so the
    * coordinator role needs access only to the inbox table for this route. */
@@ -264,6 +266,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   }) : undefined;
   if (options.workerBoard && typeof options.workerBoard.read !== "function") throw new Error("invalid_private_app_config");
   const workerBoard = options.workerBoard ? Object.freeze({ read: options.workerBoard.read.bind(options.workerBoard) }) : undefined;
+  if (options.workerScorecard && typeof options.workerScorecard.read !== "function") throw new Error("invalid_private_app_config");
+  const workerScorecard = options.workerScorecard ? Object.freeze({ read: options.workerScorecard.read.bind(options.workerScorecard) }) : undefined;
   if (options.actionInboxSource && typeof options.actionInboxSource.read !== "function") throw new Error("invalid_private_app_config");
   const actionInboxSource = options.actionInboxSource ? Object.freeze({
     read: options.actionInboxSource.read.bind(options.actionInboxSource),
@@ -515,6 +519,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               return { tenantId: options.tenantId, now: actor.now };
             });
             return Response.json(await workerBoard.read(scope), { headers: privateResponseHeaders });
+          }
+          if (url.pathname === "/api/v1/workers-scorecard") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!workerScorecard) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return { tenantId: options.tenantId, now: actor.now };
+            });
+            return Response.json(await workerScorecard.read(scope), { headers: privateResponseHeaders });
           }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
           if (observations) {
