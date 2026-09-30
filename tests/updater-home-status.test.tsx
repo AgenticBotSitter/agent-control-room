@@ -117,7 +117,7 @@ test("Install leads with updater facts, isolates bot text, names the database lo
   assert.match(card.text, /work saved during the final health check may be lost/u, "R20c is on database cards");
   assert.match(card.text, /What the bot says/u); assert.match(card.text, /<img src=x onerror=alert\(1\)>/u,
     "untrusted bot text stays text");
-  assert.match(card.text, /type the 4-word code/u); assert.match(card.text, /Confirm with Face ID/u);
+  assert.match(card.text, /type the code of words Control Room shows on your Mac/u); assert.doesNotMatch(card.text, /\d-word|four-word|six-word/iu); assert.match(card.text, /Confirm with Face ID/u);
   for (const control of ["Pause", "Resume", "Back up now", "Check now", "Repair address", "Roll back with Face ID"])
     assert.match(card.text, new RegExp(control, "u"));
 });

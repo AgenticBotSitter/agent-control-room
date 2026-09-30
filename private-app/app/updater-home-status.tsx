@@ -74,7 +74,7 @@ function Controls({ value, onChanged }: { value: UpdaterOwnerUiReadV1; onChanged
   return <div className="private-updater-controls">
     {value.plan && value.state === "ready_for_approval" ? <><button type="button" disabled={!!pending}
       onClick={() => { void approve(); }}>Confirm with Face ID</button>
-      {value.plan.macConfirmationRequired ? <p className="private-updater-mac-code"><strong>On your Mac:</strong> type the 4-word code Control Room shows after its confirmation prompt.</p> : null}</> : null}
+      {value.plan.macConfirmationRequired ? <p className="private-updater-mac-code"><strong>On your Mac:</strong> type the code of words Control Room shows on your Mac after its confirmation prompt.</p> : null}</> : null}
     <div className="private-actions" aria-label="Update controls">{(Object.keys(label) as UpdaterOwnerControlV1[]).map(action => <button
       key={action} type="button" disabled={!available.has(action) || !!pending} onClick={() => { void request(action); }}>
       {pending === action ? "Requesting…" : action === "rollback" ? "Roll back with Face ID" : label[action]}</button>)}</div>
