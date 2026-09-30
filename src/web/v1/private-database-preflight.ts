@@ -26,7 +26,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // The value was read from a live cluster on this stream's assigned ports AND
 // cross-checked against a PGlite build of the same migrations; both agree, so the
 // number is not an artefact of either applier.
-export const privateWebSchemaDigest = "d131791e12067282c8135a464b8da7c90469158af8bed36322bfb6616a1dcb13";
+export const privateWebSchemaDigest = "84ca9eb9c7ad0a9fd82d90c2a22157915123d20d9f79222d15ce317c7056726d";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
