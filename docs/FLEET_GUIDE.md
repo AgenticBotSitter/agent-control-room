@@ -114,14 +114,17 @@ The connector never hands the bot the machine's key, and it talks only to
 your Control Room address. The bot itself uses its own normal sign-in (for
 example your Codex or Claude account) and its own network access.
 
-Codex runs read-only, but read-only still means it can **read** files under
-your home folder, including the key file, if a task tells it to. The
-connector checks every answer before sending it and refuses (as a blocker,
-sending nothing) any that contains the machine's current key. Claude Code and
-Hermes run with no tools at all, so they cannot read files in the first
-place. For real isolation, run fleet Codex as its own OS user, or with a
-`HOME` that holds no secrets — no `~/.codex/auth.json`, no `~/.ssh`, no
-connector credential file of its own.
+Codex runs read-only, but read-only still means it can **read** files,
+including this machine's key file, if a task tells it to. The connector checks
+every answer and refuses to send one that contains the key written out plainly.
+It cannot catch a key that Codex was told to disguise (for example base64 or
+split into pieces), so only give a Codex machine tasks you wrote or trust. If a
+result contains a long string that looks like code or random letters and you
+did not ask for one, reject it and rotate the machine's key. Claude Code and
+Hermes run with no tools at all, so they cannot read files in the first place.
+Running the connector under its own OS user account keeps your personal files
+(`~/.ssh`, other sign-ins) out of Codex's reach. It does not hide the machine's
+own key, which Codex can always read.
 
 ## Connect a new agent over MCP
 
