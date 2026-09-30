@@ -1,0 +1,9 @@
+[
+  {
+    "file": "src/web/v1/private-serving.ts",
+    "find": "    if (closed) { rejectDuringShutdown(response); return; }",
+    "replace": "    if (false) { rejectDuringShutdown(response); return; }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test tests/web-private-serving.test.ts",
+    "why": "a request observed after shutdown begins must be refused before it can enter a shared-database write path"
+  }
+]

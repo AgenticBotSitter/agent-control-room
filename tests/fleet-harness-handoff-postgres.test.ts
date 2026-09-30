@@ -78,7 +78,7 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
       const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "PG Codex box", workerKind: "codex",
         projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
       const configPath = join(dir, "worker.json");
-      await connector.join({ server: origin, code: code.code, configPath, fetcher });
+      await connector.join({ server: origin, code: code.code, workerKind: "codex", configPath, fetcher });
       const settings = async (fakeBehaviour: string) => {
         const path = join(dir, `harnesses-${fakeBehaviour}.json`);
         await writeFile(path, JSON.stringify({ schema: "control-room.fleet-harnesses/v1",

@@ -20,9 +20,21 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import test from "node:test";
-import { fleetDatabaseSqlStateV1, isFleetClaimRefusalV1, isFleetLeaseScopeRefusalV1 }
+import { databaseSqlStateIsAnyV1, databaseSqlStateV1 } from "../src/persistence/database";
+import { FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1, FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1 }
   from "../src/fleet/v1";
 import { PrivateDatabaseError } from "../src/web/v1/bounded-database";
+
+/**
+ * The claim path's two decisions, named as the store names them, over the ONE
+ * shared SQLSTATE reader. These are the predicates the store actually calls, so
+ * a test that exercised anything else would not be testing it.
+ */
+const isFleetClaimRefusalV1 = (error: unknown) =>
+  databaseSqlStateIsAnyV1(error, FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1);
+const isFleetLeaseScopeRefusalV1 = (error: unknown) =>
+  databaseSqlStateIsAnyV1(error, FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1);
+const fleetDatabaseSqlStateV1 = databaseSqlStateV1;
 
 test("a guarded claim refusal is recognised on sqlState, never on code", () => {
   // The refusals the CLAIM insert raises, each mapped to a conflict the

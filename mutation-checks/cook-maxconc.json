@@ -43,29 +43,29 @@
   },
   {
     "file": "src/fleet/v1/database-failure.ts",
-    "find": "const CLAIM_INSERT_REFUSALS: ReadonlySet<string> = new Set([\"54000\", \"P0001\", \"23505\", \"23503\"]);",
-    "replace": "const CLAIM_INSERT_REFUSALS: ReadonlySet<string> = new Set([\"P0001\", \"23505\", \"23503\"]);",
+    "find": "export const FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1: readonly string[] =\n  [\"54000\", \"P0001\", \"23505\", \"23503\"];",
+    "replace": "export const FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1: readonly string[] =\n  [\"P0001\", \"23505\", \"23503\"];",
     "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
     "why": "0234's capacity refusal reaches the worker as a conflict, so the connector moves to the next offer instead of abandoning its pass"
   },
   {
     "file": "src/fleet/v1/database-failure.ts",
-    "find": "const LEASE_SCOPE_REFUSALS: ReadonlySet<string> = new Set([\"23P01\", \"23514\"]);",
-    "replace": "const LEASE_SCOPE_REFUSALS: ReadonlySet<string> = new Set([\"23P01\", \"23514\", \"54000\", \"P0001\"]);",
+    "find": "export const FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1: readonly string[] = [\"23P01\", \"23514\"];",
+    "replace": "export const FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1: readonly string[] =\n  [\"23P01\", \"23514\", \"54000\", \"P0001\"];",
     "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
     "why": "the two inserts have SEPARATE refusal sets: a 23514 on the CLAIM row is a caller bug that must be reported, and a claim-path code on the SCOPE insert is a fault that must not be absorbed as a conflict"
   },
   {
-    "file": "src/fleet/v1/database-failure.ts",
-    "find": "  return typeof value === \"string\" && /^[0-9A-Z]{5}$/u.test(value) && !/^E/u.test(value);",
-    "replace": "  return typeof value === \"string\" && /^[0-9A-Z]{5}$/u.test(value);",
+    "file": "src/persistence/database.ts",
+    "find": "    if (typeof value === \"string\" && /^[0-9A-Z]{5}$/u.test(value) && !value.startsWith(\"E\")) return value;",
+    "replace": "    if (typeof value === \"string\" && /^[0-9A-Z]{5}$/u.test(value)) return value;",
     "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
     "why": "a POSIX errno like EPIPE is five uppercase letters on the same field, and no SQLSTATE begins with E, so the shape alone is not enough to call the value a SQLSTATE"
   },
   {
-    "file": "src/fleet/v1/database-failure.ts",
-    "find": "  for (const field of [\"sqlState\", \"code\"]) {",
-    "replace": "  for (const field of [\"code\"]) {",
+    "file": "src/persistence/database.ts",
+    "find": "  for (const key of [\"sqlState\", \"code\"] as const) {",
+    "replace": "  for (const key of [\"code\"] as const) {",
     "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
     "why": "the private pool carries the SQLSTATE on sqlState and sets code to the class of failure, so reading only code matches no guarded refusal at all"
   }

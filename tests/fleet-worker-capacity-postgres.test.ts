@@ -153,7 +153,8 @@ test("a fleet worker never holds more live claims than its maxConcurrent, under 
             const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: `Cap worker ${index}`,
               workerKind: "mcp-agent", projectIds: [...PROJECTS_ALL], capabilities: ["writing"], maxConcurrent: 2 });
             const configPath = `${postgres.runDirectory}/worker-${index}.json`;
-            const joined = await connector.join({ server: origin, code: code.code, configPath });
+            const joined = await connector.join({ server: origin, code: code.code, workerKind: "mcp-agent",
+              configPath });
             const config = await connector.loadConfig(configPath);
             clients.push(connector.createClient(config));
             workerIds.push(joined.workerId);

@@ -5,6 +5,7 @@ import {
   existsSync,
   lstatSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
@@ -121,6 +122,21 @@ function parseManifest(root, manifestPath) {
     }
     return { ...entry, filePath, label: `${entry.file} — ${entry.why}` };
   });
+}
+
+function validateAllManifestAnchors(root) {
+  const manifestRoot = resolve(root, MANIFEST_DIRECTORY);
+  const manifests = readdirSync(manifestRoot).filter(name => name.endsWith(".json")).sort();
+  for (const name of manifests) {
+    const manifestPath = resolve(manifestRoot, name);
+    for (const entry of parseManifest(root, manifestPath)) {
+      const source = readFileSync(entry.filePath, "utf8");
+      const matches = source.split(entry.find).length - 1;
+      if (matches !== 1) {
+        throw new Error(`${relative(root, manifestPath)}: ${entry.label}: find matched ${matches} times; expected exactly once`);
+      }
+    }
+  }
 }
 
 function restoreFile(root, entry, original, mode) {
@@ -398,6 +414,7 @@ async function main() {
     return;
   }
   requireCleanCheckout(root);
+  validateAllManifestAnchors(root);
   const entries = parseManifest(root, manifestPath);
   const failures = [];
   const timeoutMs = mutationTimeoutMs();
