@@ -84,7 +84,7 @@ test("the authenticated web endpoint returns the reduced display projection and 
   const f = await fixture(t); await f.write();
   const origin = "http://127.0.0.1:4310", ownerCode = "updater-home-owner-code-0001";
   const app = createMacLocalWebProcessV1({ origin, workspaceId: "workspace:updater-home", database: {
-    client: {} as never, close: async () => {}, isAvailable: async () => true,
+    client: {} as never, close: async () => {}, isAvailable: () => true,
   }, localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: "tenant:updater-home",
     provider: "fixture", subject: "owner", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
   updaterHomeStatus: createUpdaterHomeStatusReaderV1({ root: f.root, now: () => now }) });
@@ -131,7 +131,8 @@ test("Install leads with updater facts, isolates bot text, names the database lo
 });
 
 test("Install names protected and dependency classes from updater facts", async () => {
-  const value = ownerUi(), plan = { ...value.plan!, classes: ["protected", "dependency"] as const,
+  const value = ownerUi(), plan: NonNullable<UpdaterOwnerUiReadV1["plan"]> = {
+    ...value.plan!, classes: ["protected", "dependency"],
     changesDatabase: false, changesUpdater: false, restoreMayLoseRecentWrites: false,
     macConfirmationRequired: false };
   const card = await mountedStatus(Response.json(ownerUi({ plan })));
@@ -178,7 +179,7 @@ test("the updater owner port is owner-only, origin-checked, bounded and preserve
       idempotencyKey: input.idempotencyKey, accepted: true, replayed: false }),
   };
   const app = createMacLocalWebProcessV1({ origin, workspaceId: "workspace:updater-owner", database: {
-    client: {} as never, close: async () => {}, isAvailable: async () => true },
+    client: {} as never, close: async () => {}, isAvailable: () => true },
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: "tenant:updater-owner", provider: "fixture",
       subject: "owner", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 }, updaterHomeStatus: createUpdaterHomeStatusReaderV1({ root: f.root, now: () => now }), updaterOwnerUi: port });
   t.after(async () => { await app.close(); }); const render = () => new Response("unused");
