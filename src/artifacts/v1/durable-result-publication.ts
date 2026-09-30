@@ -629,7 +629,13 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
       if (!row) unavailable();
     }
     const reservation = verifyNeutralReservationRow(row!, key);
-    if (reservation.identityDigest !== sha256Digest(identity)) conflict();
+    // A reservation written before run-scoped ids carries the content-form id. The
+    // identity digest covers every field and the row already passed its HMAC check,
+    // so accepting the content-form digest matches only an otherwise-identical
+    // replay of the same run. New reservations are still minted run-scoped only.
+    if (reservation.identityDigest !== sha256Digest(identity)
+      && reservation.identityDigest !== sha256Digest(buildNeutralIdentity(binding,
+        durableResultArtifactIdV1(contentHash), contentHash, bytes.byteLength))) conflict();
     if (reservation.state !== "metadata_committed") throw new Error("durable_result_manual_reconciliation_required");
     const resultRow = (await tx.query<NeutralReceiptRow>(`SELECT ${neutralSelection}
       WHERE r.tenant_id=$1 AND r.run_id=$2`, [identity.tenantId, identity.runId])).rows[0];
