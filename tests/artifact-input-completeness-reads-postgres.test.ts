@@ -55,8 +55,14 @@ import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
 
 const MIGRATION = "0238_artifact_input_completeness_reads.sql";
-// This file's own disposable-cluster lane; CONTROL_ROOM_PG_TEST_PORT_BASE moves it.
-const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59970) + 6;
+// This file's own reserved disposable-cluster lane, 59960-59969 by default.
+// A DEFAULT, not the caller's CONTROL_ROOM_PG_TEST_PORT_BASE: every postgres
+// test file owns a distinct fixed lane, because the lanes run with
+// --test-concurrency=1 inside one process and share that environment variable.
+// Reading it here made this file follow whatever the enclosing lane happened to
+// set, which put two files' clusters on one port whenever they ran side by
+// side. Its default honours the same rule; an explicit override still moves it.
+const PORT = Number(process.env.CONTROL_ROOM_ARTIFACT_INPUT_READS_PG_PORT ?? 59960);
 const PG = requiresRealPostgres();
 const needsPg = () => PG ? undefined : { skip: realPostgresSkipMessage() };
 
