@@ -14,7 +14,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { adaptPglite, databaseSqlStateV1, type DatabaseClient } from "../src/persistence/database";
+import { adaptPglite, databaseSqlStateIsAnyV1, databaseSqlStateV1, type DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, fleetGatewayClientAddressV1,
   fleetGatewayClientNetworkV1, FleetGatewayStoreV1, FleetOwnerServiceV1, FleetWaitRegistryV1,
   type FleetGatewayAdmissionV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
@@ -417,10 +417,62 @@ test("wait registry releases a request stopped during presence recording before 
   assert.equal(registry.parkedCount, 0);
 });
 
-test("database refusals read production sqlState before the simulation code", () => {
+test("database refusals read production sqlState before the simulation code", async () => {
   assert.equal(databaseSqlStateV1({ sqlState: "23P01", code: "database_unavailable" }), "23P01");
   assert.equal(databaseSqlStateV1({ code: "23505" }), "23505");
   assert.equal(databaseSqlStateV1({ sqlState: 23, code: null }), undefined);
+  // The wrapper's own availability code is never mistaken for a SQLSTATE, and
+  // a look-alike of the wrong shape is not read off either key.
+  assert.equal(databaseSqlStateV1({ code: "database_unavailable" }), undefined);
+  assert.equal(databaseSqlStateV1({ sqlState: "ECONNREFUSED", code: "23505" }), "23505");
+  assert.equal(databaseSqlStateV1({ sqlState: "235051" }), undefined);
+  assert.equal(databaseSqlStateV1({ sqlState: "23p01" }), undefined);
+  assert.equal(databaseSqlStateV1(null), undefined);
+  assert.equal(databaseSqlStateV1("23505"), undefined);
+  const hostile = new Proxy({}, { get() { throw new Error("sqlState read refused"); } });
+  assert.equal(databaseSqlStateV1(hostile), undefined);
+  // "is any of" is the only comparison the call sites use, so an unreadable
+  // state never matches and an empty set is never a match either.
+  assert.equal(databaseSqlStateIsAnyV1({ sqlState: "23P01" }, ["23P01", "23514"]), true);
+  assert.equal(databaseSqlStateIsAnyV1({ code: "23505" }, ["23P01", "23514"]), false);
+  assert.equal(databaseSqlStateIsAnyV1({ code: "database_unavailable" }, ["database_unavailable"]), false);
+  assert.equal(databaseSqlStateIsAnyV1({ sqlState: "23505" }, []), false);
+  assert.equal(databaseSqlStateIsAnyV1(new Error("plain"), ["P0001"]), false);
+});
+
+test("one SQLSTATE reader serves every refusal site, with both refusal sets intact", async () => {
+  // Two branches each added a reader for the same production sanitization and
+  // auto-merging kept both. A second reader reads a different shape, so the
+  // guarantee that a refusal maps to a class is a property of ONE function.
+  const database = await readFile("src/persistence/database.ts", "utf8");
+  assert.equal([...database.matchAll(/export function databaseSqlState\w*V1\(/gu)].length, 2,
+    "src/persistence/database.ts must define exactly the one reader and the one 'is any of' helper");
+  assert.match(database, /export function databaseSqlStateIsAnyV1\([\s\S]*?databaseSqlStateV1\(error\)/u,
+    "the 'is any of' helper must go through the one reader, never re-read the error itself");
+
+  // Every refusal site uses the helper. A hand-rolled comparison (=== "23505",
+  // .includes(...), or a direct .code read) is a second reader by another name.
+  const sites = new Map<string, readonly string[]>([
+    ["src/fleet/v1/gateway-store.ts", [`["23505"]`, `["P0001", "23505", "23503"]`, `["23P01", "23514"]`, `["P0001"]`]],
+    ["src/fleet/v1/owner-service.ts", [`["P0001", "23503", "23505"]`, `["P0001", "23505"]`]],
+    ["src/web/v1/task-assignment-coordinator.ts", [`["23P01", "23514"]`]],
+  ]);
+  for (const [file, expected] of sites) {
+    const source = await readFile(file, "utf8");
+    for (const line of source.split("\n").filter(row => row.includes("databaseSqlStateIsAnyV1(error")
+      && !row.trimStart().startsWith("import")))
+      assert.ok(line.trimStart().startsWith("if (databaseSqlStateIsAnyV1(error"),
+        `${file}: every site maps a refusal through the one 'is any of' helper`);
+    for (const states of expected)
+      assert.ok(source.includes(`databaseSqlStateIsAnyV1(error, ${states})`),
+        `${file}: the refusal set ${states} must survive the merge`);
+  }
+  // No site may re-read the error itself, which is the shape a second reader takes.
+  for (const [file] of sites) {
+    const source = await readFile(file, "utf8");
+    for (const row of source.split("\n")) if (/sqlState|\(error as \{ code/.test(row))
+      assert.ok(row.includes("databaseSqlStateIsAnyV1("), `${file}: a raw SQLSTATE read survived: ${row.trim()}`);
+  }
 });
 
 test("a body-less long-poll may outlive requestTimeout and still answer", async t => {
