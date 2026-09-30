@@ -141,6 +141,8 @@ test("malformed, oversized, truncated, missing-blob, and unsafe-path input fails
   assert.equal(missingBlob.refused, true);
   const unsafe = classOf([pathRow("M", "docs/bad name.md")]);
   assert.deepEqual(unsafe.refusals.map(value => value.id), ["path_not_allowed"]);
+  const traversal = classOf([pathRow("M", "docs/../security.ts")]);
+  assert.deepEqual(traversal.refusals.map(value => value.id), ["path_not_allowed"]);
 });
 
 test("submodules and escaping symlinks refuse, while a valid retry after missing data succeeds", () => {
