@@ -5,6 +5,8 @@ import { createMacLocalWebProcessV1, type MacLocalWebProcessOptionsV1 } from "./
 import { installPrivateApplication, privateNotConfigured, type PrivateApplication } from "./private-process";
 import { createMacLocalRemoteOriginGatesV1, type MacLocalRemoteAccessV1 } from "./mac-local-remote-access";
 import type { AccessKeyLoader } from "./access-key-cache";
+import { PostgresOwnerPushStoreV1, createWebPushChannelV1, startOwnerPushLoopV1 } from "../../web-push/v1";
+import type { SupervisorLoopHandleV1 } from "../../supervisor/v1/loop";
 
 type ListenerOptions = Readonly<{ port: number; createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number } }>;
@@ -56,10 +58,42 @@ export function createMacLocalControlRoomServiceV1(options: MacLocalWebProcessOp
     application: { isReady: app.isReady, close: async () => { gates?.close(); await app.close(); } }, ...(options.createServer ? { createServer: options.createServer } : {}),
     ...(options.listenerTiming ? { listenerTiming: options.listenerTiming } : {}) });
   const release = () => { if (running === app) running = undefined; };
+  // The bounded-retry owner push dispatcher (MIG-I). It is a real effect and is
+  // owned by the same lifecycle as the listener: it starts only inside start(),
+  // and it is stopped before the application closes the database, so no in-flight
+  // send can be left holding a connection this process is about to close.
+  //
+  // It is started AFTER the listener binds, so a dispatcher that cannot start --
+  // a missing grant, a mis-shaped database -- fails the same way the site fails
+  // and rolls the whole composition back, rather than leaving a half-running host
+  // whose push silently never fires.
+  const dispatch = options.ownerWebPush && options.ownerPushDispatch !== false;
+  let loop: SupervisorLoopHandleV1 | undefined;
   const start = async () => {
     useRunningApplication(app);
-    try { return await service.start(); } catch (error) { release(); throw error; }
+    try {
+      await service.start();
+      if (dispatch) {
+        loop = await startOwnerPushLoopV1({ db: options.database.client, tenantId: options.localOwnerSession.tenantId,
+          store: new PostgresOwnerPushStoreV1(options.database.client),
+          channel: createWebPushChannelV1(options.ownerWebPush!) });
+      }
+    } catch (error) {
+      release();
+      // A start that got as far as opening the loop must not leave it running
+      // against a site that never came up. The close below is best effort
+      // because the original failure is the one the caller needs to see.
+      await loop?.close().catch(() => {});
+      throw error;
+    }
   };
-  const close = async () => { try { return await service.close(); } finally { release(); } };
+  const close = async () => {
+    try {
+      // The loop first: it may be mid-send, and it holds the only database
+      // connection this composition is about to close.
+      await loop?.close().catch(() => {});
+      return await service.close();
+    } finally { release(); }
+  };
   return Object.freeze({ isReady: service.isReady, start, close });
 }
