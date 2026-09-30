@@ -278,6 +278,24 @@ test("a dropped response retains the request: Prepare stays disabled until it is
     await view.act(async () => { forget.click(); await Promise.resolve(); });
     assert.equal(buttonNamed(view.document, "Prepare proposal")?.disabled, false,
       "after forgetting, a new description can be prepared again");
+
+    // And a CONFIRMED outcome releases it too: recovering by retrying must not
+    // leave the page with one permanently disabled button.
+    const recovered = await mount(createElement(ProjectOrchestrationPanel, { projectId,
+      client: Object.freeze({ ...client, async describe() { throw new BrowserRequestError("uncertain"); } }) }));
+    try {
+      await recovered.act(async () => {
+        enter(recovered.window, recovered.document.querySelector("textarea") as HTMLTextAreaElement, "Prepare it");
+      });
+      await recovered.act(async () => { buttonNamed(recovered.document, "Prepare proposal")?.click();
+        await Promise.resolve(); });
+      assert.equal(buttonNamed(recovered.document, "Prepare proposal")?.disabled, true, "held after the drop");
+      await recovered.act(async () => { buttonNamed(recovered.document, "Check this exact request again")?.click();
+        await Promise.resolve(); });
+      assert.equal(buttonNamed(recovered.document, "Prepare proposal")?.disabled, false,
+        "a confirmed retry releases the hold");
+      assert.equal(recovered.document.querySelector("[role='alert']"), null, "and clears the alert");
+    } finally { await recovered.close(); }
   } finally { await view.close(); }
 });
 

@@ -27,8 +27,15 @@ import type { WorkBatchProposalV1 } from "../src/work-intake/v1/schemas";
 const PORT = Number(process.env.ORCHESTRATION_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59450);
 const ALLOWED = Array.from({ length: 10 }, (_, index) => PORT + index);
 const PG = requiresRealPostgres();
-const NOW = "2026-09-29T23:00:00.000Z";
-const LATER = "2026-09-30T00:00:00.000Z";
+// The session authority compares the assertion's own issuedAt against the CLOCK it
+// was given, and a WebSessionAuthority built on a fixed past instant refuses any
+// assertion that looks older than it. So the fixture's instants are anchored to the
+// run's own clock, and the adapter reads it through the same function. Everything
+// the schema stores is still exact, because NOW is written into the rows verbatim.
+const RUN_MS = Date.parse("2026-09-29T23:00:00.000Z");
+const clock = (): number => Math.max(Date.now(), RUN_MS);
+const NOW = new Date(RUN_MS).toISOString();
+const LATER = new Date(RUN_MS + 3_600_000).toISOString();
 const KEY = new Uint8Array(32).fill(47);
 
 const scope = { tenantId: "tenant:chief", workspaceId: "workspace:chief", projectId: "project:chief" };
@@ -36,8 +43,11 @@ const other = { tenantId: "tenant:chief-other", workspaceId: "workspace:chief-ot
 const otherProject = { ...scope, projectId: "project:chief-two" };
 const provider = "https://access.invalid", subject = "owner";
 const tokenDigest = `sha256:${"c".repeat(64)}`;
-const identity: VerifiedWebIdentity = { provider, subject, tokenDigest, issuedAt: NOW, expiresAt: LATER,
-  verificationExpiresAt: LATER };
+const identity: VerifiedWebIdentity = { provider, subject, tokenDigest,
+  issuedAt: new Date(clock()).toISOString(),
+  // Expires an hour after the assertion was issued, on the same clock.
+  expiresAt: new Date(clock() + 3_600_000).toISOString(),
+  verificationExpiresAt: new Date(clock() + 3_600_000).toISOString() };
 
 function database(client: Client): DatabaseClient {
   const session: DatabaseSession = { query: async <T>(sql: string, values?: unknown[]) => {
@@ -74,6 +84,11 @@ async function seedTenant(admin: Client, at: { tenantId: string; workspaceId: st
     await admin.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
       VALUES($1,$2,'active',1,$3,$3) ON CONFLICT DO NOTHING`, [at.tenantId, projectId, NOW]);
   }
+  // 0200's write guard reads the intake login's tenant through
+  // is_work_intake_session(), which resolves work_intake_tenant_binding. Without
+  // it a suggestion insert is refused for a fixture reason, not a guard reason.
+  await admin.query("DELETE FROM work_intake_tenant_binding");
+  await admin.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)", [at.tenantId]);
 }
 
 /** An owner with `projects.read` + `projects.settings`, an OPERATOR with the read
@@ -99,31 +114,69 @@ async function seedIdentities(admin: Client, at: { tenantId: string }, suffix: s
   }
   await admin.query("DELETE FROM control_web_sessions WHERE tenant_id=$1 AND token_digest=$2", [at.tenantId, tokenDigest]);
   await admin.query(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
-    VALUES($1,$2,$3,$4,$5)`, [at.tenantId, tokenDigest, owner, NOW, LATER]);
+    VALUES($1,$2,$3,$4,$5)`, [at.tenantId, tokenDigest, owner, identity.issuedAt, identity.expiresAt]);
   return { owner, operator };
 }
 
 async function seedBatch(admin: Client, at: { tenantId: string; projectId: string }, batchId: string,
   proposer: string, revision = 1, value = proposal(at.projectId)) {
   const digest = workBatchProposalDigestV1(value);
+  // 0093 admits revision 1 by INSERT and nothing else; advancing a batch is an
+  // UPDATE, which its own owner-update guard refuses for an agent. The fixture
+  // therefore seeds the batch once at revision 1 and, when a test needs a later
+  // revision, moves it with the same disable/enable the orchdb lane uses for a
+  // decided batch -- and says so, because it is a fixture reaching a state a
+  // production path reaches through WorkBatchOwnerServiceV1 instead.
   await admin.query(`INSERT INTO work_batches(id,tenant_id,project_id,proposed_by_identity_id,proposed_by_actor_type,
     proposed_at,state,proposal,queue_depth_limit,batch_digest,auth_tag,version,created_at,updated_at)
-    VALUES($1,$2,$3,$4,'agent',$5,'proposed',$6::jsonb,10,$7,$8,$9,$5,$5)
+    VALUES($1,$2,$3,$4,'agent',$5,'proposed',$6::jsonb,10,$7,$8,1,$5,$5)
     ON CONFLICT DO NOTHING`,
   [batchId, at.tenantId, at.projectId, proposer, NOW, JSON.stringify(value), digest,
     hmacSha256Tag(KEY, { purpose: "work-batch/v1", record: { id: batchId, tenantId: at.tenantId, projectId: at.projectId,
       proposedByIdentityId: proposer, proposedAt: NOW, state: "proposed", proposal: value, queueDepthLimit: 10,
-      batchDigest: digest, version: revision, createdAt: NOW, updatedAt: NOW } }), revision]);
-  for (let index = 1; index <= revision; index += 1) {
-    await admin.query(`INSERT INTO work_batch_revisions(id,tenant_id,batch_id,revision,edited_by_identity_id,edited_at,
-      reason_code,proposal,revision_digest,auth_tag) VALUES($1,$2,$3,$4,$5,$6,'submitted',$7::jsonb,$8,$9)
-      ON CONFLICT DO NOTHING`,
-    [`${batchId}:revision:${index}`, at.tenantId, batchId, index, proposer, NOW, JSON.stringify(value), digest,
-      hmacSha256Tag(KEY, { purpose: "work-batch-revision/v1", record: { id: `${batchId}:revision:${index}`,
-        tenantId: at.tenantId, batchId, revision: index, editedByIdentityId: proposer, editedAt: NOW,
-        reasonCode: "submitted", proposal: value, revisionDigest: digest } })]);
-  }
+      batchDigest: digest, version: 1, createdAt: NOW, updatedAt: NOW } })]);
+  // Revision 1 must carry the batch's own proposal and batch digest (0102's guard
+  // compares them), so it is written BEFORE the batch row is advanced. Later
+  // revisions carry the plan the batch now holds, which is what makes 0200's view
+  // stop matching the suggestion bound to revision 1.
+  await admin.query(`INSERT INTO work_batch_revisions(id,tenant_id,batch_id,revision,edited_by_identity_id,edited_at,
+    reason_code,proposal,revision_digest,auth_tag) VALUES($1,$2,$3,1,$4,$5,'submitted',$6::jsonb,$7,$8)
+    ON CONFLICT DO NOTHING`,
+  [`${batchId}:revision:1`, at.tenantId, batchId, proposer, NOW, JSON.stringify(value), digest,
+    hmacSha256Tag(KEY, { purpose: "work-batch-revision/v1", record: { id: `${batchId}:revision:1`,
+      tenantId: at.tenantId, batchId, revision: 1, editedByIdentityId: proposer, editedAt: NOW,
+      reasonCode: "submitted", proposal: value, revisionDigest: digest } })]);
   return digest;
+}
+
+/** Move an already-seeded batch to `revision`, with a DIFFERENT plan.
+ *
+ * 0093 admits revision 1 by INSERT only and 0102's owner-update guard refuses an
+ * agent's UPDATE, so the fixture reaches this state the way the orchdb lane
+ * reaches a decided batch: with the guard disabled for one statement, and saying
+ * so. What is under test is 0200's VIEW losing the current-revision binding, and
+ * the rows are otherwise real -- each has its proposal, its digest and its HMAC. */
+async function advanceBatch(admin: Client, at: { tenantId: string; projectId: string }, batchId: string,
+  revision: number) {
+  const advanced = proposal(at.projectId, 7), advancedDigest = workBatchProposalDigestV1(advanced);
+  // 0102's revision guard requires `revision = batch.version + 1` AT INSERT TIME, so
+  // the new revision row is written BEFORE the batch is advanced, and it must be
+  // edited by a live HUMAN owner holding `work_batches.decide` -- which is exactly
+  // what WorkBatchOwnerServiceV1 does, so the fixture follows the same shape.
+  await admin.query(`INSERT INTO work_batch_revisions(id,tenant_id,batch_id,revision,edited_by_identity_id,
+    edited_at,reason_code,proposal,revision_digest,auth_tag) VALUES($1,$2,$3,$4,$5,$6,'owner_revision',$7::jsonb,$8,$9)
+    ON CONFLICT DO NOTHING`,
+  [`${batchId}:revision:${revision}`, at.tenantId, batchId, revision, `identity:chief-owner`, LATER,
+    JSON.stringify(advanced), advancedDigest, hmacSha256Tag(KEY, { purpose: "work-batch-revision/v1",
+      record: { id: `${batchId}:revision:${revision}`, tenantId: at.tenantId, batchId, revision,
+        editedByIdentityId: "identity:chief-owner", editedAt: LATER, reasonCode: "owner_revision",
+        proposal: advanced, revisionDigest: advancedDigest } })]);
+  await admin.query("ALTER TABLE work_batches DISABLE TRIGGER work_batches_owner_update");
+  try {
+    await admin.query(`UPDATE work_batches SET version=$3,proposal=$4::jsonb,batch_digest=$5,updated_at=$6
+      WHERE tenant_id=$1 AND id=$2`, [at.tenantId, batchId, revision, JSON.stringify(advanced), advancedDigest, LATER]);
+  } finally { await admin.query("ALTER TABLE work_batches ENABLE TRIGGER work_batches_owner_update"); }
+  return advancedDigest;
 }
 
 /** The suggestion INSERT, exactly as the intake login's adapter writes it. */
@@ -153,7 +206,7 @@ function serviceFor(client: Client, queueCatalog = catalog) {
   const db = database(client), ids = { tenantId: scope.tenantId, workspaceId: scope.workspaceId };
   return createProjectOrchestrationServiceV1({ db, ...ids, queueCatalog, integrityKey: KEY,
     coordinator: { async coordinateInitial() { throw new Error("planner_unavailable_in_this_test"); },
-      ownerPrefill: (input) => new PostgresProjectOrchestrationStoreV1(db, ids, () => Date.parse(NOW), KEY)
+      ownerPrefill: (input) => new PostgresProjectOrchestrationStoreV1(db, ids, clock, KEY)
         .prefillForOwner(input) } });
 }
 
@@ -189,7 +242,7 @@ test("the planner selection round-trips through 0201's real constraint, includin
       assert.deepEqual(await hermes.readSettings(identity, scope.projectId).then(value => value.choice),
         { mode: "selected", workerId: "worker:hermes", workerKind: "hermes", modelKey: "profile:one", effort: null });
       const store = new PostgresProjectOrchestrationStoreV1(database(web),
-        { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, () => Date.parse(NOW));
+        { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, clock);
       assert.deepEqual(await store.read(scope.projectId), { workerId: "worker:hermes", workerKind: "hermes",
         modelKey: "profile:one" });
       // A concrete effort on the codex catalog round-trips as the exact value.
@@ -213,14 +266,22 @@ test("the optimistic version check is real under 20 concurrent saves at one expe
     const web = new Client(postgres.connection("control_room_web")); await web.connect();
     try {
       await seedTenant(admin, scope); await seedIdentities(admin, scope, "");
-      const service = serviceFor(web);
-      await service.saveSettings(identity, scope.projectId, { expectedVersion: 0, choice: { mode: "none" } });
-      // 20 concurrent saves, all claiming version 1. Exactly one may win: 0135's
-      // table has no CAS constraint, so this is the row lock's whole job.
-      const attempts = Array.from({ length: 20 }, (_, index) => service.saveSettings(identity, scope.projectId,
-        { expectedVersion: 1, choice: index % 2 === 0 ? { mode: "selected", workerId: "worker:chief",
-          workerKind: "codex", modelKey: "model:plan", effort: "high" } : { mode: "none" } }));
-      const results = await Promise.allSettled(attempts);
+      await serviceFor(web).saveSettings(identity, scope.projectId, { expectedVersion: 0, choice: { mode: "none" } });
+      // TWENTY SEPARATE CONNECTIONS. One pg Client cannot run twenty concurrent
+      // transactions -- they would interleave inside a single BEGIN, which tests
+      // nothing about the row lock. Each caller below is its own authenticated
+      // connection, which is what "concurrent" means to a connection pool.
+      const callers = Array.from({ length: 20 }, async (_unused, index) => {
+        const client = new Client(postgres.connection("control_room_web", { applicationName: `chief-save-${index}` }));
+        await client.connect();
+        try {
+          const service = serviceFor(client);
+          return await service.saveSettings(identity, scope.projectId, { expectedVersion: 1,
+            choice: index % 2 === 0 ? { mode: "selected", workerId: "worker:chief", workerKind: "codex",
+              modelKey: "model:plan", effort: "high" } : { mode: "none" } });
+        } finally { await client.end(); }
+      });
+      const results = await Promise.allSettled(callers);
       const won = results.filter(result => result.status === "fulfilled");
       const lost = results.filter(result => result.status === "rejected");
       assert.equal(won.length, 1, `exactly one save may win, got ${won.length}`);
@@ -248,22 +309,32 @@ test("suggestions come from 0200's current-revision view, and a stale one is sim
         value: proposal(scope.projectId, 3) });
       const service = serviceFor(web);
       const current = await service.listSuggestions(identity, scope.projectId, "batch:chief-one");
+      // With no dismissal table on any branch yet, the read reports "nothing
+      // dismissed" rather than failing. That absence is EXPECTED here, and it must
+      // not present as a database outage on an otherwise fine project page.
+      assert.equal(current.dismissAvailable, false, "no dismissal record is composed yet");
       assert.equal(current.suggestions.length, 1);
       assert.equal(current.suggestions[0]!.proposal.tasks.length, 3);
       assert.equal(current.suggestions[0]!.savesRevision, false);
       assert.equal(current.dismissAvailable, false, "no dismissal record is composed yet");
 
-      // Move the batch to revision 2. 0200's VIEW is current-revision-only, so the
+          // Move the batch to revision 2. 0200's VIEW is current-revision-only, so the
       // suggestion the owner already saw is not in it any more: the adapter does
       // not need a second copy of that rule to be correct.
-      const revised = proposal(scope.projectId, 4);
-      await seedBatch(admin, scope, "batch:chief-one", "identity:chief-agent", 2, revised);
+      await advanceBatch(admin, scope, "batch:chief-one", 2);
       const afterRevision = await service.listSuggestions(identity, scope.projectId, "batch:chief-one");
       assert.equal(afterRevision.suggestions.length, 0, "a suggestion against an old revision is history");
 
-      // Use is refused against the revision it does not bind.
+      // Use is refused. Which refusal is the honest one: the suggestion is not in
+      // the current-revision VIEW at all, so it is not_found rather than a
+      // conflict -- and "a stale suggestion is not there" is the same answer the
+      // in-memory double gives for a suggestion the owner already dismissed.
       await assert.rejects(service.useSuggestion(identity, scope.projectId, "batch:chief-one",
-        `split-suggestion:${"a".repeat(32)}`, 2), /conflict/);
+        `split-suggestion:${"a".repeat(32)}`, 2), /not_found/);
+      // The use route's own expected-revision check still refuses a revision that
+      // is not the batch's current one, before any read.
+      await assert.rejects(service.useSuggestion(identity, scope.projectId, "batch:chief-one",
+        `split-suggestion:${"a".repeat(32)}`, 99), /conflict/);
       // And dismiss is refused with no durable record to write, rather than lost.
       await assert.rejects(service.dismissSuggestion(identity, scope.projectId, "batch:chief-one",
         `split-suggestion:${"a".repeat(32)}`, 2), /not_found/);
@@ -315,14 +386,15 @@ test("only the project's owner can read or change the chief of staff; an operato
       await seedTenant(admin, scope); await seedIdentities(admin, scope, "");
       const service = serviceFor(web);
       const access = new PostgresProjectOrchestrationAccessV1(database(web),
-        { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, () => Date.parse(NOW));
+        { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, clock);
       const actor = await access.owner(identity, scope.projectId, "read");
       assert.equal(actor.tenantId, scope.tenantId);
       assert.equal(actor.ownerIdentityId, "identity:chief-owner");
       // An operator holding projects.read can read the SETTINGS, but changing one
       // requires the owner role, exactly as Project settings already does.
       const operatorIdentity: VerifiedWebIdentity = { provider: "https://operator.invalid",
-        subject: "owner", tokenDigest, issuedAt: NOW, expiresAt: LATER, verificationExpiresAt: LATER };
+        subject: "owner", tokenDigest, issuedAt: identity.issuedAt, expiresAt: identity.expiresAt,
+        verificationExpiresAt: identity.verificationExpiresAt };
       await assert.rejects(access.owner(operatorIdentity, scope.projectId, "settings"), /access_denied/);
       // The settings row is never created by a refused write.
       assert.equal((await web.query(`SELECT count(*)::int AS n FROM control_project_settings
@@ -342,7 +414,7 @@ test("a second tenant's project and settings are unreachable through this port",
       await seedTenant(admin, other); await seedIdentities(admin, other, "-other");
       const service = serviceFor(web);
       const store = new PostgresProjectOrchestrationStoreV1(database(web),
-        { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, () => Date.parse(NOW));
+        { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, clock);
       await service.saveSettings(identity, scope.projectId, { expectedVersion: 0, choice: { mode: "selected",
         workerId: "worker:chief", workerKind: "codex", modelKey: "model:plan", effort: "high" } });
       // Another tenant's tenant id, project id and batch id are all refused by the
@@ -377,10 +449,21 @@ test("20 concurrent describes on one project are refused in bounded time without
       await service.saveSettings(identity, scope.projectId, { expectedVersion: 0, choice: { mode: "selected",
         workerId: "worker:chief", workerKind: "codex", modelKey: "model:plan", effort: "high" } });
       const started = Date.now();
-      const results = await Promise.all(Array.from({ length: 20 }, (_, index) => service.describe(identity,
-        scope.projectId, { description: `Prepare bounded job ${index}` }, `request:stress-${String(index).padStart(4, "0")}`)
-        .then(value => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, message: String(error) }))));
+      // TWENTY SEPARATE CONNECTIONS, as above: one Client would serialise the
+      // twenty runs inside a single transaction and prove nothing about
+      // concurrency under load.
+      const results = await Promise.all(Array.from({ length: 20 }, async (_unused, index) => {
+        const client = new Client(postgres.connection("control_room_web", { applicationName: `chief-describe-${index}` }));
+        await client.connect();
+        try {
+          const value = await serviceFor(client).describe(identity, scope.projectId,
+            { description: `Prepare bounded job ${index}` }, `request:stress-${String(index).padStart(4, "0")}`);
+          return { ok: true as const, value };
+        } catch (error) { return { ok: false as const, message: String(error) }; }
+        finally { await client.end(); }
+      }));
       const elapsed = Date.now() - started;
+      assert.ok(service);
       assert.equal(results.every(result => !result.ok), true, "every describe is refused without a planner host");
       assert.equal(results.every(result => !result.ok && /not_found/.test(result.message)), true);
       assert.ok(elapsed < 30_000, `bounded: took ${elapsed}ms`);

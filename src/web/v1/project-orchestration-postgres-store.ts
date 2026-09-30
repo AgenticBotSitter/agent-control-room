@@ -37,6 +37,9 @@ type SuggestionRow = { id: string; tenant_id: string; project_id: string; batch_
   suggestion_digest: string; auth_tag: string; created_at: string | Date };
 
 const iso = (value: string | Date) => new Date(value).toISOString();
+/** PostgreSQL's own SQLSTATE for a relation that does not exist. Matched as a
+ * code, not a message, so a localised server message changes nothing. */
+const isUndefinedTable = (error: unknown) => (error as { code?: string } | null)?.code === "42P01";
 const SETTINGS_COLUMNS = `version,planner_mode,planner_worker_id,planner_worker_kind,planner_model,planner_effort`;
 const SUGGESTION_COLUMNS = `s.id,s.tenant_id,s.project_id,s.batch_id,s.request_key,s.base_revision,
   s.base_revision_digest,s.proposed_by_identity_id,s.proposal,s.proposal_digest,s.suggestion_digest,s.auth_tag,s.created_at`;
@@ -192,9 +195,21 @@ export class PostgresProjectOrchestrationStoreV1 implements ProjectOrchestration
 
   async dismissedSuggestionIds(input: Readonly<{ tenantId: string; projectId: string; batchId: string }>) {
     if (input.tenantId !== this.scope.tenantId) throw new WebAccessError("access_denied");
-    return (await this.db.query<{ suggestion_id: string }>(`SELECT suggestion_id
-      FROM work_batch_split_suggestion_dismissals WHERE tenant_id=$1 AND project_id=$2 AND batch_id=$3`,
-    [input.tenantId, input.projectId, input.batchId])).rows.map(row => row.suggestion_id);
+    try {
+      return (await this.db.query<{ suggestion_id: string }>(`SELECT suggestion_id
+        FROM work_batch_split_suggestion_dismissals WHERE tenant_id=$1 AND project_id=$2 AND batch_id=$3`,
+      [input.tenantId, input.projectId, input.batchId])).rows.map(row => row.suggestion_id);
+    } catch (error) {
+      // The dismissal record is not on any branch yet (see this class's comment on
+      // 0203), so its absence is EXPECTED, not a database fault. PostgreSQL's own
+      // undefined_table (42P01) is the signal; anything else is a real failure and
+      // is rethrown rather than read as "nothing dismissed". Without this branch
+      // every batch page would 503 on a project page that is otherwise fine, and
+      // the absence would look like a database outage rather than a missing
+      // feature -- the exact confusion F6 was filed about.
+      if (isUndefinedTable(error)) return Object.freeze([]);
+      throw error;
+    }
   }
 
   #record(row: SuggestionRow, integrityKey: Uint8Array | undefined = this.integrityKey): IntakeSuggestionRecordV1 {
