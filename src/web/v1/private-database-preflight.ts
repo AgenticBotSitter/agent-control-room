@@ -21,10 +21,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 export const privateWebSchemaDigest = "4e2487b5e85ee2214dad38eef0d90d2bb9a7f7feb63656b0edd6484383431016";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
- * `effectivePrivateWebReadTables` applies them conditionally, which keeps both shapes exact: with
- * the gateway the web login must hold exactly SELECT, and without it the web login must hold
- * nothing, because the column audit in `verifyDatabase` still compares every column against the
- * live grant, so an unexpected fleet grant is refused either way. */
+ * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
+ * the web login must hold exactly SELECT, and without it the web login must hold nothing,
+ * because the column audit still compares every column against the live grant, so an
+ * unexpected fleet grant is refused either way. */
 export const privateWebFleetReadTables = ["fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials",
   "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events",
   "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
