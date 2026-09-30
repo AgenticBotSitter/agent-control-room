@@ -66,8 +66,9 @@ export const BOT_JOURNEY_CONDITIONAL_REFUSALS_V1 = Object.freeze([
 
 /** The outcome a row is declared to have, and the code it is declared to be
  * refused WITH. Every refusal row must name a code, because "refused" alone
- * is what let two real protections break while the table still said "no". */
-export const BOT_JOURNEY_EXPECTED_ROWS_V1 = Object.freeze({
+ * is what let two real protections break while the table still said "no".
+ * Keyed by the refusal label, so a caller may index it with a string. */
+export const BOT_JOURNEY_EXPECTED_ROWS_V1 = /** @type {Readonly<Record<string, string | number>>} */ (Object.freeze({
   // Fleet codes, as the gateway's own fixed vocabulary.
   proposal_replay_with_different_work: "conflict",
   proposal_outside_its_projects: "not_found",
@@ -99,7 +100,7 @@ export const BOT_JOURNEY_EXPECTED_ROWS_V1 = Object.freeze({
   progress_on_a_claim_that_is_already_settled: "expired",
   approved_task_is_not_claimable: "conflict",
   join_with_a_code_made_for_another_kind: "worker_kind_mismatch",
-});
+}));
 
 /** A fresh temp workspace for one bot, removed by `removeBotWorkspaceV1`. */
 export async function makeBotWorkspaceV1(label) {
@@ -339,7 +340,7 @@ export class ScriptedBotV1 {
  *
  * @returns {Promise<Readonly<{ projectId: string, otherProjectId: string,
  *   steps: readonly Readonly<{ n: number, who: string, what: string, outcome: string,
- *     refusal: string | null, detail: string }>[], toolNames: readonly string[],
+ *     refusal: string | null, code: string, detail: string }>[], toolNames: readonly string[],
  *   primaryWorkerId: string, secondWorkerId: string, droppedWorkerId: string,
  *   claimableAfterApproval: boolean }>>} the same shape on every path, including
  *   the early return when an approved task turns out to be unclaimable
