@@ -6,7 +6,8 @@
 //   dedicated fleet gateway login, group control_room_fleet_gateway;
 // - migrations: the real applier as the schema owner.
 // The attack kit provisions a disposable socket-only cluster on this file's
-// reserved port lane (58640-58649) and destroys it afterwards.
+// reserved port lane (58640-58649), or the test runner's assigned port block
+// so concurrent runs never collide, and destroys it afterwards.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -27,7 +28,7 @@ import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, see
 // The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
 
-const PORT = 58640;
+const PORT = Number(process.env.FLEET_CONNECTOR_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58640);
 const PG = requiresRealPostgres();
 
 function pool(postgres: RealPostgres, role: string) {
