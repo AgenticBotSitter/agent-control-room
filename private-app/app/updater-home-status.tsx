@@ -40,6 +40,8 @@ function Facts({ value }: { value: UpdaterOwnerUiReadV1 }) {
       <li>{plan.changesUpdater ? "This update changes the updater itself." : "This update does not change the updater."}</li>
       <li>Estimated interruption: {plan.downtimeEstimateSeconds === 0 ? "none" : `up to ${plan.downtimeEstimateSeconds} seconds`}.</li>
     </ul>
+    {plan.classes.includes("protected") ? <p className="private-updater-warning" role="alert"><strong>Safety-sensitive change:</strong> This update changes Control Room&apos;s safety checks and requires independent review.</p> : null}
+    {plan.classes.includes("dependency") ? <p className="private-updater-warning"><strong>Installed software change:</strong> This update changes software dependencies.</p> : null}
     {plan.restoreMayLoseRecentWrites ? <p className="private-updater-warning" role="alert"><strong>Database change:</strong> if Control Room has to restore this update, work saved during the final health check may be lost.</p> : null}
     {plan.botSays ? <details className="private-updater-bot-says"><summary>What the bot says</summary>
       <p>{plan.botSays.title}</p>{plan.botSays.changedAreas.length ? <ul>{plan.botSays.changedAreas.map((area, index) => <li key={index}>{area}</li>)}</ul> : null}
@@ -96,9 +98,11 @@ export function UpdaterHomeStatus() {
     : <p className="private-updater-status private-updater-attention" role="alert"><strong>Self-update needs your attention.</strong> The updater is not answering clearly.</p>;
   if (read.state === "unavailable") return <p className="private-updater-status private-updater-attention" role="alert"><strong>Update status needs your attention.</strong> Control Room could not read the updater.</p>;
   const value = read.value, isAttention = ["uncertain", "attended_upgrade_required", "needs_attention"].includes(value.state);
-  return <section className={`private-panel private-updater-card ${isAttention ? "private-attention-box has-items" : ""}`} aria-labelledby="updater-install-title">
+  const isProtectedPlan = value.plan?.classes.some(name => ["updater", "protected", "dependency"].includes(name)) ?? false;
+  const isRedCard = isAttention || isProtectedPlan;
+  return <section className={`private-panel private-updater-card ${isRedCard ? "private-attention-box has-items" : ""}`} aria-labelledby="updater-install-title">
     <PanelHeading id="updater-install-title">Install</PanelHeading>
-    <StateChip state={value.state} tone={isAttention ? "bad" : value.state === "ready_for_approval" ? "warn" : "neutral"} label={stateWords[value.state]} />
+    <StateChip state={value.state} tone={isRedCard ? "bad" : value.state === "ready_for_approval" ? "warn" : "neutral"} label={stateWords[value.state]} />
     {value.activeSubscriptions === 0 ? <p className="private-updater-warning" role="alert"><strong>Phone alerts are off.</strong> No phone is subscribed, so update alerts cannot reach you.</p> : null}
     <Facts value={value} /><Controls value={value} onChanged={refresh} />
   </section>;

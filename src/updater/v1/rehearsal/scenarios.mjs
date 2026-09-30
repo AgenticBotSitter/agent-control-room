@@ -53,6 +53,31 @@ async function refereeCommit({ work, base = {}, candidate }) {
   return { classification, fromCommit, candidateCommit };
 }
 
+async function renderOwnerUi(value) {
+  const encoded = Buffer.from(JSON.stringify(value)).toString("base64url");
+  const { stdout } = await exec(process.execPath, ["--import", "tsx",
+    join(process.cwd(), "scripts/updater/rehearsal-owner-ui-worker.tsx"), encoded], {
+    encoding: "utf8", maxBuffer: 1024 * 1024,
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: "/var/empty", NODE_ENV: "test",
+      CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", LC_ALL: "C" },
+  });
+  return JSON.parse(stdout);
+}
+
+function ownerUiValue(classification, botSays = null) {
+  return {
+    schema: "control-room.updater-owner-ui/v1", observedAt: "2026-09-30T12:00:00.000Z",
+    state: "ready_for_approval", selfUpdate: "On", activeSubscriptions: 1,
+    plan: { planId: "plan-rehearsal", classes: classification.classes,
+      filesChanged: classification.filesChanged, filesAdded: classification.filesAdded,
+      filesDeleted: classification.filesDeleted, changesDatabase: classification.changesDatabase,
+      changesUpdater: classification.changesUpdater, downtimeEstimateSeconds: 0,
+      restoreMayLoseRecentWrites: classification.changesDatabase,
+      macConfirmationRequired: classification.changesUpdater, botSays },
+    availableControls: [], message: "The updater classified this candidate.",
+  };
+}
+
 async function pairRoot(root) {
   for (const path of ["updater-state", "releases/r0", "releases/r1", "releases/r2", "releases/r3",
     "pg/data-p0", "pg/data-p1", "pg/data-p2", "pg/data-p3", "pg/socket", "runtime", "updater"])
@@ -465,6 +490,60 @@ async function protectedEdits({ work }) {
     protectedEntryIds: [...new Set(classification.protectedPaths.map(hit => hit.entryId))] });
 }
 
+async function protectedCard({ work }) {
+  const { classification } = await refereeCommit({ work, candidate: async repository => {
+    const path = "src/security/rehearsal-card.ts";
+    await mkdir(dirname(join(repository, path)), { recursive: true });
+    await writeFile(join(repository, path), "export const safetySensitive = true;\n");
+  } });
+  assert.ok(classification.classes.includes("protected"));
+  assert.equal(classification.independentReviewRequired, true);
+  const rendered = await renderOwnerUi(ownerUiValue(classification));
+  assert.match(rendered.text, /Safety-sensitive change/u);
+  assert.match(rendered.text, /requires independent review/u);
+  assert.match(rendered.html, /role="alert"/u);
+  assert.match(rendered.html, /private-attention-box has-items/u);
+  return evidence(6, { classes: classification.classes, independentReviewRequired: true,
+    warningVisible: true, warningIsAlert: true, redCard: true });
+}
+
+async function dependencyCard({ work }) {
+  const before = `${JSON.stringify({ name: "rehearsal", private: true, dependencies: { alpha: "1.0.0" } }, null, 2)}\n`;
+  const after = `${JSON.stringify({ name: "rehearsal", private: true, dependencies: {
+    alpha: "1.0.0", beta: "2.0.0" } }, null, 2)}\n`;
+  const { classification } = await refereeCommit({ work, base: { "package.json": before },
+    candidate: repository => writeFile(join(repository, "package.json"), after) });
+  assert.ok(classification.classes.includes("dependency"));
+  assert.equal(classification.independentReviewRequired, true);
+  const rendered = await renderOwnerUi(ownerUiValue(classification));
+  assert.match(rendered.text, /Installed software change/u);
+  assert.match(rendered.text, /software dependencies/u);
+  assert.match(rendered.html, /private-attention-box has-items/u);
+  return evidence(5, { classes: classification.classes, independentReviewRequired: true,
+    warningVisible: true, redCard: true });
+}
+
+async function lyingMetadata({ work }) {
+  const path = "private-app/app/updater-home-status.tsx";
+  const { classification } = await refereeCommit({ work, candidate: async repository => {
+    await mkdir(dirname(join(repository, path)), { recursive: true });
+    await writeFile(join(repository, path), "export const candidateEdit = true;\n");
+  } });
+  assert.ok(classification.classes.includes("protected"));
+  assert.ok(classification.protectedPaths.some(hit => hit.path === path && hit.entryId === "owner-update-screens"));
+  const botSays = { title: "Update <img src=x onerror=alert(1)>",
+    changedAreas: ["**not** updater facts", "\u202E<svg/onload=alert(1)>"] };
+  const rendered = await renderOwnerUi(ownerUiValue(classification, botSays));
+  assert.match(rendered.text, /What the bot says/u);
+  assert.match(rendered.text, /<img src=x onerror=alert\(1\)>/u);
+  assert.match(rendered.text, /<svg\/onload=alert\(1\)>/u);
+  assert.doesNotMatch(rendered.html, /<img src=/u);
+  assert.doesNotMatch(rendered.html, /<svg/u);
+  assert.match(rendered.text, /Safety-sensitive change/u);
+  return evidence(8, { classes: classification.classes, ownerScreenProtected: true,
+    botTextStayedText: true, updaterWarningWon: true });
+}
+
 async function protectedRename({ work }) {
   const oldPath = "src/security/rehearsal-old.ts", newPath = "src/security/rehearsal-new.ts";
   const { classification } = await refereeCommit({ work, base: { [oldPath]: "export const protectedValue = 1;\n" },
@@ -526,5 +605,6 @@ export const REHEARSAL_IMPLEMENTATIONS_V1 = Object.freeze({
   known_good_injection: knownGoodInjection, rollback_chain: rollbackChain, guard_all_links: guardAllLinks,
   guard_rescue_points: guardRescuePoints, pause_stop: pauseStop, protected_edits: protectedEdits,
   protected_rename: protectedRename, updater_symlink: updaterSymlink, poisoned_journal: poisonedJournal,
+  protected_card: protectedCard, dependency_card: dependencyCard, lying_metadata: lyingMetadata,
   profile_shape: profileShape,
 });

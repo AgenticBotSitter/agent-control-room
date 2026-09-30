@@ -111,11 +111,12 @@ async function mountedStatus(response: Response, legacy = response) {
   await React.act(async () => { root.render(createElement(UpdaterHomeStatus)); });
   for (let attempt = 0; attempt < 20; attempt += 1) await React.act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 5)); });
   const text = dom.window.document.body.textContent ?? "", alert = dom.window.document.querySelector("[role=alert]");
+  const cardClass = dom.window.document.querySelector(".private-updater-card")?.className ?? "";
   await React.act(async () => { root.unmount(); }); dom.window.close();
   for (const [key, descriptor] of Object.entries(saved)) {
     if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete (globalThis as Record<string, unknown>)[key];
   }
-  return { text, alert };
+  return { text, alert, cardClass };
 }
 
 test("Install leads with updater facts, isolates bot text, names the database loss boundary and fits the phone controls", async () => {
@@ -127,6 +128,19 @@ test("Install leads with updater facts, isolates bot text, names the database lo
   assert.match(card.text, /type the code of words Control Room shows on your Mac/u); assert.doesNotMatch(card.text, /\d-word|four-word|six-word/iu); assert.match(card.text, /Confirm with Face ID/u);
   for (const control of ["Pause", "Resume", "Back up now", "Check now", "Repair address", "Roll back with Face ID"])
     assert.match(card.text, new RegExp(control, "u"));
+});
+
+test("Install names protected and dependency classes from updater facts", async () => {
+  const value = ownerUi(), plan = { ...value.plan!, classes: ["protected", "dependency"] as const,
+    changesDatabase: false, changesUpdater: false, restoreMayLoseRecentWrites: false,
+    macConfirmationRequired: false };
+  const card = await mountedStatus(Response.json(ownerUi({ plan })));
+  assert.match(card.text, /Safety-sensitive change/u);
+  assert.match(card.text, /requires independent review/u);
+  assert.match(card.text, /Installed software change/u);
+  assert.match(card.text, /software dependencies/u);
+  assert.ok(card.alert, "the safety-sensitive warning is an alert");
+  assert.match(card.cardClass, /private-attention-box/u, "protected and dependency plans use the red card");
 });
 
 test("the legacy Off/attention safety read remains the fallback until the updater owner port is installed", async () => {

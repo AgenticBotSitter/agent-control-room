@@ -149,6 +149,20 @@ test("merged watcher, referee and journal scenarios are live and fail closed", {
   assert.equal(detail.get("P10.poisoned-journal").reason, "updater_journal_ordinal_refused");
 });
 
+test("merged referee classes drive protected owner cards and untrusted metadata stays text", { timeout: 120_000 }, async t => {
+  const { config } = await fixture(t);
+  const ids = ["P1.c", "P1.d", "P7.lying-metadata"];
+  const result = await runUpdaterRehearsalV1(config, { cases: selectedCases(...ids) });
+  assert.equal(result.failed, 0); assert.equal(result.pending, 0); assert.equal(result.passed, ids.length);
+  const detail = new Map(result.phases.flatMap(phase => phase.scenarios).map(scenario => [scenario.id, scenario.detail]));
+  assert.equal(detail.get("P1.c").warningIsAlert, true);
+  assert.equal(detail.get("P1.c").redCard, true);
+  assert.ok(detail.get("P1.d").classes.includes("dependency"));
+  assert.equal(detail.get("P1.d").redCard, true);
+  assert.equal(detail.get("P7.lying-metadata").ownerScreenProtected, true);
+  assert.equal(detail.get("P7.lying-metadata").botTextStayedText, true);
+});
+
 test("a marked root is rerunnable with identical outcomes even when the clock repeats", { timeout: 120_000 }, async t => {
   const { config } = await fixture(t), clock = () => new Date("2026-09-30T12:00:00.000Z");
   const cases = selectedCases("P6.lease-burst");

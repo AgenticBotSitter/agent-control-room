@@ -124,5 +124,26 @@
     "replace": "if (false)\n          throw journalErrorV1(\"updater_journal_ordinal_refused\");",
     "test": "node --test --test-name-pattern='merged watcher, referee and journal' tests/updater-rehearsal.test.mjs",
     "why": "a conflicting authority entry with the same run, ordinal and kind must poison the file journal while an identical crash retry remains valid"
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "plan.classes.includes(\"protected\") ? <p className=\"private-updater-warning\" role=\"alert\">",
+    "replace": "false ? <p className=\"private-updater-warning\" role=\"alert\">",
+    "test": "node --test --test-name-pattern='referee classes drive protected owner cards' tests/updater-rehearsal.test.mjs",
+    "why": "a protected candidate must visibly identify the safety-sensitive independent-review boundary on the owner card"
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "plan.classes.includes(\"dependency\") ? <p className=\"private-updater-warning\">",
+    "replace": "false ? <p className=\"private-updater-warning\">",
+    "test": "node --test --test-name-pattern='referee classes drive protected owner cards' tests/updater-rehearsal.test.mjs",
+    "why": "a dependency-class candidate must tell the owner that installed software changes before approval"
+  },
+  {
+    "file": "private-app/app/updater-home-status.tsx",
+    "find": "const isProtectedPlan = value.plan?.classes.some(name => [\"updater\", \"protected\", \"dependency\"].includes(name)) ?? false;",
+    "replace": "const isProtectedPlan = false;",
+    "test": "node --test --test-name-pattern='referee classes drive protected owner cards' tests/updater-rehearsal.test.mjs",
+    "why": "updater, protected and dependency plans must use the red owner card even when the run state itself is not an error"
   }
 ]
