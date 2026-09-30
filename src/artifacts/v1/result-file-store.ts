@@ -310,6 +310,10 @@ export class ResultFileStoreV1 {
     let pendingPath: string | undefined;
     let mutationStarted = false;
     let uncertain = false;
+    // The refusal, if this operation ended in one. It is re-thrown after the
+    // lock is retired, so a caller is told the write did not happen and not
+    // merely that the store is in some state.
+    let refusal: ResultFileStoreError | undefined;
     const mutating = () => { if (mutationStarted) uncertain = true; };
     try {
       this.usable(operation);
@@ -329,9 +333,15 @@ export class ResultFileStoreV1 {
       if (inventory.names.has(name)) {
         // Create-once with an exact replay: the same bytes are a retry, and
         // anything else is a conflict rather than an overwrite.
+        //
+        // Both sides are compared to the NAME, not only to each other. The name
+        // is a digest, so a file whose bytes no longer hash to it is not a
+        // replay of anything: it is a tampered or mis-restored file, and
+        // overwriting it here would destroy the only evidence that it went wrong.
         const existing = await this.readRecord(targetPath, operation, false);
         if (!existing) throw new ResultFileStoreError("store_ambiguous");
-        if (existing.byteLength !== bytes.byteLength || bytesDigest(existing) !== bytesDigest(bytes))
+        if (bytesDigest(existing) !== input.contentDigest
+          || existing.byteLength !== bytes.byteLength || bytesDigest(bytes) !== bytesDigest(existing))
           throw new ResultFileStoreError("store_conflict");
       } else {
         if (inventory.count >= this.configuration.maximumFiles
@@ -357,10 +367,21 @@ export class ResultFileStoreV1 {
           throw new ResultFileStoreError("store_ambiguous");
       }
     } catch (error) {
+      // A refusal must REACH THE CALLER. This block only decides whether the
+      // store's own state is still knowable afterwards; it never converts a
+      // refusal into a success. A `store_conflict` or `store_capacity` is a
+      // definite answer — nothing was written — so the store stays usable and
+      // the error is re-thrown below. Anything else after a mutation started
+      // leaves the outcome unprovable, and the store poisons itself.
       if (error instanceof DeadlineError) this.poisoned = true;
+      if (error instanceof Error && error.name === "AbortError") throw error;
       if (error instanceof ResultFileStoreError
-        && (error.code === "store_conflict" || error.code === "store_capacity")) uncertain = false;
-      else if (uncertain) this.poisoned = true;
+        && (error.code === "store_conflict" || error.code === "store_capacity"
+          || error.code === "store_invalid")) {
+        uncertain = false;
+        refusal = error;
+      } else if (uncertain) this.poisoned = true;
+      else throw error;
     } finally {
       try {
         if (!uncertain && pendingPath) { await this.discard(pendingPath, operation); pendingPath = undefined; }
@@ -374,6 +395,7 @@ export class ResultFileStoreV1 {
         }
       } catch { uncertain = true; this.poisoned = true; }
     }
+    if (refusal) throw refusal;
     if (uncertain) throw new ResultFileStoreError("store_ambiguous");
   }
 

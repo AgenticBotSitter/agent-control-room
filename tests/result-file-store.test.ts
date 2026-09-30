@@ -58,19 +58,33 @@ test("a stored file comes back byte-for-byte, and an exact retry is idempotent",
 });
 
 test("the same key with different bytes is a conflict, never an overwrite", async () => {
-  await withStore({ async after(_root, store) {
+  await withStore({ async after(root, store) {
     // The key is derived from the digest, so "the same key with different
-    // bytes" is reached by handing the store a digest that is not these bytes.
-    // The store must refuse THAT, and must leave the stored file untouched.
+    // bytes" is only reachable when the FILE on disk no longer matches the name
+    // it is stored under — a tampered store, a bad restore, or a bug elsewhere.
+    // That is exactly when an overwrite would destroy the only evidence, so the
+    // store must refuse rather than accept the new bytes.
     const content = bytes("report body\n");
     const id = identity(PROJECT, FILE, content);
     await store.put({ ...id, bytes: content });
+    const name = `${resultFileStorageKeyV1(TENANT, PROJECT, FILE, id.contentDigest).slice("crbf1-".length)}.crbf`;
+    await writeFile(join(root, name), bytes("something else entirely\n"));
+    // The write is refused as a conflict, and the file is left as it was found:
+    // a create-once store never repairs and never overwrites.
+    await assert.rejects(store.put({ ...id, bytes: content }),
+      (error: unknown) => error instanceof ResultFileStoreError
+        && (error.code === "store_conflict" || error.code === "store_ambiguous"));
+    // A read of the altered file is a REFUSAL, not a miss: the file is there and
+    // its bytes are not the ones the name claims, which is a different fact from
+    // "nothing was ever stored" and must read differently in a log.
+    await assert.rejects(store.read(id),
+      (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_ambiguous");
+    // And a digest that does not match the bytes handed is refused outright,
+    // before any file is opened.
     await assert.rejects(store.put({ ...id, bytes: bytes("different\n") }),
       (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_invalid");
-    // The bytes on disk are still the original.
-    assert.deepEqual(Buffer.from((await store.read(id))!), Buffer.from(content));
-    // And there is exactly one file: a refused write creates nothing.
-    assert.equal((await readdir(join(_root))).filter(name => name.endsWith(".crbf")).length, 1);
+    assert.equal((await readdir(root)).filter(entry => entry.endsWith(".crbf")).length, 1,
+      "the refused writes created nothing");
   } });
 });
 
