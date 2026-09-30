@@ -1167,7 +1167,14 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       // the correct digests OF THAT SCOPE, the reason code is right and the raiser
       // is a real active agent. Every arm is satisfied except the membership one,
       // and that is the only thing left that can refuse it.
-      const forged = intakeRequestScopeV1("initial", scope.tenantId, scope.projectId, "forged-scope-0001");
+      // A scope the trigger CANNOT have recomputed: the row's request_key is one
+      // thing, and the scope_key it names is derived from a DIFFERENT one. The
+      // first version of this used the same key for both, so the trigger
+      // recomputed the scope from the row and the row was correctly ACCEPTED --
+      // the assertion failed, and the failure was the test being wrong, not the
+      // guard. A forged row has to disagree with itself in the one way the guard
+      // checks.
+      const forged = intakeRequestScopeV1("initial", scope.tenantId, scope.projectId, "a-different-request-key");
       const forgedDigest = (value: string) => 'planner-needs-you:' + createHash("sha256")
         .update(`${scope.tenantId}/${scope.projectId}/${value}`, "utf8").digest("hex").slice(0, 32);
       await admin.query(`INSERT INTO control_planner_failure_counters(tenant_id,project_id,scope_key,failure_count,
