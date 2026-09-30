@@ -66,7 +66,7 @@ export function PrivateConnectionView({ data, onRefresh, children }: { data: Pri
   </main></div>;
 }
 
-export function PrivateConnections() {
+export function PrivateConnections({ children }: { children?: ReactNode } = {}) {
   const [refresh, setRefresh] = useState(0);
   const installationTopology = useInstallationTopology();
   // The shared polling hook owns the schedule: it pauses while the tab is
@@ -91,5 +91,6 @@ export function PrivateConnections() {
     <HostedWorkersBoard />
     <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
     <LocalWorkerRouteStatus setup={installationTopology?.setup} state={installationTopology?.state ?? "loading"} />
+    {children}
   </PrivateConnectionView>;
 }
