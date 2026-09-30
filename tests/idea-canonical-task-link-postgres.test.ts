@@ -304,26 +304,37 @@ test("the execution freshness fence's scope table stays un-lockable, so no lock 
       // A privilege fact alone does not stop the lock coming back: the
       // statements above would still pass with `FOR SHARE` restored in the
       // source, because it asserts the GRANT, not the SQL. Pin the source
-      // itself, so re-adding a row lock to either fixed read fails here.
-      // Each entry names the file and the table whose read must stay lock-free.
-      const pinned: readonly (readonly [string, string, string])[] = [
-        ["src/idea-lab/v1/canonical-task-link-store.ts", "control_idea_canonical_task_sessions",
-          "the session binding read"],
-        ["src/idea-lab/v1/canonical-task-link-store.ts", "control_idea_canonical_task_links",
-          "the provenance link read"],
-        ["src/web/v1/task-assignment-coordinator.ts", "control_assignment_lease_scopes",
-          "the execution freshness fence's scope read"],
-      ];
-      for (const [file, table, what] of pinned) {
-        // Strip comment lines so the notes explaining why the lock was dropped
-        // are never mistaken for the lock itself.
-        const sql = readFileSync(join(process.cwd(), file), "utf8")
-          .split("\n").filter(line => !/^\s*(\*|\/\/|\/\*)/.test(line)).join("\n");
-        for (const line of sql.split("\n")) {
-          // A multi-line SQL literal puts the table and the lock on different
-          // lines, so check each statement, not each line.
-          if (line.includes(table) && /FOR (UPDATE|SHARE|NO KEY UPDATE|KEY SHARE)\b/.test(line)) {
-            assert.fail(`${file} must not row-lock ${table} in ${what}: ${line.trim()}`);
+      // itself, so re-adding a row lock on one of these reads fails here.
+      //
+      // A statement is only refused when the lock is actually ON the
+      // un-lockable table. `... FROM control_assignment_lease_scopes ... FOR
+      // UPDATE OF l` locks the joined control_leases row instead, which the
+      // coordinator does hold UPDATE on, so that statement stays legal and
+      // must not be flagged. Comment-only lines are dropped first so the notes
+      // explaining why each lock was removed are never read as the lock.
+      const unLockable = ["control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
+        "control_assignment_lease_scopes"];
+      for (const [label, file] of [
+        ["canonical task link store", "src/idea-lab/v1/canonical-task-link-store.ts"],
+        ["lease-scope fence", "src/web/v1/task-assignment-coordinator.ts"],
+      ] as const) {
+        const sql = readFileSync(join(process.cwd(), file), "utf8").split("\n")
+          .filter(line => !/^\s*(\*|\/\/|\/\*)/.test(line)).join("\n");
+        for (const statement of sql.split("`")) {
+          const locking = /FOR (UPDATE|SHARE|NO KEY UPDATE|KEY SHARE)( OF [\w,\s]+)?/.exec(statement);
+          if (!locking) continue;
+          // An explicit OF list names the locked relations; without one, the
+          // lock applies to every table the statement reads.
+          const only = locking[1] ? locking[1].replace(/^ OF /, "").split(",").map(s => s.trim()) : undefined;
+          const read = [...statement.matchAll(/\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)(?:\s+(\w+))?/gi)]
+            .map(m => ({ table: m[1], alias: m[2] }));
+          const targets = only
+            ? read.filter(r => only.includes(r.alias) || only.includes(r.table)).map(r => r.table)
+            : read.map(r => r.table);
+          for (const table of targets) {
+            if (unLockable.includes(table)) {
+              assert.fail(`${label} must not row-lock ${table}: ${statement.replace(/\s+/g, " ").trim()}`);
+            }
           }
         }
       }
