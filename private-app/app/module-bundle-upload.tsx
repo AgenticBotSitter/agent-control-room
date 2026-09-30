@@ -43,6 +43,19 @@ type Stage =
   | { status: "approved"; preview: ModulePreview }
   | { status: "error"; error: BrowserRequestError };
 
+/** A plain sentence for the verifier's exact refusal reason, when the server sent one (see
+ * `MODULE_SUBMISSION_REFUSAL_PATTERN` in module-transfer-http.ts). Falls back to `moduleTransferErrorMessage`
+ * below when there is no reason, or the reason is not one of these families. */
+function moduleRefusalSentence(reason: string | undefined): string | undefined {
+  if (!reason) return undefined;
+  if (reason.startsWith("module_signature_")) return "This file was changed after it was signed.";
+  if (reason === "module_bundle_code_source_untrusted") return "This module can run code and isn't signed by a key you trust.";
+  if (reason.startsWith("module_bundle_") || reason.startsWith("module_manifest_") || reason.startsWith("module_permission_")) {
+    return "This file is not a valid module bundle.";
+  }
+  return undefined;
+}
+
 function trustLine(preview: ModulePreview): string {
   if (preview.source.kind === "signed") return `Signed by ${preview.source.keyLabel ?? preview.source.keyId ?? "a trusted key"}.`;
   if (preview.source.kind === "reviewed") return "From a source this installation has separately reviewed and pinned.";
@@ -119,7 +132,8 @@ export function ModuleBundleUploadPanel({ client: suppliedClient }: {
         {stage.status === "previewing" && <p data-field="module-upload-checking">Checking the bundle…</p>}
         {stage.status === "error" && (
           <p role="alert" data-field="module-upload-error" data-reason={stage.error.code}>
-            {moduleTransferErrorMessage[stage.error.code]} Reason code: <code>{stage.error.code}</code>
+            {moduleRefusalSentence(stage.error.reason) ?? moduleTransferErrorMessage[stage.error.code]}
+            {" "}Reason code: <code>{stage.error.reason ?? stage.error.code}</code>
           </p>
         )}
         {(stage.status === "ready" || stage.status === "approving") && (

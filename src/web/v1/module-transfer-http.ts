@@ -26,6 +26,21 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9:_-]{16,100}$/;
  */
 const MAX_BUNDLE_SUBMISSION_BYTES = 12_000_000;
 const UPLOAD_TIMEOUT_MS = 20_000;
+/**
+ * The verifier (`verifyModuleBundleV1` and the manifest/permission parsers it calls) throws a plain
+ * `Error` whose message is one of these owner-facing codes for anything wrong with the *submitted*
+ * bundle itself -- a tampered signature, an untrusted source, a malformed manifest, and so on. Those
+ * are the owner's problem to fix (pick a different file, get it signed), not the server's, so they
+ * become 400 with the exact reason. `module_trust_*` (the owner's own trust policy) and
+ * `module_install_approval_integrity_failed` (corrupted stored state) are server-side faults and stay
+ * the default 503 from `webFailure`.
+ */
+const MODULE_SUBMISSION_REFUSAL_PATTERN = /^module_(bundle|signature|manifest|permission)_/;
+
+function moduleSubmissionRefusal(error: unknown): Response | undefined {
+  if (!(error instanceof Error) || !MODULE_SUBMISSION_REFUSAL_PATTERN.test(error.message)) return undefined;
+  return Response.json({ error: "invalid_request", reason: error.message }, { status: 400, headers: privateResponseHeaders });
+}
 
 function jsonFileResponse(fileName: string, digestHeader: string, digest: string, body: unknown): Response {
   return new Response(JSON.stringify(body), { headers: { ...privateResponseHeaders,
@@ -75,7 +90,13 @@ export function createModuleTransferHttpHandlerV1(options: {
 
       if (path === "/api/v1/modules/preview" && request.method === "POST") {
         const submission = await readSubmissionBody(request) as ModuleBundleSubmissionV1;
-        return Response.json(await options.approvals.preview(identity, submission), { headers: privateResponseHeaders });
+        try {
+          return Response.json(await options.approvals.preview(identity, submission), { headers: privateResponseHeaders });
+        } catch (error) {
+          const refusal = moduleSubmissionRefusal(error);
+          if (refusal) return refusal;
+          throw error;
+        }
       }
 
       if (path === "/api/v1/modules/approvals" && request.method === "POST") {
@@ -86,8 +107,14 @@ export function createModuleTransferHttpHandlerV1(options: {
           throw new WebAccessError("invalid_request");
         const idempotencyKey = request.headers.get("idempotency-key") ?? "";
         if (!IDEMPOTENCY_PATTERN.test(idempotencyKey)) throw new WebAccessError("invalid_request");
-        const result = await options.approvals.approve(identity, submission as ModuleBundleSubmissionV1, draft, idempotencyKey);
-        return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+        try {
+          const result = await options.approvals.approve(identity, submission as ModuleBundleSubmissionV1, draft, idempotencyKey);
+          return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+        } catch (error) {
+          const refusal = moduleSubmissionRefusal(error);
+          if (refusal) return refusal;
+          throw error;
+        }
       }
 
       const pack = /^\/api\/v1\/projects\/([^/]+)\/pack$/.exec(path);

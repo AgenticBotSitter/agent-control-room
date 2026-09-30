@@ -174,6 +174,27 @@ test("an oversized file is refused before the client is ever called", async () =
   });
 });
 
+// --- Plain sentences for the three verifier refusal families (review B1) ---
+
+for (const [reason, sentence] of [
+  ["module_signature_digest_mismatch", "this file was changed after it was signed"],
+  ["module_bundle_code_source_untrusted", "can run code and isn't signed by a key you trust"],
+  ["module_bundle_path_invalid", "this file is not a valid module bundle"],
+] as const) {
+  test(`a ${reason} refusal shows its plain sentence, not just the reason code`, async () => {
+    const client = { preview: async () => { throw new BrowserRequestError("invalid_request", reason); },
+      approve: async () => { throw new Error("not_expected"); } };
+    await withMountedPanel(client, async dom => {
+      await chooseFile(dom, JSON.stringify({ bundle: { schema: "x" }, signature: null }));
+      await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+      const alert = dom.window.document.querySelector('[role="alert"]');
+      assert.ok(alert);
+      assert.match((alert!.textContent ?? "").toLowerCase(), new RegExp(sentence));
+      assert.match(alert!.textContent ?? "", new RegExp(`Reason code: ${reason}`));
+    });
+  });
+}
+
 test("a refused preview (bad JSON) shows the reason distinctly, not a raw crash", async () => {
   const client = { preview: async () => { throw new BrowserRequestError("invalid_request"); }, approve: async () => { throw new Error("not_expected"); } };
   await withMountedPanel(client, async dom => {

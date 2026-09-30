@@ -56,7 +56,21 @@ async function call(path: string, body: unknown, headers: Record<string, string>
       headers: { accept: "application/json", "content-type": "application/json", "x-requested-with": "XMLHttpRequest", ...headers },
       body: JSON.stringify(body) });
   } catch { throw new BrowserRequestError("uncertain"); }
-  if (!response.ok) throw new BrowserRequestError(failureFor(response.status));
+  if (!response.ok) {
+    const code = failureFor(response.status);
+    // Only a 400 from this handler ever carries a `reason` (the verifier's exact refusal code);
+    // a failed or absent read just leaves it undefined, same as before this reason existed.
+    let reason: string | undefined;
+    if (code === "invalid_request") {
+      try {
+        const body = await readBoundedResponseJson(response);
+        if (body !== null && typeof body === "object" && typeof (body as { reason?: unknown }).reason === "string") {
+          reason = (body as { reason: string }).reason;
+        }
+      } catch { /* no reason available */ }
+    }
+    throw new BrowserRequestError(code, reason);
+  }
   try { return await readBoundedResponseJson(response); }
   catch { throw new BrowserRequestError("unavailable"); }
 }

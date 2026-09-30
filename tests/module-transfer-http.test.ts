@@ -104,6 +104,62 @@ test("download -> upload -> preview -> approve round-trips over real HTTP reques
   assert.deepEqual(await replay.json(), { ...approved, replayed: true });
 });
 
+test("a tampered bundle refuses preview and approve with 400 and the exact verifier reason, not 503", async () => {
+  const { handler } = await setup();
+  const submission = await (await handler(req("/api/v1/modules/news/bundle", "GET"))).json() as
+    { bundle: { manifest: Record<string, unknown> }; signature: unknown };
+  // The signature is bound to the exact bundle digest; touching the manifest after the fact
+  // (without re-signing) moves the bytes out from under the signature.
+  const tampered = { ...submission,
+    bundle: { ...submission.bundle, manifest: { ...submission.bundle.manifest, name: "Tampered" } } };
+
+  const previewResponse = await handler(req("/api/v1/modules/preview", "POST", tampered));
+  assert.equal(previewResponse.status, 400);
+  assert.deepEqual(await previewResponse.json(), { error: "invalid_request", reason: "module_signature_digest_mismatch" });
+
+  const filler = `sha256:${"0".repeat(64)}`;
+  const approveResponse = await handler(req("/api/v1/modules/approvals", "POST", { submission: tampered,
+    draft: { expectedBundleDigest: filler, expectedSource: { kind: "declarative-unsigned", keyId: null },
+      expectedCurrentApprovalId: null, acknowledgedPermissionDiffDigest: filler, acknowledgedCodeWarning: true } },
+    "http-tampered-approve-0001"));
+  assert.equal(approveResponse.status, 400);
+  assert.deepEqual(await approveResponse.json(), { error: "invalid_request", reason: "module_signature_digest_mismatch" });
+});
+
+test("a manifest that fails its own schema (not just the outer bundle shape) also refuses with 400, not 503", async () => {
+  const { handler } = await setup();
+  const submission = await (await handler(req("/api/v1/modules/news/bundle", "GET"))).json() as
+    { bundle: { manifest: Record<string, unknown> } };
+  // Manifest parsing runs before the signature check, so a schema-shape violation is caught first,
+  // regardless of the signature. This is the module_manifest_* family, not module_bundle_/signature_.
+  const invalidManifest = { bundle: { ...submission.bundle,
+    manifest: { ...submission.bundle.manifest, controlRoomCompatibility: "not-a-range" } } };
+  const previewResponse = await handler(req("/api/v1/modules/preview", "POST", invalidManifest));
+  assert.equal(previewResponse.status, 400);
+  assert.deepEqual(await previewResponse.json(), { error: "invalid_request", reason: "module_manifest_compatibility_invalid" });
+});
+
+test("an unsigned CODE bundle refuses preview with 400 module_bundle_code_source_untrusted, not 503", async () => {
+  const { handler } = await setup();
+  const submission = await (await handler(req("/api/v1/modules/news/bundle", "GET"))).json() as { bundle: unknown };
+  const previewResponse = await handler(req("/api/v1/modules/preview", "POST", { bundle: submission.bundle }));
+  assert.equal(previewResponse.status, 400);
+  assert.deepEqual(await previewResponse.json(), { error: "invalid_request", reason: "module_bundle_code_source_untrusted" });
+});
+
+test("a bundle file with a path-traversal name refuses preview with 400, not 503", async () => {
+  const { handler } = await setup();
+  const submission = await (await handler(req("/api/v1/modules/news/bundle", "GET"))).json() as
+    { bundle: { files: unknown[] } };
+  const malicious = { bundle: { ...submission.bundle,
+    files: [...submission.bundle.files, { path: "../../etc/passwd", contentBase64: Buffer.from("x").toString("base64") }] } };
+  const previewResponse = await handler(req("/api/v1/modules/preview", "POST", malicious));
+  assert.equal(previewResponse.status, 400);
+  const body = await previewResponse.json() as { error: string; reason: string };
+  assert.equal(body.error, "invalid_request");
+  assert.match(body.reason, /^module_bundle_path_invalid$/);
+});
+
 test("approve requires exactly {submission, draft} and a well-formed idempotency key", async () => {
   const { handler } = await setup();
   const submission = await (await handler(req("/api/v1/modules/news/bundle", "GET"))).json();
