@@ -33,7 +33,8 @@ import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
-import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
+import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1,
+  startOwnerPushLoopV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { FleetOwnerServiceV1 } from "../../fleet/v1";
 import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
 import type { FleetConnectorReleaseManifestV1 } from "../../fleet/v1/connector-release";
@@ -104,6 +105,11 @@ export interface MacLocalWebProcessOptionsV1 {
   }> }>;
   /** Optional private VAPID credentials. Omission leaves push unavailable. */
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** Start the bounded-retry dispatcher alongside the site. Defaults to on when
+   * `ownerWebPush` is configured, because a configured push channel that never
+   * dispatches is the exact shape of this feature having been "built" and never
+   * working. Supplied explicitly false for a read-only or test composition. */
+  ownerPushDispatch?: boolean;
   /** Remote workers (T2-F). Owner decisions use a distinct restricted
    * database login; neither the ordinary web login nor the gateway can write
    * those tables. The hook only asks the gateway to reconcile afterward. */
@@ -400,7 +406,15 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             message: "This browser can subscribe to phone notifications." }, { headers: privateResponseHeaders });
         }
         if (request.method === "POST" && !url.search && request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() === "application/json") {
-          const subscription = parseWebPushSubscriptionV1(await request.json());
+          // A malformed or off-list subscription is the CALLER's problem, so it
+          // is reported as a 400 rather than as the 503 a bare Error maps to. The
+          // endpoint allow list is enforced here, at the earliest point, so this
+          // is the status an owner sees when their browser hands us an endpoint
+          // on a host that is not a push service -- "the service is down" would
+          // send them looking in entirely the wrong place.
+          let subscription;
+          try { subscription = parseWebPushSubscriptionV1(await request.json()); }
+          catch { throw new WebAccessError("invalid_request"); }
           await ownerPush.store.subscribe({ id: "", tenantId: profile.tenantId, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh,
             auth: subscription.keys.auth, expiresAt: subscription.expirationTime === null ? null : new Date(subscription.expirationTime).toISOString() });
           return new Response(null, { status: 204, headers: privateResponseHeaders });
