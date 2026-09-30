@@ -237,9 +237,24 @@ export class PipelineAdvanceServiceV1 {
       [parsed.data.enabled,nextRun.state,nextRun.started_at,now,nextRun.version,nextTemplate.version,nextTemplateDigest,nextRunDigest,nextRunTag,
         this.scope.tenantId,projectId,run.id,run.version]);
       const transitionId = `pipeline-unattended:${randomUUID()}`;
+      // `version` is bigint, so `pg` returns it as a STRING unless a parser is
+      // registered. The digest and tag below are taken over `nextTemplate.version`
+      // and `nextRun.version` as they stand, and every reader of this record
+      // rebuilds it with `Number(...)` -- `advance`'s consent check, the sweep's,
+      // and this method's own replay. Signing a string and verifying a number
+      // never matches, so the consent was unverifiable and `advance` refused
+      // with `pipeline_integrity_failed`: a run the owner disabled could never be
+      // resumed, and a run on an ALREADY-enabled template could never be started
+      // unattended at all (only the activating branch above produces a number,
+      // which is why the unit lane's fake database -- one that returns numbers --
+      // never saw it). `templateMaterial` and `runMaterial` already normalise
+      // these for the same reason; the consent must agree with them.
+      const consentTemplateVersion = Number(nextTemplate.version), consentRunVersion = Number(nextRun.version);
+      if (!Number.isSafeInteger(consentTemplateVersion) || consentTemplateVersion < 1
+        || !Number.isSafeInteger(consentRunVersion) || consentRunVersion < 1) refuse("pipeline_integrity_failed");
       const material = { id: transitionId, tenantId: this.scope.tenantId, projectId, pipelineRunId: run.id,
-        pipelineTemplateId: template.id, templateVersion: nextTemplate.version, templateDigest: nextTemplateDigest,
-        runVersion: nextRun.version, runDigest: nextRunDigest, policyId: policy.id, policyVersion: Number(policy.version),
+        pipelineTemplateId: template.id, templateVersion: consentTemplateVersion, templateDigest: nextTemplateDigest,
+        runVersion: consentRunVersion, runDigest: nextRunDigest, policyId: policy.id, policyVersion: Number(policy.version),
         policyDigest: policy.policy_digest, ownerIdentityId: actor.id, enabled: parsed.data.enabled, idempotencyKey,
         requestDigest, occurredAt: now };
       const transitionDigest = sha256Digest(material), authTag = hmacSha256Tag(this.#key,
@@ -247,8 +262,8 @@ export class PipelineAdvanceServiceV1 {
       await tx.query(`INSERT INTO pipeline_unattended_transitions(id,tenant_id,project_id,pipeline_run_id,pipeline_template_id,
         template_version,template_digest,run_version,run_digest,policy_id,policy_version,policy_digest,owner_identity_id,enabled,
         idempotency_key,request_digest,transition_digest,auth_tag,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-        $14,$15,$16,$17,$18,$19)`, [transitionId,this.scope.tenantId,projectId,run.id,template.id,nextTemplate.version,
-        nextTemplateDigest,nextRun.version,nextRunDigest,policy.id,Number(policy.version),policy.policy_digest,actor.id,
+        $14,$15,$16,$17,$18,$19)`, [transitionId,this.scope.tenantId,projectId,run.id,template.id,consentTemplateVersion,
+        nextTemplateDigest,consentRunVersion,nextRunDigest,policy.id,Number(policy.version),policy.policy_digest,actor.id,
         parsed.data.enabled,idempotencyKey,requestDigest,transitionDigest,authTag,now]);
       await appendAuditWith(tx, { id:`audit:${transitionId}`,...this.scope,projectId,actorId:actor.id,actorType:"human",
         action: parsed.data.enabled ? "pipelines.unattended.enabled" : "pipelines.unattended.disabled",
@@ -666,17 +681,32 @@ export class PipelineAdvanceServiceV1 {
       -- A process this machine is already running. A lease and a queue row, not a
       -- harness run: a worker mints the harness run when it picks the work up,
       -- so counting only harness runs let successive sweeps each see the same
-      -- live count and queue past the ceiling until a worker started them. The
-      -- overshoot was bounded only by runs-per-hour. This counts the two: a
-      -- live harness run, OR a pipeline advance that claimed work and has no
-      -- harness run yet. Both hold a process open from the moment the work was
-      -- claimed, and a finished harness run is not one of them.
+      -- live count and queue past the ceiling until a worker started them. This
+      -- counts the two: a live harness run, OR an execution job that has been
+      -- claimed and is still waiting to be started.
+      --
+      -- The second term must be exactly "claimed and not yet running", and the
+      -- job's own state is the only honest evidence of that. It once read
+      -- "no LIVE harness run", which is not the same question: a stage whose
+      -- harness run has since SUCCEEDED, failed, was cancelled or disconnected
+      -- has no live harness run, so every stage the installation ever advanced
+      -- held a process slot for the rest of the installation's life. Receipts
+      -- are never deleted, so at the default ceiling of 12 unattended pipelines
+      -- stopped for good after 12-24 stage advances. Counting the job's state
+      -- instead means the slot is freed the moment the work is done -- finished
+      -- or cancelled -- which is what "a running agent process" means, and it
+      -- also frees a job cancelled before a worker ever picked it up.
+      -- The two terms cannot double count: this one requires NO harness run of
+      -- ANY state, so a job with a live harness run is counted only by the
+      -- first term.
       ((SELECT COUNT(DISTINCT id) FROM control_harness_runs WHERE tenant_id=$1
         AND state IN('discovered','starting','running','waiting_input','waiting_approval','cancelling'))
-        + (SELECT COUNT(DISTINCT execution_job_id) FROM pipeline_advance_receipts r WHERE r.tenant_id=$1
+        + (SELECT COUNT(DISTINCT r.execution_job_id) FROM pipeline_advance_receipts r
+        JOIN control_jobs j ON j.tenant_id=r.tenant_id AND j.id=r.execution_job_id
+        WHERE r.tenant_id=$1
+        AND j.state IN('proposed','ready','leased','running','waiting_approval')
         AND NOT EXISTS(SELECT 1 FROM control_harness_runs h
-          WHERE h.tenant_id=r.tenant_id AND h.job_id=r.execution_job_id
-          AND h.state IN('discovered','starting','running','waiting_input','waiting_approval','cancelling'))))::text
+          WHERE h.tenant_id=r.tenant_id AND h.job_id=r.execution_job_id)))::text
         AS active_agent_processes,
       (SELECT COALESCE(SUM(delegation_cost_microusd),0) FROM pipeline_advance_receipts WHERE tenant_id=$1
         AND delegation_cost_state='known')::text AS spent_microusd`,

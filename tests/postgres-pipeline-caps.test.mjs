@@ -489,6 +489,49 @@ async function planExecutionJob(client, own, stageOrdinal) {
   return executionJobId;
 }
 
+/** A stage's work, as the machine actually finishes it. These are TWO different
+ * production logins, because the product splits the two writes: the coordinator
+ * owns `control_jobs(state,version,updated_at)` and the result publisher owns
+ * `control_harness_runs(state,updated_at,last_observed_at)`. A probe that used
+ * the superuser for either would prove nothing about the installed grants, and
+ * one that used the coordinator for both would be refused 42501.
+ *
+ * `control_jobs.payload` is a canonical MIRROR of the row -- the trigger refuses
+ * any write that moves `state` or `version` without moving `payload.state` and
+ * `payload.version` with it (P0001, "canonical payload mirror mismatch"). So the
+ * two are written together here, exactly as the real job-state transition writes
+ * them; updating the column alone is not a state transition the product permits.
+ *
+ * `jobState` and `harnessState` are separate because they are separate facts and
+ * the process ceiling has to be right about both: a job CANCELLED before a
+ * worker picked it up has no harness run at all, and a job whose harness run
+ * FAILED is finished even though the job row was never advanced. */
+async function finishExecutionJob(coordinator, publisher, own, executionJobId, { jobState, harnessState }) {
+  const changed = await coordinator.client.query(`UPDATE control_jobs SET state=$3,version=version+1,
+      updated_at=clock_timestamp(),payload=jsonb_set(jsonb_set(payload,'{state}',to_jsonb($3::text)),
+      '{version}',to_jsonb(version+1))
+    WHERE tenant_id=$1 AND id=$2 RETURNING state`, [own.tenantId, executionJobId, jobState]);
+  assert.equal(changed.rows.length, 1, `the job ${executionJobId} must exist to be finished`);
+  await publisher.client.query(`UPDATE control_harness_runs SET state=$3,updated_at=clock_timestamp(),
+    last_observed_at=clock_timestamp() WHERE tenant_id=$1 AND job_id=$2`,
+  [own.tenantId, executionJobId, harnessState]);
+}
+
+/** The installation's own live-process count, read with the production
+ * coordinator login and the EXACT expression the service uses, so a test
+ * asserting "the slot came back" is reading the same number the ceiling reads
+ * and cannot pass on a different definition. */
+async function activeProcessCount(coordinator, own) {
+  return (await coordinator.client.query(`SELECT ((SELECT COUNT(DISTINCT id) FROM control_harness_runs
+      WHERE tenant_id=$1 AND state IN('discovered','starting','running','waiting_input','waiting_approval','cancelling'))
+    + (SELECT COUNT(DISTINCT r.execution_job_id) FROM pipeline_advance_receipts r
+      JOIN control_jobs j ON j.tenant_id=r.tenant_id AND j.id=r.execution_job_id
+      WHERE r.tenant_id=$1 AND j.state IN('proposed','ready','leased','running','waiting_approval')
+      AND NOT EXISTS(SELECT 1 FROM control_harness_runs h
+        WHERE h.tenant_id=r.tenant_id AND h.job_id=r.execution_job_id)))::text AS count`,
+  [own.tenantId])).rows[0].count;
+}
+
 /** The owner's SIGNED delegation policy, with one ceiling tightened. The policy
  * row is versioned and append-only in every column but `state`, `version` and
  * `updated_at`, so a ceiling is signed once at seed time and never mutated by a
@@ -951,6 +994,112 @@ test("the agent-process ceiling counts queued work that has no harness run yet",
   assert.equal(secondService.queuedCount(), 0);
 });
 
+test("a FINISHED stage gives its agent-process slot back, so the night kit keeps running", needsPg, async t => {
+  // Reviewer B3. The second term of the process count asked for "no LIVE harness
+  // run", which is not "still running": a stage whose harness run has since
+  // succeeded, failed, been cancelled or disconnected answers that question
+  // forever, and receipts are never deleted. So every stage an installation ever
+  // advanced held a process slot for the rest of the installation's life, and at
+  // the default ceiling of 12 unattended pipelines stopped for good after 12-24
+  // stage advances. The reviewer's own probe: machineMaxAgentProcesses=2, zero
+  // live harness runs, stages 0 and 1 advance and stage 2 is refused for good.
+  //
+  // The proof is the reverse of the reviewer's: with the slot correctly freed, a
+  // whole three-stage run completes and a BRAND NEW run in the same installation
+  // still advances, which the broken count could never do after 2 stages.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  const publisher = productionPool("control_room_publisher");
+  t.after(async () => { await web.close(); await coordinator.close(); await publisher.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(79);
+  const own = await seedInstallation(admin, "procfinish", key, new Date(webNow).toISOString(),
+    { executionPlanShape: "planner", maxLoops: 0, maxTotalLoops: 6 });
+  for (const ordinal of [0, 1, 2]) await planExecutionJob(admin, own, ordinal);
+  // The three harness runs the seed leaves are made terminal up front: nothing is
+  // running on this machine, so the whole ceiling is headroom. A ceiling of 2 is
+  // the reviewer's exact probe -- under the old count this stopped for good.
+  await admin.query(`UPDATE control_harness_runs SET state='succeeded' WHERE tenant_id=$1`, [own.tenantId]);
+  await ownerSetsUp(web, own, key, { runsPerHour: 100, runsPerAgentPerDay: 100, machineMaxAgentProcesses: 2,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  assert.equal(Number(await activeProcessCount(coordinator, own)), 0,
+    "no live harness run and no started execution job leaves zero processes");
+  // Walk the whole three-stage run. Each stage's work is finished the way a
+  // worker and a completion finish it, so the next advance sees the freed slot.
+  const accepted = new Set();
+  const { service } = advanceService(coordinator, own, key, { accepted });
+  for (const ordinal of [0, 1, 2]) {
+    const receipt = await service.advance(own.pipeline.runId, own.policyId);
+    assert.equal(receipt.startsWork, true, `stage ${ordinal} must advance`);
+    const executionJobId = receipt.jobId;
+    assert.equal(executionJobId.startsWith("job:execution:"), true,
+      "the receipt names the execution job, the one that holds the process");
+    assert.equal(Number(await activeProcessCount(coordinator, own)), 1,
+      `stage ${ordinal}'s queued work holds exactly one process slot`);
+    // The worker picks it up and it finishes: the job succeeds and its harness
+    // run succeeds. The slot must go back, or this is the bug.
+    await finishExecutionJob(coordinator, publisher, own, executionJobId, { jobState: "succeeded", harnessState: "succeeded" });
+    assert.equal(Number(await activeProcessCount(coordinator, own)), 0,
+      `stage ${ordinal} finished, so its process slot must be free again`);
+    accepted.add(own.pipeline.jobIds[ordinal]);
+  }
+  const terminal = await service.advance(own.pipeline.runId, own.policyId);
+  assert.equal(terminal.state, "succeeded", "the run completes all three stages");
+
+  // The reviewer's second half: a BRAND NEW run in the same installation. Under
+  // the old count every one of the three receipts above held a slot, so the
+  // ceiling of 2 was spent twice over and this advance was refused for good.
+  const second = await seedSecondRun(admin, own, key);
+  await admin.query(`UPDATE control_harness_runs SET state='succeeded' WHERE tenant_id=$1`, [own.tenantId]);
+  await ownerConsents(web, second, key);
+  const secondService = advanceService(coordinator, second, key, { accepted: new Set() });
+  assert.equal(Number(await activeProcessCount(coordinator, own)), 0,
+    "a completed run leaves no process behind");
+  assert.equal((await secondService.service.advance(second.pipeline.runId, own.policyId)).startsWork, true,
+    "a new run in an installation that already finished a run must still advance");
+});
+
+test("a CANCELLED stage gives its agent-process slot back too", needsPg, async t => {
+  // The other half of B3. A job cancelled before a worker ever picked it up has
+  // NO harness run at all, so it also has no LIVE harness run, and the old
+  // "no live harness run" test counted it for the rest of the installation's
+  // life. The job's own state is the only thing that knows it is finished.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  const publisher = productionPool("control_room_publisher");
+  t.after(async () => { await web.close(); await coordinator.close(); await publisher.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(83);
+  const own = await seedInstallation(admin, "proccancel", key, new Date(webNow).toISOString(),
+    { executionPlanShape: "planner", maxLoops: 0, maxTotalLoops: 6 });
+  for (const ordinal of [0, 1, 2]) await planExecutionJob(admin, own, ordinal);
+  await admin.query(`UPDATE control_harness_runs SET state='succeeded' WHERE tenant_id=$1`, [own.tenantId]);
+  await ownerSetsUp(web, own, key, { runsPerHour: 100, runsPerAgentPerDay: 100, machineMaxAgentProcesses: 1,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const { service } = advanceService(coordinator, own, key, { accepted: new Set() });
+  const receipt = await service.advance(own.pipeline.runId, own.policyId);
+  assert.equal(receipt.startsWork, true, "one unit of headroom is admitted");
+  // Cancelled in the queue: the job is finished and the harness run never
+  // existed for it, so the DELETE of a run row is not what frees this slot.
+  // The harness update is a no-op here (there is no run to finish), which is
+  // exactly the case the old count got wrong.
+  await finishExecutionJob(coordinator, publisher, own, receipt.jobId,
+    { jobState: "cancelled", harnessState: "succeeded" });
+  const harnessRows = (await admin.query("SELECT count(*)::int count FROM control_harness_runs"
+    + " WHERE tenant_id=$1 AND job_id=$2", [own.tenantId, receipt.jobId])).rows[0].count;
+  assert.equal(harnessRows, 0, "a job cancelled in the queue has no harness run at all");
+  assert.equal(Number(await activeProcessCount(coordinator, own)), 0,
+    "a cancelled stage must free its process slot even with no harness run");
+  const second = await seedSecondRun(admin, own, key);
+  await admin.query(`UPDATE control_harness_runs SET state='succeeded' WHERE tenant_id=$1`, [own.tenantId]);
+  await ownerConsents(web, second, key);
+  const secondService = advanceService(coordinator, second, key, { accepted: new Set() });
+  assert.equal((await secondService.service.advance(second.pipeline.runId, own.policyId)).startsWork, true,
+    "a ceiling of one is free again after the only stage is cancelled");
+});
+
 test("every installation ceiling refuses at its own boundary on the production coordinator login", needsPg, async t => {
   const admin = superuser();
   await admin.connect();
@@ -1013,6 +1162,106 @@ test("every installation ceiling refuses at its own boundary on the production c
     assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_stage_loop_counts"
       + " WHERE tenant_id=$1", [own.tenantId])).rows[0].count, 0, reason);
   }
+});
+
+test("a run the owner disabled can be re-enabled and advance, on real PostgreSQL", needsPg, async t => {
+  // Reviewer B4, on cook/v1's own S7 code. `setUnattended` signed the consent
+  // over `nextTemplate.version` and `nextRun.version` as they stood, and
+  // `version` is bigint, so `pg` handed back the STRING "2" on any path where
+  // the template was already unattended-enabled. Every reader of the consent
+  // rebuilds it with `Number(...)` -- `advance`'s check at :287, the sweep's, and
+  // this method's own replay -- so the digest never matched and `advance`
+  // refused with `pipeline_integrity_failed`. Only the activating branch
+  // (`version: Number(template.version)+1`) produced a number, which is why the
+  // unit lane's fake database never saw it and the lane's `seedSecondRun`
+  // always built a fresh template.
+  //
+  // The owner's stop is safe either way -- it fails closed -- but the run could
+  // never be resumed, and a run on an already-enabled template could never be
+  // started unattended at all. This is that path, on a real cluster, as the real
+  // web login (which writes the consent) and the real coordinator login (which
+  // verifies it).
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(89);
+  const own = await seedInstallation(admin, "consentbigint", key, new Date(webNow).toISOString(),
+    { executionPlanShape: "planner" });
+  for (const ordinal of [0, 1, 2]) await planExecutionJob(admin, own, ordinal);
+  await admin.query(`UPDATE control_harness_runs SET state='succeeded' WHERE tenant_id=$1`, [own.tenantId]);
+  await ownerSetsUp(web, own, key, { runsPerHour: 100, runsPerAgentPerDay: 100, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+
+  // The template is NOW already unattended-enabled by the consent above, and its
+  // version is a bigint that came back as a string. Assert that directly, so
+  // this test cannot quietly stop covering the bug: if the driver ever returns a
+  // number for bigint, the sign/verify asymmetry is gone and the lane says so.
+  const asStored = (await admin.query("SELECT version::text version,may_advance_unattended FROM pipeline_templates"
+    + " WHERE tenant_id=$1", [own.tenantId])).rows[0];
+  assert.equal(asStored.may_advance_unattended, true, "the template is enabled by the first consent");
+  assert.equal(typeof (await web.client.query("SELECT version FROM pipeline_templates WHERE tenant_id=$1",
+    [own.tenantId])).rows[0].version, "string",
+    "pg returns a bigint as a string, which is the whole of the bug");
+
+  const owner = new PipelineAdvanceServiceV1(web.client, own.scope, key, {}, () => webNow);
+  const pipelines = new LinearPipelineServiceV1(web.client, own.scope, key,
+    { assertCurrent: () => true, isAcceptedResultCurrent: () => false }, () => webNow);
+  const transition = async (enabled, tag) => {
+    const view = await pipelines.view(own.identity, own.project.projectId, own.pipeline.runId);
+    return owner.setUnattended(own.identity, own.project.projectId, { runId: own.pipeline.runId,
+      templateId: view.templateId, policyId: own.policyId, enabled, expectedRunVersion: view.runVersion,
+      expectedTemplateVersion: view.templateVersion }, `pipeline-unattended-${tag}`);
+  };
+
+  // 1. The owner STOPS the run. The consent written here is signed over the
+  //    already-enabled template's string version -- the exact broken path.
+  const stopped = await transition(false, `${own.pipeline.runId}-stop`);
+  assert.equal(stopped.enabled, false);
+  // 2. The stop holds: an advance now refuses, and it refuses because the run
+  //    is not authorised rather than because the record is corrupt.
+  const stoppedService = advanceService(coordinator, own, key, { accepted: new Set() });
+  await assert.rejects(stoppedService.service.advance(own.pipeline.runId, own.policyId),
+    error => error.safeReason === "unattended_not_authorized", "a disabled run starts nothing");
+  assert.equal((await admin.query("SELECT count(*)::int receipts FROM pipeline_advance_receipts"
+    + " WHERE tenant_id=$1", [own.tenantId])).rows[0].receipts, 0, "a disabled run claims nothing");
+
+  // 3. The owner RESUMES it. This is the reviewer's finding: this second consent
+  //    is also written over a string version, and the advance after it used to
+  //    refuse with `pipeline_integrity_failed` for good.
+  const resumed = await transition(true, `${own.pipeline.runId}-resume`);
+  assert.equal(resumed.enabled, true);
+  const resumedService = advanceService(coordinator, own, key, { accepted: new Set() });
+  const receipt = await resumedService.service.advance(own.pipeline.runId, own.policyId);
+  assert.equal(receipt.startsWork, true,
+    "disable -> re-enable -> advance must work, and must stay signed");
+
+  // 4. The consent is not merely readable, it is the CURRENT one: the transition
+  //    row verifies against its own key, and the run's template pin still agrees
+  //    with the template the consent names. `run_version` is the consent's own
+  //    monotonic order for one run -- the same ordering `advance` uses to pick
+  //    the latest consent -- and not `occurred_at`, which the frozen test clock
+  //    ties across all three transitions.
+  const consent = (await admin.query("SELECT template_version::text tv,run_version::text rv,enabled"
+    + " FROM pipeline_unattended_transitions WHERE tenant_id=$1 AND pipeline_run_id=$2"
+    + " ORDER BY run_version DESC,id DESC LIMIT 1", [own.tenantId, own.pipeline.runId])).rows[0];
+  assert.equal(consent.enabled, true, "the latest consent is the enabling one");
+  const template = (await admin.query("SELECT version::text v FROM pipeline_templates WHERE tenant_id=$1",
+    [own.tenantId])).rows[0];
+  assert.equal(consent.tv, template.v, "the consent pins the template's current version");
+  // And the sweep path, which rebuilds the same material independently, must also
+  // accept it -- the two readers of this record are the two that disagreed.
+  const sweep = new PipelineAdvanceServiceV1(coordinator.client, own.scope, key,
+    { unattendedEnabled: () => true, capability: resumedService.capability }, () => webNow);
+  const swept = await sweep.advanceReady();
+  assert.equal(swept.checked >= 1, true, "the sweep sees the run");
+  // The sweep re-reads and re-verifies every consent it considers; a corrupt one
+  // is refused there rather than started, so no NEW receipt means the consent it
+  // just verified was already spent by step 3 and it replayed instead.
+  assert.equal((await admin.query("SELECT count(DISTINCT execution_job_id)::int jobs"
+    + " FROM pipeline_advance_receipts WHERE tenant_id=$1", [own.tenantId])).rows[0].jobs, 1,
+    "the sweep replayed the same round rather than starting a second one");
 });
 
 test("every ceiling refuses at exactly its limit and not one run earlier", needsPg, async t => {
