@@ -118,14 +118,43 @@ BEGIN
     RAISE EXCEPTION 'fleet claim rejected';
   END IF;
 
-  -- A slot is a claim whose lease is still live. state='active' alone kept a
-  -- crashed machine's elapsed lease holding capacity open forever; expiry is
-  -- the database's own clock, never a caller's.
+  -- A slot is a claim whose lease is still live, OR a claim of THIS
+  -- transaction whose lease is not written yet.
+  --
+  -- state='active' alone kept a crashed machine's elapsed lease holding
+  -- capacity open forever; expiry is the database's own clock, never a
+  -- caller's.
+  --
+  -- The LEFT JOIN is what makes the ceiling hold for a transaction that claims
+  -- MORE THAN ONE TASK. The claim path writes the claim row first and its
+  -- lease afterwards -- 0140's guard admits an attempt or lease only when the
+  -- guarded claim row already names it -- and 0140's lease-consistency
+  -- constraint is DEFERRED, so the lease is only required at COMMIT. With an
+  -- inner JOIN a claim written earlier in the same transaction matches no lease
+  -- yet, is counted by nobody, and the transaction can insert its way past the
+  -- ceiling: measured on real PostgreSQL 17 as the fleet login, one READ
+  -- COMMITTED transaction inserting claims A, B and C against a ceiling of 2
+  -- committed all three, then their attempts and leases. The gateway claims one
+  -- task per transaction and never hit it, but 0234 promises the ceiling holds
+  -- whatever the caller does.
+  --
+  -- Counting a lease-less claim is safe, because a missing lease cannot mean
+  -- anything else. A claim only exists once its insert passed this guard, and
+  -- any OTHER transaction inserting a claim for this worker is serialised
+  -- behind the advisory lock above until it commits or rolls back -- so the
+  -- only lease-less claims this count can see are this transaction's own
+  -- pending rows. A COMMITTED claim always has its lease: 0140's deferred
+  -- fleet_claims_lease_consistency trigger refuses the COMMIT otherwise. And
+  -- no lease can be deleted out from under a committed claim, because
+  -- control_leases is granted to no role with DELETE, and fleet_claims is
+  -- append-only in both directions. So `l.id IS NULL` reads as "pending here",
+  -- never as "dead forever", and the alternative -- under-counting a pending
+  -- claim -- is the bug this closes.
   SELECT pg_catalog.count(*) INTO live_claims
   FROM public.fleet_claims fc
-  JOIN public.control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id
+  LEFT JOIN public.control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id
   WHERE fc.tenant_id=NEW.tenant_id AND fc.worker_id=NEW.worker_id
-    AND l.state='active' AND l.expires_at>pg_catalog.statement_timestamp();
+    AND (l.id IS NULL OR (l.state='active' AND l.expires_at>pg_catalog.statement_timestamp()));
 
   IF live_claims>=worker_max_concurrent THEN
     RAISE EXCEPTION 'fleet worker claim capacity reached' USING ERRCODE='54000';

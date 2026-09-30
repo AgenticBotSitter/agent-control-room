@@ -8,10 +8,17 @@
   },
   {
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
-    "find": "    AND l.state='active' AND l.expires_at>pg_catalog.statement_timestamp();",
-    "replace": "    AND l.state='active';",
+    "find": "    AND (l.id IS NULL OR (l.state='active' AND l.expires_at>pg_catalog.statement_timestamp()));",
+    "replace": "    AND (l.state='active' AND l.expires_at>pg_catalog.statement_timestamp());",
     "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "a lease past its expiry does not occupy a slot, so a crashed machine does not hold its own ceiling open"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "  LEFT JOIN public.control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id",
+    "replace": "  JOIN public.control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-isolation-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "a claim whose lease is not written yet still occupies a slot, so one transaction claiming several tasks cannot insert its way past the ceiling; the claim row is written before its lease and 0140's lease-consistency check is DEFERRED to COMMIT, so an inner JOIN counts a same-transaction claim as nothing"
   },
   {
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
