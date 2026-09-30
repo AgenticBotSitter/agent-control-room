@@ -476,11 +476,20 @@ test("the role manifest names every role the migrations, down files and schema f
   // reverse exactly that by naming the same roles. A down file that dropped them
   // would leave a database whose shared roles still held the blanket grants the
   // up migration removed, which is exactly what a down migration must never do.
+  //
+  // 0213 (MIG-E part 2) added the last two, for the same reason and in both
+  // directions: it grants SELECT on two views to `control_room_private_web` and
+  // `control_room_native_queue_worker`, and ALTERs them to
+  // `control_room_schema_owner`, so its DOWN file must name all three to revoke
+  // exactly what the up file conferred and leave nothing behind. Both new names
+  // are manifest groups (asserted above), so naming them here introduces no live
+  // role the upgrade cannot reason about.
   assert.deepEqual([...touched.keys()].sort(),
     ["control_room_agent_reviewer", "control_room_application", "control_room_backup",
       "control_room_fleet_gateway", "control_room_github_broker", "control_room_local_result_publisher",
-      "control_room_native_results", "control_room_private_web", "control_room_reader",
-      "control_room_schedule_admissions", "control_room_task_coordinator", "control_room_work_intake"],
+      "control_room_native_queue_worker", "control_room_native_results", "control_room_private_web",
+      "control_room_reader", "control_room_schedule_admissions", "control_room_schema_owner",
+      "control_room_task_coordinator", "control_room_work_intake"],
   "the migrations name these manifest roles and no others");
 
   // The scanner reads what SQL actually means, so prove it on a temp copy of
