@@ -164,6 +164,128 @@ function declaredDeletes(): string[] {
     .filter(table => table !== "");
 }
 
+/**
+ * Every `CREATE FUNCTION` a migration creates that a login can CALL, as
+ * `signature -> the file that creates it, and whether that file also declares any
+ * SECURITY DEFINER routine`.
+ *
+ * It is a named function rather than an inline loop so the grammar it reads is
+ * assertable on its own: the two blind spots below were real failures, and a
+ * scanner whose grammar has a blind spot is exactly the kind of thing this file
+ * refuses to leave unproved.
+ *
+ * Trigger functions are excluded, and deliberately so. A trigger function cannot
+ * be invoked directly, it has no SQL-callable signature, and it executes as the
+ * owner of the table it is attached to, so no login can reach it however its ACL
+ * reads.
+ *
+ * TWO BLIND SPOTS, both reported in review round 2, and both with the same shape:
+ * a correct preflight entry with no migration behind it, because the scanner could
+ * not SEE the function that earned it.
+ *
+ *   1. The optional `public.`. 0203 writes
+ *      `CREATE FUNCTION public.work_intake_split_suggestion_visible(`, and a
+ *      scanner written for the bare spelling could not see it.
+ *   2. The file-level `SECURITY DEFINER` filter, which skipped whole files.
+ *      0227's two functions are NOT security definer, they are pure immutable
+ *      helpers a CHECK constraint needs EXECUTE on, so the file was skipped and
+ *      both entries read as phantoms. They belong on the allowlist because the
+ *      web login may CALL them, which is a reason to hold an entry to a migration
+ *      whatever that function's own properties are.
+ *
+ * So the definer property is RECORDED rather than used as a filter, and each
+ * direction of the comparison below is filtered by the property that direction
+ * needs. A SECURITY DEFINER routine a login could call is what the preflight must
+ * have an answer for; a plain callable function is only what the allowlist must
+ * not be a fiction about.
+ */
+type ShippedFunction = Readonly<{ file: string; securityDefinerFile: boolean }>;
+
+/** `name(a, b)` -> `name(2)`, the normalisation both comparisons use.
+ *
+ * The empty-argument case is the load-bearing one. `text.split(",")` on an empty
+ * string yields `[""]`, so a naive arity counts a ZERO-argument function as
+ * one-argument -- which makes `is_work_intake_session()` and any genuine
+ * one-argument function share a key, so either could satisfy the other's
+ * allowlist entry. It is asserted below rather than left to a comment. */
+const arity = (signature: string) => {
+  const args = /\(([^)]*)\)/u.exec(signature)?.[1] ?? "";
+  return `(${args.split(",").map(argument => argument.trim()).filter(argument => argument !== "").length})`;
+};
+const shapeOf = (signature: string) => signature.replace(/\([^)]*\)/u, arity);
+
+async function shippedSecurityDefinerFunctions(): Promise<Map<string, ShippedFunction>> {
+  const shipped = new Map<string, ShippedFunction>();
+  for (const file of (await readdir(join(process.cwd(), "db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
+    const sql = await readFile(join(process.cwd(), "db/migrations", file), "utf8");
+    const securityDefinerFile = /SECURITY\s+DEFINER/i.test(sql);
+    // Both spellings are legal and both are in use, so the scanner accepts either
+    // and is proved to do so below.
+    for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)RETURNS\s+([a-z ]+)/gi)) {
+      if (match[4]!.trim().toLowerCase() === "trigger") continue;
+      const args = match[2]!.split(",").map(argument => argument.trim().split(/\s+/)[0]!.toLowerCase())
+        .filter(argument => argument !== "");
+      shipped.set(`${match[1]!.toLowerCase()}(${args.join(",")})`, Object.freeze({ file, securityDefinerFile }));
+    }
+  }
+  return shipped;
+}
+
+test("the SECURITY DEFINER scanner reads both spellings and every file, not only definer files", async () => {
+  // The self-test for the N-T1 fix. The failure was invisible because the scanner
+  // and the migrations disagreed about SPELLING and about WHICH FILES count, so
+  // nothing asserted the scanner against a known input. Revert either and a
+  // correct allowlist entry reads as phantom again -- and a function nobody can
+  // see is a function nobody can hold to the allowlist.
+  const shipped = await shippedSecurityDefinerFunctions();
+  // The scanner's keys carry SQL argument NAMES, so a signature is looked up by
+  // SHAPE, which is the same normalisation the allowlist test below uses. A
+  // shape maps to a SET of records, not to one: several different functions share
+  // an arity (there are more than one zero-argument callable), and collapsing
+  // them to a single record would hide a function behind whichever sorted last.
+  const byShape = new Map<string, ShippedFunction[]>();
+  for (const [signature, record] of shipped)
+    byShape.set(shapeOf(signature), [...(byShape.get(shapeOf(signature)) ?? []), record]);
+  const filesFor = (shape: string) => (byShape.get(shape) ?? []).map(record => record.file);
+  // Schema-qualified, in a file that also declares SECURITY DEFINER (0203).
+  assert.ok(filesFor("work_intake_split_suggestion_visible(3)")
+    .includes("0203_work_batch_split_suggestions_tenant_bound_read.sql"),
+  "a schema-qualified CREATE FUNCTION is invisible to the scanner");
+  // Bare, in a definer file.
+  assert.ok(filesFor("planner_failure_scope_key(2)").includes("0204_planner_needs_you_digest_scopes.sql"));
+  assert.ok(filesFor("is_work_intake_session(0)").includes("0093_work_batch_intake.sql"));
+  // NOT security definer, in a file with none -- the case the file-level filter
+  // used to skip entirely. These are the two entries the review called phantoms.
+  for (const shape of ["owner_push_endpoint_host(1)", "owner_push_endpoint_allowed(1)"]) {
+    assert.ok(filesFor(shape).includes("0227_owner_push_endpoint_allow_list.sql"),
+      `${shape} is invisible to the scanner, so a correct allowlist entry reads as phantom`);
+    const record = (byShape.get(shape) ?? []).find(candidate => candidate.file.startsWith("0227"));
+    assert.equal(record?.securityDefinerFile, false,
+      `${shape} is NOT security definer, which is why a definer-only filter could not see it`);
+  }
+  // The arity helper, asserted directly, because a zero-argument function
+  // counted as one-argument would let any one-argument function satisfy a
+  // zero-argument allowlist entry, and neither side would notice.
+  assert.equal(shapeOf("is_work_intake_session()"), "is_work_intake_session(0)");
+  assert.equal(shapeOf("owner_push_endpoint_host(text)"), "owner_push_endpoint_host(1)");
+  assert.equal(shapeOf("control_room_planner_grant_owner_retry(tenant,project,keys)"),
+    "control_room_planner_grant_owner_retry(3)");
+  // No shipped function may carry a `public.` in its NAME, which is what a
+  // half-applied fix would produce: a qualified capture leaking into the key.
+  for (const signature of shipped.keys()) assert.ok(!signature.includes("."),
+    `the scanner captured a schema qualifier in ${signature}`);
+  // And 0205's retry function is one of them, so the preflight allowlist has a
+  // migration behind it from the first run rather than after a failure.
+  assert.ok(filesFor("control_room_planner_grant_owner_retry(3)")
+    .includes("0205_planner_barrier_and_owner_retry.sql"));
+  // Trigger functions stay excluded, and this is the assertion for it: 0202's two
+  // guards are SECURITY DEFINER trigger functions, and a trigger has no
+  // SQL-callable signature to hold an allowlist entry for.
+  for (const signature of ["guard_planner_failure_counter_write()", "guard_planner_needs_you_item_insert()"]) {
+    assert.equal(shipped.has(signature), false, `a trigger function was reported as callable: ${signature}`);
+  }
+});
+
 test("every table the role files grant the web login is one the private-web preflight accepts", async () => {
   const applied = await appliedGrants();
   const accepted = acceptedGrants();
@@ -309,40 +431,26 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
   assert.ok(exempted.size >= 4,
     `only ${exempted.size} exempted signature(s) found in the preflight; the read is too narrow to prove anything`);
 
-  // Every SECURITY DEFINER function a migration creates that a login could
-  // CALL must be an allowlist entry, and every allowlist entry must be one a
+  // Every SECURITY DEFINER function a migration creates that a login could CALL
+  // must be an allowlist entry, and every allowlist entry must be one a
   // migration creates: an unlisted one is flagged by the scan on a correct
   // database, and a phantom one is a hole in it.
   //
-  // Trigger functions are excluded, and deliberately so. A trigger function
-  // cannot be invoked directly — it has no SQL-callable signature — and it
-  // executes as the owner of the table it is attached to, so the web login can
-  // never reach it however its ACL reads. Only 0093, 0106, 0141 create
-  // SECURITY DEFINER functions a login can call, and those are exactly the four
-  // the scan names.
-  const shipped = new Map<string, string>();
-  for (const file of (await readdir(join(process.cwd(), "db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
-    const sql = await readFile(join(process.cwd(), "db/migrations", file), "utf8");
-    if (!/SECURITY\s+DEFINER/i.test(sql)) continue;
-    // `RETURNS trigger` is what marks a function as a trigger function.
-    const triggers = [...sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION[\s\S]*?RETURNS\s+trigger/gi)].length;
-    for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)RETURNS\s+([a-z ]+)/gi)) {
-      if (match[4]!.trim().toLowerCase() === "trigger") continue;
-      const args = match[2]!.split(",").map(argument => argument.trim().split(/\s+/)[0]!.toLowerCase())
-        .filter(argument => argument !== "");
-      shipped.set(`${match[1]!.toLowerCase()}(${args.join(",")})`, file);
-    }
-    void triggers;
-  }
+  // BOTH directions run over every shipped function, and the definer flag is not
+  // used to filter either of them. It was, and that was N-T1: the filter skipped
+  // whole files, so 0227's two callable (non-definer) helpers were invisible and
+  // two correct allowlist entries read as phantoms. An allowlist entry exists
+  // because a login may CALL the function, so every callable function a
+  // migration creates has to be accounted for in both directions whatever its
+  // own security properties are.
+  const shipped = await shippedSecurityDefinerFunctions();
   // The shipped names carry SQL argument NAMES; the preflight carries TYPES.
   // Compare on shape, so a rename of a parameter is not a finding and a new
   // function is.
-  const shape = (signature: string) => signature.replace(/\(([^)]*)\)/u, (all, args: string) =>
-    `(${args.split(",").length})`);
-  const shapes = new Set([...shipped.keys()].map(shape));
-  assert.deepEqual([...shipped.keys()].filter(signature => !exempted.has(signature) && !shapes.has(shape(signature))).sort(), [],
-    "a SECURITY DEFINER function a migration creates is not on the preflight's allowlist, so a correct database is refused");
-  assert.deepEqual([...exempted].filter(signature => !shapes.has(shape(signature))).sort(), [],
+  const shapes = new Set([...shipped.keys()].map(shapeOf));
+  assert.deepEqual([...shipped.keys()].filter(signature => !exempted.has(signature) && !shapes.has(shapeOf(signature))).sort(), [],
+    "a callable function a migration creates is not on the preflight's allowlist, so a correct database is refused");
+  assert.deepEqual([...exempted].filter(signature => !shapes.has(shapeOf(signature))).sort(), [],
     "the preflight exempts a function no migration creates; a renamed or removed function is now a hole in the scan");
 
   // The specific shape that broke: the owner check may not sit inside the
