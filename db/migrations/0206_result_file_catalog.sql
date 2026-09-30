@@ -113,14 +113,14 @@ CREATE TABLE control_result_files (
     AND display_name !~ '"' AND display_name !~ '\.\.' AND display_name !~ '^\.'
     AND display_name ~ '^[A-Za-z0-9]'),
   declared_media_type text NOT NULL CHECK (declared_media_type IN
-    ('text/plain','text/markdown','text/csv','application/json','image/png','image/jpeg',
+    ('text/plain','text/markdown','text/csv','text/html','application/json','image/png','image/jpeg',
      'image/gif','image/webp','application/pdf','application/zip','application/octet-stream')),
   -- What the bytes actually look like, sniffed by the writer. Declared and
   -- detected are both recorded, and they are allowed to disagree: that
   -- disagreement is itself a fact the owner must be able to see, so it is
   -- reported rather than resolved.
   detected_media_type text NOT NULL CHECK (detected_media_type IN
-    ('text/plain','text/markdown','text/csv','application/json','image/png','image/jpeg',
+    ('text/plain','text/markdown','text/csv','text/html','application/json','image/png','image/jpeg',
      'image/gif','image/webp','application/pdf','application/zip','application/octet-stream')),
   size_bytes bigint NOT NULL CHECK (size_bytes BETWEEN 0 AND 268435456),
   content_digest text NOT NULL CHECK (content_digest ~ '^sha256:[a-f0-9]{64}$'),

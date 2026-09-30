@@ -36,6 +36,9 @@ import { parseProductConfigurationV1 } from "../../config/v1/product-configurati
 import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { FleetOwnerServiceV1 } from "../../fleet/v1";
 import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
+import { createResultFileHttpHandlerV1 } from "./result-file-http";
+import type { ResultFileStoreV1 } from "../../artifacts/v1/result-file-store";
+import { composeResultFileService } from "./result-file-composition";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -60,6 +63,9 @@ export interface MacLocalWebProcessOptionsV1 {
   /** Read capabilities from the same host-owned task application as the
    * submission operations. Without them, a published result looks absent. */
   taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey" | "usagePriceTable">;
+  /** The protected result-file byte store. Omitted means the download route
+   * does not exist, which is honest: there is nothing to download from. */
+  resultFileStore?: ResultFileStoreV1;
   /** Same protected installation key used by proposal intake. Omission keeps
    * the Pipelines owner module absent. */
   workBatchIntegrityKey?: Uint8Array;
@@ -165,6 +171,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     localOwnerSession: sessions, service: improvementDesk, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
     channel: createWebPushChannelV1(options.ownerWebPush) } : undefined;
+  // "Save to my Mac" (plan v4.3 2.6). Absent without a download key, and then
+  // the route simply does not exist rather than answering an empty catalog.
+  const resultFiles = options.resultFileStore && options.taskReadKeys?.harnessIntegrityKey
+    ? composeResultFileService({ database: options.database.client, tasks, tenantId: profile.tenantId,
+      downloadKey: options.taskReadKeys.harnessIntegrityKey, store: options.resultFileStore, clock })
+    : undefined;
+  const resultFileHttp = resultFiles ? createResultFileHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: resultFiles, clock }) : undefined;
   const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
     service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
       clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
@@ -455,6 +469,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
       if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
+      if (resultFileHttp && /^\/api\/v1\/projects\/[^/]+\/result-files(?:\/|$)/.test(url.pathname))
+        return resultFileHttp(request);
       if (operationsModeHttp && url.pathname === "/api/v1/operations-mode") return operationsModeHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);

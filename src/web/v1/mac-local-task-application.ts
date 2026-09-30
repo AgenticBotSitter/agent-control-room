@@ -1,3 +1,4 @@
+import type { ResultFileStoreV1 } from "../../artifacts/v1/result-file-store";
 import type { PrivateWebProcessOptions } from "./private-process";
 import type { WebTaskKeys } from "./task-service";
 import { WebTaskReviewService } from "./task-review-service";
@@ -22,6 +23,8 @@ export type MacLocalTaskApplicationV1 = Readonly<{
   taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "manualVerificationScenarios" | "usagePriceTable">
     & Pick<WebTaskKeys, "taskPlanIntegrityKey">;
   projectEvents?: ProjectEventReadSourceV1;
+  /** The protected result-file byte store, forwarded to the download route. */
+  resultFileStore?: ResultFileStoreV1;
   isReady(): boolean;
   close(): Promise<void>;
   queueDelivery?: ReturnType<typeof createTaskCoordinatorLifecycle>["queueDelivery"];
@@ -38,6 +41,9 @@ export type MacLocalTaskApplicationInputV1 = Readonly<{
     database: TaskCoordinatorDatabase;
   };
   coordinator: TaskCoordinatorConfiguration;
+  /** The SAME store instance the publishers write through, forwarded rather than
+   * opened again: two instances would be two views of one directory. */
+  resultFileStore?: ResultFileStoreV1;
   clock?: () => number;
 }>;
 
@@ -106,6 +112,9 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
         results: tasks.results, reviews: tasks.reviews, ownerReviews: tasks.ownerReviews,
         modelCatalog: tasks.modelCatalog, manualVerificationScenarios: tasks.manualVerificationScenarios,
         usagePriceTable: tasks.usagePriceTable } } : {}),
+      // The download route reads the SAME store instance the publishers write
+      // through, forwarded from the composition rather than opened a second time.
+      ...(input.resultFileStore ? { resultFileStore: input.resultFileStore } : {}),
       isReady: lifecycle.isReady.bind(lifecycle),
       close: lifecycle.close.bind(lifecycle),
       ...(lifecycle.queueDelivery ? { queueDelivery: lifecycle.queueDelivery } : {}),
