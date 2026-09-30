@@ -9,6 +9,7 @@ import type { ProjectOrchestrationSettingsV1, ProjectOrchestrationSuggestionV1 }
   "../src/web/v1/project-orchestration-wire";
 import type { createProjectOrchestrationBrowserClient } from "../src/web/v1/project-orchestration-browser-client";
 import type { WorkBatchOwnerViewV1 } from "../src/work-intake/v1/owner-schemas";
+import { BrowserRequestError } from "../src/web/v1/browser-client";
 
 const projectId = "project:test", batchId = "batch:test", now = "2026-09-29T12:00:00.000Z";
 const option = { key: "planner:1", label: "worker:chief · model:plan · high", workerId: "worker:chief",
@@ -244,6 +245,40 @@ test("Dismiss is offered only with a durable record, and says why when it is not
   assert.doesNotMatch(without, />Dismiss</);
   assert.match(without, /not recorded yet/);
   assert.match(without, /Use this/);
+});
+
+test("a dropped response retains the request: Prepare stays disabled until it is retried or forgotten", async () => {
+  // A recording client that reports a retained request, so the panel's held state
+  // is driven by the client's own answer rather than by a prop.
+  const readValue = settings("selected");
+  let retained = true;
+  const client: Client = Object.freeze({ ...recordingClient(readValue, noCalls()),
+    hasPendingDescription: () => retained,
+    async retryDescription() { retained = false; return { status: "proposal", batchId,
+      href: `/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}`,
+      startsWork: false, grantsExecutionAuthority: false } as const; },
+    forgetPendingDescription() { retained = false; },
+    async describe() { throw new BrowserRequestError("uncertain"); } });
+  const view = await mount(createElement(ProjectOrchestrationPanel, { projectId, client }));
+  try {
+    const textarea = view.document.querySelector("textarea") as HTMLTextAreaElement;
+    await view.act(async () => { enter(view.window, textarea, "Prepare it"); });
+    await view.act(async () => { buttonNamed(view.document, "Prepare proposal")?.click(); await Promise.resolve(); });
+    assert.ok(view.document.querySelector("[role='alert']"), "a dropped response is announced");
+    assert.match(view.document.body.textContent ?? "", /Retry only this exact request/);
+    // M13: while the request is retained, Prepare must be disabled -- the owner
+    // cannot start a second, different run by editing the text and pressing it.
+    const prepare = buttonNamed(view.document, "Prepare proposal");
+    assert.equal(prepare?.disabled, true, "Prepare stays disabled while a request is retained");
+    const retry = buttonNamed(view.document, "Check this exact request again");
+    assert.ok(retry, "the exact-request retry is offered");
+    const forget = buttonNamed(view.document, "Forget this and start a new description");
+    assert.ok(forget, "there is a way out of the retained state without a reload");
+    // F8: forgetting releases the hold so a NEW description can be prepared.
+    await view.act(async () => { forget.click(); await Promise.resolve(); });
+    assert.equal(buttonNamed(view.document, "Prepare proposal")?.disabled, false,
+      "after forgetting, a new description can be prepared again");
+  } finally { await view.close(); }
 });
 
 test("a planner failure is a plain Needs-you alert", async () => {

@@ -229,6 +229,46 @@ test("suggestion use only returns an immutable prefill; stale use refuses and a 
 /** M8: the prefill is a deep clone of a FROZEN stored proposal. Mutating what the
  * caller received must not reach the store, and the stored object must not be
  * reachable in mutable form at all. */
+test("the prefill is a deep clone even when the store's own proposal is mutable", async () => {
+  // The double above freezes what it stores, so a missing clone is invisible there.
+  // This store is the realistic one: it hands back the object it holds, unfrozen,
+  // exactly as a row parsed from JSON would be. Without the clone, the owner
+  // prefill would hand the browser a live reference to stored state.
+  const mutable = new InMemoryProjectOrchestrationStoreV1(tenantId);
+  await mutable.append({ tenantId, projectId, batchId, requestKey: "resplit:mutable", baseRevision: 2,
+    baseRevisionDigest: revisionDigest, proposerIdentityId: "identity:chief", proposal,
+    proposalDigest: sha256Digest(proposal), flagsByLocalId: {}, createdAt: "2026-09-29T11:00:00.000Z" });
+  const store = { read: mutable.read.bind(mutable), readSettings: mutable.readSettings.bind(mutable),
+    saveSettings: mutable.saveSettings.bind(mutable), dismissedSuggestionIds: mutable.dismissedSuggestionIds.bind(mutable),
+    listSuggestions: async (input: { projectId: string; batchId: string }) => {
+      const values = await mutable.listSuggestions({ tenantId, ...input });
+      // Deliberately NOT frozen: this is the condition the clone exists for.
+      return values.map(value => ({ ...value, proposal: structuredClone(value.proposal) }));
+    },
+    prefillForOwner: mutable.prefillForOwner.bind(mutable),
+    dismiss: mutable.dismiss.bind(mutable) };
+  const service = createProjectOrchestrationOwnerAdapterV1({ tenantId, coordinatorPrincipal: agent,
+    coordinator: { async coordinateInitial() { throw new Error("zzz"); }, ownerPrefill: store.prefillForOwner },
+    store: store as never, queueCatalog: catalog, describeAvailable: true,
+    dismissals: { async record(input: Readonly<{ suggestionId: string; baseRevision: number }>) {
+      store.dismiss({ tenantId, projectId, batchId, suggestionId: input.suggestionId,
+        expectedRevision: input.baseRevision }); } },
+    clock: () => Date.parse("2026-09-29T11:00:00.000Z"),
+    access: { async owner() { return { tenantId, ownerIdentityId: "identity:owner" }; } },
+    batches: { async read() { return { revision: 2, revisionDigest, state: "proposed" }; } } });
+  const id = (await service.listSuggestions(identity, projectId, batchId) as { suggestions: Array<{ suggestionId: string }> })
+    .suggestions[0]!.suggestionId;
+  const listed = (await store.listSuggestions({ projectId, batchId }))[0]!;
+  const prefill = await service.useSuggestion(identity, projectId, batchId, id, 2);
+  assert.equal(Object.isFrozen(prefill.proposal), true, "the prefill is frozen whatever the store returned");
+  assert.equal(Object.isFrozen(prefill.proposal.tasks[0]), true, "the clone is deep, not one level");
+  assert.equal(prefill.proposal === listed.proposal, false, "the prefill is not the store's own object");
+  assert.notEqual(prefill.proposal.tasks[0], listed.proposal.tasks[0],
+    "no shared reference survives into the owner's copy");
+  // With a mutable store, dropping the clone would leave this assignment working.
+  assert.throws(() => { (prefill.proposal.tasks as unknown[]).length = 0; }, TypeError);
+});
+
 test("the prefill is a deep clone: mutating it cannot reach the stored proposal", async () => {
   const f = fixture({ withDismissals: true });
   await seedSuggestion(f.store, "resplit:clone");
@@ -246,6 +286,42 @@ test("the prefill is a deep clone: mutating it cannot reach the stored proposal"
   const stored = await f.store.listSuggestions({ tenantId, projectId, batchId });
   assert.equal(Object.isFrozen(stored[0]!.proposal.tasks[0]), true);
   assert.throws(() => { (stored[0]!.proposal.tasks as unknown[]).length = 0; }, TypeError);
+});
+
+/** F9: `listSuggestions` maps straight over store records, so a store returning its
+ * LIVE objects would hand the browser client a mutable reference to stored state.
+ * The listing is frozen on the way out, not only at the prefill. */
+test("the suggestion listing is frozen even when the store hands back live objects", async () => {
+  const mutable = new InMemoryProjectOrchestrationStoreV1(tenantId);
+  await mutable.append({ tenantId, projectId, batchId, requestKey: "resplit:live", baseRevision: 2,
+    baseRevisionDigest: revisionDigest, proposerIdentityId: "identity:chief", proposal,
+    proposalDigest: sha256Digest(proposal), flagsByLocalId: {}, createdAt: "2026-09-29T11:00:00.000Z" });
+  const live = mutable.listSuggestions.bind(mutable);
+  const service = createProjectOrchestrationOwnerAdapterV1({ tenantId, coordinatorPrincipal: agent,
+    coordinator: { async coordinateInitial() { throw new Error("zzz"); }, ownerPrefill: mutable.prefillForOwner.bind(mutable) },
+    store: { ...mutable, readSettings: mutable.readSettings.bind(mutable),
+      saveSettings: mutable.saveSettings.bind(mutable), read: mutable.read.bind(mutable),
+      dismissedSuggestionIds: mutable.dismissedSuggestionIds.bind(mutable),
+      // A live, unfrozen store object on every read -- the condition the listing's
+      // own freeze exists for.
+      listSuggestions: async (input: Readonly<{ projectId: string; batchId: string }>) => {
+        const values = await live({ tenantId, ...input });
+        return values.map(value => ({ ...value, proposal: structuredClone(value.proposal) }));
+      } } as never,
+    queueCatalog: catalog, describeAvailable: true,
+    clock: () => Date.parse("2026-09-29T11:00:00.000Z"),
+    access: { async owner() { return { tenantId, ownerIdentityId: "identity:owner" }; } },
+    batches: { async read() { return { revision: 2, revisionDigest, state: "proposed" }; } } });
+  const page = await service.listSuggestions(identity, projectId, batchId) as
+    { suggestions: Array<{ proposal: { tasks: unknown[] } }> };
+  assert.equal(Object.isFrozen(page.suggestions[0]!.proposal), true,
+    "the listing is frozen, not the store's own object handed through");
+  const listedTasks = page.suggestions[0]!.proposal.tasks;
+  assert.equal(Object.isFrozen(listedTasks[0]), true, "the freeze is deep, not one level");
+  assert.throws(() => { listedTasks.length = 0; }, TypeError);
+  // The store still holds its own untouched copy.
+  const stored = await live({ tenantId, projectId, batchId });
+  assert.equal(stored[0]!.proposal.tasks.length, 1);
 });
 
 /** M6: the dismiss path's current-state/revision check, at the adapter AND at the
@@ -267,6 +343,17 @@ test("dismiss refuses a stale expected revision, and is refused entirely with no
     .suggestions[0]!.suggestionId;
   assert.equal((await noRecord.service.readSettings(identity, projectId)).dismissAvailable, false);
   await assert.rejects(noRecord.service.dismissSuggestion(identity, projectId, batchId, noId, 2), /not_found/);
+  // The STORE's own binding, called directly: a dismissal at a revision the
+  // suggestion is not bound to is refused even when no adapter stands in front.
+  const stale = fixture({ withDismissals: true });
+  await seedSuggestion(stale.store, "resplit:stale-bind");
+  const staleId = (await stale.store.listSuggestions({ tenantId, projectId, batchId }))[0]!.suggestionId;
+  await assert.rejects(async () => stale.store.dismiss({ tenantId, projectId, batchId, suggestionId: staleId,
+    expectedRevision: 1 }), /conflict/, "the store refuses a dismissal bound to another revision");
+  assert.deepEqual(await stale.store.dismissedSuggestionIds({ tenantId, projectId, batchId }), [],
+    "a refused dismissal records nothing");
+  await assert.rejects(async () => stale.store.dismiss({ tenantId: "tenant:other", projectId, batchId,
+    suggestionId: staleId, expectedRevision: 2 }), /access_denied/);
   assert.equal((await noRecord.service.listSuggestions(identity, projectId, batchId) as { suggestions: unknown[] }).suggestions.length, 1,
     "a refused dismissal leaves the card visible rather than pretending it is gone");
 });
