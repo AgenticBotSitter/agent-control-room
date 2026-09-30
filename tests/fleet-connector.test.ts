@@ -1040,7 +1040,8 @@ test("MCP server: exposes the six worker tools, audits calls, uses the gateway, 
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "MCP agent");
   const task = await offer(f, PROJECT_A, "mcp-1");
-  const workspace = join(f.dir, "workspace"); await mkdir(workspace);
+  const workspace = await mkdtemp(join(tmpdir(), "fleet-mcp-workspace-"));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
   await writeFile(join(workspace, "answer.md"), "# Answer\n");
   await writeFile(join(f.dir, "secret.txt"), "outside");
   await symlink(join(f.dir, "secret.txt"), join(workspace, "link.txt"));

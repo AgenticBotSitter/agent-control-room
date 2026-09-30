@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { link, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
@@ -18,8 +18,8 @@ function resultValue(reply: any) {
   return JSON.parse(reply.result.content[0].text);
 }
 
-function dispatcher(client: Record<string, unknown>, workspaceRoot: string): (request: unknown) => Promise<any> {
-  const dispatch = connector.createMcpDispatcher({ client, workspaceRoot });
+function dispatcher(client: Record<string, unknown>, workspaceRoot?: string, configPath?: string): (request: unknown) => Promise<any> {
+  const dispatch = connector.createMcpDispatcher({ client, workspaceRoot, configPath });
   return request => dispatch(request) as Promise<any>;
 }
 
@@ -137,11 +137,140 @@ test("MCP result files cannot traverse or escape through a symbolic link", async
   await symlink(join(parent, "outside.txt"), join(root, "link.txt"));
   const f = fakeClient();
   const dispatch = dispatcher(f.client, root);
-  for (const path of ["../outside.txt", "link.txt"]) {
+  for (const path of ["../outside.txt", join(parent, "outside.txt"), "link.txt"]) {
     const reply = await dispatch(message(1, "submit_result", { claimId: CLAIM, answer: "done", files: [path] }));
     assert.equal(reply.result.isError, true);
   }
   assert.ok(!f.calls.some(call => call[0] === "result"));
+});
+
+test("MCP attachment identity check refuses path and inode changes during inspection", () => {
+  const original = { dev: 1, ino: 2 };
+  assert.equal(connector.attachmentIdentityUnchanged("/workspace/file.txt", "/workspace/file.txt",
+    original, original, original), true);
+  assert.equal(connector.attachmentIdentityUnchanged("/workspace/file.txt", "/outside/file.txt",
+    original, original, original), false);
+  assert.equal(connector.attachmentIdentityUnchanged("/workspace/file.txt", "/workspace/file.txt",
+    original, { dev: 1, ino: 3 }, original), false);
+  assert.equal(connector.attachmentIdentityUnchanged("/workspace/file.txt", "/workspace/file.txt",
+    original, original, { dev: 2, ino: 2 }), false);
+});
+
+test("MCP attachments require a dedicated explicit workspace and exclude the credential directory", async t => {
+  const parent = await mkdtemp(join(tmpdir(), "fleet-mcp-root-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const root = join(parent, "workspace"), configDirectory = join(root, "connector-config");
+  const outerConfigDirectory = join(parent, "outer-config"), nestedRoot = join(outerConfigDirectory, "workspace");
+  await mkdir(configDirectory, { recursive: true });
+  await mkdir(nestedRoot, { recursive: true });
+  await writeFile(join(root, "answer.md"), "safe result\n");
+  await writeFile(join(nestedRoot, "answer.md"), "safe result\n");
+  const configPath = join(configDirectory, "connector.json");
+  const outerConfigPath = join(outerConfigDirectory, "connector.json");
+  const notDirectory = join(parent, "workspace.txt");
+  await writeFile(configPath, "credential fixture\n");
+  await writeFile(outerConfigPath, "credential fixture\n");
+  await writeFile(notDirectory, "not a directory\n");
+
+  const cases: Array<[ReturnType<typeof dispatcher>, RegExp]> = [
+    [dispatcher(fakeClient().client, undefined), /explicit --workspace/u],
+    [dispatcher(fakeClient().client, "/"), /not the filesystem root or home directory/u],
+    [dispatcher(fakeClient().client, homedir()), /not the filesystem root or home directory/u],
+    [dispatcher(fakeClient().client, notDirectory), /workspace must be a directory/u],
+    [dispatcher(fakeClient().client, root, configPath), /separate from the connector credential directory/u],
+    [dispatcher(fakeClient().client, nestedRoot, outerConfigPath), /separate from the connector credential directory/u],
+  ];
+  for (const [index, [dispatch, refusal]] of cases.entries()) {
+    const reply = await dispatch(message(index + 1, "submit_result", { claimId: CLAIM, answer: "done", files: ["answer.md"] }));
+    assert.equal(reply.result.isError, true);
+    assert.match(reply.result.content[0].text, refusal);
+  }
+});
+
+test("MCP refuses credential-like paths, secret text, hard links and aggregate overflow but attaches a normal file", async t => {
+  const parent = await mkdtemp(join(tmpdir(), "fleet-mcp-secrets-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const root = join(parent, "workspace"), configDirectory = join(parent, "config");
+  await mkdir(root); await mkdir(configDirectory);
+  const configPath = join(configDirectory, "connector.json");
+  await writeFile(configPath, "credential fixture\n");
+  await writeFile(join(root, "normal.md"), "ordinary result\n");
+  await writeFile(join(root, ".env.local"), "ordinary fixture\n");
+  await writeFile(join(root, "certificate.pem"), "ordinary fixture\n");
+  await writeFile(join(root, "auth.json"), "{}\n");
+  await writeFile(join(root, "token.txt"), `Bearer ${"a".repeat(20)}\n`);
+  await writeFile(join(root, "settings.json"), JSON.stringify({ api_key: "fixture-secret-value" }));
+  await writeFile(join(root, "renamed.png"), `Bearer ${"b".repeat(20)}\n`);
+  await writeFile(join(root, "renamed.txt"), JSON.stringify({ password: "fixture-secret-value" }));
+  await writeFile(join(root, "oversized.txt"), "x".repeat(262_145));
+  for (const directory of [".ssh", ".aws", join(".config", "gh"), join("Library", "Keychains")])
+    await mkdir(join(root, directory), { recursive: true });
+  for (const path of [join(".ssh", "id.txt"), join(".aws", "profile.txt"), join(".config", "gh", "hosts.json"),
+    join("Library", "Keychains", "login.txt"), ".netrc", "private-key.txt", "credentials-backup.json"])
+    await writeFile(join(root, path), "ordinary fixture\n");
+  await writeFile(join(parent, "linked-source.txt"), "ordinary fixture\n");
+  await link(join(parent, "linked-source.txt"), join(root, "linked.txt"));
+  for (let index = 0; index < 5; index += 1) await writeFile(join(root, `large-${index}.txt`), "x".repeat(220_000));
+  const f = fakeClient();
+  const dispatch = dispatcher(f.client, root, configPath);
+
+  const refused: Array<[string, RegExp]> = [
+    [".env.local", /may contain credentials or keys/u],
+    ["certificate.pem", /may contain credentials or keys/u],
+    ["auth.json", /may contain credentials or keys/u],
+    [join(".ssh", "id.txt"), /may contain credentials or keys/u],
+    [join(".aws", "profile.txt"), /may contain credentials or keys/u],
+    [join(".config", "gh", "hosts.json"), /may contain credentials or keys/u],
+    [join("Library", "Keychains", "login.txt"), /may contain credentials or keys/u],
+    [".netrc", /may contain credentials or keys/u],
+    ["private-key.txt", /may contain credentials or keys/u],
+    ["credentials-backup.json", /may contain credentials or keys/u],
+    ["token.txt", /secret material/u],
+    ["settings.json", /secret material/u],
+    ["renamed.png", /secret material/u],
+    ["renamed.txt", /secret material/u],
+    ["linked.txt", /single-link regular files/u],
+    ["oversized.txt", /single-link regular files/u],
+    ["missing.txt", /ENOENT/u],
+  ];
+  for (const [index, [path, refusal]] of refused.entries()) {
+    const reply = await dispatch(message(index + 1, "submit_result", { claimId: CLAIM, answer: "done", files: [path] }));
+    assert.equal(reply.result.isError, true, path);
+    assert.match(reply.result.content[0].text, refusal, path);
+  }
+  const overflow = await dispatch(message(10, "submit_result", { claimId: CLAIM, answer: "done",
+    files: Array.from({ length: 5 }, (_, index) => `large-${index}.txt`) }));
+  assert.equal(overflow.result.isError, true);
+  const accepted = await dispatch(message(11, "submit_result", { claimId: CLAIM, answer: "done", files: ["normal.md"] }));
+  assert.equal(accepted.result.isError, undefined);
+  const call = f.calls.find(value => value[0] === "result");
+  assert.equal(Buffer.from((call?.[3] as Array<{ contentBase64: string }>)[0]!.contentBase64, "base64").toString(), "ordinary result\n");
+});
+
+test("MCP attachment guard survives 200 concurrent mixed requests without leaking a bad file", async t => {
+  const parent = await mkdtemp(join(tmpdir(), "fleet-mcp-stress-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const root = join(parent, "workspace"), configDirectory = join(parent, "config"), outside = join(parent, "outside.txt");
+  await mkdir(root); await mkdir(configDirectory);
+  await writeFile(join(root, "normal.txt"), "safe\n");
+  await writeFile(join(root, ".env"), "fixture\n");
+  await writeFile(join(root, "secret.txt"), `api_key=${"s".repeat(20)}\n`);
+  await writeFile(outside, "outside\n");
+  const configPath = join(configDirectory, "connector.json");
+  await writeFile(configPath, "credential fixture\n");
+  await symlink(outside, join(root, "escape.txt"));
+  const f = fakeClient();
+  const dispatch = dispatcher(f.client, root, configPath);
+  const bad = ["../outside.txt", "escape.txt", ".env", "secret.txt"];
+  const replies = await Promise.all(Array.from({ length: 200 }, (_, index) => dispatch(message(index + 1, "submit_result", {
+    claimId: CLAIM, answer: "done", files: [index % 5 === 0 ? "normal.txt" : bad[index % bad.length]!],
+  }))));
+  assert.equal(replies.filter(reply => reply.result.isError).length, 160,
+    replies.slice(0, 5).map(reply => reply.result.content[0].text).join(" | "));
+  assert.equal(replies.filter(reply => !reply.result.isError).length, 40);
+  const submitted = f.calls.filter(call => call[0] === "result");
+  assert.equal(submitted.length, 40);
+  assert.ok(submitted.every(call => (call[3] as Array<{ name: string }>)[0]?.name === "normal.txt"));
 });
 
 test("stdio MCP returns protocol errors for malformed and oversized JSON-RPC messages", async t => {
