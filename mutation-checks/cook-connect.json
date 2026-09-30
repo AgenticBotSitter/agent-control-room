@@ -211,6 +211,20 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
+    "find": "    if (error?.preflightFailure === true && pending === undefined) await removeConfigArtifacts(configPath);",
+    "replace": "    if (error?.preflightFailure === true) await removeConfigArtifacts(configPath);",
+    "test": "node --test --test-name-pattern \"preflight retries retain\" tests/fleet-connector-install.test.mjs",
+    "why": "a preflight refusal during a retry retains the original pending secret and nonce because the prior enrollment may have committed"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    response = await fetcher(`${origin}/fleet/v1/connector-manifest.json`, { method: \"GET\", redirect: \"error\",\n      signal: AbortSignal.timeout(30_000),",
+    "replace": "    response = await fetcher(`${origin}/fleet/v1/connector-manifest.json`, { method: \"GET\", redirect: \"error\",\n      signal: undefined,",
+    "test": "node --test --test-name-pattern \"stalled pre-enrollment manifest\" tests/fleet-connector-install.test.mjs",
+    "why": "the public release preflight has the same bounded 30-second request lifetime as enrollment"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
     "find": "          if (!elected) continue;",
     "replace": "          if (false) continue;",
     "test": "node --test --test-name-pattern \"losing stale cleaner\" tests/fleet-connector-install.test.mjs",

@@ -291,6 +291,7 @@ async function refuseNewerConnectorBeforeEnrollment(origin, fetcher) {
   let response;
   try {
     response = await fetcher(`${origin}/fleet/v1/connector-manifest.json`, { method: "GET", redirect: "error",
+      signal: AbortSignal.timeout(30_000),
       headers: { accept: "application/json" } });
   } catch (error) {
     // Older gateways did not offer this public preflight. The signed enrollment
@@ -301,18 +302,18 @@ async function refuseNewerConnectorBeforeEnrollment(origin, fetcher) {
   }
   if (response.status === 404) return;
   if (response.status !== 200)
-    throw preflightFailure(`The Control Room connector release check failed (${response.status}). Nothing was installed.`);
+    throw preflightFailure(`The Control Room connector release check failed (${response.status}). This preflight did not redeem the join code.`);
   let manifest;
   try { manifest = await response.json(); }
-  catch { throw preflightFailure("The Control Room provided an invalid connector release before enrollment. Nothing was installed."); }
+  catch { throw preflightFailure("The Control Room provided an invalid connector release before enrollment. This preflight did not redeem the join code."); }
   if (!manifest || manifest.schema !== CONNECTOR_RELEASE_MANIFEST_SCHEMA || typeof manifest.version !== "string")
-    throw preflightFailure("The Control Room provided an invalid connector release before enrollment. Nothing was installed.");
+    throw preflightFailure("The Control Room provided an invalid connector release before enrollment. This preflight did not redeem the join code.");
   try {
     if (compareReleaseVersionsV1(manifest.version, CONNECTOR_VERSION) > 0)
       throw preflightFailure(`This Control Room requires connector ${manifest.version}. Download that connector before using this join code.`);
   } catch (error) {
     if (String(error?.message ?? "").startsWith("This Control Room requires")) throw error;
-    throw preflightFailure("The Control Room provided an invalid connector release before enrollment. Nothing was installed.");
+    throw preflightFailure("The Control Room provided an invalid connector release before enrollment. This preflight did not redeem the join code.");
   }
 }
 
@@ -344,7 +345,10 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
     credentialExpiresAt: null, codeDigest, clientNonce, workerKind });
   try { await refuseNewerConnectorBeforeEnrollment(origin, fetcher ?? globalThis.fetch); }
   catch (error) {
-    if (error?.preflightFailure === true) await removeConfigArtifacts(configPath);
+    // A retry may carry a secret whose prior enrollment committed after its
+    // response was lost. Keep that exact retry binding on every preflight
+    // failure; only this call's never-used pending record is disposable.
+    if (error?.preflightFailure === true && pending === undefined) await removeConfigArtifacts(configPath);
     throw error;
   }
   const client = createClient({ server: origin, workerId: null, secret }, fetcher);

@@ -259,6 +259,58 @@ test("the fake gateway refuses an unknown worker kind instead of echoing it", as
   await assert.rejects(stat(configPath), error => error.code === "ENOENT");
 });
 
+test("a stalled pre-enrollment manifest request times out before redeeming a join code", async t => {
+  const homeDir = await temporary(t, "connector-preflight-stall-"), configPath = join(homeDir, "pending.json");
+  const realTimeout = AbortSignal.timeout, controller = new AbortController();
+  AbortSignal.timeout = milliseconds => {
+    assert.equal(milliseconds, 30_000);
+    return controller.signal;
+  };
+  t.after(() => { AbortSignal.timeout = realTimeout; });
+  let enrollments = 0;
+  let manifestStarted;
+  const started = new Promise(resolve => { manifestStarted = resolve; });
+  const fetcher = async (url, init = {}) => {
+    if (new URL(url).pathname === "/fleet/v1/enroll") { enrollments += 1; throw new Error("must not enroll"); }
+    assert.equal(init.signal, controller.signal);
+    manifestStarted();
+    return await new Promise((resolve, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
+  };
+  const joining = connector.join({ server: "https://control.example", code: code("S"), workerKind: "codex", configPath, fetcher });
+  await started;
+  controller.abort(new DOMException("The operation timed out", "TimeoutError"));
+  await assert.rejects(joining, error => error?.name === "TimeoutError");
+  assert.equal(enrollments, 0);
+  const pending = await connector.loadConfig(configPath);
+  assert.equal(pending.workerId, null);
+});
+
+test("preflight retries retain the original pending enrollment nonce after a possible committed 503", async t => {
+  const homeDir = await temporary(t, "connector-preflight-retry-"), configPath = join(homeDir, "pending.json");
+  const gateway = fakeGateway();
+  let manifestStatus = 404, enrollAttempts = 0;
+  const fetcher = async (...args) => {
+    if (new URL(args[0]).pathname === "/fleet/v1/connector-manifest.json")
+      return manifestStatus === 404 ? gateway.fetcher(...args) : new Response("unavailable", { status: manifestStatus });
+    enrollAttempts += 1;
+    if (enrollAttempts === 1) return new Response(JSON.stringify({ ok: false }), {
+      status: 503, headers: { "content-type": "application/json" },
+    });
+    return gateway.fetcher(...args);
+  };
+  const input = { server: "https://control.example", code: code("R"), workerKind: "cursor", configPath, fetcher };
+  await assert.rejects(connector.join(input), error => error?.code === "http_503");
+  const firstPending = await connector.loadConfig(configPath);
+  manifestStatus = 503;
+  await assert.rejects(connector.join(input), /release check failed \(503\)/u);
+  const secondPending = await connector.loadConfig(configPath);
+  assert.equal(secondPending.secret, firstPending.secret);
+  assert.equal(secondPending.clientNonce, firstPending.clientNonce);
+  manifestStatus = 404;
+  await connector.join(input);
+  assert.equal(gateway.state.enrollments, 1);
+});
+
 test("a definitive enrollment refusal is cleanly retryable and a transport-pending profile can be uninstalled", async t => {
   const homeDir = await temporary(t, "connector-refused-enrollment-"), pathsInput = { homeDir, platform: "linux", env: {}, name: "refused" };
   let refuse = true;
