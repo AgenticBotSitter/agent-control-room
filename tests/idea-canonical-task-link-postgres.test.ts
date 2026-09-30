@@ -25,6 +25,7 @@ import { buildIdeaLabFixtureV1 } from "../src/idea-lab/v1/fixture";
 import { buildIdeaLabSessionV1 } from "../src/idea-lab/v1/contracts";
 import { IdeaLabProjectRegistryStoreV1 } from "../src/idea-lab/v1/store";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../src/idea-lab/v1/canonical-task-link-store";
+import { IdeaLabErrorV1 } from "../src/idea-lab/v1/errors";
 import { IdeaLabCanonicalTaskProposalServiceV1 } from "../src/idea-lab/v1/canonical-task-proposal";
 import { buildIdeaLabCanonicalTaskPlanV1 } from "../src/idea-lab/v1/canonical-task-plan";
 import { buildIdeaLabOwnerPromptV1 } from "../src/idea-lab/v1/discussion-prompt";
@@ -233,9 +234,17 @@ test("Idea Lab canonical task links record and replay through the production web
         // A changed record for the same task key is refused, and the stored
         // provenance is left untouched.
         const storedBefore = (await links.list(session.tenantId, session.sessionId)).length;
-        await assert.rejects(links.record(changedPlan, first.receipts[0]!.receipt),
-          /scope_mismatch|duplicate_record|integrity_failed/u,
-          "a different link for an already linked task key is refused");
+        // A raw 23505 from the driver would also satisfy a loose pattern while
+        // leaking an internal constraint name to the browser boundary, so accept
+        // only the store's own IdeaLabErrorV1 refusal codes. A predicate rather
+        // than a regexp, because that class also sets `name` to "IdeaLabErrorV1".
+        await assert.rejects(links.record(changedPlan, first.receipts[0]!.receipt), (thrown: unknown) => {
+          assert.ok(thrown instanceof IdeaLabErrorV1,
+            `expected the store's own refusal, got ${String(thrown)}`);
+          assert.ok(["scope_mismatch", "duplicate_record", "integrity_failed"].includes(thrown.safeCode),
+            `unexpected refusal code ${thrown.safeCode}`);
+          return true;
+        }, "a different link for an already linked task key is refused by the store itself");
         assert.equal((await links.list(session.tenantId, session.sessionId)).length, storedBefore,
           "a refused record leaves the provenance table unchanged");
 
