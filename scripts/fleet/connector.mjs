@@ -15,7 +15,7 @@
 // widen permissions: the gateway has no such routes.
 
 import { createHash, randomBytes } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { constants as fsConstants, promises as fsPromises, realpathSync } from "node:fs";
 import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -33,6 +33,7 @@ const MEDIA_TYPES = Object.freeze({ ".txt": "text/plain", ".log": "text/plain", 
   ".csv": "text/csv", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg", ".pdf": "application/pdf", ".srt": "text/plain", ".vtt": "text/plain" });
 const MAX_FILE_BYTES = 262_144;
+const MAX_TOTAL_FILE_BYTES = 1_048_576;
 const MAX_RESULT_BYTES = 65_536;
 const MAX_PROPOSAL_BYTES = 256 * 1024;
 const MAX_MCP_MESSAGE_BYTES = 512 * 1024;
@@ -841,10 +842,64 @@ function pathContains(parent, child) {
   return fromParent === "" || (!fromParent.startsWith(`..${sep}`) && fromParent !== ".." && !isAbsolute(fromParent));
 }
 
-function validateWorkspaceTarget(paths, homeDir) {
-  if (dirname(paths.workspace) === paths.workspace || resolve(paths.workspace) === resolve(homeDir)
-    || pathContains(paths.workspace, paths.configRoot) || pathContains(paths.configRoot, paths.workspace))
-    throw new Error("The workspace cannot be the filesystem root, your home folder, or the Control Room credential folder.");
+function sameFilesystemIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function directoryIdentityChain(path, kind) {
+  let current;
+  try { current = await realpath(path); }
+  catch { throw new Error(`The ${kind} could not be checked safely.`); }
+  const canonicalPath = current;
+  const chain = [];
+  for (;;) {
+    let info;
+    try { info = await stat(current); }
+    catch { throw new Error(`The ${kind} could not be checked safely.`); }
+    if (!info.isDirectory()) throw new Error(`The ${kind} must exist and be a directory.`);
+    chain.push(info);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return { canonicalPath, chain };
+}
+
+/** One identity-based boundary for install, MCP startup, and every attachment.
+ * Endpoint identities are compared with both ancestry chains so aliases and
+ * macOS firmlinks cannot turn the credential directory into a workspace.
+ * @param {string} workspaceRoot
+ * @param {{ configPath?: string, homeDir?: string, platform?: NodeJS.Platform }} options */
+export async function validateWorkspaceBoundary(workspaceRoot, { configPath, homeDir = homedir(),
+  platform = process.platform } = {}) {
+  if (typeof workspaceRoot !== "string" || !workspaceRoot || !isAbsolute(workspaceRoot))
+    throw new Error("The workspace must be an absolute directory path.");
+  const dataVolume = "/System/Volumes/Data";
+  if (platform === "darwin" && pathContains(dataVolume, workspaceRoot))
+    throw new Error("The workspace cannot be inside the macOS data-volume alias.");
+  const workspace = await directoryIdentityChain(workspaceRoot, "workspace");
+  if (platform === "darwin" && pathContains(dataVolume, workspace.canonicalPath))
+    throw new Error("The workspace cannot be inside the macOS data-volume alias.");
+  const workspaceChain = workspace.chain;
+  const homeChain = (await directoryIdentityChain(homeDir, "home folder")).chain;
+  if (homeChain.some(info => sameFilesystemIdentity(workspaceChain[0], info)))
+    throw new Error("The workspace cannot be the filesystem root, your home folder, or an ancestor of your home folder.");
+  if (configPath) {
+    const configDirectories = new Set([dirname(configPath)]);
+    try { configDirectories.add(dirname(await realpath(configPath))); }
+    catch (error) { if (error?.code !== "ENOENT") throw new Error("The credential directory could not be checked safely."); }
+    for (const directory of configDirectories) {
+      const configChain = (await directoryIdentityChain(directory, "credential directory")).chain;
+      if (configChain.some(info => sameFilesystemIdentity(workspaceChain[0], info))
+        || workspaceChain.some(info => sameFilesystemIdentity(configChain[0], info)))
+        throw new Error("The workspace must be separate from the connector credential directory.");
+    }
+  }
+  return workspace.canonicalPath;
+}
+
+async function validateWorkspaceTarget(paths, homeDir, platform) {
+  await validateWorkspaceBoundary(paths.workspace, { configPath: paths.configPath, homeDir, platform });
 }
 
 function xml(value) {
@@ -954,7 +1009,6 @@ export async function installConnector({ server, code, bot, name, workspace, hom
   if (alsoWorker && !bundledHarnessAdapterFactory)
     throw new Error("Unattended worker installation requires the bundled Control Room connector release.");
   const paths = connectorInstallPaths({ homeDir, env, platform, name, workspace });
-  validateWorkspaceTarget(paths, homeDir);
   const respectExplicitProfiles = resolve(homeDir) === resolve(realHomeDir);
   // Every worker-input refusal happens BEFORE enrollment, so a bad flag can
   // never consume the owner's single-use join code.
@@ -974,6 +1028,11 @@ export async function installConnector({ server, code, bot, name, workspace, hom
   catch (error) {
     if (error?.code !== "EEXIST") throw error;
     if (!(await stat(paths.workspace)).isDirectory()) throw new Error("The workspace must be a directory.");
+  }
+  try { await validateWorkspaceTarget(paths, homeDir, platform); }
+  catch (error) {
+    if (workspaceCreated) await rmdir(paths.workspace).catch(() => {});
+    throw error;
   }
   if (platform !== "win32") {
     await chmod(paths.botsDir, 0o700);
@@ -1066,19 +1125,125 @@ export function idempotencyKeyFor(tool, args) {
   return `mcp-${createHash("sha256").update(JSON.stringify([tool, args])).digest("hex").slice(0, 40)}`;
 }
 
+// Keep these in step with src/security/redaction.ts. The connector is shipped
+// as one dependency-free file, so it cannot import the TypeScript module.
+const ATTACHMENT_SECRET_PATTERNS = Object.freeze([
+  /-----BEGIN (?:PGP )?(?:[A-Z][A-Z0-9 ]* )?PRIVATE KEY(?: BLOCK)?-----/iu,
+  /\bBearer\s+[a-z0-9._~+/=-]{12,}/iu,
+  /(?:api[_-]?key|password|passphrase|secret|access[_-]?token|refresh[_-]?token)\s*[:=]\s*[^\s,;]{6,}/iu,
+  /(?:X-Amz-Signature|X-Amz-Credential)=/iu,
+  /\b(?:gh[opsu]_|github_pat_|sk_(?:live|test)_|sk-(?:ant-)?|xox[abprs]-|npm_)[a-z0-9_-]{12,}/iu,
+  /\bAKIA[0-9A-Z]{16}\b/u,
+  /\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b/u,
+  /https?:\/\/[^\s/:@]+:[^\s/@]+@/iu,
+  /\b(?:crf|crj)_[A-Za-z0-9_-]{43}\b/u,
+]);
+const ATTACHMENT_SECRET_KEY = /(?:password|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|private[_-]?key|session[_-]?cookie|(?:^|[_-])(?:token|auth|credential)(?:$|[_-]))/iu;
+const ATTACHMENT_REFERENCE_KEY = /(?:ref|refs|id|ids|digest|hash)$/iu;
+
+function inside(parent, child) {
+  return child === parent || child.startsWith(parent + sep);
+}
+
+export function attachmentIdentityUnchanged(expectedPath, confirmedPath, expectedInfo, openedInfo, confirmedInfo) {
+  return confirmedPath === expectedPath && openedInfo.dev === expectedInfo.dev && openedInfo.ino === expectedInfo.ino
+    && confirmedInfo.dev === openedInfo.dev && confirmedInfo.ino === openedInfo.ino;
+}
+
+function forbiddenAttachmentPath(path) {
+  const parts = path.toLowerCase().split(/[\\/]+/u).filter(Boolean);
+  const name = parts.at(-1) ?? "";
+  return parts.includes(".ssh") || parts.includes(".aws")
+    || parts.some((part, index) => part === ".config" && parts[index + 1] === "gh")
+    || parts.includes("keychains") || name.endsWith(".keychain") || name.endsWith(".keychain-db")
+    || name === ".netrc" || name.endsWith(".pem") || /(?:^|[._-])(?:api[-_]?key|private[-_]?key|key)(?:[._-]|$)/iu.test(name)
+    || name.startsWith(".env") || name === "auth.json" || name.startsWith("credentials")
+    || [".credentials.json", "service-account.json", "application_default_credentials.json", "token.json",
+      "secrets.json"].includes(name);
+}
+
+function jsonContainsSecret(value, depthLimit = 64) {
+  const pending = [{ value, depth: 0 }];
+  while (pending.length) {
+    const current = pending.pop();
+    if (current.depth > depthLimit) throw new Error("Attachment JSON nesting is too deep.");
+    if (!current.value || typeof current.value !== "object") continue;
+    const entries = Object.entries(current.value);
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index];
+      if (ATTACHMENT_SECRET_KEY.test(key) && !ATTACHMENT_REFERENCE_KEY.test(key)
+        && child !== null && child !== undefined) return true;
+      if (child && typeof child === "object") pending.push({ value: child, depth: current.depth + 1 });
+    }
+  }
+  return false;
+}
+
+function attachmentCheckError() {
+  return new Error("The attachment could not be checked safely.");
+}
+
 /** Reads a result file only from inside the workspace directory, never
- * through a link that escapes it, and never beyond the size limit. */
-export async function workspaceFile(root, relative) {
-  if (typeof relative !== "string" || !relative) throw new Error("A file path is required.");
-  const base = await realpath(root);
-  const target = await realpath(resolve(base, relative));
-  if (target !== base && !target.startsWith(base + sep)) throw new Error("Only files inside the workspace can be attached.");
+ * through a link that escapes it, and never beyond the size limit.
+ * @param {{ configPath?: string }} options */
+export async function workspaceFile(root, relativePath, { configPath } = {}) {
+  if (typeof root !== "string" || !root) throw new Error("Attachments require an explicit --workspace directory.");
+  if (typeof relativePath !== "string" || !relativePath) throw new Error("A file path is required.");
+  if (isAbsolute(relativePath) || relativePath.split(/[\\/]+/u).includes(".."))
+    throw new Error("Attachment paths must be relative and cannot contain '..'.");
+  const base = await validateWorkspaceBoundary(root, { configPath });
+  let target;
+  try { target = await realpath(resolve(base, relativePath)); }
+  catch { throw attachmentCheckError(); }
+  if (!inside(base, target)) throw new Error("Only files inside the workspace can be attached.");
+  if (forbiddenAttachmentPath(target)) throw new Error("Files that may contain credentials or keys cannot be attached.");
   const mediaType = MEDIA_TYPES[extname(target).toLowerCase()];
   if (!mediaType) throw new Error("That file type cannot be attached.");
-  const info = await stat(target);
-  if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new Error("Attached files must be regular files of at most 256 KiB.");
+  let expectedInfo;
+  try { expectedInfo = await stat(target); }
+  catch { throw attachmentCheckError(); }
+  if (!expectedInfo.isFile() || expectedInfo.nlink !== 1 || expectedInfo.size > MAX_FILE_BYTES)
+    throw new Error("Attached files must be single-link regular files of at most 256 KiB.");
+  let handle;
+  try { handle = await fsPromises.open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK); }
+  catch { throw attachmentCheckError(); }
+  let content, openedInfo, readError;
+  try {
+    openedInfo = await handle.stat();
+    if (!openedInfo.isFile() || openedInfo.nlink !== 1 || openedInfo.size > MAX_FILE_BYTES)
+      throw new Error("Attached files must be single-link regular files of at most 256 KiB.");
+    const buffer = Buffer.alloc(MAX_FILE_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const read = await handle.read(buffer, length, buffer.length - length, length);
+      if (read.bytesRead === 0) break;
+      length += read.bytesRead;
+    }
+    if (length > MAX_FILE_BYTES) throw new Error("Attached files must be single-link regular files of at most 256 KiB.");
+    content = buffer.subarray(0, length);
+  } catch (error) { readError = error; }
+  try { await handle.close(); } catch { readError ??= attachmentCheckError(); }
+  if (readError) {
+    if (readError.message === "Attached files must be single-link regular files of at most 256 KiB.") throw readError;
+    throw attachmentCheckError();
+  }
+  let confirmedTarget, confirmedInfo;
+  try {
+    confirmedTarget = await realpath(resolve(base, relativePath));
+    confirmedInfo = await stat(confirmedTarget);
+  } catch { throw attachmentCheckError(); }
+  if (!attachmentIdentityUnchanged(target, confirmedTarget, expectedInfo, openedInfo, confirmedInfo))
+    throw new Error("The attached file changed while it was being checked.");
+  const text = content.toString("utf8");
+  let secretJson = false;
+  try { secretJson = jsonContainsSecret(JSON.parse(text)); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw new Error("The attachment appears to contain unsafe JSON and was refused.");
+  }
+  if (secretJson || ATTACHMENT_SECRET_PATTERNS.some(pattern => pattern.test(text)))
+    throw new Error("The attachment appears to contain secret material and was refused.");
   const name = basename(target).replace(/[^A-Za-z0-9._-]/gu, "_").replace(/^[^A-Za-z0-9]+/u, "").slice(0, 120) || "file";
-  return { name, mediaType, contentBase64: (await readFile(target)).toString("base64") };
+  return { name, mediaType, contentBase64: content.toString("base64") };
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,7 +1300,8 @@ function validateMcpArguments(name, args) {
   return false;
 }
 
-export function createMcpDispatcher({ client, workspaceRoot }) {
+/** @param {{ client: any, workspaceRoot?: string, configPath?: string }} options */
+export function createMcpDispatcher({ client, workspaceRoot, configPath }) {
   let agreementCheck;
   const checkWorkingAgreement = () => {
     agreementCheck ??= Promise.resolve().then(() => client.me()).then(me => localWorkingAgreement(me.workingAgreement));
@@ -1149,7 +1315,13 @@ export function createMcpDispatcher({ client, workspaceRoot }) {
     post_progress: args => client.progress(args.claimId, args.message, key("progress", args)),
     submit_result: async args => {
       const files = [];
-      for (const path of args.files ?? []) files.push(await workspaceFile(workspaceRoot, path));
+      let totalBytes = 0;
+      for (const path of args.files ?? []) {
+        const file = await workspaceFile(workspaceRoot, path, { configPath });
+        totalBytes += Buffer.from(file.contentBase64, "base64").byteLength;
+        if (totalBytes > MAX_TOTAL_FILE_BYTES) throw new Error("Attachments may total at most 1 MiB.");
+        files.push(file);
+      }
       return client.result(args.claimId, args.answer, files, key("result", args));
     },
     report_blocker: args => client.blocker(args.claimId, args.message, key("blocker", args), args.release === true),
@@ -1221,15 +1393,9 @@ export async function serveMcp({ configPath, input = process.stdin, output = pro
   if (!workspaceRoot) throw new Error("MCP requires an explicit --workspace directory.");
   if (typeof workspaceRoot !== "string" || !isAbsolute(workspaceRoot))
     throw new Error("MCP --workspace must be an absolute directory path.");
-  let workspaceInfo;
-  try { workspaceInfo = await stat(workspaceRoot); }
-  catch (error) {
-    if (error?.code === "ENOENT") throw new Error("MCP --workspace must exist and be a directory.");
-    throw error;
-  }
-  if (!workspaceInfo.isDirectory()) throw new Error("MCP --workspace must exist and be a directory.");
+  await validateWorkspaceBoundary(workspaceRoot, { configPath });
   const client = lazyRecoveredMcpClient({ configPath, fetcher });
-  const dispatch = createMcpDispatcher({ client, workspaceRoot });
+  const dispatch = createMcpDispatcher({ client, workspaceRoot, configPath });
   const lines = createInterface({ input, crlfDelay: Infinity });
   for await (const line of lines) {
     if (!line.trim()) continue;
@@ -1885,7 +2051,8 @@ const usage = `Control Room worker connector ${CONNECTOR_VERSION}
   progress <claimId> <message>
   blocker <claimId> <message> [--release]
   result <claimId> --summary <text> [--file <path>]...
-  mcp --profile <name> --workspace <dir> Start the MCP server for an agent (stdin/stdout)
+  mcp --profile <name> --workspace <dir>  Start the MCP server for an agent (stdin/stdout);
+                                          attachments are refused without this dedicated root
 
   --config <path>   Credential file (default ${defaultConfigPath()})
 `;
@@ -1960,7 +2127,8 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
     if (command === "result") {
       const paths = rest.flatMap((arg, i) => arg === "--file" ? [rest[i + 1]] : []);
       const files = [];
-      for (const path of paths) files.push(await workspaceFile(process.cwd(), path));
+      const currentDirectory = runtime.cwd ?? process.cwd();
+      for (const path of paths) files.push(await workspaceFile(currentDirectory, path, { configPath }));
       print(await client.result(positional[0], values.summary, files, idempotencyKeyFor("result", { claimId: positional[0], summary: values.summary, paths })));
       return 0;
     }

@@ -16,6 +16,7 @@ import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../../src/harness/v1/owner-trusted-local-enablements";
 import { readPinnedMacExecutableVersion } from "../bot-executable-inspection.mjs";
+import { ensureHealthProbeKeyV1 } from "../provision-database.mjs";
 // The shared disposable-cluster teardown. `.mjs` because
 // `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
 // `.ts` module could not be imported by one of its own callers.
@@ -226,6 +227,17 @@ const workIntake = captureWorkIntakeServerConfigurationV1({ schema: WORK_INTAKE_
 for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)],
   ["work-intake-server.json", JSON.stringify(workIntake)], ["owner-sign-in.txt", ownerCode]])
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
+// The independent host-readiness probe key. `mac:up` and the task host both
+// refuse to start without it (loadHealthProbeKeyV1 in start-web-host.mjs), and
+// until afc636354 only the VPS provisioner created it -- so a rehearsal root,
+// and therefore the phone preview and any other `mac:rehearsal up` user, could
+// never start a host. This rehearsal builds a complete protected root, so it
+// must create the same key the provisioner does, through the provisioner's own
+// function so the format, mode and EEXIST-preserves-identity behaviour cannot
+// drift between the two paths.
+const service = join(root, "service");
+mkdirSync(service, { recursive: true, mode: 0o700 }); chmodSync(service, 0o700);
+await ensureHealthProbeKeyV1(root);
 const clientRoot=join(config,"work-intake-clients"); mkdirSync(clientRoot,{recursive:true,mode:0o700});
 for(const {worker,client} of clients) writeFileSync(join(clientRoot,workIntakeClientFileNameV1(worker.workerId)),`${JSON.stringify(client)}\n`,{mode:0o600});
 // An owner price table, present for every rehearsal run: this is the only

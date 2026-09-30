@@ -116,6 +116,12 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
       ?? createMacLocalWorkBatchQueueCatalogV1(configuration) } : {}),
     ...(input.workBatchQueueAdmissionAuthority ? { workBatchQueueAdmissionAuthority: input.workBatchQueueAdmissionAuthority } : {}),
     ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+    // The host's own pid, for the authenticated readiness route. Without this
+    // forwarding the route is absent in this composition and answers 404, so
+    // `mac:up` can never prove a started host is ready -- exactly the failure
+    // `operationsMode` above documents, and for the same reason: the option
+    // exists on the web process but is never mounted here.
+    ...(input.hostProcessId ? { hostProcessId: input.hostProcessId } : {}),
     ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
       healthStartedAt: input.healthStartedAt } : {}),
     ...(input.fleet ? { fleet: input.fleet } : {}),
@@ -248,7 +254,8 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             // type-checks and then silently never arrives, which is exactly how
             // this wiring stayed invisible for a whole stream.
             ...(service ? { supervisor: { operations: createOperationsModeSupervisorPortV1(
-              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason) } }),
+              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason),
+                resumeAfterMachineHealth: request => service!.resumeAfterMachineHealth(request) } }),
               supervisorId: input.supervisorId ?? MAC_LOCAL_SUPERVISOR_ID_V1 } } : {}) }) : undefined;
         if (workBatches && input.createTaskApplication
           && (!taskApplication?.workBatchAuthority || !taskApplication.workBatchView))

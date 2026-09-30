@@ -501,7 +501,8 @@ test("bad install input and real-home CLI use fail before enrollment", async t =
     { out: { write: () => {} }, err: { write: value => { err += value; } } }, { homeDir, realHomeDir: homeDir });
   assert.equal(mcpStatus, 1);
   assert.match(err, /explicit --workspace/u);
-  for (const [workspace, message] of [["relative", /absolute directory/u], [join(homeDir, "missing"), /must exist/u]]) {
+  for (const [workspace, message] of [["relative", /absolute directory/u],
+    [join(homeDir, "missing"), /could not be checked safely/u]]) {
     err = "";
     const invalidWorkspaceStatus = await connector.main(["mcp", "--profile", "real", "--workspace", workspace],
       { out: { write: () => {} }, err: { write: value => { err += value; } } }, { homeDir, realHomeDir: homeDir });
@@ -564,7 +565,7 @@ test("install refuses unsafe workspace roots and preserves an existing workspace
     homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher, runner: recorder().runner, sourcePath: SOURCE };
   const paths = connector.connectorInstallPaths(base);
   for (const workspace of [homeDir, paths.configRoot, dirname(paths.configRoot)]) {
-    await assert.rejects(connector.installConnector({ ...base, workspace }), /workspace cannot be/u);
+    await assert.rejects(connector.installConnector({ ...base, workspace }), /workspace (?:cannot be|must be separate)/u);
   }
   assert.equal(gateway.state.enrollments, 0);
 
