@@ -656,6 +656,54 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                     'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
                     'control_room_idea_creation','control_room_news_coordinator','control_room_fleet_gateway',
                     'control_room_fleet_owner_authority'))))
+            /* MIG-A 0204: the failure-scope key helper, and the SECOND half of
+               R4-B1 that the review did not name. The arm above is
+               '(EXECUTE OR SECURITY DEFINER) AND NOT (<these pins>)', so a pin is
+               needed by every function this login can EXECUTE, not only by every
+               SECURITY DEFINER one. 'planner_failure_scope_key(text, jsonb)' is
+               granted to the coordinator in db/roles/task_coordinator_roles.sql --
+               0204's header explains why it has to be: the SECURITY DEFINER guard
+               calls it, and PostgreSQL checks EXECUTE for the INSERTing role too,
+               so without the grant every escalation is refused with "permission
+               denied for function planner_failure_scope_key".
+
+               Measured consequence of its absence: the COORDINATOR login's startup
+               preflight refused every correct database (test:recurring-work and
+               this stream's own per-login preflight test), while the web login
+               passed -- which is why round 4's measurements, taken through the web
+               login, did not see it. The pin is not a widening: the function is
+               IMMUTABLE, pure SQL, computes a digest over a preimage the caller
+               already holds, and reaches no table, so EXECUTE discloses nothing the
+               coordinator could not compute.
+
+               Pinned on every property the others pin: the exact oid and
+               argument types, NOT SECURITY DEFINER (it is a helper, and a pin that
+               claimed otherwise would exempt a function running as the caller),
+               IMMUTABLE, 'proparallel='s'', not leakproof, owner
+               'control_room_schema_owner', the pinned search_path, no EXECUTE for
+               PUBLIC, and an ACL admitting exactly the one login the role file
+               grants it to. */
+            OR (p.oid='planner_failure_scope_key(text,jsonb)'::regprocedure
+              AND NOT p.prosecdef AND p.provolatile='i' AND p.prokind='f' AND p.prorettype='text'::regtype
+              AND p.pronargs=2 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
+              -- NO search_path IS PINNED, and that is read from the server rather
+              -- than assumed: measured on a real cluster, this function's proconfig
+              -- is NULL, because 0204 created it without a SET clause. Pinning a
+              -- search_path it does not have would refuse every correct database --
+              -- the same failure as R4-B1, one function over. The property is safe
+              -- without one because the body is a single IMMUTABLE SQL expression
+              -- that qualifies every function it calls (public.work_intake_canonical_jsonb,
+              -- pg_catalog.sha256, pg_catalog.encode, pg_catalog.convert_to) and so
+              -- resolves no name through the session's search_path.
+              AND p.proconfig IS NULL
+              AND p.proname='planner_failure_scope_key'
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND has_function_privilege('control_room_task_coordinator',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee)<>'control_room_task_coordinator')))
             /* MIG-A 0204/0205: the Needs-you INSERT guard, a SECURITY DEFINER
                TRIGGER function. THIS ENTRY IS WHAT ROUND 4 FOUND MISSING (R4-B1).
 
