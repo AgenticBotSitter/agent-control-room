@@ -22,6 +22,7 @@ import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
 import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyPrivateDatabase } from "../src/web/v1/private-database-preflight";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1 } from "../src/fleet/v1";
+import { SupervisorReconcilerV1 } from "../src/supervisor/v1";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
@@ -51,6 +52,7 @@ test("fleet connector end to end and least privilege, as the production logins",
   if (!PG) { t.skip(realPostgresSkipMessage()); return; }
   await withRealPostgres(async postgres => {
     const admin = adminPool(postgres), web = pool(postgres, "web"), fleet = pool(postgres, "fleet"),
+      coordinator = pool(postgres, "coordinator"),
       fleetOwner = pool(postgres, "fleetOwner"), workIntake = pool(postgres, "control_room_work_intake_agent");
     const dir = await mkdtemp(join(tmpdir(), "fleet-pg-"));
     const gateway = new FleetGatewayStoreV1(fleet.client, { tenantId: FLEET_TENANT });
@@ -137,6 +139,41 @@ test("fleet connector end to end and least privilege, as the production logins",
       await owner.review(ownerIdentity(), { resultId: second.resultId, decision: "accepted" });
       const job = await direct("web", "SELECT state FROM control_jobs WHERE id=$1", [task.jobId]);
       assert.equal(job.rows[0].state, "succeeded");
+
+      // --- The gateway observes but never expires a fleet lease. The
+      // production coordinator login is the one lease-expiry owner and records
+      // both lapse count and the second-lapse incident/outbox proposal.
+      const lapseTask = await seedProposedTask(admin.client, PROJECT_A, "pg-lapse");
+      const lapseOffer = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: lapseTask.jobId,
+        capability: "writing" });
+      const expireClaim = async (claimId: string) => admin.client.query(`UPDATE control_leases l
+        SET expires_at=statement_timestamp()-interval '1 second',payload=jsonb_set(l.payload,'{expiresAt}',
+          to_jsonb((statement_timestamp()-interval '1 second')::timestamptz))
+        FROM fleet_claims fc WHERE fc.tenant_id=l.tenant_id AND fc.lease_id=l.id AND fc.claim_id=$1`, [claimId]);
+      const firstLapseClaim = await client.claim(lapseOffer.offerId, "pg-lapse-claim-01");
+      await expireClaim(firstLapseClaim.claimId);
+      assert.deepEqual(await gateway.reconcile(), { reviews: 0, revocations: 0 });
+      assert.equal((await direct("web", "SELECT state FROM control_jobs WHERE id=$1", [lapseTask.jobId])).rows[0].state,
+        "leased", "the production fleet login leaves the elapsed lease untouched");
+      const supervisor = new SupervisorReconcilerV1(coordinator.client, FLEET_TENANT, () => Date.now()+1_000);
+      const firstLapse = await supervisor.reconcileStalled();
+      assert.equal(firstLapse.find(outcome => outcome.jobId === lapseTask.jobId)?.lapseNumber, 1);
+      assert.equal((await direct("coordinator", `SELECT lapse_count FROM control_supervisor_task_heads
+        WHERE tenant_id=$1 AND job_id=$2`, [FLEET_TENANT, lapseTask.jobId])).rows[0].lapse_count, "1");
+      const secondLapseClaim = await client.claim(lapseOffer.offerId, "pg-lapse-claim-02");
+      await expireClaim(secondLapseClaim.claimId);
+      const secondLapse = (await Promise.all([supervisor.reconcileStalled(),supervisor.reconcileStalled()])).flat();
+      const committedSecondLapse = secondLapse.filter(outcome => outcome.jobId === lapseTask.jobId&&!outcome.replayed);
+      assert.equal(committedSecondLapse.length,1,"concurrent production-role sweeps commit one second-lapse event");
+      assert.equal(committedSecondLapse[0]?.disposition, "needs_attention");
+      assert.equal((await supervisor.reconcileStalled()).length, 0, "a retry emits no duplicate Needs-you item");
+      assert.equal((await direct("coordinator", `SELECT count(*)::int AS count FROM control_action_inbox
+        WHERE tenant_id=$1 AND kind='incident' AND payload->>'reasonCode'='second_stall_needs_attention'`,
+      [FLEET_TENANT])).rows[0].count, 1);
+      assert.equal((await direct("coordinator", `SELECT count(*)::int AS count FROM control_outbox
+        WHERE tenant_id=$1 AND topic='service.incident.opened' AND aggregate_type='service_incident'
+          AND payload->>'safeReasonCode'='second_stall_needs_attention'`,[FLEET_TENANT])).rows[0].count, 1,
+      "migration 0196 admits the supervisor incident outbox shape for the production coordinator login");
 
       // --- MCP proposals use the production proposal-only intake login and
       // create only the S1 proposal record, never a task, lease or offer.
@@ -225,7 +262,7 @@ test("fleet connector end to end and least privilege, as the production logins",
       assert.equal(identity.rows[0].state, "revoked");
     } finally {
       await new Promise(done => server.close(done));
-      await Promise.all([admin.close(), web.close(), fleet.close(), fleetOwner.close(), workIntake.close()]);
+      await Promise.all([admin.close(), web.close(), fleet.close(), coordinator.close(), fleetOwner.close(), workIntake.close()]);
       await rm(dir, { recursive: true, force: true });
     }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 240_000 });

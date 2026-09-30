@@ -20,6 +20,7 @@ import { captureFleetGatewayConfigurationV1, FLEET_GATEWAY_CONFIGURATION_V1,
   FLEET_GATEWAY_SERVER_OPTIONS_V1, fleetGatewayAdmissionFromConfigurationV1,
   prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
+import { SupervisorReconcilerV1 } from "../src/supervisor/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
 // The connector is a dependency-free .mjs shipped to worker machines.
@@ -792,14 +793,26 @@ test("a claim without a live lease is refused, and no claim can exist without it
       'lease:none','direct-claim-0001',now())`, [FLEET_TENANT, task.offerId, worker.joined.workerId, workerRow.node_id,
       PROJECT_A, task.jobId]);
   }), /without its canonical lease/u);
-  // An elapsed lease: progress and results are refused, and reconcile hands the task back.
+  // An elapsed lease: progress and results are refused, but the gateway leaves
+  // expiry to the supervisor so the durable lapse count cannot be bypassed.
   const claim = await worker.client.claim(task.offerId, "claim-key-lease01");
   await f.raw.query(`UPDATE control_leases SET expires_at=acquired_at+interval '1 millisecond',
     payload=jsonb_set(payload,'{expiresAt}',to_jsonb((acquired_at+interval '1 millisecond')::timestamptz)) WHERE id LIKE 'lease:fleet:%'`);
   await assert.rejects(worker.client.progress(claim.claimId, "late", "progress-key-late"), /expired/u);
   await assert.rejects(worker.client.result(claim.claimId, "late result", [], "result-key-late01"), /expired/u);
   const applied = await f.gateway.reconcile();
-  assert.equal(applied.expiredLeases, 1);
+  assert.deepEqual(applied, { reviews: 0, revocations: 0 });
+  const untouched = await f.query<{ state: string }>("SELECT state FROM control_jobs WHERE id=$1", [task.jobId]);
+  assert.deepEqual(untouched, [{ state: "leased" }], "gateway reconcile does not expire or requeue the fleet lease");
+  const expiredAt = await f.query<{ expires_at: string | Date }>(`SELECT l.expires_at FROM fleet_claims fc
+    JOIN control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id WHERE fc.claim_id=$1`, [claim.claimId]);
+  const reconciled = await new SupervisorReconcilerV1(f.db, FLEET_TENANT,
+    () => Date.parse(new Date(expiredAt[0]!.expires_at).toISOString()) + 1).reconcileStalled();
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0]?.lapseNumber, 1);
+  assert.equal(reconciled[0]?.disposition, "queued");
+  assert.equal((await f.query<{ lapse_count: number }>(`SELECT lapse_count FROM control_supervisor_task_heads
+    WHERE tenant_id=$1 AND job_id=$2`, [FLEET_TENANT, task.jobId]))[0]?.lapse_count, 1);
   const job = await f.query<{ state: string }>("SELECT state FROM control_jobs WHERE id=$1", [task.jobId]);
   assert.deepEqual(job, [{ state: "ready" }]);
   assert.equal((await worker.client.work()).length, 1, "the task is claimable again as a new attempt");

@@ -652,13 +652,15 @@ export class FleetGatewayStoreV1 {
   }
 
   /**
-   * Applies owner decisions and elapsed leases to canonical state. Idempotent
-   * and bounded; safe to call after every owner action and on a timer. The
-   * database refuses any job move here that the owner did not record.
+   * Applies owner decisions and revocations to canonical state. Idempotent and
+   * bounded; safe to call after every owner action and on a timer. Lease expiry
+   * belongs exclusively to SupervisorReconcilerV1, including for fleet work,
+   * so one durable lapse counter decides whether another attempt is allowed.
+   * The database refuses any job move here that the owner did not record.
    */
   async reconcile() {
     const now = this.#now();
-    const applied = { reviews: 0, revocations: 0, expiredLeases: 0 };
+    const applied = { reviews: 0, revocations: 0 };
     const reviews = (await this.db.query<{ review_id: string; result_id: string; decision: string; claim_id: string;
       job_id: string; attempt_id: string; project_id: string }>(`SELECT rv.review_id,rv.result_id,rv.decision,r.claim_id,
         r.job_id,r.attempt_id,r.project_id FROM fleet_result_reviews rv
@@ -707,34 +709,6 @@ export class FleetGatewayStoreV1 {
         if (node.state !== "revoked") await moveFleetEntityV1(tx, node, "revoked", { key: worker.worker_id, occurredAt: now,
           actor: gatewayActor, metadata: { reason: "owner_revoked_worker" } });
         applied.revocations += 1;
-      });
-    }
-    // Leases that elapsed without a result: the attempt is orphaned and the
-    // task returns to the open offer. Nothing is re-run silently: the next
-    // claim is a new attempt with a new lease epoch.
-    const elapsed = (await this.db.query<{ claim_id: string; job_id: string; attempt_id: string; lease_id: string }>(
-      `SELECT fc.claim_id,fc.job_id,fc.attempt_id,fc.lease_id FROM fleet_claims fc
-      JOIN control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id
-      WHERE fc.tenant_id=$1 AND l.state='active' AND l.expires_at<=$2::timestamptz AND l.expires_at<=statement_timestamp()
-      ORDER BY l.expires_at LIMIT 50`, [this.#tenantId, now])).rows;
-    for (const claim of elapsed) {
-      await this.db.transaction(async tx => {
-        const job = await readFleetEntityV1(tx, this.#tenantId, "job", claim.job_id);
-        const attempt = await readFleetEntityV1(tx, this.#tenantId, "attempt", claim.attempt_id);
-        const lease = await readFleetEntityV1(tx, this.#tenantId, "lease", claim.lease_id);
-        if (lease.state !== "active") return;
-        const result = await new CanonicalStore(joined(tx)).expireLease({ tenantId: this.#tenantId, leaseId: lease.id,
-          jobId: job.id, attemptId: attempt.id, expectedLeaseVersion: lease.version, expectedJobVersion: job.version,
-          expectedAttemptVersion: attempt.version, epoch: lease.epoch, transitionId: `transition:fleet-expire:${claim.claim_id.slice(12)}`,
-          idempotencyKey: `fleet-expire:${claim.claim_id.slice(12)}`, actor: { actorId: gatewayActor.actorId, actorType: "service" },
-          occurredAt: now });
-        const offer = (await tx.query<{ state: string }>(`SELECT state FROM fleet_work_offers WHERE tenant_id=$1 AND job_id=$2`,
-          [this.#tenantId, job.id])).rows[0];
-        if (result.job.state === "orphaned" && offer?.state === "open") await moveFleetEntityV1(tx,
-          await readFleetEntityV1(tx, this.#tenantId, "job", job.id), "ready",
-          { key: `${claim.claim_id}:expired`, occurredAt: now, actor: gatewayActor, metadata: { reason: "lease_elapsed" } });
-        await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2", [this.#tenantId, lease.id]);
-        applied.expiredLeases += 1;
       });
     }
     return Object.freeze(applied);
