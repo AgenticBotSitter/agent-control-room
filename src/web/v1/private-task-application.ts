@@ -9,6 +9,7 @@ import { createInstalledPipelineCodexWorkerCompositionV1,
   type InstalledPipelineCodexWorkerCompositionInputV1 } from "../../node-bridge/codex-worker-composition";
 import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1 } from "../../project-events/v1";
 import { DatabaseWorkerBoardReadSourceV1 } from "./worker-board-read";
+import { DatabaseWorkerScorecardReadSourceV1 } from "./worker-scorecard-read";
 
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
@@ -58,6 +59,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     scope: { tenantId: input.tenantId, actorId: input.actorId, grantedAt: input.grantedAt }, now: input.now,
   })).snapshot });
   const workerBoard = new DatabaseWorkerBoardReadSourceV1(coordinator.database.client);
+  const workerScorecard = new DatabaseWorkerScorecardReadSourceV1(coordinator.database.client);
   const actionInboxSource = Object.freeze({ read: async (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string; state: "open";
   }) => {
@@ -76,7 +78,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, workerBoard, actionInboxSource,
+  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, workerBoard, workerScorecard, actionInboxSource,
     // The web login gets only the coordinator snapshot; the transaction-bound
     // authority stays with the controller-side pipeline service above.
     ...(web.workBatches && tasks.workBatchView ? { workBatches: { ...web.workBatches,
