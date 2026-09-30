@@ -20,11 +20,14 @@ database password and never gets your login.
    ```
 
    On Windows, use the PowerShell line shown under **Windows** on the same page.
-5. Keep it connected: `node control-room-connector.mjs run`. The machine shows
-   as **Connected** on the Workers page within a minute.
+5. Keep it connected: `node control-room-connector.mjs run`. On the Control
+   Room Mac, the install line uses `--also-worker` to create an owner
+   LaunchAgent, so it stays connected after login without the task host
+   starting the bot. The machine shows as **Connected** within a minute.
 
-The machine keeps its own key in a private file (`~/.config/control-room/connector.json`,
-readable only by you). The key renews itself every few weeks while `run` is going.
+Each installed bot keeps its own key in a private file
+(`~/.config/control-room/bots/<name>.json`, readable only by you). The key
+renews itself every few weeks while `run` is going.
 
 **If something goes wrong**
 
@@ -68,8 +71,9 @@ time, gives it to that bot on the machine, and sends the answer back to you
 for review.
 
 It only does this when the person at that machine has switched the bot on.
-Write a settings file next to the key file
-(`~/.config/control-room/harnesses.json`) that only you can change:
+The per-bot installer writes a private settings file beside that bot's key
+(`~/.config/control-room/bots/<name>.harnesses.json`). A manual connector can
+use the same schema with `run --harnesses <path>`:
 
 ```json
 {

@@ -45,3 +45,20 @@ test("starts from the same digest-bearing configuration returned by the protecte
   assert.deepEqual(running.workerReadiness.read().map(worker => worker.state), ["ready"]);
   await running.close();
 });
+
+test("connector-only startup opens the service without reading or spawning a bot executable", async () => {
+  const trace: string[] = [];
+  const startup = createMacLocalStartupV1({ connectorOnly: true,
+    async readVersion() { assert.fail("connector-only startup must not inspect a bot CLI"); },
+    openDatabase() { trace.push("database"); return { client: {} as never, async close() { trace.push("database-close"); } }; },
+    createService(input) {
+      trace.push("service");
+      assert.equal(input.workerReadiness, undefined);
+      return { async start() { trace.push("start"); }, async close() { trace.push("close"); } };
+    },
+  });
+  const running = await startup.start(config);
+  assert.deepEqual(trace, ["database", "service", "start"]);
+  assert.equal("workerReadiness" in running, false);
+  await running.close();
+});

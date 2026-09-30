@@ -135,14 +135,14 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   });
 }
 
-/** The fixed Mac-local startup order: load protected configuration, verify the
- * owner-pinned executable versions, then and only then open the one authority
- * database and assemble the loopback website. It starts neither worker nor
- * listener until its explicit start() call. */
+/** The fixed Mac-local startup order. Connector-only service mode loads no bot
+ * adapter and performs no bot executable inspection; the legacy direct mode
+ * remains available only to explicitly composed non-service callers. */
 export function createMacLocalProtectedHostV1(input: Readonly<{
   loadConfiguration(): Promise<MacLocalProtectedConfigurationV1>;
-  readVersion(executablePath: string): Promise<string>;
+  readVersion?: (executablePath: string) => Promise<string>;
   verifyModelPolicy?: Parameters<typeof createMacLocalStartupV1>[0]["verifyModelPolicy"];
+  connectorOnly?: boolean;
   openDatabase(configuration: MacLocalProtectedConfigurationV1["database"]): OpenedDatabase;
   assets: PrivateClientAssets;
   render(request: Request): Promise<Response> | Response;
@@ -178,21 +178,21 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   healthReleaseId?: string;
   healthStartedAt?: string;
 }>) {
-  if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
+  if (!input || typeof input.loadConfiguration !== "function"
+    || (input.connectorOnly !== true && typeof input.readVersion !== "function")
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
     || typeof input.render !== "function") throw new Error("mac_local_host_configuration_invalid");
   if (input.hostProcessId !== undefined
     && (!Number.isSafeInteger(input.hostProcessId) || input.hostProcessId <= 1))
     throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.createTaskApplication) throw new Error("mac_local_host_configuration_invalid");
+  if (input.connectorOnly === true && (input.createTaskApplication || input.startQueueWorker || input.loadDatabaseRoles))
+    throw new Error("mac_local_host_configuration_invalid");
   if (input.createTaskApplication && typeof input.loadDatabaseRoles !== "function") throw new Error("mac_local_host_configuration_invalid");
   if (input.startQueueWorker && (!input.createTaskApplication || typeof input.startQueueWorker !== "function"))
     throw new Error("mac_local_host_configuration_invalid");
-  const startup = createMacLocalStartupV1({
-    readVersion: input.readVersion,
-    ...(input.verifyModelPolicy ? { verifyModelPolicy: input.verifyModelPolicy } : {}),
-    openDatabase: input.openDatabase,
-    createService: async ({ configuration, database, workerReadiness, databaseRoles }) => {
+  const createService = async ({ configuration, database, workerReadiness, databaseRoles }:
+    Parameters<NonNullable<Parameters<typeof createMacLocalStartupV1>[0]["createService"]>>[0]) => {
       let taskApplication: HostedTaskApplication | undefined;
       try {
         if (input.createTaskApplication && !databaseRoles) throw new Error("mac_local_host_configuration_invalid");
@@ -201,7 +201,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             throw new Error("mac_local_host_configuration_invalid");
           const queueCatalog = createMacLocalWorkBatchQueueCatalogV1(configuration);
           return Object.freeze({ integrityKey: Uint8Array.from(input.workBatchIntegrityKey), queueCatalog,
-            selectionAuthority: createWorkBatchQueueSelectionAuthorityV1(queueCatalog, workerReadiness) });
+            ...(workerReadiness ? { selectionAuthority: createWorkBatchQueueSelectionAuthorityV1(queueCatalog, workerReadiness) } : {}) });
         })() : undefined;
         // The server-side operations mode for this installation. It exists
         // before the web process so the supervisor's machine-health port and
@@ -222,8 +222,8 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             key, Date.now);
         }
         taskApplication = input.createTaskApplication
-          ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles!,
-            ...(workBatches ? { workBatches } : {}),
+          ? await input.createTaskApplication({ configuration, database, workerReadiness: workerReadiness!, databaseRoles: databaseRoles!,
+            ...(workBatches ? { workBatches: { ...workBatches, selectionAuthority: workBatches.selectionAuthority! } } : {}),
             // The supervisor's machine-health pause goes to the server-owned
             // operations mode, never to a private copy of it. The port is only
             // offered once the mode exists, because a supervisor that could not
@@ -261,7 +261,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             workBatchQueueAdmissionAuthority: taskApplication?.workBatchView } : {}),
           ...(localOwnerSessionStore ? { localOwnerSessionStore } : {}), initialLocalOwnerSessions,
           ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
-          workerReadiness,
+          ...(workerReadiness ? { workerReadiness } : {}),
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
           ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
@@ -318,8 +318,12 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
         }
         throw error;
       }
-    },
-  });
+    };
+  const startupCommon = { openDatabase: input.openDatabase, createService,
+    ...(input.verifyModelPolicy ? { verifyModelPolicy: input.verifyModelPolicy } : {}) };
+  const startup = input.connectorOnly === true
+    ? createMacLocalStartupV1({ ...startupCommon, connectorOnly: true })
+    : createMacLocalStartupV1({ ...startupCommon, readVersion: input.readVersion! });
   const sameWebConnection = (configuration: MacLocalProtectedConfigurationV1, roles: MacLocalDatabaseRolesV1) => {
     const a = configuration.database, b = roles.web;
     return a.host === b.host && a.port === b.port && a.database === b.database && a.username === b.username

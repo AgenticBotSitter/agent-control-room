@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseMacLocalWebHostArguments, readPinnedMacExecutableVersion, startMacLocalTaskHost,
-  startMacLocalWebHost, verifyPinnedMacModelPolicy } from "../scripts/mac-local/start-web-host.mjs";
+import { parseMacLocalWebHostArguments, startMacLocalTaskHost,
+  startMacLocalWebHost } from "../scripts/mac-local/start-web-host.mjs";
+import { readPinnedMacExecutableVersion, verifyPinnedMacModelPolicy }
+  from "../scripts/mac-local/bot-executable-inspection.mjs";
 
 test("Mac local web host launcher accepts only the owner-attended fixed protected root", () => {
   assert.deepEqual(parseMacLocalWebHostArguments(["--owner-attended", "--protected-root", "/Library/Application Support/Agent Control Room"]),
@@ -13,7 +15,7 @@ test("Mac local web host launcher accepts only the owner-attended fixed protecte
   }
 });
 
-test("Mac local web host reads a bounded exact executable version without shell expansion", async () => {
+test("owner-attended setup reads a bounded exact executable version without shell expansion", async () => {
   const seen = [];
   const version = await readPinnedMacExecutableVersion("/usr/local/bin/example", { execFile: async (...args) => {
     seen.push(args); return { stdout: "example 1.2.3\n" };
@@ -25,7 +27,7 @@ test("Mac local web host reads a bounded exact executable version without shell 
     /mac_local_executable_version_unavailable/);
 });
 
-test("startup validates an explicit model allowlist against the pinned CLI surface", async () => {
+test("owner-attended setup validates an explicit model allowlist against the pinned CLI surface", async () => {
   const worker = { kind: "codex", executablePath: "/usr/local/bin/codex", modelPolicy: {
     models: ["gpt-build"], defaultModel: "gpt-build", efforts: ["high"], defaultEffort: "high",
   } };
@@ -74,35 +76,32 @@ test("web host validates and prepares optional intake before listeners and clean
     "close-intake", "close-web"]);
 });
 
-test("task host requires the fixed release provider and does not accept a caller callback", async () => {
+test("task host is connector-only and loads neither a task provider nor a native queue worker", async () => {
   const loaded = [];
-  let providerInput;
   const task = { async close() {}, isReady: () => true };
   const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, {
-    readVersion: async () => "pinned",
+    readVersion: async () => assert.fail("connector-only host must not inspect a bot CLI"),
     loadHealthProbeKey: async () => Buffer.alloc(32, 7), hostReleaseIdentity: async () => "dev",
     load: async path => {
       loaded.push(path.split("/").at(-1));
       if (path.endsWith("macLocalHost.js")) return { createMacLocalProtectedHostV1: input => ({
         async start() {
-          if (!input.startQueueWorker) assert.fail("task callbacks missing");
-          await input.createTaskApplication({ workerReadiness: {}, configuration: {}, database: {}, databaseRoles: {} });
+          assert.equal(input.connectorOnly, true);
+          assert.equal(input.createTaskApplication, undefined);
+          assert.equal(input.startQueueWorker, undefined);
+          assert.equal(input.readVersion, undefined);
           return task;
         },
       }) };
       if (path.endsWith("macLocalProtectedLoader.js")) return {
         loadMacLocalProtectedConfigurationFromRootV1: async () => ({ localOwnerSession: { tenantId: "tenant:fixture" },
-          workspaceId: "workspace:fixture",enablement:{workers:[]} }), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
+          workspaceId: "workspace:fixture",enablement:{workers:[]} }),
         loadWorkIntakeServerConfigurationFromRootV1: async()=>undefined,
         loadOwnerWebPushConfigFromRootV1: async()=>undefined,
       };
-      if (path.endsWith("macLocalTaskProvider.js")) return { loadMacLocalTaskProviderFromRootV1: async () => ({
-        workerKinds: ["hermes", "claude-code", "codex"], createTaskApplication: async input => { providerInput = input; return {}; },
-      }), requireMacLocalThreeAgentReadinessV1() {} };
       if (path.endsWith("privatePostgres.js")) return { createPrivatePostgresDatabase: () => ({
         client: { query: async () => ({ rows: [{ id: "project:fixture" }] }) }, async close() {},
       }) };
-      if (path.endsWith("nativeQueueFactories.js")) return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
       if (path.endsWith("serving.js")) return { loadPrivateClientAssets: async () => ({ respond() {} }) };
       if (path.endsWith("index.js")) return { default() {} };
       if(path.endsWith("workIntakePrivateService.js"))return{prepareWorkIntakePrivateServiceV1(){}};
@@ -110,13 +109,11 @@ test("task host requires the fixed release provider and does not accept a caller
     },
   });
   assert.equal(result, task);
-  assert.equal(providerInput.protectedRoot, "/protected");
   assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js",
-    "macLocalTaskProvider.js", "nativeQueueFactories.js", "privatePostgres.js", "serving.js",
-    "workIntakePrivateService.js"].sort());
+    "privatePostgres.js", "serving.js", "workIntakePrivateService.js"].sort());
 });
 
-test("a zero-project first start loads the live task provider without requiring a restart", async () => {
+test("a zero-project connector-only start remains website/intake-only", async () => {
   const loaded = [];
   const site = { async close() {}, isReady: () => true };
   const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, { loadHealthProbeKey: async () => Buffer.alloc(32, 7),
@@ -124,24 +121,19 @@ test("a zero-project first start loads the live task provider without requiring 
     const name = path.split("/").at(-1); loaded.push(name);
     if (name === "macLocalProtectedLoader.js") return {
       loadMacLocalProtectedConfigurationFromRootV1: async () => ({enablement:{workers:[]}}),
-      loadMacLocalDatabaseRolesFromRootV1: async () => ({}),loadWorkIntakeServerConfigurationFromRootV1:async()=>undefined,
+      loadWorkIntakeServerConfigurationFromRootV1:async()=>undefined,
       loadOwnerWebPushConfigFromRootV1:async()=>undefined,
     };
     if (name === "privatePostgres.js") return { createPrivatePostgresDatabase: () => ({}) };
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1: input => ({ async start() {
-      await input.createTaskApplication({ workerReadiness: {}, configuration: {}, database: {}, databaseRoles: {} });
-      return site;
+      assert.equal(input.connectorOnly, true); return site;
     } }) };
-    if (name === "macLocalTaskProvider.js") return { loadMacLocalTaskProviderFromRootV1: async () => ({
-      workerKinds: ["hermes", "claude-code", "codex"], createTaskApplication: async () => ({}),
-    }), requireMacLocalThreeAgentReadinessV1() {} };
-    if (name === "nativeQueueFactories.js") return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
     if (name === "serving.js") return { loadPrivateClientAssets: async () => ({ respond() {} }) };
     if (name === "index.js") return { default() {} };
     if(name==="workIntakePrivateService.js")return{prepareWorkIntakePrivateServiceV1(){}};
     throw new Error(`unexpected ${name}`);
   } });
   assert.equal(result, site);
-  assert.equal(loaded.includes("macLocalTaskProvider.js"), true);
-  assert.equal(loaded.includes("nativeQueueFactories.js"), true);
+  assert.equal(loaded.includes("macLocalTaskProvider.js"), false);
+  assert.equal(loaded.includes("nativeQueueFactories.js"), false);
 });

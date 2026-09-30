@@ -123,6 +123,57 @@ test("spawned bot CLIs receive only paths derived from the injected home", async
   assert.equal(childEnv.XDG_CUSTOM_HOME, undefined);
 });
 
+test("macOS worker install writes a per-bot harness profile and owner LaunchAgent, then removes both", async t => {
+  const homeDir = await temporary(t, "connector-mac-worker-"), gateway = fakeGateway(), commands = recorder();
+  const input = { server: "https://control.example", code: code("W"), bot: "codex", name: "local-codex",
+    homeDir, platform: "darwin", env: {}, fetcher: gateway.fetcher, runner: commands.runner, sourcePath: SOURCE,
+    alsoWorker: true, workerExecutable: "/fixture/bin/codex", workerDeadlineMs: 120_000,
+    userId: 501, nodePath: "/fixture/bin/node" };
+  const installed = await connector.installConnector(input);
+  const harnesses = JSON.parse(await readFile(installed.paths.harnessesPath, "utf8"));
+  assert.deepEqual(harnesses, { schema: "control-room.fleet-harnesses/v1", harnesses: { codex: {
+    enabled: true, executablePath: "/fixture/bin/codex", workingDirectory: installed.paths.workspace, deadlineMs: 120_000,
+  } } });
+  const plist = await readFile(installed.paths.launchAgentPath, "utf8");
+  assert.match(plist, /<string>run<\/string>/u);
+  assert.match(plist, /<string>--profile<\/string>\s*<string>local-codex<\/string>/u);
+  assert.match(plist, /<string>--harnesses<\/string>/u);
+  assert.equal(plist.includes((await connector.loadConfig(installed.paths.configPath)).secret), false);
+  assert.equal((await stat(installed.paths.launchAgentPath)).mode & 0o777, 0o600);
+  assert.deepEqual(commands.calls.filter(call => call[0] === "/bin/launchctl").map(call => call[1][0]),
+    ["bootout", "bootstrap"]);
+  assert.equal((await connector.loadConfig(installed.paths.configPath)).installation.worker, "launch-agent");
+
+  await connector.installConnector({ ...input, alsoWorker: false });
+  assert.equal((await connector.loadConfig(installed.paths.configPath)).installation.worker, "launch-agent",
+    "an ordinary retry must not orphan an already-running worker service");
+
+  await connector.uninstallConnector({ bot: input.bot, name: input.name, homeDir, platform: "darwin", env: {},
+    runner: commands.runner, userId: 501 });
+  await assert.rejects(stat(installed.paths.configPath), error => error.code === "ENOENT");
+  await assert.rejects(stat(installed.paths.harnessesPath), error => error.code === "ENOENT");
+  await assert.rejects(stat(installed.paths.launchAgentPath), error => error.code === "ENOENT");
+});
+
+test("worker install retries safely after launchctl stops halfway without a second enrollment", async t => {
+  const homeDir = await temporary(t, "connector-worker-retry-"), gateway = fakeGateway(), commands = recorder();
+  let failBootstrap = true;
+  const runner = async (...args) => {
+    if (args[0] === "/bin/launchctl" && args[1][0] === "bootstrap" && failBootstrap) {
+      failBootstrap = false; throw new Error("launchctl stopped with exit 5: fixture failure");
+    }
+    return commands.runner(...args);
+  };
+  const input = { server: "https://control.example", code: code("X"), bot: "claude-code", name: "retry-worker",
+    homeDir, platform: "darwin", env: {}, fetcher: gateway.fetcher, runner, sourcePath: SOURCE, alsoWorker: true,
+    workerExecutable: "/fixture/bin/claude", userId: 501, nodePath: "/fixture/bin/node" };
+  await assert.rejects(connector.installConnector(input), /fixture failure/u);
+  assert.equal((await connector.loadConfig(connector.connectorInstallPaths(input).configPath)).installation.state, "registering");
+  const installed = await connector.installConnector(input);
+  assert.equal(gateway.state.enrollments, 1);
+  assert.equal((await connector.loadConfig(installed.paths.configPath)).installation.state, "installed");
+});
+
 test("Hermes zero exit without a saved entry is not reported as installed", async t => {
   const homeDir = await temporary(t, "connector-hermes-postcondition-"), gateway = fakeGateway();
   const input = { server: "https://control.example", code: code("J"), bot: "hermes", name: "missing-entry",
@@ -259,13 +310,31 @@ test("CLI-backed uninstall removes each registration and keeps the graceful shar
 });
 
 test("bad install input and real-home CLI use fail before enrollment", async t => {
-  const homeDir = await temporary(t, "connector-refusal-");
+  const homeDir = await temporary(t, "connector-refusal-"), gateway = fakeGateway();
   await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "other",
     name: "bad", homeDir }), /Choose one bot/u);
   await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "codex",
     name: "bad/name", homeDir }), /bot name/u);
   await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "codex",
     name: "bad", workspace: "relative", homeDir }), /absolute directory/u);
+  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "codex",
+    name: "linux-worker", homeDir, platform: "linux", alsoWorker: true }), /macOS only/u);
+  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "cursor",
+    name: "desktop-worker", homeDir, platform: "darwin", alsoWorker: true }), /Only Claude Code/u);
+  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "hermes",
+    name: "hermes-worker", homeDir, platform: "darwin", alsoWorker: true }), /requires --worker-profile/u);
+  const workerBase = { server: "https://control.example", code: code("A"), bot: "codex", name: "invalid-worker",
+    homeDir, platform: "darwin", alsoWorker: true, userId: 501, fetcher: gateway.fetcher };
+  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "relative" }), /absolute path/u);
+  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "/fixture/bin/codex",
+    workerDeadlineMs: 99 }), /worker deadline/u);
+  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "/fixture/bin/codex",
+    workerModel: "gpt-build" }), /model selection/u);
+  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "/fixture/bin/codex",
+    nodePath: "relative" }), /Node executable/u);
+  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "/fixture/bin/codex",
+    userId: 0 }), /user id/u);
+  assert.equal(gateway.state.enrollments, 0, "all worker input refusals happen before enrollment");
   let out = "", err = "";
   const status = await connector.main(["install", "--server", "https://control.example", "--code", code("A"),
     "--bot", "codex", "--name", "real"], { out: { write: value => { out += value; } }, err: { write: value => { err += value; } } },
@@ -307,7 +376,7 @@ test("ten concurrent rotations make exactly one server rotation and stale locks 
   await rm(stale);
 });
 
-test("ten concurrent installs of one profile serialize and all succeed", async t => {
+test("twenty concurrent installs of one profile serialize and all succeed", async t => {
   const homeDir = await temporary(t, "connector-install-race-"), gateway = fakeGateway(), commands = recorder();
   let activeRegistrations = 0, maximumRegistrations = 0;
   const serialRunner = async (...args) => {
@@ -320,8 +389,8 @@ test("ten concurrent installs of one profile serialize and all succeed", async t
   };
   const input = { server: "https://control.example", code: code("K"), bot: "codex", name: "racer", homeDir,
     platform: "linux", env: {}, fetcher: gateway.fetcher, runner: serialRunner, sourcePath: SOURCE };
-  const results = await Promise.all(Array.from({ length: 10 }, () => connector.installConnector(input)));
-  assert.equal(results.length, 10);
+  const results = await Promise.all(Array.from({ length: 20 }, () => connector.installConnector(input)));
+  assert.equal(results.length, 20);
   assert.equal(gateway.state.enrollments, 1);
   assert.equal(maximumRegistrations, 1);
   assert.equal((await connector.loadConfig(results[0].paths.configPath)).installation.state, "installed");

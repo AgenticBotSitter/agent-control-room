@@ -78,6 +78,8 @@ export function connectorInstallPaths({ homeDir, env = process.env, platform = p
     ? joinPath(env.LOCALAPPDATA || joinPath(homeDir, "AppData", "Local"), "ControlRoom", "mcp")
     : joinPath(env.XDG_DATA_HOME || joinPath(homeDir, ".local", "share"), "control-room", "mcp");
   const workspaceRoot = resolve(workspace || joinPath(homeDir, "ControlRoomWork", name));
+  const serviceKey = createHash("sha256").update(name).digest("hex").slice(0, 16);
+  const launchAgentLabel = `xyz.agentcontrolroom.connector.${serviceKey}`;
   return Object.freeze({
     configRoot,
     configPath: joinPath(configRoot, "bots", `${name}.json`),
@@ -86,6 +88,10 @@ export function connectorInstallPaths({ homeDir, env = process.env, platform = p
     versionDir: joinPath(installRoot, "versions", CONNECTOR_VERSION),
     connectorPath: joinPath(installRoot, "current", "connector.mjs"),
     shimPath: joinPath(installRoot, "bin", platform === "win32" ? "control-room-mcp.cmd" : "control-room-mcp"),
+    harnessesPath: joinPath(configRoot, "bots", `${name}.harnesses.json`),
+    launchAgentLabel,
+    launchAgentPath: joinPath(homeDir, "Library", "LaunchAgents", `${launchAgentLabel}.plist`),
+    workerLogDir: joinPath(installRoot, "logs", serviceKey),
     workspace: workspaceRoot,
   });
 }
@@ -438,6 +444,93 @@ async function unregisterBot({ bot, name, homeDir, env, platform, runner, clock 
 
 function quoteSh(value) { return `'${String(value).replace(/'/gu, `'\\''`)}'`; }
 
+function xml(value) {
+  return String(value).replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;")
+    .replace(/"/gu, "&quot;").replace(/'/gu, "&apos;");
+}
+
+function workerConfiguration({ bot, executablePath, workspace, deadlineMs = 1_800_000,
+  model, effort, supportsEffort, profile, provider }) {
+  if (!["claude-code", "codex", "hermes"].includes(bot))
+    throw new Error("Only Claude Code, Codex and Hermes can be installed as unattended workers.");
+  if (!absolutePath(executablePath)) throw new Error("The worker executable must resolve to one absolute path.");
+  const base = { executablePath, workingDirectory: workspace, deadlineMs: Number(deadlineMs) };
+  if (!Number.isSafeInteger(base.deadlineMs) || base.deadlineMs < 100 || base.deadlineMs > 3_600_000)
+    throw new Error("The worker deadline must be 100 to 3600000 milliseconds.");
+  if (bot === "hermes") {
+    if (![profile, model, provider].every(value => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/u.test(value)))
+      throw new Error("Hermes worker mode requires --worker-profile, --worker-model and --worker-provider.");
+    return Object.freeze({ ...base, profile, model, provider });
+  }
+  const selected = model !== undefined || effort !== undefined || supportsEffort !== undefined;
+  if (!selected) return Object.freeze(base);
+  if (typeof model !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/u.test(model)
+    || typeof effort !== "string" || !/^(?:low|medium|high|xhigh|max)$/u.test(effort)
+    || (bot === "claude-code" && typeof supportsEffort !== "boolean")
+    || (bot === "codex" && supportsEffort !== undefined))
+    throw new Error("The worker model selection is incomplete or invalid.");
+  return Object.freeze({ ...base, model, effort, ...(bot === "claude-code" ? { supportsEffort } : {}) });
+}
+
+async function resolveWorkerExecutable(bot, { runner, env, platform }) {
+  const command = bot === "claude-code" ? "claude" : bot;
+  const lookup = platform === "win32" ? ["where.exe", [command]] : ["/usr/bin/which", [command]];
+  const result = await runner(lookup[0], lookup[1], { env });
+  const paths = String(result?.stdout ?? "").split(/\r?\n/u).map(value => value.trim()).filter(Boolean);
+  if (paths.length < 1 || !absolutePath(paths[0]))
+    throw new Error(`Could not resolve one absolute ${command} executable for worker mode.`);
+  return paths[0];
+}
+
+function launchAgentBytes(paths, { nodePath = process.execPath }) {
+  const argumentsList = [nodePath, paths.connectorPath, "run", "--profile", paths.configPath.endsWith(".json")
+    ? basename(paths.configPath, ".json") : "", "--harnesses", paths.harnessesPath];
+  const argumentsXml = argumentsList.map(value => `      <string>${xml(value)}</string>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>${xml(paths.launchAgentLabel)}</string>
+    <key>ProgramArguments</key>
+    <array>
+${argumentsXml}
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>ProcessType</key><string>Background</string>
+    <key>ThrottleInterval</key><integer>10</integer>
+    <key>StandardOutPath</key><string>${xml(joinPath(paths.workerLogDir, "out.log"))}</string>
+    <key>StandardErrorPath</key><string>${xml(joinPath(paths.workerLogDir, "err.log"))}</string>
+  </dict>
+</plist>
+`;
+}
+
+function absentLaunchAgent(error) {
+  return /(?:Could not find service|No such process|service not found|exit 3)/iu.test(String(error?.message ?? error));
+}
+
+async function stopLaunchAgent(paths, { runner, env, userId }) {
+  try { await runner("/bin/launchctl", ["bootout", `gui/${userId}/${paths.launchAgentLabel}`], { env }); }
+  catch (error) { if (!absentLaunchAgent(error)) throw error; }
+}
+
+async function installMacWorker(paths, configuration, { runner, env, userId = process.getuid?.(), nodePath = process.execPath }) {
+  if (!Number.isSafeInteger(userId) || userId < 1) throw new Error("The owner user id is unavailable for worker installation.");
+  await mkdir(dirname(paths.launchAgentPath), { recursive: true, mode: 0o700 });
+  await mkdir(paths.workerLogDir, { recursive: true, mode: 0o700 });
+  await Promise.all([writeFile(joinPath(paths.workerLogDir, "out.log"), "", { flag: "a", mode: 0o600 }),
+    writeFile(joinPath(paths.workerLogDir, "err.log"), "", { flag: "a", mode: 0o600 })]);
+  await writePrivate(paths.harnessesPath, { schema: HARNESS_SETTINGS_SCHEMA,
+    harnesses: { [configuration.bot]: { enabled: true, ...configuration.settings } } });
+  const temporary = `${paths.launchAgentPath}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
+  await writeFile(temporary, launchAgentBytes(paths, { nodePath }), { mode: 0o600, flag: "wx" });
+  await rename(temporary, paths.launchAgentPath);
+  await stopLaunchAgent(paths, { runner, env, userId });
+  await runner("/bin/launchctl", ["bootstrap", `gui/${userId}`, paths.launchAgentPath], { env });
+  return Object.freeze({ label: paths.launchAgentLabel, path: paths.launchAgentPath });
+}
+
 async function writeLauncher(paths, { platform, sourcePath, nodePath = process.execPath }) {
   await mkdir(paths.versionDir, { recursive: true, mode: 0o700 });
   await mkdir(dirname(paths.connectorPath), { recursive: true, mode: 0o700 });
@@ -463,9 +556,20 @@ function validateInstallInput({ bot, workspace }) {
 /** Installs one independently revocable bot profile. All filesystem roots and
  * command execution are injectable so tests never touch a person's real home. */
 export async function installConnector({ server, code, bot, name, workspace, homeDir, env = process.env,
-  platform = process.platform, fetcher, runner = runCommand, sourcePath = fileURLToPath(import.meta.url), clock = Date.now }) {
+  platform = process.platform, fetcher, runner = runCommand, sourcePath = fileURLToPath(import.meta.url), clock = Date.now,
+  alsoWorker = false, workerExecutable, workerDeadlineMs, workerModel, workerEffort, workerSupportsEffort,
+  workerProfile, workerProvider, userId, nodePath }) {
   validateInstallInput({ bot, workspace });
+  if (alsoWorker && platform !== "darwin") throw new Error("Unattended worker installation is currently available on macOS only.");
   const paths = connectorInstallPaths({ homeDir, env, platform, name, workspace });
+  if (alsoWorker) {
+    workerConfiguration({ bot, executablePath: workerExecutable ?? "/control-room/resolved-worker", workspace: paths.workspace,
+      deadlineMs: workerDeadlineMs, model: workerModel, effort: workerEffort, supportsEffort: workerSupportsEffort,
+      profile: workerProfile, provider: workerProvider });
+    if (nodePath !== undefined && !absolutePath(nodePath)) throw new Error("The Node executable must be one absolute path.");
+    if (!Number.isSafeInteger(userId ?? process.getuid?.()) || (userId ?? process.getuid?.()) < 1)
+      throw new Error("The owner user id is unavailable for worker installation.");
+  }
   await mkdir(paths.botsDir, { recursive: true, mode: 0o700 });
   await mkdir(paths.workspace, { recursive: true, mode: 0o700 });
   if (platform !== "win32") { await chmod(paths.botsDir, 0o700); await chmod(paths.workspace, 0o700); }
@@ -493,20 +597,30 @@ export async function installConnector({ server, code, bot, name, workspace, hom
       await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering" } });
       if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     }
+    const existingWorker = config?.installation?.worker === "launch-agent";
 
     await writeLauncher(paths, { platform, sourcePath });
     const registration = await registerBot({ bot, name, shimPath: paths.shimPath, workspace: paths.workspace,
       homeDir, env, platform, runner, clock });
+    let worker;
+    if (alsoWorker) {
+      const executablePath = workerExecutable ?? await resolveWorkerExecutable(bot, { runner, env, platform });
+      const settings = workerConfiguration({ bot, executablePath, workspace: paths.workspace, deadlineMs: workerDeadlineMs,
+        model: workerModel, effort: workerEffort, supportsEffort: workerSupportsEffort,
+        profile: workerProfile, provider: workerProvider });
+      worker = await installMacWorker(paths, { bot, settings }, { runner, env, userId, nodePath });
+    }
     config = await loadConfig(paths.configPath);
-    await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "installed" } });
+    await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace,
+      state: "installed", ...(alsoWorker || existingWorker ? { worker: "launch-agent" } : {}) } });
     if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     const status = await createClient(await loadConfig(paths.configPath), fetcher).heartbeat();
-    return Object.freeze({ paths, registration, status });
+    return Object.freeze({ paths, registration, ...(worker ? { worker } : {}), status });
   } finally { await release(); }
 }
 
 export async function uninstallConnector({ bot, name, homeDir, env = process.env, platform = process.platform,
-  runner = runCommand, clock = Date.now }) {
+  runner = runCommand, clock = Date.now, userId = process.getuid?.() }) {
   validateInstallInput({ bot });
   const paths = connectorInstallPaths({ homeDir, env, platform, name });
   const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });
@@ -514,6 +628,13 @@ export async function uninstallConnector({ bot, name, homeDir, env = process.env
     const config = await loadConfig(paths.configPath);
     if (config.installation?.bot !== bot || config.installation?.name !== name)
       throw new Error("That bot profile does not match the installed credential.");
+    if (config.installation?.worker === "launch-agent") {
+      if (platform !== "darwin") throw new Error("The installed worker service can only be removed on macOS.");
+      if (!Number.isSafeInteger(userId) || userId < 1) throw new Error("The owner user id is unavailable for worker removal.");
+      await stopLaunchAgent(paths, { runner, env, userId });
+      await rm(paths.launchAgentPath, { force: true });
+      await rm(paths.harnessesPath, { force: true });
+    }
     await unregisterBot({ bot, name, homeDir, env, platform, runner, clock });
     await rm(paths.configPath, { force: true });
   } finally { await release(); }
@@ -987,7 +1108,7 @@ function options(args) {
     const arg = args[i];
     if (arg.startsWith("--")) {
       const name = arg.slice(2);
-      if (["once", "release", "i-am-the-installer"].includes(name)) values[name] = true;
+      if (["once", "release", "i-am-the-installer", "also-worker"].includes(name)) values[name] = true;
       else { values[name] = args[i + 1]; i += 1; }
     } else positional.push(arg);
   }
@@ -997,7 +1118,11 @@ function options(args) {
 const usage = `Control Room worker connector ${CONNECTOR_VERSION}
 
   install --server <address> --code <code> --bot <kind> --name <label>
-          [--workspace <dir>]            Connect one bot with its own credential
+          [--workspace <dir>] [--also-worker]
+          [--worker-executable <path>] [--worker-deadline-ms <milliseconds>]
+          [--worker-model <model> --worker-effort <effort> [--worker-supports-effort <true|false>]]
+          [--worker-profile <profile> --worker-provider <provider>]
+                                          Connect one bot with its own credential
   uninstall --bot <kind> --name <label> Remove one bot registration and credential
   join --server <address> --code <code>   Join this machine (code from the Workers page)
   status                                  Show this worker and its credential
@@ -1032,13 +1157,20 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       if (command === "install") {
         const installed = await installConnector({ server: values.server, code: values.code, bot: values.bot,
           name: values.name, workspace: values.workspace, homeDir, env, platform, fetcher: runtime.fetcher,
-          runner: runtime.runner, sourcePath: runtime.sourcePath, clock: runtime.clock });
+          runner: runtime.runner, sourcePath: runtime.sourcePath, clock: runtime.clock,
+          alsoWorker: values["also-worker"] === true, workerExecutable: values["worker-executable"],
+          workerDeadlineMs: values["worker-deadline-ms"] === undefined ? undefined : Number(values["worker-deadline-ms"]),
+          workerModel: values["worker-model"], workerEffort: values["worker-effort"],
+          workerSupportsEffort: values["worker-supports-effort"] === undefined ? undefined
+            : values["worker-supports-effort"] === "true" ? true : values["worker-supports-effort"] === "false" ? false : "invalid",
+          workerProfile: values["worker-profile"], workerProvider: values["worker-provider"],
+          userId: runtime.userId, nodePath: runtime.nodePath });
         print(`Connected as ${values.name}. Open ${values.bot} and ask it to list Control Room work.`);
         if (["claude-desktop", "cursor"].includes(values.bot)) print(`Restart ${values.bot}.`);
         print(installed.status);
       } else {
         print(await uninstallConnector({ bot: values.bot, name: values.name, homeDir, env, platform,
-          runner: runtime.runner, clock: runtime.clock }));
+          runner: runtime.runner, clock: runtime.clock, userId: runtime.userId }));
       }
       return 0;
     }

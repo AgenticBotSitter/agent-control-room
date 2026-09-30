@@ -115,7 +115,7 @@
     "file": "scripts/fleet/connector.mjs",
     "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  try {\n    let config;",
     "replace": "  const release = async () => {};\n  try {\n    let config;",
-    "test": "node --test --test-name-pattern \"ten concurrent installs\" tests/fleet-connector-install.test.mjs",
+    "test": "node --test --test-name-pattern \"twenty concurrent installs\" tests/fleet-connector-install.test.mjs",
     "why": "same-profile installs serialize through the shared profile mutation lock"
   },
   {
@@ -124,5 +124,82 @@
     "replace": "    if (false)\n      throw new Error(\"That bot profile does not match the installed credential.\");",
     "test": "node --test --test-name-pattern \"validates the current profile\" tests/fleet-connector-install.test.mjs",
     "why": "uninstall rereads and validates the profile after obtaining the mutation lock"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (alsoWorker && platform !== \"darwin\") throw new Error(\"Unattended worker installation is currently available on macOS only.\");",
+    "replace": "  if (false) throw new Error(\"Unattended worker installation is currently available on macOS only.\");",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "unattended worker installation refuses unsupported service managers before enrollment"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const argumentsList = [nodePath, paths.connectorPath, \"run\", \"--profile\", paths.configPath.endsWith(\".json\")",
+    "replace": "  const argumentsList = [nodePath, paths.connectorPath, \"status\", \"--profile\", paths.configPath.endsWith(\".json\")",
+    "test": "node --test --test-name-pattern \"macOS worker install\" tests/fleet-connector-install.test.mjs",
+    "why": "the owner LaunchAgent runs the connector worker loop rather than a one-shot command"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (config.installation?.worker === \"launch-agent\") {",
+    "replace": "    if (false) {",
+    "test": "node --test --test-name-pattern \"macOS worker install\" tests/fleet-connector-install.test.mjs",
+    "why": "uninstall boots out the per-bot LaunchAgent before removing its credential"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      state: \"installed\", ...(alsoWorker || existingWorker ? { worker: \"launch-agent\" } : {}) } });",
+    "replace": "      state: \"installed\", ...(alsoWorker ? { worker: \"launch-agent\" } : {}) } });",
+    "test": "node --test --test-name-pattern \"macOS worker install\" tests/fleet-connector-install.test.mjs",
+    "why": "a harmless install retry preserves custody of an already-running worker service"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (![\"claude-code\", \"codex\", \"hermes\"].includes(bot))",
+    "replace": "  if (false)",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "unattended service mode refuses desktop-only bot kinds"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (!absolutePath(executablePath)) throw new Error(\"The worker executable must resolve to one absolute path.\");",
+    "replace": "  if (false) throw new Error(\"The worker executable must resolve to one absolute path.\");",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "worker services refuse relative executable paths before enrollment"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (!Number.isSafeInteger(base.deadlineMs) || base.deadlineMs < 100 || base.deadlineMs > 3_600_000)",
+    "replace": "  if (false)",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "worker services refuse unbounded execution deadlines before enrollment"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (![profile, model, provider].every(value => typeof value === \"string\" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/u.test(value)))",
+    "replace": "    if (false)",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "Hermes worker services require the complete pinned selection before enrollment"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    throw new Error(\"The worker model selection is incomplete or invalid.\");",
+    "replace": "    return Object.freeze({ ...base, model, effort });",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "Codex and Claude worker services refuse incomplete model selections before enrollment"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (nodePath !== undefined && !absolutePath(nodePath)) throw new Error(\"The Node executable must be one absolute path.\");",
+    "replace": "    if (false) throw new Error(\"The Node executable must be one absolute path.\");",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "LaunchAgents refuse a relative Node executable before enrollment"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (!Number.isSafeInteger(userId ?? process.getuid?.()) || (userId ?? process.getuid?.()) < 1)",
+    "replace": "    if (false)",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "LaunchAgents refuse an unavailable or privileged owner uid before enrollment"
   }
 ]

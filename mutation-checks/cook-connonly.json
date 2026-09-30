@@ -1,0 +1,23 @@
+[
+  {
+    "file": "src/web/v1/mac-local-startup.ts",
+    "find": "    const workerReadiness = input.connectorOnly === true ? undefined : createMacLocalWorkerReadinessV1(configuration.enablement,",
+    "replace": "    const workerReadiness = false ? undefined : createMacLocalWorkerReadinessV1(configuration.enablement,",
+    "test": "node --import tsx --test --test-name-pattern \"connector-only startup\" tests/mac-local-startup.test.ts",
+    "why": "connector-only service startup does not inspect or execute bot CLIs"
+  },
+  {
+    "file": "src/web/v1/mac-local-host.ts",
+    "find": "  if (input.connectorOnly === true && (input.createTaskApplication || input.startQueueWorker || input.loadDatabaseRoles))",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-name-pattern \"connector-only host refuses\" tests/mac-local-host.test.ts",
+    "why": "connector-only service hosts refuse every direct task and queue execution factory"
+  },
+  {
+    "file": "scripts/mac-local/start-web-host.mjs",
+    "find": "    connectorOnly: true,",
+    "replace": "    connectorOnly: false,",
+    "test": "node --test --test-name-pattern \"task host is connector-only\" tests/mac-local-web-host-launcher.test.mjs",
+    "why": "the production task-host entry point selects connector-only composition"
+  }
+]

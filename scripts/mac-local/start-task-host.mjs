@@ -57,7 +57,7 @@ async function main() {
     return;
   }
   const active = await startMacLocalTaskHost(parsed);
-  console.log("Control Room local task host is running. Press Control-C to stop.");
+  console.log("Control Room connector-only host is running. Press Control-C to stop.");
   const supervisor = process.env.CONTROL_ROOM_TASK_HOST_SUPERVISED === "1" ? process.stdin : undefined;
   monitorActiveTaskHost(active, process, globalThis, supervisor);
 }
