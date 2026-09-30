@@ -862,6 +862,12 @@ test("the item-8 store runs every query as the production deployer login", async
       await store.transition(runId, "lease-item8", "prechecked", { source: "item8-test" });
       await store.appendEvent(runId, 1, "prechecked", { source: "item8-test" });
       assert.deepEqual((await store.events(runId)).map((row: { state: string }) => row.state), ["prechecked"]);
+      // Round-trip: the next ordinal is computed from what the REAL store returns (bigint → number).
+      const [first] = await store.events(runId);
+      assert.equal(typeof first.ordinal, "number", "events() must return ordinal as a number, not node-pg's int8 string");
+      await store.transition(runId, "lease-item8", "staged", { source: "item8-test" });
+      await store.appendEvent(runId, first.ordinal + 1, "staged", { source: "item8-test" });
+      assert.deepEqual((await store.events(runId)).map((row: { ordinal: number }) => row.ordinal), [1, 2]);
       await assert.rejects(store.transition(runId, "wrong-lease", "staged"), /updater_run_lease_lost/u,
         "a second caller cannot take over the production row");
 

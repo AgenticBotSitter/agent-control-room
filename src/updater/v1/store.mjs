@@ -86,8 +86,14 @@ export class PostgresUpdaterStoreV1 {
   async events(runId) {
     if (typeof runId !== "string" || !/^run:[0-9a-f-]{36}$/u.test(runId))
       throw updaterRefuseV1("updater_event_refused");
+    // run_events.ordinal is bigint: node-pg returns int8 as a string, and `"1" + 1` is "11".
+    // Convert here, and refuse anything that is not a safe integer, so callers only ever see numbers.
     return (await this.client.query(`SELECT ordinal,state,detail,recorded_at FROM updater.run_events
-      WHERE run_id=$1 ORDER BY ordinal`, [runId])).rows;
+      WHERE run_id=$1 ORDER BY ordinal`, [runId])).rows.map(row => {
+      const ordinal = typeof row.ordinal === "string" && /^[1-9][0-9]{0,15}$/u.test(row.ordinal) ? Number(row.ordinal) : row.ordinal;
+      if (!Number.isSafeInteger(ordinal) || ordinal < 1) throw updaterRefuseV1("updater_event_refused");
+      return { ...row, ordinal };
+    });
   }
 
   async unhandledOwnerRequests(limit = 50) {
