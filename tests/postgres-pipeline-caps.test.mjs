@@ -585,6 +585,67 @@ test("every ceiling refuses at exactly its limit and not one run earlier", needs
     machineMaxAgentProcesses: 12, machineMaxDbClusters: 1, dollarCapMicroUsd: null, observedDbClusters: 1 },
   "installation_db_cluster_ceiling_reached");
 
+  // The agent-process ceiling must also ADMIT one below the line, or `>` could
+  // be `>=` and the boundary case above would still pass. Ceiling 4 with three
+  // live processes is one unit of headroom, so the run is admitted.
+  const roomyOwn = await seedInstallation(admin, "edge-procroom", key, new Date(webNow).toISOString());
+  assert.equal(await harnessRunsIn(roomyOwn.tenantId), 3, "the seed leaves three live harness runs");
+  await ownerSetsUp(web, roomyOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 4,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const roomy = advanceService(coordinator, roomyOwn, key);
+  assert.equal((await roomy.service.advance(roomyOwn.pipeline.runId, roomyOwn.policyId)).startsWork, true,
+    "one unit of headroom under the agent-process ceiling must be admitted");
+
+  // The cluster ceiling likewise: ceiling 2 with one reported cluster is
+  // headroom, and must admit.
+  const roomyClusterOwn = await seedInstallation(admin, "edge-clusterroom", key, new Date(webNow).toISOString());
+  await ownerSetsUp(web, roomyClusterOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 2, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const roomyCluster = advanceService(coordinator, roomyClusterOwn, key);
+  assert.equal((await roomyCluster.service.advance(roomyClusterOwn.pipeline.runId, roomyClusterOwn.policyId))
+    .startsWork, true, "one cluster of headroom must be admitted");
+
+  // A STALE machine state is never a pass either. The owner reported one
+  // cluster a long time ago; that observation is no longer true, so the
+  // advance refuses rather than trusting a stale count. Dropping the staleness
+  // window in latestClusterObservationV1 is what this catches.
+  const staleOwn = await seedInstallation(admin, "edge-stale", key, new Date(webNow).toISOString());
+  const staleService = advanceService(coordinator, staleOwn, key);
+  await ownerSetsUp(web, staleOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  // Re-date the observation well beyond the one-day freshness window. The table
+  // is append-only by trigger, so the row is aged by its own clock only.
+  await admin.query("ALTER TABLE pipeline_machine_capacity_observations DISABLE TRIGGER"
+    + " pipeline_machine_capacity_observations_immutable");
+  await admin.query("UPDATE pipeline_machine_capacity_observations SET observed_at = observed_at - interval '2 days'"
+    + " WHERE tenant_id=$1", [staleOwn.tenantId]);
+  await admin.query("ALTER TABLE pipeline_machine_capacity_observations ENABLE TRIGGER"
+    + " pipeline_machine_capacity_observations_immutable");
+  await assert.rejects(staleService.service.advance(staleOwn.pipeline.runId, staleOwn.policyId),
+    error => error.safeReason === "installation_cluster_count_unknown",
+    "a cluster count older than a day is no longer evidence and must refuse");
+  assert.equal(staleService.queuedCount(), 0);
+
+  // A dollar cap is compared against what has ALREADY been spent. Spending one
+  // run at 100 and then offering another at 100 under a cap of 150 must refuse:
+  // 100 + 100 is over. A cap that ignored the spending and looked only at the
+  // next cost (100 < 150) would admit it, and that is the mutation this kills.
+  const spentOwn = await seedInstallation(admin, "edge-costspent", key, new Date(webNow).toISOString());
+  const costOf = { kind: "known", admittedCostMicroUsd: 100, evidenceDigest: sha256Digest("cost") };
+  const spentFirst = advanceService(coordinator, spentOwn, key, { cost: costOf });
+  await ownerSetsUp(web, spentOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: 100, observedDbClusters: 1 });
+  assert.equal((await spentFirst.service.advance(spentOwn.pipeline.runId, spentOwn.policyId)).startsWork, true);
+  const spentSecond = await seedSecondRun(admin, spentOwn, key, "edge-costspent-2");
+  await ownerConsents(web, spentSecond, key);
+  await ownerSetsUp(web, spentOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: 150, observedDbClusters: 1 });
+  const spentService = advanceService(coordinator, spentSecond, key, { cost: costOf });
+  await assert.rejects(spentService.service.advance(spentSecond.pipeline.runId, spentOwn.policyId),
+    error => error.safeReason === "installation_cost_ceiling_exhausted",
+    "a cap of 150 must refuse a second 100 once 100 is already spent");
+  assert.equal(spentService.queuedCount(), 0);
+
   // A dollar cap of exactly the cost about to be spent still fits, and one
   // microusd less refuses. `cap - spent` is the real comparison, so a mutation
   // that drops the subtraction is caught here.
@@ -855,4 +916,195 @@ test("a run ceiling of one admits exactly one run and refuses the second", needs
   assert.equal((await firstService.service.advance(own.pipeline.runId, own.policyId)).replayed, true);
   assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts WHERE tenant_id=$1",
     [own.tenantId])).rows[0].count, 1, "a replay is not a second run");
+});
+
+
+test("a run with no allowance record of its own is refused, not waved through", needsPg, async t => {
+  // The installation allowance is the only place the owner says how much
+  // unattended work this installation may start. A run that has never had one
+  // set has no permission to start, so it refuses. If the missing-record
+  // refusal were removed, this run would advance unbounded and nothing would
+  // catch it.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(68);
+
+  const own = await seedInstallation(admin, "noallowance", key, new Date(webNow).toISOString());
+  // Consent the run, but never set an allowance: this is the real shape of an
+  // installation whose owner has enabled unattended work without choosing
+  // limits, which must not be treated as "unlimited".
+  const consented = new PipelineAdvanceServiceV1(web.client, own.scope, key, {}, () => webNow);
+  const view = await new LinearPipelineServiceV1(web.client, own.scope, key,
+    { assertCurrent: () => true, isAcceptedResultCurrent: () => false }, () => webNow)
+    .view(own.identity, own.project.projectId, own.pipeline.runId);
+  await consented.setUnattended(own.identity, own.project.projectId, { runId: own.pipeline.runId,
+    templateId: view.templateId, policyId: own.policyId, enabled: true, expectedRunVersion: view.runVersion,
+    expectedTemplateVersion: view.templateVersion }, "pipeline-unattended-noallowance");
+  assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_installation_allowances"
+    + " WHERE tenant_id=$1", [own.tenantId])).rows[0].count, 0,
+  "this installation has no allowance record at all");
+
+  const { service, queuedCount } = advanceService(coordinator, own, key);
+  await assert.rejects(service.advance(own.pipeline.runId, own.policyId),
+    error => error.safeReason === "installation_allowance_missing",
+    "a run with no installation allowance must refuse, never assume unlimited");
+  assert.equal(queuedCount(), 0);
+  assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts"
+    + " WHERE tenant_id=$1", [own.tenantId])).rows[0].count, 0, "and it claims no receipt");
+});
+
+test("every S7b down file revokes only what its own up migration granted", needsPg, async t => {
+  // Each down file is run against a database that already holds the S7b state,
+  // and each must refuse while its own state exists. A down file that
+  // over-revokes a neighbour's grants, or drops a table it did not create, is
+  // caught by comparing the catalog before and after.
+  //
+  // The down files carry their own BEGIN/COMMIT, so each attempt gets a FRESH
+  // connection: a refused one leaves that transaction aborted, and reusing the
+  // client would make every later statement fail for the wrong reason.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(67);
+
+  // Real S7b state: a counted round, a recorded cluster observation, an
+  // allowance record with limits set, and a known-cost receipt.
+  const own = await seedInstallation(admin, "down", key, new Date(webNow).toISOString());
+  const { service } = advanceService(coordinator, own, key);
+  await ownerSetsUp(web, own, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  assert.equal((await service.advance(own.pipeline.runId, own.policyId)).startsWork, true);
+
+  const down = async (file) => (await readFile(join(ROOT, "db/down", file), "utf8"));
+  const present = async (name) => {
+    const c = new Client({ host: socket, port: PORT, database: DB, user: "postgres" });
+    await c.connect();
+    try { return (await c.query("SELECT to_regclass($1) IS NOT NULL present", [name])).rows[0].present; }
+    finally { await c.end(); }
+  };
+  const runDown = async (file) => {
+    const c = new Client({ host: socket, port: PORT, database: DB, user: "postgres" });
+    await c.connect();
+    try { await c.query(await down(file)); return null; }
+    catch (error) { return String(error.message ?? error); }
+    finally { await c.end(); }
+  };
+  const runUp = async (file) => {
+    const c = new Client({ host: socket, port: PORT, database: DB, user: "postgres" });
+    await c.connect();
+    try { await c.query(await readFile(join(ROOT, "db/migrations", file), "utf8")); }
+    finally { await c.end(); }
+  };
+  const pipelineTableCount = async () => {
+    const c = new Client({ host: socket, port: PORT, database: DB, user: "postgres" });
+    await c.connect();
+    try { return (await c.query(`SELECT count(*)::int FROM information_schema.tables
+      WHERE table_schema='public' AND table_name LIKE 'pipeline_%'`)).rows[0].count; }
+    finally { await c.end(); }
+  };
+
+  // 0151: counted rounds exist, so its down refuses and leaves the table.
+  assert.equal(await present("pipeline_stage_loop_counts"), true);
+  assert.match(await runDown("0151_pipeline_stage_loop_counts.sql"), /down migration refused/u);
+  assert.equal(await present("pipeline_stage_loop_counts"), true, "a refused down leaves the table");
+
+  // 0153: a recorded cluster observation is owner evidence, so its down refuses.
+  assert.equal(await present("pipeline_machine_capacity_observations"), true);
+  assert.match(await runDown("0153_pipeline_machine_capacity_observations.sql"), /down migration refused/u);
+  assert.equal(await present("pipeline_machine_capacity_observations"), true);
+
+  // 0150: the owner has set limits, so its down refuses rather than discarding them.
+  assert.equal(await present("pipeline_installation_allowances"), true);
+  assert.match(await runDown("0150_pipeline_installation_allowances.sql"), /down migration refused/u);
+  assert.equal(await present("pipeline_installation_allowances"), true);
+
+  // This tenant's own single advance is round 0, so it holds no fix-round
+  // receipt and 0154's down is free to run here. It must restore the original
+  // per-stage key, drop the column it added and drop its two guards, while
+  // every other S7b table survives untouched.
+  const ownFixRounds = async () => (await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts"
+    + " WHERE tenant_id=$1 AND loop_index>0", [own.tenantId])).rows[0].count;
+  assert.equal(await ownFixRounds(), 0, "this tenant's own single advance is round 0");
+
+  // A fresh database, holding only this seed's state, is where 0154's down runs
+  // cleanly and restores the pre-S7b per-stage key.
+  const clean = new Client({ host: socket, port: PORT, database: "postgres", user: "postgres" });
+  await clean.connect();
+  await clean.query(`DROP DATABASE IF EXISTS ${DB}_down`);
+  await clean.query(`CREATE DATABASE ${DB}_down TEMPLATE template0`);
+  await clean.end();
+  const target = new Client({ host: socket, port: PORT, database: `${DB}_down`, user: "postgres" });
+  await target.connect();
+  try {
+    const opts = { host: socket, port: PORT, database: `${DB}_down`, user: "fixture_admin" };
+    await applyMigrations({ target: opts, bootstrapTarget: opts, migrateTarget: { ...opts, user: "control_room_migrator",
+      password: passwords.CONTROL_ROOM_MIGRATOR_PASSWORD }, rootDir: ROOT, env: { ...process.env, ...passwords } });
+    const runOn = async (sql) => { await target.query(sql); };
+    const beforeTables = (await target.query(`SELECT count(*)::int count FROM information_schema.tables
+      WHERE table_schema='public' AND table_name LIKE 'pipeline_%'`)).rows[0].count;
+    await runOn(await down("0154_pipeline_advance_round_receipts.sql"));
+    const afterTables = (await target.query(`SELECT count(*)::int count FROM information_schema.tables
+      WHERE table_schema='public' AND table_name LIKE 'pipeline_%'`)).rows[0].count;
+    assert.equal(afterTables, beforeTables, "0154's down must not touch any pipeline table");
+    const column = (await target.query(`SELECT column_name FROM information_schema.columns
+      WHERE table_name='pipeline_advance_receipts' AND column_name='loop_index'`)).rows;
+    assert.equal(column.length, 0, "0154's down drops the loop_index column it added");
+    const key = (await target.query(`SELECT pg_get_constraintdef(oid) def FROM pg_constraint
+      WHERE conname='pipeline_advance_receipts_tenant_id_pipeline_run_id_stage_o_key'`)).rows;
+    assert.deepEqual(key.map(r => r.def), ["UNIQUE (tenant_id, pipeline_run_id, stage_ordinal)"],
+      "0154's down restores the original one-receipt-per-stage key");
+    const guard = (await target.query(`SELECT tgname FROM pg_trigger
+      WHERE tgrelid='control_action_inbox'::regclass AND tgname LIKE '%pipeline_loop%'`)).rows;
+    assert.deepEqual(guard, [], "0154's down drops both loop-attention guards");
+    // And the up restores exactly that state, so the pair round-trips.
+    await target.query(await readFile(join(ROOT, "db/migrations/0154_pipeline_advance_round_receipts.sql"), "utf8"));
+    const restoredColumn = (await target.query(`SELECT column_name FROM information_schema.columns
+      WHERE table_name='pipeline_advance_receipts' AND column_name='loop_index'`)).rows;
+    assert.equal(restoredColumn.length, 1, "0154's up restores the loop_index column");
+  } finally { await target.end(); }
+
+  // 0152 reverses a whole-table change too, so it runs in the CLEAN database
+  // rather than the shared one. On the shared database the unknown-cost test
+  // above has legitimately written an unknown-cost receipt, and 0152's down
+  // refusing there is correct behaviour rather than a defect.
+  const fresh = new Client({ host: socket, port: PORT, database: `${DB}_down2`, user: "postgres" });
+  const bootstrapClean = new Client({ host: socket, port: PORT, database: "postgres", user: "postgres" });
+  await bootstrapClean.connect();
+  await bootstrapClean.query(`DROP DATABASE IF EXISTS ${DB}_down2`);
+  await bootstrapClean.query(`CREATE DATABASE ${DB}_down2 TEMPLATE template0`);
+  await bootstrapClean.end();
+  await fresh.connect();
+  try {
+    const opts = { host: socket, port: PORT, database: `${DB}_down2`, user: "fixture_admin" };
+    await applyMigrations({ target: opts, bootstrapTarget: opts, migrateTarget: { ...opts,
+      user: "control_room_migrator", password: passwords.CONTROL_ROOM_MIGRATOR_PASSWORD },
+    rootDir: ROOT, env: { ...process.env, ...passwords } });
+    const count = async () => (await fresh.query(`SELECT count(*)::int count FROM information_schema.tables
+      WHERE table_schema='public' AND table_name LIKE 'pipeline_%'`)).rows[0].count;
+    const tablesBefore = await count();
+    // Every receipt in a freshly installed database is a KNOWN cost, because
+    // that is the 0152 default and no writer has run yet, so the down runs.
+    assert.equal(await fresh.query(await readFile(join(ROOT, "db/down/0152_pipeline_advance_unknown_cost.sql"),
+      "utf8")).then(() => null, error => String(error.message ?? error)), null,
+    "0152's down must run cleanly on a database with no unknown-cost receipt");
+    assert.equal(await count(), tablesBefore, "0152's down must not touch any pipeline table");
+    assert.equal((await fresh.query(`SELECT is_nullable FROM information_schema.columns
+      WHERE table_name='pipeline_advance_receipts' AND column_name='delegation_cost_microusd'`))
+      .rows[0].is_nullable, "NO", "0152's down restores the NOT NULL it removed");
+    assert.equal((await fresh.query(`SELECT count(*)::int count FROM information_schema.columns
+      WHERE table_name='pipeline_advance_receipts' AND column_name='delegation_cost_state'`)).rows[0].count, 0,
+    "0152's down drops the column it added");
+    for (const kept of ["pipeline_stage_loop_counts", "pipeline_installation_allowances",
+      "pipeline_machine_capacity_observations"]) {
+      assert.equal((await fresh.query("SELECT to_regclass($1) IS NOT NULL p", [kept])).rows[0].p, true,
+        `${kept} survives 0152's down`);
+    }
+    // An unknown-cost receipt is exactly the state it must refuse.
+    await fresh.query(await readFile(join(ROOT, "db/migrations/0152_pipeline_advance_unknown_cost.sql"), "utf8"));
+  } finally { await fresh.end(); }
 });
