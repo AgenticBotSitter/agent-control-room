@@ -178,7 +178,9 @@ test("fifty concurrent callers are deterministic and share no mutable state", as
 });
 
 test("the CLI classifies a diff between two real repository commits", () => {
-  const [from, candidateCommit] = execFileSync("git", ["rev-parse", "HEAD^", "HEAD"], { encoding: "utf8" }).trim().split(/\s+/u);
+  const readAgainst = (JSON.parse(policies.protectedJson) as { readAgainst: { "cook/v1": string } }).readAgainst["cook/v1"];
+  const [from, candidateCommit] = execFileSync("git", ["rev-parse", `${readAgainst}^`, readAgainst],
+    { encoding: "utf8" }).trim().split(/\s+/u);
   const output = execFileSync(process.execPath, ["--import", "tsx", "src/updater/v1/referee/cli.ts",
     "--policy-dir", "src/updater/v1/policy", from!, candidateCommit!], { encoding: "utf8" });
   const result = JSON.parse(output) as ReturnType<typeof classify>;
