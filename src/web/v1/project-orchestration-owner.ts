@@ -6,7 +6,7 @@ import type { IntakeCoordinatorResultV1, IntakePlannerSelectionPortV1, IntakeSug
   IntakeSuggestionStoreV1 } from "../../work-intake/v1/intake-coordinator";
 import type { VerifiedWebIdentity } from "./access-verifier";
 import { WebAccessError } from "./access-verifier";
-import { PROJECT_ORCHESTRATION_DESCRIPTION_LIMIT_V1, projectOrchestrationDescribeSchemaV1,
+import { projectOrchestrationDescribeSchemaV1,
   projectOrchestrationSettingsDraftSchemaV1, projectOrchestrationSettingsSchemaV1,
   projectOrchestrationSuggestionPageSchemaV1, projectOrchestrationSuggestionPrefillSchemaV1,
   type ProjectOrchestrationDescribeResultV1, type ProjectOrchestrationSettingsV1,
