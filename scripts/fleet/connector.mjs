@@ -23,7 +23,7 @@ import { basename, dirname, extname, isAbsolute, join as joinPath, relative, res
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const CONNECTOR_VERSION = "0.4.0";
+export const CONNECTOR_VERSION = "0.5.0";
 const CONFIG_SCHEMA = "control-room.fleet-connector/v1";
 const SECRET_PATTERN = /^crf_[A-Za-z0-9_-]{43}$/u;
 const CODE_PATTERN = /^crj_[A-Za-z0-9_-]{43}$/u;
@@ -50,9 +50,12 @@ export function registerBundledHarnessAdapterFactory(factory) {
   bundledHarnessAdapterFactory = factory;
 }
 const BOT_KINDS = Object.freeze(["claude-code", "codex", "hermes", "claude-desktop", "cursor", "mcp-agent"]);
+const UNATTENDED_BOT_KINDS = Object.freeze(["claude-code", "codex", "hermes"]);
 const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const ROTATION_LOCK_STALE_MS = 5 * 60_000;
 const INSTALL_LOCK_DEADLINE_MS = 10 * 60_000;
+const SERVICE_FILE_MARKER = "control-room-owned-connector-service/v1";
+const SERVICE_LOG_MAX_BYTES = 1024 * 1024;
 let ownProcessIdentity;
 
 export const sha256 = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -137,6 +140,13 @@ export function connectorInstallPaths({ homeDir, env = process.env, platform = p
     ? joinPath(env.LOCALAPPDATA || joinPath(homeDir, "AppData", "Local"), "ControlRoom", "mcp")
     : joinPath(env.XDG_DATA_HOME || joinPath(homeDir, ".local", "share"), "control-room", "mcp");
   const workspaceRoot = resolve(workspace || joinPath(homeDir, "ControlRoomWork", name));
+  const serviceName = platform === "darwin" ? `com.agentcontrolroom.connector.${name}`
+    : platform === "win32" ? `AgentControlRoomConnector-${name}` : `control-room-connector-${name}.service`;
+  const servicePath = platform === "darwin" ? joinPath(homeDir, "Library", "LaunchAgents", `${serviceName}.plist`)
+    : platform === "win32" ? joinPath(configRoot, "services", `${serviceName}.xml`)
+      : joinPath(env.XDG_CONFIG_HOME || joinPath(homeDir, ".config"), "systemd", "user", serviceName);
+  const stateRoot = platform === "win32" ? joinPath(env.LOCALAPPDATA || joinPath(homeDir, "AppData", "Local"), "ControlRoom")
+    : joinPath(env.XDG_STATE_HOME || joinPath(homeDir, ".local", "state"), "control-room");
   return Object.freeze({
     configRoot,
     configPath: joinPath(configRoot, "bots", `${name}.json`),
@@ -146,6 +156,9 @@ export function connectorInstallPaths({ homeDir, env = process.env, platform = p
     connectorPath: joinPath(installRoot, "current", "connector.mjs"),
     shimPath: joinPath(installRoot, "bin", platform === "win32" ? "control-room-mcp.cmd" : "control-room-mcp"),
     workspace: workspaceRoot,
+    serviceName,
+    servicePath,
+    serviceLogPath: joinPath(stateRoot, "logs", `${name}.log`),
   });
 }
 
@@ -569,6 +582,16 @@ export function runCommand(command, args, { env = process.env, input, spawnProce
       return Promise.reject(new Error(`Test guard refused to spawn the real ${command} CLI.`));
     executable = joinPath(stubDir, command);
   }
+  const serviceCommand = ["launchctl", "systemctl", "schtasks"].find(name => {
+    const commandName = basename(command).toLowerCase();
+    return commandName === name || commandName === `${name}.exe`;
+  });
+  if (env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI === "1" && serviceCommand) {
+    const stubDir = env.CONTROL_ROOM_TEST_SERVICE_CLI_DIR;
+    if (typeof stubDir !== "string" || !isAbsolute(stubDir) || /[\u0000-\u001f\u007f]/u.test(stubDir))
+      return Promise.reject(new Error(`Test guard refused to spawn the real ${serviceCommand} service manager.`));
+    executable = joinPath(stubDir, serviceCommand);
+  }
   return new Promise((resolvePromise, reject) => {
     const child = spawnProcess(executable, args, { env, shell: false, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     let stdout = "", stderr = "";
@@ -578,7 +601,7 @@ export function runCommand(command, args, { env = process.env, input, spawnProce
     child.once("error", reject);
     child.once("close", code => {
       if (code === 0) resolvePromise({ stdout, stderr });
-      else reject(new Error(`${command} stopped with exit ${code}: ${stderr.trim() || "no error text"}`));
+      else reject(new Error(`${command} stopped with exit ${code}: ${stderr.trim() || stdout.trim() || "no error text"}`));
     });
   });
 }
@@ -786,8 +809,149 @@ async function writeLauncher(paths, { platform, sourcePath, nodePath = process.e
   if (platform !== "win32") await chmod(paths.shimPath, 0o700);
 }
 
-function validateInstallInput({ bot, workspace }) {
+function xml(value) {
+  return String(value).replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;")
+    .replace(/"/gu, "&quot;").replace(/'/gu, "&apos;");
+}
+
+function systemdQuote(value) {
+  return `"${String(value).replace(/%/gu, "%%").replace(/\\/gu, "\\\\").replace(/"/gu, '\\"')}"`;
+}
+
+function windowsCommandLineArg(value) {
+  const text = String(value);
+  if (text && !/[\s"]/u.test(text)) return text;
+  return `"${text.replace(/(\\*)"/gu, "$1$1\\\"").replace(/(\\+)$/u, "$1$1")}"`;
+}
+
+function serviceArguments(paths, nodePath) {
+  return [nodePath, paths.connectorPath, "run", "--profile", basename(paths.configPath, ".json"),
+    "--harnesses", defaultHarnessSettingsPath(paths.configPath), "--service-log", paths.serviceLogPath];
+}
+
+export function connectorServiceDefinition(paths, { platform, nodePath = process.execPath }) {
+  const args = serviceArguments(paths, nodePath);
+  if (platform === "darwin") return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- ${SERVICE_FILE_MARKER} -->
+<plist version="1.0"><dict>
+<key>Label</key><string>${xml(paths.serviceName)}</string>
+<key>ProgramArguments</key><array>${args.map(arg => `<string>${xml(arg)}</string>`).join("")}</array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+<key>ThrottleInterval</key><integer>30</integer>
+<key>ProcessType</key><string>Background</string>
+<key>StandardOutPath</key><string>/dev/null</string>
+<key>StandardErrorPath</key><string>/dev/null</string>
+</dict></plist>
+`;
+  if (platform === "linux") return `# ${SERVICE_FILE_MARKER}
+[Unit]
+Description=Agent Control Room connector ${paths.serviceName}
+
+[Service]
+Type=simple
+ExecStart=${args.map(systemdQuote).join(" ")}
+Restart=on-failure
+RestartSec=30s
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=default.target
+`;
+  if (platform === "win32") return `<?xml version="1.0" encoding="UTF-16"?>
+<!-- ${SERVICE_FILE_MARKER} -->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
+  <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings>
+  <Actions Context="Author"><Exec><Command>${xml(nodePath)}</Command><Arguments>${xml(args.slice(1).map(windowsCommandLineArg).join(" "))}</Arguments></Exec></Actions>
+</Task>
+`;
+  throw new Error("Unattended workers support macOS, Windows and Linux only.");
+}
+
+async function writeOwnedServiceFile(path, body, platform) {
+  try {
+    const existing = await readFile(path, platform === "win32" ? "utf16le" : "utf8");
+    if (!existing.includes(SERVICE_FILE_MARKER))
+      throw new Error(`Refusing to replace the unrecognized background-worker file ${path}.`);
+  } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
+  await writeFile(temporary, platform === "win32" ? `\uFEFF${body}` : body,
+    { mode: 0o600, encoding: platform === "win32" ? "utf16le" : "utf8" });
+  await rename(temporary, path);
+  if (platform !== "win32") await chmod(path, 0o600);
+}
+
+async function serviceExists(runner, command, args, env) {
+  try { await runner(command, args, { env }); return true; }
+  catch (error) {
+    if (/(?:not found|could not find|does not exist|not loaded|disabled|cannot find)/iu.test(String(error?.message ?? "")))
+      return false;
+    throw error;
+  }
+}
+
+/** Installs one login-scoped worker. It never asks a service manager for a
+ * machine/root service and every generated name is bound to one profile. */
+export async function installConnectorService(paths, { platform = process.platform, env = process.env,
+  runner = runCommand, nodePath = process.execPath, ownerUid = process.getuid?.() } = {}) {
+  if (platform !== "win32" && (!Number.isSafeInteger(ownerUid) || ownerUid <= 0))
+    throw new Error("A background worker must be installed by a non-root signed-in user.");
+  const definition = connectorServiceDefinition(paths, { platform, nodePath });
+  await writeOwnedServiceFile(paths.servicePath, definition, platform);
+  if (platform === "darwin") {
+    const domain = `gui/${ownerUid}`, target = `${domain}/${paths.serviceName}`;
+    if (await serviceExists(runner, "/bin/launchctl", ["print", target], env))
+      await runner("/bin/launchctl", ["bootout", target], { env });
+    await runner("/bin/launchctl", ["bootstrap", domain, paths.servicePath], { env });
+  } else if (platform === "linux") {
+    await runner("systemctl", ["--user", "daemon-reload"], { env });
+    await runner("systemctl", ["--user", "enable", "--now", paths.serviceName], { env });
+  } else if (platform === "win32") {
+    await runner("schtasks", ["/Create", "/TN", paths.serviceName, "/XML", paths.servicePath, "/F"], { env });
+  } else throw new Error("Unattended workers support macOS, Windows and Linux only.");
+  return Object.freeze({ name: paths.serviceName, path: paths.servicePath, logPath: paths.serviceLogPath });
+}
+
+export async function uninstallConnectorService(paths, { platform = process.platform, env = process.env,
+  runner = runCommand, ownerUid = process.getuid?.() } = {}) {
+  if (platform !== "win32" && (!Number.isSafeInteger(ownerUid) || ownerUid <= 0))
+    throw new Error("A background worker must be removed by a non-root signed-in user.");
+  if (platform === "darwin") {
+    const target = `gui/${ownerUid}/${paths.serviceName}`;
+    if (await serviceExists(runner, "/bin/launchctl", ["print", target], env))
+      await runner("/bin/launchctl", ["bootout", target], { env });
+  } else if (platform === "linux") {
+    if (await serviceExists(runner, "systemctl", ["--user", "is-enabled", paths.serviceName], env))
+      await runner("systemctl", ["--user", "disable", "--now", paths.serviceName], { env });
+  } else if (platform === "win32") {
+    if (await serviceExists(runner, "schtasks", ["/Query", "/TN", paths.serviceName], env)) {
+      try { await runner("schtasks", ["/End", "/TN", paths.serviceName], { env }); } catch {}
+      await runner("schtasks", ["/Delete", "/TN", paths.serviceName, "/F"], { env });
+    }
+  } else throw new Error("Unattended workers support macOS, Windows and Linux only.");
+  try {
+    const body = await readFile(paths.servicePath, platform === "win32" ? "utf16le" : "utf8");
+    if (!body.includes(SERVICE_FILE_MARKER))
+      throw new Error(`Refusing to remove the unrecognized background-worker file ${paths.servicePath}.`);
+    await rm(paths.servicePath, { force: true });
+  } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  if (platform === "linux") await runner("systemctl", ["--user", "daemon-reload"], { env });
+  await rm(paths.serviceLogPath, { force: true });
+  await rm(`${paths.serviceLogPath}.1`, { force: true });
+}
+
+function validateInstallInput({ bot, workspace, unattended = false }) {
   if (!BOT_KINDS.includes(bot)) throw new Error(`Choose one bot: ${BOT_KINDS.join(", ")}.`);
+  if (typeof unattended !== "boolean") throw new Error("The unattended-worker choice must be true or false.");
+  if (unattended && !UNATTENDED_BOT_KINDS.includes(bot))
+    throw new Error("Unattended work is available only for Claude Code, Codex and Hermes harnesses.");
   if (workspace !== undefined && (typeof workspace !== "string" || !workspace || !isAbsolute(workspace)
     || /[\u0000-\u001f\u007f]/u.test(workspace)))
     throw new Error("The workspace must be an absolute directory path.");
@@ -808,8 +972,8 @@ function validateWorkspaceTarget(paths, homeDir) {
  * command execution are injectable so tests never touch a person's real home. */
 export async function installConnector({ server, code, bot, name, workspace, homeDir, env = process.env,
   platform = process.platform, fetcher, runner = runCommand, sourcePath = fileURLToPath(import.meta.url), clock = Date.now,
-  realHomeDir = homedir() }) {
-  validateInstallInput({ bot, workspace });
+  realHomeDir = homedir(), unattended = false, ownerUid = process.getuid?.(), nodePath = process.execPath }) {
+  validateInstallInput({ bot, workspace, unattended });
   const paths = connectorInstallPaths({ homeDir, env, platform, name, workspace });
   validateWorkspaceTarget(paths, homeDir);
   const respectExplicitProfiles = resolve(homeDir) === resolve(realHomeDir);
@@ -837,11 +1001,13 @@ export async function installConnector({ server, code, bot, name, workspace, hom
     catch (error) {
       if (!String(error?.message ?? "").startsWith("This machine has not joined yet.")) throw error;
     }
+    let installUnattended = unattended;
     if (config?.workerId) {
       const install = config.installation;
       if (!install || install.bot !== bot || install.name !== name || install.workspace !== paths.workspace
         || config.server !== checkServer(server))
         throw new Error("This bot profile is already connected with different installation settings. Uninstall it first.");
+      installUnattended ||= install.unattended === true;
     } else {
       await join({ server, code, workerKind: bot, configPath: paths.configPath, fetcher,
         writeConfig: async (path, value) => {
@@ -849,24 +1015,33 @@ export async function installConnector({ server, code, bot, name, workspace, hom
           if (platform === "win32") await secureWindowsCredential([path], { runner, env });
         } });
       config = await loadConfig(paths.configPath);
-      await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering" } });
+      await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering",
+        ...(unattended ? { unattended: true } : {}) } });
       if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     }
 
     await writeLauncher(paths, { platform, sourcePath });
     const registration = await registerBot({ bot, name, shimPath: paths.shimPath, workspace: paths.workspace,
       configPath: paths.configPath, homeDir, env, platform, runner, clock, respectExplicitProfiles });
+    if (installUnattended) {
+      config = await loadConfig(paths.configPath);
+      await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace,
+        state: "registering", unattended: true } });
+      if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
+      await installConnectorService(paths, { platform, env, runner, ownerUid, nodePath });
+    }
     config = await loadConfig(paths.configPath);
-    await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "installed" } });
+    await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "installed",
+      ...(installUnattended ? { unattended: true } : {}) } });
     if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     const status = await createClient(await loadConfig(paths.configPath), fetcher).heartbeat();
-    return Object.freeze({ paths, registration, status });
+    return Object.freeze({ paths, registration, unattended: installUnattended, status });
   } catch (error) { failure = error; throw error; }
   finally { await releaseRotationLock(release, failure); }
 }
 
 export async function uninstallConnector({ bot, name, homeDir, env = process.env, platform = process.platform,
-  runner = runCommand, clock = Date.now, realHomeDir = homedir() }) {
+  runner = runCommand, clock = Date.now, realHomeDir = homedir(), ownerUid = process.getuid?.() }) {
   validateInstallInput({ bot });
   const paths = connectorInstallPaths({ homeDir, env, platform, name });
   const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });
@@ -876,6 +1051,8 @@ export async function uninstallConnector({ bot, name, homeDir, env = process.env
     const pendingOnly = config.workerId === null && config.installation === undefined;
     if (!pendingOnly && (config.installation?.bot !== bot || config.installation?.name !== name))
       throw new Error("That bot profile does not match the installed credential.");
+    if (!pendingOnly && config.installation?.unattended === true)
+      await uninstallConnectorService(paths, { platform, env, runner, ownerUid });
     if (!pendingOnly) await unregisterBot({ bot, name, homeDir, env, platform, runner, clock,
       respectExplicitProfiles: resolve(homeDir) === resolve(realHomeDir) });
     await removeConfigArtifacts(paths.configPath);
@@ -1053,7 +1230,7 @@ export async function serveMcp({ configPath, input = process.stdin, output = pro
 // that resolves to { kind: "completed", text } or { kind: "failed", reason }.
 // src/fleet/v1/harness-adapters.ts is that module for a Control Room checkout.
 const HARNESS_SETTINGS_SCHEMA = "control-room.fleet-harnesses/v1";
-export const HANDOFF_HARNESSES = Object.freeze(["codex", "claude-code", "hermes"]);
+export const HANDOFF_HARNESSES = UNATTENDED_BOT_KINDS;
 const HARNESS_LABELS = Object.freeze({ codex: "Codex", "claude-code": "Claude Code", hermes: "Hermes" });
 const MAX_MESSAGE_CHARS = 2000;
 const WATCHDOG_GRACE_MS = 15_000;
@@ -1135,6 +1312,23 @@ export async function loadHarnessAdapter(settings, harness, importer = specifier
   const adapter = await module.createFleetHarnessAdapter(Object.freeze({ harness, configuration: entry.configuration }));
   if (!adapter || typeof adapter.execute !== "function") throw new Error("The harness adapter module returned no adapter.");
   return Object.freeze({ harness, deadlineMs: entry.configuration.deadlineMs, execute: adapter.execute.bind(adapter) });
+}
+
+export async function appendBoundedServiceLog(path, message, maxBytes = SERVICE_LOG_MAX_BYTES) {
+  if (!absolutePath(path) || !Number.isSafeInteger(maxBytes) || maxBytes < 1024)
+    throw new Error("The background-worker log target is not valid.");
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  let bytes = Buffer.from(`${new Date().toISOString()} ${storableText(message).slice(0, 16_384)}\n`, "utf8");
+  if (bytes.length > maxBytes) bytes = bytes.subarray(bytes.length - maxBytes);
+  let size = 0;
+  try { size = (await stat(path)).size; } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  if (size + bytes.length > maxBytes) {
+    await rm(`${path}.1`, { force: true });
+    try { await rename(path, `${path}.1`); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  }
+  const handle = await open(path, "a", 0o600);
+  try { await handle.write(bytes); } finally { await handle.close(); }
+  if (process.platform !== "win32") await chmod(path, 0o600);
 }
 
 /** Text the gateway will store: no control characters except tab and newlines. */
@@ -1276,31 +1470,49 @@ export async function runClaimedTask({ client, claim, adapter, progressIntervalM
 export async function runWorker({ configPath, harnessesPath = defaultHarnessSettingsPath(configPath), fetcher, once = false,
   importer, progressIntervalMs = 60_000, pollMs = 60_000, log = message => process.stderr.write(`${message}\n`),
   sleep = ms => new Promise(done => setTimeout(done, ms)), watchdogGraceMs = WATCHDOG_GRACE_MS }) {
-  const settings = await loadHarnessSettings(harnessesPath);
   const handedBack = new Set(); // tasks this machine could not finish; left for another worker
   let adapter = null, said = "";
   const say = message => { if (message !== said) { said = message; log(`${new Date().toISOString()} ${message}`); } };
   for (;;) {
-    let current = await recoverPending({ configPath, fetcher });
-    if (current.credentialExpiresAt && Date.parse(current.credentialExpiresAt) - Date.now() < ROTATE_BEFORE_MS) {
-      await rotate({ configPath, fetcher }); current = await loadConfig(configPath);
-      log("Credential renewed.");
+    let current;
+    try {
+      current = await recoverPending({ configPath, fetcher });
+      if (current.credentialExpiresAt && Date.parse(current.credentialExpiresAt) - Date.now() < ROTATE_BEFORE_MS) {
+        await rotate({ configPath, fetcher }); current = await loadConfig(configPath);
+        log("Credential renewed.");
+      }
+    } catch (error) {
+      if (error?.code === "unauthenticated") {
+        say("Control Room revoked this machine's key. The background worker is stopping cleanly.");
+        return Object.freeze({ state: "revoked" });
+      }
+      throw error;
     }
     const client = createClient(current, fetcher);
     let me;
     try { me = await client.heartbeat(); }
     catch (error) {
-      if (error?.code === "unauthenticated") throw new Error("Control Room no longer accepts this machine's key. Ask the owner for a new key.");
+      if (error?.code === "unauthenticated") {
+        say("Control Room revoked this machine's key. The background worker is stopping cleanly.");
+        return Object.freeze({ state: "revoked" });
+      }
       say(`Could not reach Control Room (${error?.code ?? "network"}); trying again.`);
       if (once) return Object.freeze({ state: "unreachable" });
       await sleep(pollMs); continue;
     }
     const mode = operationsMode(me.operationsMode);
     const harness = HANDOFF_HARNESSES.includes(me.workerKind) ? me.workerKind : null;
+    let settings = null, settingsError = null;
+    adapter = null;
+    try { settings = await loadHarnessSettings(harnessesPath); }
+    catch (error) { settingsError = error instanceof Error ? error.message : "The harness settings could not be read."; }
     let pass = { state: "idle" };
     if (!harness) {
       say(`Connected as ${me.displayName}. This worker is driven through MCP, so run starts no harness.`);
       pass = { state: "no_harness" };
+    } else if (settingsError) {
+      say(`${settingsError} No work is taken; fix ${harnessesPath}.`);
+      pass = { state: "misconfigured" };
     } else if (settings?.harnesses?.[harness]?.enabled !== true) {
       say(`Connected as ${me.displayName}. ${HARNESS_LABELS[harness]} is not enabled on this machine, so no work is taken. `
         + `Enable it in ${harnessesPath}.`);
@@ -1323,7 +1535,10 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
           }
         }
       } catch (error) {
-        if (error?.code === "unauthenticated") throw new Error("Control Room no longer accepts this machine's key. Ask the owner for a new key.");
+        if (error?.code === "unauthenticated") {
+          say("Control Room revoked this machine's key. The background worker is stopping cleanly.");
+          return Object.freeze({ state: "revoked" });
+        }
         say(`Could not take work (${error?.code ?? "network"}); trying again.`);
         pass = { state: "unreachable" };
       }
@@ -1361,7 +1576,7 @@ function options(args) {
     const arg = args[i];
     if (arg.startsWith("--")) {
       const name = arg.slice(2);
-      if (["once", "release", "i-am-the-installer"].includes(name)) values[name] = true;
+      if (["once", "release", "unattended", "i-am-the-installer"].includes(name)) values[name] = true;
       else { values[name] = args[i + 1]; i += 1; }
     } else positional.push(arg);
   }
@@ -1371,7 +1586,8 @@ function options(args) {
 const usage = `Control Room worker connector ${CONNECTOR_VERSION}
 
   install --server <address> --code <code> --bot <kind> --name <label>
-          [--workspace <dir>]            Connect one bot with its own credential
+          [--workspace <dir>] [--unattended]
+                                          Connect one bot; optionally install its per-user worker
   uninstall --bot <kind> --name <label> Remove one bot registration and credential
   unlock --name <label>                 Remove one stale empty credential-lock directory
   join --server <address> --code <code> --bot <kind>
@@ -1398,6 +1614,12 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   const env = runtime.env ?? process.env, platform = runtime.platform ?? process.platform;
   const homeDir = runtime.homeDir ?? homedir(), realHomeDir = runtime.realHomeDir ?? homedir();
   let configPath = values.config ? resolve(values.config) : defaultConfigPath(env);
+  const serviceLogPath = values["service-log"] ? resolve(values["service-log"]) : null;
+  let serviceLogWrites = Promise.resolve();
+  const serviceLog = message => {
+    if (!serviceLogPath) return io.err.write(`${message}\n`);
+    serviceLogWrites = serviceLogWrites.then(() => appendBoundedServiceLog(serviceLogPath, message));
+  };
   const print = value => io.out.write(`${typeof value === "string" ? value : JSON.stringify(value, null, 2)}\n`);
   try {
     if (values.profile && !values.config) configPath = connectorInstallPaths({ homeDir, env, platform, name: values.profile }).configPath;
@@ -1408,7 +1630,8 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       if (command === "install") {
         const installed = await installConnector({ server: values.server, code: values.code, bot: values.bot,
           name: values.name, workspace: values.workspace, homeDir, env, platform, fetcher: runtime.fetcher,
-          runner: runtime.runner, sourcePath: runtime.sourcePath, clock: runtime.clock, realHomeDir });
+          runner: runtime.runner, sourcePath: runtime.sourcePath, clock: runtime.clock, realHomeDir,
+          unattended: values.unattended === true, ownerUid: runtime.ownerUid, nodePath: runtime.nodePath });
         print(`Connected as ${values.name}. Open ${values.bot} and ask it to list Control Room work.`);
         if (["claude-desktop", "cursor"].includes(values.bot)) print(`Restart ${values.bot}.`);
         print(installed.status);
@@ -1454,14 +1677,17 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       return 0;
     }
     if (command === "run") {
-      const pass = await runWorker({ configPath, once: values.once === true,
+      const pass = await runWorker({ configPath, fetcher: runtime.fetcher, once: values.once === true,
         ...(values.harnesses ? { harnessesPath: resolve(values.harnesses) } : {}),
-        log: message => io.err.write(`${message}\n`) });
+        log: serviceLog });
+      await serviceLogWrites;
       return pass.state === "unreachable" ? 1 : 0;
     }
     io.err.write(usage); return 2;
   } catch (error) {
-    io.err.write(`${error instanceof Error ? error.message : "The connector stopped."}\n`);
+    const message = error instanceof Error ? error.message : "The connector stopped.";
+    serviceLog(message);
+    await serviceLogWrites;
     return 1;
   }
 }

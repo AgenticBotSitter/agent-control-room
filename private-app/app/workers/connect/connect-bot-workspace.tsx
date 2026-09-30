@@ -11,7 +11,7 @@ type FleetWorker = { workerId: string; displayName: string; workerKind: string; 
 type ConnectorRelease = { version: string; file: string; sha256: string; size: number; builtFrom: string };
 type Board = { workers: FleetWorker[]; connectBot: { available: boolean; release?: ConnectorRelease } };
 export type ConnectBotInstallResult = { codeId: string; workerId: string; expiresAt: string;
-  operatingSystem: OperatingSystem; botKind: BotKind; profileName: string; ownerNextStep: string;
+  operatingSystem: OperatingSystem; botKind: BotKind; profileName: string; unattended: boolean; ownerNextStep: string;
   release: ConnectorRelease; installLine: string };
 
 const bots: readonly [BotKind, string][] = [["claude-code", "Claude Code"], ["codex", "Codex"],
@@ -20,6 +20,7 @@ const systems: readonly [OperatingSystem, string, string][] = [["macos", "macOS"
   ["windows", "Windows", "PowerShell"], ["linux", "Linux", "Terminal (bash)"]];
 const capabilities = [["code.change", "Change code"], ["code.review", "Review code"], ["research", "Research"],
   ["writing", "Writing"], ["testing", "Testing"]] as const;
+const unattendedBots: readonly BotKind[] = ["claude-code", "codex", "hermes"];
 const statusWords: Record<string, [string, ChipTone]> = { working: ["Working", "busy"], connected: ["Connected", "good"],
   offline: ["Offline", "warn"], needs_new_key: ["Needs a new key", "bad"] };
 
@@ -71,6 +72,7 @@ export function ConnectBotWorkspace() {
   const [board, setBoard] = useState<Board | "unavailable">(), [projects, setProjects] = useState<Project[] | "unavailable">();
   const [name, setName] = useState(""), [botKind, setBotKind] = useState<BotKind>("claude-code");
   const [operatingSystem, setOperatingSystem] = useState<OperatingSystem>("macos");
+  const [unattended, setUnattended] = useState(false);
   const [projectIds, setProjectIds] = useState<string[]>([]), [chosenCapabilities, setChosenCapabilities] = useState<string[]>(["writing"]);
   const [result, setResult] = useState<ConnectBotInstallResult>(), [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
@@ -83,14 +85,17 @@ export function ConnectBotWorkspace() {
   () => setProjects("unavailable")); }, [load]);
   const connected = board && board !== "unavailable" ? board.workers.filter(worker => worker.status !== "revoked") : [];
   const validName = /^[^\u0000-\u001F\u007F]{1,80}$/u.test(name.trim());
+  const supportsUnattended = unattendedBots.includes(botKind);
   const canCreate = board !== undefined && board !== "unavailable" && board.connectBot.available && validName
-    && Array.isArray(projects) && projectIds.length > 0 && chosenCapabilities.length > 0 && !busy;
+    && (!unattended || supportsUnattended) && Array.isArray(projects) && projectIds.length > 0
+    && chosenCapabilities.length > 0 && !busy;
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!canCreate) return;
     setBusy(true); setMessage(undefined); setResult(undefined);
-    void request("/api/v1/fleet/connect-codes", { botKind, name, operatingSystem, projectIds, capabilities: chosenCapabilities })
+    void request("/api/v1/fleet/connect-codes", { botKind, name, operatingSystem, projectIds, capabilities: chosenCapabilities,
+      unattended })
       .then(value => { setResult(value as ConnectBotInstallResult); setMessage("Code created. Copy the line before it expires."); void load(); })
       .catch(() => setMessage("The code was not created. Nothing changed. Check the choices and try again."))
       .finally(() => setBusy(false));
@@ -112,12 +117,20 @@ export function ConnectBotWorkspace() {
         aria-describedby="connect-bot-name-help"
         onChange={event => setName(event.target.value)} required /></label>
       <p className="private-note" id="connect-bot-name-help">Use a short name you will recognize, such as desktop-codex. New lines are not allowed.</p>
-      <label>Bot<select name="bot-kind" value={botKind} onChange={event => setBotKind(event.target.value as BotKind)}>
+      <label>Bot<select name="bot-kind" value={botKind} onChange={event => {
+        const next = event.target.value as BotKind; setBotKind(next); if (!unattendedBots.includes(next)) setUnattended(false);
+      }}>
         {bots.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <fieldset><legend>Computer operating system</legend><div className="connect-bot-choice-grid">
         {systems.map(([value, label, terminal]) => <label key={value}><input type="radio" name="operating-system"
           value={value} checked={operatingSystem === value} onChange={() => setOperatingSystem(value)} /><span><strong>{label}</strong><small>{terminal}</small></span></label>)}
       </div></fieldset>
+      <label><input type="checkbox" name="unattended" checked={unattended} disabled={!supportsUnattended}
+        onChange={event => setUnattended(event.target.checked)} /> Let this bot pick up approved work on its own</label>
+      <p className="private-note">Off by default. When on, the same line installs one background worker for this profile under your
+        computer account—not as root or a system service. It checks for approved work after you sign in and runs only a bot harness
+        you enabled in <code>harnesses.json</code>. Run the uninstall command shown after setup to turn it off.
+        {!supportsUnattended ? " Unattended work is available for Claude Code, Codex and Hermes; this kind uses MCP interactively." : ""}</p>
       <h2>2. Limit what it can reach</h2>
       <fieldset><legend>Projects</legend>{projects === undefined ? <LoadingState>Loading projects…</LoadingState>
         : projects === "unavailable" ? <UnavailableState>Projects could not be checked. No code can be created.</UnavailableState>
@@ -153,7 +166,8 @@ export function ConnectBotWorkspace() {
       <ol><li>Paste the line only into the named terminal on the computer where the bot runs.</li>
         <li>The line downloads the current connector release and checks its manifest, file size and SHA-256 shown by this signed-in Control Room.</li>
         <li>It creates one private credential and workspace, then registers the MCP connector with the chosen bot. Generic MCP writes an importable host entry instead.</li>
-        <li>The bot app starts the connector when it needs it; no separate background service is left running.</li></ol>
+        <li>The bot app starts the connector when it needs it. If you opt in to unattended work, the line also installs one per-user
+          background worker for this profile; uninstalling the profile removes it.</li></ol>
       <p>The result above gives the exact final action for the chosen bot and operating system. If the fingerprint does not match,
         nothing is installed. Create a fresh code instead of editing the line.</p>
     </section>

@@ -60,7 +60,7 @@ test("the connect-code route binds the chosen kind and returns only the current 
   const post = (body: unknown) => handler(new Request("https://control.example/api/v1/fleet/connect-codes", { method: "POST",
     headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
   const body = { botKind: "cursor", name: "<desktop> Ω", operatingSystem: "windows",
-    projectIds: ["project:alpha"], capabilities: ["writing"] };
+    projectIds: ["project:alpha"], capabilities: ["writing"], unattended: false };
   const response = await post(body);
   assert.equal(response.status, 201);
   const value = await response.json() as { installLine: string; profileName: string; ownerNextStep: string;
@@ -72,8 +72,9 @@ test("the connect-code route binds the chosen kind and returns only the current 
   assert.equal(value.profileName, "desktop-bbbbbbbbbbbb");
   assert.match(value.ownerNextStep, /Cursor is registered.*Close and reopen Cursor.*no background service/u);
   assert.deepEqual(issued, [{ displayName: "<desktop> Ω", workerKind: "cursor", operatingSystem: "windows",
-    projectIds: ["project:alpha"], capabilities: ["writing"] }]);
-  for (const refused of [{ ...body, botKind: "other" }, { ...body, operatingSystem: "android" }, { ...body, extra: true }]) {
+    projectIds: ["project:alpha"], capabilities: ["writing"], unattended: false }]);
+  for (const refused of [{ ...body, botKind: "other" }, { ...body, operatingSystem: "android" }, { ...body, extra: true },
+    { ...body, unattended: true }]) {
     const invalid = await post(refused);
     assert.equal(invalid.status, 400);
   }
@@ -87,7 +88,8 @@ test("the result says plainly when a code expired and disables copying it", asyn
   const root = createRoot(dom.window.document.getElementById("root")!);
   const result: ConnectBotInstallResult = { codeId: `fleet-code:${"a".repeat(32)}`,
     workerId: `fleet-worker:${"b".repeat(32)}`, expiresAt: "2000-01-01T00:00:00.000Z", operatingSystem: "macos",
-    botKind: "codex", profileName: "safe-profile", ownerNextStep: "Codex is registered.", release, installLine: "safe line" };
+    botKind: "codex", profileName: "safe-profile", unattended: false, ownerNextStep: "Codex is registered.", release,
+    installLine: "safe line" };
   try {
     await act(async () => root.render(<InstallLine result={result} />));
     assert.match(dom.window.document.body.textContent ?? "", /This code expired\. Create a new code/u);
@@ -119,6 +121,16 @@ test("at a 375px viewport, every picker is present and hostile display names rem
     assert.deepEqual([...dom.window.document.querySelectorAll('select[name="bot-kind"] option')].map(option => option.textContent),
       ["Claude Code", "Codex", "Hermes", "Cursor", "Claude Desktop", "Generic MCP"]);
     assert.equal(dom.window.document.querySelectorAll('input[name="operating-system"]').length, 3);
+    const unattended = dom.window.document.querySelector('input[name="unattended"]') as HTMLInputElement;
+    assert.equal(unattended.checked, false);
+    assert.equal(unattended.disabled, false);
+    await act(async () => unattended.click());
+    assert.equal(unattended.checked, true);
+    const botPicker = dom.window.document.querySelector('select[name="bot-kind"]') as HTMLSelectElement;
+    await act(async () => { botPicker.value = "cursor"; botPicker.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    assert.equal(unattended.checked, false);
+    assert.equal(unattended.disabled, true, "interactive MCP-only kinds cannot promise unattended work");
+    assert.match(dom.window.document.body.textContent ?? "", /Let this bot pick up approved work on its own[\s\S]*Off by default/iu);
     assert.equal(dom.window.document.querySelector("img"), null, "an HTML display name stays text");
     assert.match(dom.window.document.body.textContent ?? "", /<img src=x onerror=alert\(1\)> Ω/iu);
   } finally { await act(async () => root.unmount()); dom.window.close(); restoreGlobals(saved); }

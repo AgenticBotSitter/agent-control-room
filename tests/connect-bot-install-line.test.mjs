@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -35,6 +35,29 @@ if (tool === "hermes") writeFileSync(join(root, "config.yaml"),
 `;
   await mkdir(root, { recursive: true });
   for (const command of ["claude", "codex", "hermes"]) {
+    const path = join(root, command);
+    await writeFile(path, stub, { mode: 0o700 });
+    await chmod(path, 0o700);
+  }
+}
+
+async function writeServiceStubs(root) {
+  const stub = `#!/usr/bin/env node
+import { readFileSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2), statePath = process.env.CONTROL_ROOM_TEST_SERVICE_STATE;
+let state = [];
+try { state = JSON.parse(readFileSync(statePath, "utf8")); } catch {}
+if (args[0] === "print") { if (state.includes(args[1])) process.exit(0); console.error("not found"); process.exit(3); }
+if (args[0] === "bootout") state = state.filter(item => item !== args[1]);
+if (args[0] === "bootstrap") {
+  const body = readFileSync(args[2], "utf8"), label = /<key>Label<\\/key><string>([^<]+)<\\/string>/.exec(body)?.[1];
+  const target = args[1] + "/" + label;
+  if (!state.includes(target)) state.push(target);
+}
+writeFileSync(statePath, JSON.stringify(state) + "\\n", { mode: 0o600 });
+`;
+  await mkdir(root, { recursive: true });
+  for (const command of ["launchctl", "systemctl", "schtasks"]) {
     const path = join(root, command);
     await writeFile(path, stub, { mode: 0o700 });
     await chmod(path, 0o700);
@@ -84,12 +107,13 @@ async function gateway(releaseRoot, manifest, bindings) {
 
 async function readJson(path) { return JSON.parse(await readFile(path, "utf8")); }
 
-test("each exact macOS install line registers all six bot kinds and is idempotent", async t => {
+test("exact macOS lines install all registrations and one idempotent worker for each supported unattended kind", async t => {
   const root = await mkdtemp(join(tmpdir(), "connect-bot-line-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const releaseRoot = join(root, "release"), stubs = join(root, "stubs");
+  const releaseRoot = join(root, "release"), stubs = join(root, "stubs"), serviceStubs = join(root, "service-stubs");
   const release = await buildFleetConnectorReleaseForTestV1({ root: releaseRoot, builtFrom: "a".repeat(40) });
   await writeAgentCliStubs(stubs);
+  await writeServiceStubs(serviceStubs);
   const bindings = new Map(botKinds.map((bot, index) => [joinCode(index), {
     bot, workerId: workerId(index), displayName: `${bot} fixture`,
   }]));
@@ -100,21 +124,28 @@ test("each exact macOS install line registers all six bot kinds and is idempoten
     const home = join(root, `home-${index}`), xdg = join(home, ".config");
     await mkdir(home, { recursive: true });
     const identity = bindings.get(joinCode(index));
-    const commands = fleetJoinCommandsV1(service.origin, joinCode(index), bot, release.manifest, identity);
+    const optedIn = ["claude-code", "codex", "hermes"].includes(bot);
+    const commands = fleetJoinCommandsV1(service.origin, joinCode(index), bot, release.manifest, identity, optedIn);
+    const serviceState = join(root, "service-state.json");
     const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: xdg,
       XDG_DATA_HOME: join(home, ".local", "share"), XDG_CACHE_HOME: join(home, ".cache"),
       XDG_STATE_HOME: join(home, ".local", "state"), XDG_RUNTIME_DIR: join(home, ".runtime"),
       CLAUDE_CONFIG_DIR: join(home, ".claude"), CODEX_HOME: join(home, ".codex"), HERMES_HOME: join(home, ".hermes"),
       APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"),
-      CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", CONTROL_ROOM_TEST_AGENT_CLI_DIR: stubs };
+      CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", CONTROL_ROOM_TEST_AGENT_CLI_DIR: stubs,
+      CONTROL_ROOM_TEST_SERVICE_CLI_DIR: serviceStubs, CONTROL_ROOM_TEST_SERVICE_STATE: serviceState };
     await run("/bin/zsh", ["-c", commands.unix], { env, timeout: 30_000 });
     await run("/bin/zsh", ["-c", commands.unix], { env, timeout: 30_000 });
 
     const profile = commands.profileName;
     const credential = await readJson(join(xdg, "control-room", "bots", `${profile}.json`));
     assert.deepEqual(credential.installation, { bot, name: profile,
-      workspace: join(home, "ControlRoomWork", profile), state: "installed" });
+      workspace: join(home, "ControlRoomWork", profile), state: "installed", ...(optedIn ? { unattended: true } : {}) });
     assert.equal((await stat(credential.installation.workspace)).isDirectory(), true);
+    if (optedIn) {
+      const agents = await readdir(join(home, "Library", "LaunchAgents"));
+      assert.deepEqual(agents, [`com.agentcontrolroom.connector.${profile}.plist`], "one LaunchAgent belongs to this profile");
+    }
     const serverName = `control-room-${profile}`;
     if (["claude-code", "codex", "hermes"].includes(bot)) {
       const toolRoot = bot === "claude-code" ? join(home, ".claude")
@@ -134,21 +165,32 @@ test("each exact macOS install line registers all six bot kinds and is idempoten
   });
   assert.equal(service.state.enrollments, 6, "rerunning never redeems a code twice");
   assert.equal(service.state.heartbeats, 12, "both first installs and retries prove the saved credential works");
+  assert.equal((await readJson(join(root, "service-state.json"))).length, 3,
+    "retries replace the same three profile labels instead of adding duplicate agents");
 });
 
 test("Windows and Linux command fixtures install the same profile and give kind-specific next steps", () => {
-  const manifest = { schema: "control-room.fleet-connector-release/v1", version: "0.4.0",
-    file: "connector-0.4.0.mjs", sha256: "b".repeat(64), size: 1234, builtFrom: "c".repeat(40) };
+  const manifest = { schema: "control-room.fleet-connector-release/v1", version: "0.5.0",
+    file: "connector-0.5.0.mjs", sha256: "b".repeat(64), size: 1234, builtFrom: "c".repeat(40) };
   for (const [index, bot] of botKinds.entries()) {
     const identity = { displayName: `${bot} fixture`, workerId: workerId(index) };
     const commands = fleetJoinCommandsV1("https://control.example", joinCode(index), bot, manifest, identity);
     assert.match(commands.unix, new RegExp(`install .*--bot ${bot} --name ${commands.profileName} --workspace "\\$w" --i-am-the-installer$`, "u"));
     assert.match(commands.windows, new RegExp(`install .*--bot ${bot} --name ${commands.profileName} --workspace \\$w --i-am-the-installer$`, "u"));
+    if (["claude-code", "codex", "hermes"].includes(bot)) {
+      const unattended = fleetJoinCommandsV1("https://control.example", joinCode(index), bot, manifest, identity, true);
+      assert.match(unattended.unix, /--unattended --i-am-the-installer$/u);
+      assert.match(unattended.windows, /--unattended --i-am-the-installer$/u);
+    } else assert.throws(() => fleetJoinCommandsV1("https://control.example", joinCode(index), bot, manifest, identity, true));
     for (const os of ["macos", "windows", "linux"]) {
       const next = fleetConnectorOwnerNextStepV1(bot, os, commands.profileName);
       if (bot === "mcp-agent") assert.match(next, os === "windows" ? /%APPDATA%\\control-room/u : /\$XDG_CONFIG_HOME.*~\/\.config\/control-room/u);
       else if (["cursor", "claude-desktop"].includes(bot)) assert.match(next, /Close and reopen.*no background service/u);
       else assert.match(next, /registered now.*no background service or restart/u);
+      if (["claude-code", "codex", "hermes"].includes(bot)) assert.match(
+        fleetConnectorOwnerNextStepV1(bot, os, commands.profileName, true),
+        /per-user background worker.*checks for approved work.*harnesses\.json.*uninstall/isu);
+      else assert.throws(() => fleetConnectorOwnerNextStepV1(bot, os, commands.profileName, true));
     }
   }
   assert.throws(() => fleetConnectorOwnerNextStepV1("unknown", "macos", "safe-profile"));

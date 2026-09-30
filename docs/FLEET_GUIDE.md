@@ -81,9 +81,13 @@ Write a settings file next to the key file
 }
 ```
 
-Then run the downloaded connector with `run`. Its reviewed Codex, Claude Code
-and Hermes adapters are inside the same file; the machine needs no Control Room
-checkout and the settings cannot select a replacement adapter module.
+Then run the downloaded connector with `run`, or select **Let this bot pick up
+approved work on its own** on the Connect a bot page to install a per-user
+login worker that runs it for this profile. Its reviewed Codex, Claude Code and
+Hermes adapters are inside the same file; the machine needs no Control Room
+checkout and the settings cannot select a replacement adapter module. The
+login worker re-reads this file, so it is safe to enable or disable the harness
+after installation.
 
 - `deadlineMs` is the longest one task may run (at most one hour).
 - Codex and Claude Code can also take `"model"` and `"effort"`

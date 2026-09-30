@@ -63,7 +63,7 @@ test("owner fleet routes: add a worker returns a one-time install command; forei
   assert.ok(!JSON.stringify(listed).includes(value.code), "the code is shown once and never listed again");
 
   const connectBody = JSON.stringify({ botKind: "cursor", name: "desktop-cursor", operatingSystem: "windows",
-    projectIds: [projectId], capabilities: ["writing"] });
+    projectIds: [projectId], capabilities: ["writing"], unattended: false });
   const connected = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
     "content-type": "application/json" }, body: connectBody }), unused);
   assert.equal(connected.status, 201, await connected.clone().text());
@@ -76,8 +76,16 @@ test("owner fleet routes: add a worker returns a one-time install command; forei
   assert.match(install.installLine, / a{64} 1234 b{40}/u);
   const installUrl = install.installLine.match(/https:\/\/[^ ']+/u)?.[0] ?? "";
   assert.equal(installUrl.includes("crj_"), false, "the code is never placed in the connector URL");
+  const unattended = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
+    "content-type": "application/json" }, body: JSON.stringify({ ...JSON.parse(connectBody), botKind: "codex",
+      name: "overnight-codex", operatingSystem: "linux", unattended: true }) }), unused);
+  assert.equal(unattended.status, 201, await unattended.clone().text());
+  const unattendedInstall = await unattended.json() as { unattended: boolean; installLine: string; ownerNextStep: string };
+  assert.equal(unattendedInstall.unattended, true);
+  assert.match(unattendedInstall.installLine, /--unattended --i-am-the-installer$/u);
+  assert.match(unattendedInstall.ownerNextStep, /per-user background worker[\s\S]*approved work[\s\S]*turn it off/iu);
   const unicodeName = JSON.stringify({ botKind: "mcp-agent", name: "<owner bot> Ω", operatingSystem: "linux",
-    projectIds: [projectId], capabilities: ["writing"] });
+    projectIds: [projectId], capabilities: ["writing"], unattended: false });
   const unicode = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
     "content-type": "application/json" }, body: unicodeName }), unused);
   assert.equal(unicode.status, 201, "HTML and Unicode names are stored as text; the UI escapes them when rendering");
