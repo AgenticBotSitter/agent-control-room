@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { updateCandidateDecisionReceiptSchemaV1, updateCandidatePageSchemaV1,
-  type UpdateCandidateViewV1 } from "../../src/improve-control-room/v1";
+  type UpdateCandidateViewV1 } from "../../src/improve-control-room/v1/schemas";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { PanelHeading, StateChip } from "./owner-ui";
