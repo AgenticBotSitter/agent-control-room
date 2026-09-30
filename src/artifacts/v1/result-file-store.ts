@@ -206,18 +206,18 @@ export class ResultFileStoreV1 {
       || configuration.rootPath.length > 4096 || !isAbsolute(configuration.rootPath)
       || resolve(configuration.rootPath) !== configuration.rootPath
       || !Number.isSafeInteger(configuration.maximumFiles) || configuration.maximumFiles < 1
- // The per-set file ceiling is a v1 limit (32), not a free parameter: a
- // configuration may go lower, never higher, exactly as for the byte
- // ceilings below.
- || configuration.maximumFiles > RESULT_FILE_LIMITS_V1.maximumFilesPerSet
+      // The per-set file ceiling is a v1 limit (32), not a free parameter: a
+      // configuration may go lower, never higher, exactly as for the byte
+      // ceilings below.
+      || configuration.maximumFiles > RESULT_FILE_LIMITS_V1.maximumFilesPerSet
       || !Number.isSafeInteger(configuration.maximumFileBytes) || configuration.maximumFileBytes < 1
       || configuration.maximumFileBytes > RESULT_FILE_LIMITS_V1.maximumFileBytes
       || !Number.isSafeInteger(configuration.maximumSetBytes) || configuration.maximumSetBytes < 1
       || configuration.maximumSetBytes > RESULT_FILE_LIMITS_V1.maximumSetBytes
       || !Number.isSafeInteger(configuration.maximumTotalBytes) || configuration.maximumTotalBytes < 1
- // The installation quota is a v1 limit too (10 GiB). A configuration may
- // go lower so an operator can shrink it, never higher.
- || configuration.maximumTotalBytes > RESULT_FILE_LIMITS_V1.maximumTotalBytes
+      // The installation quota is a v1 limit too (10 GiB). A configuration may
+      // go lower so an operator can shrink it, never higher.
+      || configuration.maximumTotalBytes > RESULT_FILE_LIMITS_V1.maximumTotalBytes
       || !Number.isSafeInteger(configuration.operationTimeoutMs) || configuration.operationTimeoutMs < 1
       || configuration.operationTimeoutMs > 30_000) throw new ResultFileStoreError("store_invalid");
     const operation: Operation = { deadline: Date.now() + configuration.operationTimeoutMs };

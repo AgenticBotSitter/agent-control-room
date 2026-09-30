@@ -110,30 +110,45 @@ test("two projects with identical bytes are two files, and neither reads the oth
 });
 
 test("a symlinked or hard-linked entry is refused, never followed", async () => {
+  // Each case is built so that ONLY the link rule can be the reason for the
+  // refusal. A symlink whose target holds the right bytes would be served by a
+  // store that followed it, so the refusal below is that store's behaviour and
+  // not the unaccounted-entry guard's — which is why the name still matches the
+  // content-digest pattern and nothing else is left in the root.
   await withStore({ async after(root, store) {
     const content = bytes("real bytes\n");
     const id = identity(PROJECT, FILE, content);
     await store.put({ ...id, bytes: content });
     const name = `${resultFileStorageKeyV1(TENANT, PROJECT, FILE, id.contentDigest).slice("crbf1-".length)}.crbf`;
-    const target = join(root, name);
-    // Replace the stored file with a symlink to something else entirely.
-    const elsewhere = join(root, "..", "elsewhere.bin");
-    await writeFile(elsewhere, content);
-    await rm(target);
-    await symlink(elsewhere, target);
-    // The store refuses rather than serving what the link points at.
+    // The link target lives OUTSIDE the root, so nothing unaccounted is inside
+    // it, and it holds exactly the bytes the name claims.
+    const outside = join(root, "..", "outside.bin");
+    await writeFile(outside, content);
+    await rm(join(root, name));
+    await symlink(outside, join(root, name));
     await assert.rejects(store.read(id),
-      (error: unknown) => error instanceof ResultFileStoreError
-        && (error.code === "store_ambiguous" || error.code === "store_invalid"));
-    // A hard link is refused too: link count 1 is required, so a second name
-    // for the same inode cannot be a substitution vector.
-    await rm(target);
-    await writeFile(target, content);
-    const second = join(root, `${"0".repeat(64)}.crbf`);
-    await link(target, second);
+      (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_ambiguous",
+      "a symlink is not followed, even when its target holds the right bytes");
+    // A hard link is refused. `O_NOFOLLOW` cannot help here — a hard link is an
+    // ordinary file with a second name, not a symlink — so this is the case that
+    // proves the store re-checks the file it opened rather than trusting the
+    // path it asked for.
+    //
+    // The file is written DIRECTLY rather than through `put`, so the only thing
+    // that ever made it suspicious is the second name. Going through `put` would
+    // leave a lock file behind and the refusal would be the unaccounted-entry
+    // guard's, which is a different property already proved above.
+    await rm(outside);
+    await rm(join(root, name));
+    await writeFile(join(root, name), content, { mode: 0o600 });
+    await link(join(root, name), outside);
+    const listed = await lstat(join(root, name), { bigint: true });
+    assert.equal(listed.nlink, BigInt(2), "the fixture really is a hard link");
+    assert.equal(Number(listed.mode & BigInt(0o777)) & 0o077, 0,
+      "and it is still a private-mode file, so the mode check is not what refuses it");
     await assert.rejects(store.read(id),
-      (error: unknown) => error instanceof ResultFileStoreError
-        && (error.code === "store_ambiguous" || error.code === "store_invalid"));
+      (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_ambiguous",
+      "a hard link is never served");
   } });
 });
 

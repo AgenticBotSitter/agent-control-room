@@ -125,10 +125,23 @@ test("a link is short-lived, and one download spends it", async () => {
   assert.deepEqual(Buffer.from(file.bytes), Buffer.from(BYTES));
   assert.equal(file.displayName, "report.txt");
   assert.equal(db.state.spentOnce, 1);
-  // The same link a second time is refused: the grant is spent.
+  // The same link a second time is refused. Two guards could answer that — the
+  // grant lookup refuses a row that is already spent, and the conditional
+  // spend refuses a row somebody else spent in between — and this assertion
+  // does not pretend to know which. The COUNT is what makes "once" mean once.
   await assert.rejects(value.download(owner, PROJECT, SET, FILE, token),
     (error: unknown) => error instanceof WebAccessError && error.code === "not_found");
   assert.equal(db.state.spentOnce, 1, "a spent grant was not spent twice");
+  // Two concurrent downloads of one link, from two sessions, both refused: the
+  // row is read before the store is, so the loser of the race still finds
+  // `spent_at` set.
+  const race = await Promise.allSettled([
+    value.download(owner, PROJECT, SET, FILE, token),
+    value.download(other, PROJECT, SET, FILE, token),
+  ]);
+  assert.deepEqual(race.map(result => result.status), ["rejected", "rejected"],
+    "neither of two concurrent downloads of one link succeeds");
+  assert.equal(db.state.spentOnce, 1, "a race did not spend the grant twice");
 });
 
 test("a token is bound to the session, the project, the set and the file", async () => {
