@@ -416,9 +416,11 @@ test("0109, 0108 and 0105 down migrations refuse retained policy/history and rem
   const s7bDowns = ["0154_pipeline_advance_round_receipts.sql", "0153_pipeline_machine_capacity_observations.sql",
     "0152_pipeline_advance_unknown_cost.sql", "0151_pipeline_stage_loop_counts.sql",
     "0150_pipeline_installation_allowances.sql"];
-  // S7b's tables exist in this fixture too, so 0109's down refuses while they
-  // do. Reverse S7b first, exactly as an operator would, then 0109 runs.
+  // 0160 (cook/v1) also points tables at pipeline_runs, so 0105 refuses while it
+  // is installed. Same rule as S7b above: reverse the later slice first.
+  const deskDown = await readFile("db/down/0160_improve_control_room_desk.sql", "utf8");
   for (const file of s7bDowns) await populated.db.exec(await readFile(`db/down/${file}`, "utf8"));
+  await populated.db.exec(deskDown);
   await populated.db.exec(unattendedDown);
   await assert.rejects(populated.db.exec(publicationDown), /0108 down migration refused/u);
   await populated.db.exec("ROLLBACK");
@@ -430,7 +432,11 @@ test("0109, 0108 and 0105 down migrations refuse retained policy/history and rem
   const empty = await taskFixture(); t.after(() => void empty.db.close());
   await assert.rejects(empty.db.exec(unattendedDown), /a later migration depends on its history guard/u);
   await empty.db.exec("ROLLBACK");
+  // 0105 refuses while 0160 still points at pipeline_runs, for the same reason.
+  await assert.rejects(empty.db.exec(down), /a later migration depends on its tables/u);
+  await empty.db.exec("ROLLBACK");
   for (const file of s7bDowns) await empty.db.exec(await readFile(`db/down/${file}`, "utf8"));
+  await empty.db.exec(deskDown);
   await empty.db.exec(unattendedDown);
   await empty.db.exec(publicationDown);
   await empty.db.exec(agentReviewDown);
