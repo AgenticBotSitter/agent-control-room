@@ -146,11 +146,13 @@ function taskApplicationSpy() {
   const application = {
     revoked: [] as string[],
     // A batch key is configured, so the host requires the coordinator's own
-    // batch authority. These are inert stand-ins: this test exercises the
-    // operations port, not queue admission.
+    // batch authority and its web snapshot view. These are inert stand-ins:
+    // this test exercises the operations port, not queue admission.
     operations: {}, isReady: () => true, close: async () => {},
     queueDelivery: undefined, queueRecovery: undefined,
     workBatchAuthority: { assertCurrent: () => true, isAcceptedResultCurrent: async () => true },
+    workBatchView: { binding: "coordinator_snapshot" as const, assertCurrent: () => true,
+      isAcceptedResultCurrent: async () => true, acceptedResultProof: async () => null },
     // The installation's running work, as the coordinator's own login sees it:
     // one genuinely running lease, which `stopped` must revoke.
     listRunning: async () => (application.revoked.length ? [] : [{ jobId: "job:running", attemptId: "job:running:a",
