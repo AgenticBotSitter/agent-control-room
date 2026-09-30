@@ -110,9 +110,18 @@ What you will see:
 - **Remove** the machine and it stops at once; its running task is dropped
   and goes back to the queue when its time runs out.
 
-The bot never sees the machine's key, and the connector talks only to your
-Control Room address. The bot itself uses its own normal sign-in (for example
-your Codex or Claude account) and its own network access.
+The connector never hands the bot the machine's key, and it talks only to
+your Control Room address. The bot itself uses its own normal sign-in (for
+example your Codex or Claude account) and its own network access.
+
+Codex runs read-only, but read-only still means it can **read** files under
+your home folder, including the key file, if a task tells it to. The
+connector checks every answer before sending it and refuses (as a blocker,
+sending nothing) any that contains the machine's current key. Claude Code and
+Hermes run with no tools at all, so they cannot read files in the first
+place. For real isolation, run fleet Codex as its own OS user, or with a
+`HOME` that holds no secrets — no `~/.codex/auth.json`, no `~/.ssh`, no
+connector credential file of its own.
 
 ## Connect a new agent over MCP
 

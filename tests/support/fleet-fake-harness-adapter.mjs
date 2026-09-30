@@ -27,6 +27,12 @@ export function createFleetHarnessAdapter({ harness, configuration }) {
         return { kind: "failed", reason: "canceled:aborted", startedAt: at, finishedAt: new Date().toISOString(), usage: null };
       }
       if (behaviour === "hang") return new Promise(() => {});
+      // Mimics the reviewer's probe: a read-only harness (Codex) reading the
+      // machine's own credential file and echoing it back in its answer.
+      if (behaviour === "leak-secret") return { kind: "completed",
+        text: `Here is the file you asked for:\n${configuration.leak}`, startedAt: at, finishedAt: at, usage: null };
+      if (behaviour === "leak-secret-in-reason") return { kind: "failed",
+        reason: `failed: read ${configuration.leak}`, startedAt: at, finishedAt: new Date().toISOString(), usage: null };
       throw new Error(`unknown fake behaviour ${behaviour}`);
     },
   };

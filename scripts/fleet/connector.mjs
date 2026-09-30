@@ -423,6 +423,23 @@ export function storableText(value) {
 }
 const shortReason = value => storableText(value).replace(/\s+/gu, " ").slice(0, 200) || "no reason given";
 
+/** The strings to refuse in outgoing text: each live credential whole, and
+ * the bare base64url part after "crf_" (a harness that reads the credential
+ * file could echo either form back in its answer). A read-only harness such
+ * as Codex can read this machine's own key file even though it was never
+ * given the key; this is the only guard standing between that read and the
+ * key leaving the machine in a result or blocker message. */
+function secretNeedles(secrets) {
+  const needles = new Set();
+  for (const secret of secrets) {
+    if (typeof secret !== "string" || !secret) continue;
+    needles.add(secret);
+    if (secret.startsWith("crf_")) needles.add(secret.slice(4));
+  }
+  return [...needles];
+}
+const containsSecret = (text, needles) => needles.some(needle => needle.length > 0 && String(text).includes(needle));
+
 async function report(send, attempts = 3) {
   for (let attempt = 1; ; attempt += 1) {
     try { return await send(); }
@@ -440,20 +457,24 @@ async function report(send, attempts = 3) {
  * a failure, crash, timeout, stop, malformed or oversized answer becomes a
  * blocker that hands the task back. Nothing here can accept the result.
  * @param {{ client: ReturnType<typeof createClient>, claim: any, adapter: any, progressIntervalMs?: number,
- *   readMode?: () => Promise<string>, log?: (message: string) => void, watchdogGraceMs?: number }} options
+ *   readMode?: () => Promise<string>, log?: (message: string) => void, watchdogGraceMs?: number,
+ *   secrets?: string[] }} options
  * @returns {Promise<RunPass>}
  */
 export async function runClaimedTask({ client, claim, adapter, progressIntervalMs = 60_000, readMode = async () => "running",
-  log = () => {}, watchdogGraceMs = WATCHDOG_GRACE_MS }) {
+  log = () => {}, watchdogGraceMs = WATCHDOG_GRACE_MS, secrets = [] }) {
   const label = HARNESS_LABELS[adapter.harness] ?? adapter.harness;
   const keyBase = `handoff-${claim.claimId.slice("fleet-claim:".length)}`;
   const outcome = { claimId: claim.claimId, jobId: claim.jobId };
+  const needles = secretNeedles(secrets);
+  const keyLeakMessage = `${label}'s answer contained this machine's key, so it was not sent. Rotate the key.`;
   const blocked = async (message, extra = {}) => {
+    const safeMessage = containsSecret(message, needles) ? keyLeakMessage : message;
     try {
-      await report(() => client.blocker(claim.claimId, message.slice(0, MAX_MESSAGE_CHARS), `${keyBase}-blocker`, true));
-      return Object.freeze({ ...outcome, outcome: "blocked", message, ...extra });
+      await report(() => client.blocker(claim.claimId, safeMessage.slice(0, MAX_MESSAGE_CHARS), `${keyBase}-blocker`, true));
+      return Object.freeze({ ...outcome, outcome: "blocked", message: safeMessage, ...extra });
     } catch (error) {
-      return Object.freeze({ ...outcome, outcome: "abandoned", message, reason: error?.code ?? "unreachable", ...extra });
+      return Object.freeze({ ...outcome, outcome: "abandoned", message: safeMessage, reason: error?.code ?? "unreachable", ...extra });
     }
   };
   try { await report(() => client.progress(claim.claimId, `Started on ${label} on this machine.`, `${keyBase}-start`)); }
@@ -511,6 +532,7 @@ export async function runClaimedTask({ client, claim, adapter, progressIntervalM
   if (!summary) return blocked(`${label} finished with an empty answer. Nothing was submitted.`);
   if (Buffer.byteLength(summary, "utf8") > MAX_RESULT_BYTES)
     return blocked(`${label}'s answer was larger than 64 KiB, so it was not submitted. Ask for a shorter answer.`);
+  if (containsSecret(summary, needles)) return blocked(keyLeakMessage, { keyLeak: true });
   try {
     const result = await report(() => client.result(claim.claimId, summary, [], `${keyBase}-result`));
     return Object.freeze({ ...outcome, outcome: "submitted", resultId: result.resultId });
@@ -590,8 +612,11 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       else if (claim) {
         say(`Claimed "${claim.title}" for ${HARNESS_LABELS[harness]}.`);
         const readMode = async () => (await client.heartbeat()).operationsMode ?? "running";
+        // The adapter never receives these; they are only checked against the
+        // adapter's own answer afterward, so a leaked key cannot be sent on.
+        const secrets = [current.secret, current.pendingSecret].filter(value => typeof value === "string" && value);
         const finished = await runClaimedTask({ client, claim, adapter, progressIntervalMs, readMode, log,
-          watchdogGraceMs });
+          watchdogGraceMs, secrets });
         if (finished.outcome !== "submitted") handedBack.add(claim.jobId);
         say(finished.outcome === "submitted" ? `Sent the result of "${claim.title}" to the owner for review.`
           : `Could not finish "${claim.title}": ${finished.message ?? finished.reason}`);

@@ -110,5 +110,26 @@
     "replace": "    return createOwnerTrustedLocalHermesExecutionAdapterV1(createOwnerTrustedLocalHermesExecV1(dependencies), configuration);\n  return createOwnerTrustedLocalCodexExecutionAdapterV1(createOwnerTrustedLocalCodexExecV1(dependencies), configuration);",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"maps only the three harnesses\" tests/fleet-harness-handoff.test.ts",
     "why": "the repository adapter module maps only the three known harnesses"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (containsSecret(summary, needles)) return blocked(keyLeakMessage, { keyLeak: true });",
+    "replace": "  if (false) return blocked(keyLeakMessage, { keyLeak: true });",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^key leak: an answer containing\" tests/fleet-harness-handoff.test.ts",
+    "why": "a read-only harness (Codex) can read this machine's key file; an answer that echoes it back is refused, never submitted as a result"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    const safeMessage = containsSecret(message, needles) ? keyLeakMessage : message;",
+    "replace": "    const safeMessage = false ? keyLeakMessage : message;",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^key leak: a failure reason\" tests/fleet-harness-handoff.test.ts",
+    "why": "a blocker message built from the harness's own text (for example a failure reason) is masked before it can carry the key off this machine"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "          watchdogGraceMs, secrets });",
+    "replace": "          watchdogGraceMs });",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^key leak\" tests/fleet-harness-handoff.test.ts",
+    "why": "run must pass this machine's live credential(s) to runClaimedTask so a leaked key in the harness's answer can be caught"
   }
 ]

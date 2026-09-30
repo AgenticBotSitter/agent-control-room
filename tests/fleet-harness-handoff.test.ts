@@ -273,6 +273,51 @@ test("revoked mid-run: the harness is cancelled and nothing is posted with the d
   assert.equal((await events(f, task.jobId)).some(event => event.kind === "blocker"), false);
 });
 
+// Mirrors the independent security review's probe: a read-only harness
+// (Codex) can read this machine's own credential file even though it was
+// never given the key, and could put it in its answer. The connector must
+// refuse to send that answer on, in any of the texts it sends to the gateway.
+test("key leak: an answer containing this machine's key is refused, never sent as a result", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const worker = await joinWorker(f, "KeyLeak");
+  const task = await offer(f, "handoff-leak");
+  const secret = (JSON.parse(await readFile(worker.configPath, "utf8")) as { secret: string }).secret;
+  const { pass } = await runOnce(f, worker, await settings(f, "leak", fakeCodex("leak-secret", { leak: secret })));
+  assert.equal(pass.outcome, "blocked");
+  assert.deepEqual(await results(f), [], "the key never becomes a stored result");
+  assert.equal(await jobState(f, task.jobId), "ready", "released back to the open offer");
+  const blocker = (await events(f, task.jobId)).find(event => event.kind === "blocker");
+  assert.match(blocker!.message, /contained this machine's key/u);
+  assert.equal(blocker!.message.includes(secret), false);
+  assert.equal(blocker!.message.includes("crf_"), false);
+});
+
+test("key leak: the bare base64url part after crf_ is refused too", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const worker = await joinWorker(f, "KeyLeakBare");
+  const task = await offer(f, "handoff-leak-bare");
+  const secret = (JSON.parse(await readFile(worker.configPath, "utf8")) as { secret: string }).secret;
+  const bare = secret.slice("crf_".length);
+  const { pass } = await runOnce(f, worker, await settings(f, "leak-bare", fakeCodex("leak-secret", { leak: bare })));
+  assert.equal(pass.outcome, "blocked");
+  assert.deepEqual(await results(f), []);
+  const blocker = (await events(f, task.jobId)).find(event => event.kind === "blocker");
+  assert.equal(blocker!.message.includes(bare), false);
+});
+
+test("key leak: a failure reason containing the key is masked before it becomes a blocker", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const worker = await joinWorker(f, "KeyLeakReason");
+  const task = await offer(f, "handoff-leak-reason");
+  const secret = (JSON.parse(await readFile(worker.configPath, "utf8")) as { secret: string }).secret;
+  const { pass } = await runOnce(f, worker, await settings(f, "leak-reason", fakeCodex("leak-secret-in-reason", { leak: secret })));
+  assert.equal(pass.outcome, "blocked");
+  assert.deepEqual(await results(f), []);
+  const blocker = (await events(f, task.jobId)).find(event => event.kind === "blocker");
+  assert.equal(blocker!.message.includes(secret), false);
+  assert.match(blocker!.message, /contained this machine's key/u);
+});
+
 test("harness settings are refused unless the machine owner wrote them safely", async t => {
   const f = await fixture(); t.after(() => f.close());
   const write = async (name: string, value: unknown, mode = 0o600) => {

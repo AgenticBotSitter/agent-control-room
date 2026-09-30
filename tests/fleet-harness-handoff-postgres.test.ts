@@ -7,7 +7,8 @@
 // The worker machine runs the real standalone connector with a deterministic
 // fake harness adapter speaking the shared local CLI delivery contract.
 // The attack kit provisions a disposable socket-only cluster on this file's
-// reserved port lane (59200-59209) and destroys it afterwards.
+// reserved port lane (59200-59209 by default; CONTROL_ROOM_PG_TEST_PORT_BASE
+// moves it, as in linear-pipeline-postgres) and destroys it afterwards.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -25,7 +26,7 @@ import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenan
 import * as connector from "../scripts/fleet/connector.mjs";
 import * as fake from "./support/fleet-fake-harness-adapter.mjs";
 
-const PORT = 59200;
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59200);
 const PG = requiresRealPostgres();
 
 function pool(postgres: RealPostgres, role: string) {
