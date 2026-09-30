@@ -19,7 +19,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // including generic external-content migrations 0025/0026, plus MIG-I's owner push attempt heads 0224-0226 and the push-endpoint
 // allow list 0227, read from a real PostgreSQL 17 cluster installed the production way and built from these migrations. Catalog
 // query below; not a mutable database marker.
-export const privateWebSchemaDigest = "a4cadc0cc4feda19a13a5a8b51d0b7f8527b4b2b0e5c9a20da02b5d5ddd978f5";
+export const privateWebSchemaDigest = "f7534ba032c5646554d0158e7dcf87bbd13ce62b65a6044f55cc063d77d60f9d";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -607,6 +607,28 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                re-create, or a fixture that replays migrations without SET ROLE,
                is in. redeem_fleet_enrollment above checks its owner
                unconditionally for the same reason. */
+            /* The updater's health count read (0238, design \u00a78.4 item 2). SECURITY
+               DEFINER because the updater's login holds no SELECT on the release
+               tables it counts -- granting that would fail the updater's own
+               startup assertion and hand candidate-controlled rows to the approval
+               authority (R10a). The preflight exemption is narrow and says exactly
+               what the boundary is: owned by the schema owner, STABLE,
+               zero-argument, pinned to the same search_path as everything else,
+               no PUBLIC EXECUTE, and exactly one non-owner grantee which is
+               control_room_deployer. That last clause is what stops this entry
+               from becoming a hole: a second grantee fails here. */
+            OR (p.oid = 'updater_health_counts()'::regprocedure
+              AND pg_get_userbyid(p.proowner) = 'control_room_schema_owner'
+              AND p.prosecdef AND p.provolatile = 's' AND p.prokind = 'f'
+              AND p.pronargs = 0 AND p.proparallel = 'u' AND NOT p.proleakproof
+              AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND NOT has_function_privilege('public', p.oid, 'EXECUTE')
+              AND (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_deployer')
+                OR has_function_privilege('control_room_deployer', p.oid, 'EXECUTE'))
+              AND NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+                WHERE a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
+                  AND (a.is_grantable OR a.grantee = 0
+                    OR pg_get_userbyid(a.grantee) <> 'control_room_deployer')))
             OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')

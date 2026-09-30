@@ -383,7 +383,8 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
   // the same time — which is the change that would otherwise be forgotten.
   assert.deepEqual([...shipped.keys()].map(signature =>
     signature.replace(/\(.*\)/u, "")).sort(),
-  ["commit_agent_review", "is_work_intake_session", "read_agent_review_plan", "redeem_fleet_enrollment"],
+  ["commit_agent_review", "is_work_intake_session", "read_agent_review_plan",
+    "redeem_fleet_enrollment", "updater_health_counts"],
     "the shipped SECURITY DEFINER function set changed; a login-callable one needs a preflight allowlist entry");
   // The shipped names carry SQL argument NAMES; the preflight carries TYPES, so
   // the two are matched by ARITY, not by text. `shape` therefore drops the
