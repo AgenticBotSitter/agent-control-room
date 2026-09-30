@@ -7,6 +7,7 @@ import { sha256Digest } from "../../security";
 import { moveFleetEntityV1, readFleetEntityV1, type Entity, type FleetActorV1 } from "./canonical-transitions";
 import { ROLLBACK_SQL_STATES_V1, rollbackSqlStateNameV1 } from "../../web/v1/bounded-database";
 import { fleetFail, FleetErrorV1 } from "./errors";
+import { FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1, FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1 } from "./database-failure";
 import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_PATTERN_V1,
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
@@ -595,8 +596,21 @@ export class FleetGatewayStoreV1 {
         [this.#tenantId, claimId, offerId, principal.workerId, principal.nodeId, offer.project_id, job.id, attemptId, leaseId,
           idempotencyKey, now]);
       } catch (error) {
-        // The database guard refuses revoked, out-of-scope, over-capacity and doubly-leased claims.
-        if (databaseSqlStateIsAnyV1(error, ["P0001", "23505", "23503"])) return fleetFail("conflict");
+        // The database guards refuse revoked, out-of-scope, over-capacity and
+        // doubly-leased claims, each with a SQLSTATE the store reads wherever
+        // the transport put it. At the ceiling this is a conflict the connector
+        // moves past to the next offer, not a fault that ends the pass.
+        //
+        // 54000 is 0234's capacity refusal and MUST stay in this set: without
+        // it every claim by a worker at its own limit escapes as an unexpected
+        // error, the gateway answers a bare HTTP 400 `refused`, and the
+        // connector abandons its whole pass instead of moving to the next offer.
+        //
+        // 0A000 is deliberately NOT here. 0234 raises it on a REPEATABLE READ
+        // caller, whose transaction cannot enforce the ceiling for ANY claim;
+        // answering that with `conflict` would send the connector back to the
+        // next offer in the same unusable transaction.
+        if (databaseSqlStateIsAnyV1(error, FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1)) return fleetFail("conflict");
         throw error;
       }
       // The canonical store's own transaction wraps anything it does not recognise,
@@ -625,7 +639,12 @@ let claimed: Awaited<ReturnType<CanonicalStore["claimReadyTaskJob"]>>;
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.#tenantId, claimed.lease.id, offer.project_id, job.id,
           claimed.attempt.id, principal.nodeId, scope.scope_kind, scope.path_fold]);
       } catch (error) {
-        if (databaseSqlStateIsAnyV1(error, ["23P01", "23514"])) return fleetFail("conflict");
+        // 0100 raises exactly two codes on this insert -- 23P01 for a scope
+        // collision and 23514 for a scope the job never declared -- so it gets
+        // its OWN set rather than the claim insert's. A 23514 on the CLAIM row
+        // means the gateway built a row the schema forbids, which is a bug to
+        // report, not a busy worker to move past.
+        if (databaseSqlStateIsAnyV1(error, FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1)) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-claim:${suffix}`, tenantId: this.#tenantId, projectId: offer.project_id,

@@ -1,5 +1,6 @@
 export * from "./errors";
 export * from "./catalog";
+export * from "./database-failure";
 export * from "./identifiers";
 export * from "./canonical-transitions";
 export * from "./gateway-store";

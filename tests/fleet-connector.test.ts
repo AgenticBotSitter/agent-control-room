@@ -458,8 +458,18 @@ test("one SQLSTATE reader serves every refusal site, with both refusal sets inta
 
   // Every refusal site uses the helper. A hand-rolled comparison (=== "23505",
   // .includes(...), or a direct .code read) is a second reader by another name.
+  //
+  // maxconc moved the claim-path sets into named constants in database-failure.ts
+  // and the call sites now pass the constant. That is the SAME guarantee with
+  // less duplication, so the sites are pinned by NAME here and the contents are
+  // pinned once, in database-failure.ts, below. What must never happen is the
+  // old three-element literal creeping back at the call site: without 54000 every
+  // claim by a worker at its own ceiling escapes as an unexpected error, the
+  // gateway answers a bare 400 `refused`, and the connector abandons its pass
+  // instead of moving to the next offer.
   const sites = new Map<string, readonly string[]>([
-    ["src/fleet/v1/gateway-store.ts", [`["23505"]`, `["P0001", "23505", "23503"]`, `["23P01", "23514"]`, `["P0001"]`]],
+    ["src/fleet/v1/gateway-store.ts", [`["23505"]`, `["P0001"]`,
+      "FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1", "FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1"]],
     ["src/fleet/v1/owner-service.ts", [`["P0001", "23503", "23505"]`, `["P0001", "23505"]`]],
     ["src/web/v1/task-assignment-coordinator.ts", [`["23P01", "23514"]`]],
   ]);
@@ -475,6 +485,15 @@ test("one SQLSTATE reader serves every refusal site, with both refusal sets inta
       assert.ok(source.includes(`databaseSqlStateIsAnyV1(error, ${states})`),
         `${file}: the refusal set ${states} must survive the merge`);
   }
+  // The two named sets, by value, in one place. A refusal set is a promise about
+  // what the caller is told, so its contents are pinned where they are declared
+  // rather than at each use.
+  const failures = await readFile("src/fleet/v1/database-failure.ts", "utf8");
+  assert.ok(failures.includes(`FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1: readonly string[] =
+  ["54000", "P0001", "23505", "23503"];`),
+    "the claim insert set must carry 0234's 54000, or an at-capacity claim leaves as an unexpected error");
+  assert.ok(failures.includes(`FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1: readonly string[] = ["23P01", "23514"];`),
+    "the lease scope set must stay exactly 0100's two codes: a claim-path code here would absorb a real fault as a conflict");
   // No site may re-read the error itself, which is the shape a second reader takes.
   for (const [file] of sites) {
     const source = await readFile(file, "utf8");
