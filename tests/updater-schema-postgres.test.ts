@@ -201,7 +201,7 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
     // The updater's own loader, in the design's order: role and schema as the
     // installer, tables and guards as the deployer.
     const created = await installUpdaterSchema(postgres);
-    assert.equal(created.tables, 9, "the design's nine tables exist");
+    assert.equal(created.tables, 11, "the design's eleven tables exist");
     assert.deepEqual([...created.appliedFiles], [...updaterDdlFilesV1()],
       "every DDL file was applied, in order");
     // Idempotent: the updater applies this at every startup.
@@ -297,9 +297,10 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
       const tables = (await privileged.query<{ relname: string }>(
         `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='updater' AND c.relkind='r' ORDER BY 1`)).rows.map(row => row.relname);
-      assert.deepEqual(tables, ["heartbeat", "owner_requests", "passkey_registrations", "plan_approval_outcomes",
-        "plan_approvals", "plans", "push_queue", "run_events", "runs"],
-      "the design's nine tables, and no others");
+      assert.deepEqual(tables, ["backup_generations", "backup_state", "heartbeat", "owner_requests",
+        "passkey_registrations", "plan_approval_outcomes", "plan_approvals", "plans", "push_queue",
+        "run_events", "runs"],
+      "the design's eleven tables, and no others");
     } finally { await privileged.end(); }
 
     // The release ledger created none of this. If a future migration reached

@@ -56,6 +56,7 @@ export function updaterDdlFilesV1(): readonly string[] {
     "0000_bootstrap.sql",
     "0002_schema.sql",
     "0003_guards.sql",
+    "0004_backups.sql",
   ]);
 }
 
@@ -97,7 +98,8 @@ export interface UpdaterSchemaResultV1 {
 
 /** The design's table list (§9.1), asserted on the live catalog after the apply. */
 export const updaterTablesV1 = Object.freeze(["plans", "plan_approvals", "plan_approval_outcomes",
-  "passkey_registrations", "owner_requests", "push_queue", "runs", "run_events", "heartbeat"]);
+  "passkey_registrations", "owner_requests", "push_queue", "runs", "run_events", "heartbeat",
+  "backup_generations", "backup_state"]);
 
 /**
  * The release-schema tables the deployer may read, and the only ones.

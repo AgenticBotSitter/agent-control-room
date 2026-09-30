@@ -96,7 +96,7 @@ test("the DDL creates exactly the design's tables, and the loader runs every fil
       /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?updater\.(\w+)/giu)) created.add(match[1]!);
   }
   assert.deepEqual([...created].sort(), [...updaterTablesV1].sort(),
-    "the DDL's tables are the design's nine and no others");
+    "the DDL's tables are the design's eleven and no others");
 });
 
 test("the release-reader grant names only the three tables the loader allows", async () => {
