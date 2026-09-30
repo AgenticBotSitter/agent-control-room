@@ -68,6 +68,19 @@ BEGIN
     || ' ON public.control_identities TO control_room_deployer';
   EXECUTE 'GRANT SELECT (tenant_id, identity_id, role_key, risk_ceiling, allowed_actions, project_ids,'
     || ' expires_at, revoked_at) ON public.control_role_grants TO control_room_deployer';
+  -- Item 10a's addition, and the only reason `enqueue_cooling_off_notices` can
+  -- work: the deployer must be able to COUNT the owner's live subscriptions, so
+  -- it can refuse a `passkey add` when there is nobody to warn. One boolean
+  -- question, granted column-wise: the endpoint itself is never readable from
+  -- here, because the updater does not send pushes — it queues them and the
+  -- dispatch path (item 21) does, with the root-only VAPID key (R12).
+  --
+  -- `id` is included so a future de-duplication is possible without a second
+  -- grant, and `expires_at` because an expired browser endpoint is not a browser
+  -- that will be told. No endpoint, no key material, no tenant beyond the one it
+  -- already had.
+  EXECUTE 'GRANT SELECT (tenant_id, id, expires_at)'
+    || ' ON public.owner_web_push_subscriptions TO control_room_deployer';
 END;
 $$;
 
