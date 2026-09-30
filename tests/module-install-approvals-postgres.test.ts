@@ -42,9 +42,12 @@ function keyPair(): { privateKey: KeyObject; spki: string; keyId: string } {
   const spki = publicKey.export({ format: "der", type: "spki" }).toString("base64url");
   return { privateKey, spki, keyId: moduleKeyIdV1(spki) };
 }
-const publisher = keyPair();
-const trusting: ModuleTrustPolicyV1 = { trustedKeys: [{ keyId: publisher.keyId, publicKeySpki: publisher.spki,
-  label: "Test publisher", moduleIds: ["*"] }], reviewedBundleDigests: [] };
+const publisher = keyPair(), secondPublisher = keyPair();
+// Two trusted keys, so the proof can show the owner approves the signer they were shown, not any trusted one.
+const trusting: ModuleTrustPolicyV1 = { trustedKeys: [
+  { keyId: publisher.keyId, publicKeySpki: publisher.spki, label: "Test publisher", moduleIds: ["*"] },
+  { keyId: secondPublisher.keyId, publicKeySpki: secondPublisher.spki, label: "Second publisher", moduleIds: ["*"] },
+], reviewedBundleDigests: [] };
 const permissions = (access: ("read" | "write")[] = ["read"]) => ({
   projectData: [{ resource: "module_weekly_digest_notes", access }], taskTemplates: ["digest.weekly"], pipelineTemplates: [],
   workerCapabilities: [], notifications: { slots: ["project.digest"], maxPerHour: 2 }, attention: { slots: [], maxOpenPerProject: 0 },
@@ -131,7 +134,8 @@ test("the production web login keeps an owner-only, append-only, replay-proof mo
         ownerIdentityId: people.owner.id, issuer: "test" }, Date.now(), { nativeQueue: true });
       const service = new ModuleInstallApprovalServiceV1(connection.client, scope, KEY, trusting, "0.1.0", clock);
       const draftFor = (preview: Awaited<ReturnType<typeof service.preview>>, overrides: Record<string, unknown> = {}) => ({
-        expectedBundleDigest: preview.bundleDigest, expectedCurrentApprovalId: preview.currentApproval?.approvalId ?? null,
+        expectedBundleDigest: preview.bundleDigest, expectedSource: preview.expectedSource,
+        expectedCurrentApprovalId: preview.currentApproval?.approvalId ?? null,
         acknowledgedPermissionDiffDigest: preview.permissionDiffDigest, acknowledgedCodeWarning: preview.codeWarning, ...overrides });
 
       // --- First install of a DECLARATIVE module, shared unsigned. ---
@@ -223,6 +227,44 @@ test("the production web login keeps an owner-only, append-only, replay-proof mo
         "same version and permissions, different bytes: the losing tab's bundle is not approved");
       assert.equal(await count("weeklyDigest"), 4);
 
+      // --- The trust source the owner was shown is part of what they approve. ---
+      const sourced = declarative({ version: "1.3.0" });
+      const previewSigned = await service.preview(owner, signed(sourced));
+      assert.equal(previewSigned.source.kind, "signed");
+      await assert.rejects(service.approve(owner, { bundle: sourced }, draftFor(previewSigned), "module-approve-drop-signature"),
+        /conflict/u, "shown as signed, the same bytes arrive unsigned");
+      const previewUnsigned = await service.preview(owner, { bundle: sourced });
+      await assert.rejects(service.approve(owner, signed(sourced), draftFor(previewUnsigned), "module-approve-add-signature"),
+        /conflict/u, "shown as unsigned, the same bytes arrive signed");
+      const bySecond = { bundle: sourced, signature: signModuleBundleV1(sourced, secondPublisher.privateKey, secondPublisher.spki) };
+      await assert.rejects(service.approve(owner, bySecond, draftFor(previewSigned), "module-approve-swap-signer"),
+        /conflict/u, "shown as signed by one trusted key, the same bytes arrive signed by another");
+      // A reviewed pin and an unsigned share both name no key: the source kind itself is bound.
+      const pinned = new ModuleInstallApprovalServiceV1(connection.client, scope, KEY,
+        { ...trusting, reviewedBundleDigests: [digestOf(sourced)] }, "0.1.0", clock);
+      const previewReviewed = await pinned.preview(owner, { bundle: sourced });
+      assert.deepEqual(previewReviewed.expectedSource, { kind: "reviewed", keyId: null });
+      await assert.rejects(service.approve(owner, { bundle: sourced }, draftFor(previewReviewed), "module-approve-reviewed-to-unsigned"),
+        /conflict/u, "shown as reviewed, approved as an unsigned share");
+      await assert.rejects(pinned.approve(owner, { bundle: sourced }, draftFor(previewUnsigned), "module-approve-unsigned-to-reviewed"),
+        /conflict/u, "shown as an unsigned share, approved as reviewed");
+      // A draft whose source is malformed is refused before anything is read.
+      for (const expectedSource of [{ kind: "signed", keyId: null }, { kind: "declarative-unsigned", keyId: publisher.keyId },
+        { kind: "trusted", keyId: null }, { kind: "signed", keyId: "key" }, { kind: "reviewed" },
+        { kind: "reviewed", keyId: null, keyLabel: "x" }, null, "signed"]) {
+        await assert.rejects(service.approve(owner, { bundle: sourced }, draftFor(previewUnsigned, { expectedSource }),
+          "module-approve-bad-source"), /invalid_request/u, JSON.stringify(expectedSource));
+      }
+      const { expectedSource: _omitted, ...withoutSource } = draftFor(previewUnsigned);
+      await assert.rejects(service.approve(owner, { bundle: sourced }, withoutSource, "module-approve-no-source"), /invalid_request/u);
+      assert.equal(await count("weeklyDigest"), 4, "no source swap left a row");
+      // The source the owner was shown is what the row records.
+      const approvedSigned = await service.approve(owner, signed(sourced), draftFor(previewSigned), "module-approve-signed-0001");
+      assert.deepEqual({ kind: approvedSigned.sourceKind, key: approvedSigned.signerKeyId }, { kind: "signed", key: publisher.keyId });
+      await assert.rejects(service.assertApproved(bySecond), /module_install_approval_required/u, "another signer is not approved");
+      await assert.rejects(service.assertApproved({ bundle: sourced }), /module_install_approval_required/u);
+      assert.equal(await count("weeklyDigest"), 5);
+
       // --- A CODE module: trusted signature, plain warning, critical owner grant. ---
       const codeBundle = code(), codeSubmission = signed(codeBundle);
       await assert.rejects(service.preview(owner, { bundle: codeBundle }), /module_bundle_code_source_untrusted/u);
@@ -242,6 +284,10 @@ test("the production web login keeps an owner-only, append-only, replay-proof mo
       await assert.rejects(postgres.query("web", ...rawApproval({ moduleId: "sourceTools", ownerId: people.owner.id,
         key: "raw-code-noack-0001", moduleClass: "code", source: "signed", signer: publisher.keyId, ack: false })), /check constraint/u,
       "CODE without the warning acknowledged");
+      assert.equal(await count("sourceTools"), 0);
+      // The owner saw "signed by Test publisher"; the same CODE bytes arrive signed by the second trusted key.
+      const codeBySecond = { bundle: codeBundle, signature: signModuleBundleV1(codeBundle, secondPublisher.privateKey, secondPublisher.spki) };
+      await assert.rejects(service.approve(owner, codeBySecond, draftFor(previewCode), "module-approve-code-swap-signer"), /conflict/u);
       assert.equal(await count("sourceTools"), 0);
       const approvedCode = await service.approve(owner, codeSubmission, draftFor(previewCode), "module-approve-code-0001");
       assert.equal(approvedCode.sourceKind, "signed"); assert.equal(approvedCode.signerKeyId, publisher.keyId);
@@ -321,7 +367,7 @@ test("the production web login keeps an owner-only, append-only, replay-proof mo
     const [backdated, backdatedParams] = rawApproval({ moduleId: "backdated", ownerId: people.owner.id, key: "raw-backdated-0001" });
     await assert.rejects(postgres.query("web", backdated.replace(/now\(\)\)$/u, "now()-interval '1 hour')"), backdatedParams),
       /time rejected/u);
-    // No other production login can read or write the owner's approvals.
+    // No other application login can read or write the owner's approvals (backup reads everything; the migrator owns the table).
     for (const role of ["app", "scheduler", "coordinator", "intake", "news", "results", "publisher", "queueWorker", "fleet", "fleetOwner"]) {
       await assert.rejects(postgres.query(role, "SELECT 1 FROM control_module_install_approvals LIMIT 1"), /permission denied/u, role);
       await assert.rejects(postgres.query(role, ...rawApproval({ moduleId: "otherRole", ownerId: people.owner.id,

@@ -19,9 +19,17 @@ import {
  * already-"verified" result.
  */
 export interface ModuleBundleSubmissionV1 { readonly bundle: unknown; readonly signature?: unknown }
+/** The trust line the owner was shown: how the bundle is vouched for, and by which key. */
+export interface ModuleInstallExpectedSourceV1 {
+  readonly kind: "declarative-unsigned" | "reviewed" | "signed";
+  /** The signer's key id for `signed`, otherwise null. */
+  readonly keyId: string | null;
+}
 export interface ModuleInstallApprovalDraftV1 {
   /** The digest the owner was shown. A different bundle at approval time is a conflict. */
   readonly expectedBundleDigest: string;
+  /** The trust source the owner was shown. A different source kind or signer at approval time is a conflict. */
+  readonly expectedSource: ModuleInstallExpectedSourceV1;
   /** The approval the owner saw as current (null for a first install). */
   readonly expectedCurrentApprovalId: string | null;
   /** The permission diff the owner saw, bound to the approval it replaces. */
@@ -62,17 +70,35 @@ const iso = (value: string | Date) => new Date(value).toISOString();
 const same = (left: string, right: string) => { const a = Buffer.from(left), b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b); };
 
+const SOURCE_KINDS = new Set(["declarative-unsigned", "reviewed", "signed"]);
+const exactly = (value: unknown, keys: readonly string[]): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+  && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+
+/** The source binding of a verified bundle, in the draft's shape. */
+export function moduleInstallSourceOfV1(verified: Pick<VerifiedModuleBundleV1, "source">): ModuleInstallExpectedSourceV1 {
+  return Object.freeze({ kind: verified.source.kind, keyId: verified.source.kind === "signed" ? verified.source.keyId : null });
+}
+
+function parseSource(value: unknown): ModuleInstallExpectedSourceV1 | undefined {
+  if (!exactly(value, ["kind", "keyId"]) || typeof value.kind !== "string" || !SOURCE_KINDS.has(value.kind)) return undefined;
+  // A signed source names exactly one key; every other source names none.
+  if (value.kind === "signed" ? typeof value.keyId !== "string" || !DIGEST_PATTERN.test(value.keyId) : value.keyId !== null) return undefined;
+  return { kind: value.kind as ModuleInstallExpectedSourceV1["kind"], keyId: value.keyId as string | null };
+}
+
 function parseDraft(value: unknown): ModuleInstallApprovalDraftV1 | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const draft = value as Record<string, unknown>;
-  const keys = ["expectedBundleDigest", "expectedCurrentApprovalId", "acknowledgedPermissionDiffDigest", "acknowledgedCodeWarning"];
-  if (Object.keys(draft).length !== keys.length || !keys.every(key => Object.hasOwn(draft, key))) return undefined;
-  if (typeof draft.expectedBundleDigest !== "string" || !DIGEST_PATTERN.test(draft.expectedBundleDigest)
+  const keys = ["expectedBundleDigest", "expectedSource", "expectedCurrentApprovalId", "acknowledgedPermissionDiffDigest",
+    "acknowledgedCodeWarning"];
+  if (!exactly(value, keys)) return undefined;
+  const draft = value, expectedSource = parseSource(draft.expectedSource);
+  if (!expectedSource || typeof draft.expectedBundleDigest !== "string" || !DIGEST_PATTERN.test(draft.expectedBundleDigest)
     || !(draft.expectedCurrentApprovalId === null || (typeof draft.expectedCurrentApprovalId === "string"
       && APPROVAL_ID_PATTERN.test(draft.expectedCurrentApprovalId)))
     || typeof draft.acknowledgedPermissionDiffDigest !== "string" || !DIGEST_PATTERN.test(draft.acknowledgedPermissionDiffDigest)
     || typeof draft.acknowledgedCodeWarning !== "boolean") return undefined;
-  return { expectedBundleDigest: draft.expectedBundleDigest, expectedCurrentApprovalId: draft.expectedCurrentApprovalId as string | null,
+  return { expectedBundleDigest: draft.expectedBundleDigest, expectedSource,
+    expectedCurrentApprovalId: draft.expectedCurrentApprovalId as string | null,
     acknowledgedPermissionDiffDigest: draft.acknowledgedPermissionDiffDigest, acknowledgedCodeWarning: draft.acknowledgedCodeWarning };
 }
 
@@ -167,8 +193,8 @@ export class ModuleInstallApprovalServiceV1 {
       const plan = this.#plan(verified, head);
       return Object.freeze({ moduleId: verified.moduleId, moduleVersion: verified.moduleVersion, moduleClass: verified.moduleClass,
         name: verified.manifest.name, publisher: verified.manifest.publisher, bundleDigest: verified.bundleDigest,
-        source: verified.source, codeWarning: verified.codeWarning, files: verified.files,
-        currentApproval: head?.view ?? null, approvalRequired: !plan.alreadyCurrent,
+        source: verified.source, expectedSource: moduleInstallSourceOfV1(verified), codeWarning: verified.codeWarning,
+        files: verified.files, currentApproval: head?.view ?? null, approvalRequired: !plan.alreadyCurrent,
         permissionDiff: plan.diff, permissionDiffDigest: plan.diffDigest,
         installsNow: false as const, executesCode: false as const, runsMigrations: false as const });
     }, { readOnly: true });
@@ -204,8 +230,11 @@ export class ModuleInstallApprovalServiceV1 {
         return this.#receipt(checked.view, true, head?.view.approvalId === row.id);
       };
       const prior = await byKey(); if (prior) return replay(prior);
-      // The owner approves the bundle they were shown, against the approval they saw as current.
-      if (draft.expectedBundleDigest !== verified.bundleDigest) throw new WebAccessError("conflict");
+      // The owner approves the bundle they were shown, vouched for the way they were shown (the same
+      // source kind and the same signer), against the approval they saw as current.
+      const source = moduleInstallSourceOfV1(verified);
+      if (draft.expectedBundleDigest !== verified.bundleDigest || draft.expectedSource.kind !== source.kind
+        || draft.expectedSource.keyId !== source.keyId) throw new WebAccessError("conflict");
       if (verified.codeWarning && !draft.acknowledgedCodeWarning) throw new WebAccessError("invalid_request");
       const head = await this.#head(tx, verified.moduleId);
       if ((head?.view.approvalId ?? null) !== draft.expectedCurrentApprovalId) throw new WebAccessError("conflict");

@@ -35,7 +35,9 @@ export {
 } from "./bundle";
 export {
   ModuleInstallApprovalServiceV1,
+  moduleInstallSourceOfV1,
   type ModuleBundleSubmissionV1,
   type ModuleInstallApprovalDraftV1,
+  type ModuleInstallExpectedSourceV1,
   type ModuleInstallApprovalViewV1,
 } from "./install-approvals";
