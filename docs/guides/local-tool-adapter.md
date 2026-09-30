@@ -62,6 +62,8 @@ Saving the server-side link between a task, its adapter id, and its input files 
 
 ## What the connector refuses
 
-It refuses an unknown adapter id, a changed or unsafe manifest, relative executables, shell characters or partial placeholders in arguments, missing inputs, excess concurrent runs, timeouts, oversized output, symbolic links, unsupported file types, and output containing recognizable secrets. A timeout or Stop terminates the process group and removes the temporary directory.
+It refuses an unknown adapter id, an unsafe manifest, a changed or unsafe executable, relative executables, shell characters or partial placeholders in arguments, missing inputs, excess concurrent runs, timeouts, oversized output, symbolic or hard links, unsupported file types, and output containing recognizable secrets. A timeout or Stop terminates the process group and removes the temporary directory.
+
+This is not a sandbox. A tool that deliberately calls `setsid` can leave the process group before it is stopped. The connector still closes inherited output pipes and returns by the timeout deadline, but it cannot contain that escaped process; use a separate sandboxed account for untrusted tools or inputs.
 
 To change the executable or flags, stop the connector, edit the local manifest yourself, test Whisper directly, and restart the connector. Never paste credentials into the manifest or add secret-bearing variables to `envAllowlist`.
