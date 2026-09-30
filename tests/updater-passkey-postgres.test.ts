@@ -548,6 +548,14 @@ test("a registration row is accepted only for a registration the updater opened"
         /registration was already consumed/u);
       // And the web can no longer read the options for a consumed registration.
       assert.equal(await store.openRegistrationOptions(consumed), null, "a consumed registration is not offered");
+      // The consumed marker must outlive the registration, or a late insert is
+      // refused as UNKNOWN instead of CONSUMED. The web's DELETE is refused by
+      // privilege before any trigger runs, so it proves nothing about the guard;
+      // the DEPLOYER owns the table and the trigger is its only barrier.
+      assert.match(await refuses(client, "DELETE FROM updater.passkey_open_registrations WHERE registration_digest=$1",
+        [consumed]), /^23514 updater open registrations are not deletable/u);
+      assert.match(await refuses(web, INSERT_REGISTRATION, rowParams(consumed)),
+        /registration was already consumed/u, "still refused by name after the attempted delete");
 
       // EXPIRED: at the DATABASE clock, which is why the fixture has to lie
       // about the expiry rather than wait 30 minutes.
