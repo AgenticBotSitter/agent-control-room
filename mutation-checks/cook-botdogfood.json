@@ -1,0 +1,23 @@
+[
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "        if (error instanceof WorkIntakeErrorV1 && WORK_INTAKE_REFUSALS_V1[error.safeCode])\n          return fleetFail(WORK_INTAKE_REFUSALS_V1[error.safeCode]!);\n        throw error;",
+    "replace": "        throw error;",
+    "test": "node --import tsx --test --test-name-pattern \"named fleet refusal\" tests/fleet-intake-refusal-translation.test.ts",
+    "why": "a bot that reuses one idempotency key for different work is told a named conflict, not an untyped 400 the gateway logs as a server fault"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "  credential_inactive: \"forbidden\",\n  no_matching_grant: \"forbidden\",",
+    "replace": "  credential_inactive: \"unauthenticated\",\n  no_matching_grant: \"unauthenticated\",",
+    "test": "node --import tsx --test --test-name-pattern \"named fleet refusal\" tests/fleet-intake-refusal-translation.test.ts",
+    "why": "a credential the intake login will not act for is forbidden, not unauthenticated: the machine authenticated, its authority does not reach the action"
+  },
+  {
+    "file": "src/persistence/canonical-store.ts",
+    "find": "        if (selected?.worker_kind && (!selected.selection_key || !selected.model || !selected.effort)) {\n          throw new Error(\"Task model selection is unresolved\");\n        }",
+    "replace": "        if (selected && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {\n          throw new Error(\"Task model selection is unresolved\");\n        }",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=59620 node --import tsx --test --test-timeout=300000 tests/bot-dogfood-postgres.test.ts",
+    "why": "an all-NULL model-selection row is 0091's 'not chosen yet' state, so a task proposed without an explicit model is still claimable; only a row that names a worker and is missing the rest is unresolved"
+  }
+]
