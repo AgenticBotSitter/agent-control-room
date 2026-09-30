@@ -33,32 +33,8 @@ export const databaseRoleManifestV1 = Object.freeze({
   }),
 });
 
-/** Roles the schema names that the Mac upgrade must recognise but must NEVER
- * create, change or drop.
- *
- * The fleet gateway and its owner-authority role are installed by
- * db/roles/fleet_gateway_roles.sql, which is an OFFLINE OPERATOR SETUP file a
- * Mac-local install never applies. Migration 0141's `redeem_fleet_enrollment`
- * guards itself with `IF EXISTS (SELECT 1 FROM pg_roles WHERE
- * rolname='control_room_fleet_gateway')`, so a database with no gateway is
- * correct and the migration is a no-op for it — the fleet surface is simply
- * absent. Putting them in `groups` would make the upgrade CREATE them on every
- * Mac, which changes the privilege boundary: a role that grants the gateway
- * EXECUTE on enrollment and DELETE on assignment-lease scopes would exist on a
- * cluster whose owner never asked for a fleet.
- *
- * They are listed here so the manifest check still knows the name: a migration
- * naming a role nothing in the manifest knows is a live role the owner cannot
- * reason about at upgrade time. This is the difference between "the upgrade
- * owns this role" and "the upgrade has heard of it", and both are refused
- * failing the check; only the first is created.
- */
-export const databaseRoleKnownButNotManagedV1 = Object.freeze([
-  "control_room_fleet_gateway", "control_room_fleet_owner_authority",
-]);
-
 export const databaseRoleNamesV1 = Object.freeze([...databaseRoleManifestV1.groups,
-  ...Object.keys(databaseRoleManifestV1.logins), ...databaseRoleKnownButNotManagedV1]);
+  ...Object.keys(databaseRoleManifestV1.logins)]);
 
 export function databaseRoleAttributesV1(role) {
   if (!databaseRoleNamesV1.includes(role)) throw new Error("upgrade_role_catalog_refused");
