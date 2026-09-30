@@ -166,7 +166,7 @@ test("run mode checks between tasks and exits cleanly to restart a healthy updat
     }, updateCheck: async () => { checked += 1; return { state: "updated", version: "1.1.0" }; }, log() {} });
   assert.equal(checked, 1); assert.deepEqual(pass, { state: "updated", version: "1.1.0" });
   let stderr = "";
-  const direct = await connector.main(["run", "--config", f.configPath], {
+  const direct = await connector.main(["run", "--once", "--config", f.configPath], {
     out: { write() {} }, err: { write(value) { stderr += value; } },
   }, { installRoot: f.installRoot, env: {}, fetcher: async () => { throw new Error("direct run contacted gateway"); } });
   assert.equal(direct, 1); assert.match(stderr, /through launcher\.mjs launch run/u);
