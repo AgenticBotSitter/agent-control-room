@@ -479,8 +479,8 @@ test("B8: a read succeeds while a write is in progress", async () => {
     const content = bytes("the file being downloaded\n");
     const id = identity(PROJECT, FILE, content);
     await store.put({ ...id, bytes: content });
-    // While the write is in progress, the directory holds the lock AND the
-    // staging file. A real concurrent put is what creates them, so this runs one.
+    // A REAL concurrent put, so the lock and the staging file are created by the
+    // store's own write path rather than by the test.
     const large = new Uint8Array(900_000);
     large.fill(65);
     const largeId = identity("project:other", FILE, large);
@@ -491,6 +491,38 @@ test("B8: a read succeeds while a write is in progress", async () => {
       "every read succeeded while a write was in progress");
     for (const value of reads) assert.deepEqual(Buffer.from(value!), Buffer.from(content));
   } });
+  // The same property, DETERMINISTICALLY. The race above is real but it depends
+  // on timing, and a guard that only bites when the scheduler happens to line up
+  // is not a guard. A live writer's lock and staging file are therefore put in
+  // place directly — the exact state the review measured 13 of 50 reads failing
+  // in — and the read must still succeed.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-inflight-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const store = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 5_000 });
+    const content = bytes("downloaded while an upload is in flight\n");
+    const id = identity(PROJECT, FILE, content);
+    await store.put({ ...id, bytes: content });
+    // This process is live, so its pid in the lock is the proof of liveness the
+    // recovery relies on, and the store still opens and still reads.
+    await writeFile(join(root, ".control-room-result-file-store.lock"),
+      `control-room-result-file-store-write\n${process.pid}\n`, { mode: 0o600 });
+    const staging = `.control-room-result-file-store-pending-${"b".repeat(32)}`;
+    await writeFile(join(root, staging), bytes("half a file, still being written"), { mode: 0o600 });
+    const reads = await Promise.all(Array.from({ length: 50 }, () => store.read(id)));
+    assert.equal(reads.filter(value => value !== undefined).length, 50,
+      "50 reads with a live lock AND a staging file in the directory: none refused");
+    for (const value of reads) assert.deepEqual(Buffer.from(value!), Buffer.from(content));
+    // And the write lock was still doing its job: a write is refused while a
+    // live writer holds it, so ignoring bookkeeping for READS weakened nothing.
+    const other = bytes("a write that must not slip past the lock\n");
+    const otherId = identity("project:other", FILE, other);
+    await assert.rejects(store.put({ ...otherId, bytes: other }),
+      (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_ambiguous");
+  } finally { await rm(base, { recursive: true, force: true }); }
 });
 
 test("B8: a read is still refused for an entry the store did not write", async () => {
@@ -505,5 +537,85 @@ test("B8: a read is still refused for an entry the store did not write", async (
     await assert.rejects(store.read(id),
       (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_ambiguous");
     assert.deepEqual((await lstat(join(root, "notes.txt"))).ino, before.ino, "nothing was deleted");
+  } });
+});
+
+
+test("STRESS: 50 downloads race 8 uploads, and every download still succeeds", async () => {
+  // The review's case, as briefed: "50 downloads + 50 uploads". Downloads and
+  // uploads are in the SAME store, the store serialises its own writes behind a
+  // queue, and every download re-proves its own digest — so the only thing that
+  // can break here is the whole-directory accounting, which is exactly what B8
+  // was. The number of uploads is 8 rather than 50 because the store serialises
+  // writes: 50 of them would queue, not race, and would measure the queue.
+  await withStore({ async after(root, store) {
+    // Sixteen distinct stored files, so the readers are not all reading one
+    // name and a single cached page would not explain a pass.
+    const files = Array.from({ length: 16 }, (_, index) => {
+      const content = bytes(`report ${index}\n`.repeat(64));
+      return { content, id: identity("project:alpha", `result-file:${index.toString(16).padStart(32, "0")}`, content) };
+    });
+    for (const file of files) await store.put({ ...file.id, bytes: file.content, setBytes: 0, setFiles: 0 });
+    assert.equal((await readdir(root)).filter(entry => entry.endsWith(".crbf")).length, 16);
+
+    // Eight uploads in flight, each 512 KiB, in a separate project so they are
+    // real new keys rather than replays of what is already stored.
+    const uploads = Array.from({ length: 8 }, (_, index) => {
+      const content = new Uint8Array(512 * 1024);
+      content.fill(65 + index);
+      return { content, id: identity("project:uploading", `result-file:${index.toString(16).padStart(32, "0")}`, content) };
+    });
+    const writing = Promise.allSettled(uploads.map(upload =>
+      store.put({ ...upload.id, bytes: upload.content, setBytes: 0, setFiles: 0 })));
+
+    // 50 reads, spread across the 16 stored files, started while the uploads
+    // are running. Every one must return its exact bytes.
+    const reads = await Promise.all(Array.from({ length: 50 }, (_, index) => {
+      const file = files[index % files.length]!;
+      return store.read(file.id);
+    }));
+    const uploadsDone = await writing;
+    const failedUploads = uploadsDone.filter(entry => entry.status === "rejected");
+    const reasons = failedUploads.map(entry => {
+      const reason = (entry as PromiseRejectedResult).reason;
+      return String((reason as { message?: string } | undefined)?.message ?? reason);
+    });
+    assert.equal(failedUploads.length, 0, `every upload landed: ${JSON.stringify(reasons).slice(0, 300)}`);
+    const failed = reads.filter(value => value === undefined);
+    assert.equal(failed.length, 0, `all 50 downloads returned their bytes; ${failed.length} did not`);
+    for (const [index, value] of reads.entries()) {
+      const expected = files[index % files.length]!.content;
+      assert.deepEqual(Buffer.from(value!), Buffer.from(expected),
+        "every download returned the exact bytes, not a partial write from the upload in flight");
+    }
+    // And the uploads are readable afterwards, so ignoring bookkeeping during a
+    // read did not lose anything.
+    for (const upload of uploads) assert.ok(await store.read(upload.id), "each uploaded file is readable after the race");
+  } });
+});
+
+test("STRESS: 50 concurrent writers of distinct files all land, and retries still replay", async () => {
+  // The store serialises its own writes, so 50 callers is a queue rather than a
+  // race. That is the property worth proving: the queue does not drop, reorder
+  // into a conflict, or lose a file, and an exact retry after the burst is still
+  // an idempotent replay.
+  await withStore({ async after(root, store) {
+    const work = Array.from({ length: 50 }, (_, index) => {
+      const content = bytes(`concurrent ${index}\n`);
+      return { content, id: identity("project:alpha", `result-file:${index.toString(16).padStart(32, "0")}`, content) };
+    });
+    const settled = await Promise.allSettled(work.map(entry =>
+      store.put({ ...entry.id, bytes: entry.content, setBytes: 0, setFiles: 0 })));
+    assert.equal(settled.filter(entry => entry.status === "fulfilled").length, 50,
+      `every concurrent write landed: ${JSON.stringify(settled.find(entry => entry.status === "rejected")?.reason ?? null)}`);
+    assert.equal((await readdir(root)).filter(entry => entry.endsWith(".crbf")).length, 50,
+      "and every one is on disk exactly once");
+    for (const entry of work) {
+      assert.deepEqual(Buffer.from((await store.read(entry.id))!), Buffer.from(entry.content));
+      // An exact retry is still a replay, not a conflict.
+      await store.put({ ...entry.id, bytes: entry.content, setBytes: 0, setFiles: 0 });
+    }
+    assert.equal((await readdir(root)).filter(entry => entry.endsWith(".crbf")).length, 50,
+      "and no retry created a second file");
   } });
 });
