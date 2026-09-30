@@ -210,8 +210,15 @@ export function parseModuleManifestV1(value: unknown): Readonly<ModuleManifestV1
   if ((value as Record<string, unknown>).schema !== MODULE_MANIFEST_SCHEMA_V1) throw new Error("module_manifest_unknown_version");
   assertNoPortablePrototypePollutionV1("module_manifest", value, 12);
   assertGuardedText(value, "value");
-  const parsed = moduleManifestSchemaV1.parse(value);
-  return deepFreeze(structuredClone(parsed));
+  const parsed = moduleManifestSchemaV1.safeParse(value);
+  if (!parsed.success) {
+    // Prefer this schema's own module_manifest_* code over zod's generic issue text (shape or
+    // path-based failures, e.g. an unrecognized key or a missing nested field), which callers
+    // already match against the raw ZodError below.
+    const specific = parsed.error.issues.find(issue => /^module_manifest_/.test(issue.message));
+    throw specific ? new Error(specific.message) : parsed.error;
+  }
+  return deepFreeze(structuredClone(parsed.data));
 }
 
 export function isModuleSemverV1(value: string): boolean {

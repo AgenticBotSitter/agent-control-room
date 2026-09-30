@@ -41,3 +41,11 @@ export {
   type ModuleInstallExpectedSourceV1,
   type ModuleInstallApprovalViewV1,
 } from "./install-approvals";
+export {
+  exportModuleBundleV1,
+  loadModuleSigningKeyV1,
+  moduleBundleFileNameV1,
+  type ModuleDownloadBundleV1,
+  type ModuleSigningKeyV1,
+} from "./transfer";
+export { ModuleTransferServiceV1 } from "./transfer-service";
