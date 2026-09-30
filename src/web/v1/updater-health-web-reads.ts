@@ -118,7 +118,14 @@ export function createUpdaterHealthWebReadPortV1(sources: Readonly<{
       // bytes are never returned, only their number.
       const size = Number.isSafeInteger(bytes) && bytes > 0
         ? bytes : (await response.arrayBuffer()).byteLength;
-      if (!Number.isSafeInteger(size) || size < 1 || size > 4_194_304) refused("home_render_size");
+      // The ceiling matches the byte bound in the health protocol's capture
+      // (`captureUpdaterHealthCountsV1` refuses homeRenderBytes above 4 MiB), so a
+      // render this port accepts is one the signed response can carry. It must not
+      // be a second, different number: `count()` below refuses above 1_000_000, so a
+      // 4 MiB ceiling here would let the two disagree and fail as
+      // `updater_health_web_reads_refused:home_render_bytes` -- a refusal with a
+      // different reason than the one that was checked.
+      if (!Number.isSafeInteger(size) || size < 1 || size > 1_000_000) refused("home_render_size");
 
       // (5) The privilege boolean, measured on the web login's own connection.
       if (await sources.privilege.hasPlanApprovalInsert() !== true) refused("plan_approval_insert");

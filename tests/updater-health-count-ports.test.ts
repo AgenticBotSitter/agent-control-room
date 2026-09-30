@@ -52,21 +52,44 @@ test("the authority port returns the three counts as numbers, from one statement
 
 test("the authority port refuses anything that is not exactly three safe-integer counts", async () => {
   const refused = [
-    ["a non-numeric count", { ...COUNT_COLUMNS, project_count: "two" }],
-    ["a padded count", { ...COUNT_COLUMNS, project_count: " 2" }],
-    ["a float count", { ...COUNT_COLUMNS, project_count: "2.0" }],
-    ["a hex count", { ...COUNT_COLUMNS, project_count: "0x2" }],
-    ["a negative count", { ...COUNT_COLUMNS, project_count: "-1" }],
-    ["an unbounded count", { ...COUNT_COLUMNS, project_count: "1000001" }],
-    ["a null count", { ...COUNT_COLUMNS, updates_panel_count: null }],
-    ["an extra column", { ...COUNT_COLUMNS, owner_session_digest: "sha256:leak" }],
-    ["a missing column", { home_summary_count: "3", project_count: "2" }],
-    ["no row", []],
-    ["two rows", [COUNT_COLUMNS, COUNT_COLUMNS]],
+    // [what is wrong, the row the driver returns, the refusal that must be named]
+    ["a non-numeric count", { ...COUNT_COLUMNS, project_count: "two" }, "project_count"],
+    ["an empty count", { ...COUNT_COLUMNS, project_count: "" }, "project_count"],
+    ["a count with a sign", { ...COUNT_COLUMNS, project_count: "+2" }, "project_count"],
+    // These three are the ones the RANGE check cannot catch: Number("0003") is 3 and
+    // Number("1e3") is 1000, both inside the accepted range, so only the digit
+    // SPELLING check refuses them.
+    ["a zero-padded count", { ...COUNT_COLUMNS, project_count: "0003" }, "project_count"],
+    ["an exponent count", { ...COUNT_COLUMNS, project_count: "1e3" }, "project_count"],
+    ["a hexadecimal count", { ...COUNT_COLUMNS, project_count: "0x3" }, "project_count"],
+    ["a padded count", { ...COUNT_COLUMNS, project_count: " 2" }, "project_count"],
+    ["a float count", { ...COUNT_COLUMNS, project_count: "2.0" }, "project_count"],
+    ["a negative count", { ...COUNT_COLUMNS, project_count: "-1" }, "project_count"],
+    ["an unbounded count", { ...COUNT_COLUMNS, project_count: "1000001" }, "project_count"],
+    ["a null count", { ...COUNT_COLUMNS, updates_panel_count: null }, "updates_panel_count"],
+    // An extra column is what a future migration adding one would produce, and it must
+    // refuse here rather than flow into the signed health response. The value is a
+    // plausible digest so only the SHAPE check can be what refuses it.
+    ["an extra column", { ...COUNT_COLUMNS, owner_session_digest: "sha256:" + "a".repeat(64) }, "shape"],
+    ["a missing column", { home_summary_count: "3", project_count: "2" }, "shape"],
+    ["a renamed column", { ...COUNT_COLUMNS, home: "1" }, "shape"],
   ] as const;
-  for (const [why, rows] of refused)
-    await assert.rejects(createUpdaterHealthAuthorityReadPortV1(connection(rows as never)).readHealthCounts(),
-      /^Error: updater_health_authority_counts_refused:/u, `must refuse ${why}`);
+  // No row at all, and more than one, are refusals in their own right and are
+  // asserted here rather than through the table above, because they are about how
+  // many rows came back rather than what is in one.
+  await assert.rejects(createUpdaterHealthAuthorityReadPortV1(connection([])).readHealthCounts(),
+    /^Error: updater_health_authority_counts_refused:no_row$/u, "no row must refuse");
+  await assert.rejects(createUpdaterHealthAuthorityReadPortV1(connection([COUNT_COLUMNS, COUNT_COLUMNS])).readHealthCounts(),
+    /^Error: updater_health_authority_counts_refused:row_count$/u, "two rows must refuse");
+  // The reason must be the one this case is about, not merely SOME refusal: an
+  // earlier version matched only the error PREFIX, and every case was in fact being
+  // refused by the ROW-COUNT check (a single row object is not an array of rows),
+  // so deleting the count validation entirely left the whole test green. Asserting
+  // the exact reason is what makes these cases able to fail for their own reason.
+  for (const [why, row, expected] of refused)
+    await assert.rejects(createUpdaterHealthAuthorityReadPortV1(connection([row] as never)).readHealthCounts(),
+      new RegExp(`^Error: updater_health_authority_counts_refused:${expected}$`, "u"),
+      `must refuse ${why} for ${expected}`);
 });
 
 test("the authority port refuses a connection that is not one", () => {
@@ -131,11 +154,20 @@ test("the web port refuses a failed render, and a successful error page", async 
   ] as const)
     await assert.rejects(webPort({ home: { render: async () => response } })
       .port.readHealthCounts(SCOPE), /^Error: updater_health_web_reads_refused:/u, `must refuse ${why}`);
-  // An error page that renders with 200 is the case a status check alone misses,
-  // and it is refused on size only if it is empty -- so the refusal that matters
-  // here is proven with an empty 200 above.
+  // An error page that renders with 200 is the case a status check alone misses.
+  // The empty-200 refusal above is the SIZE bound, not a side effect: it must be
+  // proven independently of the status check, and the implausibly-large render the
+  // same bound rejects is asserted too, so removing either half of that bound is
+  // caught. (Dropping `size < 1 || size > 4_194_304` left the empty case passing
+  // before this test existed, because 0 is itself a safe integer.)
+  await assert.rejects(webPort({ home: { render: async () => new Response("x".repeat(1_000_001), { status: 200 }) } })
+    .port.readHealthCounts(SCOPE), /^Error: updater_health_web_reads_refused:home_render_size/u,
+    "a render past the byte ceiling is not a healthy page");
   const healthy = await webPort().port.readHealthCounts(SCOPE);
   assert.ok(healthy.homeRenderBytes > 0, "a real render reports a non-empty byte count");
+  // And the boundary values themselves are accepted, so the bound is not off by one.
+  assert.equal((await webPort({ home: { render: async () => new Response("x".repeat(1_000_000), { status: 200 }) } })
+    .port.readHealthCounts(SCOPE)).homeRenderBytes, 1_000_000, "exactly at the ceiling is allowed");
 });
 
 test("the web port refuses when the web login has lost the approval INSERT", async () => {
