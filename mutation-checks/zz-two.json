@@ -1,0 +1,16 @@
+[
+  {
+    "file": "db/migrations/0209_result_upload_sessions.sql",
+    "find": "  IF NOT public.fleet_claim_is_live(NEW.tenant_id,NEW.claim_id,NEW.worker_id) THEN\n    RAISE EXCEPTION 'result upload session rejected' USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'result upload session rejected' USING ERRCODE = '42501';\n  END IF;",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "why": "a revoked worker, an elapsed lease, a released claim or an expired credential cannot reserve an upload"
+  },
+  {
+    "file": "db/migrations/0209_result_upload_sessions.sql",
+    "find": "  IF mode IS NOT NULL AND mode<>'running' THEN",
+    "replace": "  IF false THEN",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "why": "Pause and Drain refuse a NEW upload reservation, exactly as they refuse a new claim"
+  }
+]
