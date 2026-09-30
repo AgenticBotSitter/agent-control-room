@@ -98,6 +98,15 @@ GRANT SELECT ON installation_operations_mode_revisions, installation_effective_o
 REVOKE ALL ON control_module_install_approvals
   FROM control_room_application, control_room_reader, control_room_schedule_admissions,
   control_room_github_broker, control_room_work_intake;
+-- The result-file catalog and its download grants (0206-0208) are the private
+-- web login's and the native result publisher's. The shared application,
+-- reader, backup, intake and schedule roles reach none of them, so a shared
+-- login cannot read a project's result-file names, digests or storage keys,
+-- and cannot mint a download grant. The reader and backup revokes are what
+-- keep the grant ledger out of a backup role's blind SELECT-on-everything.
+REVOKE ALL ON control_result_file_sets, control_result_files, control_result_file_download_grants
+  FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake;
 GRANT SELECT ON control_identities, control_role_grants, projects, work_batches,
   work_batch_revisions, work_batch_items, control_idempotency, audit_events, control_audit_chain_heads
   TO control_room_work_intake;

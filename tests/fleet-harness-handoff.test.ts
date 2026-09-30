@@ -57,7 +57,7 @@ async function joinWorker(f: Fixture, name: string, workerKind = "codex") {
   const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: name, workerKind,
     projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
   const configPath = join(f.dir, `${name}.json`);
-  const joined = await connector.join({ server: f.origin, code: code.code, configPath, fetcher: f.fetcher });
+  const joined = await connector.join({ server: f.origin, code: code.code, workerKind, configPath, fetcher: f.fetcher });
   return { configPath, joined, client: connector.createClient(await connector.loadConfig(configPath), f.fetcher) };
 }
 

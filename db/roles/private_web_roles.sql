@@ -170,4 +170,20 @@ GRANT UPDATE (next_position, updated_at) ON work_batch_agent_queue_heads TO cont
 GRANT SELECT, INSERT ON installation_operations_mode_revisions TO control_room_private_web;
 GRANT SELECT ON installation_effective_operations_mode TO control_room_private_web;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
+-- Result-file catalog (0206-0208, "Save to my Mac"). The web login is the
+-- owner-facing reader and the only writer of download grants: it reads the
+-- catalog, records a short-lived grant for the exact file it is about to
+-- serve, and marks that grant spent. It holds no UPDATE on the catalog itself
+-- beyond the retention columns, so it cannot mark bytes stored, quarantine a
+-- file or rewrite a producer.
+GRANT SELECT ON control_result_file_sets, control_result_files, control_result_file_download_grants
+  TO control_room_private_web;
+GRANT INSERT ON control_result_file_download_grants TO control_room_private_web;
+GRANT UPDATE (spent_at) ON control_result_file_download_grants TO control_room_private_web;
+-- The owner's two retention decisions: accept a stored set, or move one on to
+-- trash. 0207's acceptance trigger checks the recorded identity's live owner
+-- grant, so this UPDATE is permission to try, not permission to accept.
+GRANT UPDATE (retention_state, accepted_at, accepted_by_identity_id, retained_until)
+  ON control_result_file_sets TO control_room_private_web;
+
 COMMIT;

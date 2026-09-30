@@ -7,6 +7,7 @@ import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm, TaskStateGuidance, taskUrl } from "./task-panels";
 import { PrivateTaskResults } from "./task-results";
+import { PrivateResultFiles } from "./result-files-panel";
 import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
 import { createTaskVerificationWorkspace, type TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
 import { PrivateTaskPlanning } from "./task-planning";
@@ -39,13 +40,23 @@ export function TaskAuthenticationRecovery({ held }: { held: boolean }) {
   return <p>{browserAuthenticationRecovery(held)}</p>;
 }
 
-/** Read-gated child; command memory is owned by the stable keyed task page, not this subtree. */
+/** Read-gated child; command memory is owned by the stable keyed task page, not this subtree.
+ *
+ * "Delivered files" sits beside "What changed" (plan v4.3 2.6): the text result
+ * is what a bot said, the file list is what it produced. Both are read from
+ * their own route, and neither is shown for a task that has neither. */
 export function TaskDetailResults({ detail, projectId, reviewWorkspace, verificationWorkspace }: {
   detail?: TaskDetail; projectId: string; reviewWorkspace: TaskReviewWorkspace; verificationWorkspace?: TaskVerificationWorkspace;
 }) {
-  return detail && (detail.artifacts === "configured" || detail.review === "recorded")
-    ? <PrivateTaskResults key={`${projectId}:${detail.task.jobId}`} projectId={projectId}
-      jobId={detail.task.jobId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} /> : null;
+  if (!detail) return null;
+  return <>
+    {detail.artifacts === "configured" || detail.review === "recorded"
+      ? <PrivateTaskResults key={`${projectId}:${detail.task.jobId}`} projectId={projectId}
+        jobId={detail.task.jobId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} />
+      : null}
+    <PrivateResultFiles key={`files:${projectId}:${detail.task.jobId}`} projectId={projectId}
+      jobId={detail.task.jobId} />
+  </>;
 }
 
 /** A proposal has no assignment yet; asking the assignment endpoint for it is
