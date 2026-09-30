@@ -289,13 +289,18 @@ export function createProjectOrchestrationOwnerAdapterV1(options: Readonly<{ ten
         options.store.listSuggestions({ tenantId: actor.tenantId, projectId, batchId }),
         options.store.dismissedSuggestionIds({ tenantId: actor.tenantId, projectId, batchId })]);
       const hidden = new Set(dismissed);
-      return projectOrchestrationSuggestionPageSchemaV1.parse({ projectId, batchId,
+      // The page is frozen AFTER the schema parse, not before. zod's `.parse`
+      // rebuilds every object it validates, so freezing the inputs freezes copies
+      // that are then thrown away, and the page the caller holds comes back
+      // mutable. This is the F9 finding, mutation-proved as M8b.
+      const page = projectOrchestrationSuggestionPageSchemaV1.parse({ projectId, batchId,
         suggestions: values.filter(value => !hidden.has(value.suggestionId) && current.state === "proposed"
           && value.baseRevision === current.revision && value.baseRevisionDigest === current.revisionDigest)
           .map(value => ({ suggestionId: value.suggestionId,
           projectId, batchId, baseRevision: value.baseRevision, proposal: deepFreeze(cloneProposal(value.proposal)),
           createdAt: value.createdAt, dismissed: false, startsWork: false, grantsExecutionAuthority: false, savesRevision: false })),
         dismissAvailable: typeof options.dismissals?.record === "function", ...common });
+      return deepFreeze(page);
     },
     async useSuggestion(identity, projectId, batchId, suggestionId, expectedRevision) {
       const actor = await owner(identity, projectId, "suggestion");

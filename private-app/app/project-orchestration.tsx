@@ -36,10 +36,16 @@ export function ProjectOrchestrationPanel({ projectId, client: suppliedClient }:
   const submit = async (retry = false) => {
     if (pending || (!retry && !description.trim())) return;
     setPending(true); setError(undefined); setResult(undefined);
-    try { setResult(await (retry ? client.retryDescription() : client.describe(projectId, description))); }
-    catch (reason) { const failure = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
-      setError(failure); if (failure.code === "uncertain") setRetained(true); }
-    finally { setPending(false); }
+    try {
+      // Any CONFIRMED outcome releases the hold. The client has cleared its retained
+      // request by then, so leaving Prepare disabled would strand the owner on a
+      // page whose one button no longer works -- the same dead end F8 was filed for.
+      const value = await (retry ? client.retryDescription() : client.describe(projectId, description));
+      setRetained(false); setResult(value);
+    } catch (reason) {
+      const failure = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
+      setError(failure); setRetained(failure.code === "uncertain");
+    } finally { setPending(false); }
   };
   return <section className="private-panel private-orchestration" aria-labelledby="describe-job-heading">
     <h2 id="describe-job-heading">Describe a job</h2>

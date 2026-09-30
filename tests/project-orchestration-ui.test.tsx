@@ -251,14 +251,19 @@ test("a dropped response retains the request: Prepare stays disabled until it is
   // A recording client that reports a retained request, so the panel's held state
   // is driven by the client's own answer rather than by a prop.
   const readValue = settings("selected");
-  let retained = true;
+  // Start UNHELD: Prepare must be clickable for the owner to submit at all, and
+  // the dropped describe is what creates the held state.
+  let retained = false;
+  // A double of the REAL client: a confirmed outcome clears the held request, and
+  // forgetting clears it without sending anything. A double that never cleared it
+  // would make the recovery path untestable rather than unverified.
   const client: Client = Object.freeze({ ...recordingClient(readValue, noCalls()),
     hasPendingDescription: () => retained,
     async retryDescription() { retained = false; return { status: "proposal", batchId,
       href: `/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}`,
       startsWork: false, grantsExecutionAuthority: false } as const; },
     forgetPendingDescription() { retained = false; },
-    async describe() { throw new BrowserRequestError("uncertain"); } });
+    async describe() { retained = true; throw new BrowserRequestError("uncertain"); } });
   const view = await mount(createElement(ProjectOrchestrationPanel, { projectId, client }));
   try {
     const textarea = view.document.querySelector("textarea") as HTMLTextAreaElement;
@@ -280,9 +285,21 @@ test("a dropped response retains the request: Prepare stays disabled until it is
       "after forgetting, a new description can be prepared again");
 
     // And a CONFIRMED outcome releases it too: recovering by retrying must not
-    // leave the page with one permanently disabled button.
+    // leave the page with one permanently disabled button. This view needs its OWN
+    // held state -- the one above was just released by the Forget click, and
+    // sharing the double would test nothing.
+    // Start UNHELD, so Prepare is clickable and the describe below is what
+    // establishes the held state -- exactly the sequence a real owner follows.
+    let stillHeld = false;
+    const recovering: Client = Object.freeze({ ...client,
+      hasPendingDescription: () => stillHeld,
+      async describe() { stillHeld = true; throw new BrowserRequestError("uncertain"); },
+      async retryDescription() { stillHeld = false; return { status: "proposal", batchId,
+        href: `/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}`,
+        startsWork: false, grantsExecutionAuthority: false } as const; },
+      forgetPendingDescription() { stillHeld = false; } });
     const recovered = await mount(createElement(ProjectOrchestrationPanel, { projectId,
-      client: Object.freeze({ ...client, async describe() { throw new BrowserRequestError("uncertain"); } }) }));
+      client: recovering }));
     try {
       await recovered.act(async () => {
         enter(recovered.window, recovered.document.querySelector("textarea") as HTMLTextAreaElement, "Prepare it");
