@@ -16,7 +16,7 @@ after(closePrivateOwnerBootstrapConformanceDatabase);
 const connectorRelease: FleetConnectorReleaseManifestV1 = Object.freeze({ schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1,
   version: "0.3.0", file: "connector-0.3.0.mjs", sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) });
 
-test("owner fleet routes: add a worker returns a one-time join command; foreign origins and signed-out calls are refused", async t => {
+test("owner fleet routes: add a worker returns a one-time install command; foreign origins and signed-out calls are refused", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "fleet-owner-web" }); t.after(fixture.close);
   await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
     configuration: fixture.configuration, database: fixture.database, trust: fixture.trust, assertion: fixture.assertion,
@@ -54,7 +54,8 @@ test("owner fleet routes: add a worker returns a one-time join command; foreign 
   assert.match(value.code, /^crj_[A-Za-z0-9_-]{43}$/u);
   assert.match(value.commands.unix, /connector-0\.3\.0\.mjs/u);
   assert.match(value.commands.unix, /connector-manifest\.json/u);
-  assert.match(value.commands.unix, /--bot codex$/u);
+  assert.match(value.commands.unix, / install .*--bot codex .*--i-am-the-installer$/u);
+  assert.doesNotMatch(value.commands.unix, /\sjoin\s/u);
   const board = await app.handle(request("/api/v1/fleet", { headers: { cookie } }), unused);
   assert.equal(board.status, 200);
   const listed = await board.json() as { pendingCodes: { displayName: string }[]; workers: unknown[] };
@@ -70,7 +71,8 @@ test("owner fleet routes: add a worker returns a one-time join command; foreign 
   assert.deepEqual(install.release, connectorRelease);
   assert.match(install.installLine, /connector-0\.3\.0\.mjs/u);
   assert.match(install.installLine, /connector-manifest\.json/u);
-  assert.match(install.installLine, /--bot cursor$/u);
+  assert.match(install.installLine, / install .*--bot cursor .*--name desktop-cursor-[a-f0-9]{12} .*--i-am-the-installer$/u);
+  assert.doesNotMatch(install.installLine, /\sjoin\s/u);
   assert.match(install.installLine, / a{64} 1234 b{40}/u);
   const installUrl = install.installLine.match(/https:\/\/[^ ']+/u)?.[0] ?? "";
   assert.equal(installUrl.includes("crj_"), false, "the code is never placed in the connector URL");

@@ -11,7 +11,8 @@ type FleetWorker = { workerId: string; displayName: string; workerKind: string; 
 type ConnectorRelease = { version: string; file: string; sha256: string; size: number; builtFrom: string };
 type Board = { workers: FleetWorker[]; connectBot: { available: boolean; release?: ConnectorRelease } };
 export type ConnectBotInstallResult = { codeId: string; workerId: string; expiresAt: string;
-  operatingSystem: OperatingSystem; release: ConnectorRelease; installLine: string };
+  operatingSystem: OperatingSystem; botKind: BotKind; profileName: string; ownerNextStep: string;
+  release: ConnectorRelease; installLine: string };
 
 const bots: readonly [BotKind, string][] = [["claude-code", "Claude Code"], ["codex", "Codex"],
   ["hermes", "Hermes"], ["cursor", "Cursor"], ["claude-desktop", "Claude Desktop"], ["mcp-agent", "Generic MCP"]];
@@ -55,7 +56,9 @@ export function InstallLine({ result }: { result: ConnectBotInstallResult }) {
       void navigator.clipboard?.writeText(result.installLine).then(() => setCopied(true), () => setCopied(false));
     }}>{expired ? "Expired" : copied ? "Copied" : "Copy line"}</button></div>
     <p className="private-note">The line downloads the connector, checks its release manifest and SHA-256 fingerprint before running it,
-      then uses the code once. The code is an install argument, never part of a download address.</p>
+      then installs the private <code>{result.profileName}</code> profile and workspace and uses the code once.
+      The code is an install argument, never part of a download address.</p>
+    <p className="private-note"><strong>After the line finishes:</strong> {result.ownerNextStep}</p>
     <p className="private-note">Connector release {result.release.version} SHA-256: <code>{result.release.sha256}</code></p>
   </section>;
 }
@@ -149,8 +152,9 @@ export function ConnectBotWorkspace() {
     <section className="private-panel connect-bot-help" aria-labelledby="connect-bot-help-title"><h2 id="connect-bot-help-title">What happens next</h2>
       <ol><li>Paste the line only into the named terminal on the computer where the bot runs.</li>
         <li>The line downloads the current connector release and checks its manifest, file size and SHA-256 shown by this signed-in Control Room.</li>
-        <li>The bot gets its own removable credential. The one-time code expires after 10 minutes.</li></ol>
-      <p>Claude Desktop and Cursor need to be restarted after the line finishes. If the fingerprint does not match,
+        <li>It creates one private credential and workspace, then registers the MCP connector with the chosen bot. Generic MCP writes an importable host entry instead.</li>
+        <li>The bot app starts the connector when it needs it; no separate background service is left running.</li></ol>
+      <p>The result above gives the exact final action for the chosen bot and operating system. If the fingerprint does not match,
         nothing is installed. Create a fresh code instead of editing the line.</p>
     </section>
   </main></div>;

@@ -11,6 +11,62 @@
     "find": "    || !(FLEET_WORKER_KINDS_V1 as readonly string[]).includes(workerKind)) throw new WebAccessError(\"invalid_request\");",
     "replace": "    || false) throw new WebAccessError(\"invalid_request\");",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
-    "why": "a displayed join command is never emitted for a bot kind the connector service does not support"
+    "why": "a displayed install command is never emitted for a bot kind the connector service does not support"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": " && node \"$d/${release.file}\" install --server ${gatewayOrigin}",
+    "replace": " && node \"$d/${release.file}\" join --server ${gatewayOrigin}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/connect-bot-install-line.test.mjs",
+    "why": "the exact owner line must install and register the selected bot, not merely save a joined credential"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const BOT_KINDS = Object.freeze([\"claude-code\", \"codex\", \"hermes\", \"claude-desktop\", \"cursor\", \"mcp-agent\"]);",
+    "replace": "const BOT_KINDS = Object.freeze([\"claude-code\", \"codex\", \"hermes\", \"claude-desktop\", \"cursor\"]);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/connect-bot-install-line.test.mjs",
+    "why": "the connector install path must accept the sixth owner-visible Generic MCP kind"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (typeof stubDir !== \"string\" || !isAbsolute(stubDir) || /[\\u0000-\\u001f\\u007f]/u.test(stubDir))",
+    "replace": "    if (typeof stubDir !== \"string\" || false || /[\\u0000-\\u001f\\u007f]/u.test(stubDir))",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^the test guard refuses agent CLIs before even an injected spawner is called$' tests/fleet-connector-install.test.mjs",
+    "why": "the real-CLI test guard accepts only an explicit absolute stub directory"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (bot === \"mcp-agent\") {",
+    "replace": "  if (false) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/connect-bot-install-line.test.mjs",
+    "why": "Generic MCP gets its own importable config instead of falling through to another product"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "  if (!displayNamePattern.test(displayName) || !workerIdPattern.test(workerId)",
+    "replace": "  if (false || !workerIdPattern.test(workerId)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
+    "why": "control characters in an owner display name are refused before a profile command is emitted"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "  if (!displayNamePattern.test(displayName) || !workerIdPattern.test(workerId)",
+    "replace": "  if (!displayNamePattern.test(displayName) || false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
+    "why": "the unique profile suffix is derived only from a canonical fleet worker ID"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "    || !(connectOperatingSystems as readonly string[]).includes(operatingSystem)",
+    "replace": "    || false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-install-line.test.mjs",
+    "why": "owner next-step copy is emitted only for an operating system the page supports"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(profileName)) throw new WebAccessError(\"invalid_request\");",
+    "replace": "    || false) throw new WebAccessError(\"invalid_request\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-install-line.test.mjs",
+    "why": "owner next-step copy never interpolates an unsafe profile name"
   }
 ]

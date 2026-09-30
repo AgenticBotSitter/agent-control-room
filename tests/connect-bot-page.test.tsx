@@ -10,6 +10,8 @@ import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1, type FleetConnectorReleaseManifestV1
   from "../src/fleet/v1/connector-release";
 
 const code = `crj_${"A".repeat(43)}`;
+const workerId = `fleet-worker:${"d".repeat(32)}`;
+const commandIdentity = Object.freeze({ displayName: "Desktop Codex", workerId });
 const release: FleetConnectorReleaseManifestV1 = Object.freeze({ schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1,
   version: "0.3.0", file: "connector-0.3.0.mjs", sha256: "b".repeat(64), size: 1234, builtFrom: "c".repeat(40) });
 
@@ -24,18 +26,23 @@ test("the owner page shows the exact versioned fleet command, including its curr
   for (const [bot, os, command] of [["claude-code", "macos", "unix"], ["codex", "linux", "unix"],
     ["hermes", "windows", "windows"], ["cursor", "windows", "windows"], ["claude-desktop", "macos", "unix"],
     ["mcp-agent", "linux", "unix"]] as const) {
-    const commands = fleetJoinCommandsV1("https://control.example.ts.net", code, bot, release);
+    const commands = fleetJoinCommandsV1("https://control.example.ts.net", code, bot, release, commandIdentity);
     const exact = commands[command];
     assert.equal(exact.includes("\n"), false);
     assert.match(exact, /connector-0\.3\.0\.mjs/u);
     assert.match(exact, /connector-manifest\.json/u);
     assert.match(exact, / b{64} 1234 c{40}/u);
-    assert.match(exact, new RegExp(`--bot ${bot}$`, "u"));
+    assert.match(exact, new RegExp(` install .*--bot ${bot} .*--name desktop-codex-d{12} .*--i-am-the-installer$`, "u"));
+    assert.doesNotMatch(exact, /\sjoin\s/u);
     assert.equal(exact.slice(0, exact.indexOf(" --code ")).includes(code), false, `${os}: code before argument`);
     assert.equal([...exact.matchAll(/https?:\/\/[^ ']+/gu)].some(match => match[0].includes(code)), false, `${os}: code in URL`);
   }
-  assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", code, "wrong-kind", release));
-  assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", "crj_short", "codex", release));
+  assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", code, "wrong-kind", release, commandIdentity));
+  assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", "crj_short", "codex", release, commandIdentity));
+  assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", code, "codex", release,
+    { displayName: "line\nbreak", workerId }));
+  assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", code, "codex", release,
+    { displayName: "safe", workerId: "fleet-worker:short" }));
 });
 
 test("the connect-code route binds the chosen kind and returns only the current release command", async () => {
@@ -43,7 +50,8 @@ test("the connect-code route binds the chosen kind and returns only the current 
   const service = { createEnrollmentCode: async (_identity: unknown, input: unknown) => {
     issued.push(input);
     return { codeId: `fleet-code:${"a".repeat(32)}`, workerId: `fleet-worker:${"b".repeat(32)}`,
-      code, workerKind: (input as { workerKind: string }).workerKind, expiresAt: "2099-01-01T00:00:00.000Z" };
+      code, workerKind: (input as { workerKind: string }).workerKind,
+      displayName: (input as { displayName: string }).displayName, expiresAt: "2099-01-01T00:00:00.000Z" };
   } };
   const handler = createFleetOwnerHttpHandlerV1({ origin: "https://control.example", service: service as never,
     gatewayOrigin: "https://control.example.ts.net", connectorRelease: release,
@@ -54,9 +62,14 @@ test("the connect-code route binds the chosen kind and returns only the current 
     projectIds: ["project:alpha"], capabilities: ["writing"] };
   const response = await post(body);
   assert.equal(response.status, 201);
-  const value = await response.json() as { installLine: string; release: FleetConnectorReleaseManifestV1 };
+  const value = await response.json() as { installLine: string; profileName: string; ownerNextStep: string;
+    release: FleetConnectorReleaseManifestV1 };
   assert.deepEqual(value.release, release);
-  assert.equal(value.installLine, fleetJoinCommandsV1("https://control.example.ts.net", code, "cursor", release).windows);
+  const expected = fleetJoinCommandsV1("https://control.example.ts.net", code, "cursor", release,
+    { displayName: body.name, workerId: `fleet-worker:${"b".repeat(32)}` });
+  assert.equal(value.installLine, expected.windows);
+  assert.equal(value.profileName, "desktop-bbbbbbbbbbbb");
+  assert.match(value.ownerNextStep, /Cursor is registered.*Close and reopen Cursor.*no background service/u);
   assert.deepEqual(issued, [{ displayName: "<desktop> Ω", workerKind: "cursor", operatingSystem: "windows",
     projectIds: ["project:alpha"], capabilities: ["writing"] }]);
   for (const refused of [{ ...body, botKind: "other" }, { ...body, operatingSystem: "android" }, { ...body, extra: true }]) {
@@ -72,7 +85,7 @@ test("the result says plainly when a code expired and disables copying it", asyn
   const root = createRoot(dom.window.document.getElementById("root")!);
   const result: ConnectBotInstallResult = { codeId: `fleet-code:${"a".repeat(32)}`,
     workerId: `fleet-worker:${"b".repeat(32)}`, expiresAt: "2000-01-01T00:00:00.000Z", operatingSystem: "macos",
-    release, installLine: "safe line" };
+    botKind: "codex", profileName: "safe-profile", ownerNextStep: "Codex is registered.", release, installLine: "safe line" };
   try {
     await act(async () => root.render(<InstallLine result={result} />));
     assert.match(dom.window.document.body.textContent ?? "", /This code expired\. Create a new code/u);

@@ -250,6 +250,11 @@ test("the test guard refuses agent CLIs before even an injected spawner is calle
     spawnProcess: () => { spawned = true; throw new Error("must not spawn"); },
   }), /Test guard refused/u);
   assert.equal(spawned, false);
+  await assert.rejects(connector.runCommand("codex", ["mcp", "list"], {
+    env: { CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1", CONTROL_ROOM_TEST_AGENT_CLI_DIR: "relative" },
+    spawnProcess: () => { spawned = true; throw new Error("must not spawn"); },
+  }), /Test guard refused/u);
+  assert.equal(spawned, false);
 });
 
 test("Claude Desktop and Cursor JSON merges preserve other servers, back up first, and uninstall only their entry", async t => {
@@ -281,6 +286,26 @@ test("Claude Desktop and Cursor JSON merges preserve other servers, back up firs
       assert.equal((await stat(installed.paths.workspace)).isDirectory(), true, "uninstall preserves user work");
     });
   }
+});
+
+test("Generic MCP writes and removes an importable per-bot entry on macOS, Linux and Windows fixtures", async t => {
+  for (const [index, platform] of ["darwin", "linux", "win32"].entries()) await t.test(platform, async t => {
+    const homeDir = await temporary(t, `connector-generic-${platform}-`), gateway = fakeGateway();
+    const name = `generic-${platform}`, env = platform === "win32"
+      ? { APPDATA: join(homeDir, "AppData", "Roaming"), LOCALAPPDATA: join(homeDir, "AppData", "Local"), USERNAME: "fixture" }
+      : { XDG_CONFIG_HOME: join(homeDir, ".config"), XDG_DATA_HOME: join(homeDir, ".local", "share") };
+    const installed = await connector.installConnector({ server: "https://control.example",
+      code: code(String.fromCharCode(54 + index)), bot: "mcp-agent", name, homeDir, env, platform,
+      fetcher: gateway.fetcher, runner: recorder().runner, sourcePath: SOURCE });
+    const hostConfig = platform === "win32" ? join(env.APPDATA, "control-room", "generic-mcp.json")
+      : join(env.XDG_CONFIG_HOME, "control-room", "generic-mcp.json");
+    const server = `control-room-${name}`, saved = JSON.parse(await readFile(hostConfig, "utf8"));
+    assert.deepEqual(saved.mcpServers[server].args,
+      ["--profile", name, "--config", installed.paths.configPath, "--workspace", installed.paths.workspace]);
+    await connector.uninstallConnector({ bot: "mcp-agent", name, homeDir, env, platform, runner: recorder().runner });
+    assert.deepEqual(JSON.parse(await readFile(hostConfig, "utf8")).mcpServers, {});
+    await assert.rejects(stat(installed.paths.configPath), error => error.code === "ENOENT");
+  });
 });
 
 test("desktop configuration updates serialize across profiles and preserve a symlinked target", async t => {

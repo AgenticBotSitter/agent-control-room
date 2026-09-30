@@ -49,7 +49,7 @@ export function registerBundledHarnessAdapterFactory(factory) {
     throw new Error("The bundled harness adapter factory is not valid.");
   bundledHarnessAdapterFactory = factory;
 }
-const BOT_KINDS = Object.freeze(["claude-code", "codex", "hermes", "claude-desktop", "cursor"]);
+const BOT_KINDS = Object.freeze(["claude-code", "codex", "hermes", "claude-desktop", "cursor", "mcp-agent"]);
 const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const ROTATION_LOCK_STALE_MS = 5 * 60_000;
 const INSTALL_LOCK_DEADLINE_MS = 10 * 60_000;
@@ -562,10 +562,15 @@ async function releaseRotationLock(release, workError) {
 // Per-bot MCP installation
 // ---------------------------------------------------------------------------
 export function runCommand(command, args, { env = process.env, input, spawnProcess = spawn } = {}) {
-  if (env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI === "1" && ["claude", "codex", "hermes"].includes(command))
-    return Promise.reject(new Error(`Test guard refused to spawn the real ${command} CLI.`));
+  let executable = command;
+  if (env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI === "1" && ["claude", "codex", "hermes"].includes(command)) {
+    const stubDir = env.CONTROL_ROOM_TEST_AGENT_CLI_DIR;
+    if (typeof stubDir !== "string" || !isAbsolute(stubDir) || /[\u0000-\u001f\u007f]/u.test(stubDir))
+      return Promise.reject(new Error(`Test guard refused to spawn the real ${command} CLI.`));
+    executable = joinPath(stubDir, command);
+  }
   return new Promise((resolvePromise, reject) => {
-    const child = spawnProcess(command, args, { env, shell: false, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
+    const child = spawnProcess(executable, args, { env, shell: false, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     if (input !== undefined) child.stdin.end(input);
     child.stdout.on("data", chunk => { stdout += chunk; });
@@ -582,6 +587,12 @@ function botServerName(name) { return `control-room-${name}`; }
 
 function appConfigPath(bot, { homeDir, env, platform }) {
   if (bot === "cursor") return joinPath(homeDir, ".cursor", "mcp.json");
+  if (bot === "mcp-agent") {
+    const root = platform === "win32" ? env.APPDATA || joinPath(homeDir, "AppData", "Roaming")
+      : env.XDG_CONFIG_HOME || joinPath(homeDir, ".config");
+    return joinPath(root, "control-room", "generic-mcp.json");
+  }
+  if (bot !== "claude-desktop") throw new Error("That bot does not use a JSON MCP configuration file.");
   if (platform === "win32") return joinPath(env.APPDATA || joinPath(homeDir, "AppData", "Roaming"), "Claude", "claude_desktop_config.json");
   if (platform === "darwin") return joinPath(homeDir, "Library", "Application Support", "Claude", "claude_desktop_config.json");
   return joinPath(env.XDG_CONFIG_HOME || joinPath(homeDir, ".config"), "Claude", "claude_desktop_config.json");
