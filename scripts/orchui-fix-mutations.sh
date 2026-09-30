@@ -439,9 +439,9 @@ mutate F4c-any-store-is-treated-as-having-a-grant "$COORD" \
 # the scope index alone leaves the primary key (tenant_id, id) unhandled, and 19 of
 # 20 concurrent raises of one description fail with a primary-key violation -- the
 # de-duplication holding only in sequence.
-mutate F5b-needs-you-conflict-target-names-one-index "$STORE" \\
-  '      ON CONFLICT DO NOTHING@TICK@,' \\
-  '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING@TICK@,' \\
+mutate F5b-needs-you-conflict-target-names-one-index "$STORE" \
+  '      ON CONFLICT DO NOTHING@TICK@,' \
+  '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING@TICK@,' \
   --lane coord --pattern "STRESS"
 
 # The CONFLICT TARGET, which is the whole de-duplication. Naming the REQUEST-KEY
