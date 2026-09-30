@@ -44,6 +44,7 @@ import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
 import { hmacSha256Tag } from "../../security";
 import type { UpdaterHomeStatusReaderV1 } from "./updater-home-status";
+import { updaterOwnerRequestSchemaV1, type UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -130,6 +131,9 @@ export interface MacLocalWebProcessOptionsV1 {
   /** A read-only projection of updater status. It exists for Home copy only;
    * the web process receives no updater control or approval authority. */
   updaterHomeStatus?: UpdaterHomeStatusReaderV1;
+  /** The root updater's bounded owner surface. Omission leaves update controls
+   * absent rather than letting the ordinary web process invent status. */
+  updaterOwnerUi?: UpdaterOwnerUiPortV1;
 }
 
 /** Existing controller operations supplied by the host.  This is deliberately
@@ -398,6 +402,39 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       const identity = sessions.verify(request, clock());
+      if (url.pathname === "/api/v1/updater-owner-ui") {
+        if (request.method !== "GET" || url.search || !options.updaterOwnerUi) throw new WebAccessError("not_found");
+        return Response.json(await options.updaterOwnerUi.read({ tenantId: profile.tenantId, ownerSubject: identity.subject,
+          now: new Date(clock()).toISOString() }), { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/updater-owner-requests") {
+        sessions.assertLocalRequest(request, true);
+        if (request.method !== "POST" || url.search || !options.updaterOwnerUi || !request.body
+          || request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json")
+          throw new WebAccessError("invalid_request");
+        const parsed = updaterOwnerRequestSchemaV1.safeParse(await readBoundedJson(request.body, 512));
+        const key = request.headers.get("idempotency-key") ?? "";
+        if (!parsed.success || !/^[A-Za-z0-9:_-]{16,160}$/u.test(key)) throw new WebAccessError("invalid_request");
+        return Response.json(await options.updaterOwnerUi.request({ tenantId: profile.tenantId, ownerSubject: identity.subject,
+          action: parsed.data.action, planId: parsed.data.planId, idempotencyKey: key, now: new Date(clock()).toISOString() }),
+        { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/updater-owner-passkey") {
+        sessions.assertLocalRequest(request, true);
+        if (request.method !== "POST" || url.search || !options.updaterOwnerUi || !request.body
+          || request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json")
+          throw new WebAccessError("invalid_request");
+        const raw = await readBoundedJson(request.body, 256);
+        const parsed = raw && typeof raw === "object" && !Array.isArray(raw) && Object.getPrototypeOf(raw) === Object.prototype
+          && Object.keys(raw).length === 2 && ((raw as { action?: unknown }).action === "approve" || (raw as { action?: unknown }).action === "rollback")
+          && ((raw as { planId?: unknown }).planId === null || typeof (raw as { planId?: unknown }).planId === "string"
+            && /^[A-Za-z0-9:_-]{1,120}$/u.test((raw as { planId: string }).planId)) ? raw as { action: "approve" | "rollback"; planId: string | null } : undefined;
+        const key = request.headers.get("idempotency-key") ?? "";
+        if (!parsed || !/^[A-Za-z0-9:_-]{16,160}$/u.test(key)) throw new WebAccessError("invalid_request");
+        return Response.json(await options.updaterOwnerUi.beginPasskeyApproval({ tenantId: profile.tenantId,
+          ownerSubject: identity.subject, action: parsed.action, planId: parsed.planId, idempotencyKey: key, now: new Date(clock()).toISOString() }),
+        { headers: privateResponseHeaders });
+      }
       if (url.pathname === "/api/v1/updater-status") {
         if (request.method !== "GET" || url.search || !options.updaterHomeStatus) throw new WebAccessError("not_found");
         return Response.json(await options.updaterHomeStatus.read(), { headers: privateResponseHeaders });

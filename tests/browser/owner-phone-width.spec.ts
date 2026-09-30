@@ -401,6 +401,29 @@ test("Home updater status is captured at phone width", async ({ page }, testInfo
   expect(measured.offscreen).toEqual([]);
 });
 
+/** The card is driven by the updater's own bounded projection, so this browser
+ * capture supplies that projection at the HTTP boundary rather than mounting a
+ * stubbed component. It catches the actual 375px layout of every phone button. */
+test("Install card is captured at 375px with updater facts", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
+  await page.route("**/api/v1/updater-owner-ui", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+    schema: "control-room.updater-owner-ui/v1", observedAt: "2026-09-30T12:00:00.000Z", state: "ready_for_approval", selfUpdate: "On",
+    activeSubscriptions: 0, availableControls: ["pause", "backup_now", "check_now", "repair", "rollback"],
+    message: "The updater checked this update.", plan: { planId: "plan:phone", classes: ["database", "updater"], filesChanged: 4,
+      filesAdded: 2, filesDeleted: 1, changesDatabase: true, changesUpdater: true, downtimeEstimateSeconds: 30,
+      restoreMayLoseRecentWrites: true, macConfirmationRequired: true, botSays: { title: "A bot summary", changedAreas: ["one area"] } },
+  }) }));
+  await signIn(page); await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Install" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirm with Face ID" })).toBeVisible();
+  await expect(page.getByText(/Phone alerts are off/u)).toBeVisible();
+  const capture = await page.screenshot({ fullPage: true });
+  await testInfo.attach("updater-install-card-375", { body: capture, contentType: "image/png" });
+  expect(capture.byteLength).toBeGreaterThan(1_000);
+  const measured = await measure(page);
+  expect(measured.offscreen).toEqual([]); expect(measured.undersized).toEqual([]);
+});
+
 for (const mode of ["mac-local", "hosted"] as const) {
   // Named with explicit literals rather than a `${mode}` template so that the
   // PR-claims checker can resolve a citation to a single named test: its

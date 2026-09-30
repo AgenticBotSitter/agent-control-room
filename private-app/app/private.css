@@ -328,6 +328,20 @@
 .private-status-line { margin: 0 0 .75rem; font-size: 1.05rem; }
 .private-updater-status { margin: 1rem 0 0; color: var(--muted); font-size: .9rem; }
 .private-updater-attention { border-left: 4px solid var(--red); background: var(--red-soft); color: var(--text); padding: .75rem .9rem; }
+.private-updater-card { display: grid; gap: .8rem; margin-top: 1rem; }
+.private-updater-card .private-panel-heading { margin-bottom: 0; }
+.private-updater-facts { margin: 0; }
+.private-updater-fact-list { display: grid; gap: .35rem; margin: 0; padding-left: 1.2rem; }
+.private-updater-warning { margin: 0; border-left: 4px solid var(--amber); background: var(--amber-soft); padding: .7rem .85rem; }
+.private-updater-bot-says { margin: 0; color: var(--muted); }
+.private-updater-bot-says p { margin: .6rem 0; }
+.private-updater-bot-says ul { margin: .6rem 0; padding-left: 1.2rem; }
+.private-updater-controls { display: grid; gap: .7rem; }
+.private-updater-controls > button { width: 100%; }
+.private-updater-controls .private-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
+.private-updater-controls .private-actions button { min-height: 44px; }
+.private-updater-mac-code { margin: 0; border-left: 4px solid var(--amber); padding-left: .75rem; }
+@media (max-width: 420px) { .private-updater-controls .private-actions { grid-template-columns: 1fr; } }
 
 /* Needs-attention's caveat toggles reuse `.private-panel > details`'s existing
  * summary treatment (owner-ux-feedback-2026-09-27.md item 1: "Caveats/
