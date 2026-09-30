@@ -154,7 +154,7 @@ async function journeyFixture(t: TestContext, fresh: string, extra: Partial<MacL
     origin, workspaceId: configuration.workspaceId, clock: () => nowMs,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: configuration.tenantId,
       provider: trust.issuer, subject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: opened.client, close: async () => {} },
+    database: { client: opened.client, close: async () => {}, isAvailable: () => true },
     ...extra,
   });
   t.after(async () => { await app.close(); await opened.close(); await database.drop(); });

@@ -351,10 +351,17 @@ function grantsWithoutObjects(sql, objects, columns) {
   const statements = sqlStatements(sql);
   const rebuilt = [], rewritten = [];
   for (const statement of statements) {
-    // `ALL TABLES`/`ALL SEQUENCES`/`SCHEMA`/`FUNCTION` name no single withheld
-    // object and so are kept whole; everything else has a relation list worth
+    // `ALL TABLES`/`ALL SEQUENCES`/`SCHEMA` name no single withheld object and so
+    // are kept whole; everything else has a relation or function list worth
     // reading. `ALTER DEFAULT PRIVILEGES` is kept whole for the same reason.
-    const matched = /^(GRANT|REVOKE)\s+([\s\S]*?)\s+ON\s+(?!ALL\b|SCHEMA\b|FUNCTION\b|SEQUENCE\b)([\s\S]*?)\s+(?:FROM|TO)\s+([\s\S]*?);$/u
+    //
+    // A FUNCTION list is read by SIGNATURE, not by relation name (R4-B3). The
+    // function grants in this file (`work_intake_split_suggestion_visible` from
+    // 0203) name an object a partial ledger does not have, and PostgreSQL answers
+    // 42883 rather than 42P01 for them -- so the exclusion above is the wrong shape
+    // of guard for exactly the statement that used to break. Excluding FUNCTION
+    // removed the only arm that could prune them, so it is read here instead.
+    const matched = /^(GRANT|REVOKE)\s+([\s\S]*?)\s+ON\s+(?!ALL\b|SCHEMA\b|SEQUENCE\b)([\s\S]*?)\s+(?:FROM|TO)\s+([\s\S]*?);$/u
       .exec(statement);
     if (!matched) { rebuilt.push(statement); continue; }
     // The privilege list and each privilege's own column list: a column list
@@ -366,9 +373,14 @@ function grantsWithoutObjects(sql, objects, columns) {
         scoped: parsed[2] !== undefined,
         columns: parsed[2] === undefined ? [] : splitTopLevel(parsed[2]).map(column => column.trim()) };
     });
+    const isFunction = /^FUNCTION\s/iu.test(matched[3]);
+    // Split on a comma that is NOT inside a parenthesis, so a signature's argument
+    // list stays one name. The plain split is what produced
+    // `read_plan(text), bytea)`, which is not SQL.
     const listed = splitTopLevel(matched[3]).map(value => value.trim().replace(/^public\./u, ""));
-    const survivors = listed.filter(object => !objects.has(object));
-    const heldColumn = privileges.some(privilege => privilege.columns.some(column =>
+    const bare = (name) => name.replace(/^FUNCTION\s+/iu, "").split("(")[0].trim();
+    const survivors = listed.filter(object => !objects.has(isFunction ? bare(object) : object.replace(/^public\./u, "")));
+    const heldColumn = !isFunction && privileges.some(privilege => privilege.columns.some(column =>
       listed.some(object => columns.has(`${object}.${column}`))));
     if (survivors.length === listed.length && !heldColumn) { rebuilt.push(statement); continue; }
     const kept = [];
@@ -382,9 +394,13 @@ function grantsWithoutObjects(sql, objects, columns) {
     rewritten.push(statement);
     // A privilege or a statement left naming nothing is dropped: `GRANT
     // INSERT () ON t` is not valid SQL, and a statement with no surviving
-    // object would raise 42P01 on the first withheld name.
+    // object would raise 42P01 (or 42883) on the first withheld name.
     if (kept.length === 0 || survivors.length === 0) continue;
-    rebuilt.push(`${matched[1]} ${kept.join(", ")} ON ${survivors.join(", ")}`
+    // The `FUNCTION` keyword is part of the object list in PostgreSQL's grammar
+    // (`GRANT EXECUTE ON FUNCTION f(...)`), so it has to be put back with the
+    // survivors. Rebuilding without it produces `ON f(...)`, which names a
+    // relation and would raise 42P01 -- a different failure, on the same statement.
+    rebuilt.push(`${matched[1]} ${kept.join(", ")} ON ${isFunction ? `FUNCTION ${survivors.join(", ")}` : survivors.join(", ")}`
       + ` ${matched[1] === "REVOKE" ? "FROM" : "TO"} ${matched[4].trim()};`);
   }
   // If nothing was rewritten the derivation did not work: the staged file
@@ -2189,7 +2205,15 @@ async function catalogState(db){
  * because that would take the grants that do apply down with it. A statement whose
  * whole list was absent is dropped, since there is then nothing left to grant. The
  * object list is read within a single statement, so it can never run past the `;`
- * into the next statement's own `ON ... TO`. */
+ * into the next statement's own `ON ... TO`.
+ *
+ * A FUNCTION SIGNATURE IS NOT A TABLE NAME, so it is checked against the absent set
+ * BY ITS OWN NAME (R4-B3). The grant files now carry `GRANT EXECUTE ON FUNCTION
+ * work_intake_split_suggestion_visible(text, text, text) TO ...` and two more from
+ * 0204/0205, all created by migrations a partial ledger never applied; replayed
+ * verbatim they raise 42883 (`undefined_function`) and fail the upgrade. The
+ * signature's own comma list is never split -- a parenthesised argument list is one
+ * name, and splitting it produced `read_plan(text), bytea)`, which is not SQL. */
 function pruneAbsentObjects(sql, present, isAbsent) {
   // Only GRANT and REVOKE statements are rewritten. The files also carry `BEGIN;`
   // and `DO $$ ... $$` blocks whose bodies contain semicolons, so splitting the
@@ -2202,11 +2226,14 @@ function pruneAbsentObjects(sql, present, isAbsent) {
     if (!match) return statement;
     // Names the file writes with a type prefix or as a schema-wide sweep are left
     // alone: a sweep over the tables this database does have is still correct.
+    if (!/^\s*FUNCTION\b/iu.test(statement)
+      && /^\s*(?:ALL\b|SCHEMA\b|SEQUENCE\b|TABLE\b|[A-Z_]+\s+TABLE\b)/iu.test(match[1].replace(/\s+/g, " "))) return statement;
     // A list carrying a parenthesised argument type is a function signature, not a
     // list of names -- `read_agent_review_plan(text), bytea)` splits on its own
-    // commas -- so a list with an unbalanced "(" is left exactly as written.
-    if (match[1].includes("(")) return statement;
-    const names = match[1].split(",").map(entry => entry.trim());
+    // commas -- so a list with an unbalanced "(" is left exactly as written. It is
+    // still checked BY NAME below, which is what a signature needs.
+    if (match[1].includes("(") && !/^\s*FUNCTION\b/iu.test(statement)) return statement;
+    const names = match[1].split(/,(?![^()]*\))/u).map(entry => entry.trim());
     const kept = names.filter(name => {
       const bare = name.split("(")[0].trim();
       return !/^[a-z_][a-z0-9_]*$/iu.test(bare) || !isAbsent(bare);

@@ -166,21 +166,27 @@ function declaredDeletes(): string[] {
 
 /**
  * Every `CREATE FUNCTION` a migration creates that a login can CALL, as
- * `signature -> the file that creates it, and whether that file also declares any
- * SECURITY DEFINER routine`.
+ * `signature -> the file that creates it and the two SECURITY DEFINER flags`.
  *
  * It is a named function rather than an inline loop so the grammar it reads is
- * assertable on its own: the two blind spots below were real failures, and a
- * scanner whose grammar has a blind spot is exactly the kind of thing this file
- * refuses to leave unproved.
+ * assertable on its own: the blind spots below were real failures, and a scanner
+ * whose grammar has a blind spot is exactly the kind of thing this file refuses
+ * to leave unproved.
  *
  * Trigger functions are excluded, and deliberately so. A trigger function cannot
  * be invoked directly, it has no SQL-callable signature, and it executes as the
  * owner of the table it is attached to, so no login can reach it however its ACL
- * reads.
+ * reads. THIS is the property the round-4 live preflight disagreed about: the
+ * live catalog scan refuses every SECURITY DEFINER function that is not on its
+ * allowlist, and it does NOT skip `prorettype='trigger'`, so a SECURITY DEFINER
+ * trigger function needs a pinned allowlist entry exactly like a callable one
+ * (R4-B1). The trigger exclusion here is therefore about the CALLER side only:
+ * no login can invoke a trigger function, so none needs the callable allowlist.
+ * The trigger functions' own entries live in `privateDatabasePreflight` and are
+ * pinned there.
  *
- * TWO BLIND SPOTS, both reported in review round 2, and both with the same shape:
- * a correct preflight entry with no migration behind it, because the scanner could
+ * THREE BLIND SPOTS, all reported in review, and all with the same shape: a
+ * correct preflight entry with no migration behind it, because the scanner could
  * not SEE the function that earned it.
  *
  *   1. The optional `public.`. 0203 writes
@@ -192,14 +198,18 @@ function declaredDeletes(): string[] {
  *      both entries read as phantoms. They belong on the allowlist because the
  *      web login may CALL them, which is a reason to hold an entry to a migration
  *      whatever that function's own properties are.
+ *   3. The per-FILE definer flag as the ONLY signal. That attributes SECURITY
+ *      DEFINER to every function in a migration that creates both kinds -- 0106
+ *      and 0093 each declare an IMMUTABLE helper beside a SECURITY DEFINER
+ *      boundary function -- so the phantom set held six signatures where only
+ *      four were SECURITY DEFINER.
  *
- * So the definer property is RECORDED rather than used as a filter, and each
- * direction of the comparison below is filtered by the property that direction
- * needs. A SECURITY DEFINER routine a login could call is what the preflight must
- * have an answer for; a plain callable function is only what the allowlist must
- * not be a fiction about.
+ * So BOTH flags are RECORDED rather than either being used as a filter:
+ * `securityDefiner` (this function's own header) and `securityDefinerFile` (the
+ * file). The comparisons below each use the one that direction needs, and the
+ * third blind spot is what the per-function flag exists to close.
  */
-type ShippedFunction = Readonly<{ file: string; securityDefinerFile: boolean }>;
+type ShippedFunction = Readonly<{ file: string; securityDefinerFile: boolean; securityDefiner: boolean }>;
 
 /** `name(a, b)` -> `name(2)`, the normalisation both comparisons use.
  *
@@ -214,6 +224,22 @@ const arity = (signature: string) => {
 };
 const shapeOf = (signature: string) => signature.replace(/\([^)]*\)/u, arity);
 
+/**
+ * `CREATE [OR REPLACE] FUNCTION name(args) <header> AS $$|'` -> the header.
+ *
+ * The header runs from the CLOSING PARENTHESIS of the signature to the body
+ * opener, so an attribute in it belongs to THIS function and a following
+ * function's attributes cannot leak backwards into it. The `AS` opener is the
+ * terminator rather than `RETURNS`, because `RETURNS` sits INSIDE the header
+ * and a non-lazy `[\s\S]*?` before it would stop at the first occurrence rather
+ * than at this function's.
+ */
+const FUNCTION_HEADERS = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)AS\s+(?:\$\$[A-Za-z_0-9]*\$|')/giu;
+
+/** `RETURNS trigger` is what marks a function as a trigger function. */
+const returnsTrigger = (header: string) =>
+  /RETURNS\s+[A-Za-z ]*?\btrigger\b/iu.test(header.replace(/\bLANGUAGE\s+[a-z_0-9]+/giu, ""));
+
 async function shippedSecurityDefinerFunctions(): Promise<Map<string, ShippedFunction>> {
   const shipped = new Map<string, ShippedFunction>();
   for (const file of (await readdir(join(process.cwd(), "db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
@@ -221,11 +247,12 @@ async function shippedSecurityDefinerFunctions(): Promise<Map<string, ShippedFun
     const securityDefinerFile = /SECURITY\s+DEFINER/i.test(sql);
     // Both spellings are legal and both are in use, so the scanner accepts either
     // and is proved to do so below.
-    for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)RETURNS\s+([a-z ]+)/gi)) {
-      if (match[4]!.trim().toLowerCase() === "trigger") continue;
+    for (const match of sql.matchAll(FUNCTION_HEADERS)) {
+      if (returnsTrigger(match[3]!)) continue;
       const args = match[2]!.split(",").map(argument => argument.trim().split(/\s+/)[0]!.toLowerCase())
         .filter(argument => argument !== "");
-      shipped.set(`${match[1]!.toLowerCase()}(${args.join(",")})`, Object.freeze({ file, securityDefinerFile }));
+      shipped.set(`${match[1]!.toLowerCase()}(${args.join(",")})`, Object.freeze({ file, securityDefinerFile,
+        securityDefiner: /SECURITY\s+DEFINER/iu.test(match[3]!) }));
     }
   }
   return shipped;
@@ -278,11 +305,32 @@ test("the SECURITY DEFINER scanner reads both spellings and every file, not only
   // migration behind it from the first run rather than after a failure.
   assert.ok(filesFor("control_room_planner_grant_owner_retry(3)")
     .includes("0205_planner_barrier_and_owner_retry.sql"));
-  // Trigger functions stay excluded, and this is the assertion for it: 0202's two
-  // guards are SECURITY DEFINER trigger functions, and a trigger has no
-  // SQL-callable signature to hold an allowlist entry for.
+  // Trigger functions stay excluded from the CALLABLE set, and this is the
+  // assertion for it: 0202's two guards and 0204/0205's rebuild are SECURITY
+  // DEFINER trigger functions, and a trigger has no SQL-callable signature for a
+  // login to reach. They are NOT thereby exempt from the LIVE preflight's
+  // catalog scan -- R4-B1 measured the whole product refusing to start because
+  // `guard_planner_needs_you_item_insert` had no entry there -- so the pinned
+  // trigger allowlist below is what covers them.
   for (const signature of ["guard_planner_failure_counter_write()", "guard_planner_needs_you_item_insert()"]) {
     assert.equal(shipped.has(signature), false, `a trigger function was reported as callable: ${signature}`);
+  }
+  // THE THIRD BLIND SPOT, closed and proved: the per-function flag must not
+  // inherit from the file. 0093 creates `work_intake_canonical_jsonb` -- a plain
+  // IMMUTABLE helper, granted EXECUTE to the intake login in
+  // production_table_grants.sql -- in the SAME file as the SECURITY DEFINER
+  // `is_work_intake_session`. Reading the property per FILE called the helper a
+  // definer, which would have added a phantom to cook/v1's pinned set.
+  const helper = shipped.get("work_intake_canonical_jsonb(input)");
+  assert.equal(helper?.file, "0093_work_batch_intake.sql", "0093's helper was not scanned");
+  assert.equal(helper?.securityDefinerFile, true, "0093 does declare a SECURITY DEFINER function somewhere");
+  assert.equal(helper?.securityDefiner, false,
+    "a per-FILE SECURITY DEFINER flag leaked onto a function that is not one");
+  // And the other direction: 0227's two helpers are in a file with NO definer, so
+  // both flags are false and they are visible anyway -- N-T1's actual case.
+  for (const shape of ["owner_push_endpoint_host(1)", "owner_push_endpoint_allowed(1)"]) {
+    const record = [...shipped.entries()].find(([signature]) => shapeOf(signature) === shape)?.[1];
+    assert.equal(record?.securityDefiner, false, `${shape} is not SECURITY DEFINER`);
   }
 });
 
@@ -425,33 +473,92 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
   // this proves the allowlist tracks the migrations and keeps the owner test
   // unconditional, both without a database.
   const source = readFileSync(PREFLIGHT_SOURCE, "utf8");
-  const exempted = new Set<string>();
-  for (const match of source.matchAll(/'([a-z_0-9]+\([^']*?\))'::regprocedure/g))
-    exempted.add(match[1]!);
-  assert.ok(exempted.size >= 4,
-    `only ${exempted.size} exempted signature(s) found in the preflight; the read is too narrow to prove anything`);
+  // Read every OCCURRENCE of a signature, in both spellings the preflight uses:
+  // `'f(args)'::regprocedure` in the catalog-scan branches, and `'f(args)'` on
+  // its own inside the `'f(args)'::regprocedure[] boundary(oid)` array at the
+  // end. Both matter, and reading only the suffixed form is how a rename in the
+  // boundary array went unnoticed: that array is the one place the preflight
+  // demands the agent-review pair be executable, so a name that no migration
+  // creates there is a hole in the very check the scan exempts itself from.
+  //
+  // A de-duplicated set is not used either. A signature appears more than once
+  // by design -- `read_agent_review_plan(text)` is named in the scan branch, in
+  // the volatility CASE and again in the boundary array -- and a set hides
+  // that: renaming ONE occurrence leaves the other spellings present, so a
+  // set-based check passes a preflight with a hole in one of those places.
+  // Every occurrence is collected and every occurrence is compared.
+  const occurrences: string[] = [
+    ...[...source.matchAll(/'([a-z_0-9]+\([^']*?\))'::regprocedure/gu)].map(match => match[1]!),
+    // The bare form is read by anchoring on the ARRAY'S closing bracket, so the
+    // match cannot run past the element before it: `commit_agent_review(...)',
+    // 'read_agent_review_plan(text)']::regprocedure[]` yields only the second,
+    // which is the one the suffixed regex above cannot see. Anchoring on the
+    // bracket rather than looking ahead across quotes is what makes that true;
+    // a lookahead would have to span the previous element's closing quote.
+    ...[...source.matchAll(/'([a-z_0-9]+\([^']*?\))'\s*,?\s*\]\s*::regprocedure\[\]/gu)].map(match => match[1]!),
+  ];
+  assert.ok(occurrences.length >= 8,
+    `only ${occurrences.length} exempted signature occurrence(s) found in the preflight; the read is too narrow to prove anything`);
 
   // Every SECURITY DEFINER function a migration creates that a login could CALL
   // must be an allowlist entry, and every allowlist entry must be one a
   // migration creates: an unlisted one is flagged by the scan on a correct
   // database, and a phantom one is a hole in it.
   //
-  // BOTH directions run over every shipped function, and the definer flag is not
-  // used to filter either of them. It was, and that was N-T1: the filter skipped
-  // whole files, so 0227's two callable (non-definer) helpers were invisible and
-  // two correct allowlist entries read as phantoms. An allowlist entry exists
-  // because a login may CALL the function, so every callable function a
-  // migration creates has to be accounted for in both directions whatever its
-  // own security properties are.
+  // BOTH BRANCHES' GUARANTEES ARE KEPT, because they are different and both
+  // failed at least once.
+  //
+  // cook/orchui's guarantee is that the scan's DIRECTION is right: an allowlist
+  // entry exists because a login may CALL a function, so EVERY callable
+  // non-trigger function a migration creates has to be accounted for in both
+  // directions whatever its own security properties are. Filtering by
+  // SECURITY DEFINER was N-T1: the filter skipped whole files, so 0227's two
+  // callable (non-definer) helpers were invisible and two correct allowlist
+  // entries read as phantoms.
+  //
+  // cook/v1's guarantee is that the READ is right: SECURITY DEFINER must be read
+  // PER FUNCTION from that function's own header, never per FILE. Reading it
+  // per file attributes it to every function in a migration that creates both
+  // kinds -- 0106 and 0093 each declare an IMMUTABLE helper next to a SECURITY
+  // DEFINER boundary function -- so the phantom set held six signatures where
+  // only four were SECURITY DEFINER. And that set must not drift from what
+  // PostgreSQL reports, so it is pinned BY NAME below.
+  //
+  // So the shipped set below is built by `shippedFunctions()`, which records the
+  // per-function definer property AND the per-file one, and the two are used for
+  // two different assertions: the pinned definer set comes from the per-function
+  // property, and the allowlist comparison runs over every callable function
+  // with no filter at all. Neither guarantee is a restatement of the other.
+  //
+  // Trigger functions are excluded from BOTH, and deliberately so. A trigger
+  // function cannot be invoked directly, it has no SQL-callable signature, and
+  // it executes as the owner of the table it is attached to, so no login can
+  // reach it however its ACL reads.
   const shipped = await shippedSecurityDefinerFunctions();
-  // The shipped names carry SQL argument NAMES; the preflight carries TYPES.
-  // Compare on shape, so a rename of a parameter is not a finding and a new
-  // function is.
+  const definers = [...shipped.entries()]
+    .filter(([, record]) => record.securityDefiner).map(([signature]) => signature);
+  assert.deepEqual([...definers].map(signature => signature.replace(/\(.*\)/u, "")).sort(),
+  ["commit_agent_review", "control_room_planner_grant_owner_retry", "is_work_intake_session",
+    "read_agent_review_plan", "redeem_fleet_enrollment", "work_intake_split_suggestion_visible"],
+    "the shipped SECURITY DEFINER function set changed; a login-callable one needs a preflight allowlist entry");
+  // The shipped names carry SQL argument NAMES; the preflight carries TYPES, so
+  // the two are matched by SHAPE -- the name with its arity. `shapeOf` is the
+  // single normalisation both comparisons use, and it is asserted on its own in
+  // the scanner self-test above so a reader cannot make it name-blind.
   const shapes = new Set([...shipped.keys()].map(shapeOf));
-  assert.deepEqual([...shipped.keys()].filter(signature => !exempted.has(signature) && !shapes.has(shapeOf(signature))).sort(), [],
-    "a callable function a migration creates is not on the preflight's allowlist, so a correct database is refused");
-  assert.deepEqual([...exempted].filter(signature => !shapes.has(shapeOf(signature))).sort(), [],
+  assert.deepEqual(occurrences.filter(signature => !shapes.has(shapeOf(signature))).sort(), [],
     "the preflight exempts a function no migration creates; a renamed or removed function is now a hole in the scan");
+  // Each shipped SECURITY DEFINER function must be exempt under its OWN NAME, by
+  // arity. The name-blind fallback is deliberately absent: an allowlist entry
+  // that merely matched some other function's arity would be exactly the drift
+  // this exists to catch.
+  for (const signature of definers) {
+    const name = signature.slice(0, signature.indexOf("("));
+    const shipped_ = [...shipped.keys()].filter(other => other.startsWith(`${name}(`));
+    assert.ok(shipped_.length >= 1, `${name} is not a shipped signature at all`);
+    assert.ok(occurrences.some(other => shapeOf(other) === shapeOf(signature)),
+      `${name} is a shipped SECURITY DEFINER function with no preflight allowlist entry`);
+  }
 
   // The specific shape that broke: the owner check may not sit inside the
   // reviewer-only disjunct, or these two functions are exempt for every kind.
@@ -464,6 +571,63 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
     "the reviewer-only disjunct is gone; the ordering assertion below no longer means anything");
   assert.ok(branch[0].indexOf(owner) < branch[0].indexOf(reviewerDisjunct),
     "the owner test is inside the reviewer disjunct again, so every non-reviewer kind exempts these functions whatever owns them");
+});
+
+test("every SECURITY DEFINER trigger a migration creates is pinned in the live preflight's catalog scan", async () => {
+  // R4-B1, and the reconciliation of the two scanners this stream inherited.
+  //
+  // The scanner above excludes trigger functions, on the ground that no login can
+  // CALL one. That is true, and it is why N-T1's fix never noticed 0204: the
+  // function a login cannot call is not the function that breaks the product.
+  // The LIVE preflight scans `pg_proc` for every SECURITY DEFINER function and
+  // exempts only the ones it pins -- with no trigger exception -- so when 0204
+  // rebuilt the Needs-you guard as SECURITY DEFINER, every private login began
+  // refusing a correct database. Measured: test:database 81/83 and
+  // test:postgres-production #23/#25, all `private_database_preflight_failed`.
+  //
+  // So the trigger side needs its own scan, against the LIVE preflight's source
+  // rather than its callable list, and it is a scan of TRIGGERS here rather than
+  // of CALLABLES. Both scanners exist; neither is a filter over the other, and
+  // this is the one that would have caught it.
+  const source = readFileSync(PREFLIGHT_SOURCE, "utf8");
+  const scan = /OR \(SELECT 1 FROM pg_proc/.exec(source);
+  assert.ok(scan, "the preflight's function catalog scan was not found in the source");
+  // Every name the migration set pins must appear as a `::regprocedure` literal
+  // in the scan, in its own `OR (...)` branch. Reading every OCCURRENCE (rather
+  // than a de-duplicated set) is deliberate for the reason the boundary array
+  // comment above gives: a signature named in two places and renamed in one is
+  // still a hole, and a set hides it.
+  const pinned = [...source.matchAll(/'([a-z_0-9]+\(\))'::regprocedure/gu)].map(match => match[1]!);
+  // A SECURITY DEFINER trigger in db/migrations, read the same way as the
+  // callable set: per function, from its own header, and only those returning
+  // `trigger`.
+  const triggers: string[] = [];
+  for (const file of (await readdir(join(process.cwd(), "db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
+    const sql = await readFile(join(process.cwd(), "db/migrations", file), "utf8");
+    for (const match of sql.matchAll(FUNCTION_HEADERS)) {
+      if (!returnsTrigger(match[3]!)) continue;
+      if (!/SECURITY\s+DEFINER/iu.test(match[3]!)) continue;
+      triggers.push(`${match[1]!.toLowerCase()}(${match[2]!.split(",").filter(a => a.trim() !== "").length})`);
+    }
+  }
+  // The set is pinned BY NAME as well as compared. A migration that adds a sixth
+  // SECURITY DEFINER trigger fails here, which is the change that would
+  // otherwise be discovered as a product that will not start.
+  assert.deepEqual([...new Set(triggers)].sort(), ["guard_planner_needs_you_item_insert(0)"],
+    "the shipped SECURITY DEFINER trigger set changed; the live preflight needs a pinned entry for each");
+  for (const trigger of [...new Set(triggers)])
+    assert.ok(pinned.includes(trigger),
+      `${trigger} is SECURITY DEFINER and a trigger, so the live preflight's catalog scan refuses it unless it is pinned`);
+  // And the pin is a real pin, not the name appearing somewhere: the branch must
+  // hold the two properties that make a trigger an trigger, so a rebuild that
+  // changed either fails the preflight rather than passing it.
+  const branch = /OR \(p\.oid='guard_planner_needs_you_item_insert\(\)'::regprocedure[\s\S]*?'control_room_schema_owner'\)/
+    .exec(source);
+  assert.ok(branch, "the Needs-you trigger's pinned branch was not found in the preflight");
+  assert.match(branch[0], /p\.prorettype='trigger'::regtype/, "the pinned trigger branch no longer pins the return type");
+  assert.match(branch[0], /p\.prosecdef/, "the pinned trigger branch no longer pins SECURITY DEFINER");
+  assert.match(branch[0], /a\.grantee<>p\.proowner\)\)\)\s*$/m,
+    "the pinned trigger branch no longer requires an ACL that admits no login at all");
 });
 
 test("the comparison above reads role files it has to be able to read", () => {

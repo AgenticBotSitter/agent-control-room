@@ -12,6 +12,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_task_coordinator;
+-- This GRANT is kept as one contiguous block with no comment inside it: the
+-- down-migration lane rewrites role files by exact text match
+-- (tests/postgres-production-lifecycle.test.mjs), and a comment in the middle of
+-- the table list makes the whole statement stop matching.
 GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, control_web_sessions,
   projects, control_manual_project_heads, control_requests, control_workflows, control_jobs,
   control_attempts, control_leases, control_task_execution_plans, control_nodes, control_node_keys,
@@ -39,6 +43,14 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   TO control_room_task_coordinator;
 GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
   control_recurring_rules, control_recurring_proposals TO control_room_task_coordinator;
+-- Read-only, and only for the supervisor's stall decision: reconciling a stalled
+-- attempt asks whether an effect intent is still executing, confirmed or
+-- ambiguous, which is what separates "requeue it" from "the outcome is
+-- uncertain, a human must look". Postgres checks the privilege on every
+-- relation the statement names, so without this the reconciliation query fails
+-- for every eligible candidate. No INSERT, UPDATE or DELETE: intents are
+-- written by the owning paths alone.
+GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
 -- Read-only: the coordinator enforces a project's eligible-worker-kinds and
@@ -159,13 +171,27 @@ GRANT SELECT, INSERT ON control_planner_needs_you_items TO control_room_task_coo
 -- caller already holds, so EXECUTE discloses nothing the login could not compute.
 GRANT EXECUTE ON FUNCTION planner_failure_scope_key(text, jsonb) TO control_room_task_coordinator;
 
--- MIG-A 0205: EXECUTE on the owner's deliberate retry. The coordinator READS the
--- latch through its own SELECT and never sets it, so this grant is not a way to
--- manufacture a retry: the function itself refuses a counter that is not live at
--- >= 2 or that already holds a latch, and the trigger behind it refuses the write
--- outright. The owner web login is the actor that normally calls it (see
--- private_web_roles.sql); the coordinator holds it so a press can be answered
--- honestly when the owner retries from a second device.
-GRANT EXECUTE ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[])
-  TO control_room_task_coordinator;
+-- MIG-A 0205: NO EXECUTE on the owner's deliberate retry for the coordinator, and
+-- that is a change rather than an omission. Round 4 measured the consequence of
+-- having granted it: the coordinator login can set `owner_retry_cleared_at`
+-- directly, and can clear an escalated counter with no success at all -- so the
+-- "the only login that can ask is the owner's own web login" and "the
+-- coordinator holds no UPDATE on the column" claims were both false on a
+-- database built from these files.
+--
+-- The impact was low (the coordinator could always clear counters since 0202, so
+-- the loop bound was never enforced by the database against that login), but the
+-- grant had no user: no coordinator code calls
+-- `control_room_planner_grant_owner_retry`. The retry is asked for over the owner's
+-- own web pool by `PostgresIntakeOwnerRetryStoreV1` (see private_web_roles.sql),
+-- and the coordinator only READS the latch through its own SELECT.
+--
+-- The REVOKE is what makes an already-installed cluster converge: this file runs
+-- on every install and upgrade, so an install that carried the old grant drops it
+-- rather than keeping it. It names the function the file created, and the Mac
+-- upgrade path reaches the same state through
+-- scripts/mac-local/database-upgrade-grants.mjs, whose `plannerFunctions` map pins
+-- this function to the web login alone.
+REVOKE EXECUTE ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[])
+  FROM control_room_task_coordinator;
 COMMIT;

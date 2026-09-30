@@ -78,7 +78,7 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
       const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "PG Codex box", workerKind: "codex",
         projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
       const configPath = join(dir, "worker.json");
-      await connector.join({ server: origin, code: code.code, configPath, fetcher });
+      await connector.join({ server: origin, code: code.code, workerKind: "codex", configPath, fetcher });
       const settings = async (fakeBehaviour: string) => {
         const path = join(dir, `harnesses-${fakeBehaviour}.json`);
         await writeFile(path, JSON.stringify({ schema: "control-room.fleet-harnesses/v1",
@@ -106,7 +106,8 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
       assert.equal(shown.length, 1);
       assert.equal(shown[0]!.jobId, task.jobId);
       assert.equal(shown[0]!.workerName, "PG Codex box");
-      assert.match(shown[0]!.summary, /^Done by fake codex: Task handoff-pg/u);
+      assert.match(shown[0]!.summary,
+        /^Done by fake codex: <<<CONTROL_ROOM_TASK_DATA_V1>>>\n\{"title":"Task handoff-pg"/u);
       assert.equal(shown[0]!.taskState, "waiting_approval");
       assert.equal(shown[0]!.decision, null);
       // What the owner's pages read with the private web login agrees.

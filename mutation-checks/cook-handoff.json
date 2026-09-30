@@ -1,15 +1,15 @@
 [
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    } else if (settings?.harnesses?.[harness]?.enabled !== true) {",
+    "find": "    } else if (harness && settings?.harnesses?.[harness]?.enabled !== true) {",
     "replace": "    } else if (false) {",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"not enabled\" tests/fleet-harness-handoff.test.ts",
     "why": "run claims work only for the harness the machine owner enabled locally"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "if (!HANDOFF_HARNESSES.includes(harness) || entry?.enabled !== true || !settings.adapterModule) return null;",
-    "replace": "if (!settings.adapterModule) return null;",
+    "find": "  if (!HANDOFF_HARNESSES.includes(harness) || entry?.enabled !== true) return null;",
+    "replace": "  if (false) return null;",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"refused unless the machine owner\" tests/fleet-harness-handoff.test.ts",
     "why": "a disabled or unknown harness is never loaded"
   },
@@ -29,7 +29,7 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (anyEnabled) await refuseSharedWrite(value.adapterModule, \"The harness adapter module\");",
+    "find": "  if (anyEnabled && !bundledHarnessAdapterFactory) await refuseSharedWrite(value.adapterModule, \"The harness adapter module\");",
     "replace": "",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"refused unless the machine owner\" tests/fleet-harness-handoff.test.ts",
     "why": "an adapter module another user can change is refused"
@@ -127,8 +127,8 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "          watchdogGraceMs, secrets });",
-    "replace": "          watchdogGraceMs });",
+    "find": "          : await runClaimedTask({ client, claim, adapter, progressIntervalMs, readMode, log, watchdogGraceMs, secrets });",
+    "replace": "          : await runClaimedTask({ client, claim, adapter, progressIntervalMs, readMode, log, watchdogGraceMs });",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^key leak\" tests/fleet-harness-handoff.test.ts",
     "why": "run must pass this machine's live credential(s) to runClaimedTask so a leaked key in the harness's answer can be caught"
   }

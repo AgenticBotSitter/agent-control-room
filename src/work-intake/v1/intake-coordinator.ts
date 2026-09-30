@@ -50,15 +50,36 @@ export interface IntakePlannerFailureStoreV1 {
    * It is deliberately a read of a grant and not a reset of the count. The
    * failure count is the evidence the Needs-you item and the guard both rest on,
    * so lowering it would erase the fact that this description failed twice. The
-   * grant is instead CONSUMED by the `clear()` the successful or re-failed run
-   * performs, so at most one retry exists per escalation and the next escalation
-   * (two fresh failures) is what earns the next one.
+   * grant is instead CONSUMED by the clear that the run performs, so at most one
+   * retry exists per escalation and the next escalation (two fresh failures) is
+   * what earns the next one.
+   *
+   * A READ IS NOT THE DECISION. Round 4 measured twenty concurrent presses after
+   * one grant producing twenty runs: every press read this as true before the
+   * first clear landed. A store that implements `spendOwnerRetry` decides the
+   * question with one conditional UPDATE instead, and the coordinator runs only
+   * when it comes back true -- so `ownerRetryGranted` is a fast path and a hint,
+   * and never the authority.
    *
    * A store that does not support the retry returns FALSE, which is the old
    * behaviour: the escalation check refuses the press, exactly as it did before
    * this method existed. An unconfigured composition therefore cannot issue a
    * free run by accident. */
   ownerRetryGranted?(scopeKey: string): Promise<boolean> | boolean;
+  /** ATOMICALLY spend a granted retry on this scope, and report whether it did.
+   *
+   * Returns true for exactly one caller per granted retry, however many race.
+   * False means either "there was no latch", or "another caller spent it first",
+   * or "the counter was no longer live at >= 2" -- and the coordinator answers all
+   * three the same way, with `needs_you`, so a lost race is a normal outcome
+   * rather than an error.
+   *
+   * A store WITHOUT this method falls back to `ownerRetryGranted()` followed by
+   * `clear()`, which is the round-3 behaviour: correct in sequence, and unbounded
+   * under concurrency. That fallback exists so an in-memory double needs no
+   * rewrite; the real stores implement it, and the production test drives one
+   * grant against twenty concurrent presses through the real coordinator. */
+  spendOwnerRetry?(scopeKey: string): Promise<boolean> | boolean;
 }
 
 export interface IntakePlannerNeedsYouPortV1 {
@@ -184,6 +205,19 @@ export class InMemoryIntakePlannerFailureStoreV1 implements IntakePlannerFailure
    * escalation rather than as a third. */
   clear(scopeKey: string): void { this.#counts.delete(scopeKey); this.#retries.delete(scopeKey); }
   ownerRetryGranted(scopeKey: string): boolean { return this.#retries.has(scopeKey); }
+  /** The ATOMIC spend, and it is synchronous inside one turn, which is what makes
+   * it a fair double for the real store: there is no await between the check and
+   * the removal, so twenty interleaved callers can never both pass the check.
+   * A double that read, awaited and then removed would reproduce the very race
+   * R4-M1 is about, and the in-memory suite would go green on a bug the database
+   * suite catches. */
+  spendOwnerRetry(scopeKey: string): boolean {
+    if (!this.#retries.has(scopeKey)) return false;
+    if ((this.#counts.get(scopeKey) ?? 0) < 2) return false;
+    this.#retries.delete(scopeKey);
+    this.#counts.delete(scopeKey);
+    return true;
+  }
   /** The owner's deliberate retry, for tests and for an in-process composition.
    * The real durable grant is 0205's `control_room_planner_grant_owner_retry`,
    * which the database constrains; this double has no database to constrain it,
@@ -427,30 +461,49 @@ export class IntakeCoordinatorV1 {
    * named two things that did not work. A grant -- issued by 0205's
    * `control_room_planner_grant_owner_retry`, on the owner's own web login, for
    * this request's own scopes -- lets exactly one more press through, and the run
-   * that follows CONSUMES it through the existing `clear()`. So the bound holds:
-   * one extra run per escalation, never a loop, and only for an owner who asked.
+   * that follows CONSUMES it. So the bound holds: one extra run per escalation,
+   * never a loop, and only for an owner who asked.
+   *
+   * THE LATCH IS SPENT HERE AND ONLY HERE, AND IT IS SPENT ATOMICALLY (R4-M1).
+   * Round 3's version read the count, read the latch, called `clear()` and
+   * IGNORED whether `clear()` had cleared anything, then ran. Twenty concurrent
+   * presses after one owner grant therefore all read the latch before the first
+   * clear landed and ALL TWENTY ran the planner -- measured on the real
+   * coordinator with the PostgreSQL stores -- and with a working planner five of
+   * them then threw `planner_needs_you_not_escalated`, because a press that saw
+   * the latch already spent had decided "escalated" and raised after a peer's
+   * clear had zeroed the counter.
+   *
+   * So the decision is a SINGLE conditional UPDATE per scope (`spendOwnerRetry`),
+   * which carries every precondition and reports whether a row came back. The
+   * count is zeroed in the same statement, so a FAILED retry is recorded as
+   * failure 1 of a NEW escalation rather than escalating again immediately. A
+   * store with no `spendOwnerRetry` falls back to the read-then-clear pair, which
+   * is correct in sequence and is the in-memory double's behaviour.
    *
    * The grant is checked only when the count HAS escalated, so an unconfigured
    * store (one with no `ownerRetryGranted`) answers the same way it always did. */
   async #escalated(input: Readonly<{ projectScope: string; failureScope: string }>) {
     for (const scope of [input.projectScope, input.failureScope]) {
       if (await this.failures.count(scope) < 2) continue;
-      if (!(await this.failures.ownerRetryGranted?.(scope))) return true;
-      // THE GRANT IS SPENT HERE, and this is the only place. The counter cannot be
-      // lowered -- that is the evidence the escalation and the inbox item rest on
-      // -- so the latch is what says "this one press is not held against you",
-      // and spending it before the run is the only way a FAILED retry cannot
-      // count as a third failure and escalate again immediately.
-      //
-      // The clear that spends it is the one transition 0205's guard admits: NOT
-      // NULL -> NULL alongside a clear to zero. The coordinator holds UPDATE on
-      // exactly that column list, so the store's `clear()` spends the latch and
-      // zeroes the count in one statement. Zeroing HERE, before the run, is what
-      // makes the bound hold: a failed retry is recorded as failure 1 of a new
-      // escalation, and the next press needs a fresh grant.
-      await this.failures.clear(scope);
+      if (!(await this.#spendRetry(scope))) return true;
     }
     return false;
+  }
+
+  /** Spend this scope's owner-retry latch, and report whether this press got it.
+   *
+   * The atomic path first: `spendOwnerRetry` is the only call that can say yes to
+   * more than one caller per grant, and it says yes to exactly one. The fallback is
+   * the round-3 pair, and it is reachable only from a store that does not
+   * implement the atomic form -- an in-memory double, or a composition whose
+   * store predates 0205. */
+  async #spendRetry(scope: string): Promise<boolean> {
+    const atomic = this.failures.spendOwnerRetry?.(scope);
+    if (atomic) return !!await atomic;
+    if (!(await this.failures.ownerRetryGranted?.(scope))) return false;
+    await this.failures.clear(scope);
+    return true;
   }
 
   async #coordinate(input: (InitialInput & { requestKind: "initial"; requestKey: string; failureScope: string; projectScope: string })
@@ -599,9 +652,29 @@ export class IntakeCoordinatorV1 {
     // the same project scope the coordinator counted on. Without it the adapter
     // could only match the request scope, and an escalation earned by the project
     // counter (the one the owner's repeat reaches) would be refused.
-    await this.needsYou.raise({ tenantId: input.principal.tenantId, projectId: input.projectId,
-      requestKey: input.requestKey, reasonCode: "orchestrator_failed_twice", now: input.now,
-      ownerRequest: input.ownerRequest });
+    //
+    // A LOST RACE IS `needs_you`, NOT A THROW (R4-M1, the second half). The
+    // decision to escalate is made from a count read some statements earlier, and
+    // twenty concurrent presses on one granted retry can interleave like this:
+    // press A spends the latch and zeroes the counter, press B has already read
+    // count 2 and decided "escalated", and by the time B's `raise()` runs the
+    // counter it names is zero -- so the adapter refuses with
+    // `planner_needs_you_not_escalated` and the owner gets a generic failure for a
+    // press that was correctly refused. Measured: five of twenty threw.
+    //
+    // So the refusal that names a counter this request can no longer see is the
+    // ANSWER, not an error: the counter was cleared between the check and the
+    // raise, which is the same state the press was already being refused for. It
+    // is caught by NAME rather than as a blanket try/catch, so a genuinely
+    // unexpected store failure still propagates -- a silent needs_you for an
+    // unrelated database error would be the wrong kind of fail-closed.
+    try {
+      await this.needsYou.raise({ tenantId: input.principal.tenantId, projectId: input.projectId,
+        requestKey: input.requestKey, reasonCode: "orchestrator_failed_twice", now: input.now,
+        ownerRequest: input.ownerRequest });
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("planner_needs_you_not_escalated")) throw error;
+    }
     return Object.freeze({ ...common, status: "needs_you" as const, reasonCode: "orchestrator_failed_twice" as const });
   }
 }

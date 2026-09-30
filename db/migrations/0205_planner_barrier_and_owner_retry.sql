@@ -224,8 +224,22 @@ CREATE UNIQUE INDEX control_planner_needs_you_scope_unique
 --     transition 0202's guard already admitted. So the run that follows either
 --     succeeds (count cleared, latch spent) or fails (counted again from zero).
 --     A caller that asks for a retry on every press therefore still gets no more
---     than one extra run per two failures, and the only login that can ask is the
---     owner's own web login.
+--     than one extra run per two failures.
+--
+--   WHAT "ONLY THE OWNER CAN ASK" DOES AND DOES NOT MEAN HERE, corrected after
+--   round 4 measured it. It is true that the ONLY way to SET a latch from SQL is
+--   this function, and that after round 4's removal of the coordinator's EXECUTE
+--   (db/roles/task_coordinator_roles.sql now REVOKEs it, and no coordinator code
+--   called it) the only login holding EXECUTE is the owner's own web login. It is
+--   NOT true that the database keeps the coordinator out of the counter table: it
+--   holds a six-column UPDATE (0202's five plus `owner_retry_cleared_at`) and has
+--   since 0202, so it can UNSET a latch and can clear an escalated counter with no
+--   success at all. The trigger constrains WHICH transitions are legal, not who
+--   asks. The bound "one extra run per two failures" is therefore enforced by the
+--   COORDINATOR -- the latch is spent in one conditional UPDATE that only zeroes
+--   the counter when it actually spent a latch -- and not by the database against
+--   that login. The claims in this file's earlier draft and in the store comment
+--   were false and have been corrected rather than left standing.
 ALTER TABLE control_planner_failure_counters
   ADD COLUMN owner_retry_cleared_at timestamptz;
 -- A latch is only meaningful on a LIVE counter at the escalation point. A cleared

@@ -267,11 +267,19 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
   /** Whether 0205's latch is set on this scope. Read-only, and deliberately not a
    * reset: the count is the evidence the Needs-you item and the guard rest on.
    *
-   * The column is only READ here. The web login and the coordinator hold no
-   * UPDATE on it (0202's grant is a five-column list that does not name it, and
-   * the preflight's column audit enforces exactly that), so the only way to set
-   * the latch is 0205's SECURITY DEFINER function, which is what makes "the owner
-   * asked once" something a grant rather than a guess. */
+   * The coordinator DOES hold UPDATE on the column (0202's five-column grant plus
+   * 0205's, which `task_coordinator_roles.sql` and the preflight's column audit
+   * both name) -- round 4 measured the earlier comment's claim that it did not,
+   * and the claim was false. What is still true, and is the property this method
+   * relies on, is that it only READS the column: nothing here SETS a latch, and
+   * the only SQL that can is 0205's SECURITY DEFINER function, whose EXECUTE the
+   * owner owns alone. The coordinator can therefore spend a latch (below) and
+   * cannot mint one.
+   *
+   * It is a hint, not the decision. `#escalated` in the coordinator no longer
+   * treats "the latch was set when I looked" as authority to run; it calls
+   * `spendOwnerRetry`, which decides with the same predicate in ONE statement, so
+   * twenty presses that all read this as true still produce one run. */
   async ownerRetryGranted(scopeKey: string): Promise<boolean> {
     const { tenantId, projectId } = this.scope(scopeKey);
     const row = (await this.db.query<{ owner_retry_cleared_at: string | Date | null }>(
@@ -279,6 +287,48 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
        WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3`,
     [tenantId, projectId, scopeKey])).rows[0];
     return !!row?.owner_retry_cleared_at;
+  }
+
+  /** SPEND an owner-retry latch on this scope, and say whether it did.
+   *
+   * THIS IS THE R4-M1 FIX, and the shape of it is the whole point. Round 3's
+   * `#escalated` read the count, read the latch, called `clear()` and IGNORED
+   * `clear()`'s result, then ran. Every press that read the latch before the first
+   * clear landed got a run, so one owner grant followed by twenty concurrent
+   * presses produced TWENTY planner runs -- and with a working planner, fifteen
+   * runs plus five throws of `planner_needs_you_not_escalated`, because a press
+   * that saw the latch already spent decided "escalated" and called `raise()`
+   * after another press had zeroed the counter.
+   *
+   * So the latch is spent ATOMICALLY here: one `UPDATE ... WHERE` that carries
+   * every precondition, `RETURNING 1` when a row came back, and the coordinator
+   * runs only then. PostgreSQL takes the row lock for the duration, so of twenty
+   * concurrent callers exactly one re-reads the row as latch-free and the other
+   * nineteen match no row. The count is zeroed in the SAME statement, which is
+   * what makes a FAILED retry count as failure 1 of a new escalation rather than
+   * escalating again immediately.
+   *
+   * The predicate is deliberately the same one 0205's grant function admits on and
+   * the guard trigger admits as a clear, so "the latch was granted" and "the latch
+   * was spent" cannot disagree: `owner_retry_cleared_at IS NOT NULL` (there is a
+   * latch), `cleared_at IS NULL` (the counter is live), `failure_count >= 2` (it
+   * really escalated), and the row is on this tenant/project/scope. `version+1`
+   * and `GREATEST(updated_at, ...)` are 0205's guard's own requirements.
+   *
+   * Returns false rather than throwing when nothing was spent, because "another
+   * press spent it first" is the ordinary outcome under concurrency and the
+   * coordinator's answer to it is `needs_you`, not a 500. */
+  async spendOwnerRetry(scopeKey: string): Promise<boolean> {
+    const { tenantId, projectId } = this.scope(scopeKey);
+    const at = this.now();
+    const row = (await this.db.query<{ spent: number }>(
+      `UPDATE control_planner_failure_counters SET failure_count=0, cleared_at=$4::timestamptz,
+        owner_retry_cleared_at=NULL, version=version+1, updated_at=GREATEST(updated_at,$4::timestamptz)
+       WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3
+         AND owner_retry_cleared_at IS NOT NULL AND cleared_at IS NULL AND failure_count>=2
+       RETURNING 1 AS spent`,
+    [tenantId, projectId, scopeKey, at])).rows[0];
+    return !!row;
   }
 
   async record(scopeKey: string): Promise<number> {
@@ -597,13 +647,32 @@ export class PostgresIntakeCompletionLookupV1 implements IntakeCompletionLookupP
  * Plan v4.3 2.1 requires each orchestrator run to consume ONE S7b allowance,
  * idempotently, keyed by tenant, project and request key, and to retain the
  * worker, model, the `orchestrator:<model>` scorecard key and the start time.
- * The S7b allowance migrations are NOT on this branch, so this port is left
- * unwired on purpose: guessing a table name or a column would produce an adapter
- * that compiles, passes its own tests and is wrong at run time.
  *
- * When S7b merges, implement `IntakePlannerRunAllowancePortV1` against its real
- * consume operation and delete this class. The coordinator's own call site
- * (`allowance.consume(...)` in intake-coordinator.ts) needs no change. */
+ * THE ALLOWANCE MIGRATIONS ARE ON THIS TREE NOW -- 0150 adds
+ * pipeline_installation_allowances and 0154 adds pipeline_advance_receipts, both
+ * visible in the coordinator's own read list above -- so the comment this replaced,
+ * which said they were NOT and would land with S7b, was stale and wrong. Round 4
+ * found it still here after the round-3 report claimed it had been fixed, which is
+ * why it is corrected here rather than deleted: deleting it would leave the next
+ * reader with a TODO and no reason, and the reason it was wrong is the evidence.
+ *
+ * What is STILL true, and is why the port stays unwired rather than guessed: the
+ * tables that exist are the INSTALLATION's caps (`runs_per_hour`,
+ * `runs_per_agent_per_day`, `dollar_cap_microusd`, ...) and a pipeline advance
+ * receipt, not the per-run consumption row 2.1 asks for. Consumption is
+ * idempotent by tenant, project and request key, which is a different key from
+ * `pipeline_advance_receipts`'s. Pointing `consume` at a table name or column that
+ * is merely plausible would produce an adapter that compiles, passes its own tests
+ * and is wrong at run time.
+ *
+ * Until then this port refuses, and the refusal is honest: twenty concurrent
+ * presses with no allowance adapter gave twenty `allowance_refused:
+ * planner_allowance_not_configured`, 0 runs, 0 counters and 0 batches (round 4), and
+ * a granted retry is SPENT by that refusal -- worth knowing, because the owner's
+ * retry evaporates silently. The fix belongs with the real consumption row.
+ *
+ * The coordinator's own call site (`allowance.consume(...)` in
+ * intake-coordinator.ts) needs no change when that row lands. */
 export class UnwiredPlannerAllowanceV1 implements IntakePlannerRunAllowancePortV1 {
   async consume(_input: Readonly<{ tenantId: string; projectId: string; requestKey: string;
     scorecardKey: string; workerId: string; model: string; now: string }>):

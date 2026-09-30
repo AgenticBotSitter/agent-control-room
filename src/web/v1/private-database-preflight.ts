@@ -15,17 +15,16 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0196 plus this stream's chief-of-staff
-// migrations 0200-0205 (filename order, including assigned gaps, 0110-0111,
-// 0155-0157, 0160-0162, 0186, 0200-0205 and 0115), including generic
-// external-content migrations 0025/0026, plus MIG-I's owner push attempt heads
-// 0224-0226 and the push-endpoint allow list 0227, read from a real PostgreSQL 17
-// cluster installed the production way and built from these migrations. Catalog
-// query below; not a mutable database marker.
-//
-// The value was read from a live cluster on this stream's assigned ports AND
-// cross-checked against a PGlite build of the same migrations; both agree, so the
-// number is not an artefact of either applier.
+// Generated from public migrations through 0230, by filename order including
+// assigned gaps (0110-0111, 0155-0157, 0160-0162, 0186 and 0115) plus the
+// generic external-content migrations 0025/0026, this stream's chief-of-staff
+// migrations 0200-0205, cook/v1's result-file catalog 0206-0208, MIG-I's owner
+// push attempt heads 0224-0226, the push-endpoint allow list 0227 and the
+// acceptance-sweep 0230. Recomputed after the round-4 merge of cook/v1, from a
+// real PostgreSQL 17 cluster installed the production way and cross-checked
+// against a PGlite build of the same migrations; both agree, so the number is
+// not an artefact of either applier. Catalog query below; not a mutable
+// database marker.
 export const privateWebSchemaDigest = "84ca9eb9c7ad0a9fd82d90c2a22157915123d20d9f79222d15ce317c7056726d";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
@@ -68,7 +67,15 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // against this list -- a grant the preflight does not know about is a
   // preflight failure, not a lenient pass.
   "control_owner_push_attempt_heads",
+  // 0155-0157: the operations-mode revisions and the mode they resolve to. The
+  // web login reads them and inserts its own revision, which is why the table is
+  // in the read list AND `privateWebInsertTables`; an audit that listed only one
+  // side would refuse a correct database.
   "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals",
+  // 0206-0208: the result-file catalog and its download grants. Read only; the
+  // preflight's column audit is what proves the web login cannot write a
+  // catalog row, cannot quarantine a file and cannot rewrite a producer.
+  "control_result_file_sets", "control_result_files", "control_result_file_download_grants",
   // MIG-A 0200/0202/0201: the current-split-suggestion read, the open Needs-you
   // ledger, and the stored planner selection. All three are VIEWS granted to the
   // web login, so the column audit reads their columns like any other relation.
@@ -102,6 +109,10 @@ privateWebInsertTables.add("installation_operations_mode_revisions");
 privateWebInsertTables.add("control_news_task_proposal_links");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
+// 0208: the owner-facing download grant for one exact file. Insert and spend
+// only; the catalog itself is never written by the web login.
+privateWebInsertTables.add("control_result_file_download_grants");
+// cook/v1 (recurring + skills): the owner's rules and reusable skills.
 // MIG-A (0200-0202): the orchestrator's two owner-facing VIEWS are declared in
 // privateWebReadTables, and the base tables behind them are deliberately absent
 // from this insert set and must not be added -- the web login reads a
@@ -110,7 +121,6 @@ privateWebInsertTables.add("control_module_install_approvals");
 // neither insert a suggestion (an agent's act), clear a counter, nor raise an item.
 for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
   privateWebInsertTables.add(table);
-
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -166,6 +176,12 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "planner_mode", "planner_worker_id", "planner_worker_kind", "planner_model", "planner_effort"],
   control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
+  // 0206-0208: the owner's two retention decisions and the one-time spend of a
+  // download grant. Every other catalog column is read-only to the web login,
+  // which is what makes "a worker or a reader cannot mark bytes stored" a
+  // statement about the live ACL rather than about application code.
+  control_result_file_sets: ["retention_state", "accepted_at", "accepted_by_identity_id", "retained_until"],
+  control_result_file_download_grants: ["spent_at"],
   control_skills: ["current_version", "state", "updated_at"],
   control_recurring_rules: ["state", "plain_schedule", "cron_expression", "timezone", "task_template", "version",
     "updated_by_identity_id", "updated_at"],
@@ -281,6 +297,10 @@ coordinatorInserts.add("control_update_candidates");
 coordinatorReads.push("control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits", "control_service_incident_heads", "control_service_incidents");
+// The stall decision's outcome-uncertainty test reads effect intents. This is a
+// read, never a write: an intent is created and moved only by the path that
+// owns the external effect.
+coordinatorReads.push("control_effect_intents");
 for (const table of ["control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits"]) coordinatorInserts.add(table);
@@ -331,11 +351,21 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   // nothing else. The guard trigger refuses any other move, so a caller cannot set
   // the count to 2 by hand and raise an escalation it never earned, nor reset a
   // live failure. `owner_retry_cleared_at` is here because 0205's clear SPENDS an
-  // owner-retry latch by setting it to NULL -- the coordinator can therefore
-  // UNSET a latch and never SET one, and setting it is 0205's SECURITY DEFINER
-  // function alone. This list and the role file's are deliberately identical: a
-  // column in one and not the other fails the column audit rather than passing
-  // quietly.
+  // owner-retry latch by setting it to NULL, and that is a transition the
+  // coordinator must be able to make.
+  //
+  // WHAT THIS DOES NOT CLAIM, corrected after round 4 measured it: the coordinator
+  // can therefore UNSET a latch -- which spends an owner's granted retry -- and it
+  // can also clear a live counter outright, which it has been able to do since
+  // 0202. The trigger constrains WHICH transitions, not who asks. So neither the
+  // "only the owner's web login can ask" nor the "the coordinator holds no UPDATE
+  // on the column" claim is true of the DATABASE, and the code comments claiming
+  // them have been corrected rather than left standing. The bound that does hold is
+  // the one the coordinator enforces in one statement (spend the latch only when a
+  // row came back), plus the removal of the coordinator's EXECUTE on
+  // `control_room_planner_grant_owner_retry`, which is the only way to SET a latch
+  // from SQL. This list and the role file's are deliberately identical: a column in
+  // one and not the other fails the column audit rather than passing quietly.
   control_planner_failure_counters: ["failure_count", "last_failure_at", "cleared_at", "version", "updated_at",
     "owner_retry_cleared_at"],
   // An incident is opened with a bounded column set and then corrected in
@@ -356,15 +386,27 @@ const resultReads = ["workspaces", "control_identities", "control_role_grants", 
   "control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_native_review_plans",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records",
   "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding", "control_idea_sessions",
-  "control_idea_canonical_task_links", "control_idea_contributions", "control_idea_decisions"];
+  "control_idea_canonical_task_links", "control_idea_contributions", "control_idea_decisions",
+  // 0206: the publisher records the catalog for the attempt it just published,
+  // and 0206's deferred completeness trigger counts its own rows as the invoker.
+  "control_result_file_sets", "control_result_files"];
 const resultInserts = new Set(["control_native_review_plans", "control_completion_gate_records", "audit_events", "control_audit_chain_heads",
   "control_idea_contributions"]);
+// 0206-0208: the publisher may record a set and its files, and may move them
+// to stored once the bytes are on disk. It may NOT accept, quarantine, delete,
+// or touch a download grant — the web login alone mints those.
+resultInserts.add("control_result_file_sets"); resultInserts.add("control_result_files");
 const resultUpdates: Record<string, readonly string[]> = {
   control_jobs: ["result_lock"], control_harness_runs: ["coordinator_lock"], projects: ["coordinator_lock"],
   control_completion_gate_records: ["web_lock"],
   control_native_review_plans: ["results_lock"], control_native_artifact_receipts: ["results_lock"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+  // The publisher's two catalog state moves. `manifest_digest` is listed because
+  // 0206 refuses a set that does not match the digest it recomputes, so the
+  // publisher must be able to write the one it computed — and nothing else.
+  control_result_files: ["state", "stored_at"],
+  control_result_file_sets: ["state", "stored_at", "manifest_digest"],
 };
 const evidenceReads = ["workspaces", "control_identities", "control_role_grants", "projects", "control_manual_project_heads",
   "control_jobs", "control_attempts", "control_leases", "control_nodes", "control_node_keys", "control_harness_runs", "control_harness_run_events",
@@ -614,6 +656,57 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                     'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
                     'control_room_idea_creation','control_room_news_coordinator','control_room_fleet_gateway',
                     'control_room_fleet_owner_authority'))))
+            /* MIG-A 0204/0205: the Needs-you INSERT guard, a SECURITY DEFINER
+               TRIGGER function. THIS ENTRY IS WHAT ROUND 4 FOUND MISSING (R4-B1).
+
+               The catalog scan below exempts a SECURITY DEFINER function only by
+               pinning it, and it makes no exception for triggers -- so when 0204
+               (and 0205, again) rebuilt this guard with SECURITY DEFINER, every
+               private login's startup preflight began refusing a CORRECT database.
+               Measured on the merged tree: test:database 81/83, both failures
+               `private_database_preflight_failed` (module-install-approvals and
+               module-project-pack-transfer), and test:postgres-production #23/#25
+               the same. The declaration test never saw it, because that test's
+               scanner skips trigger functions -- it scans what a login can CALL,
+               and no login can call a trigger.
+
+               The two scans are now reconciled deliberately rather than by luck:
+               THIS list is the trigger side (every SECURITY DEFINER trigger a
+               migration creates must be pinned here), and
+               tests/private-web-role-preflight-declaration.test.ts is the
+               callable side (every callable function a migration creates must be
+               either pinned here or provably not login-callable). Neither scanner
+               is a filter over the other.
+
+               WHY IT IS SAFE, stated as the same argument the other entries use:
+               a trigger function cannot be invoked directly and returns
+               'trigger', so no login can call it whatever its ACL reads; it
+               executes as the owner of the table it is attached to; it writes
+               nothing and returns the row it was handed. SECURITY DEFINER is
+               load-bearing for a MEASURED reason, not a habit -- the guard calls
+               planner_failure_scope_key, and a plain trigger runs as the INSERTing
+               role, which holds no EXECUTE on it (0204's header: "permission
+               denied for function planner_failure_scope_key" on the first raise).
+
+               Pinned on every property the other entries pin: the exact oid with
+               its empty argument list, `prorettype='trigger'`, `prokind='f'`,
+               SECURITY DEFINER, VOLATILE, not leakproof, `proparallel='u'`,
+               owner `control_room_schema_owner`, the pinned search_path, no
+               EXECUTE for PUBLIC, and an ACL that admits NO login at all -- so a
+               grant to any of them fails this preflight rather than passing
+               quietly. `prolang` is named as plpgsql rather than left implicit:
+               a rebuild in another language is a different function body and has
+               to fail here rather than pass. */
+            OR (p.oid='guard_planner_needs_you_item_insert()'::regprocedure
+              AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND p.prorettype='trigger'::regtype
+              AND p.pronargs=0 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND p.proname='guard_planner_needs_you_item_insert'
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner))
             /* MIG-A 0203: the split-suggestion visibility predicate. It is a
                SECURITY DEFINER function because it is called from a VIEW's WHERE
                clause, and a view runs with its OWNER's rights -- the intake login
@@ -649,11 +742,14 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
 
                It is pinned the same way as every other entry: owner, SECURITY
                DEFINER, VOLATILE, a pinned search_path, no grant to PUBLIC, and an
-               ACL that admits exactly the two logins 0205 grants it to -- the
-               owner's web login, which calls it, and the coordinator, which runs
-               the presses. A grant to a third party fails this preflight rather
-               than passing quietly, and a function re-created with a different
-               body or a missing search_path fails it too. */
+               ACL that admits EXACTLY ONE login -- the owner's web login, which
+               calls it. Round 4 measured that the coordinator's grant, which this
+               entry used to admit, was never used by any coordinator code and
+               meant the coordinator login could set the latch itself; the role
+               file now REVOKEs it and the ACL test here is what makes a grant to
+               it (or to any third party) fail this preflight rather than pass
+               quietly. A function re-created with a different body or a missing
+               search_path fails it too. */
             OR (p.oid='control_room_planner_grant_owner_retry(text,text,text[])'::regprocedure
               AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND p.prorettype='integer'::regtype
               AND p.pronargs=3 AND NOT p.proleakproof AND p.proparallel='u'
@@ -661,9 +757,10 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
               AND p.proname='control_room_planner_grant_owner_retry'
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND has_function_privilege('control_room_private_web',p.oid,'EXECUTE')
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
-                  OR pg_get_userbyid(a.grantee) NOT IN ('control_room_task_coordinator','control_room_private_web'))))
+                  OR pg_get_userbyid(a.grantee)<>'control_room_private_web'))))
             OR (p.oid='redeem_fleet_enrollment(text,text,text,text,timestamptz)'::regprocedure
               AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND NOT p.proleakproof AND p.proparallel='u'
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'

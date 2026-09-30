@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { PgBoss } from "pg-boss";
 import { sha256Digest } from "../../security";
 import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-local-storage";
+import { ResultFileStoreV1, RESULT_FILE_LIMITS_V1 } from "../../artifacts/v1/result-file-store";
 import { createDurableReservationPostgresPortV1 } from "../../artifacts/v1/neutral-reservation-postgres";
 import { DurableResultReviewSubmissionServiceV1 } from "../../completion-gate/v1/durable-result-review-submission";
 import { DurableLocalResultInspectionServiceV1 } from "../../completion-gate/v1/durable-local-result-inspection";
@@ -105,6 +106,17 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   await ensurePrivateDirectory(artifacts);
   const storage = await PersistentLocalArtifactStorageV1.create({ rootPath: artifacts,
     maximumArtifacts: 10_000, maximumFileBytes: 65_536, maximumTotalBytes: 655_360_000, operationTimeoutMs: 2_000 });
+  // The result-file store is a SIBLING of the native text store, not a mode of
+  // it: its own root, its own keys, its own create-once rules. The 64 KiB native
+  // path above is untouched, so an installation that has never published a file
+  // store keeps exactly the behaviour it had.
+  const resultFilesRoot = join(protectedRoot, "runtime", "result-files");
+  await ensurePrivateDirectory(resultFilesRoot);
+  const resultFileStore = await ResultFileStoreV1.create({ rootPath: resultFilesRoot,
+    maximumFiles: RESULT_FILE_LIMITS_V1.maximumFilesPerSet,
+    maximumFileBytes: RESULT_FILE_LIMITS_V1.maximumFileBytes,
+    maximumSetBytes: RESULT_FILE_LIMITS_V1.maximumSetBytes,
+    maximumTotalBytes: RESULT_FILE_LIMITS_V1.maximumTotalBytes, operationTimeoutMs: 5_000 });
   const work = Object.freeze({ hermes: join(protectedRoot, "runtime", "work-hermes"),
     claude: join(protectedRoot, "runtime", "work-claude"), codex: join(protectedRoot, "runtime", "work-codex") });
   for (const path of Object.values(work)) await ensurePrivateDirectory(path);
@@ -306,7 +318,10 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     }, 30_000);
     refreshTimer.unref();
     const owned = application;
-    return Object.freeze({ ...owned, ...(agentReviews ? { agentReviews } : {}), async close() {
+    // The result-file store travels with the provider so the web process can
+    // open the download route against the SAME object the publishers write
+    // through. Two instances would be two views of one directory.
+    return Object.freeze({ ...owned, ...(agentReviews ? { agentReviews } : {}), resultFileStore, async close() {
       if (refreshTimer) clearInterval(refreshTimer);
       if (qualityTimer) clearInterval(qualityTimer);
       await refreshInFlight?.catch(() => {});
