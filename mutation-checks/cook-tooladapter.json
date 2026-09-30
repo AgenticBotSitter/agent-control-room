@@ -124,5 +124,12 @@
     "replace": "if (false)",
     "test": "node --import tsx --test --test-name-pattern \"refuses output hard links\" tests/fleet-tool-adapter.test.mjs",
     "why": "tool output cannot use a hard link to collect outside data"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (info.isDirectory()) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern \"cleanup failure still releases\" tests/fleet-tool-adapter.test.mjs",
+    "why": "cleanup restores user access before removing tool-owned locked directories"
   }
 ]
