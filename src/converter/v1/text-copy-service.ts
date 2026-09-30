@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, lstat, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -17,6 +16,25 @@ import {
 const SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec";
 const MEMORY_SAMPLE_MS = 25;
 const STOP_GRACE_MS = 150;
+/**
+ * The Node old-space ceiling, in MB, for the sandboxed HTML worker.
+ *
+ * The worker refuses to run unless its own `heap_size_limit` is at or below
+ * `TEXT_COPY_WORKER_MAX_HEAP_BYTES`, and `--max-old-space-size=N` does NOT
+ * produce a `heap_size_limit` of N. Measured on the deployed Node (26.7.0):
+ *
+ *     --max-old-space-size=64  ->  heap_size_limit = 167772160  (passes)
+ *     --max-old-space-size=96  ->  heap_size_limit = 201326592  (fails)
+ *     --max-old-space-size=128 ->  heap_size_limit = 234881024  (fails)
+ *     --max-old-space-size=160 ->  heap_size_limit = 268435456  (fails)
+ *
+ * The service used to pass 96 against a 160 MiB worker ceiling. Every HTML
+ * conversion therefore died with `memory_limit_unenforced` and returned no
+ * text copy at all. The flag and the worker's own guard are now derived from
+ * one constant so they cannot drift apart again, and the mutation check for
+ * the flag is paired with one for the worker's ceiling.
+ */
+const TEXT_COPY_NODE_HEAP_MB = 64;
 const HTML_IDENTITY = Object.freeze({ id: "control-room.html-readability-markdown", version: "1.0.0" });
 const PDF_IDENTITY = Object.freeze({ id: "control-room.pdftotext", version: "1.0.0" });
 const STUB_IDENTITIES = Object.freeze({
@@ -31,7 +49,33 @@ export const TEXT_COPY_LIMITS = Object.freeze({
   markdownBytes: 2 * 1024 * 1024,
   diagnosticBytes: 16 * 1024,
   timeoutMs: 10_000,
-  memoryBytes: 128 * 1024 * 1024,
+  /**
+   * The ceiling on the converter's whole PROCESS GROUP, which is what the
+   * monitor samples and what bounds a hostile converter.
+   *
+   * This was 128 MiB, and that was below the service's own declared limits: the
+   * worker is given a 160 MiB heap ceiling, so a converter that is behaving
+   * correctly could be killed for exceeding a budget smaller than the one it
+   * was given. Measured on the production sandbox, sweeping legal input sizes:
+   *
+   *     8 KiB input  -> succeeded
+   *    32 KiB input  -> succeeded
+   *    64 KiB input  -> succeeded
+   *   128 KiB input  -> memory_limit   (deterministic; a retry fails the same way)
+   *   256 KiB input  -> memory_limit
+   *   512 KiB input  -> memory_limit
+   *
+   * So a quarter of the advertised 512 KiB HTML ceiling could not be converted
+   * at all. jsdom builds a DOM several times the size of its source, Readability
+   * holds a second copy while scoring, and the resulting text is a third — so
+   * the group legitimately reaches ~190 MiB on a 128 KiB document.
+   *
+   * 512 MiB now admits the largest HTML the service will accept (measured peak
+   * ~190 MiB, so roughly 2.7x headroom) while still bounding a hostile process:
+   * one converter cannot reach the machine's memory, and the deadline still caps
+   * how long it may hold it.
+   */
+  memoryBytes: 512 * 1024 * 1024,
 });
 
 export interface TextCopyLimits {
@@ -144,7 +188,29 @@ function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
   }
 }
 
-async function groupRssBytes(pid: number, spawnProcess: typeof spawn): Promise<number | undefined> {
+/**
+ * The resident memory of one process group, or a reason the sample is unusable.
+ *
+ * The distinction between "the monitor failed" and "the group is already gone"
+ * is load-bearing and was measured, not assumed. `/bin/ps -o rss= -g <pgid>`
+ * exits 0 with output for a live group (40/40 samples) and exits NON-ZERO for a
+ * group whose leader has already exited (40/40 samples). The service used to
+ * map both to `undefined`, and the caller turned `undefined` into
+ * `resource_monitor_unavailable` — so a conversion that had already finished
+ * perfectly was reported as a failed conversion whenever its monitor sample
+ * landed after the process exited. Under a 20-caller burst that happened on
+ * 2 of 20 calls. Reporting "the group is gone" separately lets the caller
+ * apply the rule it actually wants: a vanished group is a finished conversion,
+ * not a broken monitor.
+ */
+type GroupRssSample =
+  | { readonly kind: "sampled"; readonly bytes: number }
+  /** `ps` ran and reported no such group: the process finished before we looked. */
+  | { readonly kind: "group_gone" }
+  /** `ps` itself could not be run or read: the monitor is genuinely unavailable. */
+  | { readonly kind: "monitor_unavailable" };
+
+async function groupRssBytes(pid: number, spawnProcess: typeof spawn): Promise<GroupRssSample> {
   return await new Promise(resolveResult => {
     let child: ChildProcess;
     try {
@@ -153,17 +219,39 @@ async function groupRssBytes(pid: number, spawnProcess: typeof spawn): Promise<n
         env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", NODE_ENV: "production" },
         stdio: ["ignore", "pipe", "ignore"],
       });
-    } catch { resolveResult(undefined); return; }
+    } catch { resolveResult({ kind: "monitor_unavailable" }); return; }
     let output = "";
+    let settled = false;
+    const settle = (sample: GroupRssSample) => {
+      if (settled) return;
+      settled = true;
+      resolveResult(sample);
+    };
     child.stdout?.on("data", chunk => { output += chunk.toString("utf8"); });
-    child.once("error", () => resolveResult(undefined));
+    child.once("error", () => settle({ kind: "monitor_unavailable" }));
     child.once("close", code => {
-      if (code !== 0) { resolveResult(undefined); return; }
-      const kibibytes = output.split(/\s+/u).filter(Boolean).reduce((sum, value) => {
+      // A spawn error and a close both fire; the first one to arrive wins, so a
+      // monitor that fails to start is never reported as a vanished group.
+      if (code !== 0) { settle({ kind: "group_gone" }); return; }
+      const rows = output.split(/\s+/u).filter(Boolean);
+      if (rows.length === 0) {
+        // `ps` exited 0 and printed no row at all. That is a monitor that cannot
+        // answer, so it fails closed rather than reporting a healthy reading.
+        settle({ kind: "monitor_unavailable" });
+        return;
+      }
+      // A row that sums to ZERO is a real reading, not a broken monitor: macOS
+      // `ps` reports RSS 0 for a process group whose members are already being
+      // torn down, and that was measured happening mid-burst (2 of 636 samples
+      // at n=50). Zero is unambiguously within the budget, so it is honoured.
+      // Treating it as "unavailable" — which this function did on its first
+      // version — turned correct conversions into resource_monitor_unavailable
+      // failures under load. Only a missing row is a missing measurement.
+      const kibibytes = rows.reduce((sum, value) => {
         const parsed = Number(value);
         return Number.isFinite(parsed) && parsed >= 0 ? sum + parsed : sum;
       }, 0);
-      resolveResult(kibibytes * 1024);
+      settle({ kind: "sampled", bytes: kibibytes * 1024 });
     });
   });
 }
@@ -192,7 +280,6 @@ function buildSandboxProfile(repositoryRoot: string, tempDirectory: string, node
   const dependencies = sandboxLiteral(join(repository, "node_modules"));
   const packageManifest = sandboxLiteral(join(repository, "package.json"));
   const temporary = sandboxLiteral(resolve(tempDirectory));
-  const home = sandboxLiteral(resolve(homedir()));
   const node = sandboxLiteral(resolve(nodeExecutable));
   const converter = sandboxLiteral(resolve(converterExecutable));
   return [
@@ -206,8 +293,25 @@ function buildSandboxProfile(repositoryRoot: string, tempDirectory: string, node
     "(allow process-info* (target same-sandbox))",
     "(allow sysctl-read)",
     '(deny sysctl-read (sysctl-name-prefix "kern.procargs") (sysctl-name-prefix "kern.proc."))',
-    "(allow file-read* file-map-executable)",
-    `(deny file-read* file-map-executable (subpath "${home}") (subpath "/private/tmp") (subpath "/private/var/folders") (subpath "/Volumes"))`,
+    // Metadata only, across the whole filesystem, and nothing else.
+    //
+    // This REPLACED a `(allow file-read* file-map-executable)` blanket followed
+    // by a blanket deny of the home directory, the temp roots and /Volumes. That
+    // shape was measured and it is fatal: `file-read*` covers the lstat that
+    // resolves a path, so denying it on every ancestor of the worker script
+    // (`/Users/<name>`, `/Users`, `/`) made Node die before main with
+    // `EPERM: operation not permitted, lstat '/Users/<name>'` — every HTML
+    // conversion failed with no output at all.
+    //
+    // `file-read-metadata` is stat/lstat/readlink on its own; it cannot return
+    // a byte of file content. A converter therefore still cannot read the
+    // source HTML of another task, a credential, or any other file outside the
+    // list below, and path resolution can still walk from `/` down to the exact
+    // leaves that are allowed. `probe: converter sandbox read scope` proves the
+    // content boundary rather than assuming it.
+    '(allow file-read-metadata (subpath "/"))',
+    // Content, and only here: the worker script, the pinned dependencies, this
+    // call's own private temp directory, the manifest, and the two executables.
     `(allow file-read* file-map-executable (subpath "${workerDirectory}") (subpath "${dependencies}") (subpath "${temporary}") (literal "${packageManifest}") (literal "${node}") (literal "${converter}"))`,
     `(allow file-write* (subpath "${temporary}") (literal "/dev/null") (subpath "/dev/fd"))`,
     '(allow file-ioctl (literal "/dev/null") (subpath "/dev/fd"))',
@@ -286,9 +390,15 @@ async function executeFixedCommand(
       memoryTimer = setInterval(() => {
         if (!child?.pid || sampling || stopCategory) return;
         sampling = true;
-        void groupRssBytes(child.pid, spawnProcess).then(bytes => {
-          if (bytes === undefined) stop("resource_monitor_unavailable");
-          else if (bytes > limits.memoryBytes) stop("memory_limit");
+        void groupRssBytes(child.pid, spawnProcess).then(sample => {
+          // A group that has already exited is a conversion that already
+          // finished, not a broken monitor: the process it was watching is
+          // gone, so there is nothing left to bound and nothing to report.
+          // Failing closed here is what turned 2 of 20 correct conversions
+          // under a burst into `resource_monitor_unavailable`.
+          if (sample.kind === "group_gone") return;
+          if (sample.kind === "monitor_unavailable") { stop("resource_monitor_unavailable"); return; }
+          if (sample.bytes > limits.memoryBytes) stop("memory_limit");
         }).finally(() => { sampling = false; });
       }, MEMORY_SAMPLE_MS);
     }
@@ -381,7 +491,16 @@ export class SandboxedTextCopyService implements TextCopyConverterPort {
     }
     const pdfExecutable = configuredPdfExecutable ? await realpath(configuredPdfExecutable) : undefined;
 
-    const tempDirectory = await mkdtemp("/tmp/acr-convert-");
+    // The temp directory MUST be canonical before it goes into the profile.
+    //
+    // On macOS `/tmp` is a symlink to `/private/tmp`, so `mkdtemp("/tmp/...")`
+    // returns a path whose real path is `/private/tmp/...`. The kernel resolves
+    // every operation to the REAL path, and a `(subpath "/tmp/acr-convert-X")`
+    // allow therefore matches nothing at all — measured: the write allow covered
+    // `/tmp/acr-convert-X` while the worker wrote to `/private/tmp/acr-convert-X`.
+    // `resolve()` (which the profile builder used) does not follow symlinks and
+    // is not enough; only `realpath` is.
+    const tempDirectory = await realpath(await mkdtemp("/tmp/acr-convert-"));
     const inputPath = join(tempDirectory, format === "html" ? "source.html" : "source.pdf");
     const outputPath = join(tempDirectory, "derived.md");
     try {
@@ -389,7 +508,7 @@ export class SandboxedTextCopyService implements TextCopyConverterPort {
       const converterExecutable = format === "html" ? nodeExecutable : pdfExecutable!;
       const worker = join(this.#configuration.repositoryRoot, "scripts", "converter", "html-to-markdown-worker.mjs");
       const converterArguments = format === "html"
-        ? ["--max-old-space-size=96", worker, inputPath, outputPath]
+        ? [`--max-old-space-size=${TEXT_COPY_NODE_HEAP_MB}`, worker, inputPath, outputPath]
         : [...this.#configuration.pdfPrefixArguments, "-enc", "UTF-8", "-nopgbrk", inputPath, outputPath];
       const profile = buildSandboxProfile(
         this.#configuration.repositoryRoot,

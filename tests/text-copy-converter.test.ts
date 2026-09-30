@@ -41,6 +41,17 @@ async function missing(path: string): Promise<boolean> {
   try { await access(path); return false; } catch { return true; }
 }
 
+/**
+ * A service on the PRODUCTION path: the real sandbox executable, the real Node,
+ * and both real probes. The rest of this file uses the shimmed `service()` above
+ * to keep the unit tests fast, but the two limits have to be proven against the
+ * thing that actually runs, because what a conversion costs is a property of
+ * the sandbox and of jsdom rather than of the argument parsing.
+ */
+function productionService(overrides: ConstructorParameters<typeof SandboxedTextCopyService>[0] = {}) {
+  return new SandboxedTextCopyService({ repositoryRoot: root, ...overrides });
+}
+
 test("HTML to Markdown returns a digest, fixed converter identity, and safe readable text", async () => {
   const converter = service();
   const converted = await converter.convert({ format: "html", sourceBytes: bytes(`<!doctype html>
@@ -146,7 +157,26 @@ test("the fixed child environment does not inherit service secrets", async t => 
   });
   assert.equal((await converter.convert({ format: "html", sourceBytes: bytes("<article>Environment body.</article>") })).status, "succeeded");
   assert.equal(childEnvironment?.CONVERTER_FORBIDDEN_SECRET, undefined);
-  assert.match(childEnvironment?.HOME ?? "", /^\/tmp\/acr-convert-/u);
+  // The temp directory the child is given is the CANONICAL one, not the path
+  // `mkdtemp` returned. On macOS `/tmp` is a symlink to `/private/tmp`, and a
+  // sandbox `(subpath ...)` rule is matched against the real path, so handing
+  // the child the unresolved path made every allow rule in the profile match
+  // nothing.
+  //
+  // The canonical form is asserted WITHOUT calling realpath: the service has
+  // already removed this directory by the time the assertion runs, so a second
+  // realpath read races that cleanup and fails with ENOENT. The prefix is the
+  // contract, and on a platform where /tmp is not a symlink the first
+  // alternative simply does not apply.
+  const home = childEnvironment?.HOME ?? "";
+  assert.ok(home.startsWith("/private/tmp/acr-convert-") || home.startsWith("/tmp/acr-convert-"),
+    `the child HOME is not a private temp directory: ${JSON.stringify(home)}`);
+  // On macOS specifically, it must be the resolved one, because that is the
+  // path the kernel resolves every operation to.
+  if (process.platform === "darwin") {
+    assert.match(home, /^\/private\/tmp\/acr-convert-/u,
+      `on macOS the child HOME must already be canonical: ${JSON.stringify(home)}`);
+  }
   assert.equal(childEnvironment?.HOME, childEnvironment?.TMPDIR);
 });
 
@@ -319,6 +349,29 @@ test("limits are stable public defaults", () => {
     markdownBytes: 2 * 1024 * 1024,
     diagnosticBytes: 16 * 1024,
     timeoutMs: 10_000,
-    memoryBytes: 128 * 1024 * 1024,
+    // Raised from 128 MiB after measuring that a legal 128 KiB HTML document
+    // peaks near 190 MiB, so the old bound refused a quarter of the input the
+    // service advertises it accepts. See the constant's own comment.
+    memoryBytes: 512 * 1024 * 1024,
   });
+});
+
+test("the memory budget admits every HTML size the service accepts", async () => {
+  // The two ceilings have to agree. htmlInputBytes says a 512 KiB document is
+  // legal; if memoryBytes is smaller than what converting one actually costs,
+  // the service refuses input it promised to handle. This walks the legal range
+  // on the real sandbox rather than trusting the arithmetic, because what a
+  // conversion costs is a property of jsdom and Readability, not of this file.
+  const service = productionService();
+  const prose = "A paragraph of ordinary prose that Readability must parse, score and serialise. ";
+  for (const size of [8 * 1024, 64 * 1024, 128 * 1024, 256 * 1024, TEXT_COPY_LIMITS.htmlInputBytes]) {
+    const head = "<html><head><title>Sweep</title></head><body><article><h1>R</h1><p>";
+    const tail = "</p></article></body></html>";
+    const body = prose.repeat(Math.ceil(size / prose.length)).slice(0, size - head.length - tail.length);
+    const source = Buffer.from(head + body + tail);
+    assert.ok(source.length <= TEXT_COPY_LIMITS.htmlInputBytes, `fixture ${size} is not a legal size`);
+    const converted = await service.convert({ format: "html", sourceBytes: source });
+    assert.equal(converted.status, "succeeded",
+      `a legal ${source.length} byte document was refused as ${converted.diagnosticCategory}`);
+  }
 });

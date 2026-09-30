@@ -5,6 +5,16 @@ import { JSDOM, VirtualConsole } from "jsdom";
 import { Readability } from "@mozilla/readability";
 
 const MAX_ELEMENTS = 20_000;
+// The ceiling this worker will accept from the flag the service passes it. The
+// service derives its `--max-old-space-size` from the same number
+// (TEXT_COPY_NODE_HEAP_MB in src/converter/v1/text-copy-service.ts) because the
+// two must agree: the flag is not the heap limit, it is a floor of ~2x the
+// value, and a flag above this ceiling made the worker refuse to start with
+// `memory_limit_unenforced` on every single HTML conversion.
+//
+// 160 MiB is what `--max-old-space-size=64` actually yields on the deployed
+// Node, and it is the same value the service's memoryBytes limit is measured
+// against, so a worker that starts is a worker already inside its budget.
 const MAX_HEAP_BYTES = 160 * 1024 * 1024;
 
 function escapeMarkdown(value) {
