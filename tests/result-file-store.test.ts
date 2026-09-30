@@ -114,7 +114,6 @@ test("a stored file comes back byte-for-byte, and an exact retry is idempotent",
     assert.deepEqual(Buffer.from((await store.read(id))!), Buffer.from(content));
   } });
 });
-
 test("the same key with different bytes is a conflict, never an overwrite", async () => {
   await withStore({ async after(root, store) {
     // The key is derived from the digest, so "the same key with different
@@ -1338,4 +1337,3 @@ test("S1: a leftover the store did not create in a PRIVATE place is never remove
       "the same leftover, private, is cleared — the refusal discriminates");
   } finally { await rm(base, { recursive: true, force: true }); }
 });
-

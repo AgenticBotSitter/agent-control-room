@@ -52,7 +52,6 @@ test("a stored file offers one obvious download and hides its details behind a t
   // The storage key, a filesystem path and the word "locator" are never rendered.
   assert.doesNotMatch(markup, /crbf1|\/Users\/|storage[_ ]?key|\.crbf/u);
 });
-
 test("a file that is not on the Mac says so in plain words and offers nothing", () => {
   for (const [state, heading] of [["missing", "Missing"], ["quarantined", "Held back"],
     ["declared", "Still arriving"]] as const) {
@@ -200,4 +199,3 @@ test("a purged set is not in the catalog at all, so the panel never mentions it"
   const buttons = [...markup.matchAll(/<button[^>]*>([^<]*)</gu)].map(match => match[1]);
   assert.deepEqual(buttons, [], "a purged set never offers a download, however it arrived");
 });
-

@@ -94,6 +94,17 @@ test("fleet connector end to end and least privilege, as the production logins",
       const betaTask = await seedProposedTask(admin.client, PROJECT_B, "pg-beta");
       const untouched = await seedProposedTask(admin.client, PROJECT_A, "pg-not-offered");
 
+      // The B4 bot kinds use the existing free-form worker_kind column and
+      // existing owner-role insert path; no schema widening or admin write is
+      // needed. Prove both new values through the production owner login.
+      for (const workerKind of ["claude-desktop", "cursor"]) {
+        const appCode = await owner.createEnrollmentCode(ownerIdentity(), { displayName: `PG ${workerKind}`,
+          workerKind, projectIds: [PROJECT_A], capabilities: ["writing"] });
+        const binding = await fleetOwner.client.query("SELECT worker_kind,display_name FROM fleet_enrollment_codes WHERE id=$1", [appCode.codeId]);
+        assert.deepEqual(binding.rows[0], { worker_kind: workerKind, display_name: `PG ${workerKind}` });
+        await owner.cancelCode(ownerIdentity(), appCode.codeId);
+      }
+
       // --- Owner (web login) creates a code; the machine joins (fleet login).
       const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "PG worker", workerKind: "mcp-agent",
         projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 2 });

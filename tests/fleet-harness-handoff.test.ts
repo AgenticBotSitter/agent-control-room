@@ -249,6 +249,33 @@ test("not enabled: a machine runs only the harness its owner enabled locally", a
   assert.equal(fake.calls.length, 0);
 });
 
+test("a standing worker notices harnesses.json enabled after it already started", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const worker = await joinWorker(f, "Enabled-later"), task = await offer(f, "handoff-enabled-later");
+  const harnessesPath = join(f.dir, "enabled-later-harnesses.json");
+  fake.calls.length = 0;
+  let sleeps = 0, stopAfterResult = false;
+  const fetcher: typeof fetch = async (input, init) => {
+    if (stopAfterResult) throw new Error("stop enabled-later loop");
+    const response = await f.fetcher(input, init);
+    if (String(input).endsWith("/result")) stopAfterResult = true;
+    return response;
+  };
+  const loop = connector.runWorker({ configPath: worker.configPath, harnessesPath, fetcher,
+    progressIntervalMs: 25, log: () => {}, sleep: async () => {
+      sleeps += 1;
+      if (sleeps === 1) {
+        await writeFile(harnessesPath, JSON.stringify({ schema: "control-room.fleet-harnesses/v1",
+          adapterModule: FAKE_MODULE, harnesses: fakeCodex("success") }), { mode: 0o600 });
+        return;
+      }
+      throw new Error("stop enabled-later loop");
+    } });
+  await assert.rejects(loop, /stop enabled-later loop/u);
+  assert.equal(fake.calls.length, 1, "the newly enabled harness runs without restarting the connector");
+  assert.equal(await jobState(f, task.jobId), "waiting_approval");
+});
+
 test("pause: Pause, Drain, Stop and an unreadable switch all stop new claims", async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Obedient");

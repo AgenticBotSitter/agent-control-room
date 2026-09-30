@@ -115,7 +115,7 @@
     "file": "scripts/fleet/connector.mjs",
     "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
     "replace": "  const release = async () => {};\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
-    "test": "node --test --test-name-pattern \"ten concurrent installs\" tests/fleet-connector-install.test.mjs",
+    "test": "node --test --test-name-pattern \"twenty concurrent unattended installs\" tests/fleet-connector-install.test.mjs",
     "why": "same-profile installs serialize through the shared profile mutation lock"
   },
   {
@@ -155,7 +155,7 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (typeof workspaceRoot !== \"string\" || !isAbsolute(workspaceRoot))",
+    "find": "  if (typeof workspaceRoot !== \"string\" || !workspaceRoot || !isAbsolute(workspaceRoot))",
     "replace": "  if (false)",
     "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
     "why": "MCP refuses a relative workspace instead of resolving it against the process directory"
@@ -316,8 +316,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": "        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);",
-    "replace": "        [\"code\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);",
+    "find": "        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);",
+    "replace": "        [\"code\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);",
     "test": "node --import tsx --test --test-name-pattern \"server-side redemption refuses\" tests/fleet-connector.test.ts",
     "why": "the enrollment HTTP contract admits the declared local worker kind for server-side binding"
   },
@@ -330,9 +330,9 @@
   },
   {
     "file": "src/web/v1/fleet-owner-http.ts",
-    "find": "&& node \"$d/${release.file}\" join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`",
-    "replace": "&& node \"$d/${release.file}\" join --server ${gatewayOrigin} --code ${code}`",
-    "test": "node --import tsx --test --test-name-pattern \"owner's join command\" tests/fleet-connector.test.ts",
+    "find": "&& node \"$d/${release.file}\" install --server ${gatewayOrigin} --code ${code} --bot ${workerKind}",
+    "replace": "&& node \"$d/${release.file}\" install --server ${gatewayOrigin} --code ${code}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"owner's install command\" tests/fleet-connector.test.ts",
     "why": "the verified-release owner command still declares the worker kind bound into its one-time code"
   }
 ]

@@ -182,7 +182,8 @@ test("run loop sleeps after an implausibly fast empty wait but not after a real 
       const running = connector.runWorker({ ...files, fetcher, pollMs: 100, random: () => 0, log: () => {},
         now: () => times.shift() ?? elapsed,
         sleep: async (ms: number) => { sleeps.push(ms); throw new Error("stop after pacing proof"); } });
-      await assert.rejects(running, name === "fast" ? /pacing proof/u : /no longer accepts/u);
+      if (name === "fast") await assert.rejects(running, /pacing proof/u);
+      else assert.deepEqual(await running, { state: "revoked" });
       assert.deepEqual(sleeps, expectedSleeps);
     });
   }
