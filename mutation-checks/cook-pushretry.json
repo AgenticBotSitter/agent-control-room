@@ -43,10 +43,10 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "    if (!sendFailure) {\n      // No subscription, or a channel that reported success while delivering",
-    "replace": "    if (false) {\n      // No subscription, or a channel that reported success while delivering",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
-    "why": "no-subscription is distinguished from send-failure by the failure report, never by the counters alone -- NOT independently detectable from a dispatcher test. The no-subscription refund path is reached only when list() returns no subscriptions, and every stress test installs one; the counters assertion lives in deliverOwnerPushV1 and is covered by tests/owner-web-push.test.ts, which is why this entry points at the delivery counters rather than at the refund."
+    "find": "    if (!sendFailure) {\n      // No subscription left by the time this item was sent to.",
+    "replace": "    if (false) {\n      // No subscription left by the time this item was sent to.",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "no-subscription is distinguished from send-failure by the failure report, never by the counters alone. This is the RESIDUAL path only -- the pre-claim gate handles the common case before anything is claimed, so this branch is reached only when a subscription vanished mid-batch, which the new 'subscription that vanishes mid-batch' test drives explicitly. The earlier version of this entry was recorded as NOT independently detectable because no test installed zero subscriptions at all; that is now the 50-item no-subscription stress test, so this branch is reachable and this entry bites."
   },
   {
     "file": "db/migrations/0225_owner_push_attempt_guards.sql",
@@ -103,5 +103,89 @@
     "replace": "    if (false) return this.#settle(id, \"failed\", spent, now, \"owner_push_subscription_gone\");",
     "test": "pnpm run test:owner-push:postgres",
     "why": "a 404/410 means the browser subscription is gone and has already been removed, so the item must stop for good rather than spend the bounded attempts reaching nothing"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "    if ((await this.input.store.list(this.input.tenantId)).length === 0) return await this.#deferUntilSubscribed(at);",
+    "replace": "    if (false && (await this.input.store.list(this.input.tenantId)).length === 0) return await this.#deferUntilSubscribed(at);",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "THE FIX for the review's blocking bug. Without the pre-claim gate, a tenant with no subscribed browser claims each item, spends an attempt, and 0225's guard then refuses the release's decrement -- so the increments stick, the whole budget burns in about four minutes at the production 30s interval, and the item sits at 'pending' with attempt_count=8, permanently unclaimable and never delivered even after the owner subscribes. The gate means an item with nobody to send it to is never claimed, so it spends no attempt and heals the moment a subscription exists."
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "    const recheckAt = new Date(Date.parse(now) + NO_SUBSCRIPTION_RECHECK_MS_V1).toISOString();",
+    "replace": "    const recheckAt = now;",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the re-check must be in the FUTURE. Leaving next_attempt_at at now re-claims the item on the very next tick, which is what burned the budget four times faster than the backoff schedule says; the assertion that every waiting item's next_attempt_at is later than the clock is the one that bites"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "      WHERE tenant_id=$1 AND state='pending' AND next_attempt_at<=$2\n      RETURNING action_inbox_id,attempt_count",
+    "replace": "      WHERE tenant_id=$1 AND next_attempt_at<=$2\n      RETURNING action_inbox_id,attempt_count",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the deferral must touch only 'pending' rows. A reserved row belongs to a dispatcher that is mid-send RIGHT NOW, and moving its next_attempt_at under it is how a live send gets rescheduled by a second dispatcher that decided there was nobody to send to"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "      SET next_attempt_at=$3,safe_reason_code='owner_push_no_subscription',updated_at=$4",
+    "replace": "      SET next_attempt_at=$3,safe_reason_code='owner_push_endpoint_unavailable',updated_at=$4",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the reason code is what an operator reads, and 'waiting for a subscription' and 'the push endpoint is unavailable' call for opposite actions: one is fixed by Settings, the other by waiting. The assertion on owner_push_no_subscription is the one that bites"
+  },
+  {
+    "file": "src/web-push/v1/delivery.ts",
+    "find": "      if (response.statusCode >= 200 && response.statusCode < 300) {\n        await input.store.delivered(input.tenantId, subscription.id, input.dedupeKey, input.now);\n        delivered++;",
+    "replace": "      if (true) {\n        await input.store.delivered(input.tenantId, subscription.id, input.dedupeKey, input.now);\n        delivered++;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
+    "why": "the status must be checked BEFORE store.delivered(), which is a terminal, non-retryable write to the 0174 ledger. Recording it for a response outside 2xx would settle the item as delivered and the phone would never ring for that stall. Unreachable through the real web-push library, which REJECTS on non-2xx -- which is exactly why the invariant has to be enforced by this code rather than by an external library's undocumented contract"
+  },
+  {
+    "file": "src/web-push/v1/policy.ts",
+    "find": "  return pushServiceHostsV1.some(pattern => pattern.test(host));",
+    "replace": "  return host.endsWith(\".googleapis.com\") || /^web\\.push\\.apple\\.com$/.test(host);",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
+    "why": "the allow list must be matched on the WHOLE host, not a suffix or a substring. A suffix test admits ANY host under a vendor's domain, which is not a push service and is an SSRF; the refused-endpoint table has evil.invalid, a suffixed apple host, a prefixed fcm host and a Windows wildcard abuse for exactly this"
+  },
+  {
+    "file": "src/web-push/v1/policy.ts",
+    "find": "  if (parsed.protocol !== \"https:\") return false;",
+    "replace": "  if (parsed.protocol !== \"https:\" && parsed.protocol !== \"http:\") return false;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
+    "why": "HTTPS only. An http endpoint would carry the VAPID-signed request in clear text and would reach a different service entirely; the refused table has an http://fcm.googleapis.com entry for this"
+  },
+  {
+    "file": "src/web-push/v1/policy.ts",
+    "find": "  if (!ownerPushEndpointAllowedV1(input.endpoint)",
+    "replace": "  if (false && !ownerPushEndpointAllowedV1(input.endpoint)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
+    "why": "the allow list must be enforced at SUBSCRIBE time, the earliest and cheapest point, so a refused endpoint never reaches the database. channel.ts would still refuse it at send time, so this entry is defence in depth rather than the only guard -- but the database-side check in 0227 is a third independent one, and this is the one that keeps the row out of existence"
+  },
+  {
+    "file": "src/web-push/v1/channel.ts",
+    "find": "    if (!ownerPushEndpointAllowedV1(subscription.endpoint)) throw new Error(\"web_push_endpoint_refused\");",
+    "replace": "    if (false) throw new Error(\"web_push_endpoint_refused\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
+    "why": "this is the check that actually stops the outbound request, so it is the one that is not optional. A row written before the allow list existed, or by anything else holding INSERT, would otherwise be dialled by the dispatcher on its own schedule with the VAPID private key resident on the web process"
+  },
+  {
+    "file": "db/migrations/0227_owner_push_endpoint_allow_list.sql",
+    "find": "  CHECK (owner_push_endpoint_allowed(endpoint)) NOT VALID;",
+    "replace": "  CHECK (true) NOT VALID;",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the database is the third independent copy of the allow list. policy.ts refuses at subscribe, channel.ts refuses at send, and this refuses the row itself -- which is what holds against a writer that is neither the application nor a future bug in it"
+  },
+  {
+    "file": "db/migrations/0227_owner_push_endpoint_allow_list.sql",
+    "find": "    WHEN value ~ '[?#]' THEN NULL",
+    "replace": "    WHEN false THEN NULL",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "a query or a fragment in the endpoint would put an attacker-chosen string inside the authority boundary the function is establishing, so `https://evil.invalid/?next=web.push.apple.com` must yield no host at all rather than one"
+  },
+  {
+    "file": "db/migrations/0227_owner_push_endpoint_allow_list.sql",
+    "find": "    WHEN value ~ '^https://[^/?#]*@' THEN NULL",
+    "replace": "    WHEN false THEN NULL",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "a credential in the URL is credential material, not a shape question, and the userinfo section is exactly where an allow-listed host would hide behind an attacker-chosen prefix"
   }
 ]

@@ -8,6 +8,18 @@ DO $$ BEGIN
     OR EXISTS (SELECT 1 FROM pipeline_runs WHERE unattended) THEN
     RAISE EXCEPTION 'pipeline unattended down migration refused: records exist';
   END IF;
+  -- S7b's 0151 and 0153 build their append-only triggers on
+  -- reject_pipeline_unattended_history_mutation(), which 0109 owns. Dropping
+  -- that function here would silently cascade those four triggers away, so a
+  -- later down path would no longer be able to drop the tables it created. A
+  -- later migration reusing this function is exactly the state in which 0109
+  -- must refuse rather than cascade: reverse the later migration first.
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgfoid =
+      'public.reject_pipeline_unattended_history_mutation()'::regprocedure
+      AND tgname NOT IN ('pipeline_advance_receipts_immutable','pipeline_advance_receipts_no_truncate',
+        'pipeline_unattended_transitions_immutable','pipeline_unattended_transitions_no_truncate')) THEN
+    RAISE EXCEPTION 'pipeline unattended down migration refused: a later migration depends on its history guard';
+  END IF;
 END $$;
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_private_web') THEN

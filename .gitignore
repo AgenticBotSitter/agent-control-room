@@ -1,5 +1,6 @@
 # Local dependencies and generated output are not release source.
 node_modules/
+scripts/fleet/release/
 /.next/
 /dist/
 /dist-vps/

@@ -34,9 +34,25 @@ export async function deliverOwnerPushV1(input: Readonly<{ tenantId: string; kin
     // second is a legitimate retry of a send that never landed.
     try {
       const response = await input.channel.send(subscription, payload);
-      await input.store.delivered(input.tenantId, subscription.id, input.dedupeKey, input.now);
-      if (response.statusCode >= 200 && response.statusCode < 300) delivered++;
-      else input.onFailure?.({ subscriptionId: subscription.id, statusCode: response.statusCode, removed: false });
+      // The status is checked BEFORE the ledger is written, not after. The real
+      // `web-push` library rejects on any non-2xx rather than resolving with
+      // one, so a resolved non-2xx is unreachable through it today -- which is
+      // exactly why the ordering has to be enforced by this code rather than by
+      // an external library's undocumented contract. `store.delivered()` is a
+      // TERMINAL, non-retryable write to the 0174 ledger: recording it for a
+      // response outside 2xx would make the dispatcher settle the item as
+      // delivered and never try again, so the phone would silently never ring
+      // for a stall.
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        await input.store.delivered(input.tenantId, subscription.id, input.dedupeKey, input.now);
+        delivered++;
+      } else {
+        // Same shape as a thrown failure, and treated as one: the reservation
+        // stays re-sendable, the failure is reported, and the caller's bounded
+        // retry still owns what happens next.
+        await input.store.failed(input.tenantId, subscription.id, input.dedupeKey, response.statusCode, input.now);
+        input.onFailure?.({ subscriptionId: subscription.id, statusCode: response.statusCode, removed: false });
+      }
     } catch (error) {
       const statusCode = typeof error === "object" && error !== null && "statusCode" in error
         && typeof (error as { statusCode?: unknown }).statusCode === "number" ? (error as { statusCode: number }).statusCode : undefined;

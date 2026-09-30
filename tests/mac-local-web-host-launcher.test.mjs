@@ -67,7 +67,9 @@ test("web host validates and prepares optional intake before listeners and clean
     if (name === "index.js") return { default() {} };
     throw new Error(`unexpected ${name}`);
   };
-  await assert.rejects(startMacLocalWebHost({ protectedRoot: "/protected" }, { load }), /fixture/);
+  await assert.rejects(startMacLocalWebHost({ protectedRoot: "/protected" }, {
+    load, loadHealthProbeKey: async () => Buffer.alloc(32, 7), hostReleaseIdentity: async () => "dev",
+  }), /fixture/);
   assert.deepEqual(calls, ["load-intake", "load-owner-web-push", "prepare-web", "prepare-intake", "start-web", "start-intake",
     "close-intake", "close-web"]);
 });
@@ -78,6 +80,7 @@ test("task host requires the fixed release provider and does not accept a caller
   const task = { async close() {}, isReady: () => true };
   const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, {
     readVersion: async () => "pinned",
+    loadHealthProbeKey: async () => Buffer.alloc(32, 7), hostReleaseIdentity: async () => "dev",
     load: async path => {
       loaded.push(path.split("/").at(-1));
       if (path.endsWith("macLocalHost.js")) return { createMacLocalProtectedHostV1: input => ({
@@ -116,7 +119,8 @@ test("task host requires the fixed release provider and does not accept a caller
 test("a zero-project first start loads the live task provider without requiring a restart", async () => {
   const loaded = [];
   const site = { async close() {}, isReady: () => true };
-  const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, { load: async path => {
+  const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, { loadHealthProbeKey: async () => Buffer.alloc(32, 7),
+    hostReleaseIdentity: async () => "dev", load: async path => {
     const name = path.split("/").at(-1); loaded.push(name);
     if (name === "macLocalProtectedLoader.js") return {
       loadMacLocalProtectedConfigurationFromRootV1: async () => ({enablement:{workers:[]}}),

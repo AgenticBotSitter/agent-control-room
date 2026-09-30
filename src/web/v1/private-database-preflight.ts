@@ -15,12 +15,12 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0196 plus MIG-I's 0224-0226 (the
-// owner push attempt heads, filename order, including assigned gaps 0110-0111,
-// 0155-0157, 0160-0162, 0186 and 0115), including generic external-content
-// migrations 0025/0026, by the controlled digest script run against a live
-// cluster. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "7ac48d18b0fff58df555380e0f4967eb2b23f51e9fc43d07e8e30779817a9682";
+// Generated from public migrations through 0196 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162, 0186 and 0115),
+// including generic external-content migrations 0025/0026, by the controlled
+// PGlite digest script and cross-checked against a real PostgreSQL 17 cluster
+// installed the production way; both agree. Catalog query below; not a mutable
+// database marker.
+export const privateWebSchemaDigest = "ee04b1e328d412bead6ce9052a36fc91bcaff09098d7a033d9b7bb814b68b4b3";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -53,8 +53,9 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_owner_push_attempt_heads", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
   "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -72,10 +73,10 @@ privateWebInsertTables.add("control_job_dependencies");
 privateWebInsertTables.add("control_project_settings"); privateWebInsertTables.add("pipeline_unattended_transitions");
 privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
-// 0224: the dispatcher records one bounded-retry head per owner attention item.
-privateWebInsertTables.add("control_owner_push_attempt_heads");
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
+// S7b: the owner sets the installation's caps and reports the machine's cluster count.
+privateWebInsertTables.add("pipeline_installation_allowances"); privateWebInsertTables.add("pipeline_machine_capacity_observations");
 privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
@@ -116,6 +117,9 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
   pipeline_templates: ["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"],
+  pipeline_installation_allowances: ["runs_per_hour", "runs_per_agent_per_day", "machine_max_agent_processes",
+    "machine_max_db_clusters", "dollar_cap_microusd", "owner_identity_id", "version", "record_digest", "auth_tag",
+    "updated_at"],
   pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
     "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
@@ -123,9 +127,6 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
   control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
-  // The link is written once at INSERT and is deliberately NOT updatable.
-  control_owner_push_attempt_heads: ["state", "attempt_count", "next_attempt_at", "reserved_at",
-    "last_attempt_at", "completed_at", "safe_reason_code", "updated_at"],
   control_skills: ["current_version", "state", "updated_at"],
   control_recurring_rules: ["state", "plain_schedule", "cron_expression", "timezone", "task_template", "version",
     "updated_by_identity_id", "updated_at"],
@@ -187,6 +188,7 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_project_event_stream_heads", "control_project_events"]);
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions", "pipeline_advance_receipts",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations", "pipeline_stage_loop_counts",
   "control_agent_review_plans", "control_pipeline_build_publications");
 coordinatorReads.push("control_improvement_requests", "control_update_candidates");
 // Scheduling reads each project's worker and concurrency settings (0135).
@@ -198,6 +200,7 @@ coordinatorInserts.add("control_recurring_proposals");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
+coordinatorInserts.add("pipeline_stage_loop_counts");
 coordinatorInserts.add("control_update_candidates");
 // Supervisor (0177-0179 and the 0017 incident tables): reconciliation heads,
 // health, loop heads and provider waits; incidents are column-scoped writes.
@@ -242,6 +245,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_attempt_resource_scopes: ["coordinator_lock"],
   pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag",
     "unattended_last_swept_at"],
+  ...Object.fromEntries(["pipeline_installation_allowances", "pipeline_stage_loop_counts"]
+    .map(table => [table, ["coordinator_lock"]])),
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
   // The supervisor's own mutable fields: a lapsed task head, an agent's health

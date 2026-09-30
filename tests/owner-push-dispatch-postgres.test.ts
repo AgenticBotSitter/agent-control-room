@@ -75,8 +75,12 @@ async function openAttention(admin: Client, id: string, kind: "failure" | "ambig
 }
 
 async function subscribe(admin: Client, id: string) {
+  // A REAL push-service host, because 0227 holds the subscriptions table to the
+  // allow list. A `push.example.invalid` fixture would now be refused by the
+  // CHECK, so every test here would be measuring the constraint instead of the
+  // dispatcher.
   await admin.query(`INSERT INTO owner_web_push_subscriptions(id,tenant_id,endpoint,p256dh,auth,expires_at,created_at,updated_at)
-    VALUES($1,$2,$3,'A','B',NULL,now(),now())`, [id, TENANT, `https://push.example.invalid/${id}`]);
+    VALUES($1,$2,$3,'A','B',NULL,now(),now())`, [id, TENANT, `https://fcm.googleapis.com/fcm/send/${id.replaceAll(":", "")}`]);
 }
 
 const heads = (admin: Client) => admin.query<Head>(
@@ -206,6 +210,154 @@ test("real PostgreSQL: 50 Needs-you items at once, the endpoint down for two min
       assert.equal(sendAttempts, sendCount, "no second push for any delivered item");
     } finally { await admin.end(); }
   }, { port: PORT + 1, allowedPorts: PORTS, database: "control_room", boundMs: 240_000 });
+});
+
+test("real PostgreSQL: 50 Needs-you items with NO subscribed phone, then the owner subscribes",
+  required ? undefined : { skip: realPostgresSkipMessage() }, async () => {
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    try {
+      // No `subscribe()` call. This is the DEFAULT state of a fresh install, and
+      // the state the owner returns to by unsubscribing every browser -- the
+      // population most likely to hit the old bug.
+      await admin.query("INSERT INTO tenants(id,display_name) VALUES($1,'Push nobody')", [TENANT]);
+      const db = asClient(postgres.connection("web"));
+      const store = new PostgresOwnerPushStoreV1(db);
+      let millis = Date.now();
+      const clock = () => millis;
+      let sends = 0;
+      const channel: OwnerNotificationChannelV1 = { kind: "web-push",
+        async send() { sends++; return { statusCode: 201 }; } };
+      for (let index = 0; index < 50; index++) await openAttention(admin, `attention:supervisor:nobody-${index}`);
+      const dispatcher = new OwnerPushDispatcherV1({ db, tenantId: TENANT, store, channel, clock });
+
+      // Ticks with nobody to send to. The step is the no-subscription re-check
+      // interval, not the SEND backoff schedule: an item with no phone is not a
+      // failing send, so it is re-checked on its own much shorter clock. Twelve
+      // steps is an hour of real time -- well past the four minutes at which the
+      // old code burned the entire attempt budget, which is the whole point.
+      for (let tick = 0; tick < 12; tick++) {
+        millis += 5 * 60_000;
+        await dispatcher.dispatch();
+      }
+      assert.equal(sends, 0, "with no subscription nothing is ever sent");
+      const waiting = (await heads(admin)).rows;
+      assert.equal(waiting.length, 50, "all 50 items are still tracked, not dropped");
+      assert.ok(waiting.every(row => row.state === "pending"),
+        "and every one of them is still waiting rather than failed or stuck");
+      // THE REGRESSION. The old code claimed first and 'refunded' afterwards,
+      // which 0225's guard refuses, so the increments stuck: after eight ticks
+      // the item sat at attempt_count=8, 'pending', permanently unclaimable, and
+      // never delivered even once the owner subscribed. Here the count never
+      // moves, because the item is never claimed.
+      assert.ok(waiting.every(row => Number(row.attempt_count) === 0),
+        `an item with nobody to send it to must spend no attempt; found ${
+          [...new Set(waiting.map(row => Number(row.attempt_count)))].join(",")}`);
+      assert.ok(waiting.every(row => row.reserved_at === null), "and is never left reserved");
+      assert.ok(waiting.every(row => row.safe_reason_code === "owner_push_no_subscription"),
+        "and says plainly that it is waiting for a subscription, which is the actionable reason");
+      // And the reason it is still waiting is a real time in the future, not
+      // 'now' -- leaving it at now is what re-claimed it every tick.
+      assert.ok(waiting.every(row => Date.parse(String(row.next_attempt_at)) > millis),
+        "each item is re-checked later rather than on the next tick");
+
+      // The owner subscribes. Nothing else changes: the same dispatcher, the same
+      // 50 items, the same heads.
+      await subscribe(admin, `push:${"9".repeat(64)}`);
+      millis += 6 * 60_000;
+      const deliveredTags: string[] = [];
+      const live: OwnerNotificationChannelV1 = { kind: "web-push",
+        async send(_subscription, payload) { sends++; deliveredTags.push(payload.tag); return { statusCode: 201 }; } };
+      const healed = new OwnerPushDispatcherV1({ db, tenantId: TENANT, store, channel: live, clock });
+      const outcomes = await healed.dispatch();
+      assert.equal(outcomes.length, 50, "every waiting item is offered the moment the owner subscribes");
+      assert.ok(outcomes.every(outcome => outcome.result === "delivered"));
+      assert.equal(deliveredTags.length, 50, "each item delivered exactly once");
+      assert.equal(new Set(deliveredTags).size, 50, "no tag was delivered twice");
+      const after = (await heads(admin)).rows;
+      assert.ok(after.every(row => row.state === "delivered"));
+      assert.ok(after.every(row => Number(row.attempt_count) === 1),
+        "and each spent exactly one attempt, on the send that actually happened");
+
+      // A second pass over the same 50 is a no-op, however far the clock moves.
+      const before = sends;
+      millis += 8 * 60 * 60 * 1000;
+      assert.equal((await healed.dispatch()).length, 0, "a delivered item is never claimed again");
+      assert.equal(sends, before, "no second push for any delivered item");
+    } finally { await admin.end(); }
+  }, { port: PORT + 7, allowedPorts: PORTS, database: "control_room", boundMs: 240_000 });
+});
+
+test("real PostgreSQL: a subscription that vanishes mid-batch spends one attempt, then stops visibly",
+  required ? undefined : { skip: realPostgresSkipMessage() }, async () => {
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    try {
+      await admin.query("INSERT INTO tenants(id,display_name) VALUES($1,'Push vanished')", [TENANT]);
+      const db = asClient(postgres.connection("web"));
+      let millis = Date.now();
+      // The pre-claim gate sees a subscription, then it is gone by the time the
+      // send happens -- the owner's only browser is unsubscribed while the batch
+      // is in flight. This is the residual path that still spends an attempt, and
+      // it must not be able to starve: the bound turns it into a visible
+      // 'failed', which is the property the old code lacked.
+      //
+      // `list` is what makes the vanishing: the first call (the dispatcher's
+      // pre-claim gate) sees the subscription, and every call after it -- which
+      // is `deliverOwnerPushV1`'s own per-item list -- sees none. The first
+      // `list` call is the gate, because nothing else runs before it.
+      let listCalls = 0;
+      const present = Object.freeze({ id: `push:${"7".repeat(64)}`, tenantId: TENANT,
+        endpoint: "https://fcm.googleapis.com/fcm/send/vanished", p256dh: "A", auth: "B", expiresAt: null });
+      const store: OwnerPushStoreV1 = {
+        async subscribe() {}, async unsubscribe() { return true; },
+        async list() { return listCalls++ === 0 ? [present] : []; },
+        async reserve() { return "reserved" as const; }, async delivered() {}, async failed() {},
+      };
+      let sends = 0;
+      const channel: OwnerNotificationChannelV1 = { kind: "web-push", async send() { sends++; return { statusCode: 201 }; } };
+      await openAttention(admin, "attention:supervisor:vanished");
+      const dispatcher = new OwnerPushDispatcherV1({ db, tenantId: TENANT, store, channel, clock: () => millis });
+      const outcomes = await dispatcher.dispatch();
+      assert.equal(outcomes.length, 1, "the item is still tracked, whatever happened to the phone");
+      assert.equal(outcomes[0]!.result, "retry_scheduled", "with nothing to send to it waits, it does not fail");
+      assert.equal(sends, 0, "and nothing was sent");
+      const row = (await heads(admin)).rows[0]!;
+      assert.equal(row.state, "pending");
+      assert.equal(Number(row.attempt_count), 1, "the claim spent the one attempt it really spent");
+      assert.equal(row.safe_reason_code, "owner_push_no_subscription");
+      // Now walk it to the bound. A head that runs out of attempts must reach
+      // 'failed' with a reason, rather than sitting at pending with an exhausted
+      // count and no claimant -- which is the stuck state the review found.
+      //
+      // The step is the SEND backoff, because a claimed item that found nobody
+      // is scheduled on the send schedule, not the no-subscription re-check.
+      // Each step is capped at an hour so the clock stays inside 0225's guard
+      // horizon -- which refuses a next_attempt_at more than a day past the
+      // DATABASE's own clock, an independent defence a fixture that raced
+      // ahead of real time would trip for the wrong reason.
+      for (let step = 1; step < OWNER_PUSH_ATTEMPT_LIMIT_V1; step++) {
+        millis += Math.min(ownerPushBackoffMsV1(step) + 60_000, 60 * 60_000);
+        // Re-arm the vanishing for each subsequent tick: the gate must see a
+        // subscription again for the item to be claimed at all, or this would
+        // prove the pre-claim gate rather than the bound.
+        listCalls = 0;
+        await dispatcher.dispatch();
+        // The deadline the previous settle actually wrote, rather than an
+        // assumption about it: this is the value a real tick would compare
+        // against, and stepping past a stale one would silently test nothing.
+        millis = Math.max(millis, Date.parse(String((await heads(admin)).rows[0]!.next_attempt_at)) + 1_000);
+      }
+      const exhausted = (await heads(admin)).rows[0]!;
+      assert.equal(exhausted.state, "failed", "a truly exhausted item is visibly failed, not stuck pending");
+      assert.equal(exhausted.safe_reason_code, "owner_push_attempts_exhausted",
+        "and says it ran out of attempts, which is the actionable reason");
+      assert.ok(exhausted.completed_at, "with a completion instant, so it is terminal in both senses");
+      assert.equal(Number(exhausted.attempt_count), OWNER_PUSH_ATTEMPT_LIMIT_V1);
+      millis += 24 * 60 * 60 * 1000;
+      assert.equal((await dispatcher.dispatch()).length, 0, "and it is never claimed again");
+    } finally { await admin.end(); }
+  }, { port: PORT + 8, allowedPorts: PORTS, database: "control_room", boundMs: 240_000 });
 });
 
 test("real PostgreSQL: two dispatchers racing one item deliver it exactly once",

@@ -10,13 +10,70 @@ const eventTitles: Record<OwnerPushEventKindV1, string> = {
   test: "Control Room test notification",
 };
 
-const endpoint = /^https:\/\/[^\s]{1,1900}$/;
 const base64url = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The push services a browser subscription can legitimately point at.
+ *
+ * Without this the web process is an SSRF primitive: the subscribe route stores
+ * whatever endpoint it is given and the channel later makes a VAPID-signed
+ * outbound POST to exactly that URL, on the dispatcher's own schedule, with the
+ * private key already resident on the web process. UPDATE_SAFETY_DESIGN §12/R12
+ * calls for the allow list, and the migration of the VAPID key to the updater is
+ * not what makes it necessary -- the web process is already making
+ * attacker-reachable requests today.
+ *
+ * Matched on the PARSED host, never on a substring of the URL. A substring test
+ * accepts `https://evil.invalid/?x=web.push.apple.com` and
+ * `https://web.push.apple.com.evil.invalid/`; a hostname test does not.
+ *
+ * Exact hosts, plus the one wildcard the brief names. Adding a browser vendor is
+ * a one-line change here and a matching expression in 0227.
+ */
+const pushServiceHostsV1: readonly RegExp[] = Object.freeze([
+  /^web\.push\.apple\.com$/,
+  /^fcm\.googleapis\.com$/,
+  /^updates\.push\.services\.mozilla\.com$/,
+  /^[a-z0-9-]+\.notify\.windows\.com$/,
+]);
+
+/**
+ * True when this endpoint is an HTTPS URL on a known push service.
+ *
+ * A predicate rather than a boolean so `parseWebPushSubscriptionV1` cannot
+ * build a subscription from a value the allow list refused: a plain boolean
+ * would leave the endpoint typed `string` while the check that guards it
+ * returns false for exactly the non-string cases.
+ */
+export function ownerPushEndpointAllowedV1(endpoint: unknown): endpoint is string {
+  if (typeof endpoint !== "string" || endpoint.length > 2048) return false;
+  let parsed: URL;
+  try { parsed = new URL(endpoint); } catch { return false; }
+  // Credentials in the URL are named before shape, the same order
+  // config/v1/artifact-storage.ts uses: an endpoint carrying a key is
+  // credential material, not a malformed URL.
+  if (parsed.username !== "" || parsed.password !== "") return false;
+  if (parsed.protocol !== "https:") return false;
+  // A query or a fragment is refused. A real push service does not put either
+  // in its endpoint, and allowing them would put an attacker-chosen string
+  // inside the authority boundary -- the same reason 0227's CHECK refuses it.
+  if (parsed.search !== "" || parsed.hash !== "") return false;
+  // A non-default port is refused. It is not a cross-host SSRF, but a real push
+  // service publishes its endpoint on 443, and 0227's CHECK refuses one too --
+  // two lists that disagree about the same string is how the database starts
+  // rejecting a subscribe the application considered valid.
+  if (parsed.port !== "" && parsed.port !== "443") return false;
+  const host = parsed.hostname.toLowerCase();
+  return pushServiceHostsV1.some(pattern => pattern.test(host));
+}
 
 export function parseWebPushSubscriptionV1(value: unknown): WebPushSubscriptionV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("web_push_subscription_invalid");
   const input = value as Record<string, unknown>, keys = input.keys;
-  if (typeof input.endpoint !== "string" || !endpoint.test(input.endpoint) || input.endpoint.length > 2048
+  // The allow list is enforced HERE, at the earliest and cheapest point, rather
+  // than only at send time. A refused subscribe never reaches the database, so
+  // there is nothing to clean up and nothing to filter later.
+  if (!ownerPushEndpointAllowedV1(input.endpoint)
     || input.expirationTime !== null && (typeof input.expirationTime !== "number" || !Number.isFinite(input.expirationTime) || input.expirationTime < 0)
     || !keys || typeof keys !== "object" || Array.isArray(keys)
     || typeof (keys as Record<string, unknown>).p256dh !== "string" || !base64url.test((keys as Record<string, string>).p256dh)

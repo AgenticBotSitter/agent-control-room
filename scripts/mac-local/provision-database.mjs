@@ -12,7 +12,7 @@
  * Re-runs reuse protected password files, so provisioning converges.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -130,6 +130,22 @@ async function writePrivate(path, content) {
     await chmod(path, privateFileMode);
   } finally {
     try { await unlink(temporary); } catch {}
+  }
+}
+
+/** Creates the independent readiness key once. Re-provisioning deliberately
+ * preserves it, so an in-flight host and its launcher retain one identity. */
+export async function ensureHealthProbeKeyV1(protectedRoot) {
+  const serviceRoot = join(protectedRoot, "service");
+  await privateDirectory(serviceRoot);
+  const path = join(serviceRoot, "health-probe.key");
+  try {
+    const handle = await open(path, "wx", privateFileMode);
+    try { await handle.writeFile(`${randomBytes(32).toString("base64url")}\n`, "utf8"); }
+    finally { await handle.close(); }
+    await chmod(path, privateFileMode);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
   }
 }
 
@@ -892,6 +908,7 @@ export async function provisionMacLocalDatabaseV1(options) {
     database: { ...database, username: bootstrapRoles.workIntake, password: allPasswords.workIntake },
     integrityKey: existingWorkIntake?.integrityKey ?? randomBytes(32).toString("base64url"), credentials });
   if (!options.dryRun) {
+    await ensureHealthProbeKeyV1(protectedRoot);
     const selectedClient=selectProvisionedWorkIntakeClientV1(clients,options.workIntakeCliWorkerKind);
     await writePrivate(join(configRoot, "database-roles.json"), `${JSON.stringify(roles)}\n`);
     await writePrivate(join(configRoot, "mac-local.json"), `${JSON.stringify(macLocal)}\n`);

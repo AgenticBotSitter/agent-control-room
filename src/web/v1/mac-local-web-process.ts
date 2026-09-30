@@ -1,6 +1,6 @@
 import type { DatabaseClient } from "../../persistence/database";
 import { WebAccessError } from "./access-verifier";
-import { privateResponseHeaders, webFailure } from "./http-common";
+import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, readLocalOwnerCodeV1,
   renderLocalOwnerSignInPageV1, renderLocalOwnerSignOutPageV1, type LocalOwnerSessionProfileV1 } from "./local-owner-session";
 import { WebProjectService } from "./project-service";
@@ -37,10 +37,12 @@ import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1,
   startOwnerPushLoopV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { FleetOwnerServiceV1 } from "../../fleet/v1";
 import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
+import type { FleetConnectorReleaseManifestV1 } from "../../fleet/v1/connector-release";
 import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
+import { hmacSha256Tag } from "../../security";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -111,8 +113,19 @@ export interface MacLocalWebProcessOptionsV1 {
   /** Remote workers (T2-F). Owner decisions use a distinct restricted
    * database login; neither the ordinary web login nor the gateway can write
    * those tables. The hook only asks the gateway to reconcile afterward. */
-  fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string; afterDecision?: () => Promise<unknown> }>;
+  fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string;
+    connectorRelease?: FleetConnectorReleaseManifestV1; afterDecision?: () => Promise<unknown> }>;
   clock?: () => number;
+  /** Present only in the real task-host process. The authenticated readiness
+   * route returns this pid so mac:up can bind the listener to the supervisor's
+   * private child record instead of trusting an arbitrary open port. */
+  hostProcessId?: number;
+  /** Independent, installation-private readiness key. It never shares owner
+   * sign-in material, so deleting or rotating the owner code cannot forge a
+   * host-health response. */
+  healthProbeKey?: Uint8Array;
+  healthReleaseId?: string;
+  healthStartedAt?: string;
 }
 
 /** Existing controller operations supplied by the host.  This is deliberately
@@ -136,6 +149,13 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // same in-session proposal service. Refuse a partial composition instead of
   // mounting a review that succeeds for ordinary accepts but cannot follow up.
   if (options.ownerReviews && !options.taskService) throw new Error("mac_local_web_process_config_invalid");
+  if (options.hostProcessId !== undefined
+    && (!Number.isSafeInteger(options.hostProcessId) || options.hostProcessId <= 1))
+    throw new Error("mac_local_web_process_config_invalid");
+  if (options.hostProcessId !== undefined && (!(options.healthProbeKey instanceof Uint8Array)
+    || options.healthProbeKey.length !== 32 || typeof options.healthReleaseId !== "string"
+    || !options.healthReleaseId || typeof options.healthStartedAt !== "string"
+    || !Number.isFinite(Date.parse(options.healthStartedAt)))) throw new Error("mac_local_web_process_config_invalid");
   const clock = options.clock ?? Date.now;
   const allowedOrigins = new Set([options.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : []),
     ...(profile.remoteOrigins ?? [])]);
@@ -193,7 +213,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
     service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
       clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
-    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}) }) : undefined;
+    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}),
+    ...(options.fleet.connectorRelease ? { connectorRelease: options.fleet.connectorRelease } : {}) }) : undefined;
   // One service, never two: a supplied instance and a key together are refused
   // rather than silently preferring one, because two instances would each hold
   // their own view of the same installation-wide state.
@@ -343,6 +364,25 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         }
         throw new WebAccessError("invalid_request");
       }
+      if (url.pathname === "/api/v1/local-host-health") {
+        if (request.method !== "POST" || url.search || options.hostProcessId === undefined)
+          throw new WebAccessError("not_found");
+        if (url.origin !== options.origin) throw new WebAccessError("access_denied");
+        sessions.assertLocalRequest(request, true);
+        if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
+          || !request.body) throw new WebAccessError("invalid_request");
+        const body = await readBoundedJson(request.body, 256);
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.getPrototypeOf(body) !== Object.prototype
+          || Object.keys(body).length !== 1 || typeof (body as { nonce?: unknown }).nonce !== "string"
+          || !/^[A-Za-z0-9_-]{43}$/u.test((body as { nonce: string }).nonce))
+          throw new WebAccessError("invalid_request");
+        const nonce = (body as { nonce: string }).nonce, pid = options.hostProcessId,
+          releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!;
+        const tag = hmacSha256Tag(options.healthProbeKey!,
+          { purpose: "local-host-health/v1", nonce, pid, releaseId, startedAt });
+        return Response.json({ schema: "control-room.local-host-health/v1", ready: true, pid, nonce, releaseId, startedAt, tag },
+          { headers: privateResponseHeaders });
+      }
       if (url.pathname === "/api/v1/local-workers") {
         if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");
         sessions.verify(request, clock());
@@ -366,7 +406,15 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             message: "This browser can subscribe to phone notifications." }, { headers: privateResponseHeaders });
         }
         if (request.method === "POST" && !url.search && request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() === "application/json") {
-          const subscription = parseWebPushSubscriptionV1(await request.json());
+          // A malformed or off-list subscription is the CALLER's problem, so it
+          // is reported as a 400 rather than as the 503 a bare Error maps to. The
+          // endpoint allow list is enforced here, at the earliest point, so this
+          // is the status an owner sees when their browser hands us an endpoint
+          // on a host that is not a push service -- "the service is down" would
+          // send them looking in entirely the wrong place.
+          let subscription;
+          try { subscription = parseWebPushSubscriptionV1(await request.json()); }
+          catch { throw new WebAccessError("invalid_request"); }
           await ownerPush.store.subscribe({ id: "", tenantId: profile.tenantId, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh,
             auth: subscription.keys.auth, expiresAt: subscription.expirationTime === null ? null : new Date(subscription.expirationTime).toISOString() });
           return new Response(null, { status: 204, headers: privateResponseHeaders });

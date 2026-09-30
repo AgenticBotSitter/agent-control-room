@@ -54,7 +54,62 @@ import { deliverOwnerPushV1 } from "./delivery";
  * happened before, the ledger holds a 'failed' row, which is re-sendable, and
  * the retry is the first attempt that could actually land. Both cases converge
  * on exactly one visible notification.
+ *
+ * ## An item with nobody to send it to
+ *
+ * The interesting case is a tenant with NO subscribed browser, which is the
+ * DEFAULT state of a fresh install and a state the owner can return to from
+ * Settings at any time.
+ *
+ * Such an item is not retried and does not burn its attempt budget. The
+ * dispatcher asks whether there is anybody to send to BEFORE it claims
+ * anything, and when the answer is no it moves each due item's
+ * `next_attempt_at` out by a bounded re-check and leaves `attempt_count` at
+ * whatever it was. Nothing is reserved, no send is attempted, and no counter
+ * moves -- so when the owner finally subscribes, the very next tick that finds
+ * the item due delivers it.
+ *
+ * An earlier version claimed first and released afterwards, calling the release
+ * a "refund" of the attempt. It was not a refund: 0225's guard correctly refuses
+ * any UPDATE that decrements `attempt_count`, the release's own UPDATE never
+ * touched the column, and `next_attempt_at` was set to now so the item was
+ * re-claimed on the next tick. Eight such ticks at the production 30s interval
+ * spent the whole budget in about four minutes and left the item at 'pending',
+ * attempt_count=8, permanently unclaimable and never delivered -- a stuck state
+ * that is neither a retry nor a failure, and that nothing in the product
+ * revives. Asking first removes the question rather than papering over it.
+ *
+ * An item whose subscription vanishes MID-BATCH still spends its attempt, which
+ * is honest and is the direction the guard is right to enforce. It cannot
+ * starve, because the attempt bound in #settle turns it into a visible,
+ * terminal 'failed' rather than a row nothing can claim again.
  */
+
+/**
+ * How long an item with nobody to send it to is re-checked.
+ *
+ * This is NOT the send backoff schedule, and deliberately not zero.
+ *
+ * The schedule in BACKOFF_SECONDS_V1 is for an item that has a phone and the
+ * push service is refusing. An item with NO subscribed browser is in a
+ * different state: nobody has to do anything wrong for it to stay that way,
+ * and the owner may subscribe minutes or days from now. A short, bounded
+ * re-check is right because it costs one indexed SELECT per tick, and a long
+ * one is wrong because the moment the owner subscribes the item should be
+ * offered, not left waiting out a four-hour step.
+ *
+ * An earlier version of this path released the head with `next_attempt_at=now`,
+ * which meant it was re-claimed on literally the next tick. Eight ticks at the
+ * 30s production interval burned the whole attempt budget in about four
+ * minutes -- and because 0225's guard refuses to decrement attempt_count, the
+ * increments stuck. The item then sat at 'pending', attempt_count=8, with
+ * nothing claimable and no path to a terminal state: not a retry, not a
+ * failure, and never delivered even after the owner subscribed. That is a
+ * third, undocumented stuck state, and it is the one the most likely
+ * population hits -- a fresh install has no subscriptions until Settings is
+ * opened.
+ */
+const NO_SUBSCRIPTION_RECHECK_MS_V1 = 5 * 60_000;
 
 /** Attempts per item, ever. Mirrors the CHECK on attempt_count. */
 export const OWNER_PUSH_ATTEMPT_LIMIT_V1 = 8;
@@ -205,6 +260,24 @@ export class OwnerPushDispatcherV1 {
     await this.adoptOpenAttention(limit);
     await this.recoverStaleReservations();
     const at = safeNow(this.#clock());
+    // Is there anybody to send to?
+    //
+    // This is asked BEFORE anything is claimed, and that ordering is the whole
+    // fix for the no-subscription starvation. The attempt is spent by the
+    // CLAIM (`attempt_count=attempt_count+1`), and the claim is committed
+    // before the send. So once an item is claimed, an attempt is spent whatever
+    // the send then finds out -- and 0225's guard correctly refuses to decrement
+    // it, because a decrement is indistinguishable from a caller rewinding a
+    // delivered head. There is no way to learn "no subscription" without first
+    // spending an attempt, unless the question is asked FIRST.
+    //
+    // Asking first is cheap: one read, no lock, and on a tenant with no
+    // subscriptions it replaces the entire claim-then-fail cycle.
+    //
+    // The one thing this must not become is a snapshot the whole batch trusts:
+    // `deliverOwnerPushV1` lists again per item, so a subscription that
+    // disappears mid-batch is caught by the send path, not skipped here.
+    if ((await this.input.store.list(this.input.tenantId)).length === 0) return await this.#deferUntilSubscribed(at);
     // The claim SELECTs and RESERVES in ONE transaction, and it is BOTH the lock
     // and the compare-and-set that make the claim exclusive.
     //
@@ -315,13 +388,22 @@ export class OwnerPushDispatcherV1 {
       // dedupe ledger is the evidence, so this is delivered, not a retry.
       return this.#settle(id, "delivered", spent, now, null);
     if (!sendFailure) {
-      // No subscription, or a channel that reported success while delivering
-      // nothing. Either way there is nothing to retry and no reason to spend the
-      // bounded attempts on a phone that was never going to be handed this item:
-      // the owner still has it on /needs-me. The attempt is REFUNDED here, which
-      // is the one place it is, and it is safe precisely because the 0174 ledger
-      // -- not this counter -- is what stops a duplicate visible notification.
-      return this.#release(id, "no_subscription", attempt - 1, now, "owner_push_no_subscription");
+      // No subscription left by the time this item was sent to. The pre-claim
+      // check catches the common case, so reaching here means the owner's only
+      // subscription was removed (or pruned as expired) DURING this batch --
+      // between the gate above and this send. There is still nothing to retry
+      // and no reason to spend the bounded attempts on a phone that was never
+      // going to be handed this item: the owner still has it on /needs-me.
+      //
+      // The attempt is NOT refunded. It was genuinely spent by the claim, and
+      // 0225's guard is right to refuse a decrement: a decrement is
+      // indistinguishable from a caller rewinding a delivered head, and the
+      // guard has no way to tell this honest release from that attack. So the
+      // honest record is "we claimed, sent to nobody, and it cost us one try",
+      // and what protects the item from the old starvation is the bound below
+      // -- a head at the limit becomes 'failed', which is a visible, terminal,
+      // explainable state rather than a row nothing can ever claim again.
+      return this.#settle(id, "deferred", spent, backoffUntil, "owner_push_no_subscription");
     }
     // 404/410: the push service reports the browser subscription is gone, and
     // `deliverOwnerPushV1` has already removed it. Retrying would reach nothing,
@@ -337,7 +419,7 @@ export class OwnerPushDispatcherV1 {
    * becomes 'failed' rather than 'pending', so a permanently broken push service
    * costs exactly ATTEMPT_LIMIT sends and then stops.
    */
-  async #settle(id: string, disposition: "delivered" | "retry" | "failed", spent: number,
+  async #settle(id: string, disposition: "delivered" | "retry" | "deferred" | "failed", spent: number,
     when: string, safeReasonCode: string | null): Promise<OwnerPushDispatchOutcomeV1> {
     const terminal = disposition === "delivered" || disposition === "failed" || spent >= OWNER_PUSH_ATTEMPT_LIMIT_V1;
     const state = terminal ? (disposition === "delivered" ? "delivered" : "failed") : "pending";
@@ -348,6 +430,16 @@ export class OwnerPushDispatcherV1 {
     // retry that will never come. A head that stopped for a specific reason
     // (a removed subscription) keeps that reason, because it is the actionable
     // one.
+    //
+    // 'deferred' is a RETRY, not a distinct terminal state, and it is the one
+    // case where the bound reaching the limit is the only thing that can stop
+    // it: nobody was subscribed, so nothing about the item is permanently
+    // undeliverable and an item that reached the bound with nobody to send it
+    // is reported as exhausted exactly as a dead endpoint would be. The
+    // difference is that this one cannot be reached at all through the
+    // pre-claim gate -- only through a subscription that vanished mid-batch --
+    // and the pre-claim gate is what makes a fresh install heal the moment the
+    // owner subscribes.
     const exhausted = state === "failed" && disposition !== "failed";
     const reason = state === "failed" ? (exhausted ? "owner_push_attempts_exhausted" : safeReasonCode) : safeReasonCode;
     // Every parameter carries an explicit cast. A bare NULL placeholder carries
@@ -375,21 +467,50 @@ export class OwnerPushDispatcherV1 {
   }
 
   /**
-   * Return a reserved head to the sendable state WITHOUT spending an attempt.
+   * Push a 'pending' item's next attempt out, WITHOUT claiming it.
    *
-   * Only reachable when there was no subscription to hand the item to, so there
-   * is no send to have made. 0225's guard admits this: it refuses a DECREMENT of
-   * attempt_count, so the count is left exactly as it was rather than subtracted
-   * -- the honest record is "we reserved, found nobody, put it back", not "we
-   * never looked".
+   * This is the path an item takes on a tenant with no subscribed browser, and
+   * it is deliberately the ONLY path that reaches 'no_subscription' in normal
+   * operation. Two properties make it correct, and both come from what this
+   * statement does not do:
+   *
+   * 1. It never touches `attempt_count`. The claim is what spends an attempt, and
+   *    this runs before the claim. 0225's guard refuses any decrement, and this
+   *    statement never asks for one -- so there is no refund to be blocked and no
+   *    way for an item to burn its budget while nobody is listening. An item
+   *    waiting here sits at `attempt_count=0` and stays there, which is the
+   *    honest record: nothing was ever sent, and no send was ever tried.
+   * 2. It only moves 'pending' rows. It writes neither `state` nor `reserved_at`
+   *    nor `last_attempt_at`, so it cannot race a live send: a row another
+   *    dispatcher has already reserved is invisible to it, and a row this
+   *    defers is one no live send holds.
+   *
+   * `next_attempt_at` moves out by a bounded re-check rather than being left at
+   * `now`. Leaving it at `now` is what made the old bug: the row was re-claimed
+   * on the very next tick, so eight ticks at the production 30s interval burned
+   * the entire budget in about four minutes.
+   *
+   * 0225's guard admits this statement: it changes no counter, no identity, no
+   * link, and no terminal state, and its new next_attempt_at is within the
+   * guard's own one-day horizon. That horizon is why the re-check is 5 minutes
+   * and not 4 hours -- both are well inside it, but 5 minutes is what makes the
+   * item reach the owner's phone promptly after they subscribe.
    */
-  async #release(id: string, result: "no_subscription", spent: number, when: string,
-    safeReasonCode: string): Promise<OwnerPushDispatchOutcomeV1> {
-    await this.input.db.query(`UPDATE control_owner_push_attempt_heads
-      SET state='pending',reserved_at=NULL,next_attempt_at=$3,last_attempt_at=NULL,
-        safe_reason_code=$4,updated_at=$3
-      WHERE tenant_id=$1 AND action_inbox_id=$2 AND state='reserved'`,
-    [this.input.tenantId, id, when, safeReasonCode]);
-    return Object.freeze({ actionInboxId: id, result, attempt: spent, nextAttemptAt: when });
+  async #deferUntilSubscribed(now: string): Promise<readonly OwnerPushDispatchOutcomeV1[]> {
+    const recheckAt = new Date(Date.parse(now) + NO_SUBSCRIPTION_RECHECK_MS_V1).toISOString();
+    const deferred = await this.input.db.query<{ action_inbox_id: string; attempt_count: number | string }>(
+      `UPDATE control_owner_push_attempt_heads
+      SET next_attempt_at=$3,safe_reason_code='owner_push_no_subscription',updated_at=$4
+      WHERE tenant_id=$1 AND state='pending' AND next_attempt_at<=$2
+      RETURNING action_inbox_id,attempt_count`, [this.input.tenantId, now, recheckAt, now]);
+    return Object.freeze(deferred.rows.map(row => Object.freeze({
+      actionInboxId: row.action_inbox_id, result: "no_subscription" as const,
+      // The attempt count is reported as it is in the ROW, not decremented for
+      // presentation. An earlier version returned `attempt - 1` here, which was
+      // cosmetic and made the outcome claim an attempt had been refunded when no
+      // column said so. The returned number is now always what the database
+      // holds, so it cannot be a fiction.
+      attempt: Number(row.attempt_count), nextAttemptAt: recheckAt,
+    })));
   }
 }
