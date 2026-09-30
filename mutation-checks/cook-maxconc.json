@@ -1,7 +1,7 @@
 [
   {
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
-    "find": "  PERFORM pg_catalog.pg_advisory_xact_lock(\n    pg_catalog.hashtextextended(json_build_array(NEW.tenant_id, NEW.worker_id)::text, 0));",
+    "find": "  PERFORM pg_catalog.pg_advisory_xact_lock(\n    pg_catalog.hashtextextended(json_build_array('fleet_worker_capacity', NEW.tenant_id, NEW.worker_id)::text, 0));",
     "replace": "  -- MUTATED: the serialising lock is gone",
     "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
     "why": "a worker's live-claim ceiling is serialised in the database, so three unlocked racing claimers cannot all read the same count and all win"
@@ -21,10 +21,52 @@
     "why": "the ceiling is exactly maxConcurrent, not one above it"
   },
   {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "  IF pg_catalog.current_setting('transaction_isolation')='repeatable read' THEN\n    RAISE EXCEPTION 'fleet claim capacity cannot be enforced in a repeatable read transaction'\n      USING ERRCODE='0A000';\n  END IF;",
+    "replace": "  -- MUTATED: the repeatable read refusal is gone",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "why": "an advisory lock cannot serialise a REPEATABLE READ caller's COUNT, because its snapshot predates the wait for the lock, so the ceiling only holds if the mode itself is refused"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "    pg_catalog.hashtextextended(json_build_array('fleet_worker_capacity', NEW.tenant_id, NEW.worker_id)::text, 0));",
+    "replace": "    pg_catalog.hashtextextended(json_build_array(NEW.tenant_id, NEW.worker_id)::text, 0));",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "why": "the advisory key is namespaced by a literal tag, so a fleet worker id cannot collide with 0100's project-scope lock keyspace and serialise against it"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "CREATE TRIGGER fleet_claims_zz_capacity_guard",
+    "replace": "CREATE TRIGGER fleet_claims_capacity_guard",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "why": "BEFORE triggers fire in NAME order, so the zz_ prefix is what puts the capacity guard after 0140's guard: an inadmissible claim is refused before it takes a lock"
+  },
+  {
     "file": "src/fleet/v1/database-failure.ts",
-    "find": "  \"54000\", \"P0001\", \"23505\", \"23503\", \"23P01\", \"23514\",",
-    "replace": "  \"P0001\", \"23505\", \"23503\", \"23P01\", \"23514\",",
+    "find": "const CLAIM_INSERT_REFUSALS: ReadonlySet<string> = new Set([\"54000\", \"P0001\", \"23505\", \"23503\"]);",
+    "replace": "const CLAIM_INSERT_REFUSALS: ReadonlySet<string> = new Set([\"P0001\", \"23505\", \"23503\"]);",
     "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
     "why": "0234's capacity refusal reaches the worker as a conflict, so the connector moves to the next offer instead of abandoning its pass"
+  },
+  {
+    "file": "src/fleet/v1/database-failure.ts",
+    "find": "const LEASE_SCOPE_REFUSALS: ReadonlySet<string> = new Set([\"23P01\", \"23514\"]);",
+    "replace": "const LEASE_SCOPE_REFUSALS: ReadonlySet<string> = new Set([\"23P01\", \"23514\", \"54000\", \"P0001\"]);",
+    "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
+    "why": "the two inserts have SEPARATE refusal sets: a 23514 on the CLAIM row is a caller bug that must be reported, and a claim-path code on the SCOPE insert is a fault that must not be absorbed as a conflict"
+  },
+  {
+    "file": "src/fleet/v1/database-failure.ts",
+    "find": "  return typeof value === \"string\" && /^[0-9A-Z]{5}$/u.test(value) && !/^E/u.test(value);",
+    "replace": "  return typeof value === \"string\" && /^[0-9A-Z]{5}$/u.test(value);",
+    "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
+    "why": "a POSIX errno like EPIPE is five uppercase letters on the same field, and no SQLSTATE begins with E, so the shape alone is not enough to call the value a SQLSTATE"
+  },
+  {
+    "file": "src/fleet/v1/database-failure.ts",
+    "find": "  for (const field of [\"sqlState\", \"code\"]) {",
+    "replace": "  for (const field of [\"code\"]) {",
+    "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
+    "why": "the private pool carries the SQLSTATE on sqlState and sets code to the class of failure, so reading only code matches no guarded refusal at all"
   }
 ]

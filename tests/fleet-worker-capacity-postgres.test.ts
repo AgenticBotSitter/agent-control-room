@@ -24,6 +24,7 @@ import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type R
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+import { DOMAIN_CONTRACT_VERSION } from "../src/domain/v1/types";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1 } from "../src/fleet/v1";
 import { createFleetGatewayStoreFromConfigurationV1 } from "../scripts/run-fleet-gateway";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
@@ -300,6 +301,214 @@ test("a fleet worker never holds more live claims than its maxConcurrent, under 
             .rows[0]!.node_id;
           for (const worker of workerIds) await releaseWorkerClaims(worker);
           assert.equal(await liveCounts(subject), 0, "the racing worker starts with nothing live");
+
+// THE ISOLATION LEVEL. Every race above is READ COMMITTED, which is
+          // what the gateway pool opens.
+          //
+          // This is the shape an advisory lock alone does not cover. An RR
+          // transaction's snapshot is fixed at its FIRST statement, and the
+          // first statement of a claim is BEGIN -- before the caller ever waits
+          // on the worker lock. So the serialised count below still reads the
+          // world as it was before the peer that committed while this caller was
+          // queued: every RR caller sees the same stale count, and the ceiling
+          // is not a ceiling. Measured before the guard was added, three RR
+          // connections at a ceiling of 2 inserted all three.
+          //
+          // This block sits HERE, immediately after the unlocked race, because
+          // both races need a worker holding NOTHING, so that "the ceiling
+          // holds" means the ceiling rather than a worker that was already at
+          // it. The release path above freed both claims. After the expiry
+          // block below it could not: that lease's expiry was aged by hand.
+          for (const worker of workerIds) await releaseWorkerClaims(worker);
+          assert.equal(await liveCounts(subject), 0, "the isolation races start with nothing live");
+
+          /**
+           * Seeds three fresh jobs on the three race projects, each with its own
+           * open offer, and returns what one racer needs to insert a claim for
+           * it. `seedProposedTask` derives the job id from the NAME, so the
+           * prefix is what makes these jobs distinct from the ones the race above
+           * used. The enrollment grid allows 20 projects per worker and this
+           * file spends all of them, so the race projects are reused rather than
+           * more added.
+           */
+          const seedIsolationOffers = async (prefix: string) => {
+            const seeded = [];
+            for (const [index, project] of RACE_PROJECTS.entries()) {
+              const task = await seedProposedTask(seeding, project, `${prefix}-${index}-${subject.slice(-4)}`);
+              const offer = await owner.offerTask(ownerIdentity(), { projectId: project, jobId: task.jobId,
+                capability: "writing" });
+              await makeJobClaimable(task.jobId, subject, subjectNode,
+                `attempt:${prefix}-seed-${index}-${subject.slice(-6)}`);
+              const attemptId = `attempt:${prefix}-${index}-${subject.slice(-6)}`;
+              seeded.push({ workerId: subject, nodeId: subjectNode, projectId: project, jobId: task.jobId,
+                offerId: offer.offerId, attemptId, leaseId: attemptId.replace("attempt:", "lease:") });
+            }
+            assert.equal(new Set(seeded.map(entry => entry.projectId)).size, 3,
+              "the three racers hold three distinct projects, so 0100 is not what refuses the third");
+            return seeded;
+          };
+
+          /**
+           * The canonical attempt and lease a claim row names, written in the
+           * SAME transaction as that claim. 0140's gateway guard admits
+           * them precisely because the guarded claim row already names them,
+           * and its deferred lease-consistency constraint is checked at
+           * COMMIT -- so a transaction that commits the claim without
+           * these two is refused at commit with P0001, which is not a
+           * capacity answer and would make a race here prove nothing.
+           *
+           * Attempt number and lease epoch are read per job rather than
+           * invented, because both are per-job sequences and the schema
+           * holds them unique.
+           */
+          const writeCanonicalAttemptAndLease = async (client: Client,
+            offer: { workerId: string; nodeId: string; jobId: string; attemptId: string; leaseId: string }) => {
+            const numbers = (await client.query<{ attempt_number: string; epoch: string }>(`SELECT
+              (SELECT COALESCE(max(attempt_number)+1,1) FROM control_attempts WHERE job_id=$1) AS attempt_number,
+              (SELECT COALESCE(max(epoch)+1,1) FROM control_leases WHERE job_id=$1) AS epoch`,
+            [offer.jobId])).rows[0]!;
+            const stamp = new Date().toISOString();
+            const expires = new Date(Date.now() + 3_600_000).toISOString();
+            const attemptNumber = Number(numbers.attempt_number), epoch = Number(numbers.epoch);
+            await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,
+              worker_id,node_id,lease_epoch,payload,created_at,updated_at)
+              VALUES($1,$2,$3,$4,'leased',0,$5,$6,$7,$8::jsonb,now(),now())`, [offer.attemptId, FLEET_TENANT,
+            offer.jobId, attemptNumber, offer.workerId, offer.nodeId, epoch,
+            JSON.stringify({ contractVersion: DOMAIN_CONTRACT_VERSION, kind: "attempt", id: offer.attemptId,
+              tenantId: FLEET_TENANT, jobId: offer.jobId, attemptNumber, state: "leased", version: 0,
+              workerId: offer.workerId, nodeId: offer.nodeId, leaseEpoch: epoch, offeredAt: stamp,
+              createdAt: stamp, updatedAt: stamp })]);
+            await client.query(`INSERT INTO control_leases(id,tenant_id,job_id,attempt_id,node_id,epoch,state,
+              version,acquired_at,expires_at,payload,created_at,updated_at)
+              VALUES($1,$2,$3,$4,$5,$6,'active',0,$7::timestamptz,$8::timestamptz,$9::jsonb,now(),now())`,
+            [offer.leaseId, FLEET_TENANT, offer.jobId, offer.attemptId, offer.nodeId, epoch, stamp, expires,
+              JSON.stringify({ contractVersion: DOMAIN_CONTRACT_VERSION, kind: "lease", id: offer.leaseId,
+                tenantId: FLEET_TENANT, jobId: offer.jobId, attemptId: offer.attemptId, nodeId: offer.nodeId,
+                epoch, state: "active", version: 0, acquiredAt: stamp, expiresAt: expires,
+                createdAt: stamp, updatedAt: stamp })]);
+          };
+
+          /**
+           * One claim insert in an already-open transaction, at the isolation
+           * level the caller chose. Order is the real claim path's order: the
+           * claim row FIRST, because 0140's guard only permits an attempt or
+           * lease a guarded claim already names. These blocks stop at the CLAIM
+           * decision, because that is the question 0234 answers and a refused
+           * claim never reaches the attempt and lease.
+           *
+           * `commit` is a parameter rather than always committing, because an RR
+           * claim that is refused leaves its transaction aborted and the caller
+           * has nothing left to commit, while the SERIALIZABLE race has to
+           * COMMIT for SSI to be given the chance to abort a loser.
+           */
+          const insertClaim = async (client: Client, offer: { offerId: string; projectId: string; jobId: string;
+            attemptId: string; leaseId: string }, claimSeed: string, keySeed: string, commit: boolean) => {
+            try {
+              await client.query(`INSERT INTO fleet_claims(tenant_id,claim_id,offer_id,worker_id,node_id,project_id,
+                job_id,attempt_id,lease_id,idempotency_key,claimed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())`,
+              [FLEET_TENANT, `fleet-claim:${claimSeed.padStart(32, "0")}`, offer.offerId, subject, subjectNode,
+                offer.projectId, offer.jobId, offer.attemptId, offer.leaseId, keySeed]);
+              if (commit) await client.query("COMMIT");
+              return "won";
+            } catch (error) {
+              await client.query("ROLLBACK").catch(() => {});
+              return `refused:${sqlState(error)}:${(error as Error).message.slice(0, 90)}`;
+            }
+          };
+
+          // REPEATABLE READ: every transaction takes its snapshot BEFORE any
+          // peer commits, which is the whole condition -- without that there is
+          // no stale count to be stale about.
+          const rrOffers = await seedIsolationOffers("iso-rr");
+          const rrClients = await Promise.all(rrOffers.map(() => as(postgres, "fleet")));
+          try {
+            await Promise.all(rrClients.map(client => client.query("BEGIN ISOLATION LEVEL REPEATABLE READ")));
+            await Promise.all(rrClients.map(client => client.query(
+              "SELECT count(*) FROM fleet_claims WHERE tenant_id=$1 AND worker_id=$2", [FLEET_TENANT, subject])));
+            const results = await Promise.all(rrClients.map((client, index) =>
+              insertClaim(client, rrOffers[index]!, (index + 1).toString(16).padStart(32, "b"),
+                `iso-rr-key-${index}`, false)));
+            // Nobody won -- not "one won". The guard refuses the MODE, so the
+            // answer is the same for the first caller and the last, and no RR
+            // claim is admitted however many are queued. Asserting "two of three
+            // won" would be the weaker claim: it would also pass on a guard that
+            // merely serialised them, which is the bug.
+            assert.equal(results.filter(value => value === "won").length, 0,
+              `no REPEATABLE READ claim may be admitted (${results.join(", ")})`);
+            // Each is told why, in a code the claim path does NOT map to
+            // conflict -- tests/fleet-claim-refusal-mapping.test.ts pins the
+            // application half of that.
+            for (const result of results)
+              assert.ok(result.includes("refused:0A000:"),
+                `an RR claim was refused on something other than 0A000 (${result})`);
+            assert.equal(await liveCounts(subject), 0, "no RR claim was committed");
+          } finally { await Promise.all(rrClients.map(client => client.end().catch(() => {}))); }
+
+          // SERIALIZABLE stays ALLOWED, deliberately: SSI is its own safety
+          // property and it holds the ceiling on its own. The refusal names
+          // REPEATABLE READ only, so this is the assertion that 0234 did not
+          // over-refuse into refusing a mode that was already safe.
+          for (const worker of workerIds) await releaseWorkerClaims(worker);
+          assert.equal(await liveCounts(subject), 0, "the SERIALIZABLE race starts with nothing live");
+          const ssiOffers = await seedIsolationOffers("iso-ssi");
+          const ssiClients = await Promise.all(ssiOffers.map(() => as(postgres, "fleet")));
+          try {
+            const results = await Promise.all(ssiClients.map((client, index) => (async () => {
+              try {
+                await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+                await client.query("SELECT count(*) FROM fleet_claims WHERE tenant_id=$1 AND worker_id=$2",
+                  [FLEET_TENANT, subject]);
+                // The claim row alone is not a whole claim: 0140's DEFERRED
+                // lease-consistency constraint is checked at COMMIT, so a
+                // transaction that commits a claim row without the attempt and
+                // lease it names is refused there with P0001 -- before SSI is
+                // given any chance to abort a loser, which is what would make
+                // this block prove nothing. So this race commits the same
+                // three rows the real claim path commits, in the real order.
+                const outcome = await insertClaim(client, ssiOffers[index]!,
+                  (index + 1).toString(16).padStart(32, "c"), `iso-ssi-key-${index}`, false);
+                if (outcome !== "won") return outcome;
+                await writeCanonicalAttemptAndLease(client, ssiOffers[index]!);
+                await client.query("COMMIT");
+                return "won";
+              } catch (error) {
+                await client.query("ROLLBACK").catch(() => {});
+                return `refused:${sqlState(error)}`;
+              }
+            })()));
+            // What this block asserts is NOT "two won". Measured here, SSI
+            // aborted TWO of the three with 40001 -- every one of these callers
+            // reads the same snapshot, so each one is in a read/write dependency
+            // with the other two, and the cycle means none of the three can be
+            // the second to commit. That is a stronger answer than the ceiling
+            // needs and it is SSI's own, not 0234's.
+            //
+            // So the claims that matter are: the mode is NOT refused (no 0A000,
+            // which is what 0234 would raise if it over-refused), and the
+            // ceiling held -- whatever committed is at or below it, because
+            // anything more would be a claim the guard admitted past the limit.
+            for (const result of results)
+              assert.ok(!result.includes("0A000"), `SERIALIZABLE is not refused by 0234 (${result})`);
+            const ssiWon = results.filter(value => value === "won").length;
+            assert.ok(ssiWon <= 2, `SERIALIZABLE admitted ${ssiWon} claims against a ceiling of 2 (${results.join(", ")})`);
+            assert.ok(ssiWon >= 1, `SERIALIZABLE refused every claim, which is a blanket refusal (${results.join(", ")})`);
+            assert.equal(await liveCounts(subject), ssiWon,
+              "every claim SERIALIZABLE committed is a live one, and no more");
+            // These commits are REAL, so the worker is now holding capacity the
+            // unlocked race below would inherit and be refused against -- its
+            // two winners would become one. They are freed through SQL rather
+            // than through `releaseWorkerClaims`, which drives the store's own
+            // canonical transitions and so cannot be used on rows written here:
+            // the job was never moved to `running`, and the release path
+            // requires that it was. Expiring the lease is the same way the
+            // expiry block below frees a slot, and it leaves the evidence.
+            await admin.query(`UPDATE control_leases SET state='expired',
+              payload=jsonb_set(payload,'{state}','"expired"'::jsonb),updated_at=now()
+              WHERE tenant_id=$1 AND job_id = ANY($2) AND state='active'`,
+            [FLEET_TENANT, ssiOffers.map(offer => offer.jobId)]);
+            assert.equal(await liveCounts(subject), 0,
+              "the SERIALIZABLE winners no longer occupy capacity for the unlocked race below");
+          } finally { await Promise.all(ssiClients.map(client => client.end().catch(() => {}))); }
           for (const [index, project] of RACE_PROJECTS.entries()) {
             const task = await seedProposedTask(seeding, project, `unlocked-${index}-${subject.slice(-4)}`);
             const offer = await owner.offerTask(ownerIdentity(), { projectId: project, jobId: task.jobId,
@@ -334,33 +543,7 @@ test("a fleet worker never holds more live claims than its maxConcurrent, under 
                 [FLEET_TENANT, `fleet-claim:${(index + 1).toString(16).padStart(32, "a")}`, offer.offerId,
                   offer.workerId, offer.nodeId, offer.projectId, offer.jobId, offer.attemptId, offer.leaseId,
                   `unlocked-key-${index}`]);
-                // The canonical attempt and lease this claim names, in the SAME
-                // transaction. 0140's gateway guard permits them BECAUSE the
-                // guarded claim row above already names them, and its deferred
-                // lease-consistency constraint is satisfied at commit.
-                const numbers = (await client.query<{ attempt_number: string; epoch: string }>(`SELECT
-                  (SELECT COALESCE(max(attempt_number)+1,1) FROM control_attempts WHERE job_id=$1) AS attempt_number,
-                  (SELECT COALESCE(max(epoch)+1,1) FROM control_leases WHERE job_id=$1) AS epoch`,
-                [offer.jobId])).rows[0]!;
-                const stamp = new Date().toISOString();
-                const expires = new Date(Date.now() + 3_600_000).toISOString();
-                const attemptNumber = Number(numbers.attempt_number), epoch = Number(numbers.epoch);
-                await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,
-                  worker_id,node_id,lease_epoch,payload,created_at,updated_at)
-                  VALUES($1,$2,$3,$4,'leased',0,$5,$6,$7,$8::jsonb,now(),now())`, [offer.attemptId, FLEET_TENANT,
-                  offer.jobId, attemptNumber, offer.workerId, offer.nodeId, epoch,
-                  JSON.stringify({ contractVersion: "control-room/domain/v1", kind: "attempt", id: offer.attemptId,
-                    tenantId: FLEET_TENANT, jobId: offer.jobId, attemptNumber, state: "leased", version: 0,
-                    workerId: offer.workerId, nodeId: offer.nodeId, leaseEpoch: epoch, offeredAt: stamp,
-                    createdAt: stamp, updatedAt: stamp })]);
-                await client.query(`INSERT INTO control_leases(id,tenant_id,job_id,attempt_id,node_id,epoch,state,
-                  version,acquired_at,expires_at,payload,created_at,updated_at)
-                  VALUES($1,$2,$3,$4,$5,$6,'active',0,$7::timestamptz,$8::timestamptz,$9::jsonb,now(),now())`,
-                [offer.leaseId, FLEET_TENANT, offer.jobId, offer.attemptId, offer.nodeId, epoch, stamp, expires,
-                  JSON.stringify({ contractVersion: "control-room/domain/v1", kind: "lease", id: offer.leaseId,
-                    tenantId: FLEET_TENANT, jobId: offer.jobId, attemptId: offer.attemptId, nodeId: offer.nodeId,
-                    epoch, state: "active", version: 0, acquiredAt: stamp, expiresAt: expires,
-                    createdAt: stamp, updatedAt: stamp })]);
+                await writeCanonicalAttemptAndLease(client, offer);
                 await client.query("COMMIT");
                 return "won";
               } catch (error) {
@@ -439,7 +622,7 @@ test("a fleet worker never holds more live claims than its maxConcurrent, under 
               worker_id,node_id,lease_epoch,payload,created_at,updated_at)
               VALUES($1,$2,$3,$4,'leased',0,$5,$6,$7,$8::jsonb,now(),now())`, [spareAttempt, FLEET_TENANT,
               spare.jobId, spareNumber, subject, subjectNode, spareEpoch,
-              JSON.stringify({ contractVersion: "control-room/domain/v1", kind: "attempt", id: spareAttempt,
+              JSON.stringify({ contractVersion: DOMAIN_CONTRACT_VERSION, kind: "attempt", id: spareAttempt,
                 tenantId: FLEET_TENANT, jobId: spare.jobId, attemptNumber: spareNumber, state: "leased",
                 version: 0, workerId: subject, nodeId: subjectNode, leaseEpoch: spareEpoch, offeredAt: spareStamp,
                 createdAt: spareStamp, updatedAt: spareStamp })]);
@@ -447,7 +630,7 @@ test("a fleet worker never holds more live claims than its maxConcurrent, under 
               version,acquired_at,expires_at,payload,created_at,updated_at)
               VALUES($1,$2,$3,$4,$5,$6,'active',0,$7::timestamptz,$8::timestamptz,$9::jsonb,now(),now())`,
             [spareLease, FLEET_TENANT, spare.jobId, spareAttempt, subjectNode, spareEpoch, spareStamp, spareExpiry,
-              JSON.stringify({ contractVersion: "control-room/domain/v1", kind: "lease", id: spareLease,
+              JSON.stringify({ contractVersion: DOMAIN_CONTRACT_VERSION, kind: "lease", id: spareLease,
                 tenantId: FLEET_TENANT, jobId: spare.jobId, attemptId: spareAttempt, nodeId: subjectNode,
                 epoch: spareEpoch, state: "active", version: 0, acquiredAt: spareStamp, expiresAt: spareExpiry,
                 createdAt: spareStamp, updatedAt: spareStamp })]);
