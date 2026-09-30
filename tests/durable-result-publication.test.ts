@@ -4,9 +4,9 @@ import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { publishDurableResultV1, readDurableResultV1, reconcileDurableResultReservationCrashV1,
-  type DurableResultBindingV1 } from "../src/artifacts/v1/durable-result-publication";
-import { durableReceiptFromCodexV1, durableReceiptFromNativeV1 } from "../src/artifacts/v1/durable-result-receipt";
+import { durableResultReservationSchemaV1, publishDurableResultV1, readDurableResultV1,
+  reconcileDurableResultReservationCrashV1, type DurableResultBindingV1, type DurableResultReservationV1 } from "../src/artifacts/v1/durable-result-publication";
+import { durableResultArtifactIdV1, durableReceiptFromCodexV1, durableReceiptFromNativeV1 } from "../src/artifacts/v1/durable-result-receipt";
 import { publishHermesSessionResultV1,
   type HermesSessionResultOutcomeV1 } from "../src/harness/hermes-gpt-v1/result-publication";
 import { publishHermes021MacosTerminalResultV1, publishCompletedHermes021MacosOutcomeV1,
@@ -21,11 +21,12 @@ import { readDurableResultReviewPlanV1, verifyReviewPlanAgainstReceiptV1 } from 
 import { openPrivateArtifactStorageV1, privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../src/node-executor/artifact-storage";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
-import { sha256Digest } from "../src/security";
+import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { createDurableReservationPostgresPortV1 } from "../src/artifacts/v1/neutral-reservation-postgres";
 import { createInMemoryNeutralReservationPort, createPersistentNeutralReservationPort,
   createPersistentNeutralReservationStore,
   type NeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
+import { createResultWriteReservationMachine, resultBytesVerificationDigestV1 } from "../src/artifacts/v1/result-write-reservation";
 import { binding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { webNativeResultFixture } from "./helpers/web-native-result";
@@ -158,6 +159,47 @@ function configAfterRestart(f: Awaited<ReturnType<typeof setup>>, storage: Contr
   return configOf(f, storage, createPersistentNeutralReservationPort(f.restartStore));
 }
 
+/**
+ * Write a committed reservation exactly as the content-addressed publisher
+ * did before the run-scoped upgrade.  This deliberately uses the production
+ * reservation machine and HMAC primitive; it does not bypass row validation
+ * by planting an unsigned object in the test port.
+ */
+function legacyContentFormReservationWriter() {
+  return createResultWriteReservationMachine<DurableResultReservationV1["identity"]>({
+    reservationSchema: durableResultReservationSchemaV1,
+    materialize: ({ reservationId, identity: value, identityDigest, state, ...fields }) => ({
+      schema: "control-room.durable-result-write-reservation/v1", reservationId, identity: value, identityDigest, state,
+      ...fields, canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
+      grantsStorageWriteAuthority: false, permitsRetry: false, permitsCleanup: false, deletesArtifact: false,
+    }),
+    bytesVerificationDigest: resultBytesVerificationDigestV1,
+    reservationId: identityDigest => `reservation:durable:${identityDigest.slice(7)}`,
+    unavailable: () => { throw new Error("durable_result_publication_unavailable"); },
+    conflict: () => { throw new Error("durable_result_reservation_conflict"); },
+    compareReplayDigests: true,
+  });
+}
+
+function replaceWithCommittedContentFormReservation(f: Awaited<ReturnType<typeof setup>>, runId: string, receivedAt: string) {
+  const row = f.restartReservations.peek(binding.tenantId, runId);
+  assert.ok(row);
+  const current = durableResultReservationSchemaV1.parse(row.reservation);
+  const identity = { ...current.identity, artifactId: durableResultArtifactIdV1(current.identity.contentHash) };
+  const writer = legacyContentFormReservationWriter();
+  const committed = writer.commitMetadata(
+    writer.verifyBytes(writer.buildReserved(identity), bytesOf("legacy-content-form"), () => {}),
+    current.manifestDigest, current.receiptDigest,
+  ) as DurableResultReservationV1;
+  const key = `${binding.tenantId}\n${runId}`;
+  f.restartStore.records.set(key, { ...row, artifact_id: committed.identity.artifactId,
+    identity_digest: committed.identityDigest, state: committed.state, contract_digest: committed.contractDigest,
+    reservation: committed, auth_tag: hmacSha256Tag(f.resultKey,
+      { purpose: "durable-result-write-reservation/v1", reservation: committed }), updated_at: receivedAt });
+  f.restartStore.artifactIndex.delete(`${binding.tenantId}\n${row.artifact_id}`);
+  f.restartStore.artifactIndex.set(`${binding.tenantId}\n${committed.identity.artifactId}`, key);
+}
+
 function thirdPartyBinding(runId: string): DurableResultBindingV1 {
   // A future connector: no snapshot, no publication contract, no
   // thread/turn/item IDs. The publisher contract must accept this without
@@ -167,6 +209,40 @@ function thirdPartyBinding(runId: string): DurableResultBindingV1 {
     harness: "third-party", connectorProfileDigest: digest("c"),
     acceptanceProfileId: "profile:test", acceptanceProfileDigest: digest("p") };
 }
+
+test("a committed pre-upgrade content-form reservation replays once, while another run remains fenced", async t => {
+  const runId = "run:durable-legacy-content-form";
+  const f = await setupWithProvision(runId); t.after(f.close);
+  const storage = new ControlledStorage(), receivedAt = at(9250), bytes = bytesOf("legacy-content-form");
+  const first = await publishDurableResultV1(configOf(f, storage),
+    { binding: nativeBinding(runId), bytes, receivedAt, assertAuthority: () => {} });
+  assert.equal(first.replayed, false);
+  assert.equal(storage.putCalls, 1);
+
+  // Simulate the row produced before the artifact id became run-scoped, then
+  // reconstruct the publisher over the same committed row and storage.
+  replaceWithCommittedContentFormReservation(f, runId, receivedAt);
+  const replay = await publishDurableResultV1(configAfterRestart(f, storage),
+    { binding: nativeBinding(runId), bytes, receivedAt, assertAuthority: () => {} });
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.receipt, first.receipt);
+  assert.equal(storage.putCalls, 1, "replay never puts a second copy");
+
+  const otherRun = "run:durable-legacy-content-form-other";
+  const stored = f.restartReservations.peek(binding.tenantId, runId);
+  assert.ok(stored);
+  // The legacy content form still has its historical uniqueness fence: a
+  // second run cannot reserve the same content-derived artifact id.
+  const previous = durableResultReservationSchemaV1.parse(stored.reservation);
+  const reservation = legacyContentFormReservationWriter().buildReserved({ ...previous.identity,
+    runId: otherRun, jobId: `job:${otherRun}`, attemptId: `attempt:${otherRun}` }) as DurableResultReservationV1;
+  const conflicting = { ...stored, run_id: otherRun, job_id: `job:${otherRun}`, attempt_id: `attempt:${otherRun}`,
+    identity_digest: reservation.identityDigest, state: reservation.state, contract_digest: reservation.contractDigest,
+    reservation, auth_tag: hmacSha256Tag(f.resultKey,
+      { purpose: "durable-result-write-reservation/v1", reservation }) };
+  assert.equal(await f.restartReservations.insertFresh(undefined as never, conflicting), "conflict");
+  assert.equal(storage.putCalls, 1, "the conflicting legacy reservation cannot put bytes");
+});
 
 test("third-party harness: a non-native/non-codex connector can publish with only a connector profile digest", async t => {
   const f = await setupWithProvision("run:durable-third-party", digest("c")); t.after(f.close);

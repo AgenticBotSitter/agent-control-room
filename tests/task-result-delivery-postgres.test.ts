@@ -206,7 +206,7 @@ test("byte-identical results from many runs all publish on real PostgreSQL, and 
   assert.equal(result.value, true);
 });
 
-test("a re-assigned attempt and a re-planned attempt still publish distinct artifacts on real PostgreSQL", needsPg(), async () => {
+test("a re-assigned attempt and two separate jobs still publish distinct artifacts on real PostgreSQL", needsPg(), async () => {
   const result = await withCluster(async postgres => {
     const { f, client, seeder } = await realFixture(postgres);
     try {
@@ -249,8 +249,8 @@ test("a re-assigned attempt and a re-planned attempt still publish distinct arti
       assert.notEqual(superseded.receipt.artifactId, replacement.receipt.artifactId,
         "a different run must not share the replacement attempt's artifact");
 
-      // Two jobs that were re-planned from the same instruction text still get
-      // separate artifacts for identical answers.
+      // Two separate jobs with the same instruction text still get separate
+      // artifacts for identical answers.
       const planRunA = "run:delivery-pg-replan-a", planRunB = "run:delivery-pg-replan-b";
       await f.provisionRuns([planRunA, planRunB]);
       const replanned = await publishDurableResultV1(config,
@@ -258,7 +258,7 @@ test("a re-assigned attempt and a re-planned attempt still publish distinct arti
       const replannedAgain = await publishDurableResultV1(config,
         { binding: makeBinding(planRunB), bytes: shared, receivedAt: at(9301), assertAuthority: () => {} });
       assert.notEqual(replanned.receipt.artifactId, replannedAgain.receipt.artifactId,
-        "a re-plan must not collide with the plan it replaced");
+        "separate jobs must not collide on identical result bytes");
       return true;
     } finally { await f.close(); await client.end().catch(() => {}); await seeder.end().catch(() => {}); }
   });

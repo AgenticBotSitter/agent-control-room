@@ -69,9 +69,9 @@ export const durableResultArtifactIdV1 = (contentHash: string): string => {
  * not lost — it is carried by the receipt's `contentHash` and the manifest's
  * `content_hash` column, both of which the publisher already verifies.
  *
- * Mixing this with content-derived ids in one namespace would let an unrelated
- * run read or overwrite another's bytes, so the two forms must never be
- * confused for one another.
+ * Both forms share an artifact-id namespace. They remain distinct because
+ * their hash inputs differ, and every read/write is still scoped and verified
+ * by the receipt's tenant, project, job, attempt, and run identity.
  */
 export const durableResultRunArtifactIdV1 = (input: Readonly<{ runId: string; contentHash: string }>): string => {
   const runId = localId.parse(input.runId);
