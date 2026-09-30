@@ -148,6 +148,9 @@ test("fixed environment guard strips caller variables and assigns ports and a sh
         assert.match(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE, /^\\d+$/);
         assert.match(process.env.CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE, /^\\d+-\\d+$/);
         assert.match(process.env.TMPDIR, /^\\/tmp\\/acr-tr-/);
+        assert.equal(process.env.HOME, process.env.TMPDIR);
+        assert.equal(process.env.ATTACK_KIT_SOCKET_ROOT, process.env.TMPDIR);
+        assert.match(process.env.CONTROL_ROOM_TEST_RUN_ID, /^[0-9a-f-]{36}$/);
         console.log("ENVIRONMENT_GUARD_OK");
       });
     `,

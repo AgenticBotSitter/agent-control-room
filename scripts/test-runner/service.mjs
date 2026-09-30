@@ -39,10 +39,11 @@ const PROTECTED_HOME_ENTRIES = Object.freeze([
 ]);
 const PROTECTED_HOME_NAME_PREFIXES = Object.freeze(["work/acr-package-"]);
 // The only programs a run may exec besides node and the PostgreSQL binaries.
-// launchctl, open, osascript and ssh are deliberately absent.
+// launchctl, open, osascript and ssh are deliberately absent. /bin/ps is too:
+// it is setuid, and macOS refuses a setuid exec under any Seatbelt profile.
 const EXEC_ALLOWED_LITERALS = Object.freeze([
   "/bin/sh", "/bin/bash", "/bin/dash", "/bin/zsh", "/bin/cat", "/bin/echo", "/bin/kill", "/bin/ls",
-  "/bin/mkdir", "/bin/ps", "/bin/rm", "/bin/sleep", "/usr/bin/env", "/usr/bin/false", "/usr/bin/ipcs",
+  "/bin/mkdir", "/bin/rm", "/bin/sleep", "/usr/bin/env", "/usr/bin/false", "/usr/bin/ipcs",
   "/usr/bin/true", "/usr/bin/uname", "/usr/sbin/lsof",
 ]);
 // Services a child must never reach even though (deny default) already
@@ -628,10 +629,6 @@ function sandboxLiteral(value) {
     throw new Error("sandbox_path_invalid");
   }
   return value;
-}
-
-async function realDirectory(path) {
-  try { return await realpath(path); } catch { return resolve(path); }
 }
 
 /** Resolves as much of `path` as exists, keeping any missing tail as written. */
