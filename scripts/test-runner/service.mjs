@@ -24,16 +24,34 @@ const REQUEST_LIMIT_BYTES = 64 * 1024;
 const TOKEN_BYTES = 32;
 const STOP_GRACE_MS = 500;
 const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
-// tests/support/attack-kit/real-postgres.ts always puts a disposable
-// cluster's Unix socket directly under /tmp as "ak<pid>-attack-kit-pg-…",
-// bypassing TMPDIR, because a socket path under macOS's much longer
-// /var/folders/... tmpdir would exceed the ~103-byte Unix-socket path limit.
-// Our own TMPDIR is already short, but this helper does it unconditionally,
-// so the sandbox must allow this one specific, narrowly-scoped /tmp pattern
-// in addition to the run's own worktree and temp directory.
-// Seatbelt matches the canonical path, and /tmp is a symlink to /private/tmp.
-const ATTACK_KIT_SHORT_SOCKET_PATTERN = "/private/tmp/ak[0-9]+-attack-kit-pg-";
 const CLUSTER_REGISTRY_NAME = "attack-kit-clusters.json";
+const RUN_ID_VARIABLE = "CONTROL_ROOM_TEST_RUN_ID";
+// Reads under these roots are denied by default (the service account's home
+// is added at run time); only the run's own roots are opened back up. Seatbelt
+// matches canonical paths, and /tmp is a symlink to /private/tmp.
+const READ_DENIED_ROOTS = Object.freeze(["/private/tmp", "/private/var/folders", "/Volumes"]);
+// Always unreadable and unwritable, even inside an allowed root: credentials,
+// agent state, the private planning repo, and the live app's install folders.
+const PROTECTED_HOME_ENTRIES = Object.freeze([
+  ".config", ".claude", ".codex", ".pgpass", ".ssh", ".gnupg", ".aws", ".docker", ".kube",
+  ".netrc", ".npmrc", ".git-credentials", ".gitconfig", "Library/Keychains",
+  "work/acr-private",
+]);
+const PROTECTED_HOME_NAME_PREFIXES = Object.freeze(["work/acr-package-"]);
+// The only programs a run may exec besides node and the PostgreSQL binaries.
+// launchctl, open, osascript and ssh are deliberately absent.
+const EXEC_ALLOWED_LITERALS = Object.freeze([
+  "/bin/sh", "/bin/bash", "/bin/dash", "/bin/zsh", "/bin/cat", "/bin/echo", "/bin/kill", "/bin/ls",
+  "/bin/mkdir", "/bin/ps", "/bin/rm", "/bin/sleep", "/usr/bin/env", "/usr/bin/false", "/usr/bin/ipcs",
+  "/usr/bin/true", "/usr/bin/uname", "/usr/sbin/lsof",
+]);
+// Services a child must never reach even though (deny default) already
+// refuses them: launching work through launchd/LaunchServices is how a job
+// would step outside this profile, because launchd spawns it unsandboxed.
+const MACH_SERVICES_DENIED = Object.freeze([
+  "com.apple.coreservices.launchservicesd", "com.apple.lsd.mapdb", "com.apple.lsd.open",
+  "com.apple.coreservices.appleevents", "com.apple.xpc.smd", "com.apple.dnssd.service",
+]);
 
 const ENV_PREFIX = /^PG_BIN="\$\{PG_BIN:-[^"$`\\\n]*\}"\s+/u;
 const FLAG_TOKEN = /^--[a-z][a-z0-9-]*(?:=[A-Za-z0-9_.:,-]+)?$/u;
@@ -161,15 +179,28 @@ export async function readConfiguration(path = DEFAULT_CONFIG_PATH) {
       protectedReadPrefixes.push(await canonicalPrefix(value, `protectedReadPrefixes[${index}]`));
     }
   }
+  const tokenFile = absolutePath(raw.tokenFile, "tokenFile");
+  const auditLog = absolutePath(raw.auditLog, "auditLog");
+  // Fail closed: a protected folder that contains a worktree or /tmp could
+  // only be enforced by also denying the run itself, so refuse it here rather
+  // than let the profile quietly drop the deny (which would make it readable).
+  const tmpReal = await realpath("/tmp");
+  for (const [name, value] of [["tokenFile", dirname(tokenFile)], ["auditLog", dirname(auditLog)],
+    ["configPath", dirname(configPath)], ...protectedReadPrefixes.map((prefix, index) => [`protectedReadPrefixes[${index}]`, prefix])]) {
+    const real = await realpath(value).catch(() => value);
+    const overlapsWorktree = allowedWorktreePrefixes.some(prefix => inside(real, dirname(prefix)) || real.startsWith(prefix));
+    if (overlapsWorktree || inside(real, tmpReal)) throw new Error(`configuration_invalid: ${name} overlaps a sandbox root`);
+  }
   return Object.freeze({
     schema: TEST_RUNNER_SCHEMA,
     configPath,
     port,
-    tokenFile: absolutePath(raw.tokenFile, "tokenFile"),
-    auditLog: absolutePath(raw.auditLog, "auditLog"),
+    tokenFile,
+    auditLog,
     allowedWorktreePrefixes: Object.freeze(allowedWorktreePrefixes),
     protectedReadPrefixes: Object.freeze(protectedReadPrefixes),
     allowedScripts: Object.freeze(allowedScripts),
+    sandboxHome: raw.sandboxHome === undefined ? homedir() : absolutePath(raw.sandboxHome, "sandboxHome"),
     pgBin,
     nodeBin,
     portPool: Object.freeze({ start, end, blockSize }),
@@ -230,11 +261,13 @@ export function authorized(header, token) {
 
 export class PortPool {
   #free;
+  #quarantined;
   #blockSize;
 
   constructor({ start, end, blockSize }) {
     this.#blockSize = blockSize;
     this.#free = new Set();
+    this.#quarantined = new Set();
     for (let base = start; base + blockSize - 1 <= end; base += blockSize) this.#free.add(base);
     if (this.#free.size === 0) throw new Error("configuration_invalid: empty port pool");
   }
@@ -247,7 +280,18 @@ export class PortPool {
   }
 
   release(block) {
-    if (block) this.#free.add(block.base);
+    if (!block) return;
+    this.#quarantined.delete(block.base);
+    this.#free.add(block.base);
+  }
+
+  /** Holds back a block something still has a socket on, until it is clear. */
+  quarantine(block) {
+    if (block) this.#quarantined.add(block.base);
+  }
+
+  quarantinedBlocks() {
+    return [...this.#quarantined].map(base => Object.freeze({ base, end: base + this.#blockSize - 1 }));
   }
 }
 
@@ -369,12 +413,18 @@ export function tapSummary(text) {
   return Object.freeze({ tests: number("tests"), pass: number("pass"), fail: number("fail"), failingTests: failing });
 }
 
-function fixedEnvironment(config, ports, tempDirectory) {
+function fixedEnvironment(config, ports, tempDirectory, runId) {
   const environment = {
     PATH: [...new Set([dirname(config.nodeBin), config.pgBin, "/usr/bin", "/bin"])].join(":"),
     PG_BIN: config.pgBin,
     CONTROL_ROOM_PG_TEST_PORT_BASE: String(ports.base),
     CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE: `${ports.base + 1}-${ports.end}`,
+    [RUN_ID_VARIABLE]: runId,
+    // The real home is unreadable inside the sandbox; point tools that look
+    // for dotfiles (git, npm) at the run's own directory instead.
+    HOME: tempDirectory,
+    // Keep the attack kit's short Unix-socket directories inside this run.
+    ATTACK_KIT_SOCKET_ROOT: tempDirectory,
     TMPDIR: tempDirectory,
     LC_ALL: "C",
     LANG: "C",
@@ -472,8 +522,15 @@ async function runUtility(executable, argv, environment, timeoutMs = 12_000) {
   });
 }
 
-async function stopOwnedPostgres(config, tempDirectory, ports, environment) {
+async function stopOwnedPostgres(config, { tempDirectory, worktree }, ports, environment) {
   const stopped = [], errors = [];
+  // Only a data directory that really lives in this run's own space may be
+  // stopped: a registry line (or a symlink in the temp directory) pointing at
+  // another cluster's data directory must never reach `pg_ctl stop`.
+  const ownRoots = [];
+  for (const root of [tempDirectory, worktree]) {
+    try { ownRoots.push(await realpath(root)); } catch { /* gone already */ }
+  }
   const artifacts = await findRunArtifacts(tempDirectory);
   const dataDirectories = new Set(artifacts.postmasterFiles.map(pidFile => dirname(pidFile)));
   const candidates = [...artifacts.postmasterFiles];
@@ -485,12 +542,15 @@ async function stopOwnedPostgres(config, tempDirectory, ports, environment) {
     }
   }
   for (const pidFile of candidates) {
+    let dataDirectory;
+    try { dataDirectory = await realpath(dirname(pidFile)); } catch { continue; }
+    if (!ownRoots.some(root => inside(root, dataDirectory))) continue;
     let lines;
-    try { lines = (await readFile(pidFile, "utf8")).split(/\r?\n/u); } catch { continue; }
+    try { lines = (await readFile(join(dataDirectory, "postmaster.pid"), "utf8")).split(/\r?\n/u); } catch { continue; }
     const pid = Number(lines[0]), port = Number(lines[3]);
     if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(port) || port < ports.base || port > ports.end) continue;
-    if (!(await ownsPostgresProcess(pid, dirname(pidFile)))) continue;
-    const code = await runUtility(join(config.pgBin, "pg_ctl"), ["-D", dirname(pidFile), "stop", "-m", "immediate", "-w", "-t", "10"], environment);
+    if (!(await ownsPostgresProcess(pid, dataDirectory))) continue;
+    const code = await runUtility(join(config.pgBin, "pg_ctl"), ["-D", dataDirectory, "stop", "-m", "immediate", "-w", "-t", "10"], environment);
     if (code === 0) stopped.push(port); else errors.push(port);
   }
   return { stopped, errors };
@@ -525,6 +585,40 @@ async function killByCwd(tempDirectory) {
   }
 }
 
+/** Kills every process of this user that still carries this run's id in its
+ *  environment: a detached grandchild keeps the worktree as its cwd and its
+ *  own session, so neither the process-group kill nor `killByCwd` reaches it. */
+async function killByRunMarker(runId) {
+  const marker = `${RUN_ID_VARIABLE}=${runId}`;
+  const argv = ["-Eww", "-o", "pid=,command="];
+  if (typeof process.getuid === "function") argv.push("-U", String(process.getuid()));
+  const listing = await new Promise(resolveResult => {
+    const child = spawn("/bin/ps", argv, { stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    child.stdout.on("data", chunk => { output += chunk; });
+    child.once("error", () => resolveResult(""));
+    child.once("close", () => resolveResult(output));
+  });
+  for (const line of listing.split(/\r?\n/u)) {
+    const match = /^\s*(\d+)\s(.*)$/u.exec(line);
+    if (!match || !match[2].split(" ").includes(marker)) continue;
+    const pid = Number(match[1]);
+    if (pid === process.pid) continue;
+    try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+}
+
+/** True while any process holds a TCP socket on the block (or `lsof` cannot say). */
+export async function portBlockHeld(block) {
+  return await new Promise(resolveResult => {
+    const child = spawn("/usr/sbin/lsof", ["-nP", "-t", `-iTCP:${block.base}-${block.end}`], { stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    child.stdout.on("data", chunk => { output += chunk; });
+    child.once("error", () => resolveResult(true));
+    child.once("close", code => resolveResult(output.trim().length > 0 || (code !== 0 && code !== 1)));
+  });
+}
+
 function wait(milliseconds) {
   return new Promise(resolveResult => setTimeout(resolveResult, milliseconds));
 }
@@ -540,59 +634,132 @@ async function realDirectory(path) {
   try { return await realpath(path); } catch { return resolve(path); }
 }
 
+/** Resolves as much of `path` as exists, keeping any missing tail as written. */
+async function realExistingPrefix(path) {
+  const absolute = resolve(path);
+  try { return await realpath(absolute); } catch { /* resolve the parent instead */ }
+  const parent = dirname(absolute);
+  return parent === absolute ? absolute : join(await realExistingPrefix(parent), basename(absolute));
+}
+
+function sandboxRegexLiteral(value) {
+  return sandboxLiteral(value).replace(/[.*+?^${}()|[\]]/gu, "\\$&");
+}
+
+function ancestors(path) {
+  const result = [];
+  for (let current = dirname(path); current !== dirname(current); current = dirname(current)) result.push(current);
+  result.push("/");
+  return result;
+}
+
+function refuseProfile() {
+  return new RunnerRefusal(500, "sandbox_profile_invalid");
+}
+
 /**
- * Builds a per-run macOS Seatbelt (sandbox-exec) profile: writes only to the
- * worktree and this run's temp directory, no reading of the token file, audit
- * log, config, `~/.ssh`, keychains, or any configured protected prefix, and
- * network loopback only on this run's assigned port block. Everything else
- * stays at the default allow, because the outer host sandbox (not this
- * profile) is what bounds the helper; this profile's only job is to stop the
- * command it runs from stepping outside the worktree, the run, and its ports.
+ * Builds a per-run macOS Seatbelt (sandbox-exec) profile on `(deny default)`
+ * (plus Apple's own `system.sb` base so dyld and libSystem work). The child:
+ *
+ *  - reads the system, but nothing under the service account's home, `/tmp`,
+ *    `/var/folders` or `/Volumes`, except its worktree, this run's temp
+ *    directory, and the node and PostgreSQL install trees; and never reads the
+ *    runner's private files, the built-in credential/agent/live-app folders,
+ *    or a configured protected prefix, even inside an allowed root;
+ *  - writes only to its worktree and this run's temp directory;
+ *  - connects only to loopback ports in its block and Unix sockets in its temp
+ *    directory, and binds/listens only on those;
+ *  - execs only node, the PostgreSQL binaries, esbuild from the worktree's
+ *    node_modules, and a short list of shell tools (never launchctl or open);
+ *  - signals only processes in its own sandbox, and reaches only the mach
+ *    services `system.sb` lists (never launchd job submission, LaunchServices
+ *    or Apple Events), so it cannot hand work to anything unsandboxed.
+ *
+ * It fails closed: any protected folder that would contain one of the run's
+ * own roots cannot be enforced without breaking the run, so the run is
+ * refused instead of the deny being dropped.
  */
-async function buildSeatbeltProfile(config, { worktree, tempDirectory, ports }) {
+export async function buildSeatbeltProfile(config, { worktree, tempDirectory, ports }) {
   const worktreeReal = sandboxLiteral(await realpath(worktree));
   const tempReal = sandboxLiteral(await realpath(tempDirectory));
-  const denyReadPrefixes = new Set();
+  const home = await realExistingPrefix(config.sandboxHome ?? homedir());
+  const nodeReal = sandboxLiteral(await realpath(config.nodeBin));
+  const nodeTree = sandboxLiteral(dirname(dirname(nodeReal)));
+  const pgReal = sandboxLiteral(await realpath(config.pgBin));
+  const pgTree = sandboxLiteral(dirname(pgReal));
+  const readRoots = [worktreeReal, tempReal, nodeTree, pgTree];
+  const deniedRoots = [home, ...READ_DENIED_ROOTS];
+  // A toolchain tree that is (or contains) a denied root would reopen all of
+  // it, for example a node binary installed as ~/bin/node.
+  for (const tree of [nodeTree, pgTree]) {
+    if (deniedRoots.some(root => inside(tree, root))) throw refuseProfile();
+  }
+  const protectedPaths = new Set();
   for (const candidate of [
     dirname(config.tokenFile),
     dirname(config.auditLog),
     dirname(config.configPath),
-    join(homedir(), ".ssh"),
-    join(homedir(), "Library", "Keychains"),
+    ...PROTECTED_HOME_ENTRIES.map(entry => join(home, entry)),
     ...(config.protectedReadPrefixes ?? []),
   ]) {
-    const real = await realDirectory(candidate);
-    // A `deny` on an ancestor of the worktree or this run's temp directory
-    // cannot be safely undone by a narrower nested `allow`: Seatbelt still
-    // denies plain traversal of the ancestor itself (needed to resolve any
-    // path underneath it), which breaks reading the worktree/temp entirely
-    // rather than just the protected prefix. Skip a candidate that overlaps
-    // either one; a misconfigured protected prefix must not break the run.
-    if (inside(real, worktreeReal) || inside(real, tempReal)) continue;
-    denyReadPrefixes.add(sandboxLiteral(real));
+    const real = await realExistingPrefix(candidate);
+    if (readRoots.some(root => inside(real, root))) throw refuseProfile();
+    protectedPaths.add(sandboxLiteral(real));
   }
+  const protectedPatterns = PROTECTED_HOME_NAME_PREFIXES.map(prefix => `^${sandboxRegexLiteral(join(home, prefix))}`);
+  for (const root of readRoots) {
+    for (const prefix of PROTECTED_HOME_NAME_PREFIXES) {
+      const relativeRoot = relative(home, root);
+      if (inside(home, root) && `${relativeRoot}${sep}`.startsWith(prefix)) throw refuseProfile();
+    }
+  }
+  const metadataOnly = new Set();
+  for (const root of readRoots) for (const ancestor of ancestors(root)) metadataOnly.add(sandboxLiteral(ancestor));
+  const protectedFilter = [
+    ...[...protectedPaths].map(path => `(subpath "${path}")`),
+    ...protectedPatterns.map(pattern => `(regex #"${pattern}")`),
+  ].join(" ");
   const lines = [
     "(version 1)",
-    "(allow default)",
-    "(deny file-write*)",
-    `(allow file-write* (subpath "${worktreeReal}") (subpath "${tempReal}") (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/")`
-      + ` (regex #"^${ATTACK_KIT_SHORT_SOCKET_PATTERN}"))`,
-    ...[...denyReadPrefixes].map(prefix => `(deny file-read* (subpath "${prefix}"))`),
-    "(deny network-outbound (remote ip))",
-    "(deny network-bind)",
-    `(allow network-bind (local unix-socket (subpath "${tempReal}")))`,
-    `(allow network-bind (local unix-socket (regex #"^${ATTACK_KIT_SHORT_SOCKET_PATTERN}")))`,
+    "(deny default)",
+    '(import "system.sb")',
+    "(allow process-fork)",
+    `(allow process-exec (literal "${nodeReal}") (subpath "${pgReal}")`
+      + ` ${EXEC_ALLOWED_LITERALS.map(path => `(literal "${path}")`).join(" ")}`
+      + ` (regex #"^${sandboxRegexLiteral(worktreeReal)}/node_modules/(\\.pnpm/[^/]+/node_modules/)?@esbuild/darwin-[a-z0-9]+/bin/esbuild$"))`,
+    "(allow signal (target same-sandbox))",
+    "(allow process-info* (target same-sandbox))",
+    "(allow process-info-listpids)",
+    "(allow sysctl-read)",
+    // ipcs iterates SysV segments through these two write-shaped sysctls.
+    '(allow sysctl-write (sysctl-name "kern.sysv.ipcs.shm") (sysctl-name "kern.sysv.ipcs.sem"))',
+    "(allow ipc-sysv-shm ipc-sysv-sem ipc-posix-shm ipc-posix-sem)",
+    "(allow file-read* file-map-executable)",
+    `(deny file-read* file-map-executable ${deniedRoots.map(root => `(subpath "${sandboxLiteral(root)}")`).join(" ")})`,
+    `(allow file-read* file-map-executable ${readRoots.map(root => `(subpath "${root}")`).join(" ")})`,
+    `(allow file-read-metadata ${[...metadataOnly].map(path => `(literal "${path}")`).join(" ")})`,
+    `(allow file-write* (subpath "${worktreeReal}") (subpath "${tempReal}") (literal "/dev/null") (literal "/dev/tty")`
+      + ' (literal "/dev/dtracehelper") (subpath "/dev/fd"))',
+    '(allow file-ioctl (literal "/dev/null") (literal "/dev/tty") (subpath "/dev/fd"))',
+    `(deny file-read* file-write* file-map-executable ${protectedFilter})`,
+    "(allow system-socket (socket-domain AF_INET) (socket-domain AF_INET6) (socket-domain AF_UNIX))",
+    `(allow network-bind network-inbound (local unix-socket (subpath "${tempReal}")))`,
+    `(allow network-outbound (remote unix-socket (subpath "${tempReal}")))`,
+    `(deny mach-lookup ${MACH_SERVICES_DENIED.map(name => `(global-name "${name}")`).join(" ")})`,
+    "(deny appleevent-send)",
+    "(deny lsopen)",
   ];
   for (let port = ports.base; port <= ports.end; port += 1) {
     lines.push(`(allow network-outbound (remote ip "localhost:${port}"))`);
-    lines.push(`(allow network-bind (local ip "localhost:${port}"))`);
+    lines.push(`(allow network-bind network-inbound (local ip "localhost:${port}"))`);
   }
   return lines.join("\n");
 }
 
-export async function executeApprovedCommand(config, command, ports, { signal } = {}) {
+export async function executeApprovedCommand(config, command, ports, { signal, runId = randomUUID() } = {}) {
   const tempDirectory = await mkdtemp("/tmp/acr-tr-");
-  const environment = fixedEnvironment(config, ports, tempDirectory);
+  const environment = fixedEnvironment(config, ports, tempDirectory, runId);
+  const runRoots = { tempDirectory, worktree: command.worktree };
   const output = new BoundedOutput(config.maxOutputBytes);
   const startedAt = Date.now();
   let child, timeoutHandle, killHandle, timedOut = false, cancelled = false, stopStarted;
@@ -602,7 +769,7 @@ export async function executeApprovedCommand(config, command, ports, { signal } 
     if (reason === "cancel") cancelled = true;
     stopStarted = (async () => {
       if (!child?.pid) return;
-      await stopOwnedPostgres(config, tempDirectory, ports, environment);
+      await stopOwnedPostgres(config, runRoots, ports, environment);
       signalGroup(child.pid, "SIGTERM");
       killHandle = setTimeout(() => signalGroup(child.pid, "SIGKILL"), STOP_GRACE_MS);
     })();
@@ -643,13 +810,14 @@ export async function executeApprovedCommand(config, command, ports, { signal } 
     timeoutHandle = setTimeout(() => requestStop("timeout"), config.timeoutMs);
     const status = await completion;
     clearTimeout(timeoutHandle);
-    await stopOwnedPostgres(config, tempDirectory, ports, environment);
+    await stopOwnedPostgres(config, runRoots, ports, environment);
     signalGroup(child.pid, "SIGTERM");
     await wait(25);
     signalGroup(child.pid, "SIGKILL");
     if (stopStarted) await stopStarted;
     clearTimeout(killHandle);
     await killByCwd(tempDirectory);
+    await killByRunMarker(runId);
     const bounded = output.result();
     return Object.freeze({
       exitCode: status.code,
@@ -716,6 +884,11 @@ export async function createTestRunnerService(config) {
   let reservations = 0;
   const server = createServer(async (request, response) => {
     response.on("error", () => {});
+    // Listen for a disconnect from the very start: a client that goes away
+    // while its body is read or its command resolved must not start a run.
+    const controller = new AbortController();
+    const onResponseClose = () => { if (!response.writableEnded) controller.abort(); };
+    response.once("close", onResponseClose);
     if (!authorized(request.headers.authorization, token)) {
       respond(response, 401, { error: "auth_refused" });
       return;
@@ -733,6 +906,9 @@ export async function createTestRunnerService(config) {
     try {
       body = await requestBody(request);
       command = await resolveApprovedCommand(config, body);
+      for (const block of ports.quarantinedBlocks()) {
+        if (!(await portBlockHeld(block))) ports.release(block);
+      }
       portBlock = ports.acquire();
       if (!portBlock) throw new RunnerRefusal(503, "port_pool_exhausted");
     } catch (error) {
@@ -741,15 +917,15 @@ export async function createTestRunnerService(config) {
       respond(response, refusal.status, { error: refusal.code });
       return;
     }
+    if (controller.signal.aborted || response.destroyed) {
+      ports.release(portBlock);
+      reservations -= 1;
+      return;
+    }
     const runId = randomUUID();
-    const controller = new AbortController();
-    const running = executeApprovedCommand(config, command, portBlock, { signal: controller.signal });
+    const running = executeApprovedCommand(config, command, portBlock, { signal: controller.signal, runId });
     activeRuns.set(runId, { controller, running });
-    // A client that disconnects mid-run must not hold its slot and port block
-    // until the timeout: abort the run the moment the connection is gone,
-    // unless this handler already finished and closed it itself.
-    const onResponseClose = () => { if (!response.writableEnded) controller.abort(); };
-    response.once("close", onResponseClose);
+    let status = 200, payload;
     try {
       const result = await running;
       await appendAudit(config, {
@@ -766,15 +942,22 @@ export async function createTestRunnerService(config) {
         durationMs: result.durationMs,
         outputBytes: result.outputBytes,
       });
-      respond(response, 200, { runId, command: command.display, ...result });
-    } catch {
-      respond(response, 500, { error: "run_failed", runId });
+      payload = { runId, command: command.display, ...result };
+    } catch (error) {
+      status = error instanceof RunnerRefusal ? error.status : 500;
+      payload = { error: error instanceof RunnerRefusal ? error.code : "run_failed", runId };
+    }
+    response.removeListener("close", onResponseClose);
+    activeRuns.delete(runId);
+    // A process that outlived every reaper and still holds a socket on the
+    // block must not meet the next run there.
+    try {
+      if (await portBlockHeld(portBlock)) ports.quarantine(portBlock);
+      else ports.release(portBlock);
     } finally {
-      response.removeListener("close", onResponseClose);
-      activeRuns.delete(runId);
-      ports.release(portBlock);
       reservations -= 1;
     }
+    respond(response, status, payload);
   });
   server.on("clientError", (_error, socket) => socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"));
   return Object.freeze({

@@ -426,12 +426,13 @@ export async function socketClaimed(port: number, directory?: string): Promise<b
   return false;
 }
 
-/** Every `/tmp/ak*` socket directory the kit's own runner publishes into. */
+/** Every `<short socket root>/ak*` socket directory the kit's own runner publishes into. */
 export async function shortSocketDirectories(): Promise<string[]> {
-  const entries = await readdir(SHORT_SOCKET_ROOT, { withFileTypes: true }).catch(() => []);
+  const root = shortSocketRoot();
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
   return entries
     .filter(entry => entry.isDirectory() && entry.name.startsWith("ak"))
-    .map(entry => join(SHORT_SOCKET_ROOT, entry.name));
+    .map(entry => join(root, entry.name));
 }
 
 /** First line of an error message, for a one-token teardown failure summary. */
@@ -583,13 +584,21 @@ async function buildQueues(admin: ConnectionOptions): Promise<void> {
  * stays where `disposableRunDirectories()` looks for it; only the SOCKET lives
  * in a short path, and it is removed with the run directory's teardown.
  */
-const SHORT_SOCKET_ROOT = "/tmp";
+const DEFAULT_SHORT_SOCKET_ROOT = "/tmp";
+
+/**
+ * Where the kit's short socket directories go. `/tmp` by default;
+ * `ATTACK_KIT_SOCKET_ROOT` lets a caller that already owns a short private
+ * directory (the local test runner's per-run `/tmp/acr-tr-*`) keep the sockets
+ * inside it, so its sandbox never has to open a shared `/tmp` pattern.
+ */
+export const shortSocketRoot = (): string => process.env.ATTACK_KIT_SOCKET_ROOT?.trim() || DEFAULT_SHORT_SOCKET_ROOT;
 
 /** Longest socket path this will create, including a 5-digit port. */
 const MAX_SOCKET_PATH_BYTES = 100;
 
 function shortSocketDirectory(run: string, port: number): string {
-  const candidate = join(SHORT_SOCKET_ROOT, `ak${process.pid}-${basename(run)}`);
+  const candidate = join(shortSocketRoot(), `ak${process.pid}-${basename(run)}`);
   // `.s.PGSQL.` plus the port is 13-14 bytes; leave headroom under the cap.
   if (Buffer.byteLength(candidate) + 16 > MAX_SOCKET_PATH_BYTES) {
     throw new Error(`attack_kit_socket_path_too_long:${candidate}`);
