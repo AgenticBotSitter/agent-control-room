@@ -1,0 +1,34 @@
+{
+  "schema": "control-room.trusted-runtime/v1",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "artifacts": [
+    {
+      "tool": "node",
+      "version": "22.13.0",
+      "archiveName": "node-v22.13.0-darwin-arm64.tar.gz",
+      "url": "https://nodejs.org/dist/v22.13.0/node-v22.13.0-darwin-arm64.tar.gz",
+      "archiveSha256": "bc1e374e7393e2f4b20e5bbc157d02e9b1fb2c634b2f992136b38fb8ca2023b7",
+      "executableRelativePath": "bin/node",
+      "executableSha256": "5c79f8e198fd2456ea6660aaa6be218f9f44747f2306c7d0f5f97b087b2f2dfc"
+    },
+    {
+      "tool": "pnpm",
+      "version": "11.19.0",
+      "archiveName": "pnpm-darwin-arm64.tar.gz",
+      "url": "https://github.com/pnpm/pnpm/releases/download/v11.19.0/pnpm-darwin-arm64.tar.gz",
+      "archiveSha256": "00075435e24d20f5d369c9aec1ee1c29ebb78b52de8ea9807013fc70187ea0e5",
+      "executableRelativePath": "pnpm",
+      "executableSha256": "65cb7439d9b023b95d0e19d843adf14e0654426ef85ad4ecd33d58849315f669"
+    },
+    {
+      "tool": "esbuild",
+      "version": "0.28.2",
+      "archiveName": "darwin-arm64-0.28.2.tgz",
+      "url": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.28.2.tgz",
+      "archiveSha256": "1980cde09749094452b20d36ff267585ccb3f72749c7bc97291cd9996ccf5a2a",
+      "executableRelativePath": "esbuild",
+      "executableSha256": "10b6243df618d374bb2d5c9cfbe7052e1405f6aa4e53a6164f11a91b9f2e1384"
+    }
+  ]
+}

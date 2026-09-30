@@ -1,0 +1,18 @@
+(version 1)
+(allow default)
+
+(deny file-read* file-map-executable (subpath "/opt/homebrew") (subpath "/Users"))
+(deny file-read* file-map-executable
+  (require-all
+    (subpath "/usr/local")
+    (require-not (literal "/usr/local/bin/control-room"))))
+
+(deny file-write*
+  (require-all
+    (require-not (subpath (param "SCRATCH_ROOT")))
+    (require-not (subpath (param "SOCKET_ROOT")))
+    (require-not (literal (param "OUT_LOG")))
+    (require-not (literal (param "ERR_LOG")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (subpath "/dev/fd"))))
