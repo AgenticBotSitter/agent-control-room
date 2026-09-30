@@ -42,7 +42,7 @@ import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-sessio
 import { createPostgresLocalOwnerSessionStoreV1 } from "../src/web/v1/local-owner-session-store";
 import { sha256Digest } from "../src/security";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_B, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
-import { BOT_JOURNEY_EXPECTED_REFUSALS_V1, BOT_JOURNEY_EXPECTED_ROWS_V1, ScriptedBotV1, botJourneyMarkdownV1,
+import { BOT_JOURNEY_CONDITIONAL_REFUSALS_V1, BOT_JOURNEY_EXPECTED_REFUSALS_V1, BOT_JOURNEY_EXPECTED_ROWS_V1, ScriptedBotV1, botJourneyMarkdownV1,
   makeBotWorkspaceV1, removeBotWorkspaceV1, runBotJourneyV1 } from "../scripts/dogfood/bot-journey.mjs";
 
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59620);
@@ -264,8 +264,14 @@ test("a bot can build Control Room through Control Room, end to end, as the prod
       // Every declared refusal was actually reached by this run. A label that
       // is declared but never recorded would otherwise look like a pass.
       const recorded = new Set(journey.steps.map(entry => entry.refusal).filter(Boolean));
-      for (const label of BOT_JOURNEY_EXPECTED_REFUSALS_V1)
+      for (const label of BOT_JOURNEY_EXPECTED_REFUSALS_V1) {
+        if (BOT_JOURNEY_CONDITIONAL_REFUSALS_V1.includes(label)) continue;
         assert.ok(recorded.has(label), `declared refusal never recorded by this run: ${label}`);
+      }
+      // A conditional label that DID appear is itself a finding: it means the
+      // protection failed, and the journey already recorded it as a refusal.
+      for (const label of BOT_JOURNEY_CONDITIONAL_REFUSALS_V1)
+        assert.ok(!recorded.has(label), `conditional refusal recorded, so a protection failed: ${label}`);
       process.stderr.write(`dogfood journey rows: ${journey.steps.length},`
         + ` refusals=${recorded.size}, not tried=${journey.steps.filter(e => e.outcome === "not tried").length}\n`);
       const markdown = botJourneyMarkdownV1(journey);
@@ -319,19 +325,29 @@ test("a bot can build Control Room through Control Room, end to end, as the prod
       // a decision is only legitimate with its signed digest and tag, and the
       // web login has no path to write one for a batch it never decided.
       (error: unknown) => ["42501", "P0001", "42883"].includes(sqlState(error) ?? ""));
-      // The gateway must log no unexpected error for anything a single bot
-      // does. A `database_unavailable` on the MCP audit append is NOT that:
-      // it is the append-only audit chain serialising under a burst of
-      // concurrent bots, which the production login's 5 s statement bound turns
-      // into a refusal. It is measured and reported below rather than hidden.
-      const faults = unexpected.map(error => (error as { code?: string }).code ?? "unknown");
-      const contention = faults.filter(code => code === "database_unavailable").length;
-      assert.deepEqual(faults.filter(code => code !== "database_unavailable"), [],
-        "the gateway logged no unexpected error for anything but audit-chain contention");
+      // The gateway must log no unexpected error for anything a single bot does,
+      // except the ONE known 40P01 deadlock between two bots' claim path and
+      // the MCP audit append. That is not a slow write and not a throughput
+      // ceiling: it reproduces with two bots, it fires in recordMcpCall, and
+      // it is being fixed at the root by the tenant-mutex lock order (the
+      // tenant row taken FOR NO KEY UPDATE everywhere) on cook/connonly. So
+      // the bound here is exact, named, and zero-tolerated-above: a second
+      // occurrence, or a different SQLSTATE, fails this test. When the lock
+      // order lands, this count goes to zero and the filter goes with it.
+      const faults = unexpected.map(error => `${(error as { code?: string }).code ?? "unknown"}`
+        + `[${(error as { sqlState?: string }).sqlState ?? "-"}]`);
+      const KNOWN_LOCK_ORDER_DEADLOCK = /database_unavailable\[40P01\]/u;
+      const knownDeadlocks = faults.filter(code => KNOWN_LOCK_ORDER_DEADLOCK.test(code));
+      assert.deepEqual(faults.filter(code => !KNOWN_LOCK_ORDER_DEADLOCK.test(code)), [],
+        "the gateway logged no unexpected error beyond the known lock-order deadlock");
+      assert.ok(knownDeadlocks.length <= 1,
+        `at most one known 40P01 per run, saw ${knownDeadlocks.length}`);
+      process.stderr.write(`dogfood known lock-order deadlocks (40P01): ${knownDeadlocks.length} of ${faults.length}`
+        + ` faults\n`);
       const audit = await asAdmin("SELECT action, count(*)::int AS count FROM audit_events"
         + " WHERE action LIKE 'fleet.%' GROUP BY action ORDER BY action");
       process.stderr.write(`dogfood audit: ${JSON.stringify(audit)}`
-        + ` | audit-chain contention refusals: ${contention}\n`);
+        + "\n");
       assert.equal(ownerIdentity().subject, "identity:fleet-owner");
     } finally {
       // Every listener this test started is closed and every pool is ended on

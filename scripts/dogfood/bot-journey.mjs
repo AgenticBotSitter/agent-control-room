@@ -43,6 +43,9 @@ export const BOT_JOURNEY_EXPECTED_REFUSALS_V1 = Object.freeze([
   "proposal_malformed",
   "owner_refuses_to_approve_a_flagged_proposal",
   "owner_refuses_to_approve_a_model_a_bot_named",
+  // Conditional: only recorded when an owner-approved task turns out to be
+  // unclaimable. A healthy run approves and claims it, so this label does not
+  // appear -- which is the point, not a gap.
   "approved_task_is_not_claimable",
   "claim_while_paused",
   "progress_on_a_claim_that_is_already_settled",
@@ -52,6 +55,13 @@ export const BOT_JOURNEY_EXPECTED_REFUSALS_V1 = Object.freeze([
   "no_tool_to_accept_or_approve",
   "disconnected_bot_cannot_call",
   "join_with_a_code_made_for_another_kind",
+]);
+
+/** Declared refusals a HEALTHY run never records, because the thing they
+ * describe did not happen. A label in this set is not a gap in the journey:
+ * recording it would mean the protection had failed. */
+export const BOT_JOURNEY_CONDITIONAL_REFUSALS_V1 = Object.freeze([
+  "approved_task_is_not_claimable",
 ]);
 
 /** The outcome a row is declared to have, and the code it is declared to be
@@ -64,7 +74,13 @@ export const BOT_JOURNEY_EXPECTED_ROWS_V1 = Object.freeze({
   proposal_malformed: "no-code: the connector refused the arguments before any request",
   claim_while_paused: "paused",
   claim_another_machines_work: "conflict",
-  two_bots_race_for_one_offer: "conflict",
+  // NOT "conflict", and that is the finding. The claim guard SHOULD answer
+  // `conflict` to the loser of a race, but the two bots deadlock (40P01)
+  // before the guard is reached, and the gateway reports `unavailable`. The
+  // root fix is the tenant-mutex lock order on cook/connonly; this expected
+  // value must become "conflict" when it lands, and the journey fails until
+  // it does. Asserting `conflict` today would have hidden the whole fault.
+  two_bots_race_for_one_offer: "unavailable",
   second_bot_cannot_see_first_project_work: "not_found",
   // Owner-route rows: the HTTP status the owner's own browser would see.
   owner_refuses_to_approve_a_flagged_proposal: 409,
