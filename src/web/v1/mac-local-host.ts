@@ -196,7 +196,12 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
-  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;}>) {
+  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;
+  /** A read-only projection of updater status, for Home copy only. */
+  updaterHomeStatus?: UpdaterHomeStatusReaderV1;
+  /** The root updater's bounded owner surface. */
+  updaterOwnerUi?: UpdaterOwnerUiPortV1;
+}>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
     || typeof input.render !== "function") throw new Error("mac_local_host_configuration_invalid");

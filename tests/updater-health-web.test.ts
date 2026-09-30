@@ -13,7 +13,7 @@ function app() {
   return createMacLocalWebProcessV1({ origin: ORIGIN, workspaceId: "workspace-health",
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: ORIGIN, tenantId: "tenant-health",
       provider: "local", subject: "owner", ownerCodeDigest: sha256Digest({ ownerCode: "owner-code-long-enough" }),
-      sessionSeconds: 900 }, database: { client: {} as never, close: async () => {} }, clock: () => NOW,
+      sessionSeconds: 900 }, database: { client: {} as never, close: async () => {}, isAvailable: () => true }, clock: () => NOW,
     hostProcessId: 4243, healthProbeKey: KEY, healthReleaseId: "release-good",
     healthStartedAt: "2026-09-30T17:59:59.500Z",
     updaterHealthReadPort: { readHealthCounts: async ({ tenantId, workspaceId }) => {

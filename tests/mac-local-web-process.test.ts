@@ -53,8 +53,11 @@ test("an uncertain write makes health unready and a supervised replacement serve
   assert.equal(health.every(response => response.status === 200), true);
   const bodies = await Promise.all(health.map(response => response.json())) as Array<Record<string, unknown>>;
   assert.equal(bodies.every(body => body.ready === false), true, "a health-probe burst must expose the outage");
-  assert.equal(bodies[0]?.tag, hmacSha256Tag(key,
-    { purpose: "local-host-health/v1", nonce: nonces[0], pid, ready: false, releaseId: "dev", startedAt }));
+  // The tag is over the SIGNED response in item 14's contract (health-protocol.mjs),
+  // which is the one cook/updaterland's inline hmacSha256Tag was merged away from.
+  assert.equal(bodies[0]?.tag, healthResponseTagV1(key, LOCAL_HOST_HEALTH_ENDPOINT_V1,
+    { schema: "control-room.local-host-health/v1", nonce: nonces[0], ready: false, pid, releaseId: "dev",
+      startedAt }));
   await app.close();
 
   let laterQueries = 0;

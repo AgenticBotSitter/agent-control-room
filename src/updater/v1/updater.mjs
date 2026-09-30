@@ -115,7 +115,11 @@ export async function startUpdaterV1(options = {}) {
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions,
     watcher: options.watcher ?? null, onError: reportTimerError });
   const scheduledHealth = options.scheduledHealth;
-  let heartbeatState = { state: "idle", step: null };  const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
+  // `heartbeatState` is already declared above (the acquisition's initial state,
+  // shared with setHeartbeatState); this method does not redeclare it. An earlier
+  // merge resolution spliced two versions of this block together and produced a
+  // duplicate declaration.
+  const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportTimerError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
     const map = { pause: "paused", resume: "running", stop: "stopped" };
@@ -127,7 +131,13 @@ export async function startUpdaterV1(options = {}) {
     // Item 13: settle a durable release/database link transaction before any
     // run is observed. The actuator either completes it or restores its source.
     await effects.recover?.();
-    await control.start(); await heartbeat.beat(); await loop.tick(); heartbeat.start(); loop.start();
+    // Two beats, not one: the first reports the state the updater woke up in,
+    // and the second reports the state after the first loop tick has observed
+    // (and possibly recovered) a live run. Dropping the second is what made
+    // "startup reports a live run before its first heartbeat" fail after the
+    // merge -- the recovery happened between the beats and nothing re-reported it.
+    await control.start(); await heartbeat.beat(); await loop.tick(); await heartbeat.beat();
+    heartbeat.start(); loop.start();
     await scheduledHealth?.start();
   } catch (error) {
     loop.stop(); await scheduledHealth?.stop(); await heartbeat.stop(); await control.stop();

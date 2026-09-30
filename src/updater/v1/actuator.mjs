@@ -249,29 +249,36 @@ export class UpdaterActuatorV1 {
   measure(run) { return this.services.measure(run); }
 
   async rollback(run) {
-    const plan = planFromRunV1(run), liveDigest = await this.schemaDigest();
-    const live = await readLivePairV1(this.root, liveDigest), pairs = [...await this.history.knownGood()].reverse();
-    let lastCode = "updater_rollback_chain_exhausted";
-    for (const candidate of pairs) {
-      if (candidate.pgDataId !== live.pgDataId || candidate.schemaDigest !== live.schemaDigest
-          || candidate.releaseId === live.releaseId) continue;
-      try {
-        await assertPairTargetsV1(this.root, candidate);
-        if (!await this.artifacts.verifyPair(candidate)) { lastCode = "updater_rollback_pair_corrupt"; continue; }
-        const rollbackFrom = await readLivePairV1(this.root, await this.schemaDigest());
-        await this.reserve.finishWithReserve(async () => {
-          await switchPairLinksV1({ root: this.root,
-            operationId: `${plan.operationId}.rollback.${candidate.releaseId}`, from: rollbackFrom,
-            to: candidate, previousReleaseId: live.releaseId, fault: this.fault });
-          await this.services.restart(run);
-        });
-        const healthy = typeof this.healthProbe === "function" ? await this.healthProbe(run, candidate)
-          : await this.healthProbe.fullHealth(await this.healthProbe.expectationForRun(run, candidate));
-        if (healthy) return candidate;
-        lastCode = "updater_rollback_pair_unhealthy";
-      } catch (error) {
-        if (isNoSpaceV1(error)) throw error;
-        lastCode = typeof error?.code === "string" ? error.code : "updater_rollback_pair_failed";      }
+    // Both sides of the merge survive here. cook/updaterland contributes the
+    // `#exclusive` wrapper (one rollback at a time per installation); item 14
+    // contributes the dual health-probe call, because the evaluator is an
+    // instance while the previous injected-function form is still accepted.
+    return this.#exclusive(async () => {
+      const plan = planFromRunV1(run), liveDigest = await this.schemaDigest();
+      const live = await readLivePairV1(this.root, liveDigest), pairs = [...await this.history.knownGood()].reverse();
+      let lastCode = "updater_rollback_chain_exhausted";
+      for (const candidate of pairs) {
+        if (candidate.pgDataId !== live.pgDataId || candidate.schemaDigest !== live.schemaDigest
+            || candidate.releaseId === live.releaseId) continue;
+        try {
+          await assertPairTargetsV1(this.root, candidate);
+          if (!await this.artifacts.verifyPair(candidate)) { lastCode = "updater_rollback_pair_corrupt"; continue; }
+          const rollbackFrom = await readLivePairV1(this.root, await this.schemaDigest());
+          await this.reserve.finishWithReserve(async () => {
+            await switchPairLinksV1({ root: this.root,
+              operationId: `${plan.operationId}.rollback.${candidate.releaseId}`, from: rollbackFrom,
+              to: candidate, previousReleaseId: live.releaseId, fault: this.fault });
+            await this.services.restart(run);
+          });
+          const healthy = typeof this.healthProbe === "function" ? await this.healthProbe(run, candidate)
+            : await this.healthProbe.fullHealth(await this.healthProbe.expectationForRun(run, candidate));
+          if (healthy) return candidate;
+          lastCode = "updater_rollback_pair_unhealthy";
+        } catch (error) {
+          if (isNoSpaceV1(error)) throw error;
+          lastCode = typeof error?.code === "string" ? error.code : "updater_rollback_pair_failed";
+        }
+      }
       throw updaterRefuseV1(lastCode);
     });
   }

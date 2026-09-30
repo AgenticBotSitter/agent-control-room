@@ -46,6 +46,8 @@ import { captureUpdaterHealthCountsV1, HealthNonceLedgerV1, healthResponseTagV1,
   LOCAL_HOST_HEALTH_ENDPOINT_V1, UPDATER_HEALTH_ENDPOINT_V1,
   verifyHealthRequestV1 } from "../../updater/v1/health-protocol.mjs";
 import type { UpdaterHealthWebReadPortV1 } from "../../updater/v1/health-ports";
+import type { UpdaterHomeStatusReaderV1 } from "./updater-home-status";
+import { updaterOwnerRequestSchemaV1, type UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
@@ -128,7 +130,14 @@ export interface MacLocalWebProcessOptionsV1 {
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
-  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;}
+  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;
+  /** A read-only projection of updater status. It exists for Home copy only;
+   * the web process receives no updater control or approval authority. */
+  updaterHomeStatus?: UpdaterHomeStatusReaderV1;
+  /** The root updater's bounded owner surface. Omission leaves update controls
+   * absent rather than letting the ordinary web process invent status. */
+  updaterOwnerUi?: UpdaterOwnerUiPortV1;
+}
 
 /** Existing controller operations supplied by the host.  This is deliberately
  * only a typed pass-through: the Mac-local web wrapper cannot construct a
@@ -386,9 +395,17 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         const { nonce } = await authenticateHealthRequest(request, LOCAL_HOST_HEALTH_ENDPOINT_V1);
         const pid = options.hostProcessId,
           releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!;
-        const response = { schema: "control-room.local-host-health/v1", nonce, ready: true, pid, releaseId, startedAt };
+        // `ready` is the process's REAL readiness, not a constant true. This is
+        // cook/updaterland's improvement, kept: an endpoint that always reports
+        // ready cannot report an outage, and the §8.4 evaluator refuses anything
+        // but `ready === true` -- so reporting the truth can only make health
+        // fail earlier, never pass wrongly. `ready` is inside the signed
+        // response, so a proxy cannot forge it either.
+        const response = { schema: "control-room.local-host-health/v1", nonce, ready: isReady(), pid, releaseId,
+          startedAt };
         const tag = healthResponseTagV1(options.healthProbeKey!, LOCAL_HOST_HEALTH_ENDPOINT_V1, response);
-        return Response.json({ ...response, tag },          { headers: privateResponseHeaders });
+        return Response.json({ ...response, tag },
+          { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/updater-health") {
         if (request.method !== "POST" || url.search || options.hostProcessId === undefined
