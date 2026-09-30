@@ -115,6 +115,12 @@ const workerScripts: Readonly<Record<string, string>> = { hermes: hermesScript, 
 
 async function up(): Promise<void> {
   if (existsSync(join(root, "pg"))) throw new Error("load_test_root_exists: remove it first (down)");
+  // `mac:up` refuses a release build whose source digest is older than the tree,
+  // and that digest covers scripts/mac-local and src. Rebuilding here means a
+  // load test is never blocked by having edited a file since the last build --
+  // and failing late, after a disposable cluster had already been created.
+  console.log("site-load: building the release artifact (mac:up refuses a stale one)");
+  invoke(["scripts/build-vps.mjs"]);
   invoke(["scripts/mac-local/rehearsal/setup.ts", "up", root, "--port", String(dbPort), "--web-port", String(webPort),
     "--fake-executables"]);
   const macLocal = JSON.parse(await readFile(join(protectedRoot, "config/mac-local.json"), "utf8"));
