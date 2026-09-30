@@ -466,9 +466,11 @@ test("one SQLSTATE reader serves every refusal site, with both refusal sets inta
   for (const [file, expected] of sites) {
     const source = await readFile(file, "utf8");
     for (const line of source.split("\n").filter(row => row.includes("databaseSqlStateIsAnyV1(error")
-      && !row.trimStart().startsWith("import")))
-      assert.ok(line.trimStart().startsWith("if (databaseSqlStateIsAnyV1(error"),
-        `${file}: every site maps a refusal through the one 'is any of' helper`);
+      && !row.trimStart().startsWith("import") && !row.trimStart().startsWith("*")
+      && !row.trimStart().startsWith("//")))
+      assert.match(line.trimStart(), /^if \((!?)databaseSqlStateIsAnyV1\(error/u,
+        `${file}: every site maps a refusal through the one 'is any of' helper in an if — ${
+          line.trim()}`);
     for (const states of expected)
       assert.ok(source.includes(`databaseSqlStateIsAnyV1(error, ${states})`),
         `${file}: the refusal set ${states} must survive the merge`);

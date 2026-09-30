@@ -87,8 +87,10 @@ export type FleetGatewayStoreOptionsV1 = Readonly<{ tenantId: string; clock?: ()
  * worker-facing write here is idempotent on its own key. This is contention,
  * not an outage, and the only correct answer is to try again rather than to
  * tell a worker its completed work was lost. The set itself lives in
- * `bounded-database` beside the one reader, so it can never drift. */
-const isRollbackContention = (error: unknown) => databaseSqlStateIsAnyV1(error, ROLLBACK_SQL_STATES_V1);
+ * `bounded-database` beside the one reader, so it can never drift.
+ *
+ * Written inline at the single call site rather than kept as a named
+ * predicate, so there is exactly one shape here to keep honest. */
 /** Bounded and jittered: under twenty bots the same statement can collide more
  * than once, and an unbounded retry would hide a genuine deadlock instead. */
 const RETRYABLE_FLEET_TRANSACTION_ATTEMPTS_V1 = 4;
@@ -96,8 +98,8 @@ const RETRYABLE_FLEET_TRANSACTION_ATTEMPTS_V1 = 4;
  * now that the lock order is fixed, so this is how a returning deadlock becomes
  * visible instead of being silently absorbed. Only the SQLSTATE, the attempt and
  * the outcome are recorded -- no tenant, worker or payload. */
-const fleetContentionLog = (outcome: "retry" | "giving_up", sqlState: string, attempt: number): void => {
-  process.stderr.write(`[fleet-gateway] contention ${outcome} sqlstate=${sqlState} attempt=${attempt}\n`);
+const fleetContentionLog = (outcome: "retry" | "giving_up", state: string, attempt: number): void => {
+  process.stderr.write(`[fleet-gateway] contention ${outcome} sqlstate=${state} attempt=${attempt}\n`);
 };
 
 export class FleetGatewayStoreV1 {
@@ -136,14 +138,14 @@ export class FleetGatewayStoreV1 {
     for (let attempt = 1; ; attempt += 1) {
       try { return await work(); }
       catch (error) {
-        if (!isRollbackContention(error)) throw error;
-        const sqlState = rollbackSqlStateNameV1(error) ?? "unknown";
+        if (!databaseSqlStateIsAnyV1(error, ROLLBACK_SQL_STATES_V1)) throw error;
+        const state = rollbackSqlStateNameV1(error) ?? "unknown";
         if (attempt >= RETRYABLE_FLEET_TRANSACTION_ATTEMPTS_V1) {
-          fleetContentionLog("giving_up", sqlState, attempt);
+          fleetContentionLog("giving_up", state, attempt);
           if (onGiveUp) return onGiveUp(error);
           throw error;
         }
-        fleetContentionLog("retry", sqlState, attempt);
+        fleetContentionLog("retry", state, attempt);
         await new Promise(done => setTimeout(done, 10 * attempt * attempt));
       }
     }

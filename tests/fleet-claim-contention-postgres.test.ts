@@ -79,6 +79,11 @@ function adminPool(postgres: RealPostgres) {
 async function gatewayFor(postgres: RealPostgres, mode: { value: FleetOperationsModeV1 },
   input: { admission?: { maxConcurrent?: number; maxConcurrentKnown?: number; maxConcurrentKnownPerWorker?: number } } = {}) {
   const admin = adminPool(postgres), fleet = pool(postgres, "fleet"), fleetOwner = pool(postgres, "fleetOwner");
+  // The supervisor is a different production login: control_supervisor_* is
+  // granted to control_room_task_coordinator, and the fleet login is refused
+  // with 42501 there. Lease expiry is run AS the login that owns it, which is
+  // the whole point of the supervisor being the sole expiry owner.
+  const coordinator = pool(postgres, "coordinator");
   const projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(fleet.client,
     deriveProjectEventIntegrityKeyV1(new Uint8Array(32).fill(19)), () => new Date().toISOString()));
   const gateway = new FleetGatewayStoreV1(fleet.client, { tenantId: FLEET_TENANT,
@@ -105,10 +110,10 @@ async function gatewayFor(postgres: RealPostgres, mode: { value: FleetOperations
   // write a test needs — ageing a lease so recovery can run — belongs to the
   // fleet gateway login, which is the only role granted UPDATE on its columns.
   const asGateway = async (sql: string, params: unknown[] = []) => fleet.client.query(sql, params).then(result => result.rows);
-  return { admin, fleet, fleetOwner, gateway, owner, unexpected, asWeb, asGateway,
+  return { admin, fleet, fleetOwner, coordinator, gateway, owner, unexpected, asWeb, asGateway,
     origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     close: async () => { await new Promise(done => server.close(done));
-      await Promise.all([admin.close(), fleet.close(), fleetOwner.close()]); } };
+      await Promise.all([admin.close(), fleet.close(), fleetOwner.close(), coordinator.close()]); } };
 }
 
 /** Enrolls one real local bot: a one-time code, the real join call, and a
@@ -205,7 +210,7 @@ test("five concurrent local bots over one project: every task is run exactly onc
             // Lease expiry is the supervisor's alone since cook/v1 commit
             // "Make supervisor sole fleet lease expiry owner", so this is the
             // same product path the Mac-local supervisor runs on its timer.
-            await new SupervisorReconcilerV1(g.fleet.client, FLEET_TENANT).reconcileStalled();
+            await new SupervisorReconcilerV1(g.coordinator.client, FLEET_TENANT).reconcileStalled();
             const recovered = await g.asWeb(`SELECT j.state,o.state AS offer_state FROM control_jobs j
               LEFT JOIN fleet_work_offers o ON o.tenant_id=j.tenant_id AND o.job_id=j.id
               WHERE j.id=$1`, [pass.jobId]);
@@ -351,7 +356,7 @@ test("a worker killed mid-job does not strand its task: the elapsed lease hands 
         // fleet lease expiry owner"). The gateway's reconcile() deliberately
         // has no expiredLeases counter any more, so driving it here would
         // assert a design that was removed rather than a behaviour.
-        const outcomes = await new SupervisorReconcilerV1(g.fleet.client, FLEET_TENANT).reconcileStalled();
+        const outcomes = await new SupervisorReconcilerV1(g.coordinator.client, FLEET_TENANT).reconcileStalled();
         assert.equal(outcomes.length, 1, `the elapsed lease is reconciled once: ${JSON.stringify(outcomes)}`);
         assert.equal((await g.asWeb("SELECT state FROM control_jobs WHERE id=$1", [lost.jobId]))[0].state, "ready");
         const lease = await g.asWeb("SELECT state FROM control_leases WHERE id=$1", [held.lease_id]);
