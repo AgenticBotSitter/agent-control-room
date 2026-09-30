@@ -84,7 +84,11 @@ test("standalone bundle runs help and an MCP handshake from a repo-free director
     server: `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`,
     workerId: `fleet-worker:${"a".repeat(32)}`, secret: `crf_${"A".repeat(43)}` }), { mode: 0o600 });
   await chmod(config, 0o600);
-  const handshake = await child(process.execPath, [bundle, "mcp", "--config", config], { cwd: runRoot,
+  // cook/connect made the workspace explicit and required, so the bundled
+  // server can never fall back to the process working directory. Opus review
+  // round 2 section 4 requires this explicit, absolute, existing check.
+  const handshake = await child(process.execPath,
+    [bundle, "mcp", "--config", config, "--workspace", runRoot], { cwd: runRoot,
     env: { PATH: process.env.PATH, HOME: join(sandbox, "injected-home"), NODE_ENV: "test" },
     input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })}\n` });
   assert.equal(handshake.code, 0, handshake.stderr);

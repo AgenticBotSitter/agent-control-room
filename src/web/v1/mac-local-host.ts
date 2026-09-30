@@ -25,7 +25,7 @@ import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
  * own incident. */
 export const MAC_LOCAL_SUPERVISOR_ID_V1 = "supervisor:mac-local";
 
-type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
+type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void>; isAvailable(): boolean }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
 type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">
   & Partial<Pick<MacLocalTaskApplicationV1, "taskService">>;
@@ -84,6 +84,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
+    || typeof input.database.isAvailable !== "function"
     || !input.assets || typeof input.assets.respond !== "function" || typeof input.render !== "function")
     throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.taskApplication) throw new Error("mac_local_host_configuration_invalid");
@@ -129,8 +130,14 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     start: service.start.bind(service),
     isReady: () => service.isReady() && taskApplication.isReady(),
     close: () => close ??= (async () => {
-      const results = await Promise.allSettled([service.close(), taskApplication.close()]);
-      if (results.some(result => result.status === "rejected")) throw new Error("mac_local_host_cleanup_uncertain");
+      // The task application owns the restricted controller/result pools. It
+      // first refuses new operations and drains active saves, so it must finish
+      // before the web composition closes the database beneath the host. Keep
+      // the later close best-effort even when the drain reports uncertainty.
+      const task = await Promise.allSettled([taskApplication.close()]);
+      const site = await Promise.allSettled([service.close()]);
+      if ([...task, ...site].some(result => result.status === "rejected"))
+        throw new Error("mac_local_host_cleanup_uncertain");
     })(),
   });
 }
