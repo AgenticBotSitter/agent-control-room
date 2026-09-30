@@ -218,9 +218,12 @@ writeFileSync(process.argv[3] + "/result.txt", readFileSync(process.argv[2]));`)
 test("overflow terminates once, an escaped pipe holder is bounded, and same-group children die", { timeout: 20_000 }, async t => {
   const dir = await workspace(t);
   const overflow = await executable(dir, "for (;;) process.stdout.write('x'.repeat(4096));");
+  const kills = [];
   const overflowRunner = connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
-    [entry(overflow, { maxOutputBytes: 1024, timeoutMs: 1_000 })], 1, "overflow.json")));
+    [entry(overflow, { maxOutputBytes: 1024, timeoutMs: 1_000 })], 1, "overflow.json")), { killProcess: (child, signal = "SIGTERM") => {
+      kills.push(signal); try { child.kill(signal); } catch {} } });
   await assert.rejects(overflowRunner.execute(input()), error => error?.code === "tool_adapter_output_too_large");
+  assert.equal(kills.filter(signal => signal === "SIGTERM").length, 1, "overflow has one termination attempt");
 
   const escapedPid = join(dir, "escaped.pid");
   const escaped = await executable(dir, `import { spawn } from "node:child_process";

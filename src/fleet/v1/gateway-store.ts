@@ -372,11 +372,15 @@ export class FleetGatewayStoreV1 {
       ORDER BY j.priority DESC,o.created_at LIMIT 50`,
     [this.#tenantId, [...principal.projectIds], [...principal.capabilities], principal.workerId])).rows;
     return Promise.all(rows.map(async row => {
-      const binding = principal.workerKind === "tool" ? await this.#toolTasks?.read(this.#tenantId, row.job_id) : undefined;
+      const binding = await this.#toolBinding(principal, row.job_id);
       return Object.freeze({ offerId: row.offer_id, projectId: row.project_id, jobId: row.job_id, capability: row.capability,
         title: String(row.payload.title ?? ""), objective: String(row.payload.objective ?? "").slice(0, 600),
         ...(binding ? { adapterId: binding.adapterId } : {}) });
     }));
+  }
+
+  async #toolBinding(principal: FleetWorkerPrincipalV1, jobId: string) {
+    return principal.workerKind === "tool" ? this.#toolTasks?.read(this.#tenantId, jobId) : undefined;
   }
 
   /** Claims one offered task through the shared canonical claim path. */
@@ -484,7 +488,7 @@ export class FleetGatewayStoreV1 {
       JOIN control_requests r ON r.tenant_id=wf.tenant_id AND r.id=wf.request_id
       JOIN control_leases l ON l.tenant_id=j.tenant_id AND l.id=$3
       WHERE j.tenant_id=$1 AND j.id=$2`, [this.#tenantId, row.job_id, row.lease_id])).rows[0];
-    const binding = principal.workerKind === "tool" ? await this.#toolTasks?.read(this.#tenantId, row.job_id) : undefined;
+    const binding = await this.#toolBinding(principal, row.job_id);
     return Object.freeze({ claimId: row.claim_id, offerId: row.offer_id, projectId: row.project_id, jobId: row.job_id,
       title: detail?.title ?? "", instructions: detail?.objective ?? "", leaseState: detail?.lease_state ?? "unknown",
       leaseExpiresAt: detail ? iso(detail.lease_expires_at) : null, taskState: detail?.job_state ?? "unknown",

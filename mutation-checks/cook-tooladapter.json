@@ -1,21 +1,21 @@
 [
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "if (!absolutePath(candidate.executable)) throw manifestError(`${candidate.id}.executable must be an absolute path`);",
-    "replace": "if (false) throw manifestError(`${candidate.id}.executable must be an absolute path`);",
+    "find": "if (!absolutePath(candidate.executable)) throw toolManifestError(`${candidate.id}.executable must be an absolute path`);",
+    "replace": "if (false) throw toolManifestError(`${candidate.id}.executable must be an absolute path`);",
     "test": "node --test --test-name-pattern \"manifest validation\" tests/fleet-tool-adapter.test.mjs",
     "why": "a server or task cannot select a relative executable"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "SHELL_META_PATTERN.test(argument)",
+    "find": "SHELL_META_PATTERN.test(arg)",
     "replace": "false",
     "test": "node --test --test-name-pattern \"manifest validation\" tests/fleet-tool-adapter.test.mjs",
     "why": "fixed arguments containing shell syntax are refused"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "if (inputNames.length === 0 || outputNames.length === 0)",
+    "find": "if (!inputNames.length || !outputNames.length)",
     "replace": "if (false)",
     "test": "node --test --test-name-pattern \"manifest validation\" tests/fleet-tool-adapter.test.mjs",
     "why": "every adapter must declare both named input and output placeholders"
@@ -64,7 +64,7 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "for (const declared of declaredRoots) await walk(declared);",
+    "find": "for (const folder of roots) await walk(folder);",
     "replace": "await walk(root);",
     "test": "node --test --test-name-pattern \"oversize and secret-bearing\" tests/fleet-tool-adapter.test.mjs",
     "why": "only files below a named output placeholder are collected"
@@ -78,7 +78,7 @@
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
-    "find": "const binding = principal.workerKind === \"tool\" ? await this.#toolTasks?.read(this.#tenantId, row.job_id) : undefined;",
+    "find": "return principal.workerKind === \"tool\" ? this.#toolTasks?.read(this.#tenantId, jobId) : undefined;",
     "replace": "const binding = undefined;",
     "test": "node --import tsx --test --test-name-pattern \"tool worker end to end\" tests/fleet-harness-handoff.test.ts",
     "why": "a tool offer carries only its structured owner-approved adapter binding"
@@ -99,8 +99,8 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "killToolProcess(child, \"SIGKILL\"); child.stdout?.destroy(); child.stderr?.destroy();",
-    "replace": "child.stdout?.destroy(); child.stderr?.destroy();",
+    "find": "// Always stop surviving group members before examining staged output.\n      killProcess(child, \"SIGKILL\"); child.stdout?.destroy(); child.stderr?.destroy();",
+    "replace": "// Always stop surviving group members before examining staged output.\n      child.stdout?.destroy(); child.stderr?.destroy();",
     "test": "node --import tsx --test --test-name-pattern \"same-group children die\" tests/fleet-tool-adapter.test.mjs",
     "why": "successful parent exit cannot leave same-group descendants alive"
   },

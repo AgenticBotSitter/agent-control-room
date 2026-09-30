@@ -1016,7 +1016,7 @@ export function createLocalToolAdapterRunner(registry, options = {}) {
   if (!registry?.adapters || !Number.isSafeInteger(registry.maxConcurrent)) throw new Error("tool_adapter_registry_invalid");
   const state = { active: 0, limit: registry.maxConcurrent, queue: [] }, spawner = options.spawner ?? spawn;
   const environment = options.environment ?? process.env, temporaryRoot = options.temporaryRoot ?? tmpdir(), log = options.log ?? (() => {}),
-    removeWork = options.removeWork ?? rm;
+    removeWork = options.removeWork ?? rm, killProcess = options.killProcess ?? killToolProcess;
   return Object.freeze({ get active() { return state.active; }, async execute(task, signal) {
     const adapter = typeof task?.adapterId === "string" ? registry.adapters.get(task.adapterId) : undefined;
     if (!adapter) throw toolError("tool_adapter_unknown", "This machine has no owner-declared adapter with that id.");
@@ -1035,14 +1035,15 @@ export function createLocalToolAdapterRunner(registry, options = {}) {
       const env = {}; for (const name of adapter.envAllowlist) if (typeof environment[name] === "string") env[name] = environment[name];
       const child = spawner(adapter.executable, argv, { cwd: work, env, shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
       let stdout = "", stderr = "", timedOut = false, overflow = false, stopped = false, terminating = false, killTimer;
-      const terminate = () => { if (terminating) return; terminating = true; killToolProcess(child); killTimer = setTimeout(() => { killToolProcess(child, "SIGKILL"); child.stdout?.destroy(); child.stderr?.destroy(); }, TOOL_KILL_GRACE_MS); };
+      const terminate = () => { if (terminating) return; terminating = true; killProcess(child); killTimer = setTimeout(() => { killProcess(child, "SIGKILL"); child.stdout?.destroy(); child.stderr?.destroy(); }, TOOL_KILL_GRACE_MS); };
       const append = (which, chunk) => { const next = (which === "stdout" ? stdout : stderr) + chunk.toString("utf8"); if (Buffer.byteLength(next, "utf8") > adapter.maxOutputBytes) { overflow = true; terminate(); } else if (which === "stdout") stdout = next; else stderr = next; };
       child.stdout?.on("data", chunk => append("stdout", chunk)); child.stderr?.on("data", chunk => append("stderr", chunk));
       const stop = () => { stopped = true; terminate(); }; signal?.addEventListener("abort", stop, { once: true });
       const timeout = setTimeout(() => { timedOut = true; terminate(); }, adapter.timeoutMs);
-      const result = await new Promise(resolveProcess => { let settled = false; const done = value => { if (!settled) { settled = true; resolveProcess(value); } }; child.once("error", error => done({ error })); child.once("exit", (code, processSignal) => done({ code, signal: processSignal })); setTimeout(() => done({ code: null, deadline: true }), adapter.timeoutMs + TOOL_KILL_GRACE_MS * 2); }).finally(() => { clearTimeout(timeout); signal?.removeEventListener("abort", stop); clearTimeout(killTimer); });
+      let hardDeadline;
+      const result = await new Promise(resolveProcess => { let settled = false; const done = value => { if (!settled) { settled = true; resolveProcess(value); } }; child.once("error", error => done({ error })); child.once("exit", (code, processSignal) => done({ code, signal: processSignal })); hardDeadline = setTimeout(() => done({ code: null, deadline: true }), adapter.timeoutMs + TOOL_KILL_GRACE_MS * 2); }).finally(() => { clearTimeout(timeout); clearTimeout(hardDeadline); signal?.removeEventListener("abort", stop); clearTimeout(killTimer); });
       // Always stop surviving group members before examining staged output.
-      killToolProcess(child, "SIGKILL"); child.stdout?.destroy(); child.stderr?.destroy();
+      killProcess(child, "SIGKILL"); child.stdout?.destroy(); child.stderr?.destroy();
       if (timedOut || result.deadline) throw toolError("tool_adapter_timeout", "The local tool exceeded its owner-declared time limit.");
       if (stopped) throw toolError("tool_adapter_aborted", "The local tool was stopped.");
       if (overflow) throw toolError("tool_adapter_output_too_large", "The local tool wrote too much process output.");
