@@ -7,7 +7,7 @@ import { connect as netConnect, createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { createTestRunnerService, readConfiguration, readOrCreateToken } from "../scripts/test-runner/service.mjs";
+import { createTestRunnerService, readConfiguration, readOrCreateToken, tapSummary } from "../scripts/test-runner/service.mjs";
 
 // Real PostgreSQL and real listeners in these tests use the caller's assigned
 // port block, never a fixed one.
@@ -244,6 +244,27 @@ test("output cap guard bounds the excerpt while retaining TAP results", async t 
   assert.ok(result.body.outputBytes > 10_000);
   assert.ok(Buffer.byteLength(result.body.logExcerpt) < 1_200);
   assert.equal(result.body.tap.fail, 0);
+});
+
+test("the TAP summary reads both reporter formats Node ships", () => {
+  // Node ships two summary shapes and the default one changed: `--test-reporter=
+  // tap` writes the spec's `# pass 1`, while a plain `node --test` in this
+  // version writes `ℹ pass 1`. Matching only the spec form made a perfectly
+  // healthy run summarise as all zeros, which is indistinguishable from a run
+  // that produced no summary at all -- so the two failures below reported
+  // `tap.pass === 0` for a run whose own log said `pass 1`.
+  const spec = "# tests 3\n# pass 3\n# fail 0\n";
+  const defaultReporter = "✔ one (0.1ms)\nℹ tests 3\nℹ pass 3\nℹ fail 0\n";
+  for (const [name, text] of [["spec", spec], ["default", defaultReporter]]) {
+    assert.deepEqual({ ...tapSummary(text) },
+      { tests: 3, pass: 3, fail: 0, failingTests: [] }, `${name} reporter summary`);
+  }
+  // Failing names come out of both shapes too, with the duration stripped.
+  assert.deepEqual(tapSummary("not ok 7 - the second case\n").failingTests, ["the second case"]);
+  assert.deepEqual(tapSummary("✖ the second case (12ms)\n").failingTests, ["the second case"]);
+  // And a count inside a test name or prose is not a count.
+  assert.equal(tapSummary("ℹ tests 9 is a phrase\n").tests, 0);
+  assert.equal(tapSummary("no summary at all\n").tests, 0);
 });
 
 test("happy path returns TAP failures and writes one secret-free audit line", async t => {
