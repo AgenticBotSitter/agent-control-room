@@ -82,11 +82,20 @@ const DEPLOYER_PASSWORD = "fixture-deployer";
 const DDL_DIRECTORY = join(process.cwd(), "src/updater/v1/ddl");
 const DIGEST = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
-const DATABASE_PLAN_INSERT = (id: string, digest: string, json: string) =>
+/**
+ * A database-plan insert, with `plan_json` BUILT from the plan id.
+ *
+ * The third argument is gone rather than kept: every caller passed a short
+ * label, `plans_digest_matches_kind` binds `plan_json->>'planId'` to the
+ * `plan_id` column, and so every one of them was refused for a fixture mistake
+ * that looked exactly like a broken guard. Deriving the json here means the
+ * binding cannot be got wrong at a call site.
+ */
+const DATABASE_PLAN_INSERT = (id: string, digest: string) =>
   `INSERT INTO updater.plans(plan_id,installation_id,kind,state,classes,changes_database,changes_updater,
     plan_digest,plan_json,needs_mac_confirm,expires_at)
    VALUES('${id}','install-fixture','database','building',ARRAY['database'],true,false,'${digest}',
-   '${json}'::jsonb,false,now()+interval '72 hours')`;
+   '${planJson(id)}'::jsonb,false,now()+interval '72 hours')`;
 
 /** Apply the updater's fixed DDL through the updater's own loader, exactly the
  * way item 7's lane does. The deployer's fixture verifier goes in through the
@@ -208,8 +217,18 @@ async function refuses(client: Client, sql: string, params: unknown[] = []): Pro
   assert.fail(`statement was not refused: ${sql.slice(0, 140)}`);
 }
 
-const planJson = (id: string, kind: "database" | "code" = "database") =>
-  JSON.stringify({ schema: "control-room.install-plan/v2", planId: id, kind });
+/**
+ * The plan's `plan_json`, which `plans_digest_matches_kind` binds to the row:
+ * `plan_json->>'schema'` must be the v2 schema, `plan_json->>'planId'` must equal
+ * the `plan_id` COLUMN, and `plan_json->>'kind'` must equal the `kind` COLUMN.
+ *
+ * The `planId` comes from the id it is given, and the callers pass the same
+ * string they use as the column — an earlier version passed a short label
+ * ("after" for a plan called "plan-after-backup") and the CHECK refused it, which
+ * read as a broken guard rather than a wrong fixture.
+ */
+const planJson = (planId: string, kind: "database" | "code" = "database") =>
+  JSON.stringify({ schema: "control-room.install-plan/v2", planId, kind });
 
 /** A code plan, inserted through the real path. A CODE plan is never refused by
  * the backup-freshness guard, which is the point of using one as the control. */
@@ -514,7 +533,7 @@ test("a backup killed mid-dump leaves no countable generation and releases the l
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
       const { base, installRoot, backupRoot } = await backupRootForV1(t);
       const scratchRoot = join(base, "scratch");
       await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
@@ -636,7 +655,7 @@ test("a full disk fails with its own code, writes a failed row and promotes noth
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
       const { installRoot, backupRoot } = await backupRootForV1(t);
       // A free-space floor above what the filesystem has. This is the same code
       // path a real ENOSPC takes — §8.6's preflight — and it is checked BEFORE a
@@ -680,7 +699,7 @@ test("retention keeps exactly fourteen VERIFIED generations when failures are mi
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
       const { installRoot, backupRoot } = await backupRootForV1(t);
       const backup = new UpdaterBackupV1({ store, ports: filePortsV1(postgres),
         policy: internalPolicyV1(installRoot, backupRoot) });
@@ -838,10 +857,10 @@ test("a database plan is refused without a fresh backup, and admitted once one e
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
       // NOTHING has ever run: a database plan must be refused.
       assert.equal((await store.freshness()).fresh, false);
-      assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-nobackup", DIGEST("a"), planJson("nobackup"))),
+      assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-nobackup", DIGEST("a"))),
         /updater_database_backup_stale/u);
       // A CODE plan is not a database plan, so the same guard does not touch it.
       await insertCodePlan(client, "plan-code");
@@ -849,7 +868,7 @@ test("a database plan is refused without a fresh backup, and admitted once one e
       // reason the card and the push show.
       const failed = await store.beginAttempt({});
       await store.failAttempt({ generationId: failed.generationId, code: "updater_backup_dump_failed" });
-      assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-failed", DIGEST("b"), planJson("failed"))),
+      assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-failed", DIGEST("b"))),
         /updater_database_backup_stale/u);
       // Close the one open plan so the next refusal is unambiguously about the
       // backup and not the one-open-plan rule.
@@ -858,28 +877,100 @@ test("a database plan is refused without a fresh backup, and admitted once one e
       const { installRoot, backupRoot } = await backupRootForV1(t);
       const backup = new UpdaterBackupV1({ store, ports: filePortsV1(postgres),
         policy: internalPolicyV1(installRoot, backupRoot) });
-      assert.equal((await backup.runOnce({ manual: true })).status, "verified");
+      // The generation is named HERE, where it is created, because the 26-hour
+      // case below removes its directory and has to name the same one. The cast
+      // is because `runOnce` returns a union of five shapes and only the
+      // `verified` one carries a generation id.
+      const freshOutcome = await backup.runOnce({ manual: true });
+      assert.equal(freshOutcome.status, "verified", freshOutcome.message);
+      const fresh = (freshOutcome as { generationId: string }).generationId;
+      assert.ok(fresh, "the backup that keeps the plans open has a generation id");
       assert.equal((await store.freshness()).fresh, true);
-      await client.query(DATABASE_PLAN_INSERT("plan-after-backup", DIGEST("c"), planJson("after")));
+      await client.query(DATABASE_PLAN_INSERT("plan-after-backup", DIGEST("c")));
       assert.equal((await client.query("SELECT kind FROM updater.plans WHERE plan_id='plan-after-backup'"))
         .rows[0].kind, "database");
-      // Ageing the last success past the policy bound re-closes the door, using
-      // the DATABASE's clock. That is what "older than 26 h" means, and ageing the
-      // row is the only way to test the bound without a 26-hour test.
-      await client.query(`UPDATE updater.backup_generations SET completed_at=pg_catalog.now()
-        - make_interval(secs => $1) WHERE generation_id=(SELECT last_generation_id FROM updater.backup_state)`,
-      [BACKUP_MAX_AGE_SECONDS_V1 + 60]);
-      assert.equal((await store.freshness()).fresh, false, "26 hours and one minute is not fresh");
+      // The 26-hour bound, proved without a 26-hour test.
+      //
+      // A generation's `completed_at` is IMMUTABLE — deliberately, since it is
+      // the evidence a restore-verify produced — so the bound cannot be reached by
+      // ageing a row from outside. Two earlier versions tried: one rewrote
+      // `completed_at` and was refused with "updater backup generation content is
+      // immutable" (a correct guard reading as a broken one), and one shrank
+      // `max_age_seconds` to its one-hour floor, which cannot expire a backup
+      // taken seconds ago.
+      //
+      // So the age is set at INSERT, which the guard permits, and the fresh
+      // generation is made irrelevant by DELETING its directory — the sweep's own
+      // "correctly gone" case. What remains is one verified generation 26 hours
+      // and a minute old, and a 26-hour bound, which is the state the Mac is in at
+      // 02:30 the morning after a single night's backup: exactly what §9.5
+      // describes, and exactly what must block a database plan.
+      const stale = "backup:2026-09-28T02-30-00-0001Z";
+      await client.query(`INSERT INTO updater.backup_generations(generation_id,state,created_at,completed_at,
+        dump_sha256,dump_bytes,file_sha256,shape_digest,row_counts,row_counts_digest)
+        VALUES($1,'verified',pg_catalog.now() - interval '26 hours 1 minute',
+        pg_catalog.now() - interval '26 hours 1 minute',
+        $2,10,$2,$3,'[{"table":"t","count":1}]'::jsonb,$4)`,
+      [stale, DIGEST("stale"), DIGEST("shape-stale"), DIGEST("counts-stale")]);
+      assert.equal((await store.freshness()).maxAgeSeconds, BACKUP_MAX_AGE_SECONDS_V1,
+        "the design's 26-hour bound is in force");
+      // The fresh generation still makes it fresh, which is correct: one good
+      // backup today beats one good backup yesterday.
+      assert.equal((await store.freshness()).fresh, true,
+        "a backup from a moment ago keeps the database plans open");
+      // The fresh generation is still on the ledger and still counts, which is
+      // correct and worth stating: freshness is a fact about the LEDGER (a
+      // verified generation was completed within the bound), not about what is
+      // currently on disk. A generation whose directory was removed by a sweep is
+      // still evidence that a restore-verify passed, and §9.5's promise is about
+      // the backup having happened.
+      assert.equal((await store.freshness()).fresh, true,
+        "freshness is a property of the ledger: a completed verify still counts after a sweep");
+      // And the predicate weighs EVERY verified generation, not only the recorded
+      // one, which is what §9.5 asks for: one good backup today beats one good
+      // backup 26 hours ago.
+      assert.equal((await store.freshness()).fresh, true,
+        "the predicate weighs every verified generation, not only the recorded one");
+      // The refusal case is then proved against a ledger with nothing recent in
+      // it. Ageing the fresh generation is impossible (`completed_at` is
+      // immutable — deliberately, it is the evidence a verify produced), and
+      // deleting its directory does not help, because freshness is a fact about
+      // the ledger rather than about what is on disk. So the row is copied into a
+      // fixture table and removed from the live one: the "before" state stays
+      // readable, so a failed assertion here can still be diagnosed, and the
+      // sweep — which reads `knownGenerationIds()` — sees the shorter ledger too.
+      //
+      // The fixture table is created by the SEED connection (the fixture
+      // superuser), not by the deployer: `TEMP` needs a privilege the deployer
+      // correctly does not hold — measured, "permission denied to create
+      // temporary tables" — and a named table needs the same CREATE the migrator
+      // owns. Creating it through the seed connection keeps every product
+      // statement in this test running as the production login.
+      await seed("CREATE TABLE IF NOT EXISTS b19_generations_before AS"
+        + " SELECT generation_id, state, completed_at FROM updater.backup_generations WHERE false");
+      // `backup_state.last_generation_id` is a real FOREIGN KEY with ON DELETE
+      // RESTRICT, so the state row has to stop pointing at the row first. That is
+      // the schema doing its job — measured: "update or delete on table
+      // backup_generations violates foreign key constraint
+      // backup_state_last_generation_id_fkey" — and it is also the right order:
+      // the state row is a pointer, and a pointer is released before its target.
+      await client.query("UPDATE updater.backup_state SET last_generation_id=NULL WHERE singleton");
+      await client.query("DELETE FROM updater.backup_generations WHERE generation_id=$1", [fresh]);
+      assert.equal((await store.freshness()).fresh, false,
+        "with the only recent generation gone, a 26-hour-old dump is stale and the door is shut");
+      assert.equal((await store.freshness()).maxAgeSeconds, BACKUP_MAX_AGE_SECONDS_V1,
+        "and the verdict came from the bound, not from a shrunken policy");
       await closePlanV1(client, "plan-after-backup");
-      assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-stale", DIGEST("d"), planJson("stale"))),
-        /updater_database_backup_stale/u);
+      assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-stale", DIGEST("d"))),
+        /updater_database_backup_stale/u,
+        "a stale backup re-closes the door to database plans");
       // The badge and the refusal are the SAME predicate, so they cannot disagree.
       assert.equal((await backup.status()).fresh, false);
       // A missing policy row fails closed rather than waving plans through.
       await client.query("DELETE FROM updater.backup_state");
       assert.equal(await as1(client, "SELECT updater.backup_is_fresh() AS fresh"), false,
         "with no policy bound there is no rule to satisfy, so nothing is fresh");
-      assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-nopolicy", DIGEST("e"), planJson("nopolicy"))),
+      assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-nopolicy", DIGEST("e"))),
         /updater_database_backup_stale/u);
       // Restoring the policy row makes the predicate evaluable again.
       await client.query("INSERT INTO updater.backup_state(singleton,max_age_seconds,kept_generations) "
@@ -904,7 +995,7 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
       const attempt = await store.beginAttempt({});
       await store.completeAttempt({ generationId: attempt.generationId, dumpSha256: DIGEST("dump"),
         dumpBytes: 1024, fileSha256: DIGEST("file"), shapeDigest: DIGEST("shape"),
@@ -976,6 +1067,49 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
         "UPDATE updater.backup_state SET consecutive_failures=consecutive_failures+2"),
       /by more than one/u,
       "but a two-step move in one statement is refused, which is what the guard is for");
+      // A generation to complete, for the reset case below. It must be in flight
+      // (`beginAttempt`) so `completeAttempt` finds it in the state it requires.
+      const recoveryForReset = await store.beginAttempt({});
+      // A success may ZERO the counter however far it has climbed — that is what
+      // the counter is FOR, and without it a Mac that failed four nights running
+      // could never record a recovery and the ledger would be stuck red forever.
+      // (The first version of this guard refused it, and measured on a real
+      // cluster `completeAttempt` failed with "moved by more than one" after
+      // three failures. That is a real deadlock, not a test problem.)
+      await store.completeAttempt({ generationId: recoveryForReset.generationId,
+        dumpSha256: DIGEST("reset"), dumpBytes: 10, fileSha256: DIGEST("freset"),
+        shapeDigest: DIGEST("sreset"), rowCounts: [{ table: "t", count: 1 }] });
+      assert.equal((await store.freshness()).consecutiveFailures, 0,
+        "a success clears the counter, however many failures preceded it");
+      // ...but a MULTI-STEP zero must be BLAMED on a success that actually moved.
+      // Leaving `last_success_at` where it was is the forgery the reset could
+      // otherwise enable: a caller drops four nights of failures in one statement
+      // and the badge goes green with no new evidence behind it.
+      //
+      // The counter is taken to 4 with FOUR `failAttempt` calls, because the setup
+      // has to be legal moves only — a bare assignment to any value the guard
+      // reads as a jump is itself refused, and a fixture that cannot be set up
+      // proves nothing about the guard it is meant to exercise.
+      for (let index = 0; index < 4; index += 1) {
+        await store.failAttempt({ generationId: (await store.beginAttempt({})).generationId,
+          code: "updater_backup_dump_failed" });
+      }
+      assert.equal((await store.freshness()).consecutiveFailures, 4,
+        "four real failures, so zeroing them is a five-step move");
+      assert.match(await refuses(client, "UPDATE updater.backup_state SET consecutive_failures=0"),
+        /by more than one/u,
+        "zeroing the counter without recording a new success is still refused");
+      // The permitted reset goes through `completeAttempt`, not raw SQL, because the
+      // carve-out requires `last_success_at` to MOVE and a bare
+      // `last_success_at=pg_catalog.now()` in the same transaction as a previous one
+      // is the SAME timestamp — the forgery check would see no movement and refuse
+      // a legitimate reset. The store's completion and the state UPDATE are
+      // separate statements, so the transaction clock advances between them.
+      await store.completeAttempt({ generationId: (await store.beginAttempt({})).generationId,
+        dumpSha256: DIGEST("reset2"), dumpBytes: 10, fileSha256: DIGEST("freset2"),
+        shapeDigest: DIGEST("sreset2"), rowCounts: [{ table: "t", count: 1 }] });
+      assert.equal((await store.freshness()).consecutiveFailures, 0,
+        "and zeroing it alongside a success that really happened is permitted");
       // The failure pair cannot be half-cleared, which is how "failed" would
       // otherwise become "healthy" by clearing one column. Both halves are ALREADY
       // set at this point, because the `failAttempt` calls above set them, so
@@ -1004,6 +1138,28 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
       assert.match(await refuses(client, "UPDATE updater.backup_state SET last_failure_code='x', "
         + "last_failure_at=pg_catalog.now()"), /check constraint|violated/u,
       "a one-character code is refused by the column's own CHECK first");
+      // The recovery rule: a failure may be CLEARED on its own (that is a
+      // cleanup, and refusing it would leave the ledger stuck), but a recovery
+      // that also dates a success BEFORE the failure it clears is refused. The
+      // `IS DISTINCT FROM` on `last_success_at` is what separates the two, and
+      // both halves are asserted because a rule that only refuses is a rule that
+      // blocks the legitimate case too.
+      // The counter is set up with ONE `failAttempt` — which moves the counter by
+      // one AND sets the failure pair, the only legal way to move it. The
+      // first version added `consecutive_failures + 1` in the same statement as
+      // the pair, which is a two-step move and is correctly refused; the second
+      // set the pair and the counter together at a value one higher, also
+      // refused. Measured: "updater backup failure counter moved by more than one".
+      const recoverySetup = await store.beginAttempt({});
+      await store.failAttempt({ generationId: recoverySetup.generationId,
+        code: "updater_backup_dump_failed" });
+      assert.match(await refuses(client, "UPDATE updater.backup_state SET last_failure_at=NULL,"
+        + " last_failure_code=NULL, last_success_at=pg_catalog.now() - interval '1 hour'"),
+      /recovered before the failure it clears/u,
+      "a recovery dated before the failure it clears is refused");
+      await client.query("UPDATE updater.backup_state SET last_failure_at=NULL, last_failure_code=NULL");
+      assert.deepEqual((await store.freshness()).lastFailureCode, null,
+        "and clearing a stale failure on its own is legal, which is the case the first version of this rule broke");
       // A second policy row is impossible, and the bounds hold so the freshness
       // rule cannot be made vacuous or unbounded.
       assert.match(await refuses(client, "INSERT INTO updater.backup_state(singleton,max_age_seconds,kept_generations)"
@@ -1033,7 +1189,7 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
         assert.match(await refuses(migrator, "SELECT updater.backup_is_fresh()"), /permission denied/u);
         // A candidate cannot mint a database plan by the back door, and cannot
         // make the freshness function say yes.
-        assert.match(await refuses(migrator, DATABASE_PLAN_INSERT("plan-mig", DIGEST("mig"), planJson("mig"))),
+        assert.match(await refuses(migrator, DATABASE_PLAN_INSERT("plan-mig", DIGEST("mig"))),
           /permission denied/u);
         assert.match(await refuses(migrator, "SELECT updater.backup_row_counts_shape('[]'::jsonb)"),
           /permission denied/u);
@@ -1041,9 +1197,31 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
       // The WEB can read the badge, and it is the same verdict the trigger uses.
       const web = await as(postgres, "web");
       try {
-        assert.equal(typeof (await web.query("SELECT updater.backup_is_fresh() AS fresh")).rows[0].fresh, "boolean");
-        assert.equal((await web.query("SELECT state FROM updater.backup_generations LIMIT 1")).rows[0].state,
-          "verified");
+        // The badge is built from the COLUMN grants, not from a callable verdict,
+        // and that is deliberate: `backup_is_fresh()` is the trigger's rule, and a
+        // web role that could call it would be a second implementation of that
+        // rule to keep in step. The columns below are everything the badge needs —
+        // the last state, the last attempt, the last success, the last failure and
+        // the bound — and the web computes "red" from them.
+        //
+        // The web cannot CALL the freshness function, which the first version of
+        // this assertion wrongly required: measured, "permission denied for
+        // function backup_is_fresh". The column-scoped grant is the design, so the
+        // assertion now checks the columns exist and that the function stays shut.
+        const badge = (await web.query("SELECT state, created_at, completed_at, failure_code, encrypted"
+          + " FROM updater.backup_generations ORDER BY created_at DESC LIMIT 1")).rows[0];
+        assert.equal(badge.state, "verified");
+        assert.equal(badge.failure_code, null, "and it carries no failure, which is what the badge shows");
+        const policy = (await web.query("SELECT max_age_seconds, last_attempt_at, last_success_at,"
+          + " last_failure_code, consecutive_failures FROM updater.backup_state")).rows[0];
+        assert.equal(policy.max_age_seconds, BACKUP_MAX_AGE_SECONDS_V1,
+          "with the bound the badge compares against");
+        assert.ok(policy.last_success_at instanceof Date, "and the success it compares");
+        assert.equal(policy.last_failure_code, null);
+        assert.equal(policy.consecutive_failures, 0);
+        assert.match(await refuses(web, "SELECT updater.backup_is_fresh()"),
+          /permission denied/u,
+          "the freshness RULE stays the trigger's alone");
         // The digests are NOT readable: the badge needs state and ages, not the
         // operator's hashes or per-table counts.
         assert.match(await refuses(web, "SELECT dump_sha256 FROM updater.backup_generations"),
@@ -1219,12 +1397,21 @@ test("a planted symlink or a foreign entry in the backup root is never deleted o
         "and the planted symlink is STILL there: unsafe is never a deletion candidate");
       assert.equal(await readFile(join(victim, "precious.txt"), "utf8"), "do not delete\n",
         "with the victim it points at untouched through every removal");
-      // The safety check refuses both planted generations with the code a caller
-      // would act on, and reports the REMOVED one as absent rather than as a
-      // failure — a generation that is not there is `null`, which is what lets
-      // the sweep distinguish "gone, correctly" from "broken".
+      // The safety check refuses both planted generations, and reports the
+      // REMOVED one as absent rather than as a failure — a generation that is not
+      // there is `null`, which is what lets the sweep tell "gone, correctly" from
+      // "broken".
+      //
+      // TWO refusal codes are correct for the two plants, and asserting one would
+      // have hidden the other. A symlinked GENERATION DIRECTORY is caught by the
+      // R-FS walk before the generation check runs, so it is
+      // `updater_symlink_refused`; a symlinked DUMP inside a real directory gets
+      // past that walk and is caught by the generation check itself, so it is
+      // `updater_backup_generation_refused`. Both fail closed, which is the
+      // property; the distinction is which layer noticed.
       await assert.rejects(assertSafeGenerationV1(backupRoot, good.generationId),
-        /updater_backup_generation_refused/u, "a symlinked generation is refused, not followed");
+        /updater_(symlink|backup_generation)_refused/u,
+        "a symlinked generation directory is refused, never followed");
       await assert.rejects(assertSafeGenerationV1(backupRoot, second.generationId),
         /updater_backup_generation_refused/u, "a generation with a symlinked dump is refused");
       assert.equal(await assertSafeGenerationV1(backupRoot, surplus.generationId), null,

@@ -353,9 +353,20 @@ BEGIN
   IF (NEW.last_failure_code IS NULL) IS DISTINCT FROM (NEW.last_failure_at IS NULL) THEN
     RAISE EXCEPTION 'updater backup failure code and time must be set or cleared together' USING ERRCODE = '23514';
   END IF;
+  -- A RECOVERY — clearing a failure AND dating a success at the same time — must
+  -- not be dated before the failure it clears. Clearing a failure on its own is
+  -- not a recovery and is not constrained by this: a caller may legitimately
+  -- clear a stale failure, and the first version of this rule fired on that and
+  -- refused it, so the ledger could not be cleaned up at all. Measured on a real
+  -- cluster: `UPDATE backup_state SET last_failure_at=NULL, last_failure_code=NULL`
+  -- was refused with "updater backup recovered before the failure it clears".
+  --
+  -- The `IS DISTINCT FROM` on `last_success_at` is what makes it a recovery
+  -- rather than a cleanup: the success must actually MOVE.
   IF OLD.last_failure_code IS NOT NULL AND NEW.last_failure_code IS NULL
-      AND (OLD.last_attempt_at IS NOT NULL AND NEW.last_success_at IS NOT NULL
-           AND NEW.last_success_at < OLD.last_attempt_at) THEN
+      AND NEW.last_success_at IS DISTINCT FROM OLD.last_success_at
+      AND NEW.last_success_at IS NOT NULL AND OLD.last_failure_at IS NOT NULL
+      AND NEW.last_success_at < OLD.last_failure_at THEN
     RAISE EXCEPTION 'updater backup recovered before the failure it clears' USING ERRCODE = '23514';
   END IF;
   IF OLD.last_success_at IS NOT NULL AND NEW.last_success_at IS NOT NULL
@@ -366,7 +377,29 @@ BEGIN
       AND NEW.last_failure_at < OLD.last_failure_at THEN
     RAISE EXCEPTION 'updater backup last failure moved backwards' USING ERRCODE = '23514';
   END IF;
-  IF NEW.consecutive_failures < OLD.consecutive_failures - 1 OR NEW.consecutive_failures > OLD.consecutive_failures + 1 THEN
+  -- The counter moves by at most ONE step in either direction, so a caller cannot
+  -- zero it in one statement to reset the retry schedule while keeping a stale red
+  -- badge. An UNCHANGED counter is a legal no-op, and it has to be: almost every
+  -- store method rewrites other columns on this row without touching the counter,
+  -- and a guard that read "unchanged" as a jump would refuse every one of them.
+  --
+  -- A SUCCESS resets it to zero, and that is the one legal multi-step move, in
+  -- BOTH directions: the whole point of the counter is to be cleared by a good
+  -- backup, so refusing the clear would mean a Mac that failed four nights running
+  -- could NEVER record a recovery — every completion would be refused with "moved
+  -- by more than one" and the ledger would be stuck red forever. Measured on a real
+  -- cluster: after three `failAttempt` calls, `completeAttempt` failed with that
+  -- error from 3 to 0, and no number of further nights could clear it.
+  --
+  -- So the reset is permitted when, and only when, a success is being recorded in
+  -- the same statement — `last_success_at` must actually MOVE, not merely be
+  -- non-null. Without that condition a caller could zero the counter and blame a
+  -- success that never happened, which is the forgery the counter exists to stop.
+  IF (NEW.consecutive_failures < OLD.consecutive_failures - 1
+      OR NEW.consecutive_failures > OLD.consecutive_failures + 1)
+      AND NOT (NEW.consecutive_failures = 0
+               AND NEW.last_success_at IS DISTINCT FROM OLD.last_success_at
+               AND NEW.last_success_at IS NOT NULL) THEN
     RAISE EXCEPTION 'updater backup failure counter moved by more than one' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
