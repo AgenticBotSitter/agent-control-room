@@ -3,10 +3,29 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { captureFleetConnectorReleaseManifestV1, type FleetConnectorReleaseManifestV1 } from "./connector-release";
 import { isIP } from "node:net";
 import type { WorkBatchServiceV1 } from "../../work-intake/v1/service";
-import { FleetErrorV1, fleetFail } from "./errors";
+import { WorkIntakeErrorV1 } from "../../work-intake/v1/errors";
+import { FleetErrorV1, fleetFail, type FleetErrorCodeV1 } from "./errors";
 import type { FleetGatewayStoreV1, FleetWorkerPrincipalV1 } from "./gateway-store";
 import { FLEET_DIGEST_PATTERN_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1 } from "./identifiers";
+
+/**
+ * The S1 proposal service reports its designed refusals with its own safe codes.
+ * They are refusals, not failures: a bot that reuses one idempotency key for
+ * different work must be told `conflict`, and a credential the intake login will
+ * not act for must be told `forbidden`, exactly as every other fleet refusal is.
+ * Without this translation they escape as an untyped 400 and the gateway's own
+ * operator log records a perfectly ordinary client mistake as a server fault.
+ * `integrity_failed` deliberately has no mapping: it is never a client error and
+ * must keep reaching the operator log.
+ */
+const WORK_INTAKE_REFUSALS_V1: Readonly<Record<string, FleetErrorCodeV1>> = Object.freeze({
+  credential_inactive: "forbidden",
+  no_matching_grant: "forbidden",
+  replay_conflict: "conflict",
+  batch_not_found: "not_found",
+  invalid_input: "invalid",
+});
 
 /**
  * The connector-facing API. Every route except enrollment and the connector
@@ -459,9 +478,17 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       const at = now();
       // The same S1 proposal service as the website intake: a proposal starts
       // no work and grants no authority until the owner approves it.
-      const result = await options.proposals.submit({ principal: { tenantId: principal.tenantId,
-        identityId: principal.identityId, actorType: "agent", authenticatedAt: at, expiresAt: principal.credentialExpiresAt },
-      projectId, rawProposal: JSON.stringify(body.proposal), idempotencyKey: body.idempotencyKey, now: at });
+      let result;
+      try {
+        result = await options.proposals.submit({ principal: { tenantId: principal.tenantId,
+          identityId: principal.identityId, actorType: "agent", authenticatedAt: at,
+          expiresAt: principal.credentialExpiresAt },
+        projectId, rawProposal: JSON.stringify(body.proposal), idempotencyKey: body.idempotencyKey, now: at });
+      } catch (error) {
+        if (error instanceof WorkIntakeErrorV1 && WORK_INTAKE_REFUSALS_V1[error.safeCode])
+          return fleetFail(WORK_INTAKE_REFUSALS_V1[error.safeCode]!);
+        throw error;
+      }
       return send(response, "accepted" in result && result.accepted === false ? 422 : 202, { ok: true, result });
     }
     return fleetFail("not_found");

@@ -895,11 +895,20 @@ export class CanonicalStore {
           effort: NonNullable<AttemptRecord["modelSelection"]>["effort"] | null;
           provider: string | null; profile: string | null }>(`SELECT worker_kind,selection_key,model,effort,provider,profile
           FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`, [input.tenantId, input.jobId])).rows[0];
-        if (selected && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {
+        // An all-NULL row is 0091's documented "chosen but not yet resolved"
+        // state, and every other reader in this codebase (task-execution-planner,
+        // the assignment coordinator) treats `worker_kind IS NOT NULL` as the
+        // test for a real choice. Only a row that names a worker but is missing
+        // any other part of the tuple is genuinely unresolved, and refusing to
+        // claim THAT is the guard's purpose. Refusing an all-NULL row instead
+        // made every task proposed without an explicit model un-claimable by
+        // the fleet, because WebTaskService always writes that row.
+        if (selected?.worker_kind && (!selected.selection_key || !selected.model || !selected.effort)) {
           throw new Error("Task model selection is unresolved");
         }
-        if (selected) modelSelection = { workerKind: selected.worker_kind!, selectionKey: selected.selection_key!,
-          model: selected.model!, effort: selected.effort!, ...(selected.provider ? { provider: selected.provider } : {}),
+        if (selected?.worker_kind) modelSelection = { workerKind: selected.worker_kind,
+          selectionKey: selected.selection_key!, model: selected.model!, effort: selected.effort!,
+          ...(selected.provider ? { provider: selected.provider } : {}),
           ...(selected.profile ? { profile: selected.profile } : {}) };
       }
 
