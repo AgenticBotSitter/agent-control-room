@@ -548,6 +548,48 @@ test("an output swapped AFTER a valid file was written is still refused", async 
   }
 });
 
+test("a large derived file is returned whole, not silently truncated", async () => {
+  // The O_NOFOLLOW read loops to EOF in 64 KiB chunks rather than issuing one
+  // read of the whole ceiling, and this asserts a conversion's output comes back
+  // WHOLE — every line, head to tail — rather than as a silently truncated
+  // success.
+  //
+  // HONEST SCOPE, because it matters for reading this test: it proves the
+  // multi-chunk loop is correct and is actually exercised (1.5 MB is ~24 reads).
+  // It does NOT prove the loop is load-bearing, and I could not make it do so
+  // here: a single read() of a regular file on this machine's APFS returned the
+  // full length at every size tested (64 KiB, 512 KiB, 1.5 MB, 2 MiB), so
+  // mutating the loop back to one read still passed this test. POSIX permits a
+  // short read and other filesystems and conditions can produce one, which is
+  // why the loop exists — but that justification is the standard, not a
+  // measurement, and it is recorded as such rather than dressed up as a bug
+  // this test caught.
+  const foreign = join(CONVERTER_SCRIPTS, "test-large-output-converter.mjs");
+  await writeFile(foreign, [
+    "import { writeFile } from 'node:fs/promises';",
+    // A line-structured body, so truncation mid-file is detectable as missing
+    // tail lines rather than merely a length mismatch.
+    "const lines = [];",
+    "for (let i = 0; i < 20000; i++) lines.push('line-' + i + '-' + 'x'.repeat(64));",
+    `await writeFile(process.argv.at(-1), lines.join('\\n') + '\\n');`,
+  ].join("\n"));
+  try {
+    const converted = await productionService({
+      pdfExecutable: process.execPath,
+      pdfPrefixArguments: [foreign],
+    }).convert({ format: "pdf", sourceBytes: bytes("%PDF-1.4 large") });
+    assert.equal(converted.status, "succeeded", `category was ${converted.diagnosticCategory}`);
+    const markdown = text(converted.markdownBytes);
+    // 20000 lines x ~75 bytes ~= 1.5 MB: under the 2 MiB ceiling, so this is a
+    // success that must be COMPLETE rather than a refusal.
+    assert.ok(markdown.length > 1_400_000, `expected the whole output, got ${markdown.length} bytes`);
+    assert.match(markdown, /^line-0-x{64}/u, "the head of the output is missing");
+    assert.match(markdown, /line-19999-x{64}\n$/u, "the TAIL of the output is missing: a short read");
+  } finally {
+    await rm(foreign, { force: true });
+  }
+});
+
 test("the output is validated on an open descriptor, never resolved twice", async () => {
   // The property the fix actually establishes, asserted deterministically.
   //

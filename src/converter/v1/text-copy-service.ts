@@ -290,6 +290,11 @@ async function groupRssBytes(pid: number, spawnProcess: typeof spawn): Promise<G
  */
 const OVERSIZE = Symbol("text_copy_output_oversize");
 
+/** Read chunk for the bounded loop below. Sized so the common case (a few KiB of
+ * markdown) is a single read, while a 2 MiB output costs 32 reads rather than
+ * one 2 MiB allocation per conversion. */
+const OUTPUT_READ_CHUNK_BYTES = 64 * 1024;
+
 async function readVerifiedOutput(path: string, maximumBytes: number): Promise<Buffer | typeof OVERSIZE | null> {
   let handle: FileHandle | undefined;
   try {
@@ -302,11 +307,29 @@ async function readVerifiedOutput(path: string, maximumBytes: number): Promise<B
     // would block forever in read() and is not text either way.
     if (!stats.isFile()) return null;
     if (stats.size > maximumBytes) return OVERSIZE;
-    // Read one byte past the ceiling: a file can grow between the stat and the
-    // read, and an unbounded read would be the converter choosing its own limit.
-    const bytes = await handle.read(Buffer.alloc(maximumBytes + 1), 0, maximumBytes + 1, 0);
-    const buffer = bytes.buffer.subarray(0, bytes.bytesRead);
-    return buffer.byteLength > maximumBytes ? OVERSIZE : Buffer.from(buffer);
+    // Loop to EOF rather than reading once. POSIX permits a single read() of a
+    // regular file to return SHORT, and treating one short read as the whole
+    // output would store a silently truncated text copy and report SUCCESS — the
+    // worst possible failure shape, because nothing downstream can tell it
+    // happened. Measured, for honesty: read() returned the full length at every
+    // size tried on this filesystem (64 KiB through 2 MiB), so that is the
+    // justification and not an observed failure here.
+    //
+    // The ceiling is enforced against bytes ACTUALLY READ, not against the stat,
+    // because the file can grow between the two: the stat is the fast path that
+    // avoids a 2 MiB allocation on the common refusal, and this loop is the
+    // authority.
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const buffer = Buffer.alloc(OUTPUT_READ_CHUNK_BYTES);
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > maximumBytes) return OVERSIZE;
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+    }
+    return Buffer.concat(chunks, total);
   } catch {
     // ELOOP (symlink), ENOENT (never written), ENOENT/EACCES from the sandbox,
     // EISDIR — all refusals, and all refusals are the same typed outcome: the
