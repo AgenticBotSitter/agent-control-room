@@ -698,7 +698,11 @@ export class PipelineAdvanceServiceV1 {
       -- also frees a job cancelled before a worker ever picked it up.
       -- The two terms cannot double count: this one requires NO harness run of
       -- ANY state, so a job with a live harness run is counted only by the
-      -- first term.
+      -- first term. The join is an inner one and can never drop a receipt:
+      -- pipeline_advance_receipts.execution_job_id has a foreign key to
+      -- control_jobs (0109), so every receipt's job exists and every claimed
+      -- stage is counted by exactly one of the two terms. A LEFT JOIN here
+      -- would be fail-OPEN: an unjoinable receipt would count as nothing.
       ((SELECT COUNT(DISTINCT id) FROM control_harness_runs WHERE tenant_id=$1
         AND state IN('discovered','starting','running','waiting_input','waiting_approval','cancelling'))
         + (SELECT COUNT(DISTINCT r.execution_job_id) FROM pipeline_advance_receipts r
