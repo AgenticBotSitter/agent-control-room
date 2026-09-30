@@ -4,7 +4,7 @@ import { databaseSqlStateIsAnyV1, type DatabaseClient, type DatabaseSession } fr
 import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema, requestRecordSchema, workflowRecordSchema,
   type JobRecord } from "../../domain/v1";
 import { sha256Digest } from "../../security";
-import { moveFleetEntityV1, readFleetEntityV1, type FleetActorV1 } from "./canonical-transitions";
+import { moveFleetEntityV1, readFleetEntityV1, type Entity, type FleetActorV1 } from "./canonical-transitions";
 import { fleetFail, FleetErrorV1 } from "./errors";
 import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_PATTERN_V1,
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
@@ -709,8 +709,16 @@ export class FleetGatewayStoreV1 {
           updated_at=GREATEST(updated_at,$3::timestamptz) WHERE tenant_id=$1 AND identity_id=$2 AND revoked_at IS NULL`,
         [this.#tenantId, worker.identity_id, now]);
         const node = await readFleetEntityV1(tx, this.#tenantId, "node", worker.node_id);
-        if (node.state !== "revoked") await moveFleetEntityV1(tx, node, "revoked", { key: worker.worker_id, occurredAt: now,
-          actor: gatewayActor, metadata: { reason: "owner_revoked_worker" } });
+        // Every one of these steps is a compare-and-set against a row another
+        // reconciler may have moved first. A conflict here means the other one
+        // already applied the revocation, which is the outcome this pass exists
+        // to produce, so it is not an error: the pass is idempotent by design.
+        try {
+          if (node.state !== "revoked") await moveFleetEntityV1(tx, node, "revoked", { key: worker.worker_id,
+            occurredAt: now, actor: gatewayActor, metadata: { reason: "owner_revoked_worker" } });
+        } catch (error) {
+          if (!isFleetErrorV1(error) || error.code !== "conflict") throw error;
+        }
         // Fleet's counterpart of the local Stop path. The owner's revocation is
         // a deliberate withdrawal, not a stall, so the in-flight lease leaves
         // the active set exactly as the supervisor's candidate query looks for
@@ -734,6 +742,25 @@ export class FleetGatewayStoreV1 {
     return Object.freeze(applied);
   }
 
+  /** Moves an entity unless a racing reconciler already did. `skipWhen` names
+   * the states this path deliberately leaves alone -- an attempt waiting on an
+   * owner decision keeps its stored result, and a job awaiting the owner is
+   * theirs to decide. A conflict means the other reconciler won, which is the
+   * outcome this pass exists for, so it is reported as already-applied rather
+   * than thrown. Any other error propagates. */
+  async #moveOrAlready<T extends Entity>(tx: DatabaseSession, entity: T, toState: T["state"],
+    base: Readonly<{ key: string; occurredAt: string; actor: FleetActorV1; metadata?: Record<string, unknown>;
+      patch?: Record<string, unknown> }>, skipWhen?: string): Promise<boolean> {
+    if (entity.state === toState || (skipWhen && entity.state === skipWhen)) return false;
+    try {
+      await moveFleetEntityV1(tx, entity, toState, base);
+      return true;
+    } catch (error) {
+      if (isFleetErrorV1(error) && error.code === "conflict") return false;
+      throw error;
+    }
+  }
+
   /** Every live lease this worker's claims still hold, revoked through the
    * shared fleet transition path. Bounded and idempotent: a lease already out
    * of `active` is left alone, so a repeated reconcile, a concurrent sweep or
@@ -746,25 +773,36 @@ export class FleetGatewayStoreV1 {
     [this.#tenantId, worker.worker_id])).rows;
     let revoked = 0;
     for (const row of rows) {
-      // Lock the lease and the claim's canonical rows in the same order every
-      // other fleet transition uses, so a concurrent sweep cannot interleave.
+      // Lock the lease before reading it. The candidate list above is a snapshot
+      // taken before any lock, so a second reconciler can hold the same row; the
+      // lock is what serializes them, and the re-read after it is what decides
+      // who wins. Without the lock the loser's re-read races the winner's write
+      // and both proceed to the same deterministic transition id, where the
+      // unique constraint on (tenant, entity_kind, entity_id, idempotency_key)
+      // turns an ordinary race into a 23505 that escapes reconcile().
+      const locked = await tx.query<{ id: string; state: string }>(
+        "SELECT id,state FROM control_leases WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+      [this.#tenantId, row.lease_id]);
       const lease = await readFleetEntityV1(tx, this.#tenantId, "lease", row.lease_id);
-      if (lease.state !== "active") continue;
+      // Re-read under the lock: the reconciler that lost the race sees a lease
+      // that is no longer active and stops here.
+      if (!locked.rows.length || locked.rows[0]!.state !== "active" || lease.state !== "active") continue;
       const attempt = await readFleetEntityV1(tx, this.#tenantId, "attempt", row.attempt_id);
       const job = await readFleetEntityV1(tx, this.#tenantId, "job", row.job_id);
       const base = { key: `${worker.worker_id}:${lease.id}`, occurredAt: now, actor: gatewayActor,
         metadata: { reason: "owner_revoked_worker", leaseId: lease.id } };
-      await moveFleetEntityV1(tx, lease, "revoked", base);
-      // An attempt waiting on an owner decision already has its result stored;
-      // cancelling that would throw away the worker's answer. It is left alone
-      // and the job is left waiting_approval, which is the owner's decision.
-      if (attempt.state !== "waiting") await moveFleetEntityV1(tx, attempt, "cancelled",
-        { ...base, patch: { finishedAt: now, safeFailureCode: "worker_revoked" } });
-      if (job.state === "leased" || job.state === "running")
-        await moveFleetEntityV1(tx, job, "orphaned", base);
+      // As with the node above, a losing compare-and-set means the twin already
+      // applied this revocation. Each move is independent, so a skipped one
+      // never skips the rest, and the scope release always runs. Only the lease
+      // move decides the count: this pass revoked this worker's lease, whether
+      // it won the move or found it already made by its twin.
+      const leaseMoved = await this.#moveOrAlready(tx, lease, "revoked", base);
+      await this.#moveOrAlready(tx, attempt, "cancelled",
+        { ...base, patch: { finishedAt: now, safeFailureCode: "worker_revoked" } }, "waiting");
+      await this.#moveOrAlready(tx, job, "orphaned", base, "waiting_approval");
       await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
         [this.#tenantId, lease.id]);
-      revoked += 1;
+      if (leaseMoved) revoked += 1;
     }
     return revoked;
   }
