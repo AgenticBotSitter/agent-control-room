@@ -1779,20 +1779,26 @@ test("the REAL coordinator spends a granted latch through the real store, and th
   await withRealPostgres(async postgres => {
     const admin = new Client(postgres.admin()); await admin.connect();
     const coordinatorClient = new Client(postgres.connection("coordinator")); await coordinatorClient.connect();
+    // On the OWNER'S WEB LOGIN, not the coordinator's: after round 4's REVOKE that
+    // is the only login holding EXECUTE on
+    // `control_room_planner_grant_owner_retry`. Everything else in this test runs on
+    // the coordinator, which is the point of the test -- the grant is the OWNER's
+    // act and the spend is the COORDINATOR's, and they are different authorities
+    // precisely because they are different logins.
+    //
+    // Declared BESIDE the other clients rather than inside the try, so the finally
+    // below can close it unconditionally. A client still open when the harness stops
+    // the cluster surfaces as an uncaught 57P01 on an idle socket, which reads as a
+    // product fault and is a leaked handle.
+    const ownerLogin = new Client(postgres.connection("web"));
     try {
+      await ownerLogin.connect();
       await seedTenant(admin, scope, { withBinding: true });
       await seedIdentities(admin, scope, "");
       const db = database(coordinatorClient);
       const scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
       const failures = new PostgresIntakePlannerFailureStoreV1(db, scopeOf, () => LATER);
       const needsYou = new PostgresIntakeNeedsYouStoreV1(db, () => ({ identityId: "identity:orch-agent" }), () => LATER);
-      // On the OWNER'S WEB LOGIN, not the coordinator's: after round 4's REVOKE that
-      // is the only login holding EXECUTE on
-      // `control_room_planner_grant_owner_retry`. Everything else in this test runs
-      // on the coordinator, which is the point of the test -- the grant is the
-      // owner's act and the spend is the coordinator's, and they are different
-      // authorities precisely because they are different logins.
-      const ownerLogin = new Client(postgres.connection("web")); await ownerLogin.connect();
       const retry = new PostgresIntakeOwnerRetryStoreV1(database(ownerLogin));
       const description = "Reconcile the digest helper with the ledger writer.";
       const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
@@ -1864,6 +1870,13 @@ test("the REAL coordinator spends a granted latch through the real store, and th
       assert.equal(await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
         requestKey: "e2e-retry-0003", ownerRequest: description }), 0,
       "a retry needs a fresh escalation, and there is none at count 1");
-    } finally { await coordinatorClient.end(); await admin.end(); }
+    // EVERY client is ended here, including the owner's web login. The harness's
+    // shutdown ladder stops the cluster when the body returns, and a connection
+    // still open at that moment surfaces as an uncaught 57P01 on an idle socket --
+    // which reads as a product fault and is a leaked handle. Closing the extra
+    // client explicitly is what keeps this test's teardown honest; it was the
+    // difference between this test passing and failing after round 4's REVOKE moved
+    // the grant onto that login.
+    } finally { await coordinatorClient.end(); await ownerLogin.end().catch(() => {}); await admin.end(); }
   }, { port: PORT + 4, allowedPorts: ALLOWED, boundMs: 240_000 });
 });
