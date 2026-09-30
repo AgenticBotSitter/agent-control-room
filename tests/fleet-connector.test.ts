@@ -15,9 +15,10 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, fleetGatewayClientAddressV1,
-  fleetGatewayClientNetworkV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetGatewayAdmissionV1 } from "../src/fleet/v1";
+  fleetGatewayClientNetworkV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetGatewayAdmissionV1,
+  type FleetOperationsModeV1 } from "../src/fleet/v1";
 import { captureFleetGatewayConfigurationV1, FLEET_GATEWAY_CONFIGURATION_V1,
-  FLEET_GATEWAY_SERVER_OPTIONS_V1, fleetGatewayAdmissionFromConfigurationV1,
+  FLEET_GATEWAY_SERVER_OPTIONS_V1, createFleetGatewayStoreFromConfigurationV1, fleetGatewayAdmissionFromConfigurationV1,
   prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { SupervisorReconcilerV1 } from "../src/supervisor/v1";
@@ -149,6 +150,41 @@ test("gateway protected configuration defaults to no proxy trust and validates e
   lease.completeAuthentication(null);
 });
 
+test("gateway operations mode reports every decision and fails closed when its provider is absent or fails", async () => {
+  const database = {} as DatabaseClient;
+  for (const mode of ["running", "paused", "draining", "stopped"] as const) {
+    const store = new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT, operationsMode: async () => mode });
+    assert.equal(await store.operationsMode(), mode);
+  }
+  assert.equal(await new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT }).operationsMode(), "unknown");
+  const failed = new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT,
+    operationsMode: async () => { throw new Error("reader failed"); } });
+  assert.equal(await failed.operationsMode(), "unknown");
+  const invalid = new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT,
+    operationsMode: async () => "unexpected" as FleetOperationsModeV1 });
+  assert.equal(await invalid.operationsMode(), "unknown");
+});
+
+test("run-fleet-gateway composes the authenticated operations-mode reader instead of a silent default", async () => {
+  const queries: Array<{ statement: string; params: unknown[] | undefined }> = [];
+  const database = { query: async (statement: string, params?: unknown[]) => {
+    queries.push({ statement, params }); return { rows: [] };
+  } } as unknown as DatabaseClient;
+  const store = createFleetGatewayStoreFromConfigurationV1(database, { tenantId: FLEET_TENANT,
+    workIntake: { database: {} as never, integrityKey: Buffer.alloc(32, 7).toString("base64url") } });
+  assert.equal(await store.operationsMode(), "running");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0]!.statement, /FROM installation_operations_mode_revisions/u);
+  assert.deepEqual(queries[0]!.params, [FLEET_TENANT]);
+
+  const missingKey = createFleetGatewayStoreFromConfigurationV1(database, { tenantId: FLEET_TENANT });
+  assert.equal(await missingKey.operationsMode(), "unknown");
+  const malformedKey = createFleetGatewayStoreFromConfigurationV1(database, { tenantId: FLEET_TENANT,
+    workIntake: { database: {} as never, integrityKey: Buffer.alloc(31, 7).toString("base64url") } });
+  assert.equal(await malformedKey.operationsMode(), "unknown");
+  assert.equal(queries.length, 1, "a missing key must not fall back to an unauthenticated database read");
+});
+
 test("gateway restart preload includes only active unexpired worker credentials", async t => {
   const f = await fixture(); t.after(() => f.close());
   const active = await joinWorker(f, "Preload active");
@@ -177,7 +213,8 @@ async function fixture(options: { gatewayClock?: () => number; admission?: Fleet
     await raw.exec(await readFile(`db/migrations/${file}`, "utf8"));
   const db: DatabaseClient = adaptPglite(raw);
   await seedFleetTenant((sql, params) => raw.query(sql, params));
-  const gateway = new FleetGatewayStoreV1(db, { tenantId: FLEET_TENANT, ...(options.gatewayClock ? { clock: options.gatewayClock } : {}) });
+  const gateway = new FleetGatewayStoreV1(db, { tenantId: FLEET_TENANT, operationsMode: async () => "running",
+    ...(options.gatewayClock ? { clock: options.gatewayClock } : {}) });
   const owner = new FleetOwnerServiceV1(db, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
     afterDecision: () => gateway.reconcile() });
   const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(db, new Uint8Array(32).fill(3)));

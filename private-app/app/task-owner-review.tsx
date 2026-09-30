@@ -15,33 +15,51 @@ const availability: Record<TaskReviewOptions["availability"], string> = {
   already_reviewed: "Your quality decision is already recorded for this revision.", target_closed: "This revision is closed for new owner decisions.",
   independence_required: "This acceptance profile requires a different independent reviewer.",
 };
+const decisionLabel: Record<TaskReviewDraft["decision"], string> = {
+  accepted: "quality acceptance", accepted_with_exceptions: "acceptance with named exceptions", changes_requested: "request for changes",
+};
+const decisionStatusLabel: Record<TaskReviewDraft["decision"], string> = {
+  accepted: "quality acceptance", accepted_with_exceptions: "accepted with exceptions", changes_requested: "changes requested",
+};
 /** The panel is presentation only. The owner's read-and-correct gesture is
  * owned by the result-bound review session (see `task-review-workspace.ts`),
  * which keys it on the exact review identity, so two results can never share
  * one tick. The panel receives the current value and reports the owner's
  * intent; it does not decide what a tick means. */
-export function OwnerReviewPanel({ options, feedback, attested, pending, held, onFeedback, onAttest, onRecord }: {
-  options: TaskReviewOptions; feedback: string; attested: boolean; pending: boolean; held: boolean;
+export function OwnerReviewPanel({ options, feedback, exceptionsText, attested, pending, held, onFeedback, onExceptionsText, onAttest, onRecord }: {
+  options: TaskReviewOptions; feedback: string; exceptionsText: string; attested: boolean; pending: boolean; held: boolean;
   onFeedback: (value: string) => void;
+  onExceptionsText: (value: string) => void;
   onAttest: (value: boolean) => void;
   onRecord: (decision: TaskReviewDraft["decision"], attested?: boolean) => void;
 }) {
+  const namedExceptions = exceptionsText.split("\n").map(line => line.trim()).filter(line => line.length > 0);
   return <section className="private-owner-review" aria-label="Owner quality decision" data-state="ready"><h4>{availability[options.availability]}</h4>
-    {options.ownReview && <div><p>Saved {options.ownReview.decision === "accepted" ? "quality acceptance" : "request for changes"}
+    {options.ownReview && <div><p>Saved {decisionLabel[options.ownReview.decision]}
       {" · "}<ConfiguredTimestamp value={options.ownReview.recordedAt} /></p>
       <p>Saved against file <code>{options.ownReview.artifactId}</code> with the matching fingerprint.</p>
-      {options.ownReview.feedback && <p className="private-summary">{options.ownReview.feedback}</p>}</div>}
+      {options.ownReview.feedback && <p className="private-summary">{options.ownReview.feedback}</p>}
+      {options.ownReview.exceptions && options.ownReview.exceptions.length > 0 && <ul className="private-summary">
+        {options.ownReview.exceptions.map(exception => <li key={exception.followUpJobId}>{exception.statement}
+          {" "}<span className="private-note">(follow-up opened)</span></li>)}
+      </ul>}</div>}
     <p>Review applies to file <code>{options.artifactId}</code> and fingerprint <code>{options.contentHash}</code>.</p>
     {options.canReview && <><label>Changes you want
       <textarea aria-label="Changes you want" maxLength={4096} value={feedback} disabled={pending || held}
         onChange={event => onFeedback(event.target.value)} /></label>
       <p className="private-note">Use this field when requesting changes. No passwords or secrets. Maximum 4,096 UTF-8 bytes.</p>
+      <label>Named exceptions to accept alongside this result (one per line)
+        <textarea aria-label="Named exceptions" maxLength={3000} value={exceptionsText} disabled={pending || held}
+          onChange={event => onExceptionsText(event.target.value)} /></label>
+      <p className="private-note">Each line becomes its own open follow-up task, linked to this one. Accepting with exceptions does not authorize any action; it only avoids a pointless revise round for small named gaps.</p>
       {options.acceptanceAttestation && <label><input type="checkbox" checked={attested} disabled={pending || held}
         onChange={event => onAttest(event.target.checked)} /> I read it and it’s correct</label>}
       {options.acceptanceAttestation && <p className="private-note">{options.acceptanceAttestation.instructions}</p>}
       <div className="private-actions"><button type="button" disabled={pending || held || !!options.acceptanceAttestation && !attested}
         onClick={() => onRecord("accepted", attested)}>Accept</button>
-        <button type="button" disabled={pending || held || !feedback.trim()} onClick={() => onRecord("changes_requested")}>Request changes</button></div></>}
+        <button type="button" disabled={pending || held || namedExceptions.length === 0}
+          onClick={() => onRecord("accepted_with_exceptions")}>Accept with exceptions</button>
+        <button type="button" disabled={pending || held || !feedback.trim()} onClick={() => onRecord("changes_requested")}>Send back</button></div></>}
     <p className="private-note">A quality decision does not authorize external actions or start another agent run. Other required checks still apply.</p>
   </section>;
 }
@@ -63,7 +81,7 @@ export function OwnerTaskReview({ projectId, jobId, artifactId, targetId, target
 
 function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, targetDigest, contentHash, session, onSaved, runId, revisionEligible }:
   ReviewWorkspaceBinding & { session: TaskReviewSession; onSaved: () => void; runId?: string; revisionEligible: boolean }) {
-  const { client } = session, { feedback, pending, receipt, error: saveError } = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
+  const { client } = session, { feedback, exceptionsText, pending, receipt, error: saveError } = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const { revisionPending, revisionError } = session.getSnapshot();
   const [error, setError] = useState<BrowserRequestError>(), [refresh, setRefresh] = useState(0);
   // The shared polling hook owns the schedule: it pauses while the tab is
@@ -103,12 +121,12 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
   const attested = attestation ? session.attested(attestation) : false;
   return <>
     {!options && !error && <p role="status" data-state="loading">Loading owner review…</p>}
-    {options && <OwnerReviewPanel options={options} feedback={feedback} attested={attested} pending={pending}
-      held={client.hasPending() || !!receipt} onFeedback={session.setFeedback}
+    {options && <OwnerReviewPanel options={options} feedback={feedback} exceptionsText={exceptionsText} attested={attested} pending={pending}
+      held={client.hasPending() || !!receipt} onFeedback={session.setFeedback} onExceptionsText={session.setExceptionsText}
       onAttest={value => { if (attestation) session.setAttested(attestation, value); }}
       onRecord={(decision, checked) => { void save(decision, checked); }} />}
     {pending && <p role="status">Saving your quality decision…</p>}
-    {options && receipt && <p role="status">Saved: {receipt.decision === "accepted" ? "quality acceptance" : "changes requested"}. No new work has been started.</p>}
+    {options && receipt && <p role="status">Saved: {decisionStatusLabel[receipt.decision]}. No new work has been started.</p>}
     {error && <p role="alert">{reviewErrorMessage[error.code]}</p>}
     {saveError && <p role="alert">{reviewErrorMessage[saveError.code]}</p>}
     {options && <OwnerRevisionPanel options={options} request={revisionRequest} eligible={revisionEligible} pending={revisionPending}

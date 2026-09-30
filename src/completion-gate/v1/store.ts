@@ -204,7 +204,7 @@ export class CompletionGateStoreV1 {
         return{review:replay.record as CompletionReviewV1,findings:replayedFindings,replayed:true};}
       if((await this.listByParent(tx,target.tenantId,target.projectId,"revision",target.id)).length)throw new CompletionGateErrorV1("target_superseded");
       const existingFindings=await this.listBySubject(tx,review.tenantId,review.projectId,"finding",review.targetId);
-      if(review.decision==="accepted"&&existingFindings.length>0)throw new CompletionGateErrorV1("invalid_record");
+      if((review.decision==="accepted"||review.decision==="accepted_with_exceptions")&&existingFindings.length>0)throw new CompletionGateErrorV1("invalid_record");
       if(review.authority==="completion_gate"){const existingReviews=await this.listByParent(tx,review.tenantId,review.projectId,"review",review.targetId) as CompletionReviewV1[];
         for(const existing of existingReviews.filter((item)=>item.authority==="completion_gate"))this.assertIndependent(existing.reviewer,review.reviewer,profile);}
       const stored=await this.insert(tx,"review",review);let replayed=stored.replayed;
@@ -377,7 +377,7 @@ export class CompletionGateStoreV1 {
     const byTimeAndId=(kind:CompletionGateRecordKindV1)=>(left:CompletionGateRecordV1,right:CompletionGateRecordV1)=>describe(kind,left).occurredAt
       .localeCompare(describe(kind,right).occurredAt)||left.id.localeCompare(right.id);
     reviews.sort(byTimeAndId("review"));verifications.sort(byTimeAndId("verification"));findings.sort(byTimeAndId("finding"));
-    const accepted=[...new Set(reviews.filter(review=>review.authority==="completion_gate"&&review.decision==="accepted").map(review=>review.id))].sort();
+    const accepted=[...new Set(reviews.filter(review=>review.authority==="completion_gate"&&(review.decision==="accepted"||review.decision==="accepted_with_exceptions")).map(review=>review.id))].sort();
     const passed=new Set(verifications.filter(verification=>verification.outcome==="passed").map(verification=>verification.scenarioId));
     const missing=profile.requiredVerificationScenarioIds.filter(scenario=>!passed.has(scenario));
     const blocked=verifications.some(verification=>profile.requiredVerificationScenarioIds.includes(verification.scenarioId)&&verification.outcome!=="passed");
@@ -402,7 +402,7 @@ export class CompletionGateStoreV1 {
     const snapshot=await this.snapshotWith(source,tenantId,target);
     if(snapshot.status!=="ready")throw new CompletionGateErrorV1("record_not_found");
     const accepted=(await this.listByParent(source,tenantId,projectId,"review",target.id) as CompletionReviewV1[])
-      .filter(value=>value.authority==="completion_gate"&&value.decision==="accepted")
+      .filter(value=>value.authority==="completion_gate"&&(value.decision==="accepted"||value.decision==="accepted_with_exceptions"))
       .sort((left,right)=>left.id.localeCompare(right.id));
     const passed=(await this.listByParent(source,tenantId,projectId,"verification",target.id) as CompletionVerificationV1[])
       .filter(value=>value.outcome==="passed").sort((left,right)=>left.id.localeCompare(right.id));
@@ -417,7 +417,7 @@ export class CompletionGateStoreV1 {
     const verifications=(await this.listByParent(tx,tenantId,target.projectId,"verification",target.id)) as CompletionVerificationV1[];
     const findings=(await this.listBySubject(tx,tenantId,target.projectId,"finding",target.id)) as CompletionFindingV1[];
     const revisions=(await this.listByParent(tx,tenantId,target.projectId,"revision",target.id)) as CompletionRevisionV1[];
-    const accepted=[...new Set(reviews.filter((review)=>review.authority==="completion_gate"&&review.decision==="accepted").map((review)=>review.id))].sort();
+    const accepted=[...new Set(reviews.filter((review)=>review.authority==="completion_gate"&&(review.decision==="accepted"||review.decision==="accepted_with_exceptions")).map((review)=>review.id))].sort();
     const passed=new Set(verifications.filter((verification)=>verification.outcome==="passed").map((verification)=>verification.scenarioId));
     const missing=profile.requiredVerificationScenarioIds.filter((scenario)=>!passed.has(scenario));
     const blocked=verifications.some((verification)=>profile.requiredVerificationScenarioIds.includes(verification.scenarioId)&&verification.outcome!=="passed");

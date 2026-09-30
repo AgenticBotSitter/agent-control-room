@@ -9,6 +9,8 @@ import { WebTaskService } from "../../web/v1/task-service";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "./schemas";
 import { workBatchProposalDigestV1 } from "./digest";
 import { computeIntakeFlagsV1, type IntakeFlagKindV1 } from "./intake-gate";
+import { bindReusableSkillsToTaskInSessionV1, composeReusableSkillInstructionsV1,
+  resolveReusableSkillsInSessionV1 } from "../../skills/v1/service";
 import { captureWorkBatchQueueCatalogV1, resolveWorkBatchQueueWorkerV1,
   type WorkBatchQueueCatalogV1 } from "./queue-catalog";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1, workBatchOwnerViewSchemaV1,
@@ -474,10 +476,16 @@ export class WorkBatchOwnerServiceV1 {
       const dependsOnJobIds = proposal.edges.filter(edge => edge.toLocalId === task.localId)
         .map(edge => jobs.get(edge.fromLocalId)).filter((value): value is string => !!value);
       const key = `batch-item:${sha256Digest({ batchId: batch.id, revision: Number(batch.version), localId: task.localId }).slice(7)}`;
+      const skills = await resolveReusableSkillsInSessionV1(tx, { tenantId: this.scope.tenantId,
+        projectId: batch.project_id }, task.skillRefs ?? []);
+      composeReusableSkillInstructionsV1(task.instructions, skills);
       const command = await this.tasks.proposeWithDependenciesInSession(tx, actor, batch.project_id,
-        { title: task.title, instructions: task.instructions, ...(task.requestedModelKey ? { model: task.requestedModelKey } : {}) },
+        { title: task.title, instructions: task.instructions,
+          ...(task.requestedModelKey ? { model: task.requestedModelKey } : {}) },
         key, dependsOnJobIds);
       if (command.receipt.startsWork !== false) throw new Error("work_batch_task_authority_invalid");
+      await bindReusableSkillsToTaskInSessionV1(tx, { tenantId: this.scope.tenantId,
+        projectId: batch.project_id, jobId: command.receipt.jobId, references: task.skillRefs ?? [], boundAt: actor.now });
       jobs.set(task.localId, command.receipt.jobId);
     }
     const queue = new Map<string, { workerId: string; workerKind: "codex" | "claude-code" | "hermes";

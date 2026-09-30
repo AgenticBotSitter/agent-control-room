@@ -346,6 +346,7 @@ export const HANDOFF_HARNESSES = Object.freeze(["codex", "claude-code", "hermes"
 const HARNESS_LABELS = Object.freeze({ codex: "Codex", "claude-code": "Claude Code", hermes: "Hermes" });
 const MAX_MESSAGE_CHARS = 2000;
 const WATCHDOG_GRACE_MS = 15_000;
+const operationsMode = value => ["running", "paused", "draining", "stopped"].includes(value) ? value : "unknown";
 // Refusals that mean this claim can no longer be reported on.
 const LOST_CLAIM_CODES = new Set(["expired", "not_found", "conflict", "unauthenticated"]);
 // Answers that are worth repeating with the same idempotency key.
@@ -461,7 +462,7 @@ async function report(send, attempts = 3) {
  *   secrets?: string[] }} options
  * @returns {Promise<RunPass>}
  */
-export async function runClaimedTask({ client, claim, adapter, progressIntervalMs = 60_000, readMode = async () => "running",
+export async function runClaimedTask({ client, claim, adapter, progressIntervalMs = 60_000, readMode = async () => "unknown",
   log = () => {}, watchdogGraceMs = WATCHDOG_GRACE_MS, secrets = [] }) {
   const label = HARNESS_LABELS[adapter.harness] ?? adapter.harness;
   const keyBase = `handoff-${claim.claimId.slice("fleet-claim:".length)}`;
@@ -575,7 +576,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       if (once) return Object.freeze({ state: "unreachable" });
       await sleep(pollMs); continue;
     }
-    const mode = me.operationsMode ?? "running";
+    const mode = operationsMode(me.operationsMode);
     const harness = HANDOFF_HARNESSES.includes(me.workerKind) ? me.workerKind : null;
     let pass = { state: "idle" };
     if (!harness) {
@@ -611,7 +612,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       else if (!claim && pass.state !== "unreachable") say(`Connected as ${me.displayName}. Waiting for work (${offers.length} offered).`);
       else if (claim) {
         say(`Claimed "${claim.title}" for ${HARNESS_LABELS[harness]}.`);
-        const readMode = async () => (await client.heartbeat()).operationsMode ?? "running";
+        const readMode = async () => operationsMode((await client.heartbeat()).operationsMode);
         // The adapter never receives these; they are only checked against the
         // adapter's own answer afterward, so a leaked key cannot be sent on.
         const secrets = [current.secret, current.pendingSecret].filter(value => typeof value === "string" && value);

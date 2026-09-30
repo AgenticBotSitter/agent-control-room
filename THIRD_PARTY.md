@@ -1,6 +1,6 @@
 # Third-party notices and distribution manifest
 
-Inventory digest: `3f63b91f0c670be0bb76fa2d09a0cbcd52422408b8c890fefb07f574341c59d1`
+Inventory digest: `c10974ff0ba36626f55c45b7bc77309a96806b2669d80311cccaac8e6bd7d621`
 
 This notice index is generated from the exact declared artifact inputs. It binds retained notice files and their SHA-256 hashes; the release assembler independently verifies the final archive against this digest.
 
@@ -26,7 +26,9 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `@ungap/structured-clone@1.4.0` — installed_root_text; `LICENSE` (dc6d4961d8b6ee747231582ae9c53ce1d66bf76bc9f5a28f554c0e97210953bf)
 - `agent-base@7.1.4` — installed_root_text; `LICENSE` (8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a)
 - `anynum@1.0.1` — installed_root_text; `LICENSE` (8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07)
+- `asn1.js@5.4.1` — installed_root_text; `LICENSE` (251ecdcdb2bafa7b106187a8cce96f322d0074c66e557c3c94cb49c769970408)
 - `bail@2.0.2` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `bn.js@4.12.5` — installed_root_text; `LICENSE` (445739f5b5eb63e5aeff5aeb0f35a45080a421615dce0d97f9939aeea498acdd)
 - `buffer-equal-constant-time@1.0.1` — installed_root_text; `LICENSE.txt` (751d0e80fb5c828f8c3de198cc760e1e05377e47c8263ab6ee2f10cdc19ba658)
 - `ccount@2.0.1` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
 - `character-entities@2.0.2` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
@@ -56,8 +58,10 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `html-encoding-sniffer@4.0.0` — installed_root_text; `LICENSE.txt` (528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa)
 - `html-url-attributes@3.0.1` — installed_root_text; `license` (e18cf5173e928f808f0cd208097fee8fbec9d28fc0255213938e4c559e29ff58)
 - `http-proxy-agent@7.0.2` — installed_root_text; `LICENSE` (71368fd0f5b4129191e9afcd1e1ef2dc89a9090d3e4d80bbab92dafd032b3bef)
+- `http_ece@1.2.0` — retained_third_party_evidence; retained upstream binding recorded in the manifest
 - `https-proxy-agent@7.0.6` — installed_root_text; `LICENSE` (8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a)
 - `iconv-lite@0.6.3` — installed_root_text; `LICENSE` (ac779f7314c74f232ef847ea86e714abe25cf6eeb5cc97b69451b74e2af6492d)
+- `inherits@2.0.4` — installed_root_text; `LICENSE` (5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b)
 - `inline-style-parser@0.2.7` — installed_root_text; `LICENSE` (395c95f20598da653ff1eb1cb9d74947c7fac689697147f1d192fd0242a0e635)
 - `is-alphabetical@2.0.1` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
 - `is-alphanumerical@2.0.1` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
@@ -124,6 +128,8 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `micromark-util-subtokenize@2.1.0` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
 - `micromark-util-symbol@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
 - `micromark-util-types@2.0.2` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `minimalistic-assert@1.0.1` — installed_root_text; `LICENSE` (136fee1129ea96ce18b41c26a72f5d4ba196ee41bfd73b55d0b8509cdda148e9)
+- `minimist@1.2.8` — installed_root_text; `LICENSE` (435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b)
 - `ms@2.1.3` — installed_root_text; `license.md` (1662fae9b5314d11cf51284e2dcd1f006a354f7343f08712a730fcff9a359801)
 - `non-error@0.1.0` — installed_root_text; `license` (5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3)
 - `nwsapi@2.2.27` — installed_root_text; `LICENSE` (2aebdf8ae67777ccb2fa66b32066c1a16bd71085011bb4085dc7408e2947d2c2)
@@ -186,6 +192,7 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `vfile@6.0.3` — installed_root_text; `license` (05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d)
 - `vfile-message@4.0.3` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
 - `w3c-xmlserializer@5.0.0` — installed_root_text; `LICENSE.md` (ab654de803cdaa9e2819ab2e934bdf7f757e308649ec231d78e80e92425cdc34)
+- `web-push@3.6.7` — installed_root_text; `LICENSE` (1fe5dbc03ffe518da23f1297de78ab5612532eddca93cca287a8dfaf4ad7ddce)
 - `webidl-conversions@7.0.0` — installed_root_text; `LICENSE.md` (a889cc4dbee2ae172c179856b25d75b0b7a5a136e1b97109b9b590b2ff1a879c)
 - `whatwg-encoding@3.1.1` — installed_root_text; `LICENSE.txt` (528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa)
 - `whatwg-mimetype@4.0.0` — installed_root_text; `LICENSE.txt` (528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa)
@@ -207,9 +214,13 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `third_party/cron-parser` — npm:cron-parser@5.10.0; pinned_npm_release_integrity; `LICENSE` (7eba1c8774e8bcb77356bafc70ac9de8383e7592bb79ab979130ab757d40f53d)
 - `third_party/cyclonedx-library` — npm:@cyclonedx/cyclonedx-library@10.2.0; pinned_npm_release_integrity; `LICENSE` (c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4), `NOTICE` (ceb63b4381f322f3bdb580be2b7e6b8d0679eb9f2b4b5190fb0b26306b26d32f)
 - `third_party/fast-xml-parser` — npm:fast-xml-parser@5.11.0; pinned_npm_release_integrity; `LICENSE` (7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745)
+- `third_party/http_ece` — 0562510a30819f52424724a6fd5504becacd98a1; pinned_npm_release_integrity; retained upstream LICENSE from the exact npm gitHead because the package tarball omits it; `LICENSE` (717363ac0c7f0883042868db171cfed1f4b423119249eac9bce5131291017ea8)
 - `third_party/jsdom` — npm:jsdom@26.1.0; pinned_npm_release_integrity; `LICENSE` (242d37e7cab25cbafc36cc973ee88f9345fddf066afe4f72b7ac3d9ad4e24cce)
 - `third_party/jsonwebtoken` — npm:jsonwebtoken@9.0.3; pinned_npm_release_integrity; `LICENSE` (2144eb6894cb440fde6b2b3aaae3b617c8f1dc9bb19813079dcf62ec6c517042), `NOTICE.md` (d7081f1a0675b244fa713fe6a64f31d28283fa3a94a05d52748b5c8236ae8aaf)
 - `third_party/luxon` — npm:luxon@3.7.2; pinned_npm_release_integrity; `LICENSE.md` (6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006)
+- `third_party/mdast-util-from-markdown` — 971e0266bc1ec8e8af558b4a668feb2d42d904e5; pinned_npm_release_integrity; retained LICENSE matches the installed package; `LICENSE` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `third_party/mdast-util-gfm` — 6b34bb2868c38c0b2909fa69c78534d5e44dc309; pinned_npm_release_integrity; retained LICENSE matches the installed package; `LICENSE` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `third_party/micromark-extension-gfm` — d4d848ba0cf6ffc8ce29f897bceda8dee4f2612f; pinned_npm_release_integrity; retained LICENSE matches the installed package; `LICENSE` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
 - `third_party/nodable-entities` — npm:@nodable/entities@3.0.0; pinned_npm_release_integrity; replaces stale 2.2.0 source-version pin; mismatch history retained in prior PROVENANCE.json; `LICENSE` (750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40), `NOTICE.md` (db2d5b47427baaf5e53494afe7227ff7def0ecf9a65d839030326646059a3a83)
 - `third_party/pg` — npm:pg@8.23.0; pinned_npm_release_integrity; `LICENSE` (192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3), `NOTICE.md` (d528779972112a0fa405d7de0f00d228dc2efb0869dfc66ba23dffd7bad9b41f)
 - `third_party/pg-boss` — npm:pg-boss@12.30.0; pinned_npm_release_integrity; `LICENSE` (51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689)
@@ -223,6 +234,7 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `third_party/remark-gfm` — npm:remark-gfm@4.0.1; pinned_npm_release_integrity; `LICENSE` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
 - `third_party/rss-parser` — npm:rss-parser@3.13.0; pinned_npm_release_integrity; `LICENSE` (66fa72d1e76ca487fde9f153ac1183b906733f314d556645cb614e90961da634), `NOTICE.md` (26732d0ddccf781ec7464f329405ce28a15d9c32d388e79a253efd8ef4a7e08c)
 - `third_party/saxes` — 211fa0ebec9b628affc09219199639887174bfc3; pinned_upstream_release; `LICENSE` (0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e), `upstream-package.json` (b2206ba4678ba63836ddc85c6425ac4207f0d92b23fd96e059814742f97fdf3a)
+- `third_party/web-push` — 8d9ba1b33bfe0d73ccf3606c59ead4287f50e3b8; pinned_npm_release_integrity; retained LICENSE matches the installed package and exact npm gitHead; `LICENSE` (1fe5dbc03ffe518da23f1297de78ab5612532eddca93cca287a8dfaf4ad7ddce)
 - `third_party/zod` — npm:zod@4.1.12; pinned_npm_release_integrity; `LICENSE` (3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8)
 
 ## Reviewed local adaptations

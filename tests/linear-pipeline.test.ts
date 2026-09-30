@@ -14,6 +14,7 @@ import { TaskExecutionPlanner } from "../src/web/v1/task-execution-planner";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import { binding, instant } from "./hermes-native-fixture";
 import { nativeQualityCompletionFixture, qualityText } from "./helpers/native-quality-completion";
+import { ReusableSkillServiceV1 } from "../src/skills/v1";
 
 const key = new Uint8Array(32).fill(12);
 const template = { name: "Build, check, validate", description: "Complete one bounded change and review it.",
@@ -120,6 +121,25 @@ test("pipeline instantiation replays exactly and changed content under one key i
   await assert.rejects(f.service.instantiate(f.identity, f.project.projectId,
     { templateId: saved.templateId, title: "Changed replay" }, "linear-pipeline-replay-0001"), /conflict/u);
   assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int count FROM pipeline_runs")).rows[0]!.count, 1);
+});
+
+test("pipeline stages bind the exact reusable skill version they reference", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const skills = new ReusableSkillServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, () => now);
+  const skill = await skills.create(f.identity, f.project.projectId,
+    { name: "Build evidence", instructions: "Retain the focused test evidence with the change." });
+  const stages = template.stages.map((stage, index) => index === 0
+    ? { ...stage, skillRefs: [{ skillId: skill.skillId, version: 1 }] } : stage);
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, { ...template, stages });
+  const run = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Exact skill pipeline" }, "linear-skill-version-0001");
+  const bindings = await f.db.query<{ job_id: string; skill_version: number; content_digest: string }>(`SELECT
+    job_id,skill_version,content_digest FROM control_task_skill_bindings WHERE tenant_id='tenant:web' ORDER BY job_id`);
+  assert.deepEqual(bindings.rows.map(row => [row.job_id, Number(row.skill_version), row.content_digest]),
+    [[run.jobIds[0], 1, skill.contentDigest]]);
+  const missing = template.stages.map((stage, index) => index === 1
+    ? { ...stage, skillRefs: [{ skillId: skill.skillId, version: 99 }] } : stage);
+  await assert.rejects(f.service.createTemplate(f.identity, f.project.projectId, { ...template, stages: missing }), /conflict/u);
 });
 
 test("pre-0098 authenticated pipelines remain readable but cannot publish or instantiate without owner revision", async t => {

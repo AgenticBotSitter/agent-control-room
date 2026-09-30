@@ -27,7 +27,8 @@ export const MAC_LOCAL_SUPERVISOR_ID_V1 = "supervisor:mac-local";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
-type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">;
+type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">
+  & Partial<Pick<MacLocalTaskApplicationV1, "taskService">>;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
 
 /** The protected enablement is the only Mac-local source of exact worker and
@@ -95,6 +96,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     workspaceId: configuration.workspaceId,
     database: input.database,
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
+    ...(taskApplication?.taskService ? { taskService: taskApplication.taskService } : {}),
     ...(taskApplication?.taskReadKeys ? { taskReadKeys: taskApplication.taskReadKeys } : {}),
     ...(taskApplication?.actionInboxSource ? { actionInboxSource: taskApplication.actionInboxSource } : {}),
     ...(taskApplication?.projectEvents ? { projectEvents: taskApplication.projectEvents } : {}),
