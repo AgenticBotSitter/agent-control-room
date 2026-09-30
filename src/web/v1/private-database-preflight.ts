@@ -41,7 +41,8 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links"] as const;
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
+  "control_module_install_approvals"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -59,6 +60,8 @@ privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTabl
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
+// 0195: the owner's append-only module install approvals (read current, insert new).
+privateWebInsertTables.add("control_module_install_approvals");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a

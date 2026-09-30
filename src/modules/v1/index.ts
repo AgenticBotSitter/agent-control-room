@@ -15,3 +15,27 @@ export {
   type ModuleProjectDataPermissionRequestV1,
   type ModuleProjectDataPermissionV1,
 } from "./permissions";
+export {
+  MODULE_BUNDLE_SCHEMA_V1,
+  MODULE_SIGNATURE_SCHEMA_V1,
+  canonicalModuleBundleV1,
+  moduleAuthoritySurfaceV1,
+  moduleCompatibilitySatisfiedV1,
+  moduleKeyIdV1,
+  modulePermissionDiffDigestV1,
+  modulePermissionDiffV1,
+  modulePermissionsDigestV1,
+  signModuleBundleV1,
+  verifyModuleBundleV1,
+  type ModuleBundleInputV1,
+  type ModuleBundleSignatureV1,
+  type ModulePermissionDiffV1,
+  type ModuleTrustPolicyV1,
+  type VerifiedModuleBundleV1,
+} from "./bundle";
+export {
+  ModuleInstallApprovalServiceV1,
+  type ModuleBundleSubmissionV1,
+  type ModuleInstallApprovalDraftV1,
+  type ModuleInstallApprovalViewV1,
+} from "./install-approvals";
