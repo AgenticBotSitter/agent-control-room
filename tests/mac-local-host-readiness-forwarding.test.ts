@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
@@ -113,6 +114,29 @@ test("the readiness route stays absent when the host supplies no pid", async t =
   t.after(() => host.close());
   const { status } = await probeHealth(host.origin);
   assert.equal(status, 404, "a composition with no pid must not serve a readiness route");
+});
+
+// The second half of the break, at its other end. `mac:up` refuses to start a
+// host without `service/health-probe.key` (loadHealthProbeKeyV1 in
+// start-web-host.mjs), and until afc636354 only the VPS provisioner created
+// that file -- so no rehearsal root could ever start a host, and the phone
+// preview, which is exactly `mac:rehearsal up` then `mac:up`, could not start
+// at all. setup.ts is a top-level side-effect script, so it cannot be imported
+// into a unit test; this asserts the wiring is present in its source, which is
+// what actually regressed, and a real `mac:rehearsal up` is covered by
+// mac-local-pg17-rehearsal.test.mjs.
+test("the rehearsal setup creates the health-probe key the host requires", async () => {
+  const source = await readFile(new URL("../scripts/mac-local/rehearsal/setup.ts", import.meta.url), "utf8");
+  assert.match(source, /await ensureHealthProbeKeyV1\(root\)/,
+    "rehearsal setup must create service/health-probe.key, or mac:up can never start");
+  // It must be the provisioner's own function, not a re-implementation: the
+  // format, the mode and the EEXIST-preserves-identity retry all live there.
+  assert.match(source, /import \{ ensureHealthProbeKeyV1 \} from "\.\.\/provision-database\.mjs"/,
+    "the key must come from the provisioner so the two paths cannot drift");
+  // The directory the key lives in is created with the private mode the
+  // provisioner expects; without it the key would be written into a 0o755 dir.
+  assert.match(source, /mkdirSync\(service, \{ recursive: true, mode: 0o700 \}\)/,
+    "the service directory must be created private before the key is written");
 });
 
 test("a web process with a pid but no probe key is refused at construction", () => {
