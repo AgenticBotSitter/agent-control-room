@@ -197,8 +197,8 @@
   },
   {
     "file": "src/updater/v1/actuator.mjs",
-    "find": "if (isNoSpaceV1(retryError)) await this.onDepleted(retryError);",
-    "replace": "if (false) await this.onDepleted(retryError);",
+    "find": "if (isNoSpaceV1(retryError)) await this.#reportDepleted(retryError);",
+    "replace": "if (false) await this.#reportDepleted(retryError);",
     "test": "node --test --test-name-pattern='double ENOSPC retry reports' tests/updater-actuator.test.mjs",
     "why": "a second disk-full failure must report depletion instead of silently consuming the rescue reserve"
   },
