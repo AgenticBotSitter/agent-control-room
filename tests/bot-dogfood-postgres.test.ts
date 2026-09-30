@@ -23,7 +23,8 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { resolve } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { Client, Pool } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
@@ -41,8 +42,8 @@ import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-sessio
 import { createPostgresLocalOwnerSessionStoreV1 } from "../src/web/v1/local-owner-session-store";
 import { sha256Digest } from "../src/security";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_B, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
-import { BOT_JOURNEY_EXPECTED_REFUSALS_V1, ScriptedBotV1, botJourneyMarkdownV1, makeBotWorkspaceV1,
-  removeBotWorkspaceV1, runBotJourneyV1 } from "../scripts/dogfood/bot-journey.mjs";
+import { BOT_JOURNEY_EXPECTED_REFUSALS_V1, BOT_JOURNEY_EXPECTED_ROWS_V1, ScriptedBotV1, botJourneyMarkdownV1,
+  makeBotWorkspaceV1, removeBotWorkspaceV1, runBotJourneyV1 } from "../scripts/dogfood/bot-journey.mjs";
 
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59620);
 const PG = requiresRealPostgres();
@@ -78,6 +79,7 @@ test("a bot can build Control Room through Control Room, end to end, as the prod
     const workspaces: string[] = [];
     const unexpected: unknown[] = [];
     const servers: Server[] = [];
+    let primaryWorkspace = "";
     let mode: FleetOperationsModeV1 = "running";
     // The gateway login is the only one that talks to a worker machine; the
     // proposal-only intake login is the one the gateway writes proposals with.
@@ -165,7 +167,10 @@ test("a bot can build Control Room through Control Room, end to end, as the prod
           ...(key ? { "idempotency-key": key } : {}) }, body: JSON.stringify(body) });
 
       /** The owner's real approve route, over HTTP, with its own revision and
-       * its own idempotency key — never a database shortcut. */
+       * its own idempotency key — never a database shortcut. The HTTP status is
+       * returned separately because it is what the journey asserts: a refusal
+       * the owner sees is a status, and a status that is 2xx means the approval
+       * went through whatever the row claims about it. */
       const approveBatch = async (projectId: string, batchId: string, items: { localId: string; decision: "approve" }[]) => {
         const detail = await ownerRoute(`/api/v1/projects/${encodeURIComponent(projectId)}/pipelines/${batchId}`,
           { headers: { cookie: ownerCookies } });
@@ -174,15 +179,19 @@ test("a bot can build Control Room through Control Room, end to end, as the prod
         const response = await post(`/api/v1/projects/${encodeURIComponent(projectId)}/pipelines/${batchId}`,
           { batchId, expectedRevision: view.revision, operation: "decide", items },
           `dogfood-approve-${batchId.slice(-12)}`);
-        return `${response.status}:${(await response.clone().text()).slice(0, 240)}`;
+        return { status: response.status, detail: (await response.clone().text()).slice(0, 240) };
       };
 
       const journey = await runBotJourneyV1({
         origin, ownerRoute, ownerCookies, ownerOrigin: webOrigin,
+        // The primary bot's workspace, so the harness can write a file just
+        // outside it: the target of the result-file boundary row.
         makeBot: async (name: string) => {
           const workspace = await makeBotWorkspaceV1(name);
           workspaces.push(workspace);
-          return new ScriptedBotV1({ name, workspace, origin });
+          const bot = new ScriptedBotV1({ name, workspace, origin });
+          if (name === "primary") primaryWorkspace = workspace;
+          return bot;
         },
         otherProjectId: PROJECT_B,
         createProject: async () => { projects += 1; journeyProjectId = await createProject(`Dogfood ${projects}`);
@@ -222,6 +231,14 @@ test("a bot can build Control Room through Control Room, end to end, as the prod
         release: async (bot: ScriptedBotV1, claimId: string) =>
           (await bot.call("report_blocker", { claimId, message: "dogfood: handing it back", release: true,
             idempotencyKey: "dogfood-blocker-0001" })).refused,
+        // A real file just OUTSIDE the bot's workspace, written by the harness
+        // rather than by the bot: `bot.write` is test code and refuses escaping
+        // paths itself, so it cannot be the boundary under test. The journey
+        // points submit_result at this file and the connector's own
+        // workspaceFile decides the row.
+        writeOutsideWorkspace: async (name: string, contents: string) => {
+          await writeFile(join(primaryWorkspace, "..", name), contents, { mode: 0o600 });
+        },
         createFleetTask: async (projectId: string, name: string) => (await seedProposedTask(admin.client,
           projectId, name)).jobId,
         workerState: async (workerId: string) => String((await asAdmin(
@@ -231,8 +248,26 @@ test("a bot can build Control Room through Control Room, end to end, as the prod
           assert.equal(response.status, 200, await response.clone().text());
         },
       });
-      for (const entry of journey.steps) if (entry.outcome === "refused")
-        assert.ok(BOT_JOURNEY_EXPECTED_REFUSALS_V1.includes(entry.refusal!), `unlabelled refusal: ${entry.what}`);
+      // Every row the table prints is checked against the declared expectation,
+      // on the label AND on the code. `runBotJourneyV1` already throws on a
+      // mismatch; this loop is the second, independent check that a row was
+      // not silently dropped from the declared set, and it names the row.
+      for (const entry of journey.steps) {
+        if (entry.outcome === "refused") {
+          assert.ok(BOT_JOURNEY_EXPECTED_REFUSALS_V1.includes(entry.refusal!), `unlabelled refusal: ${entry.what}`);
+          assert.notEqual(BOT_JOURNEY_EXPECTED_ROWS_V1[entry.refusal!], undefined,
+            `refusal with no declared code: ${entry.what}`);
+        }
+        if (entry.outcome === "not tried")
+          assert.equal(entry.code, "", `a row nobody tried must not report a code: ${entry.what}`);
+      }
+      // Every declared refusal was actually reached by this run. A label that
+      // is declared but never recorded would otherwise look like a pass.
+      const recorded = new Set(journey.steps.map(entry => entry.refusal).filter(Boolean));
+      for (const label of BOT_JOURNEY_EXPECTED_REFUSALS_V1)
+        assert.ok(recorded.has(label), `declared refusal never recorded by this run: ${label}`);
+      process.stderr.write(`dogfood journey rows: ${journey.steps.length},`
+        + ` refusals=${recorded.size}, not tried=${journey.steps.filter(e => e.outcome === "not tried").length}\n`);
       const markdown = botJourneyMarkdownV1(journey);
       process.stderr.write(`\n--- bot journey ---\n${markdown}\n--- end bot journey ---\n`);
 
