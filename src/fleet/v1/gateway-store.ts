@@ -11,6 +11,7 @@ import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILI
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1, randomHexV1 } from "./identifiers";
 import type { TaskProjectEventWriterV1 } from "../../project-events/v1/task-lifecycle";
+import { FLEET_WORKING_AGREEMENT_METADATA_V1 } from "./working-agreement";
 
 /** Authenticated machine principal. It is derived from the credential digest
  * and the stored worker row only; nothing in a request body can change it. */
@@ -189,7 +190,7 @@ export class FleetGatewayStoreV1 {
         return Object.freeze({ workerId: row.worker_id, nodeId: linked.nodeId, displayName: row.display_name,
           workerKind: row.worker_kind, projectIds: row.project_ids, capabilities: row.capabilities,
           maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: iso(credential.expires_at), purpose: row.purpose,
-          replayed: true });
+          replayed: true, workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 });
       }
       if (row.purpose === "join") {
         const node = nodeRecordSchema.parse({ contractVersion: DOMAIN_CONTRACT_VERSION, kind: "node", id: linked.nodeId,
@@ -239,7 +240,8 @@ export class FleetGatewayStoreV1 {
         safeMetadata: { codeId: row.id, credentialId, platform, architecture, connectorVersion } });
       return Object.freeze({ workerId: row.worker_id, nodeId: linked.nodeId, displayName: row.display_name,
         workerKind: row.worker_kind, projectIds: row.project_ids, capabilities: row.capabilities,
-        maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: expiresAt, purpose: row.purpose, replayed: false });
+        maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: expiresAt, purpose: row.purpose, replayed: false,
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 });
     });
   }
 
@@ -299,7 +301,36 @@ export class FleetGatewayStoreV1 {
     return Object.freeze({ workerId: principal.workerId, displayName: principal.displayName,
       workerKind: principal.workerKind, projectIds: principal.projectIds, capabilities: principal.capabilities,
       maxConcurrent: principal.maxConcurrent, credentialExpiresAt: principal.credentialExpiresAt,
-      canApprove: false, canAcceptResults: false, canMerge: false, canChangePermissions: false });
+      canApprove: false, canAcceptResults: false, canMerge: false, canChangePermissions: false,
+      workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 });
+  }
+
+  /** A parked wait is liveness only. It updates the existing presence row and
+   * deliberately never reads or writes a claim, attempt, or lease. */
+  async recordWaitPresence(principal: FleetWorkerPrincipalV1) {
+    const now = this.#now();
+    const rows = (await this.db.query<{ worker_id: string }>(`UPDATE fleet_worker_presence p SET last_seen_at=GREATEST(
+        p.last_seen_at,$3::timestamptz) FROM fleet_workers w,fleet_worker_credentials c
+      WHERE p.tenant_id=$1 AND p.worker_id=$2 AND w.tenant_id=p.tenant_id AND w.worker_id=p.worker_id
+        AND w.state='active' AND c.tenant_id=p.tenant_id AND c.worker_id=p.worker_id AND c.credential_id=$4
+        AND c.state='active' AND c.expires_at>statement_timestamp() RETURNING p.worker_id`,
+    [this.#tenantId, principal.workerId, now, principal.credentialId])).rows;
+    if (rows.length !== 1) return fleetFail("unauthenticated");
+    return Object.freeze({ presentAt: now, renewsLease: false as const });
+  }
+
+  /** Full long-poll re-query. Pause/Drain/Stop and an unreadable mode return no
+   * work, and the current credential is checked again after the request parked. */
+  async waitWork(principal: FleetWorkerPrincipalV1) {
+    const current = (await this.db.query<{ active: boolean }>(`SELECT EXISTS(SELECT 1 FROM fleet_workers w
+      JOIN fleet_worker_credentials c ON c.tenant_id=w.tenant_id AND c.worker_id=w.worker_id
+      WHERE w.tenant_id=$1 AND w.worker_id=$2 AND w.state='active' AND c.credential_id=$3
+        AND c.state='active' AND c.expires_at>statement_timestamp()) AS active`,
+    [this.#tenantId, principal.workerId, principal.credentialId])).rows[0]?.active === true;
+    if (!current) return fleetFail("unauthenticated");
+    const operationsMode = await this.operationsMode();
+    const offers = operationsMode === "running" ? await this.listWork(principal) : [];
+    return Object.freeze({ offers: Object.freeze(offers), operationsMode });
   }
 
   /** Replaces the caller's credential with one it generated locally. */
