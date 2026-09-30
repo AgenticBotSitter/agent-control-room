@@ -169,7 +169,7 @@ export class CompletionGateStoreV1 {
   }
 
   async provisionTenant(tenantId:string):Promise<void>{
-    await this.db.transaction(async(tx)=>{const tenant=await tx.query<{id:string}>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE",[tenantId]);if(!tenant.rows[0])throw new CompletionGateErrorV1("scope_mismatch");
+    await this.db.transaction(async(tx)=>{const tenant=await tx.query<{id:string}>("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE",[tenantId]);if(!tenant.rows[0])throw new CompletionGateErrorV1("scope_mismatch");
       const existing=await tx.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);const computed=await this.computedTenantState(tx,tenantId);
       if(existing.rows[0]||computed.recordCount!==0||await this.readCheckpoint(tenantId))throw new CompletionGateErrorV1("integrity_failed");
       const revision=1,stateAuthTag=this.tenantStateTag(tenantId,revision,computed.recordCount,computed.stateDigest),checkpoint=this.checkpoint(tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag);

@@ -189,7 +189,7 @@ export class WebOperationsModeServiceV1 {
       // Same first lock as every other installation-wide decision and as
       // assignment, so this cannot deadlock and cannot interleave with an
       // owner pressing the button at the same moment.
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       const owner = await this.#liveOwnerInSession(tx, now);
       // Only pause a running installation, so a health check on a timer does
       // not append a revision every cycle and bury the owner's own decisions in

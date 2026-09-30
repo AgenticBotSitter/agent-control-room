@@ -5,7 +5,7 @@ import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema, requestRecordSchema, workflo
   type JobRecord } from "../../domain/v1";
 import { sha256Digest } from "../../security";
 import { moveFleetEntityV1, readFleetEntityV1, type Entity, type FleetActorV1 } from "./canonical-transitions";
-import { ROLLBACK_SQL_STATES_V1 } from "../../web/v1/bounded-database";
+import { ROLLBACK_SQL_STATES_V1, rollbackSqlStateNameV1 } from "../../web/v1/bounded-database";
 import { fleetFail, FleetErrorV1 } from "./errors";
 import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_PATTERN_V1,
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
@@ -92,6 +92,13 @@ const isRollbackContention = (error: unknown) => databaseSqlStateIsAnyV1(error, 
 /** Bounded and jittered: under twenty bots the same statement can collide more
  * than once, and an unbounded retry would hide a genuine deadlock instead. */
 const RETRYABLE_FLEET_TRANSACTION_ATTEMPTS_V1 = 4;
+/** One operator-log line per replayed transaction. Retries are meant to be rare
+ * now that the lock order is fixed, so this is how a returning deadlock becomes
+ * visible instead of being silently absorbed. Only the SQLSTATE, the attempt and
+ * the outcome are recorded -- no tenant, worker or payload. */
+const fleetContentionLog = (outcome: "retry" | "giving_up", sqlState: string, attempt: number): void => {
+  process.stderr.write(`[fleet-gateway] contention ${outcome} sqlstate=${sqlState} attempt=${attempt}\n`);
+};
 
 export class FleetGatewayStoreV1 {
   readonly #tenantId: string;
@@ -118,19 +125,58 @@ export class FleetGatewayStoreV1 {
    * times when PostgreSQL rolled the whole thing back under contention. A
    * claim maps the final contention to an ordinary conflict so a worker moves
    * to its next offer; every other write either replays to completion or
-   * reports the contention honestly rather than losing completed work. */
+   * reports the contention honestly rather than losing completed work.
+   *
+   * This is a SAFETY NET, not the fix for contention. The lock order is fixed
+   * at the root (see `#tenantMutex`), so a replay here should be rare. Every
+   * replay is logged with its SQLSTATE, because a returning 40P01 must be
+   * visible to the operator rather than absorbed silently -- if the log ever
+   * fills with retries, the lock order has regressed. */
   async #contending<T>(work: () => Promise<T>, onGiveUp?: (error: unknown) => T): Promise<T> {
     for (let attempt = 1; ; attempt += 1) {
       try { return await work(); }
       catch (error) {
         if (!isRollbackContention(error)) throw error;
+        const sqlState = rollbackSqlStateNameV1(error) ?? "unknown";
         if (attempt >= RETRYABLE_FLEET_TRANSACTION_ATTEMPTS_V1) {
+          fleetContentionLog("giving_up", sqlState, attempt);
           if (onGiveUp) return onGiveUp(error);
           throw error;
         }
+        fleetContentionLog("retry", sqlState, attempt);
         await new Promise(done => setTimeout(done, 10 * attempt * attempt));
       }
     }
+  }
+
+  /** The installation-wide tenant mutex.
+   *
+   * Every transaction that counts ready work, or that appends to the audit
+   * chain after touching the tenant, takes this row first. It is
+   * `FOR NO KEY UPDATE` and NOT `FOR UPDATE`, and that difference is the whole
+   * fix for the 40P01 that used to deadlock the fleet:
+   *
+   *   - `FOR NO KEY UPDATE` still conflicts with itself, so mutex holders
+   *     serialise exactly as before and the "ready counts cannot race" rule
+   *     above (canonical-store) is unchanged.
+   *   - It does NOT conflict with `FOR KEY SHARE`, which is the lock every
+   *     foreign-key check takes. `recordMcpCall` appends to the audit chain
+   *     first and its `INSERT INTO audit_events` then checks `tenants(id)`.
+   *     With `FOR UPDATE` that check closed the cycle (tenant row -> chain
+   *     head -> FK check -> tenant row) and PostgreSQL killed one transaction
+   *     per collision, failing workers' MCP calls with `deadlock_detected`.
+   *
+   * It needs no privilege `FOR UPDATE` did not already need: both require
+   * UPDATE on a column, and every mutex holder already has
+   * `UPDATE (coordinator_lock)` from the role grants. No migration, no grant
+   * change and no ledger change.
+   *
+   * Every fleet `-> ready` move MUST call this first. It used to rely on an
+   * accident -- a foreign-key wait against a `FOR UPDATE` holder -- and that
+   * accident disappears the moment the mutex weakens, so the release path
+   * takes it explicitly. */
+  async #tenantMutex(tx: DatabaseSession): Promise<void> {
+    await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.#tenantId]);
   }
 
   #now(): string {
@@ -149,13 +195,20 @@ export class FleetGatewayStoreV1 {
   }
 
   /** Records an authenticated MCP tool attempt before the tool is validated or
-   * executed. The event contains no arguments or credential material. */
+   * executed. The event contains no arguments or credential material.
+   *
+   * This transaction takes the audit chain head FIRST and only reaches the
+   * tenant row through the `audit_events` foreign-key check, so it is the
+   * other half of the old deadlock. It is idempotent on the derived audit id,
+   * so replaying it is safe and it goes through `#contending` too: the fix at
+   * the root is the lock order, and this is what keeps a single survivor --
+   * rather than a refused tool call -- if anything ever collides again. */
   async recordMcpCall(principal: FleetWorkerPrincipalV1, input: Readonly<{ callId: unknown; toolName: unknown }>) {
     if (typeof input.callId !== "string" || !mcpCallPattern.test(input.callId)
       || typeof input.toolName !== "string" || !mcpToolNames.includes(input.toolName as never)) return fleetFail("invalid");
     const callId = input.callId, toolName = input.toolName;
     const auditId = `audit:fleet-mcp:${callId.slice("mcp-call:".length)}`;
-    return this.db.transaction(async tx => {
+    return this.#contending(() => this.db.transaction(async tx => {
       const prior = (await tx.query<{ actor_id: string; target_id: string; safe_metadata: { toolName?: string } }>(
         "SELECT actor_id,target_id,safe_metadata FROM audit_events WHERE id=$1", [auditId])).rows[0];
       if (prior) {
@@ -167,12 +220,14 @@ export class FleetGatewayStoreV1 {
         actorType: "worker", action: "fleet.mcp.called", targetType: "worker", targetId: principal.workerId,
         correlationId: callId, occurredAt: this.#now(), safeMetadata: { toolName } });
       return Object.freeze({ recorded: true, replayed: false });
-    });
+    }));
   }
 
   /** A previously issued credential can still identify a revoked or expired
    * machine for audit attribution. This never authenticates it or reads the
-   * request body, and an unknown secret creates no attacker-chosen audit row. */
+   * request body, and an unknown secret creates no attacker-chosen audit row.
+   * Idempotent on the derived audit id, so it replays safely through
+   * `#contending` for the same reason as `recordMcpCall`. */
   async recordRefusedMcpAuthentication(input: Readonly<{ bearer: unknown; declaredWorkerId: unknown;
     callId: unknown; toolName: unknown }>) {
     if (typeof input.bearer !== "string" || !FLEET_SECRET_PATTERN_V1.test(input.bearer)
@@ -182,7 +237,7 @@ export class FleetGatewayStoreV1 {
     const digest = plainSha256V1(input.bearer), declaredWorkerId = input.declaredWorkerId,
       callId = input.callId, toolName = input.toolName;
     const auditId = `audit:fleet-mcp-denied:${callId.slice("mcp-call:".length)}`;
-    return this.db.transaction(async tx => {
+    return this.#contending(() => this.db.transaction(async tx => {
       const worker = (await tx.query<{ identity_id: string }>(`SELECT w.identity_id FROM fleet_worker_credentials c
         JOIN fleet_workers w ON w.tenant_id=c.tenant_id AND w.worker_id=c.worker_id
         WHERE c.tenant_id=$1 AND c.secret_digest=$2 AND c.worker_id=$3`,
@@ -196,7 +251,7 @@ export class FleetGatewayStoreV1 {
         targetId: declaredWorkerId, correlationId: callId, occurredAt: this.#now(),
         safeMetadata: { toolName, reasonCode: "unauthenticated" } });
       return true;
-    });
+    }));
   }
 
   /** Redeems one enrollment code. The machine generated its credential locally
@@ -478,7 +533,7 @@ export class FleetGatewayStoreV1 {
       }
       // Pause, Drain and Stop all stop new claims; a replay above is not new.
       if (mode !== "running") return fleetFail("paused");
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.#tenantId]);
+      await this.#tenantMutex(tx);
       const offer = (await tx.query<{ project_id: string; job_id: string; capability: string; state: string;
         allowed_worker_ids: string[] | null }>(`SELECT project_id,job_id,capability,state,allowed_worker_ids
         FROM fleet_work_offers WHERE tenant_id=$1 AND offer_id=$2`, [this.#tenantId, offerId])).rows[0];
@@ -665,6 +720,9 @@ export class FleetGatewayStoreV1 {
       await moveFleetEntityV1(tx, attempt, attempt.state === "leased" ? "cancelled" : "failed",
         { ...base, patch: { finishedAt: now, safeFailureCode: "worker_blocked" } });
       if (job.state === "running") job = await moveFleetEntityV1(tx, job, "orphaned", base);
+      // This move returns owner-visible work to the open offer, so it takes the
+      // tenant mutex explicitly rather than relying on a foreign-key wait.
+      await this.#tenantMutex(tx);
       await moveFleetEntityV1(tx, job, "ready", base);
       await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2", [this.#tenantId, lease.id]);
       await appendAuditWith(tx, { id: `audit:fleet-release:${event.eventId.slice(12)}`, tenantId: this.#tenantId,
@@ -804,6 +862,8 @@ export class FleetGatewayStoreV1 {
         } else if (review.decision === "revision_requested") {
           await moveFleetEntityV1(tx, attempt, "failed", { ...base, patch: { finishedAt: now, safeFailureCode: "revision_requested" } });
           job = await moveFleetEntityV1(tx, job, "failed", base);
+          // Back to the open offer, so the tenant mutex is taken explicitly.
+          await this.#tenantMutex(tx);
           await moveFleetEntityV1(tx, job, "ready", base);
         } else {
           await moveFleetEntityV1(tx, attempt, "failed", { ...base, patch: { finishedAt: now, safeFailureCode: "result_rejected" } });

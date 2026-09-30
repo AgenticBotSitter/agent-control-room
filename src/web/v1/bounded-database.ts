@@ -1,4 +1,4 @@
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { databaseOperationSignal, withDatabaseOperationSignal } from "../../persistence/operation-signal";
 
 export const privateDatabaseLimits = Object.freeze({ connections: 8, checkoutMs: 5000,
@@ -18,6 +18,15 @@ export type PrivateDatabaseRollbackSqlState = "40P01" | "40001" | "55P03";
  * a second reader by another name and is refused by the one-reader guard. */
 export const ROLLBACK_SQL_STATES_V1: readonly PrivateDatabaseRollbackSqlState[] =
   Object.freeze(["40P01", "40001", "55P03"] as const);
+/** Which rollback state a refusal carries, for the operator log ONLY. It goes
+ * through the one reader rather than re-reading the error, so it is not a
+ * second reader; callers that must MAP a refusal use
+ * `databaseSqlStateIsAnyV1` against the set above instead. */
+export function rollbackSqlStateNameV1(error: unknown): string | undefined {
+  const sqlState = databaseSqlStateV1(error);
+  return sqlState !== undefined && ROLLBACK_SQL_STATES_V1.includes(sqlState as PrivateDatabaseRollbackSqlState)
+    ? sqlState : undefined;
+}
 export class PrivateDatabaseError extends Error {
   constructor(readonly code: "database_unavailable" | "database_outcome_uncertain" | "database_close_uncertain",
     /** PostgreSQL's sanitized five-character SQLSTATE. It proves that the
