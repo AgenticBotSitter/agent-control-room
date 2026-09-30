@@ -909,15 +909,17 @@ test("a losing stale cleaner cannot remove a new winner before owner publication
   const laggerHasRead = new Promise(resolveLagger => { laggerObserved = resolveLagger; });
   const winnerHasDirectory = new Promise(resolveWinner => { winnerElected = resolveWinner; });
   const winnerMayPublish = new Promise(resolveRelease => { releaseWinner = resolveRelease; });
-  let laggerElected = false;
+  let laggerElected = false, cleanerElections = 0;
   const winner = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
     beforeDeadOwnerCleanup: async () => laggerHasRead,
+    afterCleanerElection: async () => { cleanerElections += 1; },
     afterDirectoryElection: async () => { winnerElected(); await winnerMayPublish; } } });
   const lagger = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
     beforeDeadOwnerCleanup: async () => {
       laggerObserved();
       await winnerHasDirectory;
     },
+    afterCleanerElection: async () => { cleanerElections += 1; },
     afterDirectoryElection: async () => { laggerElected = true; await winnerMayPublish; } } });
   try {
     await winnerHasDirectory;
@@ -927,6 +929,7 @@ test("a losing stale cleaner cannot remove a new winner before owner publication
     releaseWinner();
     await Promise.allSettled([winner, lagger]);
   }
+  assert.equal(cleanerElections, 1);
 });
 
 test("ten concurrent installs of one profile serialize and all succeed", async t => {

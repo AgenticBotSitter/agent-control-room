@@ -134,8 +134,8 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  const ownerPath = joinPath(lockPath, `owner-${token}.json`);",
-    "replace": "  const ownerPath = joinPath(lockPath, `owner-${\"0\".repeat(32)}.json`);",
+    "find": "          const generation = lockGeneration(lockInfo, ownerToken);",
+    "replace": "          const generation = lockGeneration(lockInfo, token);",
     "test": "node --test --test-name-pattern \"two dead-owner cleaners\" tests/fleet-connector-install.test.mjs",
     "why": "dead-owner cleanup targets one observed generation and cannot unlink a later winner"
   },
@@ -197,7 +197,7 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "          if (!await electGenerationCleaner(lockPath, generation, clock)) continue;",
+    "find": "          if (!elected) continue;",
     "replace": "          if (false) continue;",
     "test": "node --test --test-name-pattern \"losing stale cleaner\" tests/fleet-connector-install.test.mjs",
     "why": "only the cleaner that removed the observed owner generation may remove its directory"

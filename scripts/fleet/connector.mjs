@@ -318,7 +318,7 @@ async function electGenerationCleaner(lockPath, generation, clock) {
 export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_STALE_MS, waitMs = 25,
   deadlineMs = 10_000, clock = Date.now, sleep = ms => new Promise(done => setTimeout(done, ms)),
   beforeDeadOwnerCleanup = async () => {}, afterDirectoryElection = async () => {},
-  afterOwnerPublication = async () => {},
+  afterOwnerPublication = async () => {}, afterCleanerElection = async () => {},
   getProcessIdentity: inspectProcessIdentity = getProcessIdentity,
   isPidAlive = pidAlive } = {}) {
   const started = clock(), token = randomBytes(16).toString("hex");
@@ -396,7 +396,9 @@ export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_ST
         if (ownerPid !== null && !await sameProcess(ownerPid, ownerIdentity, isPidAlive, inspectProcessIdentity)) {
           await beforeDeadOwnerCleanup({ lockPath, observedOwnerPath });
           const generation = lockGeneration(lockInfo, ownerToken);
-          if (!await electGenerationCleaner(lockPath, generation, clock)) continue;
+          const elected = await electGenerationCleaner(lockPath, generation, clock);
+          if (!elected) continue;
+          await afterCleanerElection({ lockPath, generation, observedOwnerPath });
           if (lockIsDirectory) {
             let current;
             try { current = JSON.parse(await readFile(observedOwnerPath, "utf8")); }
