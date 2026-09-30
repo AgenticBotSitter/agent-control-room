@@ -118,6 +118,33 @@ BEGIN
     OR NEW.accepted_by_identity_id IS DISTINCT FROM OLD.accepted_by_identity_id) THEN
     RAISE EXCEPTION 'result file set acceptance rejected' USING ERRCODE = '23514';
   END IF;
+  -- THROWING THE BYTES AWAY IS ALSO THE OWNER'S, and this is the review's
+  -- should-fix finding: acceptance was grant-checked but `provisional/retained
+  -- -> trash -> purged` was not, so the web login could trash or purge a set with
+  -- no owner involved at all. Acceptance says "keep this", and discarding it must
+  -- not be the easier half of the same decision.
+  --
+  -- The same predicate as acceptance, against the same accepted identity, and it
+  -- runs at the DATABASE clock rather than the caller's. A live human owner with
+  -- result-read over this project, and an unexpired grant, is required for the
+  -- move. A publisher that wrote the bytes cannot discard them, and a lapsed
+  -- session cannot either.
+  IF NEW.retention_state IS DISTINCT FROM OLD.retention_state AND NOT EXISTS (
+      SELECT 1 FROM public.control_identities owner_identity
+      JOIN public.control_role_grants owner_grant ON owner_grant.tenant_id = owner_identity.tenant_id
+        AND owner_grant.identity_id = owner_identity.id
+      WHERE owner_identity.tenant_id = NEW.tenant_id
+        -- The accepted identity when there is one, because that is the identity
+        -- whose judgement this set is being recorded under; otherwise the
+        -- identity that accepted it at all.
+        AND owner_identity.id = coalesce(OLD.accepted_by_identity_id, NEW.accepted_by_identity_id)
+        AND owner_identity.actor_type = 'human' AND owner_identity.state = 'active'
+        AND owner_grant.role_key = 'owner' AND owner_grant.revoked_at IS NULL
+        AND (owner_grant.expires_at IS NULL OR owner_grant.expires_at > pg_catalog.statement_timestamp())
+        AND (owner_grant.allowed_actions ? '*' OR owner_grant.allowed_actions ? 'tasks.results.read')
+        AND (owner_grant.project_ids ? '*' OR owner_grant.project_ids ? NEW.project_id)) THEN
+    RAISE EXCEPTION 'result file set disposal needs the owner' USING ERRCODE = '42501';
+  END IF;
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION public.guard_result_file_set_acceptance() FROM PUBLIC;

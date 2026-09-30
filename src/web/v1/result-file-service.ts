@@ -212,6 +212,29 @@ export function createResultFileServiceV1(db: DatabaseClient, authority: ResultF
   };
 
   const service: ResultFileServiceV1 = {
+    /**
+     * The two catalog reads, and the deliberate difference between them.
+     *
+     * WITH a job filter, the read goes through `readScopedResult`, which requires
+     * `tasks.read` AND `tasks.results.read` over that project. Without one, it
+     * goes through the project view, which requires the project read alone.
+     *
+     * That difference is intentional and is the reviewer's question answered
+     * rather than avoided. A project-wide listing answers "what has this
+     * project produced", which is a project-level question and is the same
+     * question Project Files already asks, so it is gated the same way. A
+     * single task's results are the narrower thing, and they are gated
+     * narrowly.
+     *
+     * The thing that actually matters — the BYTES — is gated identically on both
+     * paths and neither is the listing: `issueDownload` and `download` both go
+     * through `readScopedResult`, so 0208's guard and the grant spend both
+     * require a live owner session holding result-read. An identity that can see
+     * a name in the project listing can still not mint a link for it, cannot
+     * spend one, and is refused by the database itself if it writes a grant row
+     * directly. So the listing reveals WHAT a project produced to someone who
+     * may read the project, and the CONTENT to no one without result-read.
+     */
     async catalog(identity, projectId, jobId) {
       if (!catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
       if (jobId !== undefined) return authority.readScopedResult(identity, projectId, jobId,

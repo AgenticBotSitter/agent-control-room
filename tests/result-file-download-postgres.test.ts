@@ -585,6 +585,32 @@ test("the real download path, the grant it writes, two sessions one file, the qu
         (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
         "B6: a forged native producer is refused for a superuser too");
 
+        // ==== discarding a set is the owner's, like accepting one ==========
+        // The review's should-fix: acceptance was grant-checked, but
+        // `provisional/retained -> trash -> purged` was not, so the web login
+        // could throw the owner's bytes away with no owner involved. A set that
+        // has NOT been accepted has no accepted identity, so the guard names the
+        // identity that would have to accept it — and with none, the move is
+        // refused, which is the safe direction.
+        await assert.rejects(web(`UPDATE control_result_file_sets SET retention_state='trash'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, storedSet]),
+        (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
+          "the web login cannot trash a set nobody accepted");
+        // And the same move is refused for the PUBLISHER login, which holds the
+        // UPDATE columns needed to make it.
+        await assert.rejects(results(`UPDATE control_result_file_sets SET retention_state='trash'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, storedSet]),
+        (error: unknown) => ["42501", "23514", "42501"].includes(stateOf(error)),
+          "the publisher cannot trash a set either");
+        // A superuser is refused on the same statement, so this is the guard and
+        // not the login's grants. The identity that would have to accept it is
+        // named explicitly, which is the only way a trash can ever happen: the
+        // owner's own, and only for a set that owner's acceptance already names.
+        await assert.rejects(admin(`UPDATE control_result_file_sets SET retention_state='trash'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, storedSet]),
+        (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
+          "trashing an unaccepted set is refused even for a superuser");
+
         // ==== a cross-project read is still refused, after every fix ========
         // The fixes must not have widened anything. An identity without the
         // owner grant cannot mint, and another project's set is unreachable.
