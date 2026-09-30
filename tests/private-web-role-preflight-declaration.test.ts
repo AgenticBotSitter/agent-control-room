@@ -227,6 +227,12 @@ const shapeOf = (signature: string) => signature.replace(/\([^)]*\)/u, arity);
 /**
  * `CREATE [OR REPLACE] FUNCTION name(args) <header> AS $$|'` -> the header.
  *
+ * A FACTORY, not a constant, because the pattern carries the `g` flag: a shared
+ * stateful regex keeps its `lastIndex` between `matchAll` calls, so a second scan
+ * of a second file resumes where the first stopped and silently misses
+ * everything in between. That is exactly the failure mode this file exists to
+ * prevent, and it is invisible until a real trigger lands in the skipped range.
+ *
  * The header runs from the CLOSING PARENTHESIS of the signature to the body
  * opener, so an attribute in it belongs to THIS function and a following
  * function's attributes cannot leak backwards into it. The `AS` opener is the
@@ -234,11 +240,18 @@ const shapeOf = (signature: string) => signature.replace(/\([^)]*\)/u, arity);
  * and a non-lazy `[\s\S]*?` before it would stop at the first occurrence rather
  * than at this function's.
  */
-const FUNCTION_HEADERS = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)AS\s+(?:\$\$[A-Za-z_0-9]*\$|')/giu;
+const FUNCTION_HEADERS = () => /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)AS\s+(?:(?:\$\$[A-Za-z_0-9]*)?\$\$|')/giu;
 
-/** `RETURNS trigger` is what marks a function as a trigger function. */
-const returnsTrigger = (header: string) =>
-  /RETURNS\s+[A-Za-z ]*?\btrigger\b/iu.test(header.replace(/\bLANGUAGE\s+[a-z_0-9]+/giu, ""));
+/** `RETURNS trigger` is what marks a function as a trigger function.
+ *
+ * The return type is on its OWN LINE in every migration that has one -- 0202,
+ * 0204 and 0205 all write `RETURNS trigger\nLANGUAGE plpgsql` -- so this matches
+ * `\s+` across the newline rather than a character class of letters and spaces.
+ * The class version matched NONE of them, which reads downstream as "there are no
+ * SECURITY DEFINER triggers": a silent pass on the very scan that exists to catch
+ * R4-B1, and one this file would not have caught for the same reason. Both spellings
+ * are asserted in the scanner self-test below. */
+const returnsTrigger = (header: string) => /RETURNS\s+trigger\b/iu.test(header);
 
 async function shippedSecurityDefinerFunctions(): Promise<Map<string, ShippedFunction>> {
   const shipped = new Map<string, ShippedFunction>();
@@ -247,7 +260,7 @@ async function shippedSecurityDefinerFunctions(): Promise<Map<string, ShippedFun
     const securityDefinerFile = /SECURITY\s+DEFINER/i.test(sql);
     // Both spellings are legal and both are in use, so the scanner accepts either
     // and is proved to do so below.
-    for (const match of sql.matchAll(FUNCTION_HEADERS)) {
+    for (const match of sql.matchAll(FUNCTION_HEADERS())) {
       if (returnsTrigger(match[3]!)) continue;
       const args = match[2]!.split(",").map(argument => argument.trim().split(/\s+/)[0]!.toLowerCase())
         .filter(argument => argument !== "");
@@ -332,6 +345,23 @@ test("the SECURITY DEFINER scanner reads both spellings and every file, not only
     const record = [...shipped.entries()].find(([signature]) => shapeOf(signature) === shape)?.[1];
     assert.equal(record?.securityDefiner, false, `${shape} is not SECURITY DEFINER`);
   }
+  // THE TRIGGER DETECTOR, asserted on its own because it failed silently. A
+  // character class that excluded the newline read "there are no SECURITY DEFINER
+  // triggers" -- a pass -- on a scan whose whole job is to fail when one exists.
+  // Both spellings are legal, so both are pinned here.
+  assert.equal(returnsTrigger(" RETURNS trigger\nLANGUAGE plpgsql "), true,
+    "a trigger function with its return type on the next line was not detected");
+  assert.equal(returnsTrigger(" RETURNS trigger LANGUAGE plpgsql "), true,
+    "a single-line trigger function was not detected");
+  assert.equal(returnsTrigger(" RETURNS trigger_table "), false,
+    "a return type merely STARTING with the word trigger was treated as a trigger");
+  assert.equal(returnsTrigger(" RETURNS boolean\nLANGUAGE sql IMMUTABLE "), false,
+    "a plain function was treated as a trigger");
+  // And the same detector over the real header grammar, which is the shape that
+  // actually shipped.
+  const guardHeader = " RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp ";
+  assert.equal(returnsTrigger(guardHeader) && /SECURITY\s+DEFINER/iu.test(guardHeader), true,
+    "0204's guard header is not recognised as a SECURITY DEFINER trigger");
 });
 
 test("every table the role files grant the web login is one the private-web preflight accepts", async () => {
@@ -545,9 +575,15 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
   // the two are matched by SHAPE -- the name with its arity. `shapeOf` is the
   // single normalisation both comparisons use, and it is asserted on its own in
   // the scanner self-test above so a reader cannot make it name-blind.
+  // The trigger pin is compared against the TRIGGER set, not this one: the two
+  // scanners exclude different things (a login cannot CALL a trigger, and a
+  // SECURITY DEFINER callable is not a trigger), so a pinned signature from one
+  // side is not expected in the other's set. Both sides are checked against their
+  // own set, and neither set is a filter over the other.
   const shapes = new Set([...shipped.keys()].map(shapeOf));
-  assert.deepEqual(occurrences.filter(signature => !shapes.has(shapeOf(signature))).sort(), [],
-    "the preflight exempts a function no migration creates; a renamed or removed function is now a hole in the scan");
+  assert.deepEqual(occurrences.filter(signature => !shapes.has(shapeOf(signature))
+    && !signature.endsWith("()")).sort(), [],
+    "the preflight exempts a callable function no migration creates; a renamed or removed function is now a hole in the scan");
   // Each shipped SECURITY DEFINER function must be exempt under its OWN NAME, by
   // arity. The name-blind fallback is deliberately absent: an allowlist entry
   // that merely matched some other function's arity would be exactly the drift
@@ -590,24 +626,35 @@ test("every SECURITY DEFINER trigger a migration creates is pinned in the live p
   // of CALLABLES. Both scanners exist; neither is a filter over the other, and
   // this is the one that would have caught it.
   const source = readFileSync(PREFLIGHT_SOURCE, "utf8");
-  const scan = /OR \(SELECT 1 FROM pg_proc/.exec(source);
+  const scan = /EXISTS\(SELECT 1 FROM pg_proc p JOIN pg_namespace/u.exec(source);
   assert.ok(scan, "the preflight's function catalog scan was not found in the source");
   // Every name the migration set pins must appear as a `::regprocedure` literal
   // in the scan, in its own `OR (...)` branch. Reading every OCCURRENCE (rather
   // than a de-duplicated set) is deliberate for the reason the boundary array
   // comment above gives: a signature named in two places and renamed in one is
   // still a hole, and a set hides it.
-  const pinned = [...source.matchAll(/'([a-z_0-9]+\(\))'::regprocedure/gu)].map(match => match[1]!);
+  // The pinned form carries the EMPTY argument list as written in the preflight,
+  // which is `name()`; the shipped form this compares against is normalised to the
+  // same arity by `shapeOf`, so the two spellings meet without either being
+  // rewritten to suit the other.
+  const pinned = [...source.matchAll(/'([a-z_0-9]+\(\))'::regprocedure/gu)].map(match => shapeOf(match[1]!));
   // A SECURITY DEFINER trigger in db/migrations, read the same way as the
   // callable set: per function, from its own header, and only those returning
   // `trigger`.
   const triggers: string[] = [];
   for (const file of (await readdir(join(process.cwd(), "db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
     const sql = await readFile(join(process.cwd(), "db/migrations", file), "utf8");
-    for (const match of sql.matchAll(FUNCTION_HEADERS)) {
+    for (const match of sql.matchAll(FUNCTION_HEADERS())) {
       if (!returnsTrigger(match[3]!)) continue;
       if (!/SECURITY\s+DEFINER/iu.test(match[3]!)) continue;
-      triggers.push(`${match[1]!.toLowerCase()}(${match[2]!.split(",").filter(a => a.trim() !== "").length})`);
+      // Built with `shapeOf` rather than interpolated, so this side and the pinned
+      // side are normalised by the SAME helper. Writing the arity into the string by
+      // hand produced `name(0)`, which `shapeOf` then re-read as a ONE-argument
+      // call and normalised to `name(1)` -- so the two sides could never meet and
+      // the assertion failed for a spelling reason that reads like a missing pin.
+      const args = match[2]!.split(",").map(argument => argument.trim().split(/\s+/)[0]!.toLowerCase())
+        .filter(argument => argument !== "");
+      triggers.push(shapeOf(`${match[1]!.toLowerCase()}(${args.join(",")})`));
     }
   }
   // The set is pinned BY NAME as well as compared. A migration that adds a sixth
@@ -621,13 +668,22 @@ test("every SECURITY DEFINER trigger a migration creates is pinned in the live p
   // And the pin is a real pin, not the name appearing somewhere: the branch must
   // hold the two properties that make a trigger an trigger, so a rebuild that
   // changed either fails the preflight rather than passing it.
-  const branch = /OR \(p\.oid='guard_planner_needs_you_item_insert\(\)'::regprocedure[\s\S]*?'control_room_schema_owner'\)/
+  // The branch is read by its own opening `OR (p.oid=...)` rather than by scanning
+  // to the next `))`, because the SQL is indented across many lines and a
+  // character class would stop at the first newline. Both spellings of the pin's
+  // tail are asserted below, so a branch that was found but says the wrong thing
+  // still fails.
+  const branch = /OR \(p\.oid='guard_planner_needs_you_item_insert\(\)'::regprocedure[\s\S]*?a\.grantee<>p\.proowner\)\)/u
     .exec(source);
   assert.ok(branch, "the Needs-you trigger's pinned branch was not found in the preflight");
   assert.match(branch[0], /p\.prorettype='trigger'::regtype/, "the pinned trigger branch no longer pins the return type");
   assert.match(branch[0], /p\.prosecdef/, "the pinned trigger branch no longer pins SECURITY DEFINER");
-  assert.match(branch[0], /a\.grantee<>p\.proowner\)\)\)\s*$/m,
-    "the pinned trigger branch no longer requires an ACL that admits no login at all");
+  assert.match(branch[0], /p\.proconfig=ARRAY\['search_path=pg_catalog, public, pg_temp'\]::text\[\]/u,
+    "the pinned trigger branch no longer pins the search_path");
+  assert.match(branch[0], /p\.prolang=\(SELECT oid FROM pg_language WHERE lanname='plpgsql'\)/u,
+    "the pinned trigger branch no longer pins the language");
+  assert.match(branch[0], /NOT has_function_privilege\('public',p\.oid,'EXECUTE'\)/u,
+    "the pinned trigger branch no longer refuses an EXECUTE grant to PUBLIC");
 });
 
 test("the comparison above reads role files it has to be able to read", () => {

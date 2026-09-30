@@ -79,6 +79,24 @@ const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunc
   || ownerPushEndpointFunctions.has(object) && role === "control_room_private_web"
   || (plannerFunctions.get(object)?.has(role) ?? false)
   || agentReviewFunctions.has(object) && role === "control_room_agent_reviewer";
+/**
+ * A FUNCTION ARGUMENT TYPE, which is not an identifier: `text[]` is a one-element
+ * array of `text`, and 0205's grant function takes exactly that
+ * (`control_room_planner_grant_owner_retry(text, text, text[])`).
+ *
+ * `base[]` and `base` are both accepted, and nothing else. `[]` alone, a bare `*`,
+ * a qualified `pg_catalog.text[]`, or a shape with a space are refused, because
+ * this string is interpolated straight into a `GRANT ... ON FUNCTION` statement and
+ * a name that is not a type is not something to guess at. The array suffix is
+ * stripped before the identifier test so `text[]` and `text` cannot both reach the
+ * same catalogue row under two spellings.
+ */
+const argumentType = value => {
+  const array = value.endsWith("[]");
+  const base = array ? value.slice(0, -2) : value;
+  if (!identifier.test(base)) throw new Error("upgrade_grant_source_refused");
+  return array ? `${base}[]` : base;
+};
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");
   return value;
@@ -119,7 +137,7 @@ export function desiredMacGrantsV1(sources) {
           : null;
         if (objectKind === "FUNCTION" && !functionMatch) throw new Error("upgrade_grant_source_refused");
         const object = objectKind === "FUNCTION"
-          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${functionMatch[3].trim() ? splitCommas(functionMatch[3]).map(name).join(", ") : ""})`
+          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${functionMatch[3].trim() ? splitCommas(functionMatch[3]).map(argumentType).join(", ") : ""})`
           : objectKind === "SCHEMA" ? name(rawObject) : rawObject.split(".").map(name).join(".");
         if (!objectKind && !object.includes(".")) {
           if (!identifier.test(object)) throw new Error("upgrade_grant_source_refused");

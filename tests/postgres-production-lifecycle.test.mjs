@@ -2207,44 +2207,50 @@ async function catalogState(db){
  * object list is read within a single statement, so it can never run past the `;`
  * into the next statement's own `ON ... TO`.
  *
- * A FUNCTION SIGNATURE IS NOT A TABLE NAME, so it is checked against the absent set
- * BY ITS OWN NAME (R4-B3). The grant files now carry `GRANT EXECUTE ON FUNCTION
- * work_intake_split_suggestion_visible(text, text, text) TO ...` and two more from
- * 0204/0205, all created by migrations a partial ledger never applied; replayed
- * verbatim they raise 42883 (`undefined_function`) and fail the upgrade. The
- * signature's own comma list is never split -- a parenthesised argument list is one
- * name, and splitting it produced `read_plan(text), bytea)`, which is not SQL. */
-function pruneAbsentObjects(sql, present, isAbsent) {
-  // Only GRANT and REVOKE statements are rewritten. The files also carry `BEGIN;`
-  // and `DO $$ ... $$` blocks whose bodies contain semicolons, so splitting the
-  // whole file on ";" would tear them apart; a line-oriented split keeps every other
-  // byte of the file exactly as it was.
-  const objectList = /\bON\s+(.*?)\s+(TO|FROM)\b/isu;
-  return sql.split(/(?=^\s*(?:GRANT|REVOKE)\b)/gmu).map(statement => {
-    if (!/^\s*(?:GRANT|REVOKE)\b/iu.test(statement)) return statement;
-    const match = statement.match(objectList);
-    if (!match) return statement;
-    // Names the file writes with a type prefix or as a schema-wide sweep are left
-    // alone: a sweep over the tables this database does have is still correct.
-    if (!/^\s*FUNCTION\b/iu.test(statement)
-      && /^\s*(?:ALL\b|SCHEMA\b|SEQUENCE\b|TABLE\b|[A-Z_]+\s+TABLE\b)/iu.test(match[1].replace(/\s+/g, " "))) return statement;
-    // A list carrying a parenthesised argument type is a function signature, not a
-    // list of names -- `read_agent_review_plan(text), bytea)` splits on its own
-    // commas -- so a list with an unbalanced "(" is left exactly as written. It is
-    // still checked BY NAME below, which is what a signature needs.
-    if (match[1].includes("(") && !/^\s*FUNCTION\b/iu.test(statement)) return statement;
-    const names = match[1].split(/,(?![^()]*\))/u).map(entry => entry.trim());
-    const kept = names.filter(name => {
-      const bare = name.split("(")[0].trim();
-      return !/^[a-z_][a-z0-9_]*$/iu.test(bare) || !isAbsent(bare);
-    });
-    if (kept.length === names.length) return statement;
-    // The grantee keyword is put back: it is part of the match, not part of the
-    // object list, and a grant that lost its TO/FROM is not SQL.
-    if (kept.length === 0) return "";
-    return statement.replace(/\s*\bON\s+.*?\s+(TO|FROM)\b/isu, ` ON ${kept.join(", ")} ${match[2]}`);
-  }).join("");
-}
+ // A FUNCTION SIGNATURE IS NOT A TABLE NAME, so it is checked against the absent set
+  * BY ITS OWN NAME (R4-B3). The grant files now carry `GRANT EXECUTE ON FUNCTION
+  * work_intake_split_suggestion_visible(text, text, text) TO ...` and two more from
+  * 0204/0205, all created by migrations a partial ledger never applied; replayed
+  * verbatim they raise 42883 (`undefined_function`) and fail the upgrade. The
+  * signature's own comma list is never split -- a parenthesised argument list is one
+  * name, and splitting it produced `read_plan(text), bytea)`, which is not SQL.
+  *
+  * The name is taken from the SIGNATURE for a FUNCTION grant, and from the whole
+  * entry otherwise, which is what lets one loop prune both kinds without treating a
+  * signature's argument list as a list of names. */
+ function pruneAbsentObjects(sql, present, isAbsent) {
+   // Only GRANT and REVOKE statements are rewritten. The files also carry `BEGIN;`
+   // and `DO $$ ... $$` blocks whose bodies contain semicolons, so splitting the
+   // whole file on ";" would tear them apart; a line-oriented split keeps every other
+   // byte of the file exactly as it was.
+   const objectList = /\bON\s+(.*?)\s+(TO|FROM)\b/isu;
+   return sql.split(/(?=^\s*(?:GRANT|REVOKE)\b)/gmu).map(statement => {
+     if (!/^\s*(?:GRANT|REVOKE)\b/iu.test(statement)) return statement;
+     const match = statement.match(objectList);
+     if (!match) return statement;
+     // Names the file writes with a type prefix or as a schema-wide sweep are left
+     // alone: a sweep over the tables this database does have is still correct.
+     if (/^\s*(?:ALL|SCHEMA|SEQUENCE|TABLE|FUNCTION)\b/iu.test(match[1].replace(/\s+/g, " "))
+       && !/^\s*FUNCTION\s+[a-z_]/iu.test(match[1].trim())) return statement;
+     // A relation list carrying a parenthesised argument type is not a list of
+     // names -- `read_plan(text), bytea)` splits on its own commas -- so a relation
+     // list with an unbalanced "(" is left exactly as written. A FUNCTION list is
+     // exempt from that rule on purpose: a signature is exactly the thing that needs
+     // pruning, and `splitTopLevel`-style depth counting keeps its argument list one
+     // name.
+     if (match[1].includes("(") && !/^\s*FUNCTION\s+/iu.test(match[1].trim())) return statement;
+     const names = match[1].split(/,(?![^()]*\))/u).map(entry => entry.trim());
+     const kept = names.filter(name => {
+       const bare = name.split("(")[0].trim();
+       return !/^[a-z_][a-z0-9_]*$/iu.test(bare) || !isAbsent(bare);
+     });
+     if (kept.length === names.length) return statement;
+     // The grantee keyword is put back: it is part of the match, not part of the
+     // object list, and a grant that lost its TO/FROM is not SQL.
+     if (kept.length === 0) return "";
+     return statement.replace(/\s*\bON\s+.*?\s+(TO|FROM)\b/isu, ` ON ${kept.join(", ")} ${match[2]}`);
+   }).join("");
+ }
 
 test("pruning a role file for a database that lacks a table keeps the grants that do apply", () => {
   const prune = (sql, present) => pruneAbsentObjects(sql, new Set(present), name => !present.includes(name));

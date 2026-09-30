@@ -664,7 +664,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                (and 0205, again) rebuilt this guard with SECURITY DEFINER, every
                private login's startup preflight began refusing a CORRECT database.
                Measured on the merged tree: test:database 81/83, both failures
-               `private_database_preflight_failed` (module-install-approvals and
+               'private_database_preflight_failed' (module-install-approvals and
                module-project-pack-transfer), and test:postgres-production #23/#25
                the same. The declaration test never saw it, because that test's
                scanner skips trigger functions -- it scans what a login can CALL,
@@ -689,12 +689,12 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                denied for function planner_failure_scope_key" on the first raise).
 
                Pinned on every property the other entries pin: the exact oid with
-               its empty argument list, `prorettype='trigger'`, `prokind='f'`,
-               SECURITY DEFINER, VOLATILE, not leakproof, `proparallel='u'`,
-               owner `control_room_schema_owner`, the pinned search_path, no
+               its empty argument list, 'prorettype=trigger', 'prokind=f',
+               SECURITY DEFINER, VOLATILE, not leakproof, 'proparallel=u',
+               owner 'control_room_schema_owner', the pinned search_path, no
                EXECUTE for PUBLIC, and an ACL that admits NO login at all -- so a
                grant to any of them fails this preflight rather than passing
-               quietly. `prolang` is named as plpgsql rather than left implicit:
+               quietly. 'prolang' is named as plpgsql rather than left implicit:
                a rebuild in another language is a different function body and has
                to fail here rather than pass. */
             OR (p.oid='guard_planner_needs_you_item_insert()'::regprocedure
