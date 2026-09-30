@@ -45,6 +45,19 @@
         }
       ]
     },
+    "third_party/http_ece": {
+      "packageName": "http_ece",
+      "packageVersion": "1.2.0",
+      "sourceCommit": "0562510a30819f52424724a6fd5504becacd98a1",
+      "qualification": "pinned_npm_release_integrity; retained upstream LICENSE from the exact npm gitHead because the package tarball omits it",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1082,
+          "sha256": "717363ac0c7f0883042868db171cfed1f4b423119249eac9bce5131291017ea8"
+        }
+      ]
+    },
     "third_party/jsdom": {
       "packageName": "jsdom",
       "packageVersion": "26.1.0",
@@ -86,6 +99,45 @@
           "file": "LICENSE.md",
           "bytes": 1076,
           "sha256": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006"
+        }
+      ]
+    },
+    "third_party/mdast-util-from-markdown": {
+      "packageName": "mdast-util-from-markdown",
+      "packageVersion": "2.0.3",
+      "sourceCommit": "971e0266bc1ec8e8af558b4a668feb2d42d904e5",
+      "qualification": "pinned_npm_release_integrity; retained LICENSE matches the installed package",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ]
+    },
+    "third_party/mdast-util-gfm": {
+      "packageName": "mdast-util-gfm",
+      "packageVersion": "3.1.0",
+      "sourceCommit": "6b34bb2868c38c0b2909fa69c78534d5e44dc309",
+      "qualification": "pinned_npm_release_integrity; retained LICENSE matches the installed package",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ]
+    },
+    "third_party/micromark-extension-gfm": {
+      "packageName": "micromark-extension-gfm",
+      "packageVersion": "3.0.0",
+      "sourceCommit": "d4d848ba0cf6ffc8ce29f897bceda8dee4f2612f",
+      "qualification": "pinned_npm_release_integrity; retained LICENSE matches the installed package",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
         }
       ]
     },
@@ -262,6 +314,19 @@
           "file": "upstream-package.json",
           "bytes": 2864,
           "sha256": "b2206ba4678ba63836ddc85c6425ac4207f0d92b23fd96e059814742f97fdf3a"
+        }
+      ]
+    },
+    "third_party/web-push": {
+      "packageName": "web-push",
+      "packageVersion": "3.6.7",
+      "sourceCommit": "8d9ba1b33bfe0d73ccf3606c59ead4287f50e3b8",
+      "qualification": "pinned_npm_release_integrity; retained LICENSE matches the installed package and exact npm gitHead",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 228,
+          "sha256": "1fe5dbc03ffe518da23f1297de78ab5612532eddca93cca287a8dfaf4ad7ddce"
         }
       ]
     },

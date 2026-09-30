@@ -10,7 +10,7 @@ const instant = z.string().datetime({ offset: true });
 const safeText = z.string().trim().min(1).max(280).refine((value) => !/[\r\n\t]/.test(value), "preview text must stay on one line")
   .refine((value) => !/(?:password|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|private[_-]?key|session[_-]?cookie|bearer\s)/i.test(value), "preview text cannot carry secret material");
 const targetKind = z.enum(["code", "media", "document", "operation"]);
-const reviewDecision = z.enum(["commented", "accepted", "changes_requested", "rejected"]);
+const reviewDecision = z.enum(["commented", "accepted", "accepted_with_exceptions", "changes_requested", "rejected"]);
 const completionStatus = z.enum(["pending", "changes_requested", "verification_blocked", "revision_limit_reached", "ready", "superseded"]);
 const verificationOutcome = z.enum(["passed", "failed", "blocked", "inconclusive"]);
 

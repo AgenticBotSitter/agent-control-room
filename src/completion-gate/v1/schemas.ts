@@ -32,15 +32,22 @@ export const completionReviewTargetSchemaV1=z.object({schemaVersion:z.literal(CO
     if (target.revisionNumber>0 && (target.rootTargetId===target.id || !target.supersedesTargetId || target.supersedesTargetId===target.id)) context.addIssue({code:"custom",message:"revised target lineage invalid",path:["supersedesTargetId"]});
 });
 
+export const completionReviewExceptionSchemaV1=z.object({id,statementDigest:digest,followUpJobId:id}).strict();
+
 export const completionReviewSchemaV1=z.object({schemaVersion:z.literal(COMPLETION_GATE_SCHEMA_VERSION_V1),id,tenantId:id,projectId:id,targetId:id,
   targetDigest:digest,acceptanceProfileId:id,acceptanceProfileDigest:digest,reviewer:completionPrincipalSchemaV1,authority:z.enum(["advisory","completion_gate"]),
-  decision:z.enum(["commented","accepted","changes_requested","rejected"]),assessedRisk:risk,effectiveRisk:risk,
-  evidenceDigests:uniqueSorted(digest,1,100),findingIds:uniqueSorted(id,0,100),reviewedAt:time,grantsApproval:z.literal(false),
+  decision:z.enum(["commented","accepted","accepted_with_exceptions","changes_requested","rejected"]),assessedRisk:risk,effectiveRisk:risk,
+  evidenceDigests:uniqueSorted(digest,1,100),findingIds:uniqueSorted(id,0,100),
+  exceptions:z.array(completionReviewExceptionSchemaV1).min(1).max(10)
+    .refine(values=>new Set(values.map(value=>value.id)).size===values.length,"exception ids must be unique").optional(),
+  reviewedAt:time,grantsApproval:z.literal(false),
   grantsExecutionAuthority:z.literal(false)}).strict().superRefine((review,context)=>{
     if ((review.authority==="advisory")!==(review.decision==="commented")) context.addIssue({code:"custom",message:"advisory review may comment only",path:["decision"]});
     if (review.authority==="advisory" && review.findingIds.length>0) context.addIssue({code:"custom",message:"advisory review cannot create authoritative findings",path:["findingIds"]});
     if (["changes_requested","rejected"].includes(review.decision) && review.findingIds.length===0) context.addIssue({code:"custom",message:"negative review requires findings",path:["findingIds"]});
-    if (review.decision==="accepted" && review.findingIds.length>0) context.addIssue({code:"custom",message:"accepted review cannot carry findings",path:["findingIds"]});
+    if ((review.decision==="accepted"||review.decision==="accepted_with_exceptions") && review.findingIds.length>0) context.addIssue({code:"custom",message:"accepted review cannot carry findings",path:["findingIds"]});
+    if (review.decision==="accepted_with_exceptions" && !review.exceptions?.length) context.addIssue({code:"custom",message:"accepted with exceptions requires at least one named exception",path:["exceptions"]});
+    if (review.decision!=="accepted_with_exceptions" && review.exceptions?.length) context.addIssue({code:"custom",message:"exceptions are only recorded for accepted-with-exceptions decisions",path:["exceptions"]});
 });
 
 export const completionVerificationSchemaV1=z.object({schemaVersion:z.literal(COMPLETION_GATE_SCHEMA_VERSION_V1),id,tenantId:id,projectId:id,

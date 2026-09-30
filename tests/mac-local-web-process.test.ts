@@ -57,7 +57,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.deepEqual(await actionInboxResponse.json(), { observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false });
   const workers = await app.handle(request("/api/v1/local-workers", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(workers.status, 200); assert.deepEqual(await workers.json(), { taskWorkersStarted: true,
-    projectSections: ["overview", "inbox", "work", "pipelines", "agents", "reviews", "activity", "files", "settings"],
+    projectSections: ["overview", "inbox", "work", "pipelines", "agents", "reviews", "activity", "automations", "files", "settings"],
     workers: [{ kind: "hermes-021", state: "ready", proof: "not_proven" }] });
   const projects = await app.handle(request("/api/v1/projects", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(projects.status, 200);
@@ -96,6 +96,27 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     () => new Response("unused"));
   assert.equal(detailApi.status, 200);
   assert.equal((await detailApi.json() as { project: { projectId: string } }).project.projectId, projectId);
+  const mutationHeaders = { cookie: cookie!, origin, "content-type": "application/json" };
+  const skillResponse = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/skills`, {
+    method: "POST", headers: mutationHeaders, body: JSON.stringify({ name: "Evidence review",
+      instructions: "Cite the retained evidence and state uncertainty." }) }), () => new Response("unused"));
+  assert.equal(skillResponse.status, 201); const skill = await skillResponse.json() as { skillId: string; version: number };
+  const recurringInput = { schedule: "every Monday at 9", timezone: "UTC", title: "Weekly dependency check",
+    instructions: "Review dependency updates and propose a report.", requiredCapability: "dependency.review",
+    acceptanceCriteria: "The report cites its evidence.", acceptanceTests: "The owner reviews the cited evidence.",
+    skillRefs: [{ skillId: skill.skillId, version: skill.version }] };
+  const ruleResponse = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/recurring-rules`, {
+    method: "POST", headers: mutationHeaders, body: JSON.stringify(recurringInput) }), () => new Response("unused"));
+  assert.equal(ruleResponse.status, 201); const rule = await ruleResponse.json() as { ruleId: string; version: number };
+  const edited = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/recurring-rules/${encodeURIComponent(rule.ruleId)}`, {
+    method: "PUT", headers: mutationHeaders, body: JSON.stringify({ ...recurringInput,
+      instructions: "Review dependency updates and propose an evidence-backed report.", expectedVersion: rule.version })
+  }), () => new Response("unused"));
+  assert.equal(edited.status, 200); const editedRule = await edited.json() as { version: number };
+  const paused = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/recurring-rules/${encodeURIComponent(rule.ruleId)}/pause`, {
+    method: "POST", headers: mutationHeaders, body: JSON.stringify({ paused: true, expectedVersion: editedRule.version })
+  }), () => new Response("unused"));
+  assert.equal(paused.status, 200); assert.equal((await paused.json() as { state: string }).state, "paused");
   for (const lifecycle of ["active", "paused", "completed", "archived"]) {
     const filtered = await app.handle(request(`/projects?lifecycle=${lifecycle}`, { headers: { cookie: cookie! } }),
       () => new Response("filtered project shell"));

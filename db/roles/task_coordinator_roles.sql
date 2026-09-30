@@ -36,6 +36,8 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   control_service_incident_heads, control_service_incidents,
   installation_operations_mode_revisions
   TO control_room_task_coordinator;
+GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
+  control_recurring_rules, control_recurring_proposals TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
 -- Read-only: the coordinator enforces a project's eligible-worker-kinds and
@@ -59,6 +61,10 @@ GRANT INSERT ON control_installation_transition_revisions TO control_room_task_c
 GRANT INSERT ON control_agent_review_plans TO control_room_task_coordinator;
 GRANT INSERT ON control_pipeline_build_publications TO control_room_task_coordinator;
 GRANT INSERT ON control_update_candidates TO control_room_task_coordinator;
+GRANT INSERT ON control_recurring_proposals TO control_room_task_coordinator;
+GRANT UPDATE (state,attempt_count,batch_id,safe_reason_code,updated_at)
+  ON control_recurring_proposals TO control_room_task_coordinator;
+GRANT UPDATE (last_evaluated_at) ON control_recurring_rules TO control_room_task_coordinator;
 GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
   control_action_inbox TO control_room_task_coordinator;

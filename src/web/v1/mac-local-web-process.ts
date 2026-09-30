@@ -36,6 +36,10 @@ import { parseProductConfigurationV1 } from "../../config/v1/product-configurati
 import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { FleetOwnerServiceV1 } from "../../fleet/v1";
 import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
+import { RecurringRuleServiceV1 } from "../../recurring/v1";
+import { ReusableSkillServiceV1 } from "../../skills/v1";
+import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
+import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -48,6 +52,9 @@ export interface MacLocalWebProcessOptionsV1 {
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
   database: { client: DatabaseClient; close: () => Promise<void> };
+  /** The existing task service from the Mac task application. This keeps
+   * owner-review follow-up creation and browser task routes on one service. */
+  taskService?: WebTaskService;
   /** Existing canonical task operations, supplied by the host composition.
    * The local wrapper owns no planner, queue, review store, or worker. */
   ownerReviews?: WebTaskReviewService;
@@ -119,6 +126,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.origin !== options.origin
     || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
     throw new Error("mac_local_web_process_config_invalid");
+  // An owner review that can accept exceptions must use the task application's
+  // same in-session proposal service. Refuse a partial composition instead of
+  // mounting a review that succeeds for ordinary accepts but cannot follow up.
+  if (options.ownerReviews && !options.taskService) throw new Error("mac_local_web_process_config_invalid");
   const clock = options.clock ?? Date.now;
   const allowedOrigins = new Set([options.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : []),
     ...(profile.remoteOrigins ?? [])]);
@@ -133,7 +144,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const projects = new WebProjectService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined, productConfiguration,
     options.taskReadKeys?.harnessIntegrityKey);
-  const tasks = new WebTaskService(options.database.client,
+  const tasks = options.taskService ?? new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
   const projectActivity = new ProjectActivityServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.projectEvents, clock);
@@ -149,6 +160,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     ...(options.submission ? { submission: options.submission } : {}),
     ...(options.revisions ? { revisions: options.revisions } : {}),
   });
+  const recurringRules = new RecurringRuleServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
+  const recurringRuleHttp = createRecurringRuleHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: recurringRules, clock });
+  const reusableSkills = new ReusableSkillServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
+  const reusableSkillHttp = createReusableSkillHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: reusableSkills, clock });
   const workBatches = options.workBatchIntegrityKey ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, clock,
     options.workBatchQueueCatalog, options.workBatchQueueAdmissionAuthority) : undefined;
@@ -252,7 +271,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       await sessionWatch.authorize(identity);
       return render();
     }
-    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings|improvements)$/.exec(url.pathname);
+    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings|automations|improvements)$/.exec(url.pathname);
     if (projectSection) {
       if ([...url.searchParams.keys()].some(name => name !== "after")
         || url.searchParams.getAll("after").length > 1 || !["inbox", "reviews"].includes(projectSection[2]) && url.search)
@@ -323,7 +342,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         sessions.verify(request, clock());
         return Response.json({ taskWorkersStarted: options.taskWorkersStarted === true,
           ...(options.taskWorkersStarted === true ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
-          projectSections: ["overview", "inbox", "work", ...(workBatches ? ["pipelines"] : []), "agents", "reviews", "activity",
+          projectSections: ["overview", "inbox", "work", ...(workBatches ? ["pipelines"] : []), "agents", "reviews", "activity", "automations",
             ...(options.taskReadKeys?.results ? ["files"] : []), "settings"],
           workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
@@ -462,6 +481,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/projects"
         || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
+      if (/^\/api\/v1\/projects\/[^/]+\/recurring-rules(?:\/|$)/.test(url.pathname)) return recurringRuleHttp(request);
+      if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname)) return reusableSkillHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
       if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
       if (operationsModeHttp && url.pathname === "/api/v1/operations-mode") return operationsModeHttp(request);

@@ -41,3 +41,20 @@ export async function acknowledgeTaskHomeActivity(cursor: Readonly<{ surface: Ow
     throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable");
   }
 }
+
+/** Run `work` once the browser has painted, and hand back a cancel.
+ *
+ * The owner cursor may only advance after a read that actually reached the
+ * screen. `requestAnimationFrame` is not guaranteed to exist (jsdom, older
+ * engines, a prerender pass), and a missing scheduler must mean "no
+ * acknowledgement" rather than a broken page: the owner sees the same items
+ * again on the next visit, which is the safe direction. */
+export function scheduleAfterPaint(work: () => void): () => void {
+  if (typeof requestAnimationFrame !== "function" || typeof cancelAnimationFrame !== "function") {
+    return () => undefined;
+  }
+  const request = requestAnimationFrame.bind(globalThis);
+  const cancel = cancelAnimationFrame.bind(globalThis);
+  const handle = request(() => { work(); });
+  return () => cancel(handle);
+}

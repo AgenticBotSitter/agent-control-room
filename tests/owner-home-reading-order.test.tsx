@@ -164,6 +164,8 @@ async function mountHome(mode: "local" | "hosted") {
       sources: { ordinary: "included", ideas: "not_configured" } });
     if (path === "/api/v1/home/tasks") return Response.json({ active: [], recentResults: [],
       additionalActiveOmitted: false, additionalResultsOmitted: false, resultSource: "not_configured",
+      cursor: { surface: "home", mode: "since_last_look", firstVisit: false,
+        acknowledgeThrough: "2026-09-28T12:00:00.000Z" },
       observedAt: "2026-09-28T12:00:00.000Z", startsWork: false });
     if (path === "/api/v1/needs-me/tasks") return Response.json({ items: [], nextCursor: null, examined: 0,
       observedAt: "2026-09-28T12:00:00.000Z", startsWork: false, planningSource: "not_configured",

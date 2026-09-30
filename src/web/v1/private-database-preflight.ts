@@ -18,7 +18,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // Generated from public migrations through 0220 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162 and 0215-0220),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "16b3bdbe786ea7bd9d458074bc9ce6f222092207a10a72efbfe93006bc99d5d4";
+export const privateWebSchemaDigest = "14564ba1572ba97ca74760356e8fd60e00e8b830cbfe331cc60d065014ebc866";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -47,6 +47,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
   "work_batch_intake_flag_dismissals",
+  "control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules",
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
@@ -77,6 +78,9 @@ privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
 privateWebInsertTables.add("owner_surface_cursors");
+for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
+  privateWebInsertTables.add(table);
+
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -119,6 +123,9 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
   control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
+  control_skills: ["current_version", "state", "updated_at"],
+  control_recurring_rules: ["state", "plain_schedule", "cron_expression", "timezone", "task_template", "version",
+    "updated_by_identity_id", "updated_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
@@ -184,6 +191,9 @@ coordinatorReads.push("control_project_settings");
 coordinatorReads.push("installation_operations_mode_revisions");
 coordinatorReads.push("fleet_workers", "fleet_worker_presence", "fleet_worker_agents", "fleet_presence_transitions");
 coordinatorInserts.add("fleet_presence_transitions");
+coordinatorReads.push("control_skills", "control_skill_versions", "control_task_skill_bindings",
+  "control_recurring_rules", "control_recurring_proposals");
+coordinatorInserts.add("control_recurring_proposals");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
@@ -242,11 +252,20 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_supervisor_agent_health: ["node_id", "state", "safe_reason_code", "last_heartbeat_at", "observed_at"],
   control_supervisor_loop_heads: ["version", "last_started_at", "last_completed_at", "state"],
   control_provider_waits: ["state", "released_at"],
+  control_recurring_proposals: ["state", "attempt_count", "batch_id", "safe_reason_code", "updated_at"],
+  control_recurring_rules: ["last_evaluated_at"],
   // An incident is opened with a bounded column set and then corrected in
   // place; the head's generation counter is the only service-registry write.
   control_service_incident_heads: ["next_generation"],
   control_service_incidents: ["severity", "safe_reason_code", "safe_remedy_code", "state", "last_observed_at", "resolved_at"],
 };
+export const taskCoordinatorReadTables = Object.freeze([...coordinatorReads]);
+export const taskCoordinatorInsertTables = Object.freeze([...coordinatorInserts]);
+export const taskCoordinatorDeleteTables = Object.freeze([...coordinatorDeletes]);
+export const taskCoordinatorInsertColumns = Object.freeze(Object.fromEntries(Object.entries(coordinatorInsertColumns)
+  .map(([table, columns]) => [table, Object.freeze([...columns])])) as Record<string, readonly string[]>);
+export const taskCoordinatorUpdateColumns = Object.freeze(Object.fromEntries(Object.entries(coordinatorUpdates)
+  .map(([table, columns]) => [table, Object.freeze([...columns])])) as Record<string, readonly string[]>);
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
   "control_attempts", "control_task_model_selections",

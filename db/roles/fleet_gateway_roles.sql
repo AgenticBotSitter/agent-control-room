@@ -79,7 +79,8 @@ GRANT SELECT ON fleet_enrollment_codes, fleet_workers, fleet_worker_credentials,
   fleet_result_reviews TO control_room_private_web;
 
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_fleet_owner_authority;
-GRANT SELECT ON work_intake_tenant_binding, tenants, workspaces, projects, control_manual_project_heads,
+GRANT SELECT ON work_intake_tenant_binding TO control_room_fleet_owner_authority;
+GRANT SELECT ON tenants, workspaces, projects, control_manual_project_heads,
   control_identities, control_role_grants, control_web_sessions, control_requests, control_workflows,
   control_jobs, control_attempts, control_leases, audit_events, control_audit_chain_heads,
   fleet_enrollment_codes, fleet_enrollment_redemptions, fleet_workers, fleet_worker_credentials,

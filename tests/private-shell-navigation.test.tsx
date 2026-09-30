@@ -188,7 +188,10 @@ test("home dashboard links exact saved work, results, attention and projects wit
     requestId: "request:done", title: "Completed research", state: "succeeded" }, artifact: { artifactId: "artifact:result",
     attemptId: "attempt:done", runId: "run:done", contentHash: `sha256:${"a".repeat(64)}`, sizeBytes: 42,
     receivedAt: "2026-09-04T12:00:00.000Z", byteCheck: "matched_recorded_claim", qualityAccepted: false } }],
-    additionalActiveOmitted: false, additionalResultsOmitted: false, resultSource: "configured", observedAt: "2026-09-04T12:00:00.000Z",
+    additionalActiveOmitted: false, additionalResultsOmitted: false, resultSource: "configured",
+    cursor: { surface: "home", mode: "since_last_look", firstVisit: false,
+        acknowledgeThrough: "2026-09-04T12:00:00.000Z" },
+        observedAt: "2026-09-04T12:00:00.000Z",
     startsWork: false } }, attention: { state: "ready", value: { items: [{ task, inputDigest: `sha256:${"b".repeat(64)}`,
     reasons: ["approval"] }], nextCursor: null, examined: 1, observedAt: "2026-09-04T12:00:00.000Z", startsWork: false,
     planningSource: "configured", deliverySource: "configured", sources: { ordinary: "included", ideas: "not_configured" } } },
@@ -220,7 +223,10 @@ test("home task reader accepts only the bounded read-only activity contract", as
   const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
     requested = String(input); method = init?.method ?? "";
     return Response.json({ active: [], recentResults: [], additionalActiveOmitted: false,
-      additionalResultsOmitted: false, resultSource: "not_configured", observedAt: "2026-09-04T12:00:00.000Z", startsWork: false });
+      additionalResultsOmitted: false, resultSource: "not_configured",
+      cursor: { surface: "home", mode: "since_last_look", firstVisit: false,
+        acknowledgeThrough: "2026-09-04T12:00:00.000Z" },
+        observedAt: "2026-09-04T12:00:00.000Z", startsWork: false });
   }) as typeof fetch;
   const result = await readTaskHomeActivity(transport);
   assert.equal(requested, "/api/v1/home/tasks"); assert.equal(method, "GET"); assert.equal(result.startsWork, false);
@@ -274,6 +280,8 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
     : path === "/api/v1/home/tasks"
       ? Response.json({ active: [], recentResults: [], additionalActiveOmitted: false,
         additionalResultsOmitted: false, resultSource: "not_configured",
+        cursor: { surface: "home", mode: "since_last_look", firstVisit: false,
+        acknowledgeThrough: "2026-09-27T12:00:00.000Z" },
         observedAt: "2026-09-27T12:00:00.000Z", startsWork: false })
       : Response.json({ items: [], nextCursor: null, examined: 0,
         observedAt: "2026-09-27T12:00:00.000Z", startsWork: false,
@@ -609,7 +617,9 @@ test("home links each recent result to its exact file, not a generic results anc
     connections: { state: "unavailable", code: "unavailable" },
     activity: { state: "ready", value: { projectId: task.projectId, active: [], recentTasks: [],
       recentResults: [{ task, artifact }, { task, artifact: second }], additionalResultsOmitted: false,
-      resultSource: "configured", observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } },
+      resultSource: "configured", cursor: { surface: "home", mode: "since_last_look", firstVisit: false,
+        acknowledgeThrough: "2026-09-04T12:00:00.000Z" },
+        observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } },
   } as unknown as HomeDashboardState;
   const html = renderToStaticMarkup(createElement(HomeDashboard, { data: state }));
   // Two artifacts in one task must produce two distinct exact links.

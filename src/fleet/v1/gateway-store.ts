@@ -69,9 +69,8 @@ export type FleetOperationsModeV1 = (typeof FLEET_OPERATIONS_MODES_V1)[number];
 
 export type FleetGatewayStoreOptionsV1 = Readonly<{ tenantId: string; clock?: () => number;
   leaseMs?: number; connectorVersionLimit?: number;
-  /** Reads the owner's current Pause / Drain / Stop decision. Without a port
-   * the installation has no such switch and is running. A port that fails or
-   * answers anything unexpected refuses new claims rather than admitting them. */
+  /** Reads the owner's current Pause / Drain / Stop decision. A missing port,
+   * a failed read or an unexpected answer is unknown and refuses new claims. */
   operationsMode?: () => Promise<FleetOperationsModeV1>;
   /** Presentation-only task timeline. Without it, a hand-off is still recorded
    * in the audit log and worker events, but not shown on the Activity page. */
@@ -102,7 +101,7 @@ export class FleetGatewayStoreV1 {
 
   /** The mode connectors see. "unknown" (an unreadable switch) never admits work. */
   async operationsMode(): Promise<FleetOperationsModeV1 | "unknown"> {
-    if (!this.#operationsMode) return "running";
+    if (!this.#operationsMode) return "unknown";
     try {
       const mode = await this.#operationsMode();
       return (FLEET_OPERATIONS_MODES_V1 as readonly unknown[]).includes(mode) ? mode : "unknown";
@@ -463,6 +462,10 @@ export class FleetGatewayStoreV1 {
     const agentId = input.agentId === undefined ? null
       : typeof input.agentId === "string" && agentPattern.test(input.agentId) ? input.agentId : fleetFail("invalid");
     const now = this.#now();
+    // Read the mode before the transaction: the provider uses its own pool
+    // connection, and reading it inside would hold two per claim. The 0156
+    // trigger still decides inside the transaction, so a race costs nothing.
+    const mode = await this.operationsMode();
     return this.db.transaction(async tx => {
       const prior = (await tx.query<ClaimRow>(`SELECT * FROM fleet_claims WHERE tenant_id=$1 AND worker_id=$2
         AND idempotency_key=$3`, [this.#tenantId, principal.workerId, idempotencyKey])).rows[0];
@@ -471,7 +474,7 @@ export class FleetGatewayStoreV1 {
         return this.#claimView(tx, prior, true);
       }
       // Pause, Drain and Stop all stop new claims; a replay above is not new.
-      if (await this.operationsMode() !== "running") return fleetFail("paused");
+      if (mode !== "running") return fleetFail("paused");
       await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.#tenantId]);
       const offer = (await tx.query<{ project_id: string; job_id: string; capability: string; state: string;
         allowed_worker_ids: string[] | null }>(`SELECT project_id,job_id,capability,state,allowed_worker_ids

@@ -1,5 +1,6 @@
 export * from "./cli";
 export * from "./client";
+export * from "./compare-combine-template";
 export * from "./credential";
 export * from "./errors";
 export * from "./schemas";

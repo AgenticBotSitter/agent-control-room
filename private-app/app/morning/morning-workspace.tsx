@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { PrivateHeader } from "../private-header";
-import { acknowledgeTaskHomeActivity, readTaskHomeActivity } from "../../../src/web/v1/task-home-browser-client";
+import { acknowledgeTaskHomeActivity, readTaskHomeActivity, scheduleAfterPaint } from "../../../src/web/v1/task-home-browser-client";
 import type { TaskHomeActivity } from "../../../src/web/v1/task-home-wire";
 import { readTaskAttention } from "../../../src/web/v1/queue-attention-browser-client";
 import type { TaskAttentionPage } from "../../../src/web/v1/task-attention-wire";
@@ -47,12 +47,11 @@ export function PrivateMorningSummary() {
   useEffect(() => {
     if (activity.state !== "ready") return;
     const controller = new AbortController();
-    let second = 0;
-    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => {
+    const cancelPaint = scheduleAfterPaint(() => {
       if (activity.state === "ready") void acknowledgeTaskHomeActivity(activity.value.cursor, fetch, controller.signal)
         .catch(() => undefined);
-    }); });
-    return () => { controller.abort(); cancelAnimationFrame(first); cancelAnimationFrame(second); };
+    });
+    return () => { controller.abort(); cancelPaint(); };
   }, [activity]);
 
   useEffect(() => {

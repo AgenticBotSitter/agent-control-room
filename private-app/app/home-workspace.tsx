@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createProjectBrowserClient } from "../../src/web/v1/browser-client";
 import { readPrivateConnections, type PrivateConnectionSnapshot } from "../../src/web/v1/connection-browser-client";
 import { readTaskAttention } from "../../src/web/v1/queue-attention-browser-client";
-import { acknowledgeTaskHomeActivity, readTaskHomeActivity } from "../../src/web/v1/task-home-browser-client";
+import { acknowledgeTaskHomeActivity, readTaskHomeActivity, scheduleAfterPaint } from "../../src/web/v1/task-home-browser-client";
 import type { TaskAttentionPage } from "../../src/web/v1/task-attention-wire";
 import type { TaskHomeActivity } from "../../src/web/v1/task-home-wire";
 import type { ProjectCatalogPage } from "../../src/web/v1/project-wire";
@@ -263,11 +263,14 @@ export function PrivateHome() {
     if (data.activity.state !== "ready") return;
     const cursor = data.activity.value.cursor;
     const controller = new AbortController();
-    let second = 0;
-    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => {
+    // Acknowledge only after the read has actually painted, so a render that
+    // never reaches the screen cannot advance the owner's cursor. A missing
+    // frame scheduler degrades to "no acknowledgement" rather than breaking the
+    // page: the owner simply sees the same items again on the next visit.
+    const cancelPaint = scheduleAfterPaint(() => {
       void acknowledgeTaskHomeActivity(cursor, fetch, controller.signal).catch(() => undefined);
-    }); });
-    return () => { controller.abort(); cancelAnimationFrame(first); cancelAnimationFrame(second); };
+    });
+    return () => { controller.abort(); cancelPaint(); };
   }, [data.activity]);
   const refresh = useVisiblePolling(load, pollingEnabled);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1} className="private-home-main">
