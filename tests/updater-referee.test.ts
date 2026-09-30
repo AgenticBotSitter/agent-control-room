@@ -119,6 +119,12 @@ test("an unreadable running policy fails closed and setting decisions remain non
   const invalid = classify({ ...policies, protectedJson: policies.protectedJson.replace(
     '"schema": "control-room.policy.protected/v1"', '"schema": "wrong"') }, candidate([pathRow("M", "README.md")]));
   assert.equal(invalid.refused, true); assert.equal(invalid.classification, "updater");
+  const malformedGlob = classify({ ...policies, protectedJson: policies.protectedJson.replace(
+    '"src/updater/**"', '"src/updater/{broken"') }, candidate([pathRow("M", "README.md")]));
+  assert.equal(malformedGlob.refused, true); assert.equal(malformedGlob.classification, "updater");
+  const malformedClassGlob = classify({ ...policies, classesJson: policies.classesJson.replace(
+    '"db/**"', '"db/{broken"') }, candidate([pathRow("M", "README.md")]));
+  assert.equal(malformedClassGlob.refused, true); assert.equal(malformedClassGlob.classification, "updater");
   assert.deepEqual(classifyUpdaterSettingV1(), {
     classification: "setting", classes: [], protectedPaths: [],
     approvalNeeded: { phonePasskey: true, macConfirm: true }, independentReviewRequired: false,

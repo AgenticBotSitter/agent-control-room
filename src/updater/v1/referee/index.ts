@@ -13,7 +13,7 @@ export interface RunningUpdaterPolicyFilesV1 {
 
 export interface CandidateDiffV1 {
   raw: Uint8Array;
-  /** Blob contents keyed by the full object id printed by `git diff --raw`. */
+  /** Blob contents keyed by the object id printed by `git diff --raw`. */
   blobs?: Readonly<Record<string, Uint8Array | string>>;
 }
 
@@ -204,6 +204,24 @@ function strings(value: unknown): string[] {
   return value as string[];
 }
 
+function validateGlobPattern(pattern: string): void {
+  const segments = pattern.split("/");
+  if (segments.some(segment => segment.length === 0)) throw new Error("policy_invalid");
+  for (const segment of segments) {
+    if (segment.includes("**") && segment !== "**") throw new Error("policy_invalid");
+    for (let index = 0; index < segment.length; index += 1) {
+      if (segment[index] === "}") throw new Error("policy_invalid");
+      if (segment[index] !== "{") continue;
+      const close = segment.indexOf("}", index + 1);
+      if (close < 0 || segment.slice(index + 1, close).includes("{")) throw new Error("policy_invalid");
+      const alternatives = segment.slice(index + 1, close).split(",");
+      if (alternatives.length < 2 || alternatives.some(alternative => alternative.length === 0))
+        throw new Error("policy_invalid");
+      index = close;
+    }
+  }
+}
+
 function parsePolicies(policyFiles: RunningUpdaterPolicyFilesV1): ParsedPolicies {
   const protectedPolicy = parseStrictJsonObject(policyFiles.protectedJson);
   const classesPolicy = parseStrictJsonObject(policyFiles.classesJson);
@@ -220,6 +238,7 @@ function parsePolicies(policyFiles: RunningUpdaterPolicyFilesV1): ParsedPolicies
     const patterns = strings(value.patterns);
     const exclude = value.exclude === undefined ? [] : strings(value.exclude);
     if (patterns.length === 0 || [...patterns, ...exclude].some(pattern => pattern.length === 0)) throw new Error("policy_invalid");
+    for (const pattern of [...patterns, ...exclude]) validateGlobPattern(pattern);
     return { id: value.id, patterns, exclude,
       onChange: value.onChange as ProtectedEntry["onChange"], reason: value.reason };
   });
@@ -232,7 +251,9 @@ function parsePolicies(policyFiles: RunningUpdaterPolicyFilesV1): ParsedPolicies
   }
   const detection = (id: string): DetectionRule => {
     const value = record(byId.get(id)?.detection);
-    return { patterns: strings(value.patterns), exclude: value.exclude === undefined ? [] : strings(value.exclude) };
+    const patterns = strings(value.patterns), exclude = value.exclude === undefined ? [] : strings(value.exclude);
+    for (const pattern of [...patterns, ...exclude]) validateGlobPattern(pattern);
+    return { patterns, exclude };
   };
   const dependencyValue = record(byId.get("dependency")?.detection);
   const packageValue = record(dependencyValue.packageJsonKeys);

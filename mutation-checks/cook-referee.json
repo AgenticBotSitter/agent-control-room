@@ -1,6 +1,13 @@
 [
   {
     "file": "src/updater/v1/referee/index.ts",
+    "find": "    for (const pattern of [...patterns, ...exclude]) validateGlobPattern(pattern);\n    return { patterns, exclude };",
+    "replace": "    return { patterns, exclude };",
+    "test": "node --import tsx --test --test-name-pattern='unreadable running policy' tests/updater-referee.test.ts",
+    "why": "every database and dependency glob must parse when the running policy loads even if no current diff path reaches its malformed segment"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
     "find": "  const patterns = pattern.toLowerCase().split(\"/\");\n  const paths = path.toLowerCase().split(\"/\");",
     "replace": "  const patterns = pattern.toLowerCase().split(\"/\");\n  const paths = path.split(\"/\");",
     "test": "node --import tsx --test --test-name-pattern='supplemental examples' tests/updater-referee.test.ts",
