@@ -6,6 +6,7 @@ import { assertSafeIdV1, updaterRefuseV1 } from "./contracts.mjs";
 import { assertNoSymlinkBelowV1, atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { assertPairTargetsV1, pairV1, readKnownGoodPairsV1, readLivePairV1,
   recoverPairLinksV1, switchPairLinksV1 } from "./release-layout.mjs";
+import { clearStagedReleaseV1, readStagedReleaseV1, writeStagedReleaseV1 } from "./staged-release.mjs";
 
 const GIB_V1 = 1024 ** 3;
 const RESERVE_BYTES_V1 = 2 * GIB_V1;
@@ -126,7 +127,14 @@ export class DiskReserveV1 {
       await this.assertIntact();
       await unlink(join(this.root, "rescue-reserve.bin"));
       await syncDirectoryV1(this.root);
-      const result = await operation();
+      let result;
+      try { result = await operation(); }
+      catch (retryError) {
+        if (isNoSpaceV1(retryError)) await this.onDepleted(retryError);
+        try { await this.createReserve(); await this.assertIntact(); }
+        catch (reserveError) { await this.onDepleted(reserveError); }
+        throw retryError;
+      }
       try { await this.createReserve(); await this.assertIntact(); }
       catch (reserveError) { if (!isNoSpaceV1(reserveError)) throw reserveError; await this.onDepleted(reserveError); }
       return result;
@@ -164,7 +172,14 @@ export class UpdaterActuatorV1 {
     this.schemaDigest = schemaDigest; this.reserve = reserve; this.history = history; this.fault = fault;
   }
 
-  async recover() { return recoverPairLinksV1(this.root, { fault: this.fault }); }
+  async recover() { return recoverPairLinksV1(this.root, { fault: this.fault,
+    databaseStopped: move => this.services.databaseStopped?.(undefined, move) }); }
+
+  async #exclusive(operation) {
+    if (this.#switching) throw updaterRefuseV1("updater_actuator_busy");
+    this.#switching = true;
+    try { return await operation(); } finally { this.#switching = false; }
+  }
 
   async precheck(run) {
     const plan = planFromRunV1(run), digest = await this.schemaDigest();
@@ -182,7 +197,9 @@ export class UpdaterActuatorV1 {
     try {
       const entry = await lstat(final);
       if (!entry.isDirectory() || entry.isSymbolicLink()) throw updaterRefuseV1("updater_release_target_refused");
-      await this.artifacts.verifyRelease(run, final, plan); return { replayed: true };
+      await this.artifacts.verifyRelease(run, final, plan);
+      await writeStagedReleaseV1(this.root, plan.to.releaseId);
+      return { replayed: true };
     } catch (error) { if (error?.code !== "ENOENT") throw error; }
     await this.reserve.preflight({ releaseBytes: plan.releaseBytes, databaseBytes: plan.databaseBytes,
       databasePlan: plan.databaseClass !== "none" });
@@ -191,10 +208,12 @@ export class UpdaterActuatorV1 {
     try {
       await this.artifacts.unpackRelease(run, staging, plan);
       await this.artifacts.verifyRelease(run, staging, plan);
+      await writeStagedReleaseV1(this.root, plan.to.releaseId);
       await rename(staging, final); await syncDirectoryV1(releases);
       return { replayed: false };
     } catch (error) {
       try { await removeTreeNoFollowV1(staging); } catch (cleanupError) { if (cleanupError?.code !== "ENOENT") throw cleanupError; }
+      await clearStagedReleaseV1(this.root, plan.to.releaseId);
       throw error;
     }
   }
@@ -203,16 +222,14 @@ export class UpdaterActuatorV1 {
   drain(run) { return this.services.drain(run); }
 
   async switchPair(run) {
-    if (this.#switching) throw updaterRefuseV1("updater_actuator_busy");
-    this.#switching = true;
-    try {
+    return this.#exclusive(async () => {
       const plan = planFromRunV1(run);
       if (plan.from.pgDataId !== plan.to.pgDataId
           && await this.services.databaseStopped?.(run, plan) !== true)
         throw updaterRefuseV1("updater_database_not_stopped");
       return await switchPairLinksV1({ root: this.root, operationId: plan.operationId, from: plan.from, to: plan.to,
         previousReleaseId: plan.from.releaseId, fault: this.fault });
-    } finally { this.#switching = false; }
+    });
   }
 
   restart(run) { return this.services.restart(run); }
@@ -221,30 +238,32 @@ export class UpdaterActuatorV1 {
   measure(run) { return this.services.measure(run); }
 
   async rollback(run) {
-    const plan = planFromRunV1(run), liveDigest = await this.schemaDigest();
-    const live = await readLivePairV1(this.root, liveDigest), pairs = [...await this.history.knownGood()].reverse();
-    let lastCode = "updater_rollback_chain_exhausted";
-    for (const candidate of pairs) {
-      if (candidate.pgDataId !== live.pgDataId || candidate.schemaDigest !== live.schemaDigest
-          || candidate.releaseId === live.releaseId) continue;
-      try {
-        await assertPairTargetsV1(this.root, candidate);
-        if (!await this.artifacts.verifyPair(candidate)) { lastCode = "updater_rollback_pair_corrupt"; continue; }
-        const rollbackFrom = await readLivePairV1(this.root, await this.schemaDigest());
-        await this.reserve.finishWithReserve(async () => {
-          await switchPairLinksV1({ root: this.root,
-            operationId: `${plan.operationId}.rollback.${candidate.releaseId}`, from: rollbackFrom,
-            to: candidate, previousReleaseId: live.releaseId, fault: this.fault });
-          await this.services.restart(run);
-        });
-        if (await this.healthProbe(run, candidate)) return candidate;
-        lastCode = "updater_rollback_pair_unhealthy";
-      } catch (error) {
-        if (isNoSpaceV1(error)) throw error;
-        lastCode = typeof error?.code === "string" ? error.code : "updater_rollback_pair_failed";
+    return this.#exclusive(async () => {
+      const plan = planFromRunV1(run), liveDigest = await this.schemaDigest();
+      const live = await readLivePairV1(this.root, liveDigest), pairs = [...await this.history.knownGood()].reverse();
+      let lastCode = "updater_rollback_chain_exhausted";
+      for (const candidate of pairs) {
+        if (candidate.pgDataId !== live.pgDataId || candidate.schemaDigest !== live.schemaDigest
+            || candidate.releaseId === live.releaseId) continue;
+        try {
+          await assertPairTargetsV1(this.root, candidate);
+          if (!await this.artifacts.verifyPair(candidate)) { lastCode = "updater_rollback_pair_corrupt"; continue; }
+          const rollbackFrom = await readLivePairV1(this.root, await this.schemaDigest());
+          await this.reserve.finishWithReserve(async () => {
+            await switchPairLinksV1({ root: this.root,
+              operationId: `${plan.operationId}.rollback.${candidate.releaseId}`, from: rollbackFrom,
+              to: candidate, previousReleaseId: live.releaseId, fault: this.fault });
+            await this.services.restart(run);
+          });
+          if (await this.healthProbe(run, candidate)) return candidate;
+          lastCode = "updater_rollback_pair_unhealthy";
+        } catch (error) {
+          if (isNoSpaceV1(error)) throw error;
+          lastCode = typeof error?.code === "string" ? error.code : "updater_rollback_pair_failed";
+        }
       }
-    }
-    throw updaterRefuseV1(lastCode);
+      throw updaterRefuseV1(lastCode);
+    });
   }
 }
 
@@ -254,6 +273,8 @@ export async function collectOldReleasesV1(root, { keep = 5, openStagingReleaseI
     history.knownGood(), history.restorePoints(),
   ]);
   const protectedIds = new Set([...known, ...restore].map(pair => pair.releaseId));
+  const stagedReleaseId = await readStagedReleaseV1(root);
+  if (stagedReleaseId) protectedIds.add(stagedReleaseId);
   for (const link of ["current", "previous"]) {
     try {
       const entry = await lstat(join(root, link));

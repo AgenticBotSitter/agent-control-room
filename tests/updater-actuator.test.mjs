@@ -54,7 +54,7 @@ test("pair links resume safely after a kill at every journal and filesystem step
       await assert.rejects(switchPairLinksV1({ root, operationId: "switch-one", from: pair("r2", "p2", 2),
         to: pair("r3", "p3", 3), fault: step => { if (armed && step === cut) { armed = false;
           throw Object.assign(new Error("killed"), { code: "simulated_kill" }); } } }), /killed/u);
-      const recovered = await recoverPairLinksV1(root);
+      const recovered = await recoverPairLinksV1(root, { databaseStopped: async () => true });
       assert.ok(["completed"].includes(recovered.status), cut);
       assert.equal(await readlink(join(root, "current")), "releases/r3");
       assert.equal(await readlink(join(root, "pg/current")), "data-p3");
@@ -69,7 +69,7 @@ test("an interrupted pair switch rolls back when either target disappears", asyn
     to: pair("r3", "p3", 3), fault: step => { if (armed && step === "after_database_done") {
       armed = false; throw Object.assign(new Error("killed"), { code: "simulated_kill" }); } } }), /killed/u);
   await rm(join(root, "releases/r3"), { recursive: true });
-  assert.equal((await recoverPairLinksV1(root)).status, "rolled_back");
+  assert.equal((await recoverPairLinksV1(root, { databaseStopped: async () => true })).status, "rolled_back");
   assert.equal(await readlink(join(root, "current")), "releases/r2");
   assert.equal(await readlink(join(root, "pg/current")), "data-p2");
 });
@@ -153,6 +153,66 @@ test("a database-pair switch requires the item-5 clean-stop proof", async t => {
   assert.equal(await readlink(join(root, "pg/current")), "data-p3");
 });
 
+test("startup recovery requires stop proof before database moves in both directions", async t => {
+  await t.test("forward", async t => {
+    const root = await fixtureV1(t); let armed = true, proofs = 0;
+    await assert.rejects(switchPairLinksV1({ root, operationId: "recover-forward", from: pair("r2", "p2", 2),
+      to: pair("r3", "p3", 3), fault: step => { if (armed && step === "after_previous_done") {
+        armed = false; throw Object.assign(new Error("killed"), { code: "simulated_kill" });
+      } } }), /killed/u);
+    await writeFile(join(root, "pg/data-p2/postmaster.pid"), "live");
+    await assert.rejects(recoverPairLinksV1(root, { databaseStopped: async () => { proofs += 1; return true; } }),
+      /updater_database_not_stopped/u);
+    assert.equal(proofs, 0, "an on-disk postmaster refuses before accepting the port proof");
+    assert.equal(await readlink(join(root, "pg/current")), "data-p2");
+    await unlink(join(root, "pg/data-p2/postmaster.pid"));
+    await assert.rejects(recoverPairLinksV1(root, { databaseStopped: async () => false }),
+      /updater_database_not_stopped/u);
+    assert.equal(await readlink(join(root, "pg/current")), "data-p2");
+    const recovered = await recoverPairLinksV1(root, { databaseStopped: async move => {
+      assert.deepEqual(move, { operationId: "recover-forward", direction: "forward", fromPgDataId: "p2",
+        toPgDataId: "p3" }); return true;
+    } });
+    assert.equal(recovered.status, "completed");
+    assert.equal(await readlink(join(root, "pg/current")), "data-p3");
+  });
+
+  await t.test("rollback", async t => {
+    const root = await fixtureV1(t); let armed = true, proofs = 0;
+    await assert.rejects(switchPairLinksV1({ root, operationId: "recover-rollback", from: pair("r2", "p2", 2),
+      to: pair("r3", "p3", 3), fault: step => { if (armed && step === "after_database_done") {
+        armed = false; throw Object.assign(new Error("killed"), { code: "simulated_kill" });
+      } } }), /killed/u);
+    await rm(join(root, "releases/r3"), { recursive: true });
+    await writeFile(join(root, "pg/data-p3/postmaster.pid"), "live");
+    await assert.rejects(recoverPairLinksV1(root, { databaseStopped: async () => { proofs += 1; return true; } }),
+      /updater_database_not_stopped/u);
+    assert.equal(proofs, 0);
+    assert.equal(await readlink(join(root, "pg/current")), "data-p3");
+    await unlink(join(root, "pg/data-p3/postmaster.pid"));
+    await assert.rejects(recoverPairLinksV1(root, { databaseStopped: async () => false }),
+      /updater_database_not_stopped/u);
+    const recovered = await recoverPairLinksV1(root, { databaseStopped: async move => {
+      assert.equal(move.direction, "rollback"); return true;
+    } });
+    assert.equal(recovered.status, "rolled_back");
+    assert.equal(await readlink(join(root, "pg/current")), "data-p2");
+  });
+});
+
+test("recovery does not demand stop proof after the database-link effect is already durable", async t => {
+  const root = await fixtureV1(t); let armed = true;
+  await assert.rejects(switchPairLinksV1({ root, operationId: "recover-effect", from: pair("r2", "p2", 2),
+    to: pair("r3", "p3", 3), fault: step => { if (armed && step === "after_database_effect") {
+      armed = false; throw Object.assign(new Error("killed"), { code: "simulated_kill" });
+    } } }), /killed/u);
+  assert.equal(await readlink(join(root, "pg/current")), "data-p3");
+  const recovered = await recoverPairLinksV1(root, { databaseStopped: async () => {
+    throw new Error("stop proof must not be requested for a no-op link rewrite");
+  } });
+  assert.equal(recovered.status, "completed");
+});
+
 test("rollback walks past a corrupt release and uses the reserve only for ENOSPC recovery", async t => {
   const root = await fixtureV1(t), history = new PairHistoryV1(root);
   await writeFile(join(root, "updater-state/known-good"), `${JSON.stringify({ schema: "control-room.known-good/v1", count: 3,
@@ -170,6 +230,46 @@ test("rollback walks past a corrupt release and uses the reserve only for ENOSPC
   assert.equal(restartAttempts, 2, "the reserve funded one retry after disk exhaustion");
   assert.equal(depleted, 0); assert.equal(await readlink(join(root, "current")), "releases/r0");
   assert.equal((await readFile(join(root, "rescue-reserve.bin"))).length, 4096);
+});
+
+test("a double ENOSPC retry reports depletion and restores the rescue reserve before rethrowing", async t => {
+  const root = await fixtureV1(t); let attempts = 0, depleted = 0;
+  const reserve = new DiskReserveV1(root, { reserveBytes: 4096,
+    createReserve: async () => writeFile(join(root, "rescue-reserve.bin"), Buffer.alloc(4096)),
+    onDepleted: async error => { depleted += 1; assert.equal(error.code, "ENOSPC"); } });
+  await assert.rejects(reserve.finishWithReserve(async () => {
+    attempts += 1; throw Object.assign(new Error("still full"), { code: "ENOSPC" });
+  }), error => error.code === "ENOSPC");
+  assert.equal(attempts, 2);
+  assert.equal(depleted, 1, "the second disk-full failure is reported");
+  assert.equal((await reserve.assertIntact()).size, 4096, "the retry failure does not strand the reserve absent");
+});
+
+test("reserve recreation failure is reported after a double ENOSPC", async t => {
+  const root = await fixtureV1(t); const reported = [];
+  const reserve = new DiskReserveV1(root, { reserveBytes: 4096,
+    createReserve: async () => { throw Object.assign(new Error("no room for reserve"), { code: "ENOSPC" }); },
+    onDepleted: async error => reported.push(error.message) });
+  await assert.rejects(reserve.finishWithReserve(async () => {
+    throw Object.assign(new Error("operation still full"), { code: "ENOSPC" });
+  }), /operation still full/u);
+  assert.deepEqual(reported, ["operation still full", "no room for reserve"]);
+  await assert.rejects(reserve.assertIntact(), /ENOENT/u);
+});
+
+test("50 parallel actuator rollbacks have one winner and retry cleanly after the winner", async t => {
+  const root = await fixtureV1(t); let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let blocked = true;
+  const { actuator } = actuatorV1(root, { artifacts: { verifyPair: async () => {
+    if (blocked) await gate; return true;
+  } } });
+  const first = actuator.rollback(runV1()); await new Promise(resolve => setImmediate(resolve));
+  const burst = await Promise.allSettled(Array.from({ length: 49 }, () => actuator.rollback(runV1())));
+  assert.equal(burst.filter(row => row.status === "rejected" && row.reason.code === "updater_actuator_busy").length, 49);
+  blocked = false; release();
+  assert.equal((await first).releaseId, "r1");
+  assert.equal(await readlink(join(root, "current")), "releases/r1");
 });
 
 test("rollback walks past a missing release directory in the rescue chain", async t => {
@@ -205,6 +305,49 @@ test("retention never deletes current, previous, automatic or restore-chain rele
   await symlink(join(root, "outside"), join(root, "releases/planted")); await writeFile(join(root, "outside"), "safe");
   await assert.rejects(collectOldReleasesV1(root), /updater_retention_symlink_refused/u);
   assert.equal(await readFile(join(root, "outside"), "utf8"), "safe");
+});
+
+test("a promoted staged release survives a crash before switch and its marker settles", async t => {
+  const root = await fixtureV1(t, { releases: ["r0", "r1", "r2", "r4", "r5", "r6"], data: ["p2"] });
+  const { actuator } = actuatorV1(root);
+  await actuator.stage(runV1());
+  assert.match(await readFile(join(root, "updater-state/staged-release"), "utf8"), /"releaseId":"r3"/u);
+  const removed = await collectOldReleasesV1(root, { keep: 3 });
+  assert.ok(!removed.includes("r3"));
+  assert.equal(await readFile(join(root, "releases/r3/manifest"), "utf8"), "new");
+  await actuator.switchPair(runV1());
+  await assert.rejects(readFile(join(root, "updater-state/staged-release")), /ENOENT/u);
+});
+
+test("settling an older switch never clears a different staged release", async t => {
+  const root = await fixtureV1(t);
+  await writeFile(join(root, "updater-state/staged-release"), `${JSON.stringify({
+    schema: "control-room.staged-release/v1", releaseId: "r4",
+  })}\n`);
+  await switchPairLinksV1({ root, operationId: "settle-old", from: pair("r2", "p2", 2),
+    to: pair("r3", "p2", 2) });
+  assert.match(await readFile(join(root, "updater-state/staged-release"), "utf8"), /"releaseId":"r4"/u);
+});
+
+test("rollback recovery clears the abandoned staged-release marker", async t => {
+  const root = await fixtureV1(t); const { actuator } = actuatorV1(root); let armed = true;
+  await actuator.stage(runV1());
+  await assert.rejects(switchPairLinksV1({ root, operationId: "stage-rollback", from: pair("r2", "p2", 2),
+    to: pair("r3", "p3", 3), fault: step => { if (armed && step === "after_database_done") {
+      armed = false; throw Object.assign(new Error("killed"), { code: "simulated_kill" });
+    } } }), /killed/u);
+  await rm(join(root, "releases/r3"), { recursive: true });
+  assert.equal((await recoverPairLinksV1(root, { databaseStopped: async () => true })).status, "rolled_back");
+  await assert.rejects(readFile(join(root, "updater-state/staged-release")), /ENOENT/u);
+});
+
+test("fresh-install retention tolerates absent known-good and append creates the first pair", async t => {
+  const root = await fixtureV1(t, { releases: ["r0", "r1", "r2", "r3", "r4"], data: ["p2"] });
+  await unlink(join(root, "updater-state/known-good"));
+  assert.deepEqual(await new PairHistoryV1(root).knownGood(), []);
+  const removed = await collectOldReleasesV1(root, { keep: 2 });
+  assert.deepEqual(new Set(removed), new Set(["r0", "r3", "r4"]));
+  assert.deepEqual(await new PairHistoryV1(root).appendKnownGood(pair("r2", "p2", 2)), [pair("r2", "p2", 2)]);
 });
 
 test("bad and missing actuator input refuses before any side effect", async t => {

@@ -193,7 +193,14 @@
     "find": "if (this.#switching) throw updaterRefuseV1(\"updater_actuator_busy\");",
     "replace": "if (false) throw updaterRefuseV1(\"updater_actuator_busy\");",
     "test": "node --test --test-name-pattern='50 parallel actuator' tests/updater-actuator.test.mjs",
-    "why": "a fifty-caller burst must admit exactly one filesystem switch actor"
+    "why": "fifty-caller switch and rollback bursts must each admit exactly one filesystem actor"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (isNoSpaceV1(retryError)) await this.onDepleted(retryError);",
+    "replace": "if (false) await this.onDepleted(retryError);",
+    "test": "node --test --test-name-pattern='double ENOSPC retry reports' tests/updater-actuator.test.mjs",
+    "why": "a second disk-full failure must report depletion instead of silently consuming the rescue reserve"
   },
   {
     "file": "src/updater/v1/actuator.mjs",
@@ -224,11 +231,53 @@
     "why": "retention must never collect current, previous, automatic, restore-point or open-staging releases"
   },
   {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (stagedReleaseId) protectedIds.add(stagedReleaseId);",
+    "replace": "if (false) protectedIds.add(stagedReleaseId);",
+    "test": "node --test --test-name-pattern='promoted staged release survives' tests/updater-actuator.test.mjs",
+    "why": "retention must honor the durable marker for a promoted release whose run crashed before switch"
+  },
+  {
     "file": "src/updater/v1/release-layout.mjs",
     "find": "await assertPairTargetsV1(root, record.to);",
     "replace": "await assertPairTargetsV1(root, record.from);",
     "test": "node --test --test-name-pattern='interrupted pair switch rolls back' tests/updater-actuator.test.mjs",
     "why": "startup may resume only when both members of the recorded target pair still exist"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (currentPgDataId === nextPgDataId) return;",
+    "replace": "if (false) return;",
+    "test": "node --test --test-name-pattern='does not demand stop proof' tests/updater-actuator.test.mjs",
+    "why": "recovery must distinguish an already-durable database-link effect from a move that still needs stop proof"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "await lstat(pidPath);\n    throw updaterRefuseV1(\"updater_database_not_stopped\");",
+    "replace": "await lstat(pidPath);\n    return;",
+    "test": "node --test --test-name-pattern='stop proof before database moves' tests/updater-actuator.test.mjs",
+    "why": "startup recovery must refuse a database-link move while the current data directory has postmaster.pid"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (await databaseStopped?.(move) !== true) throw updaterRefuseV1(\"updater_database_not_stopped\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_database_not_stopped\");",
+    "test": "node --test --test-name-pattern='stop proof before database moves' tests/updater-actuator.test.mjs",
+    "why": "startup recovery needs an affirmative stop proof before moving pg/current forward or backward"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (error?.code === \"ENOENT\") return Object.freeze([]);",
+    "replace": "if (false) return Object.freeze([]);",
+    "test": "node --test --test-name-pattern='fresh-install retention' tests/updater-actuator.test.mjs",
+    "why": "a fresh install with no known-good file has an empty automatic history rather than a broken retention pass"
+  },
+  {
+    "file": "src/updater/v1/staged-release.mjs",
+    "find": "if (await readStagedReleaseV1(root) !== expected) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --test --test-name-pattern='never clears a different staged release' tests/updater-actuator.test.mjs",
+    "why": "settling an older transaction must not unpin the staged release belonging to another run"
   },
   {
     "file": "src/updater/v1/updater.mjs",
