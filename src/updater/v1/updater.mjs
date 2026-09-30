@@ -4,7 +4,7 @@ import { PostgresUpdaterStoreV1 } from "./store.mjs";
 import { UpdaterControlServerV1 } from "./control-socket.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
 import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
-  newUpdaterIdentityV1 } from "./runtime.mjs";
+  newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
 
 function updaterRootV1(env) {
@@ -44,12 +44,21 @@ export async function startUpdaterV1(options = {}) {
   const referee = options.referee ?? { assertPlanAllowed: async () => {
     throw updaterRefuseV1("updater_referee_port_unbound");
   } };
-  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles,
-    journal: new FileStepJournalV1(root) });
+  const journal = options.journal ?? new FileStepJournalV1(root);
+  await journal.recoverCompaction();
+  let journalUncertain = false;
+  if (options.journalDisplay) {
+    const reconciliation = await reconcileJournalDisplayV1({ journal, display: options.journalDisplay,
+      rescued: await stateFiles.hasRescueMarker() });
+    journalUncertain = reconciliation.state === "uncertain";
+  }
+  stateFiles.journalUncertain = () => journalUncertain;
+  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles, journal });
   const ownerActions = options.ownerActions ?? { handle: async request => {
     if (request.request_kind === "pause") mode.set("paused");
     else if (request.request_kind === "stop") mode.set("stopped");
     else if (request.request_kind === "resume") mode.set("running");
+    else if (request.request_kind === "check_and_continue") await runner.checkAndContinue();
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
   const reportTimerError = options.onTimerError ?? (error => {

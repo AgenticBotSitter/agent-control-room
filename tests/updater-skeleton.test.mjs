@@ -69,7 +69,7 @@ class MemoryJournal {
 }
 
 class Effects {
-  calls = []; healthResult = true; gate; fail;
+  calls = []; healthResult = true; measureResult; gate; fail;
   async #call(name) { this.calls.push(name); await this.gate; if (this.fail === name) throw Object.assign(new Error(name),
     { code: `updater_${name}_failed` }); }
   precheck() { return this.#call("precheck"); } stage() { return this.#call("stage"); }
@@ -77,16 +77,18 @@ class Effects {
   switchPair() { return this.#call("switch"); } restart() { return this.#call("restart"); }
   async health() { await this.#call("health"); return this.healthResult; }
   commitKnownGood() { return this.#call("known_good"); } rollback() { return this.#call("rollback"); }
-  measure() { return this.#call("measure"); }
+  async measure() { await this.#call("measure"); return this.measureResult; }
 }
 
 function makeRunner({ flag = "On\n", rescued = false, mode = new UpdaterModeV1(), effects = new Effects(),
-  store = new MemoryStore(), journal = new MemoryJournal() } = {}) {
+  store = new MemoryStore(), journal = new MemoryJournal(), journalUncertain = false } = {}) {
+  let rescuePresent = rescued;
   const stateFiles = { leaseToken: "lease-one", readSelfUpdate: async () => flag,
-    hasRescueMarker: async () => rescued };
+    hasRescueMarker: async () => rescuePresent, journalUncertain: () => journalUncertain,
+    async removeRescueMarker() { rescuePresent = false; } };
   const referee = { calls: 0, async assertPlanAllowed() { this.calls += 1; } };
   return { runner: new UpdaterRunnerV1({ store, effects, journal, mode, stateFiles, referee }),
-    store, effects, journal, mode, referee };
+    store, effects, journal, mode, referee, rescued: () => rescuePresent };
 }
 
 test("the updater state machine records intent before every repeat-safe effect and finishes a code run", async () => {
@@ -109,8 +111,26 @@ test("Off, rescue, pause/stop, retry failure and a second concurrent caller fail
   });
   await t.test("a rescue marker forces uncertain and measures without advancing", async () => {
     const fixture = makeRunner({ rescued: true }), result = await fixture.runner.runOnce();
-    assert.equal(result.status, "uncertain"); assert.deepEqual(fixture.effects.calls, ["measure"]);
+    assert.equal(result.status, "uncertain"); assert.deepEqual(fixture.effects.calls, []);
     assert.equal(fixture.store.run.state, "uncertain");
+  });
+  await t.test("a journal/display disagreement is uncertain before an effect", async () => {
+    const fixture = makeRunner({ journalUncertain: true }), result = await fixture.runner.runOnce();
+    assert.equal(result.status, "uncertain"); assert.deepEqual(fixture.effects.calls, []);
+  });
+  await t.test("only an explicit check-and-continue measures a rescue and it leaves uncertainty on a bad measurement", async () => {
+    const fixture = makeRunner({ rescued: true }); await fixture.runner.runOnce();
+    await assert.rejects(fixture.runner.checkAndContinue(), /updater_measurement_refused/u);
+    assert.equal(fixture.rescued(), true); assert.equal(fixture.store.run.state, "uncertain");
+    fixture.effects.measureResult = { state: "rolled_back", detail: { release: "known-good" } };
+    assert.equal((await fixture.runner.checkAndContinue()).status, "rolled_back");
+    assert.equal(fixture.rescued(), false); assert.equal(fixture.store.run.state, "rolled_back");
+  });
+  await t.test("an inconsistent check-and-continue runs rollback rather than advancing", async () => {
+    const fixture = makeRunner({ rescued: true }); await fixture.runner.runOnce();
+    fixture.effects.measureResult = { state: "rollback_required" };
+    assert.equal((await fixture.runner.checkAndContinue()).status, "rolled_back");
+    assert.deepEqual(fixture.effects.calls, ["measure", "rollback"]); assert.equal(fixture.rescued(), false);
   });
   await t.test("pause before drain waits and stop refuses without switching", async () => {
     const paused = new UpdaterModeV1(); paused.set("paused");

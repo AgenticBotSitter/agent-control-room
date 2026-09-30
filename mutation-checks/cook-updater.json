@@ -173,5 +173,54 @@
     "replace": "if (!row || false",
     "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
     "why": "the updater store refuses any connection that is not the production deployer login"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (!equalMacV1(prevMac, previous) || !equalMacV1(mac, macV1(key, previous, entry)))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='torn boundary' tests/updater-journal.test.mjs",
+    "why": "a hostile local bot cannot append a forged journal line without the root-held MAC key"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "(entry.mode & 0o022) !== 0",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='torn boundary' tests/updater-journal.test.mjs",
+    "why": "a writable journal is not trusted as root-only authority"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (!text.endsWith(\"\\n\")) throw journalErrorV1(\"updater_journal_short\");",
+    "replace": "if (false) throw journalErrorV1(\"updater_journal_short\");",
+    "test": "node --test --test-name-pattern='torn boundary' tests/updater-journal.test.mjs",
+    "why": "a partial final line after a crash is uncertain, never silently accepted"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (mirror.length > file.length) return { state: \"uncertain\", reason: \"display_ahead\" };",
+    "replace": "if (false) return { state: \"uncertain\", reason: \"display_ahead\" };",
+    "test": "node --test --test-name-pattern='file-first' tests/updater-journal.test.mjs",
+    "why": "a database display ahead of the authoritative journal must stop automatic action"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (!measurement || ![\"succeeded\", \"rolled_back\"].includes(measurement.state))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='explicit check-and-continue' tests/updater-skeleton.test.mjs",
+    "why": "check-and-continue removes uncertainty only after an explicit valid measured terminal state"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (this.stateFiles.journalUncertain?.()) return { status: \"uncertain\",",
+    "replace": "if (false) return { status: \"uncertain\",",
+    "test": "node --test --test-name-pattern='journal/display disagreement' tests/updater-skeleton.test.mjs",
+    "why": "a disagreement between the authoritative file and database display blocks automatic effects"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (measurement?.state === \"rollback_required\") {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='inconsistent check-and-continue' tests/updater-skeleton.test.mjs",
+    "why": "an inconsistent measured state must run the rollback port rather than resume forward"
   }
 ]
