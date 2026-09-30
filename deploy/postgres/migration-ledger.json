@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "a0a7fefbf6610e20571ee2fe5d9396aca54b829da9874691b9d7fae949db10e0",
+  "digest": "4b13636b5e9fa7501afc06f56c0bfb0fe4ff8340481829bc5376882874c00a16",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -647,7 +647,7 @@
     {
       "file": "db/migrations/0157_installation_operations_mode_grants.sql",
       "order": 108,
-      "sha256": "964ed741aaa2045a64f71f9e2957c7c35a52f85c1e898bd5308d08895677874b",
+      "sha256": "d85dc5ca942091cbe4c96aae5a1ac287b0befa44fb947e1b4b34f423d7133366",
       "kind": "migrate"
     },
     {

@@ -170,13 +170,13 @@ async function seedReadyJob(admin: Client, jobId: string) {
  * Each call is its own job, because a job has exactly one attempt number 1 — a
  * real installation reaches these states through a different job, not by
  * re-claiming the same one. */
-async function claim(admin: Client, suffix: string, state = "leased") {
+async function claim(admin: Client, suffix: string, state = "leased", inserter: Client = admin) {
   const job = await seedReadyJob(admin, `job:operations-mode:${suffix}`);
   const now = new Date().toISOString(), attemptId = `${job.id}:attempt:1`;
   const attempt = { kind: "attempt", id: attemptId, tenantId: TENANT, jobId: job.id, attemptNumber: 1, state,
     workerId: "executor:test", nodeId: NODE, leaseId: null, version: 0, startedAt: null, finishedAt: null,
     createdAt: now, updatedAt: now };
-  await admin.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,worker_id,node_id,version,
+  await inserter.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,worker_id,node_id,version,
     payload,created_at,updated_at) VALUES($1,$2,$3,1,$4,'executor:test',$5,0,$6::jsonb,$7,$7)`,
   [attemptId, TENANT, job.id, state, NODE, JSON.stringify(attempt), now]);
   return { jobId: job.id, attemptId };
@@ -278,7 +278,24 @@ test("the owner records the mode server-side and the database refuses claims, ad
           await assert.rejects(claim(admin, "refused-while-paused"), MODE, "paused must refuse a claim");
           await assert.rejects(startDelivery(admin, undeliveredUnderRunning), MODE,
             "paused must refuse a start for an already-claimed attempt");
-          assert.equal(await count(), 2, "the refused claim wrote nothing");
+          // Every production login that creates claims is held by the same
+          // guard. The guard reads the mode with the inserting login's
+          // privileges, so a claim login without a read of the mode record is
+          // refused with "permission denied" in every mode, running included,
+          // which is how the fleet gateway's claims all failed. (The fleet
+          // gateway has its own attempt-write trigger that refuses a raw insert
+          // first; its real claim path is proven in
+          // fleet-connector-postgres.test.ts.)
+          for (const role of ["news"] as const) {
+            const login = new Client(postgres.connection(role));
+            await login.connect();
+            try {
+              await assert.rejects(claim(admin, `refused-while-paused-${role}`, "leased", login),
+                (error: unknown) => MODE.test(String(error)) && (error as { code?: string }).code === "55000",
+                `paused must refuse a claim from the ${role} login by its mode, not by a missing grant`);
+            } finally { await login.end(); }
+          }
+          assert.equal(await count(), 2, "the refused claims wrote nothing");
           assert.equal(await queueCount(), 1, "the refused start wrote nothing");
 
           // The refusal is the mode, not a coincidence: the same start is

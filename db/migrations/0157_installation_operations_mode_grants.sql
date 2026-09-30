@@ -31,4 +31,10 @@ DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_task_coordinator') THEN
     EXECUTE 'GRANT SELECT ON installation_operations_mode_revisions TO control_room_task_coordinator';
   END IF;
+  -- The fleet gateway creates claims too, and the 0156 claim guard reads the
+  -- mode with the inserting login's privileges: without this read every fleet
+  -- claim is refused, even while the installation is running.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') THEN
+    EXECUTE 'GRANT SELECT ON installation_operations_mode_revisions TO control_room_fleet_gateway';
+  END IF;
 END $$;
