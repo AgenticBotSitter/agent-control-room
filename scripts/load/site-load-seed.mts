@@ -50,22 +50,25 @@ if (!cookie.startsWith("control_room_local_owner=")) throw new Error("load_test_
 
 const seedFile = join(root, "load-seed.json");
 // A load run must not depend on what this shared Mac's load average is doing
-// when it starts. The host pauses the whole installation automatically when the
-// machine fails a health check, and a paused installation refuses every new
-// claim with a 503. The load test is not testing that pause, so it resumes
-// through the owner's own endpoint -- the same call the owner's Pause / Drain /
-// Stop control makes -- and reports that it did.
-const modeBefore = (await (await api("/api/v1/operations-mode", { expect: [200] })).json()) as
-  { mode?: string; reason?: string };
-if (modeBefore.mode === "running") {
-  console.log("load-test seed: installation mode is running; no resume needed");
-} else {
+// when it starts, or while it runs. The host pauses the whole installation
+// whenever the machine fails a health check, and a paused installation refuses
+// every new claim with a 503. The load test is not testing that pause, so it
+// resumes through the owner's own endpoint -- the same call the owner's Pause /
+// Drain / Stop control makes -- and counts how many times it had to.
+let machineHealthResumes = 0;
+async function ensureRunning(): Promise<void> {
+  const current = (await (await api("/api/v1/operations-mode", { expect: [200] })).json()) as { mode?: string };
+  if (current.mode === "running") return;
   const resumed = await api("/api/v1/operations-mode", { method: "POST", expect: [200],
     body: JSON.stringify({ mode: "running", reason: "site load test resumed after an automatic machine-health pause" }) });
-  const modeAfter = (await resumed.json()) as { mode?: string };
-  if (modeAfter.mode !== "running") throw new Error("load_test_resume_refused: the installation is not running");
-  console.log(`load-test seed: resumed from "${modeBefore.mode}" (${modeBefore.reason ?? "no reason recorded"})`);
+  const after = (await resumed.json()) as { mode?: string };
+  if (after.mode !== "running") throw new Error("load_test_resume_refused: the installation is not running");
+  machineHealthResumes += 1;
 }
+await ensureRunning();
+console.log(machineHealthResumes
+  ? `load-test seed: resumed from an automatic machine-health pause (${machineHealthResumes} so far)`
+  : "load-test seed: installation mode is running; no resume needed");
 
 const catalogue = (await (await api("/api/v1/projects", { expect: [200] })).json()) as
   { projects?: { projectId: string }[] };
@@ -202,13 +205,15 @@ const lanes = workerKinds.map((worker, lane) => ({
 await Promise.all(lanes.map(async lane => {
   for (const task of lane.candidates) {
     if (lane.delivered >= runningCount) break;
-    // A refusal is usually a signal that has not been refreshed yet, or a node
-    // still draining its previous lease. Both clear on their own within the
-    // 30s refresh interval, so a short retry is correct; anything else is a
-    // genuine conflict and is counted.
+    // A refusal here is almost never a bug: this installation pauses itself
+    // whenever the Mac fails a health check (one-minute load >= 18), and a
+    // paused installation refuses every new claim. On a shared machine that
+    // pause recurs, so each retry first confirms the installation is running
+    // again and resumes it through the owner's own endpoint. The retry count is
+    // reported, so a machine that was busy the whole time is visible as such.
     let delivered = false;
-    for (let attempt = 0; attempt < 3 && !delivered; attempt += 1) {
-      if (attempt > 0) await new Promise(wait => setTimeout(wait, 5_000));
+    for (let attempt = 0; attempt < 6 && !delivered; attempt += 1) {
+      if (attempt > 0) { await new Promise(wait => setTimeout(wait, 5_000)); await ensureRunning(); }
       delivered = await runOneTask(task, lane.worker);
     }
     if (delivered) lane.delivered += 1;
@@ -218,7 +223,8 @@ await Promise.all(lanes.map(async lane => {
 const running = lanes.reduce((total, lane) => total + lane.delivered, 0);
 refused = lanes.reduce((total, lane) => total + lane.refused, 0);
 console.log(`load-test seed: ${running} tasks driven to a terminal state through the real queue`
-  + ` (${refused} refused after retries); per worker ${JSON.stringify(Object.fromEntries(lanes.map(lane => [lane.worker.kind, lane.delivered])))}`);
+  + ` (${refused} refused after retries, ${machineHealthResumes} machine-health resumes);`
+  + ` per worker ${JSON.stringify(Object.fromEntries(lanes.map(lane => [lane.worker.kind, lane.delivered])))}`);
 
 // Let the real queue deliver. The pretend workers answer instantly, so this only
 // waits for the coordinator's own claim, run, publish and quality sweep. A
@@ -241,6 +247,6 @@ console.log(`load-test seed: ${delivered}/${sampled.length} sampled tasks reache
 
 const summary = { schema: "control-room.site-load-seed/v1", origin, seeded: true,
   projects: projects.map(project => project.projectId), tasks: allTasks.length, running, delivered,
-  runningTasks };
+  refused, machineHealthResumes, runningTasks };
 await writeFile(seedFile, `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
 console.log(`load-test seed complete: ${projects.length} projects, ${allTasks.length} tasks, ${running} submitted`);

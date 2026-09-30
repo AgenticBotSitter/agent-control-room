@@ -14,6 +14,13 @@ ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_task_coordinator;
 GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, control_web_sessions,
   projects, control_manual_project_heads, control_requests, control_workflows, control_jobs,
+  -- `control_effect_intents` is read by the supervisor reconciler, in the same
+  -- statement and the same transaction as the stalled-attempt decision it
+  -- decides. Without it every reconcile cycle raised `database_unavailable` and
+  -- the supervisor reported `supervisor_cycle_unavailable` forever, so a stalled
+  -- task was never requeued or escalated. SELECT only: the coordinator never
+  -- writes an effect intent.
+  control_effect_intents,
   control_attempts, control_leases, control_task_execution_plans, control_nodes, control_node_keys,
   control_node_fleet_current, control_job_dependencies, control_transition_events, control_outbox,
   audit_events, control_audit_chain_heads, control_completion_gate_integrity, control_completion_gate_records,
