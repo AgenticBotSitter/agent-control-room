@@ -17,8 +17,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from public migrations through 0202 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162, 0186 and 0115),
 // including generic external-content migrations 0025/0026, by the controlled
-// PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "d1d8eaa69f3821c57b735c02a7373c40e2fc87c32a5b804c8038cab656227788";
+// PGlite digest script and cross-checked against a real PostgreSQL 17 cluster
+// installed the production way; both agree. Catalog query below; not a mutable
+// database marker. Recomputed after the chief-of-staff migrations.
+export const privateWebSchemaDigest = "ee04b1e328d412bead6ce9052a36fc91bcaff09098d7a033d9b7bb814b68b4b3";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -51,6 +53,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
   "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals",
@@ -73,6 +76,8 @@ privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTabl
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
+// S7b: the owner sets the installation's caps and reports the machine's cluster count.
+privateWebInsertTables.add("pipeline_installation_allowances"); privateWebInsertTables.add("pipeline_machine_capacity_observations");
 privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
@@ -121,6 +126,9 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
   pipeline_templates: ["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"],
+  pipeline_installation_allowances: ["runs_per_hour", "runs_per_agent_per_day", "machine_max_agent_processes",
+    "machine_max_db_clusters", "dollar_cap_microusd", "owner_identity_id", "version", "record_digest", "auth_tag",
+    "updated_at"],
   pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
     "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
@@ -193,6 +201,7 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_project_event_stream_heads", "control_project_events"]);
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions", "pipeline_advance_receipts",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations", "pipeline_stage_loop_counts",
   "control_agent_review_plans", "control_pipeline_build_publications");
 coordinatorReads.push("control_improvement_requests", "control_update_candidates");
 // Scheduling reads each project's worker and concurrency settings (0135).
@@ -214,6 +223,7 @@ coordinatorInserts.add("control_recurring_proposals");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
+coordinatorInserts.add("pipeline_stage_loop_counts");
 coordinatorInserts.add("control_update_candidates");
 // Supervisor (0177-0179 and the 0017 incident tables): reconciliation heads,
 // health, loop heads and provider waits; incidents are column-scoped writes.
@@ -258,6 +268,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_attempt_resource_scopes: ["coordinator_lock"],
   pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag",
     "unattended_last_swept_at"],
+  ...Object.fromEntries(["pipeline_installation_allowances", "pipeline_stage_loop_counts"]
+    .map(table => [table, ["coordinator_lock"]])),
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
   // The supervisor's own mutable fields: a lapsed task head, an agent's health
@@ -568,9 +580,23 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
                   OR pg_get_userbyid(a.grantee)<>'control_room_fleet_gateway')))
+            /* The owner is checked for EVERY kind, not only the reviewer. The
+               rest of this branch (SECURITY DEFINER, the pinned search_path, the
+               volatility of each signature) describes what these two functions
+               must be on a correct database; none of it says who may own them.
+               Leaving the owner test inside the $2 disjunct made the whole shape
+               conditional, so on a database where the functions exist with the
+               right properties but are owned by anyone other than
+               control_room_schema_owner, every non-reviewer kind exempted them on
+               the strength of the web login merely lacking EXECUTE - which is
+               exactly the state a SECURITY DEFINER function an operator can
+               re-create, or a fixture that replays migrations without SET ROLE,
+               is in. redeem_fleet_enrollment above checks its owner
+               unconditionally for the same reason. */
             OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-              AND (($2 AND p.prosecdef AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND (($2 AND p.prosecdef
                 AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
                 AND NOT p.proleakproof AND p.proparallel='u'
                 AND p.provolatile=CASE WHEN p.oid='read_agent_review_plan(text)'::regprocedure THEN 's' ELSE 'v' END)

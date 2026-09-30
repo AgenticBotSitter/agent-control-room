@@ -104,9 +104,22 @@ export class ProductionPipelineAdvanceAuthorityV1 implements Pick<PipelineAdvanc
     if(!job)fail("execution_authority_missing");
     const cost=await this.costs.currentCost({tenantId:selection.tenantId,projectId:selection.projectId,
       routeId:selection.nodeId,requiredCapability:job.required_capability});
-    if(cost.kind!=="known"||!Number.isSafeInteger(cost.admittedCostMicroUsd)||cost.admittedCostMicroUsd<0
-      ||!/^sha256:[a-f0-9]{64}$/.test(cost.evidenceDigest))fail("policy_cost_unknown");
-    const knownCost=cost as Extract<typeof cost,{kind:"known"}>;
+    // "Count runs, never dollars." An unknown cost is reported as unknown and
+    // is not a refusal here: it is refused nowhere. The installation's optional
+    // dollar cap and the owner's signed policy ceiling are both compared in the
+    // advance service, which owns the ceilings.
+    //
+    // A port that CLAIMS to know the cost and returns something impossible --
+    // a negative, fractional, non-finite or absurdly large amount, or an
+    // evidence digest that is not a digest -- is not an honest unknown, it is an
+    // integrity failure, and demoting it to `unknown` let it slip past every
+    // dollar ceiling. So it refuses here, before anything is queued or claimed.
+    let nextCost: Readonly<{kind:"known";microUsd:number;evidenceDigest:string}>
+      | Readonly<{kind:"unknown"}> = {kind:"unknown"};
+    if (cost.kind==="unknown") nextCost = {kind:"unknown"};
+    else if (!Number.isSafeInteger(cost.admittedCostMicroUsd) || cost.admittedCostMicroUsd<0
+      || !/^sha256:[a-f0-9]{64}$/.test(cost.evidenceDigest)) fail("advance_conflict");
+    else nextCost = {kind:"known" as const,microUsd:cost.admittedCostMicroUsd,evidenceDigest:cost.evidenceDigest};
     const usage=(await tx.query<{tasks:string;cost:string;concurrent:string}>(`SELECT
       (SELECT COALESCE(SUM(task_units),0) FROM control_project_coordination_operation_receipts WHERE tenant_id=$1 AND policy_id=$2)
        +(SELECT COALESCE(SUM(delegation_task_units),0) FROM pipeline_advance_receipts WHERE tenant_id=$1 AND policy_id=$2) tasks,
@@ -118,8 +131,8 @@ export class ProductionPipelineAdvanceAuthorityV1 implements Pick<PipelineAdvanc
       policyDigest:policy.policy_digest,coordinatorVersion:number(policy.coordinator_version),
       ownerIdentityId:policy.owner_identity_id,action:"tasks.assign" as const,
       routeId:selection.nodeId,executorId:selection.workerId,taskUnits:number(usage?.tasks??"0"),
-      committedCostMicroUsd:number(usage?.cost??"0"),nextCost:{kind:"known" as const,microUsd:knownCost.admittedCostMicroUsd,
-        evidenceDigest:knownCost.evidenceDigest},concurrentTasks:number(usage?.concurrent??"0"),validUntil:new Date(policy.valid_until).toISOString(),
+      committedCostMicroUsd:number(usage?.cost??"0"),nextCost,
+      concurrentTasks:number(usage?.concurrent??"0"),validUntil:new Date(policy.valid_until).toISOString(),
       selectionDigest:sha256Digest(selection)};
     return {receiptId:`pipeline-delegation:${selection.runId}:${selection.stageOrdinal}`,receiptDigest:sha256Digest(material),...material};
   }

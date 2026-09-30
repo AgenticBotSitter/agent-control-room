@@ -41,6 +41,7 @@ GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindi
   control_recurring_rules TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
   pipeline_ordered_stage_runs, pipeline_unattended_transitions,
+  pipeline_installation_allowances, pipeline_machine_capacity_observations,
   control_pipeline_build_publications, control_codex_result_publications
   TO control_room_private_web;
 GRANT SELECT ON control_improvement_requests, control_update_candidates,
@@ -123,6 +124,13 @@ GRANT SELECT, INSERT ON control_module_install_approvals TO control_room_private
 -- UPDATE or DELETE, and SELECT stays the three coordination-page columns.
 GRANT INSERT ON control_job_dependencies TO control_room_private_web;
 GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web;
+-- The one installation allowance record and the owner-reported cluster count.
+-- The owner sets and re-signs the limits; no other login may raise one.
+GRANT INSERT ON pipeline_installation_allowances, pipeline_machine_capacity_observations
+  TO control_room_private_web;
+GRANT UPDATE (runs_per_hour, runs_per_agent_per_day, machine_max_agent_processes, machine_max_db_clusters,
+  dollar_cap_microusd, owner_identity_id, version, record_digest, auth_tag, updated_at)
+  ON pipeline_installation_allowances TO control_room_private_web;
 GRANT UPDATE (may_advance_unattended, version, updated_at, record_digest, auth_tag)
   ON pipeline_templates TO control_room_private_web;
 GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest,

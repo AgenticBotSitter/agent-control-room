@@ -15,6 +15,14 @@ import { createPipelineAdvanceCycleV1 } from "../src/web/v1/private-task-startup
 const key=new Uint8Array(32).fill(41), at=Date.parse("2026-09-27T12:00:00.000Z"), iso=(n=0)=>new Date(at+n).toISOString();
 const digest=(c:string)=>`sha256:${c.repeat(64)}`;
 const result=<T>(rows:T[]):QueryResult<T>=>({rows});
+/** The three CHECK constraints `pipeline_stage_loop_counts` enforces, restated
+ * here so the fake table can be held to exactly what the real one is. A row
+ * that breaks one of these could never be written to the real table, so a fake
+ * that accepts it would let a regression pass. */
+const floors=(row:{loop_index:number|string;max_loops:number|string;max_total_loops:number|string;
+  run_total_loops:number|string})=>{const loop=Number(row.loop_index),max=Number(row.max_loops),
+  totalMax=Number(row.max_total_loops),total=Number(row.run_total_loops);
+  return loop<=max&&total<=totalMax&&total>=loop+1;};
 const templateDefinition={name:"Pipeline",description:"Bounded pipeline.",stages:[
   {ordinal:0,stageKind:"build",role:"builder",description:"Build.",requiredCapability:"code.change",workerId:"worker:one",
     workerKind:"codex",nodeId:"node:one",selectionKey:"selection:one",model:"model-one",effort:"high",provider:null,profile:null,
@@ -26,12 +34,13 @@ const templateDefinition={name:"Pipeline",description:"Bounded pipeline.",stages
     provider:"provider:test",profile:"profile:test",maxLoops:0}],maxTotalLoops:2,maxDurationSeconds:3600} as const;
 
 function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentOrdinal?:number|null;
-  startedAt?:number|null;updatedAt?:number}={}){
+  startedAt?:number|null;updatedAt?:number;maxTotalLoops?:number}={}){
   const template:any={id:"pipeline-template:test",project_id:"project:test",name:templateDefinition.name,
-    description:templateDefinition.description,stages:templateDefinition.stages,max_stages:3,max_total_loops:2,
+    description:templateDefinition.description,stages:templateDefinition.stages,max_stages:3,
+    max_total_loops:overrides.maxTotalLoops??2,
     may_advance_unattended:overrides.unattended??true,max_duration_seconds:3600,version:2,created_at:iso(),updated_at:iso()};
   const templateMaterial={id:template.id,tenantId:"tenant:test",projectId:template.project_id,name:template.name,
-    description:template.description,stages:template.stages,maxStages:3,maxTotalLoops:2,
+    description:template.description,stages:template.stages,maxStages:3,maxTotalLoops:template.max_total_loops,
     mayAdvanceUnattended:template.may_advance_unattended,maxDurationSeconds:3600,version:2,createdAt:iso(),updatedAt:iso()};
   template.record_digest=sha256Digest(templateMaterial);template.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-template/v1",record:templateMaterial});
   const startedAt=Object.prototype.hasOwnProperty.call(overrides,"startedAt")?overrides.startedAt:0;
@@ -45,6 +54,8 @@ function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentO
     templateVersion:2,templateDigest:run.template_digest,workflowId:run.workflow_id,title:run.title,state:run.state,
     startedAt:startedAt===null?null:iso(startedAt),updatedAt:iso(updatedAt),completedAt:null,
     currentStageOrdinal:run.current_stage_ordinal,unattended:run.unattended,version:2};
+  run.template_digest=template.record_digest;
+  runMaterial.templateDigest=template.record_digest;
   run.record_digest=sha256Digest(runMaterial);run.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-run/v1",record:runMaterial});
   const stages=templateDefinition.stages.map(stage=>{const row:any={project_id:"project:test",pipeline_run_id:run.id,
     stage_ordinal:stage.ordinal,stage_kind:stage.stageKind,role:stage.role,current_job_id:`job:source:${stage.ordinal}`,
@@ -65,6 +76,15 @@ function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentO
   if(overrides.tamperStage)stages[1]!.model="tampered";
   return{template,run,stages};
 }
+/** The stage ordinal a pipeline job id names. A pipeline job id is
+ * `job:<source|reentry>:<ordinal>[:<seq>]` for the stage's own job -- a fix
+ * round mints a new one -- or `job:execution:<ordinal>` for the execution job
+ * the planner derives from it. The stage ordinal is the number after the
+ * first kind segment, so the number after the LAST segment only works for the
+ * execution job; that asymmetry is the whole of review finding B1. */
+function ordinalOfJobId(id:string){const segments=id.split(":");
+  const kind=["source","reentry"].includes(segments[1]!)?segments[1]!:"execution";
+  return Number(segments[segments.indexOf(kind)+1]);}
 function job(id:string){const authority:any={projectId:"project:test",allowedExecutor:"worker:one",allowedOperations:["task.execute"],
   credentialRefs:[],filesystemRoots:["/synthetic"],networkPolicy:"none",allowedNetworkDestinations:[],effectPolicy:"none",
   maxRisk:"low",maxDurationSeconds:3600,maxConcurrentEffects:0,expiresAt:iso(3600000),digest:""};authority.digest=computeAuthorityDigest(authority);
@@ -78,11 +98,39 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
   states?: PipelineStageResolutionV1["state"][];
   disableDuringDispatch?:boolean;coordinatorDeadline?:number;advanceClockBeforePrecommit?:number;staleConsent?:boolean;
   tamperConsent?:boolean;usage?:{taskUnits?:number;concurrentTasks?:number;committedCostMicroUsd?:number};
-  driftAfterSweepSelection?:boolean}={}){
+  driftAfterSweepSelection?:boolean;
+  allowance?:{runs_per_hour:number;runs_per_agent_per_day:number;machine_max_agent_processes:number;
+    machine_max_db_clusters:number;dollar_cap_microusd:number|null};
+  tamperAllowance?:boolean;noAllowance?:boolean;dbClusters?:number|null;clusterObservedAt?:number;
+  activeProcesses?:number;spentMicroUsd?:number;agentRunsToday?:number;runsThisHour?:number;
+  nextCostKind?:"known"|"unknown";maxTotalLoops?:number;priorLoops?:Array<{stageOrdinal:number;workerId?:string}>;
+  attentions?:any[]}={}){
   const rows=signedRows(overrides),policy={id:"policy:test",project_id:"project:test",coordinator_identity_id:"agent:lead",
     coordinator_version:1,owner_identity_id:"identity:owner",state:"active",version:1,policy_digest:digest("p"),allowed_actions:["tasks.assign"],
     eligible_routes:["route:one","route:two","route:three"],risk_ceiling:"low",max_total_tasks:3,max_total_cost_microusd:1000,max_concurrent_tasks:2,
-    valid_from:iso(-1000),valid_until:iso(60000)};const receipts=new Map<number,any>();let enabled=true,effects=0,chain=Promise.resolve();
+    valid_from:iso(-1000),valid_until:iso(60000)};
+  // The one installation allowance record: owner-set limits, a truthful cluster
+  // observation, and the counted loops this fixture's transactions appended.
+  const limits=overrides.allowance??{runs_per_hour:6,runs_per_agent_per_day:12,machine_max_agent_processes:12,
+    machine_max_db_clusters:6,dollar_cap_microusd:null};
+  const allowanceMaterial={schema:"control-room.pipeline-installation-allowance/v1",tenantId:"tenant:test",
+    workspaceId:"workspace:test",runsPerHour:limits.runs_per_hour,runsPerAgentPerDay:limits.runs_per_agent_per_day,
+    machineMaxAgentProcesses:limits.machine_max_agent_processes,machineMaxDbClusters:limits.machine_max_db_clusters,
+    dollarCapMicroUsd:limits.dollar_cap_microusd,ownerIdentityId:"identity:owner",version:1,updatedAt:iso()};
+  const allowanceRow={runs_per_hour:limits.runs_per_hour,runs_per_agent_per_day:limits.runs_per_agent_per_day,
+    machine_max_agent_processes:limits.machine_max_agent_processes,machine_max_db_clusters:limits.machine_max_db_clusters,
+    dollar_cap_microusd:limits.dollar_cap_microusd,version:1,owner_identity_id:"identity:owner",updated_at:iso(),
+    record_digest:overrides.tamperAllowance?digest("x"):sha256Digest(allowanceMaterial),
+    auth_tag:overrides.tamperAllowance?`hmac-sha256:${"0".repeat(64)}`
+      :hmacSha256Tag(key,{purpose:"pipeline-installation-allowance/v1",record:allowanceMaterial})};
+  const clusters=overrides.dbClusters===undefined?0:overrides.dbClusters;
+  const receipts=new Map<string,any>(),loops:any[]=[];
+  // The receipt chain is the loop count, as it is in production: one durable
+  // receipt per fix round, and nothing before the first one. A stage therefore
+  // starts with NO receipts (its first attempt is round 0), and every re-entry
+  // adds exactly one.
+  const loopRounds:any[]=[];
+  let enabled=true,effects=0,chain=Promise.resolve();
   const consentMaterial={id:"transition:test",tenantId:"tenant:test",projectId:"project:test",pipelineRunId:"pipeline-run:test",
     pipelineTemplateId:rows.template.id,templateVersion:Number(rows.template.version),templateDigest:rows.template.record_digest,
     runVersion:Number(rows.run.version),runDigest:rows.run.record_digest,policyId:"policy:test",policyVersion:1,
@@ -102,6 +150,16 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       const replacement={...consentMaterial,id:"transition:replacement"};Object.assign(consent,{id:replacement.id,
         transition_digest:sha256Digest(replacement),auth_tag:hmacSha256Tag(key,{purpose:"pipeline-unattended-transition/v1",record:replacement})});}
       return result([selected] as T[]);}
+    // The loop pre-check's own reads, matched before the broad run rules below.
+    if(sql.includes("r.state='active'")&&sql.includes("pipeline_unattended_transitions"))
+      return result([{eligible:true}] as T[]);
+    if(sql.includes("FROM pipeline_runs r JOIN pipeline_templates t")){
+      const ordinal=overrides.currentOrdinal===undefined?0:Number(overrides.currentOrdinal);
+      const stage=rows.stages[ordinal]!;
+      return result([{stage_ordinal:ordinal,worker_id:stage.worker_id,max_loops:stage.max_loops,
+        current_job_id:stage.current_job_id,stage_kind:stage.stage_kind,
+        max_total_loops:rows.template.max_total_loops,run_version:rows.run.version,
+        run_digest:rows.run.record_digest}] as unknown as T[]);}
     if(sql.startsWith("SELECT project_id FROM pipeline_runs"))return result([{project_id:"project:test"}] as T[]);
     if(sql.includes("FROM pipeline_runs")&&sql.includes("FOR UPDATE"))return result([rows.run] as T[]);
     if(sql.includes("FROM pipeline_templates"))return result([rows.template] as T[]);
@@ -109,13 +167,87 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     if(sql.includes("FROM pipeline_unattended_transitions")&&sql.includes("ORDER BY run_version"))return result([consent] as T[]);
     if(sql.startsWith("UPDATE pipeline_runs SET unattended_last_swept_at"))return result([] as T[]);
     if(sql.includes("FROM projects p"))return result([{lifecycle:"active"}] as T[]);
-    if(sql.includes("FROM pipeline_advance_receipts"))return result((receipts.has(Number(params[2]))?[receipts.get(Number(params[2]))]:[]) as T[]);
-    if(sql.includes("FROM control_jobs")){const id=String(params[2]),ordinal=Number(id.split(":").at(-1)),stage=rows.stages[ordinal]!;
-      const value=job(id);value.authority.allowedExecutor=stage.worker_id;value.authority.digest=computeAuthorityDigest(value.authority);
+    if(sql.includes("active_agent_processes"))return result([{runs_this_hour:String(overrides.runsThisHour??loops.length),
+      agent_runs_today:String(overrides.agentRunsToday??0),
+      active_agent_processes:String(overrides.activeProcesses??0),spent_microusd:String(overrides.spentMicroUsd??0)}] as T[]);
+    // The receipt reads, most specific first: they share a table, so the order
+    // is what tells them apart. `#stageRound`'s replay read names
+    // `source_job_id`, and the count read is a COUNT -- both would otherwise be
+    // swallowed by the per-stage/per-round lookup below.
+    if(sql.includes("SELECT id FROM pipeline_advance_receipts"))return result([] as T[]);
+    // A REPLAY is resolved by the round that job's own receipt carries, so a
+    // lost response replays rather than opening the next fix round.
+    if(sql.includes("SELECT loop_index FROM pipeline_advance_receipts")&&sql.includes("AND source_job_id=$4")){
+      const prior=loopRounds.find(row=>Number(row.stage_ordinal)===Number(params[2])
+        &&row.source_job_id===String(params[3]));
+      return result((prior?[{loop_index:prior.loop_index}]:[]) as T[]);}
+    // The round a stage is on, as a count of that stage's own receipts.
+    if(sql.includes("COUNT(*)::text count FROM pipeline_advance_receipts")){
+      const ordinal=Number(params[2]);
+      return result([{count:String(loopRounds.filter(row=>Number(row.stage_ordinal)===ordinal).length)}] as T[]);}
+    // The fix rounds that already exist, as the receipt rows the service reads.
+    // `#claimLoopRound` names only the ordinal (it needs the run's whole count)
+    // and `#loopRounds` names the ordinal, the round and the source job, so both
+    // shapes are answered from the same list.
+    if(sql.includes("SELECT stage_ordinal,loop_index,source_job_id FROM pipeline_advance_receipts")
+      ||(/SELECT stage_ordinal\s+FROM pipeline_advance_receipts/.test(sql)
+        &&!sql.includes("FROM pipeline_advance_receipts r")))
+      return result(loopRounds as T[]);
+    if(sql.includes("FROM pipeline_advance_receipts")&&sql.includes("AND stage_ordinal=$3")){
+      const key=`${Number(params[2])}:${Number(params[3])}`;
+      return result((receipts.has(key)?[receipts.get(key)]:[]) as T[]);}
+    if(sql.includes("FROM pipeline_stage_loop_counts"))return result(loops as T[]);
+    if(sql.includes("FROM pipeline_machine_capacity_observations"))
+      return result((clusters===null?[]:[{db_clusters:clusters,observed_at:iso(overrides.clusterObservedAt??0)}]) as T[]);
+    if(sql.includes("FROM pipeline_installation_allowances"))
+      return result((overrides.noAllowance?[]:[allowanceRow]) as T[]);
+    if(sql.includes("FROM pipeline_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE"))return result([] as T[]);
+    if(sql.startsWith("INSERT INTO control_action_inbox")){
+      const item=JSON.parse(String(params[5]));
+      const attn=overrides.attentions??[];
+      // A second item under one id would violate the primary key, so the service
+      // must never attempt it: the fixture fails loudly if it does.
+      if (attn.some(existing=>existing.id===item.id))
+        throw new Error(`duplicate attention item: ${item.id}`);
+      attn.push(item);return result([] as T[]);}
+    if(sql.includes("FROM control_action_inbox")){
+      const id=String(params[1]);
+      const found=(overrides.attentions??[]).find(item=>item.id===id);
+      return result((found?[{payload:found}]:[]) as T[]);}
+    if(sql.includes("SELECT id FROM pipeline_advance_receipts"))return result([] as T[]);
+    if(sql.startsWith("INSERT INTO pipeline_stage_loop_counts")){
+      // Column order: id,tenant,project,run,stage,worker,loop_index,max_loops,
+      // max_total_loops,run_total_loops,reason_code,receipt_id,receipt_digest,
+      // request_digest,auth_tag,recorded_at.
+      const material={schema:"control-room.pipeline-stage-loop-count/v1",tenantId:"tenant:test",projectId:"project:test",
+        pipelineRunId:"pipeline-run:test",stageOrdinal:Number(params[4]),workerId:String(params[5]),
+        loopIndex:Number(params[6]),maxLoops:Number(params[7]),maxTotalLoops:Number(params[8]),
+        runTotalLoops:Number(params[9]),
+        reasonCode:params[10]==="stage_advanced"?"stage_advanced"
+          :params[10]==="stage_loop_limit_reached"?"stage_loop_limit_reached":"run_loop_limit_reached",
+        receiptId:String(params[11]),receiptDigest:String(params[12]),requestDigest:String(params[13]),
+        recordedAt:String(params[15])};
+      if (loops.some(existing=>existing.id===params[0])) return result([] as T[]);
+      loops.push({id:params[0],pipeline_run_id:"pipeline-run:test",stage_ordinal:params[4],worker_id:params[5],
+        loop_index:params[6],max_loops:params[7],max_total_loops:params[8],run_total_loops:params[9],
+        reason_code:params[10],receipt_id:params[11],receipt_digest:params[12],request_digest:params[13],
+        auth_tag:hmacSha256Tag(key,{purpose:"pipeline-stage-loop-count/v1",record:material}),recorded_at:params[15]});
+      return result([] as T[]);}
+    if(sql.includes("FROM control_jobs")){
+      // A pipeline job id names its stage: `job:source:<n>` is the stage's own
+      // job, `job:reentry:<n>:<seq>` is a fix round the planner minted, and
+      // `job:execution:<n>` is the execution job for stage n.
+      const ordinal=ordinalOfJobId(String(params[2])),stage=rows.stages[ordinal]!;
+      const value=job(String(params[2]));value.authority.allowedExecutor=stage.worker_id;
+      value.authority.digest=computeAuthorityDigest(value.authority);
       return result([{payload:value,project_id:"project:test",workflow_id:"workflow:test",pipeline_run_id:"pipeline-run:test",
         stage_kind:stage.stage_kind,stage_ordinal:ordinal}] as T[]);}
-    if(sql.includes("FROM control_task_execution_plans")){const ordinal=Number(String(params[2]).split(":").at(-1));
-      return result([{source_job_id:`job:source:${ordinal}`}] as T[]);}
+    if(sql.includes("FROM control_task_execution_plans")){
+      // The plan row names the SOURCE job it was planned from, which is the
+      // stage's own CURRENT job -- including after a fix round, where the
+      // planner mints a new source job and plans the execution job from it.
+      const stage=rows.stages[ordinalOfJobId(String(params[2]))]!;
+      return result([{source_job_id:stage.current_job_id}] as T[]);}
     if(sql.includes("FROM control_project_delegation_policies"))return result([policy] as T[]);
     if(sql.startsWith("UPDATE pipeline_runs")&&sql.includes("SET current_stage_ordinal=")){
       rows.run.current_stage_ordinal=Number(params[0]);rows.run.updated_at=String(params[1]);rows.run.version=Number(params[2]);
@@ -126,14 +258,22 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       rows.run.updated_at=String(params[0]);rows.run.version=Number(params[1]);rows.run.record_digest=String(params[2]);
       rows.run.auth_tag=String(params[3]);return result([{version:rows.run.version,record_digest:rows.run.record_digest,
         auth_tag:rows.run.auth_tag}] as T[]);}
-    if(sql.startsWith("INSERT INTO pipeline_advance_receipts")){const receipt={id:params[0],project_id:params[2],pipeline_run_id:params[3],
-      stage_ordinal:params[4],source_job_id:params[5],execution_job_id:params[6],attempt_id:params[7],queue_id:params[8],
-      selection_digest:params[9],template_version:params[10],template_digest:params[11],run_version:params[12],run_digest:params[13],
-      policy_id:params[14],policy_version:params[15],policy_digest:params[16],delegation_receipt_id:params[17],
-      delegation_receipt_digest:params[18],delegation_task_units:params[19],delegation_cost_microusd:params[20],
-      delegation_cost_evidence_digest:params[21],request_digest:params[22],receipt_digest:params[23],auth_tag:params[24],
-      advanced_at:params[25]};
-      receipts.set(Number(params[4]),receipt);
+    if(sql.startsWith("INSERT INTO pipeline_advance_receipts")){
+      // Column order: id,tenant,project,run,stage,loop_index,source,execution,attempt,
+      // queue,selection_digest,template_version,template_digest,run_version,run_digest,
+      // policy_id,policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,
+      // task_units,cost_state,cost_microusd,cost_evidence_digest,request_digest,receipt_digest,
+      // auth_tag,advanced_at.
+      const receipt={id:params[0],project_id:params[2],pipeline_run_id:params[3],
+        stage_ordinal:params[4],loop_index:params[5],source_job_id:params[6],execution_job_id:params[7],attempt_id:params[8],
+        queue_id:params[9],selection_digest:params[10],template_version:params[11],template_digest:params[12],run_version:params[13],
+        run_digest:params[14],policy_id:params[15],policy_version:params[16],policy_digest:params[17],delegation_receipt_id:params[18],
+        delegation_receipt_digest:params[19],delegation_task_units:params[20],delegation_cost_state:params[21],
+        delegation_cost_microusd:params[22],delegation_cost_evidence_digest:params[23],request_digest:params[24],
+        receipt_digest:params[25],auth_tag:params[26],advanced_at:params[27]};
+      receipts.set(`${Number(params[4])}:${Number(params[5])}`,receipt);
+      // The durable receipt is what the next ceiling check counts: one per fix round.
+      loopRounds.push({stage_ordinal:Number(params[4]),loop_index:Number(params[5]),source_job_id:String(params[6])});
       return result([] as T[]);}
     if(sql.includes("SELECT event_digest,event_hash FROM audit_events"))return result([] as T[]);
     if(sql.includes("INSERT INTO control_audit_chain_heads")||sql.includes("INSERT INTO audit_events"))return result([] as T[]);
@@ -151,7 +291,9 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     assertAcceptedPredecessorInSession:()=>{},assertSelectionCurrentInSession:()=>{},assertSelectionCurrent:()=>{},
     authorizeDelegationInSession:async(_tx,selection)=>({receiptId:"delegation:one",receiptDigest:digest("d"),policyId:"policy:test",
       policyVersion:1,policyDigest:digest("p"),coordinatorVersion:1,ownerIdentityId:"identity:owner",action:"tasks.assign",routeId:overrides.route??`route:${["one","two","three"][selection.stageOrdinal]}`,
-      executorId:selection.workerId,taskUnits:0,committedCostMicroUsd:0,nextCost:{kind:"known",microUsd:10,evidenceDigest:digest("e")},
+      executorId:selection.workerId,taskUnits:0,committedCostMicroUsd:0,
+      nextCost:overrides.nextCostKind==="unknown"?{kind:"unknown" as const}
+        :{kind:"known" as const,microUsd:10,evidenceDigest:digest("e")},
       concurrentTasks:0,validUntil:iso(60000),...overrides.usage}),
     assignAndQueueInSession:async(_tx,_input,gate)=>{if(overrides.coordinatorDeadline!==undefined)
       gate.commitDeadline(overrides.coordinatorDeadline);if(overrides.disableDuringDispatch)enabled=false;await gate.assertCurrent();
@@ -159,7 +301,33 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
   const service=new PipelineAdvanceServiceV1(db,{tenantId:"tenant:test",workspaceId:"workspace:test"},key,
     {unattendedEnabled:()=>enabled,capability},()=>clock);
   return{service,setStates(value:PipelineStageResolutionV1["state"][]){states=value;},get currentOrdinal(){return rows.run.current_stage_ordinal;},
-    get runVersion(){return rows.run.version;},get effects(){return effects;},get receipts(){return receipts;}};
+    get runVersion(){return rows.run.version;},get effects(){return effects;},get receipts(){return receipts;},
+    get loops(){return loops;},get attentions(){return overrides.attentions??[];},
+    /** One more fix round for a stage: the planner's shape. A re-entry mints a NEW
+     * source job and the stage row's `current_job_id` moves to it, so the round
+     * count -- the stage's own receipts -- grows by exactly one and the next
+     * advance is the next round rather than a replay of the last. The stage row
+     * is signed over that column, so it is re-signed with the service's own key:
+     * an unsigned rewind would fail the run's integrity check instead of
+     * reaching the loop ceiling. */
+    reenterStage(ordinal:number){const stage=rows.stages[ordinal]!;
+      stage.current_job_id=`job:reentry:${ordinal}:${loopRounds.length}`;
+      const material={id:`pipeline-run:test:stage:${ordinal}`,tenantId:"tenant:test",projectId:"project:test",
+        pipelineRunId:"pipeline-run:test",stageOrdinal:ordinal,stageKind:stage.stage_kind,role:stage.role,
+        workerId:stage.worker_id,workerKind:stage.worker_kind,nodeId:stage.node_id,selectionKey:stage.selection_key,
+        model:stage.model,effort:stage.effort,provider:stage.provider,profile:stage.profile,
+        currentJobId:stage.current_job_id,currentAttemptId:stage.current_attempt_id,currentLeaseId:stage.current_lease_id,
+        state:stage.state,maxLoops:Number(stage.max_loops),handoffFromResultDigest:stage.handoff_from_result_digest,
+        allowedPaths:stage.allowed_paths,maximumChangedFiles:stage.maximum_changed_files,
+        maximumChangedBytes:stage.maximum_changed_bytes,signoffReviewId:stage.signoff_review_id,
+        startedAt:stage.started_at===null?null:iso(stage.started_at),
+        finishedAt:stage.finished_at===null?null:iso(stage.finished_at),version:Number(stage.version)};
+      stage.record_digest=sha256Digest(material);
+      stage.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-stage-run/v1",record:material});},
+    /** The planner materialises a not-yet-started stage's job. Nothing enters the
+     * receipt chain: a planned job is not a started round, which is the whole
+     * point of counting receipts rather than jobs. */
+    planStage(_ordinal:number){}};
 }
 
 test("durable advance replays with a stable timestamp after a lost response or restart",async()=>{const f=fixture();
@@ -180,22 +348,209 @@ test("a stale authenticated owner consent refuses before assignment or queue eff
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_not_authorized");assert.equal(f.effects,0);});
 // The policy allowances are the caps: max_total_tasks 3, max_concurrent_tasks 2
-// and max_total_cost_microusd 1000 in the fixture policy; the next stage costs 10.
+// in the fixture policy. There is no dollar cap by default, so a known cost is
+// recorded and never refused; the installation's optional cap is pinned below.
 test("exhausted policy allowances refuse before assignment or queue effects",async()=>{
   for(const [usage,reason] of [[{taskUnits:3},"policy_task_allowance_exhausted"],
-    [{concurrentTasks:2},"policy_concurrency_exhausted"],[{committedCostMicroUsd:991},"policy_cost_allowance_exhausted"]] as const){
+    [{concurrentTasks:2},"policy_concurrency_exhausted"]] as const){
     const f=fixture({usage});
     await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
       (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason===reason,reason);
     assert.equal(f.effects,0,reason);}
-  const edge=fixture({usage:{taskUnits:2,concurrentTasks:1,committedCostMicroUsd:990}});
+  const edge=fixture({usage:{taskUnits:2,concurrentTasks:1}});
   assert.equal((await edge.service.advance("pipeline-run:test","policy:test")).startsWork,true);assert.equal(edge.effects,1);
+  // "Count runs, never dollars": with no dollar cap set, even a very expensive
+  // known next cost advances. Only the run ceilings bound this run.
+  const rich=fixture({usage:{taskUnits:2,concurrentTasks:1}});
+  assert.equal((await rich.service.advance("pipeline-run:test","policy:test")).startsWork,true);
 });
 test("a forged owner consent tag refuses advance before assignment or queue effects",async()=>{
   const f=fixture({tamperConsent:true});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");
   assert.equal(f.effects,0);assert.equal(f.receipts.size,0);});
+
+// S7b: each installation ceiling refuses exactly AT its boundary, never past
+// it, and always before any assignment or queue effect. Only the ceiling under
+// test is at its boundary in each case; the others are far away.
+test("each installation ceiling refuses at its own boundary and one below it advances",async()=>{
+  const open={runs_per_hour:6,runs_per_agent_per_day:12,machine_max_agent_processes:12,
+    machine_max_db_clusters:6,dollar_cap_microusd:null};
+  const cases=[
+    // reason, limits to tighten, count already at the boundary
+    ["installation_runs_per_hour_exhausted",{runs_per_hour:2},2],
+    ["installation_agent_runs_per_day_exhausted",{runs_per_agent_per_day:2},2],
+    ["installation_agent_process_ceiling_reached",{machine_max_agent_processes:4},4],
+    ["installation_db_cluster_ceiling_reached",{machine_max_db_clusters:3},3],
+  ] as const;
+  for(const [reason,tightened,atBoundary] of cases){
+    const allowance={...open,...tightened};
+    const busy={runsThisHour:0,agentRunsToday:0,activeProcesses:0,dbClusters:0};
+    // AT the boundary: the next run would be one too many, so it refuses.
+    const at=fixture({allowance,...busy,
+      ...(reason==="installation_runs_per_hour_exhausted"?{runsThisHour:atBoundary}:{}),
+      ...(reason==="installation_agent_runs_per_day_exhausted"?{agentRunsToday:atBoundary}:{}),
+      ...(reason==="installation_agent_process_ceiling_reached"?{activeProcesses:atBoundary}:{}),
+      ...(reason==="installation_db_cluster_ceiling_reached"?{dbClusters:atBoundary}:{})});
+    await assert.rejects(at.service.advance("pipeline-run:test","policy:test"),
+      (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason===reason,reason);
+    assert.equal(at.effects,0,reason);assert.equal(at.receipts.size,0,reason);
+    // ONE BELOW: the run still fits and advances.
+    const below=fixture({allowance,...busy,
+      ...(reason==="installation_runs_per_hour_exhausted"?{runsThisHour:atBoundary-1}:{}),
+      ...(reason==="installation_agent_runs_per_day_exhausted"?{agentRunsToday:atBoundary-1}:{}),
+      ...(reason==="installation_agent_process_ceiling_reached"?{activeProcesses:atBoundary-1}:{}),
+      ...(reason==="installation_db_cluster_ceiling_reached"?{dbClusters:atBoundary-1}:{})});
+    assert.equal((await below.service.advance("pipeline-run:test","policy:test")).startsWork,true,reason);
+    assert.equal(below.effects,1,reason);
+  }
+});
+test("an unknown or unrecorded cluster count refuses and a stale observation is not trusted",async()=>{
+  const unrecorded=fixture({dbClusters:null});
+  await assert.rejects(unrecorded.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="installation_cluster_count_unknown");
+  assert.equal(unrecorded.effects,0);
+  // Recorded two days ago: nobody may claim that is still true.
+  const stale=fixture({dbClusters:1,clusterObservedAt:-172800000});
+  await assert.rejects(stale.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="installation_cluster_count_unknown");
+  assert.equal(stale.effects,0);
+});
+test("an installation with no allowance record refuses rather than assuming defaults",async()=>{
+  const f=fixture({noAllowance:true});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="installation_allowance_missing");
+  assert.equal(f.effects,0);assert.equal(f.receipts.size,0);});
+test("a forged allowance tag refuses advance before assignment or queue effects",async()=>{
+  const f=fixture({tamperAllowance:true});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");
+  assert.equal(f.effects,0);});
+test("the optional dollar cap refuses only when it is set and the cost is known",async()=>{
+  const capped={runs_per_hour:6,runs_per_agent_per_day:12,machine_max_agent_processes:12,
+    machine_max_db_clusters:6,dollar_cap_microusd:100};
+  // 95 spent, next run costs 10: one micro-USD over the cap, so it refuses.
+  const over=fixture({allowance:capped,spentMicroUsd:95});
+  await assert.rejects(over.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="installation_cost_ceiling_exhausted");
+  assert.equal(over.effects,0);
+  // Exactly 90 spent leaves exactly 10: the next run fits and advances.
+  const edge=fixture({allowance:capped,spentMicroUsd:90});
+  assert.equal((await edge.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+  // A fully spent cap with an UNKNOWN cost still advances: unknown is not a
+  // number, and unknown must never refuse.
+  const unknown=fixture({allowance:capped,spentMicroUsd:100,nextCostKind:"unknown"});
+  assert.equal((await unknown.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+  // With no cap set at all, an expensive known cost advances as well.
+  const uncapped=fixture({spentMicroUsd:0});
+  assert.equal((await uncapped.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+});
+test("an unknown cost advances and the receipt records it as unknown with no invented number",async()=>{
+  const f=fixture({nextCostKind:"unknown"});
+  const outcome=await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal(outcome.startsWork,true);
+  assert.equal(f.effects,1);
+  const receipt=f.receipts.get("0:0");
+  assert.equal(receipt.delegation_cost_state,"unknown");
+  assert.equal(receipt.delegation_cost_microusd,null);
+  assert.equal(receipt.delegation_cost_evidence_digest,null);
+  // The replay path accepts the same honest unknown, so a lost response is still
+  // a replay and not a conflict.
+  const replay=await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal((replay as {replayed:boolean}).replayed,true);
+  // A known cost is stored with its number and its evidence digest.
+  const known=fixture();
+  await known.service.advance("pipeline-run:test","policy:test");
+  assert.equal(known.receipts.get("0:0").delegation_cost_state,"known");
+  assert.equal(known.receipts.get("0:0").delegation_cost_microusd,10);
+  assert.equal(known.receipts.get("0:0").delegation_cost_evidence_digest,digest("e"));});
+test("the loop limit stops advancing that run and raises exactly one Needs Attention item",async()=>{
+  // The fixture template gives stage 0 maxLoops 1: round 0 runs, and the stage may
+  // be entered once more. A third entry is past the ceiling.
+  const attentions:any[]=[];
+  const f=fixture({attentions,maxTotalLoops:6});
+  assert.equal((await f.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+  assert.equal(f.loops.length,1);
+  assert.equal(f.loops[0].loop_index,0);
+  assert.equal(f.loops[0].worker_id,"worker:one");
+  assert.equal(f.loops[0].reason_code,"stage_advanced");
+  // A lost response replays the same receipt and never opens a second round.
+  await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal(f.loops.length,1);
+  // One fix round: the planner adds a job to the same stage, so the next advance
+  // is round 1, which max_loops 1 still admits.
+  f.reenterStage(0);
+  assert.equal((await f.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+  assert.deepEqual(f.loops.map(row=>[row.stage_ordinal,row.loop_index,row.reason_code]),[[0,0,"stage_advanced"],[0,1,"stage_advanced"]]);
+  // A second fix round is round 2, past max_loops 1: the run stops, and the owner
+  // is told once.
+  f.reenterStage(0);
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="stage_loop_limit_reached");
+  assert.equal(attentions.length,1);
+  assert.equal(attentions[0].reasonCode,"pipeline_stage_loop_limit_reached");
+  assert.equal(attentions[0].maxLoops,1);
+  assert.equal(attentions[0].kind,"question");
+  assert.equal(attentions[0].state,"open");
+  // The stop is recorded as its own signed receipt of the ceiling decision. It
+  // names the LAST ROUND THE RUN ACTUALLY STARTED, not the round that was
+  // refused: a stop can sit at max_loops and never above it, which is what the
+  // table's own CHECK asserts. Recording the refused round instead made every
+  // stop fail its constraint and left the owner with a database error.
+  const stops=f.loops.filter(row=>row.reason_code!=="stage_advanced");
+  assert.equal(stops.length,1);
+  // The clamp is the point of this assertion: the refused round is 2, one past
+  // the ceiling of 1, and the recorded row must sit AT the ceiling instead. A
+  // fake table cannot prove the CHECK catches it, so this asserts the value the
+  // CHECK exists to guarantee, and the real-login suite proves the CHECK.
+  assert.equal(floors(stops[0]),true,"the recorded round is inside the ceiling it names");
+  assert.equal(stops[0].loop_index,1);
+  assert.equal(stops[0].max_loops,1);
+  assert.equal(stops[0].run_total_loops,2);
+  assert.equal(stops[0].reason_code,"stage_loop_limit_reached");
+  // Repeating the refusal raises no second item and claims no new round.
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="stage_loop_limit_reached");
+  assert.equal(attentions.length,1);
+  assert.equal(f.loops.filter(row=>row.reason_code!=="stage_advanced").length,1);
+});
+test("the run-wide loop ceiling stops a run whose stages are each under their own",async()=>{
+  // max_total_loops 2 admits round indices 0 and 1 for the whole run. Stage 0
+  // runs round 0, stage 1 runs round 1, and neither stage is near its own
+  // max_loops of 1. A second round on stage 0 would be round 2 of the run, so it
+  // is the RUN ceiling that stops it, not the stage ceiling.
+  const attentions:any[]=[];
+  const f=fixture({attentions,maxTotalLoops:2});
+  assert.equal((await f.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+  f.setStates(["accepted","eligible","terminal_failure"]);
+  assert.equal((await f.service.advance("pipeline-run:test","policy:test")).startsWork,true);
+  // The run is on stage 1 with two rounds spent. A fix round back on stage 0
+  // would be the run's third round.
+  f.setStates(["accepted","eligible","terminal_failure"]);
+  f.reenterStage(0);
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="run_loop_limit_reached");
+  assert.equal(attentions.length,1);
+  assert.equal(attentions[0].reasonCode,"pipeline_run_loop_limit_reached");
+  assert.equal(attentions[0].maxTotalLoops,2);
+  // Neither stage hit its own ceiling: no round row carries a stage refusal.
+  assert.ok(f.loops.every(row=>row.reason_code!=="stage_loop_limit_reached"));
+  // Nothing was queued for the refused round.
+  assert.equal(f.effects,2);
+});
+test("the counted loop rounds are appended with the receipt that opened them",async()=>{
+  const f=fixture();
+  await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal(f.loops.length,1);
+  const [row]=f.loops;
+  assert.equal(row.stage_ordinal,0);
+  assert.equal(row.loop_index,0);
+  assert.equal(row.worker_id,"worker:one");
+  assert.equal(row.reason_code,"stage_advanced");
+  // A replay of the same receipt must not append a second round.
+  await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal(f.loops.length,1);});
+
 test("advance cycle refuses a replaced owner transition selected before its transaction",async()=>{
   const f=fixture({driftAfterSweepSelection:true});const page=await f.service.advanceReady();
   assert.equal(page.checked,1);assert.equal(page.advanced.length,0);assert.equal(f.effects,0);});
@@ -263,7 +618,7 @@ test("accepted current stage advances exactly one ordinal while in-flight lost r
   if(!first.startsWork||!next.startsWork)assert.fail("expected queued stage receipts");
   assert.equal(first.stageOrdinal,0);assert.equal(next.stageOrdinal,1);assert.equal(next.replayed,false);assert.equal(f.effects,2);
   assert.equal(f.currentOrdinal,1);assert.equal(f.runVersion,3);
-  assert.equal(Number(f.receipts.get(1)?.run_version),3);
+  assert.equal(Number(f.receipts.get("1:0")?.run_version),3);
 });
 test("accepted final stage terminalizes the authenticated run without another queue effect",async()=>{
   const f=fixture({currentOrdinal:2,states:["accepted","accepted","accepted"]});
@@ -416,6 +771,8 @@ test("0109 owns append-only records, least-privilege grants, and a guarded down 
   assert.match(coordinator,/GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator/u);
   assert.match(coordinator,/GRANT UPDATE \(state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at\)[\s\S]*ON pipeline_runs/u);
   assert.match(preflight,/privateWebReadTables[\s\S]*pipeline_unattended_transitions/u);
+  // cook/v1 renamed the local to the exported privateWebInsertTables, and the
+  // declaration this asserts is that the slice still adds its own table there.
   assert.match(preflight,/privateWebInsertTables\.add\("pipeline_unattended_transitions"\)/u);
   assert.match(preflight,/pipeline_templates: \["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"\]/u);
   assert.match(preflight,/pipeline_runs: \["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest"/u);
@@ -457,7 +814,7 @@ test("production adapter reserves through ordinary assignment before the existin
   assert.equal(deadline,at+30000);assert.equal(queuedDeadline,at+30000);
 });
 
-test("production authority derives policy usage and cost from canonical records and refuses unknown cost",async()=>{
+test("production authority derives policy usage and cost from canonical records and reports an unknown cost as unknown",async()=>{
   const selection:any={tenantId:"tenant:test",projectId:"project:test",runId:"pipeline-run:test",stageOrdinal:0,
     sourceJobId:"job:source:0",executionJobId:"job:execution:0",workerId:"worker:one",workerKind:"hermes",nodeId:"route:one",
     selectionKey:"selection:one",model:"model-one",effort:"high",provider:"provider:test",profile:"profile:test"};
@@ -477,10 +834,26 @@ test("production authority derives policy usage and cost from canonical records 
   const receipt=await authority.authorizeDelegationInSession(tx,selection,"policy:test");
   assert.deepEqual({taskUnits:receipt.taskUnits,cost:receipt.committedCostMicroUsd,next:receipt.nextCost,concurrent:receipt.concurrentTasks},
     {taskUnits:1,cost:25,next:{kind:"known",microUsd:10,evidenceDigest:digest("e")},concurrent:1});
+  // "Count runs, never dollars": an unknown cost is an honest unknown, not a
+  // refusal. It is refused nowhere, and the receipt records it as unknown.
   const unknown=new ProductionPipelineAdvanceAuthorityV1({tenantId:"tenant:test",workspaceId:"workspace:test"},current,
     accepted,{currentCost:()=>({kind:"unknown"})},()=>at);
-  await assert.rejects(unknown.authorizeDelegationInSession(tx,selection,"policy:test"),
-    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="policy_cost_unknown");
+  const unknownReceipt=await unknown.authorizeDelegationInSession(tx,selection,"policy:test");
+  assert.deepEqual(unknownReceipt.nextCost,{kind:"unknown"});
+  // A cost port that CLAIMS to know the cost and returns something impossible is
+  // an integrity failure, not an honest unknown: demoting it to `unknown` let it
+  // slip past every dollar ceiling, so it now refuses before anything is queued.
+  for (const forged of [
+    { kind: "known" as const, admittedCostMicroUsd: -5, evidenceDigest: digest("e") },
+    { kind: "known" as const, admittedCostMicroUsd: 1.5, evidenceDigest: digest("e") },
+    { kind: "known" as const, admittedCostMicroUsd: 10, evidenceDigest: "not-a-digest" },
+  ]) {
+    const lying=new ProductionPipelineAdvanceAuthorityV1({tenantId:"tenant:test",workspaceId:"workspace:test"},current,
+      accepted,{currentCost:()=>forged as never},()=>at);
+    await assert.rejects(lying.authorizeDelegationInSession(tx,selection,"policy:test"),
+      (error:unknown)=>(error as {safeReason?:string}).safeReason==="advance_conflict",
+      `a malformed known cost must refuse, got ${JSON.stringify(forged)}`);
+  }
 });
 
 test("installed advance cycle is default-off, non-overlapping, and drains before close",async()=>{

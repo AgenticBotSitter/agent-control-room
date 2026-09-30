@@ -13,7 +13,7 @@ SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
 
 CREATE OR REPLACE FUNCTION guard_task_coordinator_outbox_insert() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_task_coordinator'
     AND pg_has_role(current_user,oid,'MEMBER'))

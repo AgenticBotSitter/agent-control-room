@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { captureFleetConnectorReleaseManifestV1, type FleetConnectorReleaseManifestV1 } from "./connector-release";
 import { isIP } from "node:net";
 import type { WorkBatchServiceV1 } from "../../work-intake/v1/service";
 import { FleetErrorV1, fleetFail } from "./errors";
@@ -306,7 +308,8 @@ function decodeFiles(value: unknown) {
 }
 
 export type FleetGatewayHttpOptionsV1 = Readonly<{ store: FleetGatewayStoreV1; proposals?: WorkBatchServiceV1;
-  connectorScript?: Readonly<{ body: string; digest: string }>; now?: () => string;
+  connectorRelease?: Readonly<{ bundle: Uint8Array; manifest: FleetConnectorReleaseManifestV1; manifestBody: string }>;
+  now?: () => string;
   admission?: FleetGatewayAdmissionV1;
   /** Operator log for failures that are not a fixed refusal. Never sent to the caller. */
   onUnexpectedError?: (error: unknown) => void }>;
@@ -314,6 +317,20 @@ export type FleetGatewayHttpOptionsV1 = Readonly<{ store: FleetGatewayStoreV1; p
 export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) {
   const now = options.now ?? (() => new Date().toISOString());
   const admission = options.admission ?? createFleetGatewayAdmissionV1();
+  let connectorRelease = options.connectorRelease;
+  if (connectorRelease) {
+    let manifest: FleetConnectorReleaseManifestV1, declared: FleetConnectorReleaseManifestV1;
+    try {
+      manifest = captureFleetConnectorReleaseManifestV1(JSON.parse(connectorRelease.manifestBody));
+      declared = captureFleetConnectorReleaseManifestV1(connectorRelease.manifest);
+    }
+    catch { throw new Error("fleet_connector_release_refused"); }
+    if (JSON.stringify(manifest) !== JSON.stringify(declared)
+      || connectorRelease.bundle.length !== manifest.size
+      || createHash("sha256").update(connectorRelease.bundle).digest("hex") !== manifest.sha256)
+      throw new Error("fleet_connector_release_refused");
+    connectorRelease = Object.freeze({ bundle: connectorRelease.bundle, manifest, manifestBody: connectorRelease.manifestBody });
+  }
   const claimRoute = /^\/fleet\/v1\/claims\/(fleet-claim:[a-f0-9]{32})\/(progress|blocker|result)$/u;
   const proposalRoute = /^\/fleet\/v1\/projects\/([^/]+)\/proposals$/u;
 
@@ -345,11 +362,21 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     try { url = new URL(request.url ?? "/", "http://gateway.invalid"); } catch { return fleetFail("not_found"); }
     if (url.search || url.hash) return fleetFail("not_found");
     const path = url.pathname, method = request.method;
-    if (method === "GET" && path === "/fleet/v1/connector.mjs" && options.connectorScript) {
+    const release = connectorRelease;
+    if (method === "GET" && release && (path === "/fleet/v1/connector.mjs"
+      || path === `/fleet/v1/${release.manifest.file}`)) {
       response.writeHead(200, { "cache-control": "no-store", "content-type": "text/javascript; charset=utf-8",
-        "x-content-type-options": "nosniff", "x-control-room-connector-sha256": options.connectorScript.digest,
+        "content-length": String(release.manifest.size), "x-content-type-options": "nosniff",
+        "x-control-room-connector-sha256": `sha256:${release.manifest.sha256}`,
         connection: "close" });
-      response.end(options.connectorScript.body);
+      response.end(release.bundle);
+      return;
+    }
+    if (method === "GET" && path === "/fleet/v1/connector-manifest.json" && release) {
+      response.writeHead(200, { "cache-control": "no-store", "content-type": "application/json; charset=utf-8",
+        "content-length": String(Buffer.byteLength(release.manifestBody)), "x-content-type-options": "nosniff",
+        connection: "close" });
+      response.end(release.manifestBody);
       return;
     }
     if (method === "POST" && path === "/fleet/v1/enroll") {

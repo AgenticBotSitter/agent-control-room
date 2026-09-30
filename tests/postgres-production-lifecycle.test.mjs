@@ -906,19 +906,34 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   const queueDown=await readFile(join(ROOT,"db/down/0104_work_batch_agent_queue.sql"),"utf8");
   const ownerDown=await readFile(join(ROOT,"db/down/0102_work_batch_owner_approval.sql"),"utf8");
   const down=await readFile(join(ROOT,"db/down/0093_work_batch_intake.sql"),"utf8");
-  // Every migration that installed a row-level policy, trigger or view READING
-  // work_intake_tenant_binding has to be rolled back before 0093 drops it, or
-  // PostgreSQL refuses with 2BP01. Which migrations those is DERIVED from the
-  // UP migrations — the dependency lives in what they create (a policy whose
-  // USING clause selects the binding), not in what their down file removes —
-  // and never listed, because a list is exactly what goes stale: 0155 added
-  // `installation_operations_mode_revisions_work_intake_scope` and this
-  // teardown began failing with a dependency error naming a migration the test
-  // had never heard of.
+  // Every migration that attached anything to what 0093 drops has to be rolled
+  // back first, or PostgreSQL refuses with 2BP01. Which migrations those is
+  // DERIVED from the UP migrations — the dependency lives in what they create,
+  // not in what their down file removes — and never listed, because a list is
+  // exactly what goes stale.
+  //
+  // There are TWO dependencies, not one, and deriving only the first is what
+  // broke this teardown:
+  //
+  //   1. A row-level policy, trigger or view READING work_intake_tenant_binding.
+  //      0155 added `installation_operations_mode_revisions_work_intake_scope`
+  //      and the teardown began failing with a dependency error naming a
+  //      migration the test had never heard of.
+  //   2. A FOREIGN KEY pointing AT a table 0093 drops. 0110 declares
+  //      `FOREIGN KEY (tenant_id,batch_id,project_id) REFERENCES
+  //      work_batches(tenant_id,id,project_id)`, so its
+  //      `work_batch_intake_flag_dismissals` table holds a constraint on
+  //      work_batches even though its up file never mentions the binding
+  //      table. Deriving on the binding name alone therefore left 0110 out and
+  //      `DROP TABLE work_batches` failed with
+  //      `2BP01 cannot drop table work_batches because other objects depend on
+  //      it`, naming no migration. Both relations are named from the tables
+  //      0093 actually drops, so a migration that depends on either is found.
   //
   // Scanned newest-first by ledger order, so a migration added later is torn
   // down before the one it depends on. Only down files that exist are applied,
   // and 0093 itself is excluded because it is the table being dropped.
+  const INTAKE_TABLES = ["work_intake_tenant_binding", "work_batches", "work_batch_revisions"];
   const explicitlyRolledBack = ["0109_pipeline_unattended_advance.sql", "0108_pipeline_build_publications.sql",
     "0104_work_batch_agent_queue.sql", "0102_work_batch_owner_approval.sql"];
   const downFiles = new Set((await readdir(join(ROOT, "db/down"))).filter(name => name.endsWith(".sql")));
@@ -928,11 +943,21 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     if (file.startsWith("0093_") || explicitlyRolledBack.includes(file)) continue;
     // Not every migration ships a down file: the base ones never needed one.
     if (!downFiles.has(file)) continue;
-    if ((await readFile(join(ROOT, entry.file), "utf8")).includes("work_intake_tenant_binding"))
+    const up = await readFile(join(ROOT, entry.file), "utf8");
+    // A policy/trigger/view reading the binding singleton, or a foreign key
+    // that keeps one of the dropped relations alive.
+    if (up.includes("work_intake_tenant_binding")
+      || INTAKE_TABLES.some(table => new RegExp(`REFERENCES\\s+${table}\\b`, "u").test(up)))
       intakeBindingDeps.push(file);
   }
   assert.ok(intakeBindingDeps.length>0,
-    "no migration's up file mentions work_intake_tenant_binding; the teardown order is wrong");
+    "no migration's up file depends on the work-intake tables; the teardown order is wrong");
+  // The derivation has to stay a comparison rather than an assumption: 0110 is
+  // the migration that a binding-only derivation missed, so it is named
+  // explicitly. If a future migration adds the same kind of dependency the
+  // derivation above finds it, and this assertion keeps proving it did.
+  assert.ok(intakeBindingDeps.includes("0110_work_batch_intake_flag_dismissals.sql"),
+    "0110's foreign key into work_batches was not derived: the teardown would drop the table under it");
   await query(db,"CREATE POLICY test_dependent_policy ON audit_events AS RESTRICTIVE USING (true)");
   await assert.rejects(query(db,down),/shared-ledger RLS policies depend on it/u);
   const retained=(await query(db,`SELECT
