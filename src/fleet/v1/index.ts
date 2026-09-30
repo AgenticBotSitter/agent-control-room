@@ -5,3 +5,5 @@ export * from "./gateway-store";
 export * from "./gateway-http";
 export * from "./connector-release";
 export * from "./owner-service";
+export * from "./wait-registry";
+export * from "./working-agreement";
