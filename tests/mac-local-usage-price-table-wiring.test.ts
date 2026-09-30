@@ -49,7 +49,8 @@ void _macLocalWebProcessAdmitsUsagePriceTable;
 // keys -- never through the two composition hand-offs a real Mac-local start
 // actually uses. The table silently never reached production. These tests
 // build the real `createMacLocalTaskApplicationV1` and
-// `createMacLocalWebProcessV1` composition -- no injected `WebTaskService` --
+// `createMacLocalWebProcessV1` composition -- with the task application's
+// single shared `WebTaskService`, rather than a separately constructed one --
 // and read a project overview and task detail back only through that real
 // HTTP surface, so deleting either hand-off's `usagePriceTable` field fails
 // the test, not just a type check.
@@ -101,7 +102,8 @@ test("the real Mac-local composition wires the owner price table through to a ru
     origin, workspaceId: configuration.web.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: configuration.web.tenantId,
       provider: OWNER_PROVIDER, subject: OWNER_SUBJECT, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: webDatabase.client, close: async () => {} },
+    database: { client: webDatabase.client, close: async () => {}, isAvailable: () => true },
+    taskService: app.taskService,
     taskReadKeys: app.taskReadKeys,
     ...app.operations,
   });
@@ -229,7 +231,8 @@ test("a project's cost is refused for another project's owner", async t => {
     origin, workspaceId: configuration.web.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: configuration.web.tenantId,
       provider: OWNER_PROVIDER, subject: OWNER_SUBJECT, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: webDatabase.client, close: async () => {} },
+    database: { client: webDatabase.client, close: async () => {}, isAvailable: () => true },
+    taskService: app.taskService,
     taskReadKeys: app.taskReadKeys,
     ...app.operations,
   });

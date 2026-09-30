@@ -4,11 +4,12 @@
 // database with every migration applied. The same guards are exercised as the
 // production logins in tests/fleet-connector-postgres.test.ts.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { readdir, readFile } from "node:fs/promises";
@@ -18,13 +19,14 @@ import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, fleetGatewa
   fleetGatewayClientNetworkV1, FleetGatewayStoreV1, FleetOwnerServiceV1, FleetWaitRegistryV1,
   type FleetGatewayAdmissionV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
 import { captureFleetGatewayConfigurationV1, FLEET_GATEWAY_CONFIGURATION_V1,
-  FLEET_GATEWAY_SERVER_OPTIONS_V1, fleetGatewayAdmissionFromConfigurationV1,
+  FLEET_GATEWAY_SERVER_OPTIONS_V1, createFleetGatewayStoreFromConfigurationV1, fleetGatewayAdmissionFromConfigurationV1,
   prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
 // The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
+import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1 } from "../src/fleet/v1/connector-release";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 const CF_PROXY = Object.freeze({ trustedProxyAddresses: ["127.0.0.1"], trustedClientHeader: "cf-connecting-ip" as const });
@@ -78,7 +80,8 @@ function slowEnrollment(port: number, address: string) {
 
 function enrollmentRequestBody() {
   return JSON.stringify({ code: `crj_${"J".repeat(43)}`, credentialDigest: `sha256:${"0".repeat(64)}`,
-    platform: "linux", architecture: "x64", connectorVersion: "1.0.0", clientNonce: `crn_${"A".repeat(43)}` });
+    workerKind: "mcp-agent", platform: "linux", architecture: "x64", connectorVersion: "1.0.0",
+    clientNonce: `crn_${"A".repeat(43)}` });
 }
 
 test("slow enrollment uploads from two networks cannot occupy the enrollment lane", async t => {
@@ -150,6 +153,41 @@ test("gateway protected configuration defaults to no proxy trust and validates e
   lease.completeAuthentication(null);
 });
 
+test("gateway operations mode reports every decision and fails closed when its provider is absent or fails", async () => {
+  const database = {} as DatabaseClient;
+  for (const mode of ["running", "paused", "draining", "stopped"] as const) {
+    const store = new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT, operationsMode: async () => mode });
+    assert.equal(await store.operationsMode(), mode);
+  }
+  assert.equal(await new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT }).operationsMode(), "unknown");
+  const failed = new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT,
+    operationsMode: async () => { throw new Error("reader failed"); } });
+  assert.equal(await failed.operationsMode(), "unknown");
+  const invalid = new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT,
+    operationsMode: async () => "unexpected" as FleetOperationsModeV1 });
+  assert.equal(await invalid.operationsMode(), "unknown");
+});
+
+test("run-fleet-gateway composes the authenticated operations-mode reader instead of a silent default", async () => {
+  const queries: Array<{ statement: string; params: unknown[] | undefined }> = [];
+  const database = { query: async (statement: string, params?: unknown[]) => {
+    queries.push({ statement, params }); return { rows: [] };
+  } } as unknown as DatabaseClient;
+  const store = createFleetGatewayStoreFromConfigurationV1(database, { tenantId: FLEET_TENANT,
+    workIntake: { database: {} as never, integrityKey: Buffer.alloc(32, 7).toString("base64url") } });
+  assert.equal(await store.operationsMode(), "running");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0]!.statement, /FROM installation_operations_mode_revisions/u);
+  assert.deepEqual(queries[0]!.params, [FLEET_TENANT]);
+
+  const missingKey = createFleetGatewayStoreFromConfigurationV1(database, { tenantId: FLEET_TENANT });
+  assert.equal(await missingKey.operationsMode(), "unknown");
+  const malformedKey = createFleetGatewayStoreFromConfigurationV1(database, { tenantId: FLEET_TENANT,
+    workIntake: { database: {} as never, integrityKey: Buffer.alloc(31, 7).toString("base64url") } });
+  assert.equal(await malformedKey.operationsMode(), "unknown");
+  assert.equal(queries.length, 1, "a missing key must not fall back to an unauthenticated database read");
+});
+
 test("gateway restart preload includes only active unexpired worker credentials", async t => {
   const f = await fixture(); t.after(() => f.close());
   const active = await joinWorker(f, "Preload active");
@@ -180,13 +218,18 @@ async function fixture(options: { gatewayClock?: () => number; admission?: Fleet
   const db: DatabaseClient = adaptPglite(raw);
   await seedFleetTenant((sql, params) => raw.query(sql, params));
   const gateway = new FleetGatewayStoreV1(db, { tenantId: FLEET_TENANT,
-    ...(options.gatewayClock ? { clock: options.gatewayClock } : {}),
-    ...(options.operationsMode ? { operationsMode: options.operationsMode } : {}) });
+    operationsMode: options.operationsMode ?? (async () => "running"),
+    ...(options.gatewayClock ? { clock: options.gatewayClock } : {}) });
   const owner = new FleetOwnerServiceV1(db, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
     afterDecision: () => gateway.reconcile() });
   const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(db, new Uint8Array(32).fill(3)));
+  const fixtureBundle = Buffer.from("export {};\n");
+  const fixtureManifest = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: "0.3.0", file: "connector-0.3.0.mjs",
+    sha256: createHash("sha256").update(fixtureBundle).digest("hex"), size: fixtureBundle.length,
+    builtFrom: "0".repeat(40) } as const;
   const handler = createFleetGatewayHandlerV1({ store: gateway, proposals,
-    connectorScript: { body: "export {};\n", digest: `sha256:${"0".repeat(64)}` },
+    connectorRelease: { bundle: fixtureBundle, manifest: fixtureManifest,
+      manifestBody: `${JSON.stringify(fixtureManifest, null, 2)}\n` },
     ...(options.admission ? { admission: options.admission } : {}),
     ...(options.waitRegistry ? { waitRegistry: options.waitRegistry } : {}) });
   let reads = 0;
@@ -208,7 +251,7 @@ async function joinWorker(f: Fixture, name: string, projectIds = [PROJECT_A], ca
   const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: name, workerKind: "mcp-agent",
     projectIds, capabilities, maxConcurrent });
   const configPath = join(f.dir, `${name}.json`);
-  const joined = await connector.join({ server: f.origin, code: code.code, configPath });
+  const joined = await connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath });
   const config = await connector.loadConfig(configPath);
   return { code, configPath, joined, config, client: connector.createClient(config) };
 }
@@ -274,7 +317,8 @@ test("one-command join: a single-use code enrolls a machine whose secret never l
   assert.equal("text" in me.workingAgreement, false, "the gateway never supplies agreement prose");
 
   // Single use: the same code cannot enroll a second machine.
-  await assert.rejects(connector.join({ server: f.origin, code: worker.code.code, configPath: join(f.dir, "again.json") }),
+  await assert.rejects(connector.join({ server: f.origin, code: worker.code.code, workerKind: "mcp-agent",
+    configPath: join(f.dir, "again.json") }),
     /unauthenticated/u);
   // The canonical records: an active node, a proposal-only agent grant.
   const grants = await f.query<{ role_key: string; allowed_actions: string[]; project_ids: string[] }>(
@@ -317,11 +361,12 @@ test("connector-owned welcome rules refuse mismatched server metadata without sh
   const dir = await mkdtemp(join(tmpdir(), "fleet-welcome-mismatch-")); t.after(() => rm(dir, { recursive: true, force: true }));
   const configPath = join(dir, "connector.json");
   const fetcher: typeof fetch = async () => new Response(JSON.stringify({ ok: true, result: {
-    workerId: `fleet-worker:${"d".repeat(32)}`, displayName: "mismatch", projectIds: [PROJECT_A], capabilities: ["writing"],
+    workerId: `fleet-worker:${"d".repeat(32)}`, displayName: "mismatch", workerKind: "codex",
+    projectIds: [PROJECT_A], capabilities: ["writing"],
     credentialExpiresAt: "2099-01-01T00:00:00.000Z", workingAgreement: { version: "999", digest: "sha256:bad",
       text: hostile, startsWork: false, grantsAuthority: false } } }), { status: 201, headers: { "content-type": "application/json" } });
   await assert.rejects(connector.join({ server: "http://127.0.0.1:8123", code: `crj_${"J".repeat(43)}`,
-    configPath, fetcher }), error => String((error as Error).message).includes(connector.WORKING_AGREEMENT_TEXT)
+    workerKind: "codex", configPath, fetcher }), error => String((error as Error).message).includes(connector.WORKING_AGREEMENT_TEXT)
       && !String((error as Error).message).includes(hostile));
   assert.equal((await connector.loadConfig(configPath)).workerId, null,
     "mismatched metadata leaves only the retryable pending enrollment and never enables the worker");
@@ -445,6 +490,27 @@ test("wait query failures are retryable 503 responses with Retry-After", async t
   assert.equal(unexpected.length, 1);
 });
 
+test("database pressure during authentication and ordinary routes is a retryable 503", async t => {
+  const failure = Object.assign(new Error("database_unavailable"), { code: "database_unavailable" });
+  const principal = fakePrincipal();
+  for (const [name, store] of [
+    ["authentication", { async authenticate() { throw failure; } }],
+    ["route", { async authenticate() { return principal; }, async myClaims() { throw failure; } }],
+  ] as const) await t.test(name, async t => {
+    const unexpected: unknown[] = [];
+    const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
+      onUnexpectedError: error => unexpected.push(error) });
+    const server = createServer((request, response) => { void handler.handle(request, response); });
+    await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+    t.after(() => new Promise<void>(done => server.close(() => done())));
+    const path = name === "authentication" ? "/fleet/v1/me" : "/fleet/v1/claims";
+    const response = await nodeJsonRequest(`http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`,
+      { headers: { authorization: "Bearer fake", "x-control-room-worker": principal.workerId } });
+    assert.deepEqual([response.status, response.body.error, response.headers["retry-after"]], [503, "unavailable", "1"]);
+    assert.deepEqual(unexpected, [failure]);
+  });
+});
+
 test("stress: 80 parked waits cap and jitter DB polling while a burst of claims completes", { timeout: 10_000 }, async t => {
   let activeWaitQueries = 0, maxWaitQueries = 0, jitterCalls = 0, claimCalls = 0;
   const waitDatabase = async <T>(value: T) => {
@@ -554,6 +620,59 @@ test("long-poll wakes on work, returns no work during Pause, and cleans up a sto
   await waitUntil(() => waitRegistry.parkedCount === 0, "revoked wait retained its registry slot");
 });
 
+test("server-side redemption refuses the wrong bot kind without consuming the code", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Kind bound", workerKind: "codex",
+    projectIds: [PROJECT_A], capabilities: ["code.change"] });
+  const configPath = join(f.dir, "kind-bound.json");
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "claude-code", configPath }),
+    /worker_kind_mismatch/u);
+  assert.deepEqual(await f.query<{ state: string }>("SELECT state FROM fleet_enrollment_codes WHERE id=$1", [code.codeId]),
+    [{ state: "issued" }]);
+  assert.equal((await f.query("SELECT 1 FROM fleet_workers")).length, 0);
+  const joined = await connector.join({ server: f.origin, code: code.code, workerKind: "codex", configPath });
+  assert.equal(joined.workerKind, "codex");
+});
+
+test("every connector install target enrolls through the real kind-bound gateway", async t => {
+  const f = await fixture({ admission: createFleetGatewayAdmissionV1({ enrollPerIp: 20, enrollGlobal: 20 }) });
+  t.after(() => f.close());
+  const kinds = ["claude-code", "codex", "hermes", "claude-desktop", "cursor"] as const;
+  const runner = async (command: string, args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}) => {
+    assert.ok(["claude", "codex", "hermes"].includes(command), `unexpected executable ${command}`);
+    if (command === "hermes") {
+      const path = join(options.env!.HERMES_HOME!, "config.yaml");
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, `mcp_servers:\n  ${args[2]}:\n    command: fixture\n`, { mode: 0o600 });
+    }
+    return { stdout: "", stderr: "" };
+  };
+  for (const [index, kind] of kinds.entries()) await t.test(kind, async () => {
+    const issued = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: `Install ${kind}`,
+      workerKind: kind, projectIds: [PROJECT_A], capabilities: ["code.change"] });
+    const homeDir = join(f.dir, `install-${kind}`);
+    await mkdir(homeDir);
+    const installed = await connector.installConnector({ server: f.origin, code: issued.code, bot: kind,
+      name: `real-${kind}`, homeDir, realHomeDir: join(f.dir, "not-the-real-home"), platform: "darwin",
+      env: { ...process.env, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" }, runner,
+      workspace: undefined, fetcher: fetch, sourcePath: resolve("scripts/fleet/connector.mjs") });
+    assert.equal((await connector.loadConfig(installed.paths.configPath)).workerKind, kind);
+
+    const otherKind = kind === "codex" ? "cursor" : "codex";
+    const wrong = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: `Wrong ${kind} ${index}`,
+      workerKind: otherKind, projectIds: [PROJECT_A], capabilities: ["code.change"] });
+    const wrongHome = join(f.dir, `wrong-${kind}`);
+    await mkdir(wrongHome);
+    await assert.rejects(connector.installConnector({ server: f.origin, code: wrong.code, bot: kind,
+      name: `wrong-${kind}`, homeDir: wrongHome, realHomeDir: join(f.dir, "not-the-real-home"), platform: "darwin",
+      env: { ...process.env, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" }, runner,
+      workspace: undefined, fetcher: fetch, sourcePath: resolve("scripts/fleet/connector.mjs") }),
+    /worker_kind_mismatch/u);
+    assert.deepEqual(await f.query<{ state: string }>("SELECT state FROM fleet_enrollment_codes WHERE id=$1", [wrong.codeId]),
+      [{ state: "issued" }]);
+  });
+});
+
 test("a lost enrollment response is recovered with the same pending secret and nonce", async t => {
   const f = await fixture(); t.after(() => f.close());
   const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Recoverable", workerKind: "mcp-agent",
@@ -565,12 +684,13 @@ test("a lost enrollment response is recovered with the same pending secret and n
     if (drop && response.ok) { drop = false; await response.arrayBuffer(); throw new Error("simulated lost enrollment response"); }
     return response;
   };
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath, fetcher: loseFirstResponse }),
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath,
+    fetcher: loseFirstResponse }),
     /simulated lost enrollment response/u);
   const pending = await connector.loadConfig(configPath);
   assert.equal(pending.workerId, null);
   assert.match(pending.clientNonce, /^crn_[A-Za-z0-9_-]{43}$/u);
-  const recovered = await connector.join({ server: f.origin, code: code.code, configPath });
+  const recovered = await connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath });
   const saved = await connector.loadConfig(configPath);
   assert.equal(saved.workerId, recovered.workerId);
   assert.equal(saved.secret, pending.secret, "retry keeps the credential whose digest was committed");
@@ -579,10 +699,11 @@ test("a lost enrollment response is recovered with the same pending secret and n
   const alteredNoncePath = join(f.dir, "altered-nonce.json");
   await writeFile(alteredNoncePath, JSON.stringify({ schema: "control-room.fleet-connector/v1", server: f.origin,
     workerId: null, secret: pending.secret, credentialExpiresAt: null, codeDigest: connector.sha256(code.code),
-    clientNonce: connector.newEnrollmentNonce() }), { mode: 0o600 });
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath: alteredNoncePath }),
+    clientNonce: connector.newEnrollmentNonce(), workerKind: "mcp-agent" }), { mode: 0o600 });
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath: alteredNoncePath }),
     /unauthenticated/u, "even the committed credential digest cannot replay with a different client nonce");
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath: join(f.dir, "attacker.json") }),
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent",
+    configPath: join(f.dir, "attacker.json") }),
     /unauthenticated/u, "the consumed code is not replayable with another secret or nonce");
 });
 
@@ -596,7 +717,8 @@ test("a lost enrollment response cannot be replayed after the code expires", asy
     await response.arrayBuffer();
     throw new Error("simulated lost enrollment response");
   };
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath, fetcher: loseResponse }),
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath,
+    fetcher: loseResponse }),
     /simulated lost enrollment response/u);
   const pending = await connector.loadConfig(configPath);
   assert.equal(pending.workerId, null);
@@ -607,7 +729,7 @@ test("a lost enrollment response cannot be replayed after the code expires", asy
   } finally {
     await f.raw.exec("ALTER TABLE fleet_enrollment_codes ENABLE TRIGGER fleet_enrollment_codes_guard");
   }
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath }), /unauthenticated/u,
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath }), /unauthenticated/u,
     "the original nonce and credential do not bypass code expiry");
   assert.equal((await f.query("SELECT 1 FROM fleet_enrollment_redemptions")).length, 1);
   assert.equal((await f.query("SELECT 1 FROM fleet_worker_credentials")).length, 1);
@@ -938,12 +1060,14 @@ test("an expired or cancelled enrollment code is refused", async t => {
   const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Late", workerKind: "codex",
     projectIds: [PROJECT_A], capabilities: ["code.change"] });
   skew = 11 * 60_000;
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath: join(f.dir, "late.json") }), /unauthenticated/u);
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "codex",
+    configPath: join(f.dir, "late.json") }), /unauthenticated/u);
   skew = 0;
   const cancelled = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Cancelled", workerKind: "codex",
     projectIds: [PROJECT_A], capabilities: ["code.change"] });
   assert.equal((await f.owner.cancelCode(ownerIdentity(), cancelled.codeId)).cancelled, true);
-  await assert.rejects(connector.join({ server: f.origin, code: cancelled.code, configPath: join(f.dir, "c.json") }), /unauthenticated/u);
+  await assert.rejects(connector.join({ server: f.origin, code: cancelled.code, workerKind: "codex",
+    configPath: join(f.dir, "c.json") }), /unauthenticated/u);
   // The database clock also refuses consumption after expiry, whatever the caller's clock says.
   const direct = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Direct", workerKind: "codex",
     projectIds: [PROJECT_A], capabilities: ["code.change"] });
@@ -1083,7 +1207,7 @@ test("credential rotation retires the old secret and owner re-key replaces it", 
   // Owner re-key: a fresh machine credential, the previous one revoked.
   const rekey = await f.owner.issueRekeyCode(ownerIdentity(), worker.joined.workerId);
   const second = join(f.dir, "rekeyed.json");
-  const rejoined = await connector.join({ server: f.origin, code: rekey.code, configPath: second });
+  const rejoined = await connector.join({ server: f.origin, code: rekey.code, workerKind: "mcp-agent", configPath: second });
   assert.equal(rejoined.workerId, worker.joined.workerId);
   await connector.createClient(await connector.loadConfig(second)).me();
   await assert.rejects(connector.createClient(rotated).me(), /unauthenticated/u);
@@ -1381,9 +1505,18 @@ test("the connector refuses insecure servers and loosely protected credential fi
 test("the owner's join command carries only a safe address and the one-time code", async () => {
   const { fleetJoinCommandsV1 } = await import("../src/web/v1/fleet-owner-http");
   const code = `crj_${"a".repeat(43)}`;
-  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code);
-  assert.equal(commands.unix, `curl -fsSL https://control.example.ts.net/fleet/v1/connector.mjs -o control-room-connector.mjs && node control-room-connector.mjs join --server https://control.example.ts.net --code ${code}`);
+  const release = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: "0.3.0", file: "connector-0.3.0.mjs",
+    sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) } as const;
+  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code, "codex", release);
+  assert.match(commands.unix, /connector-0\.3\.0\.mjs/u);
+  assert.match(commands.unix, new RegExp(release.sha256, "u"));
+  assert.match(commands.unix, /connector-manifest\.json/u);
+  assert.match(commands.unix, /--bot codex$/u);
+  assert.match(commands.windows, new RegExp(`node \\$f join --server https://control\\.example\\.ts\\.net --code ${code} --bot codex$`, "u"));
   for (const origin of ["https://x.example;rm -rf ~", "https://x.example/$(id)", "file:///etc", "https://user@x.example"])
-    assert.throws(() => fleetJoinCommandsV1(origin, code));
-  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id"));
+    assert.throws(() => fleetJoinCommandsV1(origin, code, "codex", release));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id", "codex", release));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", code, "codex;id", release));
+  // A kind the server does not offer is refused, so no command is ever printed for it.
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", code, "not-a-kind", release));
 });

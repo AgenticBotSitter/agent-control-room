@@ -1,9 +1,9 @@
 {
   "schema": "control-room.runtime-license-bundled-scan/v1",
-  "inventoryDigest": "3f63b91f0c670be0bb76fa2d09a0cbcd52422408b8c890fefb07f574341c59d1",
+  "inventoryDigest": "4cf293978f7037ae2c5ef2b8960a9b35f20c1024ea1ccad8fadc1fb999a7f410",
   "summary": {
-    "observed": 39,
-    "matched": 33,
+    "observed": 44,
+    "matched": 38,
     "reviewedExclusions": 6,
     "undisclosed": 0
   },
@@ -229,6 +229,19 @@
       }
     },
     {
+      "package": "http_ece",
+      "vendorRoot": "third_party",
+      "path": "third_party/http_ece/LICENSE",
+      "bytes": 1082,
+      "sha256": "717363ac0c7f0883042868db171cfed1f4b423119249eac9bce5131291017ea8",
+      "status": "bundled_evidence_match",
+      "evidenceRow": {
+        "root": "third_party/http_ece",
+        "sha256": "717363ac0c7f0883042868db171cfed1f4b423119249eac9bce5131291017ea8",
+        "bytes": 1082
+      }
+    },
+    {
       "package": "jsdom",
       "vendorRoot": "third_party",
       "path": "third_party/jsdom/LICENSE",
@@ -278,6 +291,45 @@
         "root": "third_party/luxon",
         "sha256": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006",
         "bytes": 1076
+      }
+    },
+    {
+      "package": "mdast-util-from-markdown",
+      "vendorRoot": "third_party",
+      "path": "third_party/mdast-util-from-markdown/LICENSE",
+      "bytes": 1094,
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "status": "bundled_evidence_match",
+      "evidenceRow": {
+        "root": "third_party/mdast-util-from-markdown",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+        "bytes": 1094
+      }
+    },
+    {
+      "package": "mdast-util-gfm",
+      "vendorRoot": "third_party",
+      "path": "third_party/mdast-util-gfm/LICENSE",
+      "bytes": 1094,
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "status": "bundled_evidence_match",
+      "evidenceRow": {
+        "root": "third_party/mdast-util-gfm",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+        "bytes": 1094
+      }
+    },
+    {
+      "package": "micromark-extension-gfm",
+      "vendorRoot": "third_party",
+      "path": "third_party/micromark-extension-gfm/LICENSE",
+      "bytes": 1099,
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "status": "bundled_evidence_match",
+      "evidenceRow": {
+        "root": "third_party/micromark-extension-gfm",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+        "bytes": 1099
       }
     },
     {
@@ -512,6 +564,19 @@
         "root": "third_party/saxes",
         "sha256": "b2206ba4678ba63836ddc85c6425ac4207f0d92b23fd96e059814742f97fdf3a",
         "bytes": 2864
+      }
+    },
+    {
+      "package": "web-push",
+      "vendorRoot": "third_party",
+      "path": "third_party/web-push/LICENSE",
+      "bytes": 228,
+      "sha256": "1fe5dbc03ffe518da23f1297de78ab5612532eddca93cca287a8dfaf4ad7ddce",
+      "status": "bundled_evidence_match",
+      "evidenceRow": {
+        "root": "third_party/web-push",
+        "sha256": "1fe5dbc03ffe518da23f1297de78ab5612532eddca93cca287a8dfaf4ad7ddce",
+        "bytes": 228
       }
     },
     {

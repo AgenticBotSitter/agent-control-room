@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { reusableSkillReferencesSchemaV1 } from "../../skills/v1/schemas";
 
 export const WORK_BATCH_PROPOSAL_V1 = "control-room.work-batch-proposal/v1" as const;
 export const WORK_BATCH_RECEIPT_V1 = "control-room.work-batch-receipt/v1" as const;
@@ -20,6 +21,7 @@ const workBatchProposalTaskSchemaV1 = z.object({
   requestedModelKey: id.optional(),
   acceptanceCriteria: z.string().min(1).max(4_000),
   acceptanceTests: z.string().min(1).max(4_000),
+  skillRefs: reusableSkillReferencesSchemaV1.optional(),
 }).strict();
 
 function validateWorkBatchProposalGraphV1(value: { tasks: readonly { localId: string }[];

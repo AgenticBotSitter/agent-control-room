@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 type Worker = Readonly<{ kind: string; state: "ready" | "unavailable"; proof: "proven" | "not_proven" }>;
-export type LocalProjectSection = "overview" | "inbox" | "work" | "pipelines" | "agents" | "reviews" | "activity" | "files" | "settings";
+export type LocalProjectSection = "overview" | "inbox" | "work" | "pipelines" | "agents" | "reviews" | "activity" | "automations" | "files" | "settings";
 export type LocalStatus = Readonly<{ taskWorkersStarted: boolean; instruction?: string; workers: readonly Worker[];
   projectSections: readonly LocalProjectSection[] }>;
 type Runtime = Readonly<{ mode: "checking" | "local" | "hosted"; status?: LocalStatus }>;
@@ -21,7 +21,7 @@ export function parseLocalStatusV1(value: unknown): LocalStatus | undefined {
   if (typeof record.taskWorkersStarted !== "boolean" || !Array.isArray(record.workers)
     || record.instruction !== undefined && typeof record.instruction !== "string"
     || !Array.isArray(record.projectSections) || record.projectSections.some(section =>
-      !["overview", "inbox", "work", "pipelines", "agents", "reviews", "activity", "files", "settings"].includes(String(section)))
+      !["overview", "inbox", "work", "pipelines", "agents", "reviews", "activity", "automations", "files", "settings"].includes(String(section)))
     || record.workers.some(worker => !worker || typeof worker !== "object" || Array.isArray(worker)
       || typeof worker.kind !== "string" || !["ready", "unavailable"].includes(worker.state)
       || !["proven", "not_proven"].includes(worker.proof))) return undefined;

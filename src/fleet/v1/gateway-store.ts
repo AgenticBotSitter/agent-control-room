@@ -9,7 +9,7 @@ import { fleetFail, FleetErrorV1 } from "./errors";
 import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_PATTERN_V1,
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
-  plainSha256V1, randomHexV1 } from "./identifiers";
+  FLEET_WORKER_KINDS_V1, plainSha256V1, randomHexV1 } from "./identifiers";
 import type { TaskProjectEventWriterV1 } from "../../project-events/v1/task-lifecycle";
 import { FLEET_WORKING_AGREEMENT_METADATA_V1 } from "./working-agreement";
 
@@ -63,9 +63,8 @@ export type FleetOperationsModeV1 = (typeof FLEET_OPERATIONS_MODES_V1)[number];
 
 export type FleetGatewayStoreOptionsV1 = Readonly<{ tenantId: string; clock?: () => number;
   leaseMs?: number; connectorVersionLimit?: number;
-  /** Reads the owner's current Pause / Drain / Stop decision. Without a port
-   * the installation has no such switch and is running. A port that fails or
-   * answers anything unexpected refuses new claims rather than admitting them. */
+  /** Reads the owner's current Pause / Drain / Stop decision. A missing port,
+   * a failed read or an unexpected answer is unknown and refuses new claims. */
   operationsMode?: () => Promise<FleetOperationsModeV1>;
   /** Presentation-only task timeline. Without it, a hand-off is still recorded
    * in the audit log and worker events, but not shown on the Activity page. */
@@ -96,7 +95,7 @@ export class FleetGatewayStoreV1 {
 
   /** The mode connectors see. "unknown" (an unreadable switch) never admits work. */
   async operationsMode(): Promise<FleetOperationsModeV1 | "unknown"> {
-    if (!this.#operationsMode) return "running";
+    if (!this.#operationsMode) return "unknown";
     try {
       const mode = await this.#operationsMode();
       return (FLEET_OPERATIONS_MODES_V1 as readonly unknown[]).includes(mode) ? mode : "unknown";
@@ -156,11 +155,13 @@ export class FleetGatewayStoreV1 {
 
   /** Redeems one enrollment code. The machine generated its credential locally
    * and sends only the digest, so no secret travels back in the response. */
-  async enroll(input: Readonly<{ code: unknown; credentialDigest: unknown; platform: unknown; architecture: unknown;
+  async enroll(input: Readonly<{ code: unknown; workerKind: unknown; credentialDigest: unknown; platform: unknown; architecture: unknown;
     connectorVersion: unknown; clientNonce: unknown }>) {
     const code = typeof input.code === "string" && FLEET_CODE_PATTERN_V1.test(input.code) ? input.code : fleetFail("unauthenticated");
     const credentialDigest = typeof input.credentialDigest === "string" && FLEET_DIGEST_PATTERN_V1.test(input.credentialDigest)
       ? input.credentialDigest : fleetFail("invalid");
+    const workerKind = typeof input.workerKind === "string" && FLEET_WORKER_KINDS_V1.includes(input.workerKind as never)
+      ? input.workerKind : fleetFail("invalid");
     const platform = platforms[input.platform as keyof typeof platforms] ?? fleetFail("invalid");
     const architecture = typeof input.architecture === "string" && /^[a-z0-9_]{2,16}$/u.test(input.architecture)
       ? input.architecture : fleetFail("invalid");
@@ -178,6 +179,9 @@ export class FleetGatewayStoreV1 {
       // One refusal for unknown, cancelled and expired codes. A committed
       // redemption remains replayable only by the same pending connector.
       if (!row) return fleetFail("unauthenticated");
+      // This check is in the redemption transaction, so a mismatch consumes
+      // nothing and creates no worker or credential.
+      if (row.worker_kind !== workerKind) return fleetFail("worker_kind_mismatch");
       const linked = fleetWorkerLinkedIdsV1(row.worker_id);
       if (row.replayed) {
         const credential = (await tx.query<{ expires_at: string | Date }>(`SELECT expires_at FROM fleet_worker_credentials
@@ -388,6 +392,10 @@ export class FleetGatewayStoreV1 {
   async claim(principal: FleetWorkerPrincipalV1, input: Readonly<{ offerId: unknown; idempotencyKey: unknown }>) {
     const offerId = entityId(input.offerId, "offer"), idempotencyKey = key(input.idempotencyKey);
     const now = this.#now();
+    // Read the mode before the transaction: the provider uses its own pool
+    // connection, and reading it inside would hold two per claim. The 0156
+    // trigger still decides inside the transaction, so a race costs nothing.
+    const mode = await this.operationsMode();
     return this.db.transaction(async tx => {
       const prior = (await tx.query<ClaimRow>(`SELECT * FROM fleet_claims WHERE tenant_id=$1 AND worker_id=$2
         AND idempotency_key=$3`, [this.#tenantId, principal.workerId, idempotencyKey])).rows[0];
@@ -396,7 +404,7 @@ export class FleetGatewayStoreV1 {
         return this.#claimView(tx, prior, true);
       }
       // Pause, Drain and Stop all stop new claims; a replay above is not new.
-      if (await this.operationsMode() !== "running") return fleetFail("paused");
+      if (mode !== "running") return fleetFail("paused");
       await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.#tenantId]);
       const offer = (await tx.query<{ project_id: string; job_id: string; capability: string; state: string;
         allowed_worker_ids: string[] | null }>(`SELECT project_id,job_id,capability,state,allowed_worker_ids

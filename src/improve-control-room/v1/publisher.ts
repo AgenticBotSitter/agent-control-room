@@ -5,7 +5,7 @@ import type { ImproveControlRoomDeskServiceV1 } from "./service";
 
 export type UpdateCandidateProfileIdV1 = "fast" | "db" | "full" | "targeted";
 export type UpdateCandidateRunnerKindV1 = "candidate_worktree" | "local_test_runner";
-export type UpdateCandidateRiskKindV1 = "security" | "database" | "authority";
+export type UpdateCandidateRiskKindV1 = "security" | "database" | "authority" | "dependency";
 
 export type UpdateCandidateProfileConfigurationV1 = Readonly<{
   id: UpdateCandidateProfileIdV1;
@@ -74,6 +74,11 @@ const revision = /^[a-f0-9]{40}$/u, digest = /^sha256:[a-f0-9]{64}$/u;
 const identifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
 const safePath = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\\)[\x21-\x7e]{1,512}$/u;
 const migrationPath = /^db\/migrations\/(\d{4}_[a-z0-9_]+)\.sql$/u;
+const isDatabasePath = (path: string) => path === "db" || path.startsWith("db/")
+  || path === "deploy/postgres" || path.startsWith("deploy/postgres/")
+  || path === "scripts/mac-local/database-role-manifest.mjs" || path.endsWith(".sql");
+const isDependencyPath = (path: string) => path === "package.json" || path === "pnpm-lock.yaml"
+  || path === ".npmrc" || path === "pnpm-workspace.yaml" || path === ".pnpmfile.cjs";
 const order: readonly UpdateCandidateProfileIdV1[] = ["fast", "targeted", "db", "full"];
 
 function captureConfiguration(value: UpdateCandidatePublisherConfigurationV1) {
@@ -96,7 +101,7 @@ function captureConfiguration(value: UpdateCandidatePublisherConfigurationV1) {
   const pathRules = value.pathRules.map(rule => {
     if (!safePath.test(rule.prefix) || rule.prefix.endsWith("/") === false || !rule.area.trim() || rule.area.length > 240
       || rule.profiles?.some((profile: "db" | "full") => profile !== "db" && profile !== "full")
-      || rule.risk !== undefined && !["security", "database", "authority"].includes(rule.risk))
+      || rule.risk !== undefined && !["security", "database", "authority", "dependency"].includes(rule.risk))
       throw new Error("update_candidate_publisher_config_invalid");
     return Object.freeze({ ...rule, profiles: Object.freeze([...(rule.profiles ?? [])]) });
   });
@@ -148,28 +153,40 @@ function classify(paths: readonly string[], rules: readonly UpdateCandidatePathR
   const risks = new Map<UpdateCandidateRiskKindV1, string>();
   for (const path of paths) {
     if (!safePath.test(path)) throw new Error("update_candidate_repository_unavailable");
+    const databasePath = isDatabasePath(path), dependencyPath = isDependencyPath(path);
     const matching = rules.filter(rule => path.startsWith(rule.prefix));
     if (!matching.length) {
-      profiles.add("full"); areas.add(path.split("/", 1)[0] ?? "other");
-      risks.set("authority", "unclassified path"); continue;
+      if (!databasePath && !dependencyPath) {
+        profiles.add("full"); areas.add(path.split("/", 1)[0] ?? "other");
+        risks.set("authority", "unclassified path"); continue;
+      }
     }
     for (const rule of matching) {
       areas.add(rule.area); for (const profile of rule.profiles ?? []) profiles.add(profile);
       if (rule.risk) risks.set(rule.risk, rule.area);
     }
+    if (databasePath) { profiles.add("db"); areas.add("database-sensitive files"); risks.set("database", "database-sensitive files"); }
+    if (dependencyPath) { profiles.add("full"); areas.add("dependency configuration"); risks.set("dependency", "dependency configuration"); }
   }
   return { profileIds: order.filter(profile => profiles.has(profile)), changedAreas: [...areas].sort(),
     riskFlags: [...risks].sort(([left], [right]) => left.localeCompare(right)).map(([kind, area]) => ({ kind,
       summary: `${area} changed`, needsIndependentReview: true as const })) };
 }
 
-function databaseChanges(paths: readonly string[]) {
-  const migrationIds = paths.map(path => migrationPath.exec(path)?.[1]).filter((value): value is string => !!value).sort();
-  return migrationIds.length ? { kind: "migrations" as const, migrationIds,
+function databaseChanges(paths: readonly string[], addedPaths: readonly string[]) {
+  const changedPaths = paths.filter(isDatabasePath).sort();
+  if (!changedPaths.length) return { kind: "none" as const };
+  const migrationIds = changedPaths.map(path => migrationPath.exec(path)?.[1])
+    .filter((value): value is string => !!value).sort();
+  if (changedPaths.every(path => migrationPath.test(path) && addedPaths.includes(path))) return {
+    kind: "migrations" as const, migrationIds,
     summary: `${migrationIds.length} migration${migrationIds.length === 1 ? "" : "s"} added.`,
-    compatibilityNotes: "Run against the reviewed schema ledger as the production login before release.",
-    rollbackNotes: "Use only the reviewed migration rollback or verified restore plan; no automatic rollback is authorized." }
-    : { kind: "none" as const };
+    compatibilityNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure.",
+    rollbackNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure." };
+  return { kind: "changes" as const, changedPaths, migrationIds,
+    summary: `${changedPaths.length} database-sensitive path${changedPaths.length === 1 ? "" : "s"} changed.`,
+    compatibilityNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure.",
+    rollbackNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure." };
 }
 
 function summary(snapshot: IntegrationRepositorySnapshotV1) {
@@ -181,6 +198,7 @@ function summary(snapshot: IntegrationRepositorySnapshotV1) {
 export class UpdateCandidatePublisherV1 {
   readonly #configuration: ReturnType<typeof captureConfiguration>;
   readonly #pending = new Map<string, Promise<UpdateCandidatePublishResultV1>>();
+  #sweeping?: Promise<UpdateCandidatePublishResultV1[]>;
   readonly #reviews: UpdateCandidateReviewSourceV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: Readonly<{ tenantId: string; workspaceId: string }>,
     private readonly desk: Pick<ImproveControlRoomDeskServiceV1, "recordCandidate">,
@@ -228,8 +246,7 @@ export class UpdateCandidatePublisherV1 {
     const first = await this.#configuration.repository.observe({ pipelineRunId: runId });
     if (!revision.test(first.baseRevision) || !revision.test(first.candidateRevision)
       || first.baseRevision === first.candidateRevision || !first.changedPaths.length || first.changedPaths.length > 1000
-      || !Array.isArray(first.addedPaths) || first.addedPaths.some(path => !first.changedPaths.includes(path))
-      || first.changedPaths.filter(path => migrationPath.test(path)).some(path => !first.addedPaths.includes(path)))
+      || !Array.isArray(first.addedPaths) || first.addedPaths.some(path => !first.changedPaths.includes(path)))
       return { state: "blocked", reason: "repository_unavailable" };
     const classified = classify(first.changedPaths, this.#configuration.pathRules);
     const accepted = await this.#reviews.acceptedForRun(runId);
@@ -259,15 +276,21 @@ export class UpdateCandidatePublisherV1 {
     const input = recordUpdateCandidateSchemaV1.parse({ projectId: binding.project_id,
       improvementRequestId: binding.request_id, pipelineRunId: binding.pipeline_run_id,
       baseRevision: first.baseRevision, candidateRevision: first.candidateRevision, summary: summary(first),
-      changedAreas: classified.changedAreas, testResults, databaseChanges: databaseChanges(first.addedPaths),
+      changedAreas: classified.changedAreas, testResults, databaseChanges: databaseChanges(first.changedPaths, first.addedPaths),
       riskFlags: classified.riskFlags, independentReviews: independent, leadWorkerId: binding.lead_worker_id });
     try { assertNoSecretMaterial(input); } catch { return { state: "blocked", reason: "candidate_invalid" }; }
     const recorded = await this.desk.recordCandidate(input);
     return { state: recorded.replayed ? "replayed" : "published", candidateId: recorded.candidate.candidateId };
   }
 
-  async sweep(limit = 8) {
+  sweep(limit = 8): Promise<UpdateCandidatePublishResultV1[]> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 32) throw new Error("update_candidate_publisher_config_invalid");
+    const existing = this.#sweeping; if (existing) return existing;
+    const operation = this.#sweep(limit).finally(() => { if (this.#sweeping === operation) this.#sweeping = undefined; });
+    this.#sweeping = operation; return operation;
+  }
+
+  async #sweep(limit: number) {
     const rows = (await this.db.query<{ pipeline_run_id: string }>(`SELECT request.pipeline_run_id
       FROM control_improvement_requests request JOIN pipeline_runs run ON run.tenant_id=request.tenant_id
         AND run.id=request.pipeline_run_id AND run.project_id=request.project_id
@@ -275,7 +298,11 @@ export class UpdateCandidatePublisherV1 {
         AND candidate.pipeline_run_id=request.pipeline_run_id
       WHERE request.tenant_id=$1 AND run.state='succeeded' AND candidate.id IS NULL
       ORDER BY run.completed_at,request.pipeline_run_id LIMIT $2`, [this.scope.tenantId, limit])).rows;
-    return Promise.all(rows.map(row => this.publishRun(row.pipeline_run_id)));
+    const results: UpdateCandidatePublishResultV1[] = [];
+    // The integration repository has one mutable branch HEAD. Keep observation,
+    // tests, re-observation and recording together for one candidate at a time.
+    for (const row of rows) results.push(await this.publishRun(row.pipeline_run_id));
+    return results;
   }
 }
 

@@ -18,8 +18,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { privateWebReadTables, privateWebInsertColumns, privateWebReadColumns,
-  privateWebInsertTables, privateWebUpdateColumns, privateWebFleetReadTables }
-  from "../src/web/v1/private-database-preflight";
+  privateWebInsertTables, privateWebUpdateColumns, privateWebFleetReadTables, taskCoordinatorReadTables,
+  taskCoordinatorInsertColumns, taskCoordinatorInsertTables, taskCoordinatorUpdateColumns, taskCoordinatorDeleteTables,
+} from "../src/web/v1/private-database-preflight";
 
 const ROLE_DIRECTORY = join(process.cwd(), "db/roles");
 const PREFLIGHT_SOURCE = join(process.cwd(), "src/web/v1/private-database-preflight.ts");
@@ -86,12 +87,12 @@ function parseGrants(sql: string, role: string): Grants {
 }
 
 /** The web role's table privileges across every role file an operator applies. */
-async function appliedGrants(): Promise<Grants> {
+async function appliedGrants(role = ROLE): Promise<Grants> {
   const files = (await readdir(ROLE_DIRECTORY)).filter(file => file.endsWith(".sql")).sort();
   assert.ok(files.length > 0, "no db/roles/*.sql files were found");
   const combined: Grants = new Map();
   for (const file of files) {
-    const grants = parseGrants(await readFile(join(ROLE_DIRECTORY, file), "utf8"), ROLE);
+    const grants = parseGrants(await readFile(join(ROLE_DIRECTORY, file), "utf8"), role);
     for (const [privilege, tables] of grants) {
       const target = combined.get(privilege) ?? new Map<string, Columns>();
       for (const [table, columns] of tables) target.set(table, mergeGrant(target.get(table), columns));
@@ -207,6 +208,47 @@ test("every table the role files grant the web login is one the private-web pref
     "the private-web preflight and the db/roles files disagree; a correct database would fail startup");
 });
 
+test("every task-coordinator grant is exactly declared by its startup preflight", async () => {
+  const role = "control_room_task_coordinator";
+  const applied = await appliedGrants(role);
+  // pg-boss objects live in their own schema and are verified by the native
+  // queue preflight. This comparison covers the public application tables
+  // accepted by verifyTaskCoordinatorDatabase.
+  for (const tables of applied.values()) for (const table of [...tables.keys()])
+    if (table.includes(".")) tables.delete(table);
+  const wideInserts = new Set(taskCoordinatorInsertTables);
+  const insertable = new Map<string, Columns>();
+  for (const table of new Set([...wideInserts, ...Object.keys(taskCoordinatorInsertColumns)]))
+    insertable.set(table, wideInserts.has(table) ? null : [...taskCoordinatorInsertColumns[table]!]);
+  const accepted = new Map<Privilege, Map<string, Columns>>([
+    ["SELECT", new Map(taskCoordinatorReadTables.map(table => [table, null] as [string, Columns]))],
+    ["INSERT", insertable],
+    ["UPDATE", new Map(Object.entries(taskCoordinatorUpdateColumns)
+      .map(([table, columns]) => [table, [...columns]] as [string, Columns]))],
+    ["DELETE", new Map([...taskCoordinatorDeleteTables].map(table => [table, null] as [string, Columns]))],
+  ]);
+  const disagreements: string[] = [];
+  for (const privilege of PRIVILEGES) {
+    const granted = applied.get(privilege) ?? new Map<string, Columns>();
+    const expected = accepted.get(privilege)!;
+    for (const table of granted.keys()) if (!expected.has(table))
+      disagreements.push(`${role} holds ${privilege} on ${table}, undeclared`);
+    for (const table of expected.keys()) if (!granted.has(table))
+      disagreements.push(`${privilege} on ${table} is declared, not granted`);
+    for (const [table, columns] of granted) {
+      const wanted = expected.get(table);
+      if (wanted === undefined) continue;
+      if ((wanted === null) !== (columns === null)) disagreements.push(`${table}: ${privilege} grant shape differs`);
+      else if (columns && wanted) {
+        const difference = [...wanted].filter(column => !columns.includes(column))
+          .concat([...columns].filter(column => !wanted.includes(column))).sort();
+        if (difference.length) disagreements.push(`${table}: ${privilege} columns differ: ${difference.join(", ")}`);
+      }
+    }
+  }
+  assert.deepEqual(disagreements, [], "the task-coordinator grants and startup preflight disagree");
+});
+
 test("the web DELETE declaration is read from the preflight, not restated here", () => {
   // A restatement of the DELETE set would pass while describing a value the
   // preflight no longer holds, so the read is asserted against the source it
@@ -247,6 +289,137 @@ test("the fleet read tables come only from the fleet role file, and the prefligh
   for (const table of privateWebFleetReadTables)
     assert.ok(!(privateWebReadTables as readonly string[]).includes(table),
       `${table} is back in the unconditional read set`);
+});
+
+test("every SECURITY DEFINER function the preflight exempts is owned by the schema owner, unconditionally", async () => {
+  // The comparison above is about TABLES. The same preflight also exempts a
+  // fixed set of SECURITY DEFINER functions from its catalog scan, and that
+  // allowlist has its own drift: the owner test for the two agent-review
+  // boundary functions sat inside the agent-reviewer disjunct, so every other
+  // kind exempted them on "this login has no EXECUTE" alone, whatever owned
+  // them. Nothing here compared the allowlist with the migrations, so the gap
+  // was invisible until a fixture that replays db/migrations without SET ROLE
+  // produced it. The real-PostgreSQL lanes prove a correct install is accepted;
+  // this proves the allowlist tracks the migrations and keeps the owner test
+  // unconditional, both without a database.
+  const source = readFileSync(PREFLIGHT_SOURCE, "utf8");
+  // Read every OCCURRENCE of a signature, in both spellings the preflight uses:
+  // `'f(args)'::regprocedure` in the catalog-scan branches, and `'f(args)'` on
+  // its own inside the `'f(args)'::regprocedure[] boundary(oid)` array at the
+  // end. Both matter, and reading only the suffixed form is how a rename in the
+  // boundary array went unnoticed: that array is the one place the preflight
+  // demands the agent-review pair be executable, so a name that no migration
+  // creates there is a hole in the very check the scan exempts itself from.
+  //
+  // A de-duplicated set is not used either. A signature appears more than once
+  // by design -- `read_agent_review_plan(text)` is named in the scan branch, in
+  // the volatility CASE and again in the boundary array -- and a set hides
+  // that: renaming ONE occurrence leaves the other spellings present, so a
+  // set-based check passes a preflight with a hole in one of those places.
+  // Every occurrence is collected and every occurrence is compared.
+  const occurrences: string[] = [
+    ...[...source.matchAll(/'([a-z_0-9]+\([^']*?\))'::regprocedure/gu)].map(match => match[1]!),
+    // The bare form is read by anchoring on the ARRAY'S closing bracket, so the
+    // match cannot run past the element before it: `commit_agent_review(...)',
+    // 'read_agent_review_plan(text)']::regprocedure[]` yields only the second,
+    // which is the one the suffixed regex above cannot see. Anchoring on the
+    // bracket rather than looking ahead across quotes is what makes that true;
+    // a lookahead would have to span the previous element's closing quote.
+    ...[...source.matchAll(/'([a-z_0-9]+\([^']*?\))'\s*,?\s*\]\s*::regprocedure\[\]/gu)].map(match => match[1]!),
+  ];
+  assert.ok(occurrences.length >= 8,
+    `only ${occurrences.length} exempted signature occurrence(s) found in the preflight; the read is too narrow to prove anything`);
+
+  // Every SECURITY DEFINER function a migration creates that a login could
+  // CALL must be an allowlist entry, and every allowlist entry must be one a
+  // migration creates: an unlisted one is flagged by the scan on a correct
+  // database, and a phantom one is a hole in it.
+  //
+  // Trigger functions are excluded, and deliberately so. A trigger function
+  // cannot be invoked directly — it has no SQL-callable signature — and it
+  // executes as the owner of the table it is attached to, so the web login can
+  // never reach it however its ACL reads.
+  //
+  // SECURITY DEFINER is read PER FUNCTION, from each function's own header.
+  // It used to be read per FILE — `if (!/SECURITY\s+DEFINER/i.test(sql)) continue`
+  // — and that is wrong for every migration that creates both kinds, because
+  // 0106 (and 0093) declare an IMMUTABLE helper next to a SECURITY DEFINER
+  // boundary function and one `test()` over the file body attributes SECURITY
+  // DEFINER to all of them. The consequence was not cosmetic: the phantom
+  // set then held six signatures where only four are SECURITY DEFINER, and
+  // 0227's two pure SQL helpers were not in it at all even though the
+  // preflight exempts them. The four below were read off a live PostgreSQL 17
+  // (`SELECT proname, prosecdef FROM pg_proc WHERE prorettype<>'trigger'`),
+  // which is the authority this check is standing in for: the required set is
+  // exactly the four names that query returns.
+  const shipped = new Map<string, string>();
+  // Every non-trigger function a migration creates, whether or not it is
+  // SECURITY DEFINER. The phantom check below has to run against THIS set: an
+  // allowlist entry naming a function no migration creates is a hole whatever
+  // kind the phantom would have been, so restricting the set to the SECURITY
+  // DEFINER ones would have made that check unable to see 0227 at all.
+  const created = new Map<string, string>();
+  for (const file of (await readdir(join(process.cwd(), "db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
+    const sql = await readFile(join(process.cwd(), "db/migrations", file), "utf8");
+    // The header runs from the signature to the body opener (`AS $$` or
+    // `AS '...'`), so attributes in the header belong to THIS function and a
+    // following function's attributes cannot leak backwards into it.
+    for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)AS\s+(?:\$\$|')/giu)) {
+      const header = match[3]!;
+      // `RETURNS trigger` is what marks a function as a trigger function.
+      const returned = /RETURNS\s+([a-z ]+)/iu.exec(header);
+      if (returned && returned[1]!.trim().toLowerCase() === "trigger") continue;
+      const args = match[2]!.split(",").map(argument => argument.trim().split(/\s+/)[0]!.toLowerCase())
+        .filter(argument => argument !== "");
+      const signature = `${match[1]!.toLowerCase()}(${args.join(",")})`;
+      created.set(signature, file);
+      if (!/SECURITY\s+DEFINER/iu.test(header)) continue;
+      shipped.set(signature, file);
+    }
+  }
+  // The set is not allowed to drift from what PostgreSQL actually reports, so
+  // it is pinned by name. A migration that adds a fifth SECURITY DEFINER
+  // function a login can call fails here, and has to add its allowlist entry at
+  // the same time — which is the change that would otherwise be forgotten.
+  assert.deepEqual([...shipped.keys()].map(signature =>
+    signature.replace(/\(.*\)/u, "")).sort(),
+  ["commit_agent_review", "is_work_intake_session", "read_agent_review_plan", "redeem_fleet_enrollment"],
+    "the shipped SECURITY DEFINER function set changed; a login-callable one needs a preflight allowlist entry");
+  // The shipped names carry SQL argument NAMES; the preflight carries TYPES, so
+  // the two are matched by ARITY, not by text. `shape` therefore drops the
+  // argument text but KEEPS the name, which is what makes the phantom check
+  // above a real check: an allowlist entry for a function no migration creates
+  // has a name no created signature carries, so it cannot match. It is NOT a
+  // name-blind arity comparison, and a future reader must not make it one --
+  // that would make this assertion vacuously true for every signature.
+  const shape = (signature: string) => signature.replace(/\(([^)]*)\)/u, (all, args: string) =>
+    `${signature.slice(0, signature.indexOf("("))}(${args.split(",").length})`);
+  const shapes = new Set([...created.keys()].map(shape));
+  assert.deepEqual(occurrences.filter(signature => !shapes.has(shape(signature))).sort(), [],
+    "the preflight exempts a function no migration creates; a renamed or removed function is now a hole in the scan");
+  // Each of the four must be exempt under its OWN NAME, by arity. The
+  // name-blind fallback is deliberately absent: a fifth allowlist entry that
+  // merely matched some other function's arity would be exactly the drift this
+  // exists to catch.
+  for (const name of ["commit_agent_review", "is_work_intake_session", "read_agent_review_plan",
+    "redeem_fleet_enrollment"]) {
+    const signatures = [...shipped.keys()].filter(signature => signature.startsWith(`${name}(`));
+    assert.equal(signatures.length, 1, `${name} has ${signatures.length} shipped signatures, not one`);
+    assert.ok(occurrences.some(signature => shape(signature) === shape(signatures[0]!)),
+      `${name} is a shipped SECURITY DEFINER function with no preflight allowlist entry`);
+  }
+
+  // The specific shape that broke: the owner check may not sit inside the
+  // reviewer-only disjunct, or these two functions are exempt for every kind.
+  const branch = /OR\s*\(p\.oid IN \('commit_agent_review[\s\S]*?NOT has_function_privilege\(p\.oid,'EXECUTE'\)\)\)\)\)/.exec(source);
+  assert.ok(branch, "the agent-review allowlist branch was not found in the preflight");
+  const owner = "pg_get_userbyid(p.proowner)='control_room_schema_owner'";
+  const reviewerDisjunct = "$2 AND p.prosecdef";
+  assert.ok(branch[0].includes(owner), "the agent-review allowlist branch no longer checks the owner at all");
+  assert.ok(branch[0].includes(reviewerDisjunct),
+    "the reviewer-only disjunct is gone; the ordering assertion below no longer means anything");
+  assert.ok(branch[0].indexOf(owner) < branch[0].indexOf(reviewerDisjunct),
+    "the owner test is inside the reviewer disjunct again, so every non-reviewer kind exempts these functions whatever owns them");
 });
 
 test("the comparison above reads role files it has to be able to read", () => {

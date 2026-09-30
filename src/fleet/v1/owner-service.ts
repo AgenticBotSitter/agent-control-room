@@ -5,11 +5,8 @@ import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { fleetFail } from "./errors";
 import { FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_LIFETIME_MS_V1, FLEET_ENTITY_ID_PATTERN_V1,
   FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1, FLEET_WORKER_KIND_PATTERN_V1, newFleetCodeV1,
-  plainSha256V1, randomHexV1 } from "./identifiers";
+  FLEET_WORKER_KINDS_V1, plainSha256V1, randomHexV1 } from "./identifiers";
 
-/** Worker kinds offered in the owner form. "mcp-agent" is any other agent
- * that connects only through the MCP tools. */
-export const FLEET_WORKER_KINDS_V1 = Object.freeze(["codex", "claude-code", "hermes", "mcp-agent"] as const);
 /** Plain capability labels an owner can grant and an offer can require. */
 export const FLEET_CAPABILITIES_V1 = Object.freeze(["code.change", "code.review", "research", "writing", "testing"] as const);
 
@@ -91,7 +88,8 @@ export class FleetOwnerServiceV1 {
       targetType: "fleet_worker", targetId: input.workerId, occurredAt: createdAt,
       safeMetadata: { codeId, workerKind: input.workerKind, projectIds: [...input.projectIds],
         capabilities: [...input.capabilities], expiresAt } });
-    return Object.freeze({ codeId, code, workerId: input.workerId, expiresAt, purpose: input.purpose });
+    return Object.freeze({ codeId, code, workerId: input.workerId, workerKind: input.workerKind,
+      expiresAt, purpose: input.purpose });
   }
 
   /** "New key": a single-use code that replaces the machine's credential. The

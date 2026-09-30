@@ -9,6 +9,7 @@ import {
   parseModuleManifestV1,
 } from "../src/modules/v1/index";
 import { PRODUCT_CONFIGURATION_MODULES_V1 } from "../src/config/v1/product-configuration";
+import { sha256Digest } from "../src/security";
 
 function declarativeManifest(): Record<string, unknown> {
   return {
@@ -61,6 +62,30 @@ describe("module manifest v1", () => {
     assert.equal(Object.isFrozen(parsed.permissions.projectData), true);
     (input.permissions as { taskTemplates: string[] }).taskTemplates.push("garden.changed");
     assert.deepEqual(parsed.permissions.taskTemplates, ["garden.plan-bed"]);
+  });
+
+  it("shares exact immutable skill versions only as guarded declarative text", () => {
+    const input = declarativeManifest();
+    const material = { schema: "control-room.module-shared-skill/v1", id: "garden.review", version: 2,
+      name: "Garden evidence review", instructions: "Compare the observations and cite the retained evidence." };
+    input.skills = [{ id: material.id, version: material.version, name: material.name,
+      instructions: material.instructions, contentDigest: sha256Digest(material) }];
+    const parsed = parseModuleManifestV1(input);
+    assert.deepEqual(parsed.skills?.map(skill => [skill.id, skill.version]), [["garden.review", 2]]);
+    assert.equal(Object.isFrozen(parsed.skills), true);
+    const changed = structuredClone(input) as Record<string, any>;
+    changed.skills[0].instructions = "Changed without a new digest.";
+    assert.throws(() => parseModuleManifestV1(changed), /module_manifest_skill_digest_invalid/);
+    const duplicate = structuredClone(input) as Record<string, any>;
+    duplicate.skills.push(structuredClone(duplicate.skills[0]));
+    assert.throws(() => parseModuleManifestV1(duplicate), /module_manifest_duplicate_skill/);
+    const executableModule = structuredClone(input) as Record<string, any>;
+    executableModule.class = "code";
+    assert.throws(() => parseModuleManifestV1(executableModule), /module_manifest_skills_require_declarative_class/);
+    const executable = structuredClone(input) as Record<string, any>;
+    executable.skills[0].instructions = "Use $(untrusted input)";
+    executable.skills[0].contentDigest = sha256Digest({ ...material, instructions: executable.skills[0].instructions });
+    assert.throws(() => parseModuleManifestV1(executable), /executable_content/);
   });
 
   it("fails closed on unknown keys, raw role-like fields, and invalid versions", () => {
