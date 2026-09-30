@@ -417,7 +417,15 @@ test("a second tenant's project and settings are unreachable through this port",
         { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, clock);
       await service.saveSettings(identity, scope.projectId, { expectedVersion: 0, choice: { mode: "selected",
         workerId: "worker:chief", workerKind: "codex", modelKey: "model:plan", effort: "high" } });
-      // Another tenant's tenant id, project id and batch id are all refused by the
+      // A project that does not exist is not found, not read as "none chosen" and
+      // not answered with a foreign-key error. The owner granted a wildcard project
+      // scope, so the GRANT alone cannot tell a real project from a typed id.
+      await assert.rejects(service.readSettings(identity, "project:not-here"), /not_found/);
+      await assert.rejects(service.saveSettings(identity, "project:not-here",
+        { expectedVersion: 0, choice: { mode: "none" } }), /not_found/);
+      await assert.rejects(service.describe(identity, "project:not-here", { description: "x" },
+        "request:ghost-0001"), /not_found/);
+      // A second tenant's tenant id, project id and batch id are all refused by the
       // store's own tenant check, not merely by the access port.
       for (const foreign of [other.tenantId, "tenant:invented"])
         await assert.rejects(store.readSettings(foreign, scope.projectId), /access_denied/);

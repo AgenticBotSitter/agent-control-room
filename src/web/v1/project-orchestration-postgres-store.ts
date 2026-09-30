@@ -175,10 +175,21 @@ export class PostgresProjectOrchestrationStoreV1 implements ProjectOrchestration
         // the row with only the planner columns set. 0135's other columns stay
         // NULL, which already meant "unrestricted, uncapped, no default" for every
         // other setting.
-        await tx.query(`INSERT INTO control_project_settings(tenant_id,project_id,version,
-          updated_by_identity_id,updated_at,planner_mode,planner_worker_id,planner_worker_kind,planner_model,planner_effort)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [input.tenantId, input.projectId, next, input.writtenByIdentityId, input.now, ...columns]);
+        try {
+          await tx.query(`INSERT INTO control_project_settings(tenant_id,project_id,version,
+            updated_by_identity_id,updated_at,planner_mode,planner_worker_id,planner_worker_kind,planner_model,planner_effort)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [input.tenantId, input.projectId, next, input.writtenByIdentityId, input.now, ...columns]);
+        } catch (error) {
+          // PostgreSQL's own message names every constraint it checked, and this
+          // one is a refusal in the same sense as any other. The owner must never
+          // be shown a schema's prose; the access port has already established that
+          // the project exists, so a violation here means a concurrent DELETE and
+          // the honest answer is that the project is not available.
+          if ((error as { code?: string } | null)?.code === "23503")
+            throw new WebAccessError("not_found");
+          throw error;
+        }
       }
     }, () => {});
     return Object.freeze({ version: input.expectedVersion + 1, choice: input.choice });
@@ -281,15 +292,27 @@ export class PostgresProjectOrchestrationDismissalsV1 implements ProjectOrchestr
  * choice. An operator grant can never change the chief of staff. */
 export class PostgresProjectOrchestrationAccessV1 implements ProjectOrchestrationAccessPortV1 {
   readonly #authority: WebSessionAuthority;
-  constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
+  constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     clock: () => number = Date.now) {
     this.#authority = new WebSessionAuthority(db, scope, clock);
   }
   async owner(identity: VerifiedWebIdentity, projectId: string, operation: "read" | "settings" | "describe" | "suggestion") {
     const write = operation !== "read";
-    return this.#authority.authenticated(identity, async (_tx, actor: WebActor) => {
+    return this.#authority.authenticated(identity, async (tx, actor: WebActor) => {
       actor.require("projects.read", projectId);
       if (write) actor.require("projects.settings", projectId, true);
+      // The GRANT is not the project. A caller holding a wildcard owner grant can
+      // name any id at all, so the project itself must exist and belong to this
+      // workspace before any settings row is read or created -- otherwise a save
+      // for a project that does not exist reaches the INSERT and comes back as a
+      // foreign-key error, and a read reports "none chosen" for a project that is
+      // not there. The read is scoped to this workspace's own projects, so a
+      // project id from another workspace is not found either.
+      const project = (await tx.query<{ id: string }>(`SELECT p.id FROM projects p
+        JOIN workspaces w ON w.tenant_id=p.tenant_id AND w.id=p.workspace_id
+        WHERE p.tenant_id=$1 AND p.id=$2 AND p.workspace_id=$3`,
+      [this.scope.tenantId, projectId, this.scope.workspaceId])).rows[0];
+      if (!project) throw new WebAccessError("not_found");
       return Object.freeze({ tenantId: this.scope.tenantId, ownerIdentityId: actor.id });
     }, { readOnly: !write });
   }
