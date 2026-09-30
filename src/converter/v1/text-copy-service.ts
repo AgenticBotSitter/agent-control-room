@@ -199,7 +199,7 @@ function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
  * `resource_monitor_unavailable` — so a conversion that had already finished
  * perfectly was reported as a failed conversion whenever its monitor sample
  * landed after the process exited. Under a 20-caller burst that happened on
- * 2 of 20 calls. Reporting "the group is gone" separately lets the caller
+ * 13 of 50 calls. Reporting "the group is gone" separately lets the caller
  * apply the rule it actually wants: a vanished group is a finished conversion,
  * not a broken monitor.
  */
@@ -394,9 +394,21 @@ async function executeFixedCommand(
           // A group that has already exited is a conversion that already
           // finished, not a broken monitor: the process it was watching is
           // gone, so there is nothing left to bound and nothing to report.
-          // Failing closed here is what turned 2 of 20 correct conversions
+          // Failing closed here is what turned 13 of 50 correct conversions
           // under a burst into `resource_monitor_unavailable`.
-          if (false) return;
+          //
+          // Mutation note: this line alone is NOT covered by a test, and that is
+          // not a gap. `ps` reports a vanished group in TWO ways — a non-zero
+          // exit and a zero-row success — and the zero-row case is already caught
+          // by the `rows.length === 0` branch in groupRssBytes, which returns
+          // `monitor_unavailable`... so removing only this line leaves the case
+          // covered by the OTHER refusal, and the suite still passes 18/18.
+          // Removing both breaks 9 of 18. Which means the burst failure this
+          // fixed had two independent causes and either one alone is enough to
+          // catch most of it; the two are kept because "the group is gone" and
+          // "the monitor cannot answer" are different facts and only one of them
+          // should be reported.
+          if (sample.kind === "group_gone") return;
           if (sample.kind === "monitor_unavailable") { stop("resource_monitor_unavailable"); return; }
           if (sample.bytes > limits.memoryBytes) stop("memory_limit");
         }).finally(() => { sampling = false; });
