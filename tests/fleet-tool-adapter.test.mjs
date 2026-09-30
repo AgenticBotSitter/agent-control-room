@@ -7,6 +7,10 @@ import { join } from "node:path";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
 
+/** The gateway ships the agreement metadata; a fake that omits it is refused. */
+const WORKING_AGREEMENT = Object.freeze({ version: connector.WORKING_AGREEMENT.version,
+  digest: connector.WORKING_AGREEMENT.digest, startsWork: false, grantsAuthority: false });
+
 async function workspace(t) {
   const dir = await mkdtemp(join(tmpdir(), "fleet-tool-adapter-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -310,8 +314,9 @@ test("enrollment and heartbeat advertise manifest capabilities as evidence witho
   const fetcher = async (_url, init) => {
     requests.push(JSON.parse(init.body));
     if (requests.length === 1) return Response.json({ ok: true, result: { workerId, displayName: "Tools", projectIds: ["project:one"],
-      capabilities: ["owner.approved"], workerKind: "tool", credentialExpiresAt: new Date(Date.now() + 86_400_000).toISOString() } });
-    return Response.json({ ok: true, result: { workerId, capabilities: ["owner.approved"] } });
+      capabilities: ["owner.approved"], workerKind: "tool", workingAgreement: WORKING_AGREEMENT,
+      credentialExpiresAt: new Date(Date.now() + 86_400_000).toISOString() } });
+    return Response.json({ ok: true, result: { workerId, capabilities: ["owner.approved"], workingAgreement: WORKING_AGREEMENT } });
   };
   const code = `crj_${"A".repeat(43)}`;
   const joined = await connector.join({ server: "https://control.example", code, workerKind: "tool", configPath, fetcher });
