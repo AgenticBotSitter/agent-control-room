@@ -1357,3 +1357,72 @@ test("a claimed resultSubtypeCode that disagrees with the raw material is refuse
   // The honest pairing (raw subtype and claimed code agree) is unaffected.
   assert.equal(claudeEvidenceFor().kind, "claude_terminal_result");
 });
+
+/**
+ * Two runs whose result BYTES are identical must both publish. Content-scoped
+ * artifact identity made the second run's reservation insert collide on
+ * `UNIQUE (tenant_id, artifact_id)`, so its delivery could never complete —
+ * which is how real task delivery failed 60 times in 63 on a throwaway install
+ * (see cook-mdelivery). Two short answers to the same question are the ordinary
+ * case, not an edge case, so identity is per run and content is carried
+ * separately.
+ */
+test("two runs with byte-identical results both publish, and each artifact stays distinct", async t => {
+  const storage = new ControlledStorage();
+  const firstRun = "run:durable-identical-a", secondRun = "run:durable-identical-b";
+  const fa = await setupWithProvision(firstRun); t.after(fa.close);
+  const fb = await setupWithProvision(secondRun); t.after(fb.close);
+  // The same text, byte for byte, from two different runs.
+  const shared = bytesOf("identical-result");
+  const first = await publishDurableResultV1(configOf(fa, storage),
+    { binding: nativeBinding(firstRun), bytes: shared, receivedAt: at(9000), assertAuthority: () => {} });
+  const second = await publishDurableResultV1(configOf(fb, storage),
+    { binding: nativeBinding(secondRun), bytes: shared, receivedAt: at(9100), assertAuthority: () => {} });
+
+  assert.equal(first.replayed, false);
+  assert.equal(second.replayed, false);
+  // Content identity is preserved exactly: both recorded the same hash.
+  assert.equal(first.receipt.contentHash, second.receipt.contentHash);
+  // Run identity is what separates them, so the artifact ids differ. If they
+  // ever matched again the second publish would refuse exactly as it did.
+  assert.notEqual(first.receipt.artifactId, second.receipt.artifactId);
+  assert.match(first.receipt.artifactId, /^artifact:result:[a-f0-9]{64}$/);
+  assert.match(second.receipt.artifactId, /^artifact:result:[a-f0-9]{64}$/);
+  // Both artifacts exist and both hold the shared bytes.
+  assert.equal(storage.artifacts.size, 2);
+  assert.deepEqual(storage.artifacts.get(first.receipt.artifactId), shared);
+  assert.deepEqual(storage.artifacts.get(second.receipt.artifactId), shared);
+  // Each is readable under its own job only.
+  const readFirst = await fa.db.transaction(tx => readDurableResultV1(tx, fa.resultKey, "local",
+    (artifactId, signal) => storage.read(artifactId, signal), binding.tenantId, binding.projectId,
+    nativeBinding(firstRun).jobId, first.receipt.artifactId));
+  assert.equal(readFirst?.text, text("identical-result"));
+});
+
+test("a replay still returns the same receipt, and a second run cannot read the first run's artifact", async t => {
+  const storage = new ControlledStorage();
+  const firstRun = "run:durable-isolation-a", secondRun = "run:durable-isolation-b";
+  const fa = await setupWithProvision(firstRun); t.after(fa.close);
+  const fb = await setupWithProvision(secondRun); t.after(fb.close);
+  const first = await publishDurableResultV1(configOf(fa, storage),
+    { binding: nativeBinding(firstRun), bytes: bytesOf("isolation"), receivedAt: at(9000), assertAuthority: () => {} });
+  const second = await publishDurableResultV1(configOf(fb, storage),
+    { binding: nativeBinding(secondRun), bytes: bytesOf("isolation"), receivedAt: at(9100), assertAuthority: () => {} });
+
+  // Run-scoped ids keep replay stable for the run that already published.
+  const replayed = await publishDurableResultV1(configAfterRestart(fa, storage),
+    { binding: nativeBinding(firstRun), bytes: bytesOf("isolation"), receivedAt: at(9000), assertAuthority: () => {} });
+  assert.equal(replayed.replayed, true);
+  assert.deepEqual(replayed.receipt, first.receipt);
+
+  // The other run's artifact is not reachable through this job's result.
+  const crossRead = await fb.db.transaction(tx => readDurableResultV1(tx, fb.resultKey, "local",
+    (artifactId, signal) => storage.read(artifactId, signal), binding.tenantId, binding.projectId,
+    nativeBinding(secondRun).jobId, first.receipt.artifactId));
+  assert.equal(crossRead ?? null, null);
+  // Its own artifact still reads back correctly.
+  const ownRead = await fb.db.transaction(tx => readDurableResultV1(tx, fb.resultKey, "local",
+    (artifactId, signal) => storage.read(artifactId, signal), binding.tenantId, binding.projectId,
+    nativeBinding(secondRun).jobId, second.receipt.artifactId));
+  assert.equal(ownRead?.text, text("isolation"));
+});
