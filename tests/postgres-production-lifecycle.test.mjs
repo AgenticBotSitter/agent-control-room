@@ -2718,7 +2718,14 @@ function roleEditsWithoutObjects(sql, withheld, revocations) {
     // Asserts nothing but what the withheld down files take away: the release
     // being reconstructed did not have it, so neither does this database.
     if (asserted.every(item => revocations.has(item))) { pairs.push([statement, ""]); continue; }
-    const survivors = listed.filter(object => !objects.has(object));
+    // A FUNCTION object's name is its SIGNATURE, so it is matched by the bare name
+    // before the parenthesis -- and the `FUNCTION` keyword belongs to the LIST, so
+    // it is stripped before that. `withheldObjects` collects function NAMES (R4-B3),
+    // and comparing a whole signature against them never matches, which is what
+    // pruned every function grant from a baseline that legitimately holds most of
+    // them and made the down-rung comparison fail on all of them at once.
+    const bareName = object => object.replace(/^FUNCTION\s+/iu, "").split("(")[0].trim();
+    const survivors = listed.filter(object => !objects.has(bareName(object)));
     const held = rights.some(right => right.names.some(column =>
       listed.some(object => columns.has(`${object}.${column}`))));
     // Nothing withheld touches this grant: leave its text exactly as it is. The
@@ -2737,8 +2744,13 @@ function roleEditsWithoutObjects(sql, withheld, revocations) {
       // Every column this privilege named was withheld: it cannot be granted.
       return surviving.length === 0 ? [] : [`${right.privilege} (${surviving.join(",")})`];
     });
+    // The `FUNCTION` keyword is put back on the survivors when the ORIGINAL had
+    // it: it belongs to the object list in PostgreSQL's grammar, and rebuilding
+    // without it names a relation instead.
+    const isFunction = /^FUNCTION\s/iu.test(listedText.trim());
     pairs.push([statement, kept.length === 0 || survivors.length === 0 ? ""
-      : `GRANT ${kept.join(", ")} ON ${survivors.join(", ")} TO ${grantee};`]);
+      : `GRANT ${kept.join(", ")} ON ${isFunction
+        ? `FUNCTION ${survivors.map(bareName).join(", ")}` : survivors.join(", ")} TO ${grantee};`]);
   }
   for (const [verbatim] of pairs) assert.ok(sql.includes(verbatim),
     `role file no longer contains this grant verbatim: ${verbatim}`);
@@ -2834,6 +2846,15 @@ async function installMacRoleFiles(database, edits = {}) {
       ...(await client.query(`SELECT a.attname AS name FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public' AND a.attnum > 0 AND NOT a.attisdropped`)).rows.map(r => r.name),
+      // FUNCTIONS TOO (R4-B3), for the same reason relations and columns are. The
+      // pruner below reads this set to decide what a grant may name, and it reads
+      // a function's name as its BARE name (before the parenthesis), so that is
+      // what is added here. A database that HAS `planner_failure_scope_key` and
+      // does not list it read as absent, so its grant was pruned anyway and the
+      // down-rung comparison then demanded every function grant on a baseline
+      // that legitimately holds most of them.
+      ...(await client.query("SELECT p.proname AS name FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+        + " WHERE n.nspname = 'public'")).rows.map(r => r.name),
     ]);
     for (const file of MAC_ROLE_FILES) {
       let sql = await readFile(join(ROOT, "db/roles", file), "utf8");
