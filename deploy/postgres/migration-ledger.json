@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "89526e4ad0f8d004975559732c25f7dea64d866a3513596eda7202354c46c4d3",
+  "digest": "b77db6cac8cdbc14592f0aa2db78d8067fec610fb23c808ad9964d565de1dfbc",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -623,7 +623,7 @@
     {
       "file": "db/migrations/0152_pipeline_advance_unknown_cost.sql",
       "order": 104,
-      "sha256": "bbf0d1d3e8c2db34a7e2af242a23d7fa08c04efb4e6a3a57cd942a6f37cb3af3",
+      "sha256": "4e0c09fd02fbc1696aa30c379e22d11fb38a96c2b78e61006af57a805868ac72",
       "kind": "migrate"
     },
     {

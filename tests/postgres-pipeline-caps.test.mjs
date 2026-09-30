@@ -238,7 +238,7 @@ async function seedInstallation(client, suffix, key, at, { maxLoops = 1, maxTota
  * The attempt ids come from the rows the seed actually wrote, so the receipt's
  * foreign keys are satisfied by real data, not by a fabricated id. */
 function advanceService(coordinator, own, key, { accepted = new Set(), cost = { kind: "known", admittedCostMicroUsd: 10,
-  evidenceDigest: sha256Digest("cost") } } = {}) {
+  evidenceDigest: sha256Digest("cost") }, skipPrecheck = false } = {}) {
   // The attempt for a job is read from the REAL row the planner wrote, never from
   // a map frozen at seed time: a fix round mints a new attempt for the same
   // stage, and the receipt's foreign key must resolve to the row that exists.
@@ -256,7 +256,15 @@ function advanceService(coordinator, own, key, { accepted = new Set(), cost = { 
       return { receipt: { attemptId, leaseId: `lease:${value.jobId}`, leaseEpoch: 1 }, replayed: false };
     } },
     { enqueueAssignedInSession: async () => ({ queueId: `queue:caps-${++queued}`, replayed: false }) });
-  const service = new PipelineAdvanceServiceV1(coordinator.client, own.scope, key,
+  // `skipPrecheck` makes #precheckLoopStop inert by answering only its
+  // eligibility query with "not eligible". Every other statement is still the
+  // real production client, so the transaction's own loop count is left to do
+  // the refusing alone. Used to prove that second guard on its own.
+  const client = skipPrecheck ? { ...coordinator.client,
+    query: (sql, params) => /FROM pipeline_runs r/.test(String(sql))
+      ? Promise.resolve({ rows: [{ eligible: false }], rowCount: 1, command: "SELECT", fields: [] })
+      : coordinator.client.query(sql, params) } : coordinator.client;
+  const service = new PipelineAdvanceServiceV1(client, own.scope, key,
     { unattendedEnabled: () => true, capability }, () => webNow);
   return { service, accepted, queuedCount: () => queued };
 }
@@ -954,6 +962,55 @@ test("a run with no allowance record of its own is refused, not waved through", 
   assert.equal(queuedCount(), 0);
   assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts"
     + " WHERE tenant_id=$1", [own.tenantId])).rows[0].count, 0, "and it claims no receipt");
+});
+
+test("the in-transaction loop count refuses even when the pre-check is skipped", needsPg, async t => {
+  // #precheckLoopStop reads the job chain before the advance transaction opens;
+  // #claimLoopRound re-reads it inside the transaction under the run row lock.
+  // The second read is the only guard if the chain grows in between, so it is
+  // tested with the pre-check made inert. Nothing about the ceilings changes:
+  // the transaction's own count has to refuse on its own.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(69);
+
+  // max_loops 1: rounds 0 and 1 are admitted, round 2 is past the ceiling.
+  const own = await seedInstallation(admin, "inloop", key, new Date(webNow).toISOString(), { maxLoops: 1 });
+  const { service, accepted } = advanceService(coordinator, own, key, { skipPrecheck: true });
+  await ownerSetsUp(web, own, key, { runsPerHour: 100, runsPerAgentPerDay: 100, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  // Both admitted rounds go through the transaction's own count and succeed,
+  // which is itself half the proof: the count is live, not decorative.
+  assert.equal((await service.advance(own.pipeline.runId, own.policyId)).startsWork, true, "round 0 is admitted");
+  accepted.add(own.buildJob);
+  accepted.add(own.checkJob);
+  await rewindRunTo(admin, own, 0, key);
+  await reenterStage(admin, own, 0, key);
+  assert.equal((await service.advance(own.pipeline.runId, own.policyId)).stageOrdinal, 0, "round 1 is admitted");
+  await rewindRunTo(admin, own, 0, key);
+  await reenterStage(admin, own, 0, key);
+  assert.equal((await admin.query("SELECT count(*)::int count FROM control_jobs WHERE tenant_id=$1"
+    + " AND pipeline_run_id=$2 AND stage_ordinal=0", [own.tenantId, own.pipeline.runId])).rows[0].count, 3,
+  "a third build job is planned, one round past the ceiling");
+
+  // With the pre-check inert, ONLY the transaction's count can refuse this.
+  await assert.rejects(service.advance(own.pipeline.runId, own.policyId),
+    error => error.safeReason === "stage_loop_limit_reached",
+    "the transaction's own count must refuse a chain past the ceiling");
+  assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_stage_loop_counts"
+    + " WHERE tenant_id=$1 AND reason_code='stage_advanced'", [own.tenantId])).rows[0].count, 2,
+  "the refused round started no third round");
+  // And with the pre-check back on, the same run is still refused and the owner
+  // is told exactly once: the two guards agree.
+  const normal = advanceService(coordinator, own, key);
+  await assert.rejects(normal.service.advance(own.pipeline.runId, own.policyId),
+    error => error.safeReason === "stage_loop_limit_reached");
+  assert.equal((await admin.query("SELECT count(*)::int count FROM control_action_inbox WHERE id=$1",
+    [`attention:pipeline-loop:${own.pipeline.runId}`])).rows[0].count, 1,
+  "one Needs Attention item, written by the pre-check once it is back");
 });
 
 test("every S7b down file revokes only what its own up migration granted", needsPg, async t => {

@@ -20,4 +20,10 @@ ALTER TABLE pipeline_advance_receipts ADD CONSTRAINT pipeline_advance_receipts_c
   CHECK ((delegation_cost_state='known' AND delegation_cost_microusd IS NOT NULL
       AND delegation_cost_evidence_digest IS NOT NULL)
     OR (delegation_cost_state='unknown' AND delegation_cost_microusd IS NULL
-      AND delegation_cost_evidence_digest IS NULL));
+      AND delegation_cost_evidence_digest IS NULL)) NOT VALID;
+-- The constraint is NOT VALID, as 0109's equivalent is: the three columns were
+-- just added in this same file, so no pre-S7b row can violate the pairing, and
+-- validating in one scan would take a lock no migration this size should take.
+-- Every row written from here on is checked, which is what the pairing is for.
+-- The down file drops this constraint outright along with its own column, so no
+-- unvalidated constraint is left behind.
