@@ -29,8 +29,8 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "      WHERE tenant_id=$1 AND h.state='reserved' AND h.reserved_at<=$2",
-    "replace": "      WHERE tenant_id=$1 AND h.state='reserved' AND h.reserved_at<=$2 AND false",
+    "find": "      WHERE h.tenant_id=$1 AND h.state='reserved' AND h.reserved_at<=$2",
+    "replace": "      WHERE h.tenant_id=$1 AND h.state='reserved' AND h.reserved_at<=$2 AND false",
     "test": "pnpm run test:owner-push:postgres",
     "why": "a dispatcher killed between the reservation and the settle leaves a row no tick can ever pick up, so that stall is never pushed for at all"
   },
@@ -43,8 +43,8 @@
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
-    "find": "      if (deliveredCount === 0 && result.deduplicated === 0 && result.removed === 0)",
-    "replace": "      if (false)",
+    "find": "    if (!sendFailure) {\n      // No subscription, or a channel that reported success while delivering",
+    "replace": "    if (false) {\n      // No subscription, or a channel that reported success while delivering",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
     "why": "no-subscription is distinguished from send-failure by the failure report, never by the counters alone"
   },

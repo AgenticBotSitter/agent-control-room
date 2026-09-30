@@ -221,17 +221,31 @@ test("real PostgreSQL: two dispatchers racing one item deliver it exactly once",
       const channel: OwnerNotificationChannelV1 = { kind: "web-push",
         async send() { sends++; return { statusCode: 201 }; } };
       for (let index = 0; index < 20; index++) await openAttention(admin, `attention:supervisor:race-${index}`);
-      const make = () => new OwnerPushDispatcherV1({ db, tenantId: TENANT, store, channel });
-      // Two dispatchers, the SAME item set, started together. SKIP LOCKED makes
-      // one of them walk past the rows the other holds; the compare-and-set on
-      // (state, attempt_count) is what actually prevents a double send.
-      const [left, right] = await Promise.all([make().dispatch(), make().dispatch()]);
-      assert.equal(sends, 20, "each of the 20 items was sent exactly once across two racing dispatchers");
-      assert.equal(left.length + right.length, 20, "every item is accounted for by exactly one dispatcher");
+      // Two dispatchers on INDEPENDENT connections. Sharing one client made this
+      // test pass for the wrong reason: the pool serialises a single client, so
+      // the second dispatcher never overlapped the first and the claim's
+      // exclusivity was never exercised. Two connections are what a second
+      // host process would have, and the only shape in which SKIP LOCKED and the
+      // compare-and-set mean anything.
+      const make = () => new OwnerPushDispatcherV1({ db: asClient(postgres.connection("web")), tenantId: TENANT,
+        store: new PostgresOwnerPushStoreV1(asClient(postgres.connection("web"))), channel,
+        clock: () => Date.now() });
+      const left = make(), right = make();
+      // Ten rounds of a genuine overlap: a single round can pass by luck, and a
+      // guard that only fails under contention must be contended with. Round 0 is
+      // the one that delivers; every round after it must find nothing at all,
+      // because every item is terminal.
+      for (let round = 0; round < 10; round++) {
+        const outcomes = (await Promise.all([left.dispatch(), right.dispatch()])).flat();
+        assert.equal(outcomes.length, round === 0 ? 20 : 0,
+          `round ${round}: only the first round may claim items, and then each exactly once`);
+        assert.equal(sends, 20, `round ${round}: each of the 20 items was sent exactly once across two racing dispatchers`);
+      }
       const rows = (await heads(admin)).rows;
       assert.equal(rows.length, 20);
       assert.ok(rows.every(row => row.state === "delivered"));
-      assert.ok(rows.every(row => Number(row.attempt_count) === 1), "no item was attempted twice");
+      assert.ok(rows.every(row => Number(row.attempt_count) === 1),
+        "no item was attempted twice across ten rounds of two racing dispatchers");
     } finally { await admin.end(); }
   }, { port: PORT + 2, allowedPorts: PORTS, database: "control_room", boundMs: 180_000 });
 });
@@ -288,6 +302,44 @@ test("real PostgreSQL: a crash mid-send is recovered, and the ledger suppresses 
       assert.equal(Number(row.attempt_count), 2, "the crash still spent an attempt, which is the safe direction");
     } finally { await admin.end(); }
   }, { port: PORT + 3, allowedPorts: PORTS, database: "control_room", boundMs: 180_000 });
+});
+
+test("real PostgreSQL: a subscription the push service reports as gone stops for good",
+  required ? undefined : { skip: realPostgresSkipMessage() }, async () => {
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    try {
+      await admin.query("INSERT INTO tenants(id,display_name) VALUES($1,'Push gone')", [TENANT]);
+      await subscribe(admin, `push:${"f".repeat(64)}`);
+      const db = asClient(postgres.connection("web"));
+      const store = new PostgresOwnerPushStoreV1(db);
+      let millis = Date.now();
+      let sends = 0;
+      // 404/410: the browser subscription is permanently gone. The push service
+      // says so and `deliverOwnerPushV1` removes the subscription, so the item
+      // must stop immediately -- spending the bounded attempts reaching nothing
+      // would be eight sends to a subscription that no longer exists.
+      const gone: OwnerNotificationChannelV1 = { kind: "web-push", async send() { sends++; throw { statusCode: 410 }; } };
+      await openAttention(admin, "attention:supervisor:gone");
+      const dispatcher = new OwnerPushDispatcherV1({ db, tenantId: TENANT, store, channel: gone, clock: () => millis });
+      const outcomes = await dispatcher.dispatch();
+      assert.equal(outcomes.length, 1);
+      assert.equal(outcomes[0]!.result, "exhausted",
+        "a permanently undeliverable item stops rather than retrying");
+      const row = (await heads(admin)).rows[0]!;
+      assert.equal(row.state, "failed");
+      assert.equal(row.safe_reason_code, "owner_push_subscription_gone",
+        "and says WHY, which is the actionable reason rather than the attempt bound");
+      assert.equal(Number(row.attempt_count), 1, "it spent exactly one send, not the whole budget");
+      // The subscription really was removed, so the next tick has nothing to try.
+      const subs = await admin.query("SELECT count(*)::int AS n FROM owner_web_push_subscriptions WHERE tenant_id=$1", [TENANT]);
+      assert.equal(subs.rows[0]!.n, 0, "the dead subscription is gone from the ledger");
+      // And it is never picked up again, however far the clock moves.
+      millis += 24 * 60 * 60 * 1000;
+      assert.equal((await dispatcher.dispatch()).length, 0, "a failed head is never claimed again");
+      assert.equal(sends, 1, "and the endpoint was contacted exactly once");
+    } finally { await admin.end(); }
+  }, { port: PORT + 6, allowedPorts: PORTS, database: "control_room", boundMs: 180_000 });
 });
 
 test("real PostgreSQL: the 0225 guard refuses to re-alert for a delivered stall",
@@ -379,8 +431,15 @@ test("real PostgreSQL: a wedged endpoint holds no database connection or row loc
       } };
       for (let index = 0; index < 10; index++) await openAttention(admin, `attention:supervisor:slow-${index}`);
       const started = Date.now();
-      const runs = await Promise.all(Array.from({ length: 10 },
-        () => new OwnerPushDispatcherV1({ db, tenantId: TENANT, store, channel: slowChannel, clock: () => millis }).dispatch()));
+      // Ten dispatchers on TEN INDEPENDENT connections, all racing for the same
+      // ten items: the worst case for lock contention, and the only shape in
+      // which a lock held across a send would show up. One shared client would
+      // serialise them and hide exactly what this test exists to find.
+      const runs = await Promise.all(Array.from({ length: 10 }, () => {
+        const own = asClient(postgres.connection("web"));
+        return new OwnerPushDispatcherV1({ db: own, tenantId: TENANT, store: new PostgresOwnerPushStoreV1(own),
+          channel: slowChannel, clock: () => millis }).dispatch();
+      }));
       const outcomes = runs.flat();
       assert.equal(outcomes.length, 10, "each of the ten items is claimed by exactly one dispatcher");
       assert.ok(outcomes.every(outcome => outcome.result === "retry_scheduled"),
