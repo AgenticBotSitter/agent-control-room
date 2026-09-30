@@ -152,7 +152,7 @@ async function journeyFixture(t: TestContext): Promise<Journey> {
   const app = createMacLocalWebProcessV1({ origin, workspaceId: configuration.workspaceId, clock: () => nowMs,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: configuration.tenantId,
       provider: trust.issuer, subject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: opened.client, close: async () => {} }, planning,
+    database: { client: opened.client, close: async () => {}, isAvailable: () => true }, planning,
     workerReadiness: { read: () => [{ kind: "codex" as const, state: "ready" as const, proof: "proven" as const }] },
     taskWorkersStarted: true,
   });

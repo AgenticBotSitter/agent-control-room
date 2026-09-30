@@ -1,15 +1,15 @@
 import { appendAuditWith } from "../../audit/audit-store";
 import { CanonicalStore } from "../../persistence/canonical-store";
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateIsAnyV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema, requestRecordSchema, workflowRecordSchema,
   type JobRecord } from "../../domain/v1";
 import { sha256Digest } from "../../security";
-import { moveFleetEntityV1, readFleetEntityV1, type FleetActorV1 } from "./canonical-transitions";
+import { moveFleetEntityV1, readFleetEntityV1, type Entity, type FleetActorV1 } from "./canonical-transitions";
 import { fleetFail, FleetErrorV1 } from "./errors";
 import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_PATTERN_V1,
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
-  plainSha256V1, randomHexV1 } from "./identifiers";
+  FLEET_WORKER_KINDS_V1, plainSha256V1, randomHexV1 } from "./identifiers";
 import type { TaskProjectEventWriterV1 } from "../../project-events/v1/task-lifecycle";
 
 /** Authenticated machine principal. It is derived from the credential digest
@@ -154,11 +154,13 @@ export class FleetGatewayStoreV1 {
 
   /** Redeems one enrollment code. The machine generated its credential locally
    * and sends only the digest, so no secret travels back in the response. */
-  async enroll(input: Readonly<{ code: unknown; credentialDigest: unknown; platform: unknown; architecture: unknown;
+  async enroll(input: Readonly<{ code: unknown; workerKind: unknown; credentialDigest: unknown; platform: unknown; architecture: unknown;
     connectorVersion: unknown; clientNonce: unknown }>) {
     const code = typeof input.code === "string" && FLEET_CODE_PATTERN_V1.test(input.code) ? input.code : fleetFail("unauthenticated");
     const credentialDigest = typeof input.credentialDigest === "string" && FLEET_DIGEST_PATTERN_V1.test(input.credentialDigest)
       ? input.credentialDigest : fleetFail("invalid");
+    const workerKind = typeof input.workerKind === "string" && FLEET_WORKER_KINDS_V1.includes(input.workerKind as never)
+      ? input.workerKind : fleetFail("invalid");
     const platform = platforms[input.platform as keyof typeof platforms] ?? fleetFail("invalid");
     const architecture = typeof input.architecture === "string" && /^[a-z0-9_]{2,16}$/u.test(input.architecture)
       ? input.architecture : fleetFail("invalid");
@@ -176,6 +178,9 @@ export class FleetGatewayStoreV1 {
       // One refusal for unknown, cancelled and expired codes. A committed
       // redemption remains replayable only by the same pending connector.
       if (!row) return fleetFail("unauthenticated");
+      // This check is in the redemption transaction, so a mismatch consumes
+      // nothing and creates no worker or credential.
+      if (row.worker_kind !== workerKind) return fleetFail("worker_kind_mismatch");
       const linked = fleetWorkerLinkedIdsV1(row.worker_id);
       if (row.replayed) {
         const credential = (await tx.query<{ expires_at: string | Date }>(`SELECT expires_at FROM fleet_worker_credentials
@@ -228,7 +233,7 @@ export class FleetGatewayStoreV1 {
           expires_at,source_code_id) VALUES($1,$2,$3,$4,'active',$5,$6,$7)`,
         [this.#tenantId, credentialId, row.worker_id, credentialDigest, now, expiresAt, row.id]);
       } catch (error) {
-        if ((error as { code?: string }).code === "23505") return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["23505"])) return fleetFail("conflict");
         throw error;
       }
       await this.#presence(tx, row.worker_id, connectorVersion, platform, now);
@@ -320,7 +325,7 @@ export class FleetGatewayStoreV1 {
           expires_at,rotated_from_credential_id) VALUES($1,$2,$3,$4,'active',$5,$6,$7)`,
         [this.#tenantId, credentialId, principal.workerId, digest, now, expiresAt, current.credential_id]);
       } catch (error) {
-        if ((error as { code?: string }).code === "23505") return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["23505"])) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-rotate:${credentialId.slice(17)}`, tenantId: this.#tenantId,
@@ -418,7 +423,7 @@ export class FleetGatewayStoreV1 {
           idempotencyKey, now]);
       } catch (error) {
         // The database guard refuses revoked, out-of-scope, over-capacity and doubly-leased claims.
-        if (["P0001", "23505", "23503"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["P0001", "23505", "23503"])) return fleetFail("conflict");
         throw error;
       }
       const claimed = await canonical.claimReadyTaskJob({ tenantId: this.#tenantId, jobId: job.id,
@@ -436,7 +441,7 @@ export class FleetGatewayStoreV1 {
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.#tenantId, claimed.lease.id, offer.project_id, job.id,
           claimed.attempt.id, principal.nodeId, scope.scope_kind, scope.path_fold]);
       } catch (error) {
-        if (["23P01", "23514"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["23P01", "23514"])) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-claim:${suffix}`, tenantId: this.#tenantId, projectId: offer.project_id,
@@ -499,7 +504,7 @@ export class FleetGatewayStoreV1 {
         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [this.#tenantId, eventId, claim.claim_id, principal.workerId, kind, message,
         idempotencyKey, now]);
     } catch (error) {
-      if ((error as { code?: string }).code === "P0001") return fleetFail("expired");
+      if (databaseSqlStateIsAnyV1(error, ["P0001"])) return fleetFail("expired");
       throw error;
     }
     return { eventId, replayed: false };
@@ -620,7 +625,7 @@ export class FleetGatewayStoreV1 {
         [this.#tenantId, resultId, index + 1, file.name, file.mediaType, file.content.byteLength, bytesSha256V1(file.content),
           Buffer.from(file.content)]);
       } catch (error) {
-        if ((error as { code?: string }).code === "P0001") return fleetFail("expired");
+        if (databaseSqlStateIsAnyV1(error, ["P0001"])) return fleetFail("expired");
         throw error;
       }
       const base = { key: claim.claim_id, occurredAt: now, actor: workerActor(principal), metadata: { resultId } };
@@ -655,13 +660,15 @@ export class FleetGatewayStoreV1 {
   }
 
   /**
-   * Applies owner decisions and elapsed leases to canonical state. Idempotent
-   * and bounded; safe to call after every owner action and on a timer. The
-   * database refuses any job move here that the owner did not record.
+   * Applies owner decisions and revocations to canonical state. Idempotent and
+   * bounded; safe to call after every owner action and on a timer. Lease expiry
+   * belongs exclusively to SupervisorReconcilerV1, including for fleet work,
+   * so one durable lapse counter decides whether another attempt is allowed.
+   * The database refuses any job move here that the owner did not record.
    */
   async reconcile() {
     const now = this.#now();
-    const applied = { reviews: 0, revocations: 0, expiredLeases: 0 };
+    const applied = { reviews: 0, revocations: 0, leaseRevocations: 0 };
     const reviews = (await this.db.query<{ review_id: string; result_id: string; decision: string; claim_id: string;
       job_id: string; attempt_id: string; project_id: string }>(`SELECT rv.review_id,rv.result_id,rv.decision,r.claim_id,
         r.job_id,r.attempt_id,r.project_id FROM fleet_result_reviews rv
@@ -707,40 +714,102 @@ export class FleetGatewayStoreV1 {
           updated_at=GREATEST(updated_at,$3::timestamptz) WHERE tenant_id=$1 AND identity_id=$2 AND revoked_at IS NULL`,
         [this.#tenantId, worker.identity_id, now]);
         const node = await readFleetEntityV1(tx, this.#tenantId, "node", worker.node_id);
-        if (node.state !== "revoked") await moveFleetEntityV1(tx, node, "revoked", { key: worker.worker_id, occurredAt: now,
-          actor: gatewayActor, metadata: { reason: "owner_revoked_worker" } });
+        // Every one of these steps is a compare-and-set against a row another
+        // reconciler may have moved first. A conflict here means the other one
+        // already applied the revocation, which is the outcome this pass exists
+        // to produce, so it is not an error: the pass is idempotent by design.
+        try {
+          if (node.state !== "revoked") await moveFleetEntityV1(tx, node, "revoked", { key: worker.worker_id,
+            occurredAt: now, actor: gatewayActor, metadata: { reason: "owner_revoked_worker" } });
+        } catch (error) {
+          if (!isFleetErrorV1(error) || error.code !== "conflict") throw error;
+        }
+        // Fleet's counterpart of the local Stop path. The owner's revocation is
+        // a deliberate withdrawal, not a stall, so the in-flight lease leaves
+        // the active set exactly as the supervisor's candidate query looks for
+        // one. Without this, the supervisor -- now the sole expiry owner --
+        // would find the abandoned lease just as it finds a genuine stall,
+        // count a lapse, and on a second lapse raise a Needs-you item for work
+        // the owner took back on purpose.
+        //
+        // The move runs through moveFleetEntityV1, not CanonicalStore
+        // .revokeLease, because 0140's gateway job guard admits `orphaned` but
+        // not `cancelled`, and that guard cannot be widened here: the fleet
+        // login is not allowed to cancel work on its own. `ready` is likewise
+        // refused once the claim has been withdrawn, so the job is left
+        // `orphaned`, where the owner's own flows (task-service's Needs-you
+        // query, the assignment coordinator's reassignment) already pick it
+        // up. Nothing is marked done.
+        applied.leaseRevocations += await this.#revokeWorkerLeases(tx, worker, now);
         applied.revocations += 1;
       });
     }
-    // Leases that elapsed without a result: the attempt is orphaned and the
-    // task returns to the open offer. Nothing is re-run silently: the next
-    // claim is a new attempt with a new lease epoch.
-    const elapsed = (await this.db.query<{ claim_id: string; job_id: string; attempt_id: string; lease_id: string }>(
-      `SELECT fc.claim_id,fc.job_id,fc.attempt_id,fc.lease_id FROM fleet_claims fc
-      JOIN control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id
-      WHERE fc.tenant_id=$1 AND l.state='active' AND l.expires_at<=$2::timestamptz AND l.expires_at<=statement_timestamp()
-      ORDER BY l.expires_at LIMIT 50`, [this.#tenantId, now])).rows;
-    for (const claim of elapsed) {
-      await this.db.transaction(async tx => {
-        const job = await readFleetEntityV1(tx, this.#tenantId, "job", claim.job_id);
-        const attempt = await readFleetEntityV1(tx, this.#tenantId, "attempt", claim.attempt_id);
-        const lease = await readFleetEntityV1(tx, this.#tenantId, "lease", claim.lease_id);
-        if (lease.state !== "active") return;
-        const result = await new CanonicalStore(joined(tx)).expireLease({ tenantId: this.#tenantId, leaseId: lease.id,
-          jobId: job.id, attemptId: attempt.id, expectedLeaseVersion: lease.version, expectedJobVersion: job.version,
-          expectedAttemptVersion: attempt.version, epoch: lease.epoch, transitionId: `transition:fleet-expire:${claim.claim_id.slice(12)}`,
-          idempotencyKey: `fleet-expire:${claim.claim_id.slice(12)}`, actor: { actorId: gatewayActor.actorId, actorType: "service" },
-          occurredAt: now });
-        const offer = (await tx.query<{ state: string }>(`SELECT state FROM fleet_work_offers WHERE tenant_id=$1 AND job_id=$2`,
-          [this.#tenantId, job.id])).rows[0];
-        if (result.job.state === "orphaned" && offer?.state === "open") await moveFleetEntityV1(tx,
-          await readFleetEntityV1(tx, this.#tenantId, "job", job.id), "ready",
-          { key: `${claim.claim_id}:expired`, occurredAt: now, actor: gatewayActor, metadata: { reason: "lease_elapsed" } });
-        await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2", [this.#tenantId, lease.id]);
-        applied.expiredLeases += 1;
-      });
-    }
     return Object.freeze(applied);
+  }
+
+  /** Moves an entity unless a racing reconciler already did. `skipWhen` names
+   * the states this path deliberately leaves alone -- an attempt waiting on an
+   * owner decision keeps its stored result, and a job awaiting the owner is
+   * theirs to decide. A conflict means the other reconciler won, which is the
+   * outcome this pass exists for, so it is reported as already-applied rather
+   * than thrown. Any other error propagates. */
+  async #moveOrAlready<T extends Entity>(tx: DatabaseSession, entity: T, toState: T["state"],
+    base: Readonly<{ key: string; occurredAt: string; actor: FleetActorV1; metadata?: Record<string, unknown>;
+      patch?: Record<string, unknown> }>, skipWhen?: string): Promise<boolean> {
+    if (entity.state === toState || (skipWhen && entity.state === skipWhen)) return false;
+    try {
+      await moveFleetEntityV1(tx, entity, toState, base);
+      return true;
+    } catch (error) {
+      if (isFleetErrorV1(error) && error.code === "conflict") return false;
+      throw error;
+    }
+  }
+
+  /** Every live lease this worker's claims still hold, revoked through the
+   * shared fleet transition path. Bounded and idempotent: a lease already out
+   * of `active` is left alone, so a repeated reconcile, a concurrent sweep or
+   * a second revocation neither throws nor double-counts. */
+  async #revokeWorkerLeases(tx: DatabaseSession, worker: { worker_id: string }, now: string): Promise<number> {
+    const rows = (await tx.query<{ job_id: string; attempt_id: string; lease_id: string }>(
+      `SELECT l.job_id,l.attempt_id,l.id AS lease_id FROM fleet_claims fc
+      JOIN control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id
+      WHERE fc.tenant_id=$1 AND fc.worker_id=$2 AND l.state='active' ORDER BY fc.claimed_at LIMIT 50`,
+    [this.#tenantId, worker.worker_id])).rows;
+    let revoked = 0;
+    for (const row of rows) {
+      // Lock the lease before reading it. The candidate list above is a snapshot
+      // taken before any lock, so a second reconciler can hold the same row; the
+      // lock is what serializes them, and the re-read after it is what decides
+      // who wins. Without the lock the loser's re-read races the winner's write
+      // and both proceed to the same deterministic transition id, where the
+      // unique constraint on (tenant, entity_kind, entity_id, idempotency_key)
+      // turns an ordinary race into a 23505 that escapes reconcile().
+      const locked = await tx.query<{ id: string; state: string }>(
+        "SELECT id,state FROM control_leases WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+      [this.#tenantId, row.lease_id]);
+      const lease = await readFleetEntityV1(tx, this.#tenantId, "lease", row.lease_id);
+      // Re-read under the lock: the reconciler that lost the race sees a lease
+      // that is no longer active and stops here.
+      if (!locked.rows.length || locked.rows[0]!.state !== "active" || lease.state !== "active") continue;
+      const attempt = await readFleetEntityV1(tx, this.#tenantId, "attempt", row.attempt_id);
+      const job = await readFleetEntityV1(tx, this.#tenantId, "job", row.job_id);
+      const base = { key: `${worker.worker_id}:${lease.id}`, occurredAt: now, actor: gatewayActor,
+        metadata: { reason: "owner_revoked_worker", leaseId: lease.id } };
+      // As with the node above, a losing compare-and-set means the twin already
+      // applied this revocation. Each move is independent, so a skipped one
+      // never skips the rest, and the scope release always runs. Only the lease
+      // move decides the count: this pass revoked this worker's lease, whether
+      // it won the move or found it already made by its twin.
+      const leaseMoved = await this.#moveOrAlready(tx, lease, "revoked", base);
+      await this.#moveOrAlready(tx, attempt, "cancelled",
+        { ...base, patch: { finishedAt: now, safeFailureCode: "worker_revoked" } }, "waiting");
+      await this.#moveOrAlready(tx, job, "orphaned", base, "waiting_approval");
+      await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+        [this.#tenantId, lease.id]);
+      if (leaseMoved) revoked += 1;
+    }
+    return revoked;
   }
 }
 
