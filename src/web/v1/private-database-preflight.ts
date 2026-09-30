@@ -57,7 +57,17 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // 0206-0208: the result-file catalog and its download grants. Read only; the
   // preflight's column audit is what proves the web login cannot write a
   // catalog row, cannot quarantine a file and cannot rewrite a producer.
-  "control_result_file_sets", "control_result_files", "control_result_file_download_grants"] as const;
+  "control_result_file_sets", "control_result_files", "control_result_file_download_grants",
+  // 0212-0213: the owner's read of text-copy derivations. It is a VIEW, not the
+  // table, and that is the whole point: the view is owned by the schema owner and
+  // re-checks the caller's own live owner grant over the row's project, so the
+  // owner can read the derivations of a project it may read results in while
+  // holding no SELECT on control_text_copy_derivations itself. Declaring the view
+  // here is what makes the preflight's "every table the role files grant is one
+  // the preflight accepts" guard pass; the underlying table is deliberately NOT
+  // declared, so a future grant of it on the web login fails this check rather
+  // than quietly widening the owner to a tenant-wide read.
+  "control_project_text_copy_derivations"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",

@@ -24,7 +24,13 @@ import type { TextCopyDerivationResult } from "../src/converter/v1/text-copy-por
 import { Client } from "pg";
 
 const PG_BIN = "/opt/homebrew/opt/postgresql@17/bin";
-const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59420);
+// This suite's OWN port block, read from TEXT_COPY_DERIVATION_PG_PORT_BASE and
+// defaulting to the block assigned to this stream. It deliberately does NOT read
+// CONTROL_ROOM_PG_TEST_PORT_BASE: several suites in this repository read that one
+// and assert their own port is inside their own block, so sharing it put
+// result-file-catalog-postgres out of range and failed it with
+// attack_kit_port_outside_block — a failure in a suite this work never touches.
+const PORT = Number(process.env.TEXT_COPY_DERIVATION_PG_PORT_BASE ?? 59420);
 const ALLOWED = Array.from({ length: 10 }, (_, index) => PORT + index);
 const pgBin = resolvePgBin(PG_BIN);
 const skip = pgBin === null ? realPostgresSkipMessage(PG_BIN) : false;
