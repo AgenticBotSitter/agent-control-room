@@ -87,7 +87,7 @@ $$;
 
 CREATE TABLE IF NOT EXISTS updater.backup_generations (
   generation_id text PRIMARY KEY CHECK (generation_id ~
-    '^backup:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{3}Z$'),
+    '^backup:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{4}Z$'),
   -- 'verified' means the dump was written, hashed, restore-verified into a
   -- scratch cluster and compared. Nothing else may ever set it: see
   -- guard_backup_generation_immutable() and the shape constraint.
@@ -298,11 +298,28 @@ BEGIN
       RAISE EXCEPTION 'updater backup generation content is immutable' USING ERRCODE = '23514';
     END IF;
   ELSE
-    -- The one permitted transition, stated rather than left to the shape
-    -- constraint: an in-flight attempt may complete, and it may complete only
-    -- into `verified` with the failure cleared.
-    IF NEW.state <> 'verified' OR NEW.failure_code IS NOT NULL THEN
-      RAISE EXCEPTION 'updater backup generation may only complete in flight' USING ERRCODE = '23514';
+    -- The in-flight row may be settled EITHER WAY, and both directions are
+    -- spelled out rather than left to the shape constraint:
+    --   * completed:  failed/backup_in_progress -> verified, failure cleared, with
+    --     every digest present (the shape constraint checks that);
+    --   * failed:     failed/backup_in_progress -> failed, with a REAL failure
+    --     code that is not the in-flight marker, and no digest at all.
+    --
+    -- The second direction was missing at first, and its absence is a serious
+    -- bug rather than a strictness win: a disk-full or a verify failure could
+    -- not be recorded, so the row stayed `backup_in_progress` forever, the
+    -- operator reading the ledger saw an attempt that was mysteriously still
+    -- running, and the failure count never moved. Measured: the disk-full row
+    -- read back as `backup_in_progress` instead of `updater_backup_disk_full`.
+    IF NEW.state = 'verified' AND NEW.failure_code IS NULL THEN
+      NULL; -- the completion path; the shape constraint carries the rest
+    ELSIF NEW.state = 'failed' AND NEW.failure_code IS NOT NULL
+        AND NEW.failure_code <> 'backup_in_progress'
+        AND NEW.dump_sha256 IS NULL AND NEW.dump_bytes IS NULL AND NEW.file_sha256 IS NULL
+        AND NEW.shape_digest IS NULL AND NEW.row_counts_digest IS NULL THEN
+      NULL; -- the failure path
+    ELSE
+      RAISE EXCEPTION 'updater backup generation may only settle in flight' USING ERRCODE = '23514';
     END IF;
   END IF;
   IF NEW.retain_until IS NOT NULL AND OLD.retain_until IS NOT NULL AND NEW.retain_until < OLD.retain_until THEN

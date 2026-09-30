@@ -401,15 +401,6 @@ export class UpdaterBackupV1 {
     // subprocess in it, and this is a root-held file.
     const fileSha256 = await sha256FileV1(dumpPath, undefined);
     if (fileSha256 !== dumped.sha256) throw UpdaterBackupV1.#refuse("updater_backup_dump_digest_mismatch");
-    // TIGHTEN THE MODE, here rather than in the port. `pg_dump` is a child
-    // process and chooses its own output mode under the updater's umask — a real
-    // 0644 was observed on this Mac — so a group- or world-readable dump on
-    // root's disk is possible unless root tightens it itself. The port is
-    // untrusted for exactly the reason the digest re-read above is: it contains a
-    // subprocess. `assertSafeGenerationV1` then refuses any generation whose dump
-    // is still loose, so a port that skipped this is caught on the next sweep
-    // rather than trusted here.
-    await chmod(dumpPath, 0o400);
     // The evidence is the SHAPE digest and the row counts, not the release's
     // ownership-bearing schema digest. A restore runs with `--no-owner` (R9.3
     // step 4: `--no-owner --role=control_room_migrator`), so every restored object
@@ -446,12 +437,20 @@ export class UpdaterBackupV1 {
     // The file digest AFTER sealing, so the manifest records the bytes that are
     // actually on disk. The plaintext digest above is what the source evidence
     // is compared against, which is why both exist.
-    // The seal port also rewrites the dump through a child process, so the mode
-    // is tightened again after it. Doing it once before the seal would leave the
-    // SEALED file at whatever mode `openssl` chose, which is the file that stays
-    // on the external drive.
-    if (encrypted) await chmod(dumpPath, 0o400);
     const sealedSha256 = encrypted ? await sha256FileV1(dumpPath, undefined) : fileSha256;
+    // TIGHTEN THE MODE, HERE AND ONLY HERE — after the last write and after the
+    // last read. `pg_dump` and `openssl` are both child processes and each chose
+    // its own output mode under the updater's umask (a real 0644 was observed on
+    // this Mac), so a group- or world-readable dump is possible unless root
+    // tightens it itself. It cannot be done earlier: the restore-verify and the
+    // seal both need to read and rewrite this file, and 0400 is unreadable to
+    // anything but the owner — measured as `EACCES: permission denied` when the
+    // chmod was moved ahead of the seal. The port is untrusted for the same
+    // reason the digest re-read above is: it contains a subprocess.
+    // `assertSafeGenerationV1` refuses any generation whose dump is still loose,
+    // so a generation left readable by some future path is caught on the next
+    // sweep rather than trusted here.
+    await chmod(dumpPath, 0o400);
     const manifest = backupManifestV1({ generationId, createdAt: this.clock().toISOString(),
       dumpSha256: dumped.sha256, dumpBytes: dumped.bytes, fileSha256: sealedSha256,
       shapeDigest: source.shapeDigest, rowCounts: source.rowCounts, snapshotXid: source.snapshotXid ?? null,

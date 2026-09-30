@@ -36,15 +36,15 @@ test("the generation-id grammar is the SAME in the DDL CHECK and in the store", 
   // PATTERNS, not as textually similar strings. A {2} where the store says {3}
   // is invisible to a string comparison and fatal at run time.
   const ddlPattern = new RegExp(check[1], "u");
-  const sample = "backup:2026-09-30T13-18-22-471Z";
+  const sample = "backup:2026-09-30T13-18-22-4712Z";
   assert.ok(ddlPattern.test(sample),
     `the DDL grammar must accept a real generation id (${sample})`);
   // The store's own assertion must accept exactly the same set. Rather than
   // duplicating the regex, drive the store's exported function.
-  assert.equal(generationLeafV1(sample), "2026-09-30_13-18-22-471",
+  assert.equal(generationLeafV1(sample), "2026-09-30_13-18-22-4712",
     "the store accepts the id and renders the leaf the sweep will look for");
   for (const bad of ["backup:2026-09-30T13-18-22Z", "backup:2026-09-30T13-18-22-4Z", "backup:../etc",
-    "backup:2026-09-30T13-18-22-471", "backup:2026-09-30T13-18-22-4711Z", ""]) {
+    "backup:2026-09-30T13-18-22-471", "backup:2026-09-30T13-18-22-47123Z", ""]) {
     assert.throws(() => generationLeafV1(bad), /updater_backup_generation_refused/u,
       `the store must refuse ${JSON.stringify(bad)}`);
     assert.equal(ddlPattern.test(bad), false,
@@ -52,8 +52,8 @@ test("the generation-id grammar is the SAME in the DDL CHECK and in the store", 
   }
   // The leaf transform must be injective over the grammar: two distinct ids can
   // never render to one directory name, or retention deletes the wrong one.
-  const ids = ["backup:2026-01-01T02-30-00-000Z", "backup:2026-01-01T02-30-00-001Z",
-    "backup:2026-01-01T02-30-01-000Z", "backup:2026-01-02T02-30-00-000Z"];
+  const ids = ["backup:2026-01-01T02-30-00-0001Z", "backup:2026-01-01T02-30-00-0012Z",
+    "backup:2026-01-01T02-30-01-0003Z", "backup:2026-01-02T02-30-00-0004Z"];
   const leaves = ids.map(generationLeafV1);
   assert.equal(new Set(leaves).size, ids.length, "distinct ids must render to distinct leaves");
   for (const leaf of leaves) assert.doesNotMatch(leaf, /[/\\]/u, "a leaf is one path component");
@@ -71,8 +71,16 @@ test("the in-flight completion path the store depends on is present in the trigg
   const body = guard[0];
   assert.match(body, /OLD\.failure_code <> 'backup_in_progress'/u,
     "the guard must be conditional on the row being in flight, or no backup can ever complete");
-  assert.match(body, /NEW\.state <> 'verified'/u,
-    "an in-flight row must only be allowed to complete into `verified`");
+  // BOTH settle directions must be present. A guard that only allowed the
+  // completion was a real bug: a disk-full or a verify failure could not be
+  // recorded at all, so its row stayed `backup_in_progress` forever and the
+  // failure count never moved. Measured on a real cluster.
+  assert.match(body, /NEW\.state = 'verified' AND NEW\.failure_code IS NULL/u,
+    "an in-flight row must be allowed to complete into `verified` with the failure cleared");
+  assert.match(body, /ELSIF NEW\.state = 'failed' AND NEW\.failure_code IS NOT NULL/u,
+    "AND to settle as failed with a real code, or no failure can ever be recorded");
+  assert.match(body, /NEW\.failure_code <> 'backup_in_progress'/u,
+    "and the in-flight marker is not itself a failure code");
   // And the direction matters: a verified row must not be rewritable.
   assert.match(body, /IF NEW\.generation_id IS DISTINCT FROM OLD\.generation_id THEN/u,
     "the primary key must be immutable even on the completion path");
@@ -129,7 +137,7 @@ test("the backup root policy requires a seal outside the install root and refuse
 
 test("a manifest is refused without every digest, and carries both for a sealed dump", () => {
   const digest = `sha256:${"a".repeat(64)}`;
-  const good = { generationId: "backup:2026-09-30T13-18-22-471Z", createdAt: "2026-09-30T19:18:22.000Z",
+  const good = { generationId: "backup:2026-09-30T13-18-22-4712Z", createdAt: "2026-09-30T19:18:22.000Z",
     dumpSha256: digest, dumpBytes: 100, fileSha256: `sha256:${"b".repeat(64)}`, shapeDigest: `sha256:${"c".repeat(64)}`,
     rowCounts: [{ table: "t", count: 1 }], snapshotXid: null, encrypted: true, installRoot: "/opt/cr",
     pgVersion: "control-room.pg-version/v1" };
@@ -203,7 +211,7 @@ test("the safety check reports a generation that is not there, rather than throw
   // the ledger knows, and a row with no directory is normal after a failed run
   // (the attempt is recorded, the bytes never landed).
   for (const root of ["/nonexistent-backup-root", "/nonexistent-backup-root/deeper"]) {
-    assert.equal(await assertSafeGenerationV1(root, "backup:2026-09-30T13-18-22-471Z"), null,
+    assert.equal(await assertSafeGenerationV1(root, "backup:2026-09-30T13-18-22-4712Z"), null,
       `a generation under a missing root is reported absent (${root}), not as a failure and not as present`);
   }
   // And an id outside the grammar is refused outright, so no caller-supplied
@@ -240,8 +248,13 @@ class RecordingStore {
   async acquireBackupLock() { this.#record("acquireBackupLock"); return { status: this.lockStatus, inFlight: false }; }
   async releaseBackupLock() { this.#record("releaseBackupLock"); }
   async scheduleNext(seconds) { this.#record("scheduleNext", { seconds }); this.nextDueAt = null; }
+  // The id is minted to the REAL grammar, four tie-break digits wide. An
+  // earlier version of this double used three, and the runner's own
+  // `generationLeafV1` — which re-checks the grammar — refused it, so three
+  // tests failed with `updater_backup_generation_refused` for a reason that had
+  // nothing to do with what they were testing.
   async beginAttempt() { this.#record("beginAttempt"); this.generationSeq += 1;
-    return { generationId: `backup:2026-01-0${this.generationSeq}T02-30-00-00${this.generationSeq}Z` }; }
+    return { generationId: `backup:2026-01-01T02-30-00-${String(this.generationSeq).padStart(4, "0")}Z` }; }
   async completeAttempt(detail) { this.#record("completeAttempt", detail); return { generationId: detail.generationId }; }
   async failAttempt(detail) { this.#record("failAttempt", detail); return detail; }
   async latestAttempt() { return null; }

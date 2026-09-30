@@ -20,7 +20,7 @@ const updaterBackupRowCountsRefusedV1 = () => updaterRefuseV1("updater_backup_ro
  * updater's own bounded-id rule.
  */
 
-const GENERATION_ID_V1 = /^backup:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{3}Z$/u;
+const GENERATION_ID_V1 = /^backup:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{4}Z$/u;
 const FAILURE_CODE_V1 = /^[a-z][a-z0-9_]{1,63}$/u;
 const DIGEST_V1 = /^sha256:[a-f0-9]{64}$/u;
 const XID_V1 = /^[0-9A-Fa-f:]{1,64}$/u;
@@ -70,18 +70,32 @@ export function generationLeafV1(generationId) {
  * the DDL's caller, not of a strftime on this machine.
  */
 export async function nextGenerationIdV1(client) {
-  // The three trailing digits are zero-PADDED. `floor(random()*1000)::int::text`
-  // yields "47" as often as "875", and an unpadded two-digit value fails the
-  // `{3}` group in the DDL's CHECK — so roughly two attempts in three were
-  // refused at INSERT. Measured on a real cluster:
-  // `backup:2026-09-30T13-39-28-47Z`.
+  // The FOUR trailing digits are zero-PADDED, and they are drawn from
+  // `pg_catalog.random()` rather than a sequence for a reason worth stating: a
+  // sequence would make the id's middle component PREDICTABLE from an observed
+  // one, so an attacker who saw one generation name could guess the next night's
+  // name before it was written. These three digits only break ties within a
+  // single second; the primary key is still what guarantees uniqueness. Four
+  // digits rather than three because three is not enough for the density the
+  // RETENTION TEST creates: twenty-six attempts inside one second collided
+  // about 28% of the time at 1-in-1000, which failed a real lane run. At four
+  // digits that is ~3% and production's one-run-a-night is ~1 in 10,000 a year.
   //
-  // `lpad` is applied to a `text` cast, not to an integer: the integer form has
-  // no width to pad. Uniqueness is a tiebreak, not the property — the primary
-  // key is the guarantee, and two attempts inside one millisecond are refused
-  // rather than merged.
+  // Zero-padding is not cosmetic. `floor(random()*1000)::int::text` yields "47"
+  // as often as "875", and an unpadded two-digit value fails the `{3}` group in
+  // the DDL's CHECK — so roughly two attempts in three were refused at INSERT.
+  // Measured on a real cluster: `backup:2026-09-30T13-39-28-47Z`. `lpad` is
+  // applied to a `text` cast, not to an integer, because the integer form has no
+  // width to pad.
+  //
+  // A collision within one second is refused by the primary key, and
+  // the runner records it as a failed attempt and retries an hour later. That is
+  // the right trade: a nightly backup must not silently invent a second
+  // generation, and it is not worth a retry loop that could hide two real
+  // attempts. The primary key refusing a collision is the honest answer; a
+  // retry loop would be a silent way of hiding two real attempts.
   const result = await client.query(`SELECT 'backup:' || to_char(pg_catalog.now(),
-    'YYYY-MM-DD"T"HH24-MI-SS') || '-' || lpad((floor(pg_catalog.random()*1000)::int)::text, 3, '0')
+    'YYYY-MM-DD"T"HH24-MI-SS') || '-' || lpad((floor(pg_catalog.random()*10000)::int)::text, 4, '0')
     || 'Z' AS generation_id`);
   const id = result.rows[0]?.generation_id;
   return assertGenerationIdV1(id, "updater_backup_generation_id_refused");

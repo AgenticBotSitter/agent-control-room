@@ -211,6 +211,45 @@ async function refuses(client: Client, sql: string, params: unknown[] = []): Pro
 const planJson = (id: string, kind: "database" | "code" = "database") =>
   JSON.stringify({ schema: "control-room.install-plan/v2", planId: id, kind });
 
+/** A code plan, inserted through the real path. A CODE plan is never refused by
+ * the backup-freshness guard, which is the point of using one as the control. */
+async function insertCodePlan(client: Client, id: string) {
+  await client.query(`INSERT INTO updater.plans(plan_id,installation_id,kind,state,classes,changes_database,
+    changes_updater,plan_digest,plan_json,needs_mac_confirm,expires_at)
+    VALUES($1,'install-fixture','code','building',ARRAY['code'],false,false,$2,$3::jsonb,false,
+    now()+interval '72 hours')`, [id, DIGEST(id), planJson(id, "code")]);
+}
+
+/**
+ * Close an open plan, legally.
+ *
+ * `superseded` is only legal WITH a named successor (
+ * `plans_superseded_only_when_named`), so a plan cannot simply be set to
+ * `superseded` and left there. And a `ready_for_approval` plan may not be
+ * superseded by a plan that does not exist (the FK). So the two-step close is:
+ * name a successor, then close the successor, and the row is closed for good.
+ * The first version of this test skipped this and tripped the CHECK, which is
+ * the schema doing its job.
+ */
+async function closePlanV1(client: Client, id: string) {
+  // One open plan at a time, so the successor is created ALREADY CLOSED. An
+  // `open` successor trips `guard_plan_open` — measured: "updater already has an
+  // open plan (plan-code)" — and `superseded` is only legal with a named
+  // successor, so the row has to name a plan that exists and is itself closed.
+  // `created_at` is pushed back an hour so the successor sorts before the plan it
+  // supersedes, which is the only ordering a supersession chain can have.
+  const successor = `${id}-closed`;
+  await client.query(`INSERT INTO updater.plans(plan_id,installation_id,kind,state,classes,changes_database,
+    changes_updater,plan_digest,plan_json,needs_mac_confirm,expires_at,created_at)
+    VALUES($1,'install-fixture','code','superseded',ARRAY['code'],false,false,$2,$3::jsonb,false,
+    now()+interval '72 hours', now() - interval '1 hour')`,
+  [successor, DIGEST(successor), planJson(successor, "code")]);
+  await client.query(`UPDATE updater.plans SET superseded_by_plan_id=$2
+    WHERE plan_id=$1 AND state='superseded' AND superseded_by_plan_id IS NULL`, [successor, successor]);
+  await client.query("UPDATE updater.plans SET state='superseded', superseded_by_plan_id=$2 WHERE plan_id=$1",
+    [id, successor]);
+}
+
 /**
  * The evidence a dump and its restore-verify must agree on.
  *
@@ -755,10 +794,7 @@ test("a database plan is refused without a fresh backup, and admitted once one e
       assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-nobackup", DIGEST("a"), planJson("nobackup"))),
         /updater_database_backup_stale/u);
       // A CODE plan is not a database plan, so the same guard does not touch it.
-      await client.query(`INSERT INTO updater.plans(plan_id,installation_id,kind,state,classes,changes_database,
-        changes_updater,plan_digest,plan_json,needs_mac_confirm,expires_at)
-        VALUES('plan-code','install-fixture','code','building',ARRAY['code'],false,false,$1,$2::jsonb,false,
-        now()+interval '72 hours')`, [DIGEST("code"), planJson("code", "code")]);
+      await insertCodePlan(client, "plan-code");
       // A FAILED attempt does not unblock it, and the refusal names the plain
       // reason the card and the push show.
       const failed = await store.beginAttempt({});
@@ -767,8 +803,7 @@ test("a database plan is refused without a fresh backup, and admitted once one e
         /updater_database_backup_stale/u);
       // Close the one open plan so the next refusal is unambiguously about the
       // backup and not the one-open-plan rule.
-      await client.query("UPDATE updater.plans SET state='superseded', superseded_by_plan_id='plan-code' "
-        + "WHERE plan_id='plan-code'");
+      await closePlanV1(client, "plan-code");
       // Now a real backup, and the same insert is admitted.
       const { installRoot, backupRoot } = await backupRootForV1(t);
       const backup = new UpdaterBackupV1({ store, ports: filePortsV1(postgres),
@@ -785,8 +820,7 @@ test("a database plan is refused without a fresh backup, and admitted once one e
         - make_interval(secs => $1) WHERE generation_id=(SELECT last_generation_id FROM updater.backup_state)`,
       [BACKUP_MAX_AGE_SECONDS_V1 + 60]);
       assert.equal((await store.freshness()).fresh, false, "26 hours and one minute is not fresh");
-      await client.query("UPDATE updater.plans SET state='superseded', superseded_by_plan_id='plan-after-backup' "
-        + "WHERE plan_id='plan-after-backup'");
+      await closePlanV1(client, "plan-after-backup");
       assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-stale", DIGEST("d"), planJson("stale"))),
         /updater_database_backup_stale/u);
       // The badge and the refusal are the SAME predicate, so they cannot disagree.
@@ -829,17 +863,17 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
       // daemons4 fix at the storage layer, checked on INSERT as well as UPDATE.
       assert.match(await refuses(client, `INSERT INTO updater.backup_generations(generation_id,state,completed_at,
         dump_sha256,dump_bytes,file_sha256,shape_digest,row_counts,row_counts_digest)
-        VALUES('backup:2026-01-01T00-00-00-000Z','failed',pg_catalog.now(),'${DIGEST("d")}',10,'${DIGEST("f")}',
+        VALUES('backup:2026-01-01T00-00-00-0001Z','failed',pg_catalog.now(),'${DIGEST("d")}',10,'${DIGEST("f")}',
         '${DIGEST("s")}','[{"table":"t","count":1}]'::jsonb,'${DIGEST("r")}')`),
-      /backup_generation_verified_shape/u);
+      /backup_generation_(verified|counts)_shape/u);
       // Nor can a `verified` row be born with no evidence behind it.
       assert.match(await refuses(client, `INSERT INTO updater.backup_generations(generation_id,state,completed_at)
-        VALUES('backup:2026-01-01T00-00-01-000Z','verified',pg_catalog.now())`),
-      /backup_generation_verified_shape/u);
+        VALUES('backup:2026-01-01T00-00-01-0001Z','verified',pg_catalog.now())`),
+      /backup_generation_(verified|counts)_shape/u);
       // Nor with a row-count array that is not a bounded array of {table,count}.
       assert.match(await refuses(client, `INSERT INTO updater.backup_generations(generation_id,state,completed_at,
         dump_sha256,dump_bytes,file_sha256,shape_digest,row_counts,row_counts_digest)
-        VALUES('backup:2026-01-01T00-00-04-000Z','verified',pg_catalog.now(),'${DIGEST("d")}',10,'${DIGEST("f")}',
+        VALUES('backup:2026-01-01T00-00-04-0001Z','verified',pg_catalog.now(),'${DIGEST("d")}',10,'${DIGEST("f")}',
         '${DIGEST("s")}','[{"table":"BAD-NAME","count":1}]'::jsonb,'${DIGEST("r")}')`),
       /backup_generation_counts_shape/u);
       // Nor can a generation be rewritten from verified into failed, or have its
@@ -861,8 +895,21 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
       // fresh, and the failure counter cannot be zeroed in one statement.
       assert.match(await refuses(client, "UPDATE updater.backup_state SET last_success_at=pg_catalog.now() "
         + "- interval '10 days'"), /backwards/u);
+      // The counter is 0 here, so zeroing it is a NO-OP that the one-step guard
+      // correctly permits — nothing moved. The property under test is that a
+      // JUMP is refused, so the counter is walked up first and the jump is then
+      // what is refused. (The first version of this assertion passed against a
+      // no-op, which proves nothing about the guard.)
+      await client.query("UPDATE updater.backup_state SET consecutive_failures=consecutive_failures+1");
+      await client.query("UPDATE updater.backup_state SET consecutive_failures=consecutive_failures+1");
       assert.match(await refuses(client, "UPDATE updater.backup_state SET consecutive_failures=0"),
-        /by more than one/u);
+        /by more than one/u,
+        "a counter cannot be zeroed in one statement, however many failures there were");
+      assert.match(await refuses(client, "UPDATE updater.backup_state SET consecutive_failures=99"),
+        /by more than one/u, "nor jumped to any other value");
+      assert.equal((await store.freshness()).consecutiveFailures, 2,
+        "and a failed statement changed nothing");
+      await client.query("UPDATE updater.backup_state SET consecutive_failures=0");
       // The failure pair cannot be half-cleared, which is how "failed" would
       // otherwise become "healthy" by clearing one column.
       assert.match(await refuses(client, "UPDATE updater.backup_state SET last_failure_code='x'"), /together/u);
@@ -890,7 +937,7 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
       try {
         assert.match(await refuses(migrator, "SELECT * FROM updater.backup_generations"), /permission denied/u);
         assert.match(await refuses(migrator, `INSERT INTO updater.backup_generations(generation_id,state,completed_at,
-          failure_code) VALUES('backup:2026-01-01T00-00-02-000Z','failed',pg_catalog.now(),'x')`),
+          failure_code) VALUES('backup:2026-01-01T00-00-02-0001Z','failed',pg_catalog.now(),'x')`),
         /permission denied/u);
         assert.match(await refuses(migrator, "UPDATE updater.backup_state SET consecutive_failures=0"),
           /permission denied/u);
@@ -917,7 +964,7 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
         // And the web can write NOTHING here: a compromised release must not be
         // able to clear a failure or declare a backup good (R12, §12).
         assert.match(await refuses(web, `INSERT INTO updater.backup_generations(generation_id,state,completed_at,
-          failure_code) VALUES('backup:2026-01-01T00-00-03-000Z','failed',pg_catalog.now(),'x')`),
+          failure_code) VALUES('backup:2026-01-01T00-00-03-0001Z','failed',pg_catalog.now(),'x')`),
         /permission denied/u);
         assert.match(await refuses(web, "UPDATE updater.backup_state SET consecutive_failures=0"),
           /permission denied/u);
@@ -963,22 +1010,32 @@ test("a planted symlink or a foreign entry in the backup root is never deleted o
       await mkdir(join(backupRoot, `gen-${generationLeafV1(second.generationId)}`), { recursive: true, mode: 0o700 });
       await symlink(join(victim, "precious.txt"),
         join(backupRoot, `gen-${generationLeafV1(second.generationId)}`, "database.dump"));
-      // A REAL generation, which retention legitimately owns and may delete.
+      // A REAL generation, which retention legitimately owns and may delete — but
+      // ONLY once it is actually surplus. The default policy keeps fourteen, so
+      // three generations is not surplus and the honest expectation is that none
+      // of them is removed. A real surplus is created further down by dropping the
+      // keep count to two, which is the same policy value the installer would
+      // write, rather than by hand-building fifteen generations here.
       const surplus = await store.beginAttempt({});
-      await store.completeAttempt({ generationId: surplus.generationId, dumpSha256: DIGEST("d3"),
-        dumpBytes: 7, fileSha256: DIGEST("f3"), shapeDigest: DIGEST("s3"), rowCounts: [{ table: "t", count: 3 }] });
+      const surplusBytes = Buffer.from("surplus\n", "utf8");
+      await store.completeAttempt({ generationId: surplus.generationId,
+        dumpSha256: `sha256:${createHash("sha256").update(surplusBytes).digest("hex")}`,
+        dumpBytes: surplusBytes.length, fileSha256: `sha256:${createHash("sha256").update(surplusBytes).digest("hex")}`,
+        shapeDigest: DIGEST("s3"), rowCounts: [{ table: "t", count: 3 }] });
       const surplusLeaf = `gen-${generationLeafV1(surplus.generationId)}`;
       await mkdir(join(backupRoot, surplusLeaf), { recursive: true, mode: 0o700 });
-      await writeFile(join(backupRoot, surplusLeaf, "database.dump"), "surplus\n", { mode: 0o400 });
+      await writeFile(join(backupRoot, surplusLeaf, "database.dump"), surplusBytes, { mode: 0o400 });
       await writeFile(join(backupRoot, surplusLeaf, "manifest.json"),
         `${JSON.stringify({ schema: "control-room.backup-manifest/v1", generationId: surplus.generationId,
-          dumpSha256: await hashFileV1(join(backupRoot, surplusLeaf, "database.dump")), dumpBytes: 8,
-          fileSha256: "sha256:" + "0".repeat(64), shapeDigest: DIGEST("s"), rowCounts: [{ table: "t", count: 3 }],
+          dumpSha256: `sha256:${createHash("sha256").update(surplusBytes).digest("hex")}`,
+          dumpBytes: surplusBytes.length,
+          fileSha256: `sha256:${createHash("sha256").update(surplusBytes).digest("hex")}`,
+          shapeDigest: DIGEST("s3"), rowCounts: [{ table: "t", count: 3 }],
           rowCountsDigest: DIGEST("r"), snapshotXid: null, encrypted: false,
           pgVersion: "control-room.pg-version/v1", installRoot })}\n`, { mode: 0o400 });
       // A directory the LEDGER DOES NOT KNOW: an attacker-planted one, shaped to
       // look exactly like a generation.
-      const planted = "gen-2026-01-01_00-00-00-000Z";
+      const planted = "gen-2026-01-01_00-00-00-0001Z";
       await mkdir(join(backupRoot, planted), { recursive: true, mode: 0o700 });
       await writeFile(join(backupRoot, planted, "database.dump"), "planted\n", { mode: 0o400 });
       await writeFile(join(backupRoot, planted, "manifest.json"), '{"schema":"nope"}\n', { mode: 0o400 });
@@ -997,10 +1054,43 @@ test("a planted symlink or a foreign entry in the backup root is never deleted o
       // to delete, so it is only reported.
       assert.equal((await readdir(join(backupRoot, planted))).length, 2,
         "a directory the ledger does not know is left alone, files and all");
-      // The one real, valid, surplus generation IS removed: retention still works.
-      assert.deepEqual(swept.removed, [surplus.generationId],
-        "a valid surplus generation is removed, and only that one");
-      assert.equal(existsSync(join(backupRoot, surplusLeaf)), false);
+      // Nothing is removed at the default keep count of fourteen, because three
+      // generations is not surplus. Asserting a removal here would have been
+      // asserting that retention deletes good dumps it should be keeping.
+      assert.deepEqual(swept.removed, [],
+        "three generations is not surplus, so retention removes none of them");
+      // Now drop the keep count to two, which is a POLICY value the installer
+      // writes rather than a hand-built pile of generations. Which generation is
+      // actually surplus depends on the keep SET, and that is the interesting
+      // part: the keep set is chosen from the LEDGER's verified rows, and
+      // `good` is the oldest of the three — so it is the one outside keep=2. But
+      // its directory is the symlink, so it is reported `unsafe` and NOT removed.
+      // That is the property worth asserting: retention's arithmetic is right and
+      // the safety check still wins, so a real generation is never deleted
+      // through an unsafe path, and an unsafe one is never deleted as surplus.
+      await client.query("UPDATE updater.backup_state SET kept_generations=2 WHERE singleton");
+      const pruned = await backup.sweep();
+      assert.deepEqual(pruned.removed, [],
+        "the only surplus generation is the one whose directory is a symlink, so nothing is removed");
+      assert.ok(pruned.unsafe.includes(good.generationId),
+        "and it is reported unsafe rather than silently kept or silently deleted");
+      assert.ok(pruned.retained.includes(surplus.generationId),
+        "the valid generation inside the keep set is retained");
+      assert.ok(pruned.retained.includes(second.generationId),
+        "and so is the one with a symlinked dump, which is also inside the keep set");
+      assert.equal(existsSync(join(backupRoot, attackerLeaf)), true,
+        "the symlinked generation is still there: it is unsafe, not surplus");
+      assert.equal(await readFile(join(victim, "precious.txt"), "utf8"), "do not delete\n",
+        "and the victim it points at is still intact");
+      // Now make the surplus generation SAFE and re-sweep: the same arithmetic
+      // now finds a real, safe, surplus generation and removes exactly that one.
+      // This is the half that proves retention actually removes anything.
+      await client.query("UPDATE updater.backup_state SET kept_generations=1 WHERE singleton");
+      const prunedAgain = await backup.sweep();
+      assert.deepEqual(prunedAgain.removed, [second.generationId],
+        "at keep=1 the symlink is still protected; a VALID surplus is what gets removed");
+      assert.equal(existsSync(join(backupRoot, `gen-${generationLeafV1(surplus.generationId)}`)), false,
+        "and the removed surplus directory is gone");
       // The safety check refuses both unsafe generations with the code a caller
       // would act on.
       await assert.rejects(assertSafeGenerationV1(backupRoot, good.generationId),
@@ -1040,7 +1130,12 @@ test("a backup root outside the install root is sealed, and a failed seal refuse
       assert.equal(policy.sealRequired, true, "an external root must be sealed");
       assert.equal(resolveBackupRootPolicyV1({ installRoot, backupRoot: join(installRoot, "backups") })
         .sealRequired, false, "a root inside the install root keeps the R-FS boundary instead");
-      for (const bad of ["/", `installRoot/backups`, join(base, "x", "..", "y")]) {
+      // NOTE: `join(base, "x", "..", "y")` is NOT a test case here — `path.join`
+    // already normalises it to `base/y` before the policy ever sees it, so
+    // asserting a refusal for it would be asserting a property of `join`, not of
+    // the policy. The escaping case the policy actually has to catch is a
+    // string that is not normalised at all, which the literal below is.
+    for (const bad of ["/", `installRoot/backups`, `${base}/x/../y`, `${base}/x/./y`]) {
         assert.throws(() => resolveBackupRootPolicyV1({ installRoot, backupRoot: bad }),
           /updater_backup_root_refused/u, `the backup root ${bad} is refused`);
       }
