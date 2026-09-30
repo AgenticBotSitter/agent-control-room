@@ -115,7 +115,7 @@ export async function startMacLocalWebHost(input, runtime = {}) {
   return startHostWithOptionalIntake(host, installed, intakeModule);
 }
 
-async function startHostWithOptionalIntake(host, installed, intakeModule) {
+export async function startHostWithOptionalIntake(host, installed, intakeModule) {
   let active, intake;
   try {
     if (installed) intake = await intakeModule.prepareWorkIntakePrivateServiceV1({ ...installed,
@@ -124,6 +124,7 @@ async function startHostWithOptionalIntake(host, installed, intakeModule) {
     if (!intake) return active;
     await intake.start();
     return Object.freeze({
+      isReady: active.isReady.bind(active),
       async close() {
         const results = await Promise.allSettled([intake.close(), active.close()]);
         if (results.some(result => result.status === "rejected")) throw new Error("mac_local_web_host_cleanup_uncertain");
