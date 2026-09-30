@@ -43,6 +43,7 @@ import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
 import { hmacSha256Tag } from "../../security";
+import type { UpdaterHomeStatusReaderV1 } from "./updater-home-status";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -126,6 +127,9 @@ export interface MacLocalWebProcessOptionsV1 {
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
+  /** A read-only projection of updater status. It exists for Home copy only;
+   * the web process receives no updater control or approval authority. */
+  updaterHomeStatus?: UpdaterHomeStatusReaderV1;
 }
 
 /** Existing controller operations supplied by the host.  This is deliberately
@@ -394,6 +398,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       const identity = sessions.verify(request, clock());
+      if (url.pathname === "/api/v1/updater-status") {
+        if (request.method !== "GET" || url.search || !options.updaterHomeStatus) throw new WebAccessError("not_found");
+        return Response.json(await options.updaterHomeStatus.read(), { headers: privateResponseHeaders });
+      }
       if (url.pathname === "/api/v1/product-configuration") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         await projects.authorizeCatalog(identity);

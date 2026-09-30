@@ -21,6 +21,7 @@ import { useVisiblePolling } from "./use-visible-polling";
 import { OperationsControlPanel } from "./operations-control";
 import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount, workerChipToneV1 } from "./owner-ui";
 import { UpdateCandidatesHome } from "./update-candidates-home";
+import { UpdaterHomeStatus } from "./updater-home-status";
 
 export type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
 export function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
@@ -297,6 +298,7 @@ export function PrivateHome() {
         second one is the only check that would have caught the original defect
         on a real page. */}
     <HomeDashboard data={data} />
+    <UpdaterHomeStatus />
     <p className="private-note"><a href="/morning">Open morning summary</a> — finished, waiting for you, stalled and PRs opened since Control Room last checked.</p>
     <OperationsControlPanel />
     {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />

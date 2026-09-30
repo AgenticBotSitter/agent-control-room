@@ -18,6 +18,7 @@ import { captureWorkBatchQueueCatalogV1, createWorkBatchQueueSelectionAuthorityV
 import { WebOperationsModeServiceV1, operationsModeStopAuthorityV1 } from "./operations-mode-service";
 import { createOperationsModeSupervisorPortV1 } from "./operations-mode-supervisor-port";
 import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
+import { createUpdaterHomeStatusReaderV1, type UpdaterHomeStatusReaderV1 } from "./updater-home-status";
 
 /** The installation's one supervisor identity. The Mac-local host runs a single
  * supervisor loop, so this is fixed rather than configurable: a second id would
@@ -81,6 +82,8 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
    * already built, so the endpoint and the supervisor's health port are two
    * callers of one service rather than two services over one state. */
   operationsMode?: WebOperationsModeServiceV1;
+  /** Test/deployment seam for the updater's public, display-only status file. */
+  updaterHomeStatus?: UpdaterHomeStatusReaderV1;
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
@@ -118,6 +121,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     // the endpoint exists in the web process but is never mounted, and it 404s
     // on a real installation while every service-level test passes.
     ...(input.operationsMode ? { operationsMode: input.operationsMode } : {}),
+    updaterHomeStatus: input.updaterHomeStatus ?? createUpdaterHomeStatusReaderV1(),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -177,6 +181,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
+  updaterHomeStatus?: UpdaterHomeStatusReaderV1;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
@@ -269,6 +274,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
             healthStartedAt: input.healthStartedAt } : {}),
           ...(service ? { operationsMode: service } : {}),
+          ...(input.updaterHomeStatus ? { updaterHomeStatus: input.updaterHomeStatus } : {}),
         });
         if (!input.startQueueWorker) return web;
         if (!taskApplication?.queueDelivery || !databaseRoles) throw new Error("mac_local_host_configuration_invalid");

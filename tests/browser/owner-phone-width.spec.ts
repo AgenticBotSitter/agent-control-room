@@ -387,6 +387,20 @@ test("every owner page is usable at phone width", async ({ page }) => {
   expect(projectId).toBeTruthy();
 });
 
+/** A real 375px capture is retained with the browser test result. The status
+ * may honestly be either calm Off or the red attention state on a rehearsal
+ * without an updater, but it must be visible without a horizontal scroll. */
+test("Home updater status is captured at phone width", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
+  await signIn(page); await page.goto("/");
+  await expect(page.getByText(/Self-update(?: needs your attention|: Off)/u)).toBeVisible();
+  const capture = await page.screenshot({ fullPage: false });
+  await testInfo.attach("home-updater-status-375", { body: capture, contentType: "image/png" });
+  expect(capture.byteLength).toBeGreaterThan(1_000);
+  const measured = await measure(page);
+  expect(measured.offscreen).toEqual([]);
+});
+
 for (const mode of ["mac-local", "hosted"] as const) {
   // Named with explicit literals rather than a `${mode}` template so that the
   // PR-claims checker can resolve a citation to a single named test: its
