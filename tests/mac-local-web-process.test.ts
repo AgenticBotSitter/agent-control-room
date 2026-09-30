@@ -5,11 +5,67 @@ import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-sessio
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
+import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
+import { createPrivatePgDriver } from "../src/web/v1/private-pg-driver";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 import { nodeExchange } from "./helpers/web-node";
 
 after(closePrivateOwnerBootstrapConformanceDatabase);
+
+test("an uncertain write makes health unready and a supervised replacement serves later requests", async () => {
+  const statements: string[] = [], releases: boolean[] = [];
+  let commitAttempts = 0, poolEnds = 0;
+  const failed = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) {
+      statements.push(statement);
+      if (statement === "COMMIT") { commitAttempts += 1; throw new Error("lost acknowledgement"); }
+      return { rows: [] };
+    },
+    release(destroy) { releases.push(!!destroy); },
+  }; }, async end() { poolEnds += 1; } }));
+  const origin = "http://127.0.0.1:3210", startedAt = "2026-09-30T00:00:00.000Z";
+  const key = new Uint8Array(32).fill(8), pid = 4_244;
+  const createApp = (database: typeof failed) => createMacLocalWebProcessV1({ origin, workspaceId: "workspace:dbready",
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: "tenant:dbready", provider: "local",
+      subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode: "dbready-owner-code-long-enough" }), sessionSeconds: 900 },
+    database, hostProcessId: pid, healthProbeKey: key, healthReleaseId: "dev", healthStartedAt: startedAt });
+  const app = createApp(failed);
+  assert.equal(app.isReady(), true);
+  await assert.rejects(failed.client.transaction(session => session.query("INSERT INTO synthetic VALUES (1)")),
+    { message: "database_outcome_uncertain" });
+  assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "COMMIT"],
+    "an uncertain write is attempted once and is never rolled back or replayed");
+  assert.equal(commitAttempts, 1); assert.deepEqual(releases, [true]); assert.equal(poolEnds, 1);
+  assert.equal(app.isReady(), false, "the application must become unready with its quarantined database binding");
+  const refusedRetries = await Promise.allSettled(Array.from({ length: 20 }, () => failed.client.query("SELECT retry")));
+  assert.equal(refusedRetries.every(result => result.status === "rejected"
+    && result.reason instanceof Error && result.reason.message === "database_unavailable"), true,
+  "concurrent callers after the uncertain write must fail closed without reaching the old pool");
+  assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "COMMIT"]);
+
+  const nonces = Array.from({ length: 50 }, (_, index) => Buffer.alloc(32, index + 1).toString("base64url"));
+  const health = await Promise.all(nonces.map(nonce => app.handle(new Request(`${origin}/api/v1/local-host-health`, {
+    method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }),
+  }), () => new Response("unused"))));
+  assert.equal(health.every(response => response.status === 200), true);
+  const bodies = await Promise.all(health.map(response => response.json())) as Array<Record<string, unknown>>;
+  assert.equal(bodies.every(body => body.ready === false), true, "a health-probe burst must expose the outage");
+  assert.equal(bodies[0]?.tag, hmacSha256Tag(key,
+    { purpose: "local-host-health/v1", nonce: nonces[0], pid, ready: false, releaseId: "dev", startedAt }));
+  await app.close();
+
+  let laterQueries = 0;
+  const replacement = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) { laterQueries += 1; return { rows: statement === "SELECT later" ? [{ ok: true }] : [] }; },
+    release() {},
+  }; }, async end() {} }));
+  const restarted = createApp(replacement);
+  assert.deepEqual(await replacement.client.query("SELECT later"), { rows: [{ ok: true }] });
+  assert.equal(laterQueries, 1); assert.equal(restarted.isReady(), true,
+    "a restarted host owns a fresh binding and can serve a later request");
+  await restarted.close();
+});
 
 test("the real Mac-local wrapper signs in locally and reaches the existing project service", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-web" }); t.after(fixture.close);
@@ -23,7 +79,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
       trustedOrigin },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
     hostProcessId: 4_243,
     healthProbeKey: new Uint8Array(32).fill(9), healthReleaseId: "dev", healthStartedAt: "2026-09-30T00:00:00.000Z",
     workBatchIntegrityKey: new Uint8Array(32).fill(7),
@@ -66,7 +122,8 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.equal(health.status, 200); assert.equal(health.headers.get("set-cookie"), null);
   assert.deepEqual(await health.json(), { schema: "control-room.local-host-health/v1", ready: true, pid: 4_243, nonce,
     releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z", tag: hmacSha256Tag(new Uint8Array(32).fill(9),
-      { purpose: "local-host-health/v1", nonce, pid: 4_243, releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });
+      { purpose: "local-host-health/v1", nonce, pid: 4_243, ready: true,
+        releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });
   const healthRead = await app.handle(request("/api/v1/local-host-health"), () => new Response("unused"));
   assert.equal(healthRead.status, 404, "health is an authenticated POST, not a public read");
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
@@ -327,7 +384,7 @@ test("the Mac-local needs-me route composes saved-plan verification into the tas
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
     taskReadKeys: { taskPlanIntegrityKey: new Uint8Array(32).fill(3), reviews: {
       integrityKey: new Uint8Array(32).fill(4), checkpoints: new InMemoryRollbackCheckpointStoreV1({ testOnly: true }) } } });
   t.after(() => app.close());
@@ -348,7 +405,7 @@ test("the Mac-local wrapper does not accept a forwarded or foreign request", asy
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow });
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow });
   const response = await app.handle(new Request(`${origin}/api/v1/local-owner-session`, { method: "POST", headers: {
     origin, forwarded: "for=192.0.2.1", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(response.status, 403);
@@ -368,7 +425,7 @@ test("the Mac-local wrapper forwards the existing assignment operation through l
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
     assignment: { tenantId: fixture.configuration.tenantId, workspaceId: fixture.configuration.workspaceId,
       async projectOptions(...input) {
         projectReads.push(input);

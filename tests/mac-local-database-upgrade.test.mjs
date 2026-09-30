@@ -914,7 +914,7 @@ async function startWebHostOnRoster(t, protectedRoot) {
     const name = path.split("/").at(-1);
     if (name === "macLocalProtectedLoader.js") return macLocalProtectedLoader;
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() {
-      return { async start() { return { async close() {} }; } };
+      return { async start() { return { isReady: () => true, async close() {} }; } };
     } };
     if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {
       return { async start() {}, async close() {} };

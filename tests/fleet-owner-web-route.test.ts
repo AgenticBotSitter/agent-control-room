@@ -27,7 +27,7 @@ test("owner fleet routes: add a worker returns a one-time join command; foreign 
     ownerAuthority: typeof fixture.client }) => createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, ...(fleet ? { fleet } : {}) });
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, ...(fleet ? { fleet } : {}) });
   const app = make({ gatewayOrigin: "https://control.example.ts.net", connectorRelease, ownerAuthority: fixture.client });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const unused = () => new Response("unused");

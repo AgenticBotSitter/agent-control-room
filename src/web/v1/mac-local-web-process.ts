@@ -53,7 +53,7 @@ export interface MacLocalWebProcessOptionsV1 {
   localOwnerSessionStore?: LocalOwnerSessionStoreV1;
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
-  database: { client: DatabaseClient; close: () => Promise<void> };
+  database: { client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean };
   /** The existing task service from the Mac task application. This keeps
    * owner-review follow-up creation and browser task routes on one service. */
   taskService?: WebTaskService;
@@ -137,7 +137,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const profile = captureLocalOwnerSessionProfileV1(options.localOwnerSession);
   const origin = new URL(options.origin);
   if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.origin !== options.origin
-    || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
+    || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function"
+    || typeof options.database.isAvailable !== "function")
     throw new Error("mac_local_web_process_config_invalid");
   // An owner review that can accept exceptions must use the task application's
   // same in-session proposal service. Refuse a partial composition instead of
@@ -221,6 +222,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const operationsModeHttp = operationsMode ? createOperationsModeHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: operationsMode, clock }) : undefined;
   let closed: Promise<void> | undefined;
+  const isReady = () => closed === undefined && options.database.isAvailable() === true;
 
   function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
     return new Response(null, { status: 303, headers: { ...privateResponseHeaders,
@@ -371,10 +373,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           || !/^[A-Za-z0-9_-]{43}$/u.test((body as { nonce: string }).nonce))
           throw new WebAccessError("invalid_request");
         const nonce = (body as { nonce: string }).nonce, pid = options.hostProcessId,
-          releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!;
+          releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!, ready = isReady();
         const tag = hmacSha256Tag(options.healthProbeKey!,
-          { purpose: "local-host-health/v1", nonce, pid, releaseId, startedAt });
-        return Response.json({ schema: "control-room.local-host-health/v1", ready: true, pid, nonce, releaseId, startedAt, tag },
+          { purpose: "local-host-health/v1", nonce, pid, ready, releaseId, startedAt });
+        return Response.json({ schema: "control-room.local-host-health/v1", ready, pid, nonce, releaseId, startedAt, tag },
           { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/local-workers") {
@@ -536,5 +538,5 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     }
   }
 
-  return Object.freeze({ handle, isReady: () => closed === undefined, close: () => closed ??= options.database.close() });
+  return Object.freeze({ handle, isReady, close: () => closed ??= options.database.close() });
 }
