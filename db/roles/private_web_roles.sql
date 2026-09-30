@@ -87,6 +87,10 @@ GRANT INSERT ON work_batch_queue_admissions, work_batch_agent_queue_heads TO con
 GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO control_room_private_web;
 GRANT INSERT ON control_improvement_requests, control_update_candidate_decisions TO control_room_private_web;
 GRANT UPDATE (state, version, decided_at) ON control_update_candidates TO control_room_private_web;
+-- Module install approvals (0195): the owner's append-only approval of one exact
+-- module bundle. Read to show the current approval; insert only through the
+-- owner-gated approval action. No UPDATE or DELETE: a new approval supersedes.
+GRANT SELECT, INSERT ON control_module_install_approvals TO control_room_private_web;
 -- Owner-authored dependent proposals (pipeline stages, approved batch items)
 -- write the edge between two jobs this role itself inserts. Append-only: no
 -- UPDATE or DELETE, and SELECT stays the three coordination-page columns.
