@@ -12,14 +12,19 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_task_coordinator;
+-- `control_effect_intents` is in this list because the supervisor reconciler
+-- reads it in the same statement and the same transaction as the stalled-attempt
+-- decision it makes (src/supervisor/v1/reconciler.ts). Without the SELECT every
+-- reconcile cycle raised `database_unavailable`, the supervisor reported
+-- `supervisor_cycle_unavailable` forever, and a stalled task was never requeued
+-- or escalated. SELECT only: the coordinator never writes an effect intent.
+--
+-- This GRANT is kept as one contiguous block with no comment inside it: the
+-- down-migration lane rewrites role files by exact text match
+-- (tests/postgres-production-lifecycle.test.mjs), and a comment in the middle of
+-- the table list made the whole statement stop matching.
 GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, control_web_sessions,
   projects, control_manual_project_heads, control_requests, control_workflows, control_jobs,
-  -- `control_effect_intents` is read by the supervisor reconciler, in the same
-  -- statement and the same transaction as the stalled-attempt decision it
-  -- decides. Without it every reconcile cycle raised `database_unavailable` and
-  -- the supervisor reported `supervisor_cycle_unavailable` forever, so a stalled
-  -- task was never requeued or escalated. SELECT only: the coordinator never
-  -- writes an effect intent.
   control_effect_intents,
   control_attempts, control_leases, control_task_execution_plans, control_nodes, control_node_keys,
   control_node_fleet_current, control_job_dependencies, control_transition_events, control_outbox,

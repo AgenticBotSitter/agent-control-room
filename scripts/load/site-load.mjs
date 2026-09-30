@@ -119,35 +119,38 @@ const catalog = [
   { name: "projects", route: "/projects", reads: ["/api/v1/local-workers", "/api/v1/product-configuration",
       "/api/v1/needs-me/tasks", "/api/v1/projects"],
     poll: { path: () => "/api/v1/projects", baseMs: 30_000, quietBackoff: true } },
-  { name: "project-overview", route: (p) => `/projects/${id(p)}`,
+  { name: "project-overview", projectScoped: true, route: (p) => `/projects/${id(p)}`,
     reads: (p) => ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks",
       `/api/v1/projects/${id(p)}`],
     poll: (p) => ({ path: () => `/api/v1/projects/${id(p)}`, baseMs: 30_000, quietBackoff: true }) },
-  { name: "project-work-tasks", route: (p) => `/projects/${id(p)}/tasks`,
+  { name: "project-work-tasks", projectScoped: true, route: (p) => `/projects/${id(p)}/tasks`,
     reads: (p) => ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks",
       `/api/v1/projects/${id(p)}/tasks`],
     poll: (p) => ({ path: () => `/api/v1/projects/${id(p)}/tasks`, baseMs: 30_000, quietBackoff: true }) },
-  { name: "project-activity", route: (p) => `/projects/${id(p)}/activity`,
+  { name: "project-activity", projectScoped: true, route: (p) => `/projects/${id(p)}/activity`,
     reads: (p) => ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks",
       `/api/v1/projects/${id(p)}`, `/api/v1/projects/${id(p)}/activity?limit=50`],
     poll: null },
-  { name: "project-automations", route: (p) => `/projects/${id(p)}/automations`,
+  { name: "project-automations", projectScoped: true, route: (p) => `/projects/${id(p)}/automations`,
     reads: (p) => ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks",
       `/api/v1/projects/${id(p)}`, `/api/v1/projects/${id(p)}/recurring-rules`],
     poll: null },
-  { name: "project-settings", route: (p) => `/projects/${id(p)}/settings`,
+  // The settings panel reads the project record itself; there is no separate
+  // per-project settings endpoint in Mac-local, and an earlier version of this
+  // tool asserted one that 404s on every real request.
+  { name: "project-settings", projectScoped: true, route: (p) => `/projects/${id(p)}/settings`,
     reads: (p) => ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks",
-      `/api/v1/projects/${id(p)}`, `/api/v1/projects/${id(p)}/settings`],
+      `/api/v1/projects/${id(p)}`],
     poll: null },
-  { name: "project-agents", route: (p) => `/projects/${id(p)}/agents`,
+  { name: "project-agents", projectScoped: true, route: (p) => `/projects/${id(p)}/agents`,
     reads: (p) => ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks",
       `/api/v1/projects/${id(p)}`, `/api/v1/projects/${id(p)}/agents`],
     poll: null },
-  { name: "project-files", route: (p) => `/projects/${id(p)}/files`,
+  { name: "project-files", projectScoped: true, route: (p) => `/projects/${id(p)}/files`,
     reads: (p) => ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks",
       `/api/v1/projects/${id(p)}`, `/api/v1/projects/${id(p)}/files`],
     poll: null },
-  { name: "task-detail", route: async (p) => `/projects/${id(p)}/tasks/${id(await taskFor(p, 0))}`,
+  { name: "task-detail", projectScoped: true, route: async (p) => `/projects/${id(p)}/tasks/${id(await taskFor(p, 0))}`,
     reads: async (p) => ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks",
       `/api/v1/projects/${id(p)}/tasks/${id(await taskFor(p, 0))}`],
     // The jobId is resolved once when the tab opens, not inside the poll
@@ -163,11 +166,14 @@ const catalog = [
     reads: ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks",
       "/api/v1/home/tasks"],
     poll: null },
-  { name: "updates-workboard", route: (p) => `/workboard?projectId=${id(p)}`,
-    reads: (p) => ["/api/v1/local-workers", "/api/v1/home/tasks", "/api/v1/workers-board",
-      `/api/v1/projects/${id(p)}/overview`, `/api/v1/projects/${id(p)}/agents`,
-      `/api/v1/projects/${id(p)}/inbox`, `/api/v1/projects/${id(p)}/reviews`],
-    poll: null },
+  // "Updates" is the Action Inbox plus the needs-me task page: those are the two
+  // routes an owner actually reads to see what changed. `/workboard` and
+  // `/api/v1/workers-board` are hosted-only -- private-process.ts mounts the
+  // latter and the Mac-local composition does not -- so requesting them here only
+  // measured a 404 that no owner would ever see.
+  { name: "updates", route: "/needs-me",
+    reads: ["/api/v1/local-workers", "/api/v1/needs-me/tasks", "/api/v1/needs-me/action-items"],
+    poll: { path: () => "/api/v1/needs-me/tasks", baseMs: 30_000, quietBackoff: true } },
   { name: "needs-me", route: "/needs-me",
     reads: ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks"],
     poll: { path: () => "/api/v1/needs-me/tasks", baseMs: 30_000, quietBackoff: true } },
@@ -210,11 +216,13 @@ async function measure(tab, name, path, options = {}) {
       try { const parsed = JSON.parse(body); if (parsed?.error) series.codes[parsed.error] = (series.codes[parsed.error] ?? 0) + 1; }
       catch { series.codes[`http_${status}`] = (series.codes[`http_${status}`] ?? 0) + 1; }
     }
-    // A tenant leak would show up as a project id the tab never asked for. The
-    // tab's own project set is the only thing it is entitled to see.
-    if (options.projectId && typeof body === "string") {
-      const others = projects.filter(project => project !== options.projectId);
-      if (others.some(project => body.includes(project))) series.crossProject += 1;
+    // A tenant leak would show up as another project's id inside a PROJECT-
+    // SCOPED response. Only such a route can be checked this way: the catalogue,
+    // Home and the Action Inbox legitimately list every project in the tenant,
+    // so seeing another project's id there is the correct answer, not a leak.
+    if (options.projectScoped && typeof body === "string") {
+      const foreign = projects.filter(project => project !== options.projectId && body.includes(project));
+      if (foreign.length) series.crossProject += 1;
     }
     return { status: response.status, body };
   } catch (error) {
@@ -285,7 +293,7 @@ async function openTab(index) {
   // requests. It is the most expensive request on every page.
   await measure(tab, routeName, route);
   const reads = typeof spec.reads === "function" ? await spec.reads(projectId) : spec.reads;
-  for (const path of reads) { ensure(path); await measure(tab, path, path, { projectId }); }
+  for (const path of reads) { ensure(path); await measure(tab, path, path, { projectId, projectScoped: spec.projectScoped === true }); }
   // The recurring read, at the page's real interval. The scheduler's unchanged
   // stretch is reproduced so an idle quiet tab really does poll less often.
   const poll = typeof spec.poll === "function" ? await spec.poll(projectId) : spec.poll;
@@ -298,7 +306,7 @@ async function openTab(index) {
         if (tab.closed) return;
         const path = poll.path();
         ensure(path);
-        const result = await measure(tab, path, path, { projectId });
+        const result = await measure(tab, path, path, { projectId, projectScoped: spec.projectScoped === true });
         if (poll.quietBackoff && result.status === 200) {
           unchanged += 1;
           delayMs = poll.baseMs * Math.min(2 ** unchanged, 4);
@@ -329,14 +337,26 @@ async function runOwnerActions(durationMs) {
         scopes: [{ kind: "file", path: `loadtest/action-${n}.txt` }] }) });
     actions.statuses[String(proposed.status)] = (actions.statuses[String(proposed.status)] ?? 0) + 1;
     if (proposed.status === 201) actions.proposed += 1; else actions.refused += 1;
-    // Pause then resume the same project: two real lifecycle transitions.
-    const view = await (await fetch(new URL(`/api/v1/projects/${encodeURIComponent(projectId)}`, origin),
+    // Pause then resume the same project: two real lifecycle transitions. A
+    // lifecycle command is a COMMAND, so it needs an idempotency key exactly as
+    // the browser client sends, and each transition needs the version the
+    // previous one returned -- a stale expectedVersion is a 409, not a silent
+    // success. Without the key this endpoint refuses with 400, which is how the
+    // first version of this tool reported 28 phantom refusals per level.
+    const current = await (await fetch(new URL(`/api/v1/projects/${encodeURIComponent(projectId)}`, origin),
       { headers: { cookie: ownerCookie, origin } })).json();
+    let version = current?.project?.version;
     for (const lifecycle of ["paused", "active"]) {
+      if (typeof version !== "number") break;
       const moved = await fetch(new URL(`/api/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, origin), {
-        method: "POST", headers, body: JSON.stringify({ lifecycle, expectedVersion: view.project?.version }) });
+        method: "POST", headers: { ...headers, "idempotency-key": `loadtest-lifecycle-${Date.now()}-${n}-${lifecycle}` },
+        body: JSON.stringify({ lifecycle, expectedVersion: version }) });
       actions.statuses[String(moved.status)] = (actions.statuses[String(moved.status)] ?? 0) + 1;
-      if (moved.status === 201 || moved.status === 200) actions.transitions += 1;
+      if (moved.status === 200 || moved.status === 201) {
+        actions.transitions += 1;
+        const result = await moved.json();
+        version = result?.project?.version ?? version + 1;
+      }
     }
   }
   return actions;
