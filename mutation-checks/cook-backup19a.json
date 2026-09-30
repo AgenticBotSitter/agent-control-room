@@ -4,7 +4,7 @@
     "find": "CREATE OR REPLACE FUNCTION updater.guard_plan_backup_fresh() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$\nBEGIN\n  IF NEW.kind <> 'database' THEN RETURN NEW; END IF;",
     "replace": "CREATE OR REPLACE FUNCTION updater.guard_plan_backup_fresh() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$\nBEGIN\n  IF true THEN RETURN NEW; END IF;\n  IF NEW.kind <> 'database' THEN RETURN NEW; END IF;",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "a database plan with no fresh backup must be refused, or item 19a's §9.5 promise (\"blocks DB plans until fixed\") is void and a database can be migrated with nothing to restore from"
+    "why": "a database plan with no fresh backup must be refused, or item 19a's \u00a79.5 promise (\"blocks DB plans until fixed\") is void and a database can be migrated with nothing to restore from"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
@@ -29,10 +29,10 @@
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
-    "find": "  IF NEW.consecutive_failures < OLD.consecutive_failures - 1 OR NEW.consecutive_failures > OLD.consecutive_failures + 1 THEN",
+    "find": "  IF (NEW.consecutive_failures < OLD.consecutive_failures - 1\n      OR NEW.consecutive_failures > OLD.consecutive_failures + 1)\n      AND NOT (NEW.consecutive_failures = 0\n               AND NEW.last_success_at IS DISTINCT FROM OLD.last_success_at\n               AND NEW.last_success_at IS NOT NULL) THEN",
     "replace": "  IF false THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "the failure counter must move by at most one, or one statement can zero it and reset the retry schedule the badge's urgency depends on"
+    "why": "the failure counter must move by at most one, or one statement can zero it and reset the retry schedule the badge's urgency depends on. The whole condition goes, including the success carve-out: with the guard absent a caller can both zero the counter AND date a success that never happened, which turns the badge green with no new evidence behind it."
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
@@ -109,7 +109,7 @@
     "find": "    if (Number.isFinite(free) && free < floor) throw UpdaterBackupV1.#refuse(\"updater_backup_disk_full\");",
     "replace": "    if (false) throw UpdaterBackupV1.#refuse(\"updater_backup_disk_full\");",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "the free-space preflight is §8.6's rule: without it a nearly-full disk is discovered half way through a dump, and the failure leaves a partial generation and a full root"
+    "why": "the free-space preflight is \u00a78.6's rule: without it a nearly-full disk is discovered half way through a dump, and the failure leaves a partial generation and a full root"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
@@ -127,9 +127,16 @@
   },
   {
     "file": "src/updater/v1/backup-store.mjs",
-    "find": "      WHERE generation_id=$1 AND state='failed' AND failure_code='backup_in_progress'\n      RETURNING generation_id`,",
-    "replace": "      WHERE generation_id=$1\n      RETURNING generation_id`,",
+    "find": "        row_counts=$6::jsonb, row_counts_digest=$7, snapshot_xid=$8,\n        encrypted=$9, retain_until=$10, failure_code=NULL, failure_detail=NULL\n      WHERE generation_id=$1 AND state='failed' AND failure_code='backup_in_progress'\n      RETURNING generation_id`,",
+    "replace": "        row_counts=$6::jsonb, row_counts_digest=$7, snapshot_xid=$8,\n        encrypted=$9, retain_until=$10, failure_code=NULL, failure_detail=NULL\n      WHERE generation_id=$1\n      RETURNING generation_id`,",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "only an IN-FLIGHT attempt may complete: without the predicate, a retry or a replay could rewrite a finished generation, and a row already completed would be counted twice"
+    "why": "only an IN-FLIGHT attempt may complete: without the predicate, a retry or a replay could rewrite a finished generation, and a row already completed would be counted twice. Anchored on the completion statement's own columns, because the same predicate also guards failAttempt and a bare anchor matched both."
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "      AND NEW.last_success_at IS DISTINCT FROM OLD.last_success_at\n      AND NEW.last_success_at IS NOT NULL AND OLD.last_failure_at IS NOT NULL\n      AND NEW.last_success_at < OLD.last_failure_at THEN",
+    "replace": "      AND false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "a recovery must not be dated before the failure it clears, or the ledger can be made to report a success that predates the failure it is credited with clearing. The last_success_at IS DISTINCT FROM clause is what separates a RECOVERY from a cleanup: dropping it makes the rule fire on clearing a stale failure, which is legal and which an earlier version of this guard wrongly refused."
   }
 ]
