@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { Client, Pool } from "pg";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
+import { macRolePlan } from "../scripts/mac-local/database-upgrade-grants.mjs";
 import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database.ts";
 import { privatePgOptions } from "../src/web/v1/private-pg-options.ts";
@@ -49,10 +50,11 @@ const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "po
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (set PG_BIN)" };
 const passwords = { CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24), CONTROL_ROOM_APP_PASSWORD: "a".repeat(24),
   CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24), CONTROL_ROOM_WORK_INTAKE_PASSWORD: "w".repeat(24) };
-// The Mac-local installer's exact login set. The provisioner refuses any other
-// set, so this file provisions precisely what a real Mac-local installation has.
-const LOGINS = ["control_room_web", "control_room_coordinator", "control_room_results", "control_room_publisher",
-  "control_room_agent_reviewer_login", "control_room_queue_worker"];
+// The Mac-local installer's exact login set, read from the one role manifest the
+// provisioner itself consults. The provisioner refuses any other set, so this
+// file provisions precisely what a real Mac-local installation has -- and it
+// keeps doing so when the installer gains a login.
+const LOGINS = Object.keys(macRolePlan);
 const loginPasswords = Object.fromEntries(LOGINS.map((name, index) => [name, `${index}`.repeat(40)]));
 const DB = "control_room";
 
