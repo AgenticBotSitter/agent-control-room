@@ -24,31 +24,40 @@ for (let index = 0; index < args.length; index += 1) {
 if (policyDirectory === null || revisions.length !== 2 ||
     revisions.some(revision => !/^[0-9a-f]{7,64}$/u.test(revision))) usage();
 
+const gitEnvironment = {
+  NODE_ENV: process.env.NODE_ENV ?? "production",
+  PATH: process.env.PATH ?? "/usr/bin:/bin",
+  HOME: "/var/empty",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_NO_REPLACE_OBJECTS: "1",
+};
 const git = (...gitArgs: string[]) => execFileSync("git", ["-C", repository, ...gitArgs], {
-  encoding: "buffer", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+  encoding: "buffer", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"], env: gitEnvironment,
 });
 
 try {
   const budget = new UpdaterRefereePlanTimeBudgetV1();
-  const raw = git("-c", "core.quotepath=off", "-c", "diff.renames=copies", "-c", "diff.renameLimit=0",
-    "diff", "--raw", "-z", "--find-renames", "--find-copies", "--find-copies-harder", "--no-ext-diff", "--no-textconv",
+  const raw = git("-c", "core.quotepath=off", "diff", "--raw", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
     "--ignore-submodules=none", "--no-relative", revisions[0]!, revisions[1]!, "--");
   const treeRaw = git("ls-tree", "-r", "-z", revisions[1]!);
   const records = parseUpdaterRawDiffV1(raw);
   const treeEntries = parseUpdaterCandidateTreeV1(treeRaw);
   const treeSymlinks = treeEntries.filter(entry => entry.mode === "120000");
-  if (treeSymlinks.length > 1024) throw new Error("tree_unreadable");
+  const treeAttributes = treeEntries.filter(entry => {
+    const lower = entry.path.toLowerCase();
+    return lower === ".gitattributes" || lower.endsWith("/.gitattributes");
+  });
+  if (treeSymlinks.length > 1024 || treeAttributes.length > 64) throw new Error("tree_unreadable");
   const blobs: Record<string, Uint8Array> = Object.create(null);
   for (const entry of treeSymlinks) blobs[entry.oid] = git("cat-file", "blob", entry.oid);
+  for (const entry of treeAttributes) blobs[entry.oid] = git("cat-file", "blob", entry.oid);
   for (const record of records) {
     const paths = [record.oldPath, record.newPath].filter((path): path is string => path !== null);
     const needsManifest = paths.some(path => path.toLowerCase() === "package.json" || path.toLowerCase().endsWith("/package.json"));
-    const needsAttributes = paths.some(path => {
-      const lower = path.toLowerCase(); return lower === ".gitattributes" || lower.endsWith("/.gitattributes");
-    });
     if (record.oldMode !== "000000" && (record.oldMode === "120000" || needsManifest))
       blobs[record.oldOid] = git("cat-file", "blob", record.oldOid);
-    if (record.newMode !== "000000" && (record.newMode === "120000" || needsManifest || needsAttributes))
+    if (record.newMode !== "000000" && (record.newMode === "120000" || needsManifest))
       blobs[record.newOid] = git("cat-file", "blob", record.newOid);
   }
   const directory = resolve(policyDirectory);

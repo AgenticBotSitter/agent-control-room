@@ -85,10 +85,17 @@
     },
     {
       "id": "launch-daemons",
-      "patterns": ["deploy/macos/**", "**/*.plist", "**/*.plist.in", "src/installer/v1/macos-launch-daemon-*", "scripts/mac-local/install-supervisor-launchdaemon.mjs", "scripts/mac-local/uninstall-service.mjs"],
+      "patterns": ["deploy/macos/**", "**/*.plist.in", "scripts/mac-local/install-supervisor-launchdaemon.mjs", "scripts/mac-local/uninstall-service.mjs"],
       "onChange": "protected",
       "status": "present",
       "reason": "LaunchDaemon definitions (which uid runs what, KeepAlive, the guard tick); applied only by the attended installer, but they define the service split."
+    },
+    {
+      "id": "launch-daemons-future",
+      "patterns": ["**/*.plist", "src/installer/v1/macos-launch-daemon-*"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Future LaunchDaemon definitions and installer adapters retain the same protected treatment before they first land."
     },
     {
       "id": "installer",
@@ -158,7 +165,6 @@
         "tests/{reviewer-independence,agent-review-authority,protected-agent-principal}*",
         "tests/completion-*",
         "tests/{improve-control-room,candidate-acceptance-precheck}*",
-        "tests/*update-candidate*",
         "tests/*mutation*",
         "tests/{test-quarantine,affected-tests,ci-path-routing,audit-required-hashes,check-pr-claims}*",
         "tests/migration-*-check*",
@@ -175,6 +181,13 @@
       "onChange": "protected",
       "status": "present",
       "reason": "Guard tests: the tests that pin the protected areas in this file; the running release's pack also runs against the candidate (§10.3), so editing one is a protected change."
+    },
+    {
+      "id": "future-updater-guard-tests",
+      "patterns": ["tests/*update-candidate*"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Future update-candidate guard tests are protected from the first commit that adds them."
     },
     {
       "id": "security-core",
@@ -202,6 +215,40 @@
       "reason": "The web front door: request gate, origin/host checks, owner session cookie, access keys and the first-owner bootstrap."
     },
     {
+      "id": "worker-trust-and-protected-configuration",
+      "patterns": [
+        "src/web/v1/mac-local-{node-key-pin,protected-loader,protected-configuration}.ts"
+      ],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Worker key pinning and the loaders and schema for the Mac's Protected configuration."
+    },
+    {
+      "id": "machine-authentication",
+      "patterns": [
+        "src/node-protocol/v1/{crypto,authentication}.ts",
+        "src/connection-registry/v1/{node-ingress,transport-admission}.ts",
+        "src/work-intake/v1/machine-auth.ts"
+      ],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Worker and node authentication: frame signatures, enrollment proofs, pinned transports and machine tokens."
+    },
+    {
+      "id": "owner-signing",
+      "patterns": ["src/harness/v1/{bounded-owner-signature,owned-owner-signature,owner-signing-stream}.ts"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Owner-signing bounds and streams that protected owner-signature tests exercise."
+    },
+    {
+      "id": "front-door-body-parsing",
+      "patterns": ["src/web/v1/http-common.ts"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Shared bounded JSON parsing used by the owner-session and access-key front door."
+    },
+    {
       "id": "front-door-serve",
       "patterns": ["src/web/v1/mac-local-remote-access.ts", "scripts/mac-local/remote-access.ts"],
       "onChange": "protected",
@@ -225,26 +272,43 @@
     {
       "id": "owner-update-screens",
       "patterns": [
+        "private-app/app/layout.tsx",
+        "private-app/app/layout-providers.tsx",
+        "private-app/app/owner-ui.tsx",
         "private-app/app/update-candidates-home.tsx",
         "private-app/app/improve-control-room-workspace.tsx",
         "private-app/app/projects/[projectid]/improvements/**",
         "private-app/app/setup/**",
         "private-app/app/local-installation-wizard.tsx",
-        "private-app/app/updates/**",
         "private-app/app/**/*{update,install,passkey,approval,setup}*",
         "private-app/app/service-worker.js",
-        "private-app/app/pwa-registration.tsx"
+        "private-app/app/pwa-registration.tsx",
+        "src/web/v1/browser-json.ts"
       ],
       "onChange": "protected",
       "status": "present",
       "reason": "The Install/update/setup/approval screens the owner reads before Face ID, and the service worker that can rewrite any page of the origin (R15: catches mistakes; §5.4 covers a hostile release)."
     },
     {
+      "id": "future-owner-update-screens",
+      "patterns": ["private-app/app/updates/**"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "The future dedicated Install route is protected from the first commit that adds it."
+    },
+    {
       "id": "health-handlers",
-      "patterns": ["src/web/v1/mac-local-web-process.ts", "src/web/v1/*updater-health*", "src/fleet/v1/gateway-http.ts", "scripts/mac-local/up.mjs", "scripts/mac-local/start-web-host.mjs"],
+      "patterns": ["src/web/v1/mac-local-web-process.ts", "src/fleet/v1/gateway-http.ts", "scripts/mac-local/up.mjs", "scripts/mac-local/start-web-host.mjs"],
       "onChange": "protected",
       "status": "present",
       "reason": "The HMAC-tagged health endpoints the updater probes (§8.4: /api/v1/local-host-health, /api/v1/updater-health, /fleet/v1/health) and the code that loads health-probe.key."
+    },
+    {
+      "id": "future-updater-health-handlers",
+      "patterns": ["src/web/v1/*updater-health*"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Future updater health handlers are protected from the first commit that adds them."
     },
     {
       "id": "owner-setup-scripts",
@@ -266,10 +330,24 @@
     },
     {
       "id": "database-roles",
-      "patterns": ["db/roles/**", "db/setup/**", "deploy/postgres/provision-database.sql", "scripts/mac-local/database-role-manifest.mjs", "src/web/v1/mac-local-database-roles.ts"],
+      "patterns": ["db/roles/**", "db/setup/**", "deploy/postgres/provision-database.sql", "scripts/mac-local/database-role-manifest.mjs", "scripts/mac-local/database-upgrade-scram.mjs", "src/web/v1/mac-local-database-roles.ts"],
       "onChange": "protected",
       "status": "present",
       "reason": "Database roles and grants decide which login can write which table (including updater.plan_approvals); these are also 'database' class via classes.json."
+    },
+    {
+      "id": "build-pipeline",
+      "patterns": ["**/{tsconfig,jsconfig}*.json", "vite.*.config.ts", "postcss.config.mjs", "scripts/build-vps.mjs", "scripts/mac-local/build-source.mjs"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Build configuration and entry scripts decide which candidate source becomes the running web application."
+    },
+    {
+      "id": "environment-files",
+      "patterns": ["**/.env*"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Build tools load .env files into candidate builds; tracked environment files can therefore change security behaviour."
     },
     {
       "id": "deploy-authority",

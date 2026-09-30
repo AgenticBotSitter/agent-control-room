@@ -446,7 +446,8 @@ function safePath(path: string): boolean {
   if (path.length === 0 || path.startsWith("/") || path.includes("\\")) return false;
   if ([...encoder.encode(path)].some(byte => byte < 0x21 || byte > 0x7e)) return false;
   const segments = path.split("/");
-  return segments.every(segment => segment.length > 0 && segment !== ".." && !isDotGitSegment(segment));
+  return segments.every(segment => segment.length > 0 && segment !== "." && segment !== ".." &&
+    !isDotGitSegment(segment) && !isNodeModulesSegment(segment));
 }
 
 function asciiCaseFold(value: string): string {
@@ -455,6 +456,10 @@ function asciiCaseFold(value: string): string {
 
 function isDotGitSegment(segment: string): boolean {
   return asciiCaseFold(segment) === ".git";
+}
+
+function isNodeModulesSegment(segment: string): boolean {
+  return asciiCaseFold(segment) === "node_modules";
 }
 
 function containsDotGitSegment(path: string): boolean {
@@ -610,7 +615,7 @@ function archiveAttributesUnsafe(text: string): boolean {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) continue;
     if (line === "* text=auto eol=lf") continue;
-    const tokens = line.split(/[ \t]+/u).slice(1);
+    const tokens = line.split(/[ \t\r]+/u).slice(1);
     for (const token of tokens) {
       const lower = token.toLowerCase();
       if (lower === "export-ignore" || lower === "export-subst" || lower === "ident" ||
@@ -673,6 +678,15 @@ export function classifyUpdaterCandidateV1(
   };
   let filesAdded = 0, filesDeleted = 0;
   try {
+    for (const entry of treeEntries) {
+      if (!safePath(entry.path))
+        refusal("path_not_allowed", "This update has a file name Control Room can't check safely.");
+      if (entry.mode === "160000") refusal("submodule", "Submodules aren't supported.");
+      const lower = entry.path.toLowerCase();
+      if ((lower === ".gitattributes" || lower.endsWith("/.gitattributes")) &&
+          archiveAttributesUnsafe(blobText(diff, entry.oid, 1024 * 1024)))
+        refusal("archive_attributes", "This update changes how its files are unpacked.");
+    }
     for (const [recordIndex, entry] of records.entries()) {
       if ((recordIndex & 0xff) === 0) budget.checkpoint();
       const paths = [...new Set([entry.oldPath, entry.newPath].filter((path): path is string => path !== null))];
@@ -731,14 +745,9 @@ export function classifyUpdaterCandidateV1(
           }
         }
       }
-      const newLower = entry.newPath?.toLowerCase();
-      if ((newLower === ".gitattributes" || newLower?.endsWith("/.gitattributes")) && entry.newMode !== "000000") {
-        if (archiveAttributesUnsafe(blobText(diff, entry.newOid, 1024 * 1024)))
-          refusal("archive_attributes", "This update changes how its files are unpacked.");
-      }
     }
   } catch {
-    refusal("diff_unreadable", "Control Room couldn't read what this update changes.");
+    return failure("diff_unreadable", "Control Room couldn't read what this update changes.");
   }
   if (classes.has("updater") && classes.has("database"))
     refusal("updater_with_database", "An update to the updater can't also change the database. Split it into two updates.");

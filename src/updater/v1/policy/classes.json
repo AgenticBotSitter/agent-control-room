@@ -6,8 +6,8 @@
   "installedAt": "updater/<uver>/policy/classes.json. Only updater/current is read. The publisher's riskFlags/changedAreas are display only and never change a class.",
 
   "diff": {
-    "command": ["<xcrun-resolved git>", "--git-dir", "updater-state/mirror.git", "-c", "core.quotepath=off", "-c", "diff.renames=copies", "-c", "diff.renameLimit=0", "diff", "--raw", "-z", "-M", "-C", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-relative", "<from.commit>", "<candidate.commit>"],
-    "env": "Same clean env as the mirror fetch: GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null HOME=/var/empty, no GIT_* passed through.",
+    "command": ["<xcrun-resolved git>", "--git-dir", "updater-state/mirror.git", "-c", "core.quotepath=off", "diff", "--raw", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-relative", "<from.commit>", "<candidate.commit>"],
+    "env": "Same clean env as the mirror fetch: GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_NO_REPLACE_OBJECTS=1 HOME=/var/empty, no caller GIT_* passed through.",
     "from": "from.commit is the commit of the release that is live now (the known-good pair's release), never a merge-base.",
     "rowHandling": {
       "A": "new path",
@@ -19,7 +19,7 @@
       "modeOnly": "an M row whose blob ids are equal but modes differ (exec bit on/off) is classified like a content change of that path",
       "U/X/unknown": "refuse: diff_unreadable"
     },
-    "note": "Rename/copy detection is a heuristic. Correctness never depends on it: an undetected rename shows as D + A and both paths are classified anyway."
+    "note": "Rename and copy detection is disabled to avoid quadratic work. A rename is emitted as D + A, so both paths are still classified; a copy is classified by its new path."
   },
 
   "combination": {
@@ -73,8 +73,8 @@
         "packageJsonKeys": {
           "appliesTo": "every package.json (root and nested). Both versions are parsed as JSON; the class comes from which top-level keys differ.",
           "dependency": ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "peerDependenciesMeta", "bundledDependencies", "bundleDependencies", "dependenciesMeta", "overrides", "resolutions", "pnpm", "packageManager", "engines", "workspaces"],
-          "protected": ["scripts"],
-          "code": ["name", "version", "description", "license", "private", "type", "author", "repository", "homepage", "keywords", "main", "module", "exports", "imports", "types", "bin", "files", "browserslist"],
+          "protected": ["scripts", "imports", "type"],
+          "code": ["name", "version", "description", "license", "private", "author", "repository", "homepage", "keywords", "main", "module", "exports", "types", "bin", "files", "browserslist"],
           "unknownKey": "dependency (a key the running policy doesn't know is treated as one pnpm might read)",
           "unparseable": "dependency + protected (either side not valid JSON, duplicate keys, or not an object)",
           "addedOrDeleted": "a whole package.json added or deleted → dependency"
@@ -144,7 +144,7 @@
   ],
 
   "refusals": [
-    { "id": "path_not_allowed", "when": "Any diff path outside printable ASCII 0x21–0x7e (the publisher's safePath), with a '..' or '.git' segment, a leading '/', or a backslash.", "text": "This update has a file name Control Room can't check safely." },
+    { "id": "path_not_allowed", "when": "Any diff path outside printable ASCII 0x21–0x7e (the publisher's safePath), or any diff or candidate-tree path with a '.', '..', '.git' or 'node_modules' segment, a leading '/', or a backslash.", "text": "This update has a file name Control Room can't check safely." },
     { "id": "case_collision", "when": "The candidate TREE (not just the diff) holds two paths that are equal after ASCII case folding and Unicode NFC/NFD normalisation.", "text": "Two files in this update would overwrite each other on this Mac." },
     { "id": "submodule", "when": "Any entry with mode 160000 in the candidate tree, or a .gitmodules file.", "text": "Submodules aren't supported." },
     { "id": "archive_attributes", "when": "Any .gitattributes in the candidate tree sets export-ignore, export-subst, filter, ident, working-tree-encoding, eol=crlf or text=… other than 'auto eol=lf'.", "text": "This update changes how its files are unpacked." },

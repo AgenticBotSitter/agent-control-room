@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { classifyUpdaterCandidateV1 as classify, parseUpdaterRawDiffV1,
+import { classifyUpdaterCandidateV1 as classify, parseUpdaterCandidateTreeV1, parseUpdaterRawDiffV1,
   classifyUpdaterSettingV1, updaterPolicyGlobMatchesV1 as glob, UPDATER_REFEREE_MAX_DIFF_RECORDS_V1,
-  UPDATER_REFEREE_MAX_RAW_DIFF_BYTES_V1, UPDATER_REFEREE_PLAN_TIME_BUDGET_MS_V1,
+  UPDATER_REFEREE_MAX_RAW_DIFF_BYTES_V1, UPDATER_REFEREE_MAX_TREE_RECORDS_V1,
+  UPDATER_REFEREE_PLAN_TIME_BUDGET_MS_V1,
   UpdaterRefereePlanTimeBudgetV1 } from
   "../src/updater/v1/referee";
 
@@ -58,6 +59,38 @@ function withTempRepository(run: (repository: string) => void): void {
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
+}
+
+function initializeRepository(repository: string): void {
+  execFileSync("git", ["init", "-q", repository]);
+  execFileSync("git", ["-C", repository, "config", "user.name", "Referee Test"]);
+  execFileSync("git", ["-C", repository, "config", "user.email", "referee@example.invalid"]);
+}
+
+function writeRepositoryFile(repository: string, path: string, contents = "fixture\n"): void {
+  const destination = join(repository, path);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, contents);
+}
+
+function commitRepository(repository: string, message: string, paths: string[] = ["."]): string {
+  execFileSync("git", ["-C", repository, "add", "-f", "--", ...paths]);
+  execFileSync("git", ["-C", repository, "commit", "-q", "-m", message]);
+  return execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+}
+
+function runRefereeCli(repository: string, from: string, to: string, environment: Record<string, string> = {}) {
+  return spawnSync(process.execPath, ["--import", "tsx", "src/updater/v1/referee/cli.ts",
+    "--policy-dir", "src/updater/v1/policy", "--repo", repository, from, to], {
+    encoding: "utf8", env: { ...process.env, ...environment },
+  });
+}
+
+function committedCandidate(repository: string, from: string, to: string) {
+  return {
+    raw: execFileSync("git", ["-C", repository, "diff", "--raw", "-z", "--no-renames", from, to]),
+    treeRaw: execFileSync("git", ["-C", repository, "ls-tree", "-r", "-z", to]),
+  };
 }
 
 test("the ten worked policy examples produce their expected plan class and refusals", () => {
@@ -178,6 +211,9 @@ test("malformed, oversized, truncated, missing-blob, and unsafe-path input fails
   assert.equal(missingBlob.refused, true);
   const unsafe = classOf([pathRow("M", "docs/bad name.md")]);
   assert.deepEqual(unsafe.refusals.map(value => value.id), ["path_not_allowed"]);
+  const unsafeDiffOnly = candidate([pathRow("M", "docs/bad name.md")]);
+  unsafeDiffOnly.treeRaw = new Uint8Array();
+  assert.deepEqual(refusalIds(classify(policies, unsafeDiffOnly)), ["path_not_allowed"]);
   const traversal = classOf([pathRow("M", "docs/../security.ts")]);
   assert.deepEqual(traversal.refusals.map(value => value.id), ["path_not_allowed"]);
 });
@@ -192,6 +228,24 @@ test("a backslash is refused as path_not_allowed", () => {
 
 test("an ASCII-case-folded .git path segment is refused", () => {
   assert.deepEqual(refusalIds(classOf([pathRow("M", "docs/.GiT/config")])), ["path_not_allowed"]);
+});
+
+test("real commits refuse node_modules segments in the diff and anywhere in the candidate tree", () => {
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "README.md");
+    const base = commitRepository(repository, "base");
+    writeRepositoryFile(repository, "src/NoDe_MoDuLeS/@simplewebauthn/server/index.js", "export const verify = () => true;\n");
+    const shadow = commitRepository(repository, "shadow dependency");
+    const first = runRefereeCli(repository, base, shadow);
+    assert.equal(first.status, 1);
+    assert.deepEqual(refusalIds(JSON.parse(first.stdout) as ReturnType<typeof classify>), ["path_not_allowed"]);
+    writeRepositoryFile(repository, "docs/follow-up.md");
+    const followUp = commitRepository(repository, "unrelated follow-up");
+    const second = runRefereeCli(repository, shadow, followUp);
+    assert.equal(second.status, 1);
+    assert.deepEqual(refusalIds(JSON.parse(second.stdout) as ReturnType<typeof classify>), ["path_not_allowed"]);
+  });
 });
 
 test("an absolute symlink target is refused as symlink_escape", () => {
@@ -252,6 +306,17 @@ test("the 100001st raw-diff record is unreadable", () => {
   assert.throws(() => parseUpdaterRawDiffV1(raw), /diff_unreadable/u);
 });
 
+test("tree parsing rejects an invalid header, the 100001st record, and fatal UTF-8", () => {
+  assert.throws(() => parseUpdaterCandidateTreeV1(encode(`100600 blob ${oid("a")}\tdocs/file.ts\0`)),
+    /tree_unreadable/u);
+  const row = `100644 blob ${oid("a")}\tx\0`;
+  assert.throws(() => parseUpdaterCandidateTreeV1(encode(row.repeat(UPDATER_REFEREE_MAX_TREE_RECORDS_V1 + 1))),
+    /tree_unreadable/u);
+  const invalidUtf8 = encode(`100644 blob ${oid("a")}\tdocs/file.ts\0`);
+  invalidUtf8[invalidUtf8.length - 4] = 0xff;
+  assert.throws(() => parseUpdaterCandidateTreeV1(invalidUtf8), /encoded data/u);
+});
+
 test("a wildcard in the first brace alternative matches", () => {
   assert.equal(glob("scripts/{prepare*,initialize}-local.mjs", "scripts/prepare-release-local.mjs"), true);
 });
@@ -279,6 +344,9 @@ test("submodules and escaping symlinks refuse, while a valid retry after missing
   const submodule = classOf([pathRow("A", "vendor/tool", { oldMode: "000000", newMode: "160000",
     oldOid: zero, newOid: oid("b") })]);
   assert.deepEqual(submodule.refusals.map(value => value.id), ["submodule"]);
+  const deletedSubmodule = classOf([pathRow("D", "vendor/tool", { oldMode: "160000", newMode: "000000",
+    oldOid: oid("b"), newOid: zero })]);
+  assert.deepEqual(deletedSubmodule.refusals.map(value => value.id), ["submodule"]);
   const row = pathRow("A", "docs/link", { oldMode: "000000", newMode: "120000", oldOid: zero, newOid: oid("c") });
   assert.equal(classOf([row]).refused, true);
   const retry = classOf([row], { [oid("c")]: "../README.md" });
@@ -327,23 +395,36 @@ test("the fixed plan-time budget is shared across candidate and five overlay pro
   assert.deepEqual(refusalIds(classify(policies, input, budget)), ["diff_unreadable"]);
 });
 
-test("classification fails closed when its plan-time deadline expires halfway", () => {
-  const input = candidate(Array.from({ length: 600 }, (_, index) => pathRow("M", `x/${index.toString(36)}`)));
-  let calls = 0;
-  const budget = new UpdaterRefereePlanTimeBudgetV1(() => calls++ < 3 ? 0 : UPDATER_REFEREE_PLAN_TIME_BUDGET_MS_V1 + 1);
-  const result = classify(policies, input, budget);
-  assert.equal(result.refused, true);
-  assert.ok(refusalIds(result).includes("diff_unreadable"));
-  assert.ok(result.changedPaths.length < 600);
+test("a real 600-file commit returns the one fail-closed shape when the deadline expires halfway", () => {
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "README.md");
+    const base = commitRepository(repository, "base");
+    for (let index = 0; index < 600; index += 1)
+      writeRepositoryFile(repository, `x/${index.toString(36)}`);
+    const candidateCommit = commitRepository(repository, "large candidate");
+    let calls = 0;
+    const budget = new UpdaterRefereePlanTimeBudgetV1(() =>
+      calls++ < 3 ? 0 : UPDATER_REFEREE_PLAN_TIME_BUDGET_MS_V1 + 1);
+    assert.deepEqual(classify(policies, committedCandidate(repository, base, candidateCommit), budget), {
+      classification: "updater", classes: ["updater", "protected"], protectedPaths: [],
+      approvalNeeded: { phonePasskey: true, macConfirm: true }, independentReviewRequired: true,
+      refused: true,
+      refusals: [{ id: "diff_unreadable", text: "Control Room couldn't read what this update changes." }],
+      filesChanged: 0, filesAdded: 0, filesDeleted: 0, changedPaths: [],
+      changesDatabase: false, changesUpdater: true,
+    });
+  });
 });
 
-test("every present protected-policy entry and wildcard-in-braces matcher covers the real tracked tree", () => {
+test("every present protected-policy pattern and wildcard-in-braces matcher covers the real tracked tree", () => {
   const tracked = execFileSync("git", ["ls-files", "-z"], { encoding: "buffer" }).toString("utf8").split("\0").filter(Boolean);
   const policy = JSON.parse(policies.protectedJson) as { entries: Array<{
     id: string; status: string; patterns: string[]; exclude?: string[];
   }> };
   for (const entry of policy.entries.filter(value => value.status === "present")) {
-    assert.ok(entry.patterns.some(pattern => tracked.some(path => glob(pattern, path))), entry.id);
+    for (const pattern of entry.patterns)
+      assert.ok(tracked.some(path => glob(pattern, path)), `${entry.id}: ${pattern}`);
   }
   assert.equal(glob("scripts/{prepare,initialize}-local-installation*.mjs",
     "scripts/prepare-local-installation-release.mjs"), true);
@@ -382,26 +463,162 @@ test("the CLI classifies a diff between two real repository commits", () => {
   assert.ok(parseUpdaterRawDiffV1(execFileSync("git", ["diff", "--raw", "-z", "--find-renames", from!, candidateCommit!])).length > 1);
 });
 
-test("the CLI detects a protected copy from an unchanged source", () => {
+test("the CLI disables copy detection and still protects both halves of a real rename", () => {
   withTempRepository(repository => {
-    execFileSync("git", ["init", "-q", repository]);
-    execFileSync("git", ["-C", repository, "config", "user.name", "Referee Test"]);
-    execFileSync("git", ["-C", repository, "config", "user.email", "referee@example.invalid"]);
-    mkdirSync(join(repository, "tests"));
-    writeFileSync(join(repository, "tests", "private-name-guard.test.mjs"), "export const guard = true;\n");
-    execFileSync("git", ["-C", repository, "add", "."]);
-    execFileSync("git", ["-C", repository, "commit", "-q", "-m", "base"]);
-    const from = execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    mkdirSync(join(repository, "docs"));
-    writeFileSync(join(repository, "docs", "guard-copy.ts"), "export const guard = true;\n");
-    execFileSync("git", ["-C", repository, "add", "."]);
-    execFileSync("git", ["-C", repository, "commit", "-q", "-m", "copy"]);
-    const to = execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    const output = execFileSync(process.execPath, ["--import", "tsx", "src/updater/v1/referee/cli.ts",
-      "--policy-dir", "src/updater/v1/policy", "--repo", repository, from, to], { encoding: "utf8" });
-    const result = JSON.parse(output) as ReturnType<typeof classify>;
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "tests/private-name-guard.test.mjs", "export const guard = true;\n");
+    const from = commitRepository(repository, "base");
+    writeRepositoryFile(repository, "docs/guard-copy.ts", "export const guard = true;\n");
+    const copy = commitRepository(repository, "copy");
+    const copyResult = runRefereeCli(repository, from, copy);
+    assert.equal(copyResult.status, 0);
+    assert.deepEqual((JSON.parse(copyResult.stdout) as ReturnType<typeof classify>).classes, ["code"]);
+    execFileSync("git", ["-C", repository, "mv", "tests/private-name-guard.test.mjs", "docs/guard-moved.ts"]);
+    const to = commitRepository(repository, "rename");
+    const output = runRefereeCli(repository, copy, to);
+    assert.equal(output.status, 0);
+    const result = JSON.parse(output.stdout) as ReturnType<typeof classify>;
     assert.deepEqual(result.classes, ["protected"]);
     assert.ok(result.protectedPaths.some(hit => hit.path === "tests/private-name-guard.test.mjs"));
+  });
+});
+
+test("real commits protect the security implementations and build pipeline named by the rulebook", () => {
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "README.md");
+    const base = commitRepository(repository, "base");
+    const expected: Array<[string, string]> = [
+      ["src/web/v1/mac-local-node-key-pin.ts", "worker-trust-and-protected-configuration"],
+      ["src/web/v1/mac-local-protected-loader.ts", "worker-trust-and-protected-configuration"],
+      ["src/web/v1/mac-local-protected-configuration.ts", "worker-trust-and-protected-configuration"],
+      ["src/node-protocol/v1/crypto.ts", "machine-authentication"],
+      ["src/node-protocol/v1/authentication.ts", "machine-authentication"],
+      ["src/connection-registry/v1/node-ingress.ts", "machine-authentication"],
+      ["src/connection-registry/v1/transport-admission.ts", "machine-authentication"],
+      ["src/harness/v1/bounded-owner-signature.ts", "owner-signing"],
+      ["src/harness/v1/owned-owner-signature.ts", "owner-signing"],
+      ["src/harness/v1/owner-signing-stream.ts", "owner-signing"],
+      ["src/work-intake/v1/machine-auth.ts", "machine-authentication"],
+      ["src/web/v1/http-common.ts", "front-door-body-parsing"],
+      ["private-app/app/layout.tsx", "owner-update-screens"],
+      ["private-app/app/layout-providers.tsx", "owner-update-screens"],
+      ["private-app/app/owner-ui.tsx", "owner-update-screens"],
+      ["src/web/v1/browser-json.ts", "owner-update-screens"],
+      ["scripts/mac-local/database-upgrade-scram.mjs", "database-roles"],
+      ["src/jsconfig.json", "build-pipeline"],
+      ["vite.attack.config.ts", "build-pipeline"],
+      ["postcss.config.mjs", "build-pipeline"],
+      ["scripts/build-vps.mjs", "build-pipeline"],
+      ["scripts/mac-local/build-source.mjs", "build-pipeline"],
+    ];
+    for (const [path] of expected) writeRepositoryFile(repository, path);
+    const candidateCommit = commitRepository(repository, "security implementations");
+    const output = runRefereeCli(repository, base, candidateCommit);
+    assert.equal(output.status, 0);
+    const result = JSON.parse(output.stdout) as ReturnType<typeof classify>;
+    assert.deepEqual(result.classes, ["protected"]);
+    for (const [path, id] of expected)
+      assert.ok(result.protectedPaths.some(hit => hit.path === path && hit.entryId === id), `${id}: ${path}`);
+  });
+});
+
+test("real package.json commits protect imports and type resolution levers", () => {
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "package.json", '{"name":"fixture"}\n');
+    const base = commitRepository(repository, "base");
+    writeRepositoryFile(repository, "package.json", '{"name":"fixture","type":"module","imports":{"#guard":"./evil.js"}}\n');
+    const candidateCommit = commitRepository(repository, "resolution levers");
+    const output = runRefereeCli(repository, base, candidateCommit);
+    assert.equal(output.status, 0);
+    const result = JSON.parse(output.stdout) as ReturnType<typeof classify>;
+    assert.deepEqual(result.classes, ["protected"]);
+    assert.deepEqual(result.protectedPaths.map(hit => hit.entryId).sort(),
+      ["package-json:imports", "package-json:type"]);
+  });
+});
+
+test("a real tracked .env file is protected", () => {
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "README.md");
+    const base = commitRepository(repository, "base");
+    writeRepositoryFile(repository, ".env.production", "CONTROL_ROOM_BUILD_TARGET=other\n");
+    const candidateCommit = commitRepository(repository, "environment file");
+    const output = runRefereeCli(repository, base, candidateCommit);
+    assert.equal(output.status, 0);
+    const result = JSON.parse(output.stdout) as ReturnType<typeof classify>;
+    assert.deepEqual(result.classes, ["protected"]);
+    assert.ok(result.protectedPaths.some(hit => hit.entryId === "environment-files"));
+  });
+});
+
+test("real CR-separated archive attributes are refused even when unchanged in the candidate diff", () => {
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "README.md");
+    const base = commitRepository(repository, "base");
+    writeRepositoryFile(repository, ".gitattributes", "guard.txt -diff\rexport-ignore\n");
+    const attributesCommit = commitRepository(repository, "archive attributes");
+    const changed = runRefereeCli(repository, base, attributesCommit);
+    assert.equal(changed.status, 1);
+    assert.ok(refusalIds(JSON.parse(changed.stdout) as ReturnType<typeof classify>).includes("archive_attributes"));
+    writeRepositoryFile(repository, "docs/follow-up.md");
+    const followUp = commitRepository(repository, "follow up");
+    const unchanged = runRefereeCli(repository, attributesCommit, followUp);
+    assert.equal(unchanged.status, 1);
+    assert.ok(refusalIds(JSON.parse(unchanged.stdout) as ReturnType<typeof classify>).includes("archive_attributes"));
+  });
+});
+
+test("a real burst above 64 candidate attribute files fails before blob loading", () => {
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "README.md");
+    const base = commitRepository(repository, "base");
+    for (let index = 0; index < 65; index += 1)
+      writeRepositoryFile(repository, `attributes/${index.toString(36)}/.gitattributes`, "* text=auto eol=lf\n");
+    const candidateCommit = commitRepository(repository, "attribute burst");
+    const output = runRefereeCli(repository, base, candidateCommit);
+    assert.equal(output.status, 1);
+    assert.equal(output.stdout, "");
+    assert.match(output.stderr, /couldn't read what this update changes/u);
+  });
+});
+
+test("a real unchanged gitlink in the candidate tree is refused", () => {
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "README.md");
+    const base = commitRepository(repository, "base");
+    execFileSync("git", ["-C", repository, "update-index", "--add", "--cacheinfo", `160000,${base},vendor/tool`]);
+    execFileSync("git", ["-C", repository, "commit", "-q", "-m", "gitlink"]);
+    const withGitlink = execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    writeRepositoryFile(repository, "docs/follow-up.md");
+    const followUp = commitRepository(repository, "follow up", ["docs/follow-up.md"]);
+    const output = runRefereeCli(repository, withGitlink, followUp);
+    assert.equal(output.status, 1);
+    assert.ok(refusalIds(JSON.parse(output.stdout) as ReturnType<typeof classify>).includes("submodule"));
+  });
+});
+
+test("the CLI ignores caller Git config and replacement refs when reading real commits", () => {
+  withTempRepository(repository => {
+    initializeRepository(repository);
+    writeRepositoryFile(repository, "README.md");
+    const base = commitRepository(repository, "base");
+    writeRepositoryFile(repository, "src/security/digest.ts");
+    const protectedCommit = commitRepository(repository, "protected");
+    execFileSync("git", ["-C", repository, "checkout", "-q", "-b", "alternate", base]);
+    writeRepositoryFile(repository, "docs/ordinary.ts");
+    const replacement = commitRepository(repository, "ordinary replacement");
+    execFileSync("git", ["-C", repository, "replace", protectedCommit, replacement]);
+    const output = runRefereeCli(repository, base, protectedCommit, {
+      GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.repositoryformatversion", GIT_CONFIG_VALUE_0: "99",
+    });
+    assert.equal(output.status, 0, output.stderr);
+    assert.deepEqual((JSON.parse(output.stdout) as ReturnType<typeof classify>).classes, ["protected"]);
   });
 });
 
@@ -425,5 +642,32 @@ test("the CLI reads a hostile candidate tree and refuses a case collision", () =
       "--policy-dir", "src/updater/v1/policy", "--repo", repository, base, candidateCommit], { encoding: "utf8" });
     assert.equal(result.status, 1);
     assert.ok(refusalIds(JSON.parse(result.stdout) as ReturnType<typeof classify>).includes("case_collision"));
+  });
+});
+
+test("the CLI refuses a real crafted commit containing a dot tree segment", () => {
+  withTempRepository(repository => {
+    execFileSync("git", ["init", "--bare", "-q", repository]);
+    const environment = { ...process.env, GIT_AUTHOR_NAME: "Referee Test", GIT_AUTHOR_EMAIL: "referee@example.invalid",
+      GIT_COMMITTER_NAME: "Referee Test", GIT_COMMITTER_EMAIL: "referee@example.invalid" };
+    const hashObject = (type: "blob" | "tree", input: string | Buffer) => execFileSync("git",
+      ["-C", repository, "hash-object", "--literally", "-t", type, "-w", "--stdin"],
+      { input, encoding: "utf8" }).trim();
+    const rawTree = (mode: string, name: string, objectId: string) => Buffer.concat([
+      Buffer.from(`${mode} ${name}\0`), Buffer.from(objectId, "hex"),
+    ]);
+    const blob = hashObject("blob", "content\n");
+    const baseTree = hashObject("tree", rawTree("100644", "base.ts", blob));
+    const base = execFileSync("git", ["-C", repository, "commit-tree", baseTree],
+      { input: "base\n", encoding: "utf8", env: environment }).trim();
+    const securityTree = hashObject("tree", rawTree("100644", "digest.ts", blob));
+    const dotTree = hashObject("tree", rawTree("40000", "security", securityTree));
+    const srcTree = hashObject("tree", rawTree("40000", ".", dotTree));
+    const hostileTree = hashObject("tree", rawTree("40000", "src", srcTree));
+    const candidateCommit = execFileSync("git", ["-C", repository, "commit-tree", hostileTree, "-p", base],
+      { input: "dot segment\n", encoding: "utf8", env: environment }).trim();
+    const result = runRefereeCli(repository, base, candidateCommit);
+    assert.equal(result.status, 1);
+    assert.ok(refusalIds(JSON.parse(result.stdout) as ReturnType<typeof classify>).includes("path_not_allowed"));
   });
 });
