@@ -212,9 +212,23 @@ export class PasskeyStoreV1 {
     assertSafeIdV1(planId, "updater_refusal_plan_refused");
     if (typeof reason !== "string" || !/^[a-z][a-z0-9_]{1,63}$/u.test(reason))
       throw updaterRefuseV1("updater_refusal_input_refused");
-    const result = await this.client.query(
-      `SELECT count, first_in_hour, bucket_start FROM updater.record_approval_refusal($1,$2,$3)`,
-    [approvalId, planId, reason]);
+    let result;
+    try {
+      result = await this.client.query(
+        `SELECT count, first_in_hour, bucket_start FROM updater.record_approval_refusal($1,$2,$3)`,
+      [approvalId, planId, reason]);
+    } catch (error) {
+      // A REPLAY is the database refusing to count one approval twice, which is
+      // the correct outcome and not a failure (review passkey2 DB-6). It is
+      // raised as a raw 42501 so it can never be mistaken for a count; here it
+      // becomes a typed code the aggregator reads as "already counted", so an
+      // approval-processing loop does not treat a retried NOTIFY as an error.
+      // Matched on SQLSTATE AND message, because 42501 alone is also what a
+      // missing grant looks like, and that must stay a failure.
+      if (error?.code === "42501" && /updater refusal is not an approval/u.test(String(error?.message)))
+        throw updaterRefuseV1("updater_refusal_replayed");
+      throw error;
+    }
     const row = result.rows[0];
     if (!row || !Number.isSafeInteger(row.count) || row.count < 1 || typeof row.first_in_hour !== "boolean")
       throw updaterRefuseV1("updater_refusal_store_refused");
@@ -231,20 +245,29 @@ export class PasskeyStoreV1 {
    * undelivered and `pendingRefusalBuckets` returns it at the next startup.
    */
   async markRefusalJournaled(planId, bucketStart) {
-    assertSafeIdV1(planId, "updater_refusal_plan_refused");
-    if (typeof bucketStart !== "string" || !Number.isFinite(Date.parse(bucketStart)))
-      throw updaterRefuseV1("updater_refusal_bucket_refused");
-    await this.client.query(`UPDATE updater.approval_refusal_buckets SET journaled_at = pg_catalog.now()
-      WHERE plan_id = $1 AND bucket_start = $2::timestamptz`, [planId, bucketStart]);
+    await this.#markRefusal("journaled_at", planId, bucketStart);
   }
 
   /** The same for the push row's commit. */
   async markRefusalPushed(planId, bucketStart) {
+    await this.#markRefusal("pushed_at", planId, bucketStart);
+  }
+
+  /** One delivery half. EXACTLY one bucket must match: a mark that matched
+   * nothing (a bucket string in the wrong shape, a pruned bucket) would leave
+   * the alert pending forever while the caller believed it delivered. A second
+   * mark keeps the first timestamp, so a re-drive that re-marks is a no-op. */
+  async #markRefusal(column, planId, bucketStart) {
     assertSafeIdV1(planId, "updater_refusal_plan_refused");
     if (typeof bucketStart !== "string" || !Number.isFinite(Date.parse(bucketStart)))
       throw updaterRefuseV1("updater_refusal_bucket_refused");
-    await this.client.query(`UPDATE updater.approval_refusal_buckets SET pushed_at = pg_catalog.now()
-      WHERE plan_id = $1 AND bucket_start = $2::timestamptz`, [planId, bucketStart]);
+    const statement = column === "journaled_at"
+      ? `UPDATE updater.approval_refusal_buckets SET journaled_at = COALESCE(journaled_at, pg_catalog.now())
+          WHERE plan_id = $1 AND bucket_start = $2::timestamptz`
+      : `UPDATE updater.approval_refusal_buckets SET pushed_at = COALESCE(pushed_at, pg_catalog.now())
+          WHERE plan_id = $1 AND bucket_start = $2::timestamptz`;
+    const result = await this.client.query(statement, [planId, bucketStart]);
+    if (result.rowCount !== 1) throw updaterRefuseV1("updater_refusal_bucket_refused");
   }
 
   /**
@@ -259,13 +282,22 @@ export class PasskeyStoreV1 {
    */
   async pendingRefusalBuckets(limit = 50) {
     const bounded = Math.max(1, Math.min(200, Number(limit) || 1));
-    const rows = (await this.client.query(`SELECT plan_id, bucket_start, count, first_in_hour, last_approval_id,
-        journaled_at, pushed_at FROM updater.approval_refusal_buckets
-      WHERE journaled_at IS NULL OR pushed_at IS NULL ORDER BY bucket_start, plan_id LIMIT $1`, [bounded])).rows;
+    // `reason` is the FIRST refusal's, read from the per-approval ledger, because
+    // that is the refusal the hour's alert was about and the re-drive must send
+    // the same line the first delivery would have.
+    const rows = (await this.client.query(`SELECT b.plan_id, b.bucket_start, b.count, b.first_in_hour,
+        b.last_approval_id, b.journaled_at, b.pushed_at, r.reason
+      FROM updater.approval_refusal_buckets b
+      JOIN updater.approval_refusals r ON r.approval_id = b.first_in_hour
+      WHERE b.journaled_at IS NULL OR b.pushed_at IS NULL ORDER BY b.bucket_start, b.plan_id LIMIT $1`,
+    [bounded])).rows;
+    // `firstApprovalId`, not `firstInHour`: `recordApprovalRefusal` returns a
+    // BOOLEAN under that name, and the same name holding an approval id here
+    // was one misread away from a truthy string standing in for "first".
     return rows.map(row => Object.freeze({ planId: String(row.plan_id),
       bucketStart: new Date(row.bucket_start).toISOString(), count: Number(row.count),
-      firstInHour: String(row.first_in_hour), lastApprovalId: String(row.last_approval_id),
-      journaled: row.journaled_at !== null, pushed: row.pushed_at !== null }));
+      firstApprovalId: String(row.first_in_hour), lastApprovalId: String(row.last_approval_id),
+      reason: String(row.reason), journaled: row.journaled_at !== null, pushed: row.pushed_at !== null }));
   }
 
   /** Prune delivered buckets older than the retention window. The updater calls
@@ -312,7 +344,13 @@ export class PasskeyStoreV1 {
       FROM updater.enqueue_cooling_off_notices($1,$2,$3::timestamptz,$4::timestamptz)`,
     [credentialId, number, new Date(coolingOffUntil).toISOString(), new Date(repeatAt).toISOString()]);
     const row = result.rows[0];
-    if (!row || !Number.isSafeInteger(row.subscriptions) || row.subscriptions < 1)
+    // BOTH notices, or refuse (review passkey2 DB-1). Checking only the
+    // subscription count let a result with fewer than two of the updater's own
+    // rows through as success, and `completeRegistration` then told the owner
+    // warnings were queued. The SQL already raises when a key is held by a row
+    // it did not write; this is the port holding the same line, so a store that
+    // ever returned a short count cannot become a silent add.
+    if (!row || !Number.isSafeInteger(row.subscriptions) || row.subscriptions < 1 || row.enqueued !== 2)
       throw updaterRefuseV1("updater_passkey_cooling_off_refused");
     return Object.freeze({ enqueued: Number(row.enqueued), subscriptions: Number(row.subscriptions) });
   }
@@ -373,26 +411,20 @@ export class PasskeyWebStoreV1 {
    * P-2's read. Only open, unconsumed, unexpired registrations come back, and
    * the row is exactly what the updater published.
    *
-   * `consumed_at` is NOT readable by the web login (the DDL grants five columns and
-   * this is not one of them), so it cannot appear in this query's WHERE clause —
-   * which means the web cannot itself exclude a consumed registration, and must
-   * ask the UPDATER whether the digest is still open. That is `openRegistrationOptions`
-   * on the deployer store, and it is why the two ports are separate objects rather
-   * than one class with a flag: the web's read is a projection of what the updater
-   * published, and the updater's read is the authority on whether it is still
-   * usable.
-   *
-   * So this method answers the question it CAN answer from the columns it holds —
-   * is there an unexpired row, and what should the page show — and refuses when
-   * there is none, which covers the expired case. The consumed case is refused one
-   * level up, by the updater, before the web is ever asked.
+   * `consumed_at` is NOT readable by the web login, and it does not need to be:
+   * the read goes through `updater.passkey_open_registrations_web`, a view the
+   * deployer owns that already filters to unconsumed, unexpired rows at the
+   * DATABASE clock. The first version read the table directly and could only
+   * filter on expiry, so it served the options of a registration the updater had
+   * already consumed and the page failed later, at the insert (review passkey2
+   * DB-8). Now a consumed registration and an expired one get the same refusal
+   * here, before the owner is asked to touch Face ID.
    */
   async options(registrationDigest) {
     if (typeof registrationDigest !== "string" || !DIGEST_V1.test(registrationDigest))
       throw updaterRefuseV1("updater_registration_digest_refused");
     const row = (await this.client.query(`SELECT registration_digest, mode, options_json, authorization_challenge
-      FROM updater.passkey_open_registrations
-      WHERE registration_digest = $1 AND expires_at > pg_catalog.now()`, [registrationDigest])).rows[0];
+      FROM updater.passkey_open_registrations_web WHERE registration_digest = $1`, [registrationDigest])).rows[0];
     if (!row) throw updaterRefuseV1("updater_registration_expired");
     return Object.freeze({ registrationDigest: String(row.registration_digest), mode: String(row.mode),
       options: row.options_json,

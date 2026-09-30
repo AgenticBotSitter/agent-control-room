@@ -376,8 +376,12 @@ export class PasskeyAuthorityV1 {
         const number = ledger.passkeys.length + 1;
         let coolingOffNoticesEnqueued = false;
         if (coolingOffUntil) {
-          await boundedV1(() => this.store.notifyCoolingOff({ credentialId: verified.credentialId, number,
+          const notice = await boundedV1(() => this.store.notifyCoolingOff({ credentialId: verified.credentialId, number,
             coolingOffUntil, repeatAt: new Date(nowMs + 12 * 60 * 60_000).toISOString() }), this.notificationTimeoutMs);
+          // Both notices, now and at 12 h, or no key (review passkey2 DB-1). A
+          // port that resolved with fewer — or with nothing — has not told the
+          // owner, and "warnings were queued" must never be printed on that.
+          if (notice?.enqueued !== 2) throw updaterRefuseV1("updater_passkey_cooling_off_refused");
           coolingOffNoticesEnqueued = true;
         }
         ledger.passkeys.push({ credentialId: verified.credentialId, publicKey: verified.publicKey,
@@ -450,26 +454,87 @@ export class PasskeyAuthorityV1 {
   }
 }
 
-/** R16 aggregation delegates the row/count transaction to a typed store port. */
+/**
+ * R16 aggregation delegates the row/count transaction to a typed store port.
+ *
+ * DELIVERY IS MARKED PER SINK, AFTER THE SINK (P-4, review passkey2 DB-4). The
+ * count commits first; then the journal line, then `markRefusalJournaled`; then
+ * the push, then `markRefusalPushed`. A sink that throws leaves its half
+ * unmarked, so the bucket stays in `pendingRefusalBuckets` and `redrive` sends
+ * exactly the missing half. The two sinks are independent: a journal that
+ * failed does not stop the phone alert, and the first failure is rethrown after
+ * both have been tried so the caller still sees it.
+ *
+ * Both sinks are keyed on `passkey-refusal:<planId>:<bucketStart>`, so a crash
+ * between a sink accepting and its mark committing re-drives into the sink's own
+ * idempotency (the push queue's key is UNIQUE and reserved to the updater).
+ */
 export class PasskeyRefusalAggregatorV1 {
   constructor({ store, journal, push, clock = () => new Date() }) {
     this.store = store; this.journal = journal; this.push = push; this.clock = clock;
+  }
+  #requirePorts() {
+    if (!this.store?.recordApprovalRefusal || !this.store?.markRefusalJournaled || !this.store?.markRefusalPushed)
+      throw updaterRefuseV1("updater_passkey_store_port_unbound");
   }
   async record({ approvalId, planId, reason }) {
     assertSafeIdV1(planId, "updater_refusal_plan_refused");
     if (typeof approvalId !== "string" || !/^approval:[0-9a-f-]{36}$/u.test(approvalId)
         || typeof reason !== "string" || !/^[a-z][a-z0-9_]{1,63}$/u.test(reason))
       throw updaterRefuseV1("updater_refusal_input_refused");
-    if (!this.store?.recordApprovalRefusal) throw updaterRefuseV1("updater_passkey_store_port_unbound");
-    const result = await boundedV1(() => this.store.recordApprovalRefusal({ approvalId, planId, reason,
-      observedAt: exactNowV1(this.clock).toISOString() }));
+    this.#requirePorts();
+    let result;
+    try {
+      result = await boundedV1(() => this.store.recordApprovalRefusal({ approvalId, planId, reason,
+        observedAt: exactNowV1(this.clock).toISOString() }));
+    } catch (error) {
+      // Already counted (review passkey2 DB-6). The first processing owns the
+      // alert, and if its delivery was interrupted the bucket is pending and
+      // `redrive` finishes it, so a replay has nothing left to do.
+      if (error?.code === "updater_refusal_replayed")
+        return Object.freeze({ count: null, notified: false, replayed: true });
+      throw error;
+    }
     if (!result || !Number.isSafeInteger(result.count) || result.count < 1 || typeof result.bucketStart !== "string")
       throw updaterRefuseV1("updater_refusal_store_refused");
-    if (result.firstInHour === true) {
-      const idempotencyKey = `passkey-refusal:${planId}:${result.bucketStart}`;
-      await this.journal.recordRefusal({ idempotencyKey, planId, reason, count: result.count });
-      await this.push.queueRefusal({ idempotencyKey, planId, reason, count: result.count });
+    if (result.firstInHour === true)
+      await this.#deliver({ planId, bucketStart: result.bucketStart, reason, count: result.count,
+        journaled: false, pushed: false });
+    return Object.freeze({ count: result.count, notified: result.firstInHour === true, replayed: false });
+  }
+
+  /**
+   * Finish every bucket whose alert was not fully delivered. Item 8 calls this
+   * at startup; it sends only the half each bucket is missing, with the count
+   * the bucket holds now, and marks each half after its sink accepts.
+   */
+  async redrive({ limit = 50 } = {}) {
+    this.#requirePorts();
+    if (!this.store?.pendingRefusalBuckets) throw updaterRefuseV1("updater_passkey_store_port_unbound");
+    const pending = await boundedV1(() => this.store.pendingRefusalBuckets(limit));
+    let delivered = 0, failure;
+    for (const bucket of pending) {
+      try { await this.#deliver(bucket); delivered += 1; } catch (error) { failure ??= error; }
     }
-    return Object.freeze({ count: result.count, notified: result.firstInHour === true });
+    if (failure) throw failure;
+    return Object.freeze({ pending: pending.length, delivered });
+  }
+
+  async #deliver({ planId, bucketStart, reason, count, journaled, pushed }) {
+    const idempotencyKey = `passkey-refusal:${planId}:${bucketStart}`;
+    let failure;
+    if (!journaled) {
+      try {
+        await this.journal.recordRefusal({ idempotencyKey, planId, reason, count });
+        await boundedV1(() => this.store.markRefusalJournaled(planId, bucketStart));
+      } catch (error) { failure ??= error; }
+    }
+    if (!pushed) {
+      try {
+        await this.push.queueRefusal({ idempotencyKey, planId, reason, count });
+        await boundedV1(() => this.store.markRefusalPushed(planId, bucketStart));
+      } catch (error) { failure ??= error; }
+    }
+    if (failure) throw failure;
   }
 }

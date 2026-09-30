@@ -76,7 +76,7 @@ async function tempRoot(t) {
 async function registrationFixture(t, { now = new Date("2026-09-30T12:00:00.000Z") } = {}) {
   const root = await tempRoot(t), rows = new Map(), notices = [], clock = { value: now };
   const store = { async registrationRows(key) { return rows.get(key) ?? []; },
-    async notifyCoolingOff(value) { notices.push(value); } };
+    async notifyCoolingOff(value) { notices.push(value); return { enqueued: 2, subscriptions: 1 }; } };
   const authority = new PasskeyAuthorityV1({ root, store, config, clock: () => clock.value });
   const device = authenticator(), started = await authority.beginRegistration({ mode: "initial" });
   const options = await authority.registrationOptions(started.registrationSecret);
@@ -289,6 +289,7 @@ test("cooling-off notice is mandatory, precedes the passkey write, and revoke-al
     const before = JSON.parse(await readFile(join(fixture.root, "updater-state/passkeys.json"), "utf8"));
     assert.equal(before.passkeys.length, 1, "notification enqueue happens before the new passkey ledger write");
     fixture.notices.push(notice);
+    return { enqueued: 2, subscriptions: 1 };
   };
   await fixture.authority.revokePasskey(1);
   await assert.rejects(fixture.authority.beginRegistration({ mode: "initial" }), /updater_registration_mode_refused/u);
@@ -413,14 +414,78 @@ test("10,000 structured registration and 10,000 assertion mutations are refused 
 });
 
 test("10,000 refusal rows produce one journal line and one push in the hour", async () => {
-  let count = 0, journal = 0, pushes = 0;
+  let count = 0, journal = 0, pushes = 0; const marks = [];
   const aggregator = new PasskeyRefusalAggregatorV1({ store: { async recordApprovalRefusal() {
     count += 1; return { count, firstInHour: count === 1, bucketStart: "2026-09-30T12:00:00.000Z" };
-  } }, journal: { async recordRefusal() { journal += 1; } }, push: { async queueRefusal() { pushes += 1; } } });
+  }, async markRefusalJournaled(plan, bucket) { marks.push(["journaled", plan, bucket]); },
+  async markRefusalPushed(plan, bucket) { marks.push(["pushed", plan, bucket]); } },
+  journal: { async recordRefusal() { journal += 1; } }, push: { async queueRefusal() { pushes += 1; } } });
   for (let index = 0; index < 10_000; index += 1) await aggregator.record({
     approvalId: `approval:00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
     planId: "plan-one", reason: "malformed_assertion" });
   assert.deepEqual({ count, journal, pushes }, { count: 10_000, journal: 1, pushes: 1 });
+  assert.deepEqual(marks, [["journaled", "plan-one", "2026-09-30T12:00:00.000Z"],
+    ["pushed", "plan-one", "2026-09-30T12:00:00.000Z"]], "each delivered half is marked once, after its sink");
+});
+
+test("a cooling-off port that queued fewer than both notices refuses the add and writes no key", async t => {
+  for (const short of [undefined, { enqueued: 1, subscriptions: 1 }, { enqueued: 0, subscriptions: 3 }]) {
+    const fixture = await registrationFixture(t), add = await fixture.authority.beginRegistration({ mode: "add" }),
+      options = await fixture.authority.registrationOptions(add.registrationSecret), device = authenticator(),
+      response = registrationResponse(device, { challenge: options.publicKey.challenge }), code = comparisonCodeV1(response.id);
+    fixture.rows.set(add.registrationDigest, [{ registrationDigest: add.registrationDigest, credentialId: response.id,
+      comparisonCode: code, response, userHandle: options.publicKey.user.id }]);
+    fixture.store.notifyCoolingOff = async () => short;
+    await assert.rejects(fixture.authority.completeRegistration({ registrationSecret: add.registrationSecret, typedCode: code }),
+      /updater_passkey_cooling_off_refused/u, `a port answering ${JSON.stringify(short)} is not a queued warning`);
+    assert.equal((await fixture.authority.listPasskeys()).length, 1, "and the new key was not written");
+  }
+});
+
+test("a refusal sink that fails leaves its half pending, the other half still lands, and a re-drive finishes once", async () => {
+  const buckets = new Map(), journalLines = [], pushes = [];
+  const bucketStart = "2026-09-30T12:00:00.000Z";
+  const store = {
+    async recordApprovalRefusal({ approvalId, planId, reason }) {
+      if (buckets.get(approvalId)) throw Object.assign(new Error("replayed"), { code: "updater_refusal_replayed" });
+      buckets.set(approvalId, true);
+      const key = `${planId}|${bucketStart}`, existing = buckets.get(key);
+      if (existing) { existing.count += 1; return { count: existing.count, firstInHour: false, bucketStart }; }
+      buckets.set(key, { planId, bucketStart, count: 1, reason, journaled: false, pushed: false });
+      return { count: 1, firstInHour: true, bucketStart };
+    },
+    async markRefusalJournaled(planId, start) { buckets.get(`${planId}|${start}`).journaled = true; },
+    async markRefusalPushed(planId, start) { buckets.get(`${planId}|${start}`).pushed = true; },
+    async pendingRefusalBuckets() {
+      return [...buckets.values()].filter(value => typeof value === "object" && (!value.journaled || !value.pushed))
+        .map(value => ({ ...value }));
+    },
+  };
+  let journalDown = true;
+  const aggregator = new PasskeyRefusalAggregatorV1({ store,
+    journal: { async recordRefusal(line) { if (journalDown) throw Object.assign(new Error("disk"), { code: "journal_down" });
+      journalLines.push(line.idempotencyKey); } },
+    push: { async queueRefusal(line) { pushes.push(line.idempotencyKey); } } });
+  const approvalId = "approval:00000000-0000-4000-8000-000000000001";
+  await assert.rejects(aggregator.record({ approvalId, planId: "plan-one", reason: "malformed_assertion" }),
+    /disk/u, "the journal's failure is surfaced, not swallowed");
+  assert.deepEqual(pushes, ["passkey-refusal:plan-one:2026-09-30T12:00:00.000Z"], "the phone alert still went");
+  const bucket = buckets.get(`plan-one|${bucketStart}`);
+  assert.deepEqual({ journaled: bucket.journaled, pushed: bucket.pushed }, { journaled: false, pushed: true },
+    "only the half whose sink accepted is marked");
+  // A replay of the same approval is "already counted", not an error.
+  assert.deepEqual({ ...(await aggregator.record({ approvalId, planId: "plan-one", reason: "malformed_assertion" })) },
+    { count: null, notified: false, replayed: true });
+  journalDown = false;
+  assert.deepEqual({ ...(await aggregator.redrive()) }, { pending: 1, delivered: 1 });
+  assert.deepEqual(journalLines, ["passkey-refusal:plan-one:2026-09-30T12:00:00.000Z"], "the journal line, once");
+  assert.equal(pushes.length, 1, "and the push that already landed was not sent again");
+  assert.deepEqual({ ...(await aggregator.redrive()) }, { pending: 0, delivered: 0 }, "nothing is left to re-drive");
+  const unbound = new PasskeyRefusalAggregatorV1({ store: { recordApprovalRefusal: store.recordApprovalRefusal },
+    journal: aggregator.journal, push: aggregator.push });
+  await assert.rejects(unbound.record({ approvalId: "approval:00000000-0000-4000-8000-000000000002",
+    planId: "plan-one", reason: "malformed_assertion" }), /updater_passkey_store_port_unbound/u,
+  "an aggregator that cannot mark delivery refuses rather than delivering without a record");
 });
 
 test("a dropped registration-row read times out, invalidates the secret, and a fresh retry can succeed", async t => {

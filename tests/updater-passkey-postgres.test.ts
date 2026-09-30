@@ -34,7 +34,7 @@ import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from 
 import { securityDefinerAuditLive } from "./support/attack-kit/search-path-audit";
 import { applyUpdaterSchemaV1 } from "../src/updater/v1/schema-installer";
 import { PasskeyStoreV1, PasskeyWebStoreV1 } from "../src/updater/v1/passkey-store.mjs";
-import { comparisonCodeV1 } from "../src/updater/v1/passkey.mjs";
+import { comparisonCodeV1, PasskeyRefusalAggregatorV1 } from "../src/updater/v1/passkey.mjs";
 
 // 59670 is the port block this job was given.
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59670), PG = requiresRealPostgres();
@@ -148,7 +148,8 @@ async function refuses(client: Client, sql: string, params?: unknown[]): Promise
   assert.fail(`statement was not refused: ${sql.slice(0, 140)}`);
 }
 
-async function installUpdaterSchema(postgres: Postgres) {
+async function installUpdaterSchema(postgres: Postgres, { directory = DDL_DIRECTORY,
+  rolesFile = join(process.cwd(), "db/roles/updater_release_reader_roles.sql") } = {}) {
   const bootstrap = new Client({ ...postgres.admin(), user: "fixture_admin" } as never);
   await bootstrap.connect();
   const owner = new Client({ host: postgres.socketDirectory, port: postgres.port,
@@ -158,9 +159,9 @@ async function installUpdaterSchema(postgres: Postgres) {
   let deployer: Client | undefined;
   try {
     return await applyUpdaterSchemaV1({
-      bootstrap, directory: DDL_DIRECTORY, deployerHasFixturePassword: true,
+      bootstrap, directory, deployerHasFixturePassword: true,
       connectDeployer: async () => {
-        await owner.query(await readFile(join(process.cwd(), "db/roles/updater_release_reader_roles.sql"), "utf8"));
+        await owner.query(await readFile(rolesFile, "utf8"));
         await bootstrap.query(`ALTER ROLE control_room_deployer PASSWORD '${DEPLOYER_PASSWORD}'`);
         deployer = new Client({ host: postgres.socketDirectory, port: postgres.port,
           user: "control_room_deployer", password: DEPLOYER_PASSWORD, database: postgres.database });
@@ -653,8 +654,17 @@ test("the web's added surface is five SELECT columns and no write at all", async
 
       // The migrator still reaches nothing at all, including the new tables.
       for (const table of ["passkey_open_registrations", "approval_refusals", "approval_refusal_buckets",
-        "passkey_registrations_limits"])
+        "passkey_registrations_limits", "passkey_open_registrations_web"])
         await refuses(migrator, `SELECT * FROM updater.${table}`);
+      // The web's usable read is the view (DB-8): SELECT only, and it carries the
+      // same five columns and not `consumed_at`, so the web learns "open" without
+      // learning when anything was consumed.
+      await web.query("SELECT registration_digest, mode, options_json, authorization_challenge, expires_at"
+        + " FROM updater.passkey_open_registrations_web");
+      await refuses(web, "SELECT consumed_at FROM updater.passkey_open_registrations_web");
+      await refuses(web, "INSERT INTO updater.passkey_open_registrations_web(registration_digest,mode,options_json,"
+        + "expires_at) VALUES($1,'initial','{}'::jsonb,now())", [registrationDigest("via-view")]);
+      await refuses(web, "DELETE FROM updater.passkey_open_registrations_web");
       await refuses(migrator, "CREATE TABLE updater.probe2(id int)");
       assert.equal((await migrator.query<{ usage: boolean }>(
         "SELECT has_schema_privilege(current_user,'updater','USAGE') AS usage")).rows[0]?.usage, false);
@@ -886,8 +896,10 @@ test("a replayed approval is a refusal with no effect, and a skew clock opens no
       await other.end();
       assert.ok(!("resolved" in second),
         `a replay must be refused, and the store returned ${JSON.stringify(second)}`);
-      assert.match(second.error, /not an approval/u,
-        "and refused by name rather than silently accepted");
+      // Typed, not a raw 42501 (review passkey2 DB-6): an approval loop reads this
+      // as "already counted" rather than as a failure.
+      assert.match(second.error, /^updater_refusal_replayed$/u,
+        "and refused by its typed name rather than silently accepted");
       assert.equal((await client.query<{ count: number }>(
         "SELECT count FROM updater.approval_refusal_buckets WHERE plan_id=$1", [plan])).rows[0]?.count, 1,
       "the count is still 1 after the replay");
@@ -1060,7 +1072,7 @@ test("a rolled-back authenticator counter is refused once, and the refusal is ag
         await replay.connect();
         try {
           await assert.rejects(new PasskeyStoreV1(replay).recordApprovalRefusal({ approvalId, planId: plan,
-            reason: "updater_passkey_assertion_refused" }), /not an approval/u);
+            reason: "updater_passkey_assertion_refused" }), /\bupdater_refusal_replayed$/u);
         } finally { await replay.end(); }
       }
       assert.equal((await client.query<{ n: number }>("SELECT count(*)::int AS n"
@@ -1509,6 +1521,455 @@ test("every routine in schema updater pins its search_path with pg_temp last", a
           /^pg_catalog, (updater|public, updater), pg_temp$/u,
           `${finding.routine} pins ${finding.searchPath}, which is neither of the design's two paths (R10b)`);
     } finally { await client.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+// -----------------------------------------------------------------------------
+// Review passkey2 §4: DB-1..DB-8
+// -----------------------------------------------------------------------------
+
+const PUSH_ID = () => `push:${randomUUID()}`;
+const WEB_PUSH = `INSERT INTO updater.push_queue(id,template,title,body) VALUES($1,$2,$3,$4)`;
+
+test("DB-1: the web cannot hold an updater push key, and a held key makes the add refuse", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await seedOwnerSession(postgres);
+    await seedSubscription(postgres, "https://web.push.apple.com/db1");
+    const plan = planId("db1");
+    await insertPlan(postgres, plan);
+    const { client, store } = await deployerStore(postgres);
+    const web = as(postgres, "web");
+    await web.connect();
+    try {
+      const credentialId = "c3F1YXR0ZWQta2V5LWNyZWRlbnRpYWwtMzItYnl0ZXMtbG9uZw";
+      const until = new Date(Date.now() + 86_400_000).toISOString();
+      const repeat = new Date(Date.now() + 43_200_000).toISOString();
+      // The review's reproduction, step 1: the web pre-claims both cooling-off
+      // keys with a harmless-looking row. Refused, by name, for both keys.
+      for (const suffix of ["now", "repeat"])
+        assert.match(await refuses(web, `INSERT INTO updater.push_queue(id,idempotency_key,template,title,body)
+          VALUES($1,$2,'owner.digest','Weekly summary','Nothing new')`,
+        [PUSH_ID(), `passkey-cooling-off:${credentialId}:${suffix}`]),
+        /^42501 only the updater may set a push idempotency key/u);
+      // And the refusal-alert key, whose plan id and hour are both predictable.
+      const hour = (await client.query<{ hour: Date }>("SELECT date_trunc('hour', now()) AS hour")).rows[0]!.hour;
+      assert.match(await refuses(web, `INSERT INTO updater.push_queue(id,idempotency_key,template,title,body)
+        VALUES($1,$2,'owner.digest','Weekly summary','Nothing new')`,
+      [PUSH_ID(), `passkey-refusal:${plan}:${new Date(hour).toISOString()}`]),
+      /^42501 only the updater may set a push idempotency key/u);
+      // ANY key, not just the two known shapes: the namespace is the updater's.
+      assert.match(await refuses(web, `INSERT INTO updater.push_queue(id,idempotency_key,template,title,body)
+        VALUES($1,'anything-else','owner.digest','t','b')`, [PUSH_ID()]),
+      /only the updater may set a push idempotency key/u);
+      // The web's ordinary, key-less push still lands: this guard narrows the
+      // web to what it was always meant to do, it does not take the queue away.
+      await web.query(WEB_PUSH, [PUSH_ID(), "owner.digest", "Weekly summary", "Nothing new"]);
+
+      // With the keys free, the updater queues both of ITS notices.
+      const ok = await store.notifyCoolingOff({ credentialId, number: 2, coolingOffUntil: until, repeatAt: repeat });
+      assert.deepEqual({ ...ok }, { enqueued: 2, subscriptions: 1 });
+      const own = await client.query<{ template: string }>("SELECT template FROM updater.push_queue"
+        + " WHERE idempotency_key LIKE $1", [`passkey-cooling-off:${credentialId}:%`]);
+      assert.deepEqual(own.rows.map(row => row.template), ["control-room-updater.passkey_cooling_off",
+        "control-room-updater.passkey_cooling_off"], "both rows under the keys are the updater's own notice");
+
+      // The second wall: a key that IS held by a foreign row (only reachable by a
+      // superuser with triggers off, i.e. the guard bypassed or the grant widened)
+      // makes the enqueue RAISE rather than count the squatter as a warning.
+      const squatted = "c3F1YXR0ZWQtYnktYS1zdXBlcnVzZXItMzItYnl0ZXMtbG9uZw";
+      await seed(postgres, `INSERT INTO updater.push_queue(id,idempotency_key,template,title,body)
+        VALUES($1,$2,'owner.digest','Weekly summary','Nothing new')`,
+      [PUSH_ID(), `passkey-cooling-off:${squatted}:now`]);
+      await assert.rejects(store.notifyCoolingOff({ credentialId: squatted, number: 3, coolingOffUntil: until,
+        repeatAt: repeat }), /held by a row the updater did not write/u);
+      assert.equal((await client.query<{ n: number }>("SELECT count(*)::int AS n FROM updater.push_queue"
+        + " WHERE idempotency_key LIKE $1 AND template LIKE 'control-room-updater%'",
+      [`passkey-cooling-off:${squatted}:%`])).rows[0]?.n, 0,
+      "and the refusal rolled back the notice it had queued under the free key");
+      // Same when the squatter holds the REPEAT key and the row merely looks
+      // like the updater's but is scheduled as an immediate send.
+      const lookalike = "bG9va2FsaWtlLXJlcGVhdC1rZXktMzItYnl0ZXMtbG9uZw";
+      await seed(postgres, `INSERT INTO updater.push_queue(id,idempotency_key,template,title,body)
+        VALUES($1,$2,'control-room-updater.passkey_cooling_off','A new passkey was added',
+          'A new passkey was added on your Mac. It becomes active in 24 hours. If this wasn''t you, run sudo /usr/local/bin/control-room passkey revoke 4.')`,
+      [PUSH_ID(), `passkey-cooling-off:${lookalike}:repeat`]);
+      await assert.rejects(store.notifyCoolingOff({ credentialId: lookalike, number: 4, coolingOffUntil: until,
+        repeatAt: repeat }), /held by a row the updater did not write/u);
+    } finally { await web.end(); await client.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("DB-1: the store refuses a cooling-off answer that is not both notices", async () => {
+  // NO DATABASE: the port's own line, for a store whose SQL ever returned a short
+  // count. The real function raises before this is reachable, which is why it is
+  // proved with a stub — this is the check that would still hold if it did not.
+  for (const row of [{ enqueued: 1, subscriptions: 1 }, { enqueued: 0, subscriptions: 2 },
+    { enqueued: 3, subscriptions: 1 }, undefined]) {
+    const store = new PasskeyStoreV1({ query: async () => ({ rows: row ? [row] : [] }) });
+    await assert.rejects(store.notifyCoolingOff({ credentialId: CREDENTIAL, number: 2,
+      coolingOffUntil: new Date(Date.now() + 86_400_000).toISOString(),
+      repeatAt: new Date(Date.now() + 43_200_000).toISOString() }), /updater_passkey_cooling_off_refused/u,
+    `a store answer of ${JSON.stringify(row)} is not two queued warnings`);
+  }
+});
+
+test("DB-2: the per-digest cap holds under every isolation level the web can pick", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await seedOwnerSession(postgres);
+    const { client, store } = await deployerStore(postgres);
+    try {
+      const RACERS = 20;
+      // The review's reproduction: every racer opens its transaction and takes
+      // its snapshot BEFORE any of them inserts, then all insert and commit. The
+      // advisory lock serialises the inserts, so under REPEATABLE READ each one
+      // counts the rows that existed at ITS snapshot — none — and all 20 landed.
+      const race = async (digest: string, level: string) => {
+        const racers = await Promise.all(Array.from({ length: RACERS }, async () => {
+          const racer = as(postgres, "web");
+          await racer.connect();
+          await racer.query(`BEGIN ISOLATION LEVEL ${level}`);
+          await racer.query("SELECT 1");
+          return racer;
+        }));
+        const outcomes = await Promise.all(racers.map(async racer => {
+          try {
+            const v = registrationValues(digest);
+            await racer.query(INSERT_REGISTRATION, [v.id, v.registrationDigest, v.credentialId,
+              v.attestationObject, v.clientDataJson, v.transports, v.comparisonCode, v.ownerSessionDigest]);
+            await racer.query("COMMIT");
+            return "landed";
+          } catch (error) {
+            await racer.query("ROLLBACK").catch(() => {});
+            const { code, message } = error as { code?: string; message: string };
+            return `${code} ${message}`;
+          } finally { await racer.end(); }
+        }));
+        const visible = (await store.registrationRows(digest) as RegistrationRowV1[]).length;
+        return { landed: outcomes.filter(outcome => outcome === "landed").length, visible, outcomes };
+      };
+
+      const repeatable = registrationDigest("rr-race");
+      await openRegistration(postgres, store, repeatable);
+      const rr = await race(repeatable, "REPEATABLE READ");
+      assert.equal(rr.landed, 0, `no REPEATABLE READ racer may land, ${rr.landed} did`);
+      assert.equal(rr.visible, 0, "and the table holds none of them");
+      for (const outcome of rr.outcomes)
+        assert.match(outcome, /^0A000 updater registration row cap cannot be enforced in a repeatable read transaction/u);
+
+      const serializable = registrationDigest("ser-race");
+      await openRegistration(postgres, store, serializable);
+      const ser = await race(serializable, "SERIALIZABLE");
+      assert.equal(ser.landed, 0, `no SERIALIZABLE racer may land, ${ser.landed} did`);
+      for (const outcome of ser.outcomes)
+        assert.match(outcome, /^0A000 updater registration row cap cannot be enforced in a serializable transaction/u);
+
+      // The control: the SAME barrier under READ COMMITTED lands exactly the cap.
+      // This is what makes the two refusals above the guard's doing and not the
+      // race's shape — the same race, in the one mode the cap can be evaluated
+      // in, is bounded rather than refused.
+      const committed = registrationDigest("rc-race");
+      await openRegistration(postgres, store, committed);
+      const rc = await race(committed, "READ COMMITTED");
+      assert.equal(rc.landed, 4, `the cap of four holds under READ COMMITTED, ${rc.landed} landed`);
+      assert.equal(rc.visible, 4);
+      for (const outcome of rc.outcomes.filter(value => value !== "landed"))
+        assert.match(outcome, /^42501 updater registration already has 4 rows/u);
+
+      // One transaction, sequential inserts: the fifth sees the four before it.
+      const oneTx = registrationDigest("one-tx");
+      await openRegistration(postgres, store, oneTx);
+      const web = as(postgres, "web");
+      await web.connect();
+      try {
+        await web.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+        for (let index = 0; index < 4; index += 1) {
+          const v = registrationValues(oneTx);
+          await web.query(INSERT_REGISTRATION, [v.id, v.registrationDigest, v.credentialId, v.attestationObject,
+            v.clientDataJson, v.transports, v.comparisonCode, v.ownerSessionDigest]);
+        }
+        const v = registrationValues(oneTx);
+        assert.match(await refuses(web, INSERT_REGISTRATION, [v.id, v.registrationDigest, v.credentialId,
+          v.attestationObject, v.clientDataJson, v.transports, v.comparisonCode, v.ownerSessionDigest]),
+        /already has 4 rows/u);
+        await web.query("ROLLBACK");
+        // One STATEMENT, many rows: the BEFORE trigger sees the rows its own
+        // statement already wrote, so a single INSERT ... SELECT of six is refused
+        // whole rather than landing six past the cap.
+        const multi = registrationDigest("multi-row");
+        await openRegistration(postgres, store, multi);
+        assert.match(await refuses(web, `INSERT INTO updater.passkey_registrations(id,registration_digest,
+            credential_id,attestation_object,client_data_json,transports,comparison_code,owner_session_digest)
+          SELECT 'passkey-registration:' || pg_catalog.gen_random_uuid()::text, $1,$2,$3,$4,$5::text[],$6,$7
+            FROM pg_catalog.generate_series(1,6)`,
+        [multi, CREDENTIAL, ATTEST, CLIENT, ["internal"], comparisonCodeV1(CREDENTIAL), OWNER_SESSION]),
+        /already has 4 rows/u);
+        assert.equal((await store.registrationRows(multi) as RegistrationRowV1[]).length, 0,
+          "and the statement left nothing behind");
+      } finally { await web.end(); }
+      assert.equal((await client.query<{ n: number }>("SELECT count(*)::int AS n FROM updater.passkey_registrations"
+        + " WHERE registration_digest=$1", [oneTx])).rows[0]?.n, 0, "the rolled-back transaction left nothing");
+    } finally { await client.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+/** The updater schema's catalog, as sorted text, so two installs can be compared
+ * as one object: columns (by name, not position), constraints, indexes,
+ * triggers, routines, relations and every privilege, exploded and sorted. */
+async function updaterCatalog(postgres: Postgres) {
+  const admin = new Client(postgres.admin());
+  await admin.connect();
+  try {
+    const rows = async (sql: string) => (await admin.query(sql)).rows.map(row => JSON.stringify(row));
+    const scope = `JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'updater'`;
+    return {
+      relations: await rows(`SELECT c.relname, c.relkind, pg_get_userbyid(c.relowner) AS owner,
+          c.reloptions::text AS options FROM pg_class c ${scope} ORDER BY 1`),
+      columns: await rows(`SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod) AS type,
+          a.attnotnull, pg_get_expr(d.adbin, d.adrelid) AS default_value
+        FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+        LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+        ${scope} AND a.attnum > 0 AND NOT a.attisdropped ORDER BY 1, 2`),
+      constraints: await rows(`SELECT c.relname, k.conname, k.contype, k.convalidated,
+          pg_get_constraintdef(k.oid) AS definition
+        FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid ${scope} ORDER BY 1, 2`),
+      indexes: await rows(`SELECT pg_get_indexdef(i.indexrelid) AS definition
+        FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid ${scope} ORDER BY 1`),
+      triggers: await rows(`SELECT pg_get_triggerdef(t.oid) AS definition
+        FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid ${scope} AND NOT t.tgisinternal ORDER BY 1`),
+      routines: await rows(`SELECT p.proname, pg_get_function_identity_arguments(p.oid) AS args,
+          md5(p.prosrc) AS body, p.prosecdef, p.provolatile, p.proconfig::text AS config
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'updater' ORDER BY 1, 2`),
+      privileges: await rows(`SELECT * FROM (
+          SELECT c.relname AS object, NULL::text AS column_name, pg_get_userbyid(x.grantee) AS grantee, x.privilege_type
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) x
+           WHERE n.nspname = 'updater'
+          UNION ALL
+          SELECT c.relname, a.attname, pg_get_userbyid(x.grantee), x.privilege_type
+            FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(a.attacl) x
+           WHERE n.nspname = 'updater' AND a.attnum > 0 AND NOT a.attisdropped
+          UNION ALL
+          SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', NULL,
+              pg_get_userbyid(x.grantee), x.privilege_type
+            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace, aclexplode(p.proacl) x
+           WHERE n.nspname = 'updater') all_privileges ORDER BY 1, 2, 3, 4`),
+    };
+  } finally { await admin.end(); }
+}
+
+const ITEM7_DDL = join(process.cwd(), "tests/fixtures/updater-ddl-item7");
+
+test("DB-3: an item-7 updater schema upgrades to this one, with its rows, and matches a fresh install", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  // The reference: a fresh install of this tree's DDL, on its own cluster, and
+  // RESTARTED once — applied twice, as the upgraded side below is. That is the
+  // state every real install is in after its first restart, and it matters to
+  // the comparison: a second apply's `REVOKE ... ON ALL TABLES` turns a table's
+  // implicit owner ACL (NULL) into the same privileges written out, so a
+  // once-applied reference differs from any restarted install in ACL spelling
+  // alone.
+  let fresh: Awaited<ReturnType<typeof updaterCatalog>> | undefined;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await installUpdaterSchema(postgres);
+    fresh = await updaterCatalog(postgres);
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+  assert.ok(fresh);
+
+  await withRealPostgres(async postgres => {
+    // Item 7's schema, byte for byte (tests/fixtures/updater-ddl-item7 is
+    // `git show 00722d26c:src/updater/v1/ddl/*`), applied through this tree's
+    // loader. The loader runs every file and THEN asserts the table set, so the
+    // apply completes and the assertion names exactly the three tables item 7
+    // did not have — which is also the proof that this really is item 7's shape.
+    await assert.rejects(installUpdaterSchema(postgres, { directory: ITEM7_DDL,
+      rolesFile: join(ITEM7_DDL, "updater_release_reader_roles.sql") }),
+    /updater_schema_refused:missing_tables:passkey_open_registrations,passkey_registrations_limits,approval_refusals,approval_refusal_buckets/u);
+    await seedOwnerSession(postgres);
+    // Rows in the tables item 7's code did write: a plan (the deployer's) and a
+    // web push (the web's). Both must survive the upgrade untouched.
+    const legacyPlan = planId("item7-legacy");
+    await insertPlan(postgres, legacyPlan);
+    const web = as(postgres, "web");
+    await web.connect();
+    const legacyPush = PUSH_ID();
+    try { await web.query(WEB_PUSH, [legacyPush, "owner.digest", "Weekly summary", "Nothing new"]); }
+    finally { await web.end(); }
+
+    // The upgrade: this tree's DDL over item 7's. This is the apply that failed
+    // with 42703 in the review. Then again, because the updater applies it at
+    // every start.
+    await installUpdaterSchema(postgres);
+    await installUpdaterSchema(postgres);
+
+    const upgraded = await updaterCatalog(postgres);
+    for (const part of Object.keys(fresh!) as (keyof typeof upgraded)[])
+      assert.deepEqual(upgraded[part], fresh![part], `the upgraded ${part} match a fresh install's`);
+
+    const { client, store } = await deployerStore(postgres);
+    try {
+      assert.equal((await client.query<{ n: number }>("SELECT count(*)::int AS n FROM updater.plans WHERE plan_id=$1",
+        [legacyPlan])).rows[0]?.n, 1, "item 7's plan row survived");
+      assert.equal((await client.query<{ n: number }>("SELECT count(*)::int AS n FROM updater.push_queue WHERE id=$1",
+        [legacyPush])).rows[0]?.n, 1, "item 7's push row survived");
+      // And the upgraded schema WORKS, on the three paths that touch what
+      // changed: the cooling-off enqueue (the template CHECK item 7 wrote without
+      // `-`, and the idempotency key), a web registration carrying the add-mode
+      // assertion (the five auth_* columns), and a refusal (the new tables).
+      await seedSubscription(postgres, "https://web.push.apple.com/upgraded");
+      const notice = await store.notifyCoolingOff({ credentialId: CREDENTIAL, number: 2,
+        coolingOffUntil: new Date(Date.now() + 86_400_000).toISOString(),
+        repeatAt: new Date(Date.now() + 43_200_000).toISOString() });
+      assert.equal(notice.enqueued, 2);
+      const digest = registrationDigest("upgraded");
+      await openRegistration(postgres, store, digest, "add");
+      const webPort = await webStore(postgres);
+      try {
+        await webPort.store.insert({ id: REGISTRATION_ID("upgraded"), ownerSessionDigest: OWNER_SESSION,
+          registrationDigest: digest, credentialId: CREDENTIAL, comparisonCode: comparisonCodeV1(CREDENTIAL),
+          response: { id: CREDENTIAL, rawId: CREDENTIAL, type: "public-key", response: { clientDataJSON: b64(CLIENT),
+            attestationObject: b64(ATTEST), transports: ["internal"] }, clientExtensionResults: {} },
+          // Spread through `Record<string, unknown>` because the `.mjs` port's
+          // inferred parameter type is its default (`null`); the same idiom the
+          // web-insert test uses for its overrides.
+          ...({ authorizationAssertion: { id: CREDENTIAL, rawId: CREDENTIAL, type: "public-key", response: {
+            clientDataJSON: b64(CLIENT), authenticatorData: b64(AUTH), signature: b64(SIG), userHandle: null },
+          clientExtensionResults: {} } } as Record<string, unknown>) });
+      } finally { await webPort.client.end(); }
+      const rows = await store.registrationRows(digest) as RegistrationRowV1[];
+      assert.equal(rows[0]?.authorizationAssertion?.response.signature, b64(SIG));
+      const refusal = await store.recordApprovalRefusal({ approvalId: `approval:${randomUUID()}`, planId: legacyPlan,
+        reason: "updater_passkey_assertion_refused" });
+      assert.equal(refusal.firstInHour, true);
+    } finally { await client.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("DB-4: the aggregator marks each delivered half, and a failed sink is re-driven exactly once", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await seedOwnerSession(postgres);
+    const plan = planId("db4");
+    await insertPlan(postgres, plan);
+    const { client, store } = await deployerStore(postgres);
+    try {
+      const journalLines: string[] = [], pushes: string[] = [];
+      let journalDown = true;
+      const aggregator = new PasskeyRefusalAggregatorV1({ store,
+        journal: { async recordRefusal(line: { idempotencyKey: string }) {
+          if (journalDown) throw Object.assign(new Error("journal disk full"), { code: "journal_down" });
+          journalLines.push(line.idempotencyKey);
+        } },
+        push: { async queueRefusal(line: { idempotencyKey: string }) { pushes.push(line.idempotencyKey); } } });
+      const approvalId = `approval:${randomUUID()}`;
+      // The count commits, then the journal throws. The failure is surfaced, the
+      // push still lands, and only the push half is marked.
+      await assert.rejects(aggregator.record({ approvalId, planId: plan, reason: "updater_passkey_assertion_refused" }),
+        /journal disk full/u);
+      assert.equal(pushes.length, 1, "the phone alert did not wait on the journal");
+      const pending = await store.pendingRefusalBuckets() as { planId: string; journaled: boolean; pushed: boolean;
+        reason: string; firstApprovalId: string; count: number }[];
+      const mine = pending.find(entry => entry.planId === plan);
+      assert.deepEqual({ journaled: mine?.journaled, pushed: mine?.pushed, reason: mine?.reason,
+        first: mine?.firstApprovalId, count: mine?.count },
+      { journaled: false, pushed: true, reason: "updater_passkey_assertion_refused", first: approvalId, count: 1 },
+      "the bucket is pending on exactly the half whose sink failed");
+      // A replay of the same approval is "already counted", not an error, and
+      // sends nothing (DB-6).
+      assert.deepEqual({ ...(await aggregator.record({ approvalId, planId: plan,
+        reason: "updater_passkey_assertion_refused" })) }, { count: null, notified: false, replayed: true });
+      // A second refusal in the hour joins the count and delivers nothing itself.
+      const second = await aggregator.record({ approvalId: `approval:${randomUUID()}`, planId: plan,
+        reason: "updater_passkey_assertion_refused" });
+      assert.deepEqual({ ...second }, { count: 2, notified: false, replayed: false });
+      // The re-drive, with the journal back: the missing half, once, carrying
+      // the count the bucket holds now.
+      journalDown = false;
+      assert.deepEqual({ ...(await aggregator.redrive()) }, { pending: 1, delivered: 1 });
+      assert.equal(journalLines.length, 1, "one journal line");
+      assert.equal(pushes.length, 1, "and no second push");
+      assert.equal((await store.pendingRefusalBuckets() as { planId: string }[])
+        .some(entry => entry.planId === plan), false, "the bucket left the re-drive list");
+      assert.deepEqual({ ...(await aggregator.redrive()) }, { pending: 0, delivered: 0 });
+      const marked = (await client.query<{ journaled: boolean; pushed: boolean }>(`SELECT journaled_at IS NOT NULL
+        AS journaled, pushed_at IS NOT NULL AS pushed FROM updater.approval_refusal_buckets WHERE plan_id=$1`,
+      [plan])).rows[0];
+      assert.deepEqual({ ...marked }, { journaled: true, pushed: true });
+      // A mark that matches no bucket is a refusal, not a silent no-op.
+      await assert.rejects(store.markRefusalPushed(plan, "2001-01-01T00:00:00.000Z"),
+        /updater_refusal_bucket_refused/u);
+    } finally { await client.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("DB-5: a web push is sent at once — no schedule, no queue time of its own", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    const web = as(postgres, "web");
+    await web.connect();
+    try {
+      // The review's reproduction: both instants 30 days ahead, equal, so the
+      // old `not_before <> queued_at` rule let it through.
+      assert.match(await refuses(web, `INSERT INTO updater.push_queue(id,template,title,body,queued_at,not_before)
+        VALUES($1,'owner.digest','t','b',now()+interval '30 days',now()+interval '30 days')`, [PUSH_ID()]),
+      /^42501 only the updater may schedule a push/u);
+      // A future queue time alone, with no `not_before`, is the same schedule.
+      assert.match(await refuses(web, `INSERT INTO updater.push_queue(id,template,title,body,queued_at)
+        VALUES($1,'owner.digest','t','b',now()+interval '30 days')`, [PUSH_ID()]),
+      /^42501 only the updater may schedule a push/u);
+      // And a backdated one, which would jump the queue's order.
+      assert.match(await refuses(web, `INSERT INTO updater.push_queue(id,template,title,body,queued_at)
+        VALUES($1,'owner.digest','t','b',now()-interval '1 day')`, [PUSH_ID()]),
+      /^42501 only the updater may schedule a push/u);
+      // `not_before = now()` is still a schedule the web may not set.
+      assert.match(await refuses(web, `INSERT INTO updater.push_queue(id,template,title,body,not_before)
+        VALUES($1,'owner.digest','t','b',now())`, [PUSH_ID()]),
+      /^42501 only the updater may schedule a push/u);
+      // The default path, and an explicit `now()`, both land.
+      await web.query(WEB_PUSH, [PUSH_ID(), "owner.digest", "t", "b"]);
+      await web.query(`INSERT INTO updater.push_queue(id,template,title,body,queued_at)
+        VALUES($1,'owner.digest','t','b',now())`, [PUSH_ID()]);
+    } finally { await web.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("DB-8: the web's options read refuses a consumed registration, not only an expired one", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    const { client, store } = await deployerStore(postgres);
+    const web = await webStore(postgres);
+    try {
+      const digest = registrationDigest("db8");
+      await openRegistration(postgres, store, digest);
+      assert.equal((await web.store.options(digest)).registrationDigest, digest, "open: served");
+      assert.equal(await store.consumeRegistration(digest), true);
+      await assert.rejects(web.store.options(digest), /updater_registration_expired/u,
+        "consumed: refused before the owner is asked for Face ID");
+      // Through the view the web cannot see the row at all, and still cannot
+      // read `consumed_at` from the table.
+      assert.equal((await web.client.query("SELECT 1 FROM updater.passkey_open_registrations_web"
+        + " WHERE registration_digest=$1", [digest])).rows.length, 0);
+      await refuses(web.client, "SELECT consumed_at FROM updater.passkey_open_registrations");
+    } finally { await web.client.end(); await client.end(); }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 
