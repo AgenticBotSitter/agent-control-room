@@ -17,13 +17,15 @@
 //
 // Usage: node scripts/ci/run-mutation-postgres-test.mjs <node-test-args...>
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..", "..");
-const ledger = ["run", "db:ledger"];
+const LEDGER = resolve(root, "deploy/postgres/migration-ledger.json");
+const ledgerBefore = readFileSync(LEDGER);
 
 const reledger = (reason) => {
-  const result = spawnSync("pnpm", ledger, { cwd: root, stdio: "pipe", encoding: "utf8" });
+  const result = spawnSync("pnpm", ["run", "db:ledger"], { cwd: root, stdio: "pipe", encoding: "utf8" });
   if (result.status !== 0) {
     process.stderr.write(`run-mutation-postgres-test: re-ledger failed (${reason}):\n${result.stderr ?? ""}\n`);
     return false;
@@ -34,7 +36,10 @@ const reledger = (reason) => {
 if (!reledger("before the test")) process.exit(2);
 const test = spawnSync(process.execPath, ["--import", "tsx", "--test", ...process.argv.slice(2)],
   { cwd: root, stdio: "inherit" });
-// The tree goes back to its committed state either way, so a failure here can
-// never leave a mutated migration behind for the next command to find.
-if (!reledger("after the test")) process.exit(2);
+// Restore the committed ledger, and do it LAST. The caller restores the mutated
+// file itself once this exits, so re-deriving here would describe a migration
+// that is about to be un-mutated. Leaving a re-derived ledger behind would
+// instead make every LATER check refuse to run on a dirty checkout, and that
+// would look like a failure of those checks rather than of this one.
+writeFileSync(LEDGER, ledgerBefore);
 process.exit(test.status ?? 2);
