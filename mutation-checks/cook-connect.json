@@ -115,7 +115,7 @@
     "file": "scripts/fleet/connector.mjs",
     "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
     "replace": "  const release = async () => {};\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
-    "test": "node --test --test-name-pattern \"ten concurrent installs\" tests/fleet-connector-install.test.mjs",
+    "test": "node --test --test-name-pattern \"twenty concurrent unattended installs\" tests/fleet-connector-install.test.mjs",
     "why": "same-profile installs serialize through the shared profile mutation lock"
   },
   {
@@ -155,22 +155,22 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (typeof workspaceRoot !== \"string\" || !isAbsolute(workspaceRoot))",
+    "find": "  if (typeof workspaceRoot !== \"string\" || !workspaceRoot || !isAbsolute(workspaceRoot))",
     "replace": "  if (false)",
     "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
     "why": "MCP refuses a relative workspace instead of resolving it against the process directory"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    if (error?.code === \"ENOENT\") throw new Error(\"MCP --workspace must exist and be a directory.\");",
-    "replace": "    if (false) throw new Error(\"MCP --workspace must exist and be a directory.\");",
+    "find": "  try { current = await realpath(path); }\n  catch { throw new Error(`The ${kind} could not be checked safely.`); }",
+    "replace": "  try { current = await realpath(path); }\n  catch (error) { throw error; }",
     "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
     "why": "MCP gives a controlled refusal when the absolute workspace does not exist"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (!workspaceInfo.isDirectory()) throw new Error(\"MCP --workspace must exist and be a directory.\");",
-    "replace": "  if (false) throw new Error(\"MCP --workspace must exist and be a directory.\");",
+    "find": "    if (!info.isDirectory()) throw new Error(`The ${kind} must exist and be a directory.`);",
+    "replace": "    if (false) throw new Error(`The ${kind} must exist and be a directory.`);",
     "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
     "why": "MCP refuses a file passed as its workspace"
   },
@@ -225,8 +225,8 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (dirname(paths.workspace) === paths.workspace || resolve(paths.workspace) === resolve(homeDir)\n    || pathContains(paths.workspace, paths.configRoot) || pathContains(paths.configRoot, paths.workspace))",
-    "replace": "  if (false)",
+    "find": "  try { await validateWorkspaceTarget(paths, homeDir, platform); }",
+    "replace": "  try { await Promise.resolve(); }",
     "test": "node --test --test-name-pattern \"unsafe workspace roots\" tests/fleet-connector-install.test.mjs",
     "why": "install refuses roots that could expose the live connector credential as a result attachment"
   },
@@ -316,8 +316,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": "        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);",
-    "replace": "        [\"code\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);",
+    "find": "        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);",
+    "replace": "        [\"code\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);",
     "test": "node --import tsx --test --test-name-pattern \"server-side redemption refuses\" tests/fleet-connector.test.ts",
     "why": "the enrollment HTTP contract admits the declared local worker kind for server-side binding"
   },

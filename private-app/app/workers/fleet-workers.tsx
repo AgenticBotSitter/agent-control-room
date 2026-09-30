@@ -19,7 +19,6 @@ const statusWords: Record<string, [string, ChipTone]> = {
   working: ["Working", "busy"], connected: ["Connected", "good"], offline: ["Offline", "warn"],
   revoked: ["Removed", "neutral"], needs_new_key: ["Needs a new key", "bad"],
 };
-
 async function call(path: string, body?: unknown) {
   const response = await fetch(path, { method: body === undefined ? "GET" : "POST", credentials: "same-origin",
     cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10_000),

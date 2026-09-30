@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { buildFleetConnectorReleaseForTestV1 } from "../scripts/build-fleet-connector.mjs";
+import { FLEET_WORKING_AGREEMENT_METADATA_V1 } from "../src/fleet/v1/working-agreement.ts";
 import { fleetConnectorOwnerNextStepV1, fleetJoinCommandsV1 } from "../src/web/v1/fleet-owner-http.ts";
 
 const run = promisify(execFile);
@@ -88,12 +89,14 @@ async function gateway(releaseRoot, manifest, bindings) {
       if (!prior) { used.set(body.code, body); state.enrollments += 1; }
       return send(201, JSON.stringify({ ok: true, result: { workerId: expected.workerId,
         displayName: expected.displayName, projectIds: ["project:test"], workerKind: expected.bot,
-        capabilities: ["writing"], credentialExpiresAt: "2099-01-01T00:00:00.000Z" } }));
+        capabilities: ["writing"], credentialExpiresAt: "2099-01-01T00:00:00.000Z",
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 } }));
     }
     if (request.method === "POST" && request.url === "/fleet/v1/heartbeat"
       && /^Bearer crf_[A-Za-z0-9_-]{43}$/u.test(request.headers.authorization ?? "")) {
       state.heartbeats += 1;
-      return send(200, JSON.stringify({ ok: true, result: { displayName: "Installed", operationsMode: "running" } }));
+      return send(200, JSON.stringify({ ok: true, result: { displayName: "Installed", operationsMode: "running",
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 } }));
     }
     send(404, JSON.stringify({ ok: false, error: "not_found" }));
   });

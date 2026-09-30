@@ -274,8 +274,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": "      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),\n        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);\n      const lease = admission.enter(request, \"enroll\");",
-    "replace": "      const lease = admission.enter(request, \"enroll\");\n      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),\n        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);",
+    "find": "      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),\n        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);\n      const lease = admission.enter(request, \"enroll\");",
+    "replace": "      const lease = admission.enter(request, \"enroll\");\n      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),\n        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);",
     "test": "node --import tsx --test --test-name-pattern \"slow enrollment uploads from two networks\" tests/fleet-connector.test.ts",
     "why": "an incomplete enrollment upload cannot occupy one of the four database-work slots"
   },

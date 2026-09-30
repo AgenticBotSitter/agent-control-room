@@ -92,7 +92,7 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "if (target !== base && !target.startsWith(base + sep)) throw",
+    "find": "if (!inside(base, target)) throw",
     "replace": "if (false) throw",
     "test": "node --import tsx --test --test-name-pattern \"MCP server\" tests/fleet-connector.test.ts",
     "why": "MCP result files cannot escape the workspace"

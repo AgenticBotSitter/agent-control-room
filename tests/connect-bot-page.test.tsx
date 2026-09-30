@@ -5,6 +5,8 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { ConnectBotWorkspace, InstallLine, type ConnectBotInstallResult }
   from "../private-app/app/workers/connect/connect-bot-workspace";
+import { FLEET_CAPABILITY_OPTIONS_V1, FLEET_CONNECT_BOT_CAPABILITY_OPTIONS_V1, FLEET_CONNECT_BOT_OPTIONS_V1,
+  FLEET_WORKER_OPTIONS_V1 } from "../src/fleet/v1/catalog";
 import { createFleetOwnerHttpHandlerV1, fleetConnectorProfileNameV1, fleetJoinCommandsV1 } from "../src/web/v1/fleet-owner-http";
 import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1, type FleetConnectorReleaseManifestV1 }
   from "../src/fleet/v1/connector-release";
@@ -14,6 +16,14 @@ const workerId = `fleet-worker:${"d".repeat(32)}`;
 const commandIdentity = Object.freeze({ displayName: "Desktop Codex", workerId });
 const release: FleetConnectorReleaseManifestV1 = Object.freeze({ schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1,
   version: "0.3.0", file: "connector-0.3.0.mjs", sha256: "b".repeat(64), size: 1234, builtFrom: "c".repeat(40) });
+
+test("one fleet catalog includes the separate local-tool flow without offering it as a bot install", () => {
+  assert.equal(FLEET_WORKER_OPTIONS_V1.find(option => option.kind === "tool")?.label, "Local tool adapter");
+  assert.equal(FLEET_CONNECT_BOT_OPTIONS_V1.map(option => String(option.kind)).includes("tool"), false);
+  assert.equal(FLEET_CAPABILITY_OPTIONS_V1.find(option => option.capability === "tool.whisper")?.label,
+    "Whisper transcription");
+  assert.equal(FLEET_CONNECT_BOT_CAPABILITY_OPTIONS_V1.map(option => String(option.capability)).includes("tool.whisper"), false);
+});
 
 function saveGlobals(keys: string[]) { return Object.fromEntries(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)])); }
 function restoreGlobals(saved: Record<string, PropertyDescriptor | undefined>) {

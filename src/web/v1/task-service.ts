@@ -518,9 +518,18 @@ export class WebTaskService {
     });
   }
 
-  /** Trusted server composition, never a browser-supplied callback. */
+  /** Trusted server composition, never a browser-supplied callback.
+   *
+   * The scope carries `identityId` — the RESOLVED `control_identities.id` from
+   * the authenticated transaction, not the caller's asserted subject. A caller
+   * that needs to name the identity in a database row (the download grant does,
+   * and 0208's guard compares it to the session row) must be given the value the
+   * authentication actually resolved, because the two differ on a Mac-local
+   * install: the session's subject is `owner:local` and the identity id is
+   * `macLocalOwnerIdentityIdV1(tenant)`. */
   async readScopedResult<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string,
-    read: (scope: { tenantId: string; projectId: string; jobId: string }) => Promise<T>) {
+    read: (scope: { tenantId: string; projectId: string; jobId: string; identityId: string },
+      tx: DatabaseSession) => Promise<T>) {
     this.id(projectId); this.id(jobId);
     return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
@@ -529,7 +538,59 @@ export class WebTaskService {
         [this.scope.tenantId, projectId, jobId])).rows[0];
       if (!row) throw new WebAccessError("not_found");
       validated(row, this.scope.tenantId, projectId);
-      return read({ tenantId: this.scope.tenantId, projectId, jobId });
+      // The transaction is handed to the callback, and that is the whole point
+      // of the second argument. The pool the web process binds is eight
+      // connections wide, and this transaction holds one of them for its whole
+      // life. A callback that answered its queries with the CLIENT instead
+      // asked the same eight-connection pool for a second connection while
+      // holding the first: at eight such callers the pool was exhausted, the
+      // server's `idle_in_transaction_session_timeout` killed every one of them,
+      // and `bindPrivatePgPool` closed the database client permanently. The
+      // whole app then failed every page with no restart — the review measured
+      // it at eight parallel downloads and at the briefed 50.
+      //
+      // So work inside this boundary runs on `tx` and only on `tx`, and the
+      // service is written so that it has nothing to ask the pool for after
+      // this returns. A caller that genuinely needs to WRITE takes
+      // `writeScopedResult` below, which opens the transaction itself and
+      // commits it before returning.
+      return read({ tenantId: this.scope.tenantId, projectId, jobId, identityId: actor.id }, tx);
+    });
+  }
+
+  /**
+   * The same boundary over a WRITABLE transaction the callback owns.
+   *
+   * `readScopedResult` is deliberately read-only: it takes `FOR SHARE` locks so
+   * that many readers can share a connection pool while revocation still waits
+   * for the reads already under way. A caller that must WRITE inside the same
+   * authorisation — the download-grant mint, whose row 0208's guard demands an
+   * accepted file and a live session — cannot do that on a read-only
+   * transaction, and asking the pool for a second connection is the N1 outage
+   * above.
+   *
+   * So the write happens in the same transaction, on the same connection, and
+   * the whole point of the signature change is that the callback is given `tx`
+   * to do it with. The alternative — commit the authorisation and write
+   * afterwards on a fresh connection — was the other half of the review's fix,
+   * and it is a real option for a spend; it is NOT acceptable for the mint,
+   * because 0208's guard compares the new row against the session row that
+   * this very transaction has just inserted and not yet committed (the
+   * review's R1a: a session's first ever request was a mint, and it was
+   * refused 42501 because a second connection cannot see an uncommitted row).
+   */
+  async writeScopedResult<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string,
+    write: (scope: { tenantId: string; projectId: string; jobId: string; identityId: string },
+      tx: DatabaseSession) => Promise<T>) {
+    this.id(projectId); this.id(jobId);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+      if (!row) throw new WebAccessError("not_found");
+      validated(row, this.scope.tenantId, projectId);
+      return write({ tenantId: this.scope.tenantId, projectId, jobId, identityId: actor.id }, tx);
     });
   }
 

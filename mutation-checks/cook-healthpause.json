@@ -1,0 +1,9 @@
+[
+  {
+    "file": "src/web/v1/operations-mode-service.ts",
+    "find": "  return current?.mode === \"paused\" && current.reason === pauseReason;",
+    "replace": "  return true;",
+    "test": "pnpm run test:supervisor",
+    "why": "automatic recovery must only resume the exact automatic pause, never a later owner pause, drain, stop, or resume"
+  }
+]

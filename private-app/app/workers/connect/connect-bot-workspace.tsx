@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { PrivateHeader } from "../../private-header";
 import { LoadingState, StateChip, UnavailableState, type ChipTone } from "../../owner-ui";
+import { FLEET_CONNECT_BOT_CAPABILITY_OPTIONS_V1, FLEET_CONNECT_BOT_OPTIONS_V1,
+  type FleetConnectBotKindV1 } from "../../../../src/fleet/v1/catalog";
 
-type BotKind = "claude-code" | "codex" | "hermes" | "claude-desktop" | "cursor" | "mcp-agent";
+type BotKind = FleetConnectBotKindV1;
 type OperatingSystem = "macos" | "windows" | "linux";
 type Project = { projectId: string; title: string };
 type FleetWorker = { workerId: string; displayName: string; workerKind: string; status: string; lastSeenAt: string | null };
@@ -14,12 +16,10 @@ export type ConnectBotInstallResult = { codeId: string; workerId: string; expire
   operatingSystem: OperatingSystem; botKind: BotKind; profileName: string; unattended: boolean; ownerNextStep: string;
   release: ConnectorRelease; installLine: string };
 
-const bots: readonly [BotKind, string][] = [["claude-code", "Claude Code"], ["codex", "Codex"],
-  ["hermes", "Hermes"], ["cursor", "Cursor"], ["claude-desktop", "Claude Desktop"], ["mcp-agent", "Generic MCP"]];
+const bots = FLEET_CONNECT_BOT_OPTIONS_V1;
 const systems: readonly [OperatingSystem, string, string][] = [["macos", "macOS", "Terminal (zsh)"],
   ["windows", "Windows", "PowerShell"], ["linux", "Linux", "Terminal (bash)"]];
-const capabilities = [["code.change", "Change code"], ["code.review", "Review code"], ["research", "Research"],
-  ["writing", "Writing"], ["testing", "Testing"]] as const;
+const capabilities = FLEET_CONNECT_BOT_CAPABILITY_OPTIONS_V1;
 const unattendedBots: readonly BotKind[] = ["claude-code", "codex", "hermes"];
 const statusWords: Record<string, [string, ChipTone]> = { working: ["Working", "busy"], connected: ["Connected", "good"],
   offline: ["Offline", "warn"], needs_new_key: ["Needs a new key", "bad"] };
@@ -120,7 +120,7 @@ export function ConnectBotWorkspace() {
       <label>Bot<select name="bot-kind" value={botKind} onChange={event => {
         const next = event.target.value as BotKind; setBotKind(next); if (!unattendedBots.includes(next)) setUnattended(false);
       }}>
-        {bots.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        {bots.map(({ kind, label }) => <option key={kind} value={kind}>{label}</option>)}</select></label>
       <fieldset><legend>Computer operating system</legend><div className="connect-bot-choice-grid">
         {systems.map(([value, label, terminal]) => <label key={value}><input type="radio" name="operating-system"
           value={value} checked={operatingSystem === value} onChange={() => setOperatingSystem(value)} /><span><strong>{label}</strong><small>{terminal}</small></span></label>)}
@@ -137,9 +137,9 @@ export function ConnectBotWorkspace() {
           : projects.length === 0 ? <p className="private-note">No projects are available yet.</p> : projects.map(project =>
         <label key={project.projectId}><input type="checkbox" checked={projectIds.includes(project.projectId)}
           onChange={() => setProjectIds(toggle(projectIds, project.projectId))} /> {project.title}</label>)}</fieldset>
-      <fieldset><legend>What it may do</legend>{capabilities.map(([value, label]) => <label key={value}>
-        <input type="checkbox" checked={chosenCapabilities.includes(value)}
-          onChange={() => setChosenCapabilities(toggle(chosenCapabilities, value))} /> {label}</label>)}</fieldset>
+      <fieldset><legend>What it may do</legend>{capabilities.map(({ capability, label }) => <label key={capability}>
+        <input type="checkbox" checked={chosenCapabilities.includes(capability)}
+          onChange={() => setChosenCapabilities(toggle(chosenCapabilities, capability))} /> {label}</label>)}</fieldset>
       <button type="submit" disabled={!canCreate}>Create code</button>
       <p className="private-note">The bot can work only in the projects and categories you pick. It cannot approve,
         accept or merge work, and it never receives your login or a database password.</p>
@@ -151,7 +151,7 @@ export function ConnectBotWorkspace() {
           : connected.length === 0 ? <p>No bots are connected yet.</p> : <ul className="private-local-agent-list">{connected.map(worker => {
             const [label, tone] = statusWords[worker.status] ?? [worker.status, "neutral" as ChipTone];
             return <li className="private-local-agent-card" key={worker.workerId}><h3>{worker.displayName}</h3>
-              <p><StateChip state={worker.status} label={label} tone={tone} /> {bots.find(([kind]) => kind === worker.workerKind)?.[1] ?? worker.workerKind}</p>
+              <p><StateChip state={worker.status} label={label} tone={tone} /> {bots.find(option => option.kind === worker.workerKind)?.label ?? worker.workerKind}</p>
               <div className="private-actions"><button type="button" disabled={busy} onClick={() => {
                 if (!confirm(`Remove ${worker.displayName}? It will lose access immediately.`)) return;
                 setBusy(true); setMessage(undefined);

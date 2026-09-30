@@ -3,7 +3,7 @@ import test from "node:test";
 import { DOMAIN_CONTRACT_VERSION, type JobRecord, type LeaseRecord } from "../src/domain/v1";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { classifyProviderWaitV1, ProviderWaitStoreV1, SupervisorReconcilerV1,
-  SupervisorWatchdogV1 } from "../src/supervisor/v1";
+  SupervisorWatchdogV1, supervisorMachineHealthConfigV1 } from "../src/supervisor/v1";
 import { at, nativeTaskFixture } from "./native-task-fixture";
 import { binding } from "./hermes-native-fixture";
 
@@ -134,7 +134,8 @@ test("an owner Stop revocation is not counted as a lease lapse by the supervisor
 test("a stale supervisor loop records health, pauses starts through the operations interface, and raises an incident", async t => {
   const f=await nativeTaskFixture();t.after(f.close);let now=Date.parse(at(20_000)),pauses=0;
   const machine={async sample(){return{hostAlive:true,sharedMemorySegments:3,loadOneMinute:2};}};
-  const operations={async pauseNewStarts(){pauses++;return{state:"paused" as const,receiptId:`pause:${pauses}`};}};
+  const operations={async pauseNewStarts(){pauses++;return{state:"paused" as const,receiptId:`pause:${pauses}`};},
+    async resumeAfterMachineHealth(){return{state:"not_automatic" as const,receiptId:"resume:fixture"};}};
   const watchdog=new SupervisorWatchdogV1(f.db,binding.tenantId,"service:supervisor",machine,operations,()=>now);
   assert.equal((await watchdog.cycle()).healthy,true);now+=121_000;
   const unhealthy=await watchdog.cycle();assert.equal(unhealthy.healthy,false);assert.deepEqual(unhealthy.reasonCodes,["loop_not_alive"]);
@@ -145,4 +146,20 @@ test("a stale supervisor loop records health, pauses starts through the operatio
   const attention=await f.raw.query<{kind:string;payload:{reasonCode:string}}>(`SELECT kind,payload FROM control_action_inbox
     WHERE tenant_id=$1 AND kind='incident'`,[binding.tenantId]);
   assert.equal(attention.rows[0]?.payload.reasonCode,"loop_not_alive");
+});
+
+test("flapping load holds the automatic recovery window until the Mac is calmly healthy for five minutes", async t => {
+  const f=await nativeTaskFixture();t.after(f.close);let now=Date.parse(at(20_000)),load=18,pauses=0,resumes=0;
+  const machine={async sample(){return{hostAlive:true,sharedMemorySegments:3,loadOneMinute:load};}};
+  const operations={async pauseNewStarts(){pauses++;return{state:"paused" as const,receiptId:`pause:${pauses}`};},
+    async resumeAfterMachineHealth(){resumes++;return{state:"resumed" as const,receiptId:`resume:${resumes}`};}};
+  const watchdog=new SupervisorWatchdogV1(f.db,binding.tenantId,"service:supervisor",machine,operations,()=>now,
+    supervisorMachineHealthConfigV1({cpuCount:12}));
+  assert.equal((await watchdog.cycle()).healthy,false);assert.equal(pauses,1);
+  for (const next of [11,11,12,11,11,11,11,11,11]) {
+    now+=60_000;load=next;await watchdog.cycle();
+  }
+  assert.equal(resumes,1,"load at the 12-core recovery boundary resets the sustained window instead of flapping starts");
+  now+=60_000;await watchdog.cycle();
+  assert.equal(resumes,1,"a successful automatic recovery is not retried every later healthy cycle");
 });

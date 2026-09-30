@@ -31,6 +31,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
 import { Client, Pool } from "pg";
+import { privilegeClassMarkerTables, revokeMarkerClassesSql } from "./support/privilege-class-markers";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import {
   encodeProjectEventCursorV1,
@@ -299,6 +300,13 @@ before(async () => {
     PASSWORD 'pawrite'`);
   await admin.query(`GRANT ALL ON ALL TABLES IN SCHEMA public TO pa_writer`);
   await admin.query(`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO pa_writer`);
+  // A privilege-class marker table is granted, not inherited: holding SELECT on
+  // one IS membership of that class. GRANT ALL ON ALL TABLES has just made
+  // pa_writer a fleet gateway, and the fleet guards would then refuse this
+  // fixture's own inserts into control_identities. Production never hits this
+  // because a login reaches a marker only by inheriting the one group the role
+  // file names.
+  await admin.query(revokeMarkerClassesSql("pa_writer", await privilegeClassMarkerTables(ROOT)));
   await purgePreviousRuns();
 
   const writerPool = new Pool({ ...WRITER, max: 4, application_name: "control-room-activity-test-writer" });
