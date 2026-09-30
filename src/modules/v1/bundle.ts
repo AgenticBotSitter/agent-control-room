@@ -91,7 +91,7 @@ export interface ModulePermissionDiffV1 {
   readonly removed: readonly string[];
 }
 
-const fail = (code: string): never => { throw new Error(code); };
+function fail(code: string): never { throw new Error(code); }
 
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
