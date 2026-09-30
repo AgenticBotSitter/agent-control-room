@@ -2,7 +2,7 @@ import { parseMacLocalWebHostArguments, startMacLocalTaskHost } from "./start-we
 import { pathToFileURL } from "node:url";
 
 export function monitorActiveTaskHost(active, runtime = process, timers = globalThis, supervisor = undefined) {
-  let closed = false, supervisorLost = false, boundedStop;
+  let closed = false, supervisorLost = false, boundedStop, readinessTimer;
   let onSupervisorLost;
   const releaseSupervisor = () => {
     if (!supervisor) return;
@@ -13,6 +13,7 @@ export function monitorActiveTaskHost(active, runtime = process, timers = global
   const stop = async (code = 0) => {
     if (closed) return;
     closed = true;
+    if (readinessTimer !== undefined) timers.clearInterval(readinessTimer);
     releaseSupervisor();
     try { await active.close(); runtime.exitCode = code; }
     catch { runtime.exitCode = 1; }
@@ -47,6 +48,16 @@ export function monitorActiveTaskHost(active, runtime = process, timers = global
     runtime.exitCode = 1;
     void stopWithinBound(1);
   });
+  if (typeof active.isReady === "function" && typeof timers.setInterval === "function") {
+    readinessTimer = timers.setInterval(() => {
+      let ready = false;
+      try { ready = active.isReady() === true; } catch {}
+      if (ready || closed) return;
+      runtime.stderr.write("host stopped because application readiness failed\n");
+      void stopWithinBound(1);
+    }, 1_000);
+    readinessTimer.unref?.();
+  }
   return Object.freeze({ stop });
 }
 

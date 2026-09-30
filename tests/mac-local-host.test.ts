@@ -35,7 +35,8 @@ test("loads then verifies workers before it opens the authority database", async
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { trace.push("load"); return configuration; },
     async readVersion() { trace.push("version"); return "codex test"; },
-    openDatabase() { trace.push("database"); return { client: {} as never, async close() { trace.push("database-close"); } }; },
+    openDatabase() { trace.push("database"); return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("database-close"); } }; },
     assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
     hostProcessId: 4_243,
@@ -76,7 +77,8 @@ test("connector-only host refuses direct task factories and starts without bot e
   const host = createMacLocalProtectedHostV1({ connectorOnly: true,
     async loadConfiguration() { trace.push("load"); return configuration; },
     async readVersion() { assert.fail("connector-only host must not inspect a bot CLI"); },
-    openDatabase() { trace.push("database"); return { client: {} as never, async close() { trace.push("close"); } }; },
+    openDatabase() { trace.push("database"); return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("close"); } }; },
     assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
   });
@@ -94,7 +96,8 @@ test("protected Mac startup creates the shared task lifecycle only after worker 
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { trace.push("load"); return configuration; },
     async readVersion() { trace.push("version"); return "codex test"; },
-    openDatabase() { trace.push("web-database"); return { client: {} as never, async close() { trace.push("web-close"); } }; },
+    openDatabase() { trace.push("web-database"); return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("web-close"); } }; },
     async loadDatabaseRoles() { trace.push("database-roles"); return databaseRoles; },
     async createTaskApplication({ configuration: received, workerReadiness, databaseRoles: receivedRoles }) {
       trace.push("task-application");
@@ -118,7 +121,7 @@ test("protected host captures one batch key, catalog and exact-selection authori
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
     async loadDatabaseRoles() { return databaseRoles; },
-    openDatabase() { return { client: {} as never, async close() { closed = true; } }; },
+    openDatabase() { return { client: {} as never, isAvailable: () => true, async close() { closed = true; } }; },
     workBatchIntegrityKey: key,
     async createTaskApplication({ workBatches }) {
       assert.ok(workBatches);
@@ -157,7 +160,7 @@ test("a Mac-local host owns the shared task composition and fails ready when tha
   server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
   const service = createMacLocalWebServiceFromConfigurationV1({
     configuration,
-    database: { client: {} as never, async close() { databaseCloses++; } },
+    database: { client: {} as never, isAvailable: () => true, async close() { databaseCloses++; } },
     assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
@@ -176,8 +179,12 @@ test("a Mac-local host owns the shared task composition and fails ready when tha
 });
 
 test("a Mac-local host refuses operations from a different controller lifecycle", () => {
+  assert.throws(() => createMacLocalWebServiceFromConfigurationV1({ configuration,
+    database: { client: {} as never, async close() {} } as never,
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); } }),
+  /mac_local_host_configuration_invalid/);
   assert.throws(() => createMacLocalWebServiceFromConfigurationV1({
-    configuration, database: { client: {} as never, async close() {} },
+    configuration, database: { client: {} as never, isAvailable: () => true, async close() {} },
     assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     operations: {}, taskApplication: { operations: {}, isReady: () => true, async close() {} },
   }), /mac_local_host_configuration_invalid/);
@@ -199,7 +206,8 @@ test("starts the existing queue worker only after the loopback site is listening
   server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
-    openDatabase() { return { client: {} as never, async close() { trace.push("database-close"); } }; },
+    openDatabase() { return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("database-close"); } }; },
     async loadDatabaseRoles() { return databaseRoles; },
     async createTaskApplication() { return { operations: {}, isReady: () => true, async close() { trace.push("task-close"); },
       async queueDelivery() { return { disposition: "delivered" as const }; } }; },
@@ -235,7 +243,7 @@ test("closes a rejected queue worker before it closes the local site", async () 
   server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
-    openDatabase() { return { client: {} as never, async close() {} }; },
+    openDatabase() { return { client: {} as never, isAvailable: () => true, async close() {} }; },
     async loadDatabaseRoles() { return databaseRoles; },
     async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {}, async queueDelivery() { return { disposition: "delivered" as const }; } }; },
     async startQueueWorker() { return { status: () => ({ accepting: false }), async close() { trace.push("worker-close"); } }; },

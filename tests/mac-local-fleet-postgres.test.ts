@@ -77,10 +77,15 @@ test("real Mac-local host plus gateway completes code, install, claim, fake run,
         // test-only role alias.
         agentReviewer: roleConfig("app"), queueWorker: roleConfig("queueWorker"),
         fleetGateway: gatewayRole.configuration, fleetOwner: owner.configuration });
-      const openDatabase = (value: typeof web.configuration) => value.username === web.configuration.username ? web.open()
-        : value.username === owner.configuration.username ? owner.open()
-          : value.username === gatewayRole.configuration.username ? gatewayRole.open()
-            : value.username === intake.configuration.username ? intake.open() : (() => { throw new Error("unexpected production role"); })();
+      const openDatabase = (value: typeof web.configuration) => {
+        const opened = value.username === web.configuration.username ? web.open()
+          : value.username === owner.configuration.username ? owner.open()
+            : value.username === gatewayRole.configuration.username ? gatewayRole.open()
+              : value.username === intake.configuration.username ? intake.open() : (() => { throw new Error("unexpected production role"); })();
+        // The Mac-local startup bridge requires the availability probe that the
+        // production pool exposes and the supervisor's health monitor reads.
+        return { ...opened, isAvailable: () => true };
+      };
       gateway = await prepareMacLocalFleetGatewayV1({ configuration, databaseRoles: roles, port: gatewayPort,
         workIntake: { database: intake.configuration, integrityKey: "k".repeat(43) } as never, openDatabase });
       await gateway.start();

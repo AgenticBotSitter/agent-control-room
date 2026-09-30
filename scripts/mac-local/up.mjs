@@ -112,7 +112,7 @@ async function requestAuthenticatedHostHealth(port, healthProbeKey, timeoutMs = 
       || value.nonce !== nonce || !Number.isSafeInteger(value.pid) || value.pid <= 1
       || typeof value.releaseId !== "string" || typeof value.startedAt !== "string"
       || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.tag !== "string") return undefined;
-    const material = JSON.stringify({ nonce, pid: value.pid, purpose: "local-host-health/v1",
+    const material = JSON.stringify({ nonce, pid: value.pid, purpose: "local-host-health/v1", ready: value.ready,
       releaseId: value.releaseId, startedAt: value.startedAt });
     const expected = `hmac-sha256:${createHmac("sha256", healthProbeKey).update(material, "utf8").digest("hex")}`;
     const actualBytes = Buffer.from(value.tag, "utf8"), expectedBytes = Buffer.from(expected, "utf8");

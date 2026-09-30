@@ -421,7 +421,8 @@ test("each remote path keeps the owner session, CSRF, sign-out, expiry and revoc
     provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
     remoteOrigins: [tailnetOrigin, cloudflareOrigin] } as const;
   const app = createMacLocalWebProcessV1({ origin: loopback, workspaceId: fixture.configuration.workspaceId, localOwnerSession,
-    cloudflareAccessOrigin: cloudflareOrigin, database: { client: fixture.client, close: async () => {} }, clock: () => clock.now });
+    cloudflareAccessOrigin: cloudflareOrigin,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => clock.now });
   const gates = createMacLocalRemoteOriginGatesV1(remoteAccess, { clock: () => clock.now, loadKeys: async () => [keyA.published] });
   const handler = createMacLocalNodeHandler({ origin: loopback, application: { isReady: () => true, close: async () => {} },
     handler: request => app.handle(request, () => new Response("page")), assets: assets([]), remoteOrigins: gates.gates });
@@ -500,10 +501,14 @@ test("each remote path keeps the owner session, CSRF, sign-out, expiry and revoc
 });
 
 test("the service composition refuses session origins without matching gates", () => {
-  const base = { origin: loopback, port: 3210, workspaceId: "workspace:x", database: { client: {} as never, close: async () => {} },
+  const base = { origin: loopback, port: 3210, workspaceId: "workspace:x",
+    database: { client: {} as never, close: async () => {}, isAvailable: () => true },
     assets: assets([]), render: () => new Response("x") };
   const session = { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: loopback, tenantId: "tenant:x", provider: "p", subject: "s",
     ownerCodeDigest: sha256Digest({ ownerCode: "x".repeat(24) }), sessionSeconds: 900 } as const;
+  assert.throws(() => createMacLocalWebProcessV1({ origin: loopback, workspaceId: "workspace:x",
+    database: { client: {} as never, close: async () => {} } as never, localOwnerSession: session }),
+  /mac_local_web_process_config_invalid/, "database availability is mandatory");
   assert.throws(() => createMacLocalControlRoomServiceV1({ ...base, localOwnerSession: { ...session, remoteOrigins: [cloudflareOrigin] } }),
     /mac_local_remote_access_invalid/, "an origin without its gate");
   assert.throws(() => createMacLocalControlRoomServiceV1({ ...base, localOwnerSession: { ...session, remoteOrigins: [tailnetOrigin] },

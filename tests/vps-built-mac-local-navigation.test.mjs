@@ -23,7 +23,7 @@ test("built Mac-local pages, owner navigation and their browser reads stay reach
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }),
       sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
     workerReadiness: { read: () => [
       { kind: "hermes-021", state: "ready", proof: "not_proven" },
       { kind: "claude-code", state: "ready", proof: "not_proven" },

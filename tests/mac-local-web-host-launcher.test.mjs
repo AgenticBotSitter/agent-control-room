@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseMacLocalWebHostArguments, startMacLocalTaskHost,
-  startMacLocalWebHost } from "../scripts/mac-local/start-web-host.mjs";
+import { parseMacLocalWebHostArguments, startHostWithOptionalIntake,
+  startMacLocalTaskHost, startMacLocalWebHost } from "../scripts/mac-local/start-web-host.mjs";
+// The service host must never import bot executable inspection; it lives in
+// its own module so the launcher's own module graph stays spawn-free.
 import { readPinnedMacExecutableVersion, verifyPinnedMacModelPolicy }
   from "../scripts/mac-local/bot-executable-inspection.mjs";
 import { startMacLocalFleetGateway } from "../scripts/mac-local/start-fleet-gateway.mjs";
@@ -79,6 +81,19 @@ test("web host validates and prepares optional intake before listeners and clean
   }), /fixture/);
   assert.deepEqual(calls, ["load-intake", "load-owner-web-push", "load-roles", "prepare-web", "prepare-intake", "start-web", "start-intake",
     "close-intake", "close-web", "close-fleet"]);
+});
+
+test("optional intake preserves the web host readiness signal", async () => {
+  let ready = true, intakeStarts = 0, closes = 0;
+  const result = await startHostWithOptionalIntake({ async start() { return {
+    isReady: () => ready, async close() { closes += 1; },
+  }; } }, { integrityKey: "y".repeat(43) }, { async prepareWorkIntakePrivateServiceV1() { return {
+    async start() { intakeStarts += 1; }, async close() { closes += 1; },
+  }; } });
+  assert.equal(intakeStarts, 1); assert.equal(result.isReady(), true);
+  ready = false;
+  assert.equal(result.isReady(), false, "the task-host monitor must see database-backed web readiness through intake");
+  await result.close(); assert.equal(closes, 2);
 });
 
 test("task host is connector-only and loads neither a task provider nor a native queue worker", async () => {

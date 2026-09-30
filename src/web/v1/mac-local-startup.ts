@@ -4,8 +4,8 @@ import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-con
 import { createMacLocalWorkerReadinessV1, type MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
 
-type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
-type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void> }>;
+type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void>; isAvailable(): boolean }>;
+type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
 type ServiceInput = Readonly<{ configuration: MacLocalProtectedConfigurationV1; database: OpenedDatabase;
   workerReadiness?: MacLocalWorkerReadinessV1; databaseRoles?: MacLocalDatabaseRolesV1 }>;
 type StartupCommon = Readonly<{
@@ -17,7 +17,7 @@ type DirectStartupInput = StartupCommon & Readonly<{ connectorOnly?: false;
   readVersion(executablePath: string): Promise<string> }>;
 type ConnectorStartupInput = StartupCommon & Readonly<{ connectorOnly: true;
   readVersion?: (executablePath: string) => Promise<string> }>;
-type Started = Readonly<{ close(): Promise<void> }>;
+type Started = Readonly<{ close(): Promise<void>; isReady(): boolean }>;
 
 export function createMacLocalStartupV1(input: DirectStartupInput): Readonly<{
   start(configuration: MacLocalProtectedConfigurationV1, databaseRoles?: MacLocalDatabaseRolesV1):
@@ -43,12 +43,15 @@ export function createMacLocalStartupV1(input: DirectStartupInput | ConnectorSta
     let database: OpenedDatabase | undefined, service: LocalService | undefined;
     try {
       database = input.openDatabase(configuration.database);
-      if (!database || !database.client || typeof database.close !== "function") throw new Error();
+      if (!database || !database.client || typeof database.close !== "function"
+        || typeof database.isAvailable !== "function") throw new Error();
       service = await input.createService({ configuration, database, ...(workerReadiness ? { workerReadiness } : {}),
         ...(databaseRoles ? { databaseRoles } : {}) });
-      if (!service || typeof service.start !== "function" || typeof service.close !== "function") throw new Error();
+      if (!service || typeof service.start !== "function" || typeof service.close !== "function"
+        || typeof service.isReady !== "function") throw new Error();
       await service.start();
-      return Object.freeze({ close: service.close.bind(service), ...(workerReadiness ? { workerReadiness } : {}) });
+      return Object.freeze({ close: service.close.bind(service), isReady: service.isReady.bind(service),
+        ...(workerReadiness ? { workerReadiness } : {}) });
     } catch (error) {
       // Keep a bounded, non-secret diagnostic when the composed host refuses
       // startup. Raw driver messages can contain connection details.

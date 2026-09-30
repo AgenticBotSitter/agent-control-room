@@ -33,7 +33,7 @@ const ACK_SERVER_SOURCE = `const server = createServer(socket => { socket.on("er
 
 function fakeHealthResponse(healthProbeKey, nonce, pid) {
   const releaseId = "dev", startedAt = "2026-09-30T00:00:00.000Z";
-  const material = JSON.stringify({ nonce, pid, purpose: "local-host-health/v1", releaseId, startedAt });
+  const material = JSON.stringify({ nonce, pid, purpose: "local-host-health/v1", ready: true, releaseId, startedAt });
   const tag = `hmac-sha256:${createHmac("sha256", healthProbeKey).update(material, "utf8").digest("hex")}`;
   return { schema: "control-room.local-host-health/v1", ready: true, pid, nonce, releaseId, startedAt, tag };
 }
@@ -433,6 +433,29 @@ test("the task host marks an unhandled rejection failed before asynchronous clea
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(exits, [1]);
   assert.deepEqual(cleared, scheduled);
+});
+
+test("the task host exits unsuccessfully when application readiness becomes false", async () => {
+  const runtime = new EventEmitter(), output = [], exits = [];
+  runtime.stderr = { write: value => output.push(value) };
+  runtime.exit = code => exits.push(code);
+  let ready = true, closes = 0, readinessCallback, readinessCleared = false;
+  const active = { isReady: () => ready, async close() { closes += 1; } };
+  const timers = {
+    setInterval: callback => { readinessCallback = callback; return { unref() {} }; },
+    clearInterval: () => { readinessCleared = true; },
+    setTimeout: () => ({ forced: true }),
+    clearTimeout() {},
+  };
+  monitorActiveTaskHost(active, runtime, timers);
+  readinessCallback();
+  assert.equal(closes, 0); assert.equal(runtime.exitCode, undefined);
+  ready = false;
+  readinessCallback();
+  assert.equal(runtime.exitCode, 1, "launchd only restarts a supervised child that exits unsuccessfully");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(closes, 1); assert.deepEqual(exits, [1]); assert.equal(readinessCleared, true);
+  assert.match(output.join(""), /application readiness failed/u);
 });
 
 test("real uncaught exceptions and unhandled rejections reach the rotating crash log", async t => {

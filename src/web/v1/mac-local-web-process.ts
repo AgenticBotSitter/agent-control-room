@@ -33,7 +33,8 @@ import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
-import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
+import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1,
+  startOwnerPushLoopV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { FleetOwnerServiceV1 } from "../../fleet/v1";
 import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
 import type { FleetConnectorReleaseManifestV1 } from "../../fleet/v1/connector-release";
@@ -53,7 +54,7 @@ export interface MacLocalWebProcessOptionsV1 {
   localOwnerSessionStore?: LocalOwnerSessionStoreV1;
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
-  database: { client: DatabaseClient; close: () => Promise<void> };
+  database: { client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean };
   /** The existing task service from the Mac task application. This keeps
    * owner-review follow-up creation and browser task routes on one service. */
   taskService?: WebTaskService;
@@ -104,6 +105,11 @@ export interface MacLocalWebProcessOptionsV1 {
   }> }>;
   /** Optional private VAPID credentials. Omission leaves push unavailable. */
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** Start the bounded-retry dispatcher alongside the site. Defaults to on when
+   * `ownerWebPush` is configured, because a configured push channel that never
+   * dispatches is the exact shape of this feature having been "built" and never
+   * working. Supplied explicitly false for a read-only or test composition. */
+  ownerPushDispatch?: boolean;
   /** Remote workers (T2-F). Owner decisions use a distinct restricted
    * database login; neither the ordinary web login nor the gateway can write
    * those tables. The hook only asks the gateway to reconcile afterward. */
@@ -137,7 +143,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const profile = captureLocalOwnerSessionProfileV1(options.localOwnerSession);
   const origin = new URL(options.origin);
   if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.origin !== options.origin
-    || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
+    || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function"
+    || typeof options.database.isAvailable !== "function")
     throw new Error("mac_local_web_process_config_invalid");
   // An owner review that can accept exceptions must use the task application's
   // same in-session proposal service. Refuse a partial composition instead of
@@ -224,6 +231,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const operationsModeHttp = operationsMode ? createOperationsModeHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: operationsMode, clock }) : undefined;
   let closed: Promise<void> | undefined;
+  const isReady = () => closed === undefined && options.database.isAvailable() === true;
 
   function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
     return new Response(null, { status: 303, headers: { ...privateResponseHeaders,
@@ -374,10 +382,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           || !/^[A-Za-z0-9_-]{43}$/u.test((body as { nonce: string }).nonce))
           throw new WebAccessError("invalid_request");
         const nonce = (body as { nonce: string }).nonce, pid = options.hostProcessId,
-          releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!;
+          releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!, ready = isReady();
         const tag = hmacSha256Tag(options.healthProbeKey!,
-          { purpose: "local-host-health/v1", nonce, pid, releaseId, startedAt });
-        return Response.json({ schema: "control-room.local-host-health/v1", ready: true, pid, nonce, releaseId, startedAt, tag },
+          { purpose: "local-host-health/v1", nonce, pid, ready, releaseId, startedAt });
+        return Response.json({ schema: "control-room.local-host-health/v1", ready, pid, nonce, releaseId, startedAt, tag },
           { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/local-workers") {
@@ -408,7 +416,15 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             message: "This browser can subscribe to phone notifications." }, { headers: privateResponseHeaders });
         }
         if (request.method === "POST" && !url.search && request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() === "application/json") {
-          const subscription = parseWebPushSubscriptionV1(await request.json());
+          // A malformed or off-list subscription is the CALLER's problem, so it
+          // is reported as a 400 rather than as the 503 a bare Error maps to. The
+          // endpoint allow list is enforced here, at the earliest point, so this
+          // is the status an owner sees when their browser hands us an endpoint
+          // on a host that is not a push service -- "the service is down" would
+          // send them looking in entirely the wrong place.
+          let subscription;
+          try { subscription = parseWebPushSubscriptionV1(await request.json()); }
+          catch { throw new WebAccessError("invalid_request"); }
           await ownerPush.store.subscribe({ id: "", tenantId: profile.tenantId, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh,
             auth: subscription.keys.auth, expiresAt: subscription.expirationTime === null ? null : new Date(subscription.expirationTime).toISOString() });
           return new Response(null, { status: 204, headers: privateResponseHeaders });
@@ -544,5 +560,5 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     }
   }
 
-  return Object.freeze({ handle, isReady: () => closed === undefined, close: () => closed ??= options.database.close() });
+  return Object.freeze({ handle, isReady, close: () => closed ??= options.database.close() });
 }
