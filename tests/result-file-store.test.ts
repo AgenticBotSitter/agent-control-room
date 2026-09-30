@@ -42,7 +42,13 @@ const bytes = (value: string) => new TextEncoder().encode(value);
  * this fixture got wrong first, and the only symptom was one test failing.
  */
 function startSecondOfProcessV1(pid: number): number {
-  if (pid === process.pid) return Math.floor((Date.now() - process.uptime() * 1000) / 1000);
+  // `ps` for EVERY pid, including this one. An earlier revision short-circuited
+  // to `Date.now() - process.uptime()`, and that drifts by a whole second under
+  // CPU load — `process.uptime()` accumulates float error over a long run and
+  // this lane runs four files in parallel — so the fixture's start second
+  // disagreed with the store's and a live writer's lock was cleared. Asking the
+  // same question the store asks removes the disagreement rather than narrowing
+  // it.
   // A pid `ps` will not even look at still needs a third line: a dead writer's
   // start second is a number, and the store only compares it when the boot
   // matches. Any plausible second will do, because a dead pid is proved dead by

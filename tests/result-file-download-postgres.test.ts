@@ -622,14 +622,17 @@ test("the real download path, the grant it writes, two sessions one file, the qu
           WHERE tenant_id=$1 AND set_id=$2`, [TENANT, storedSet]),
         (error: unknown) => ["42501", "23514", "42501"].includes(stateOf(error)),
           "the publisher cannot trash a set either");
-        // A superuser is refused on the same statement, so this is the guard and
-        // not the login's grants. The identity that would have to accept it is
-        // named explicitly, which is the only way a trash can ever happen: the
-        // owner's own, and only for a set that owner's acceptance already names.
+        // A superuser is refused too, and the reason is the important one: 0209's
+        // rejection arm needs a LIVE OWNER GRANT, and being a superuser is not
+        // one. `postgres` has every privilege on the table and still cannot do
+        // this, which is what makes the guard a guard rather than a grants
+        // arrangement. (Before 0209 the superuser was refused because an
+        // unaccepted set had no identity at all, which is the review's S3 and is
+        // now a deliberate hole rather than an accident — proved further down.)
         await assert.rejects(admin(`UPDATE control_result_file_sets SET retention_state='trash'
           WHERE tenant_id=$1 AND set_id=$2`, [TENANT, storedSet]),
         (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
-          "trashing an unaccepted set is refused even for a superuser");
+          "trashing an unaccepted set is refused even for a superuser: a superuser holds no owner grant");
 
         // The ALLOW direction, because a guard that refuses everything is not a
         // guard. A set the OWNER accepted may then be trashed by that same
@@ -696,6 +699,169 @@ test("the real download path, the grant it writes, two sessions one file, the qu
           content.byteLength, issuedAt, new Date(Date.parse(issuedAt) + 240_000).toISOString()]),
         (error: unknown) => ["23514", "23503"].includes(stateOf(error)),
         "a grant for a file that is not in the set is still refused");
+        // ==== S3: an unaccepted set can be rejected, and swept after 90 days ===
+        //
+        // The review's S3, and it was a real hole rather than a tidiness
+        // complaint. 0207 made disposal the owner's, and an unaccepted set has NO
+        // accepted identity, so `coalesce(OLD.accepted_by_identity_id, …)` was
+        // NULL, the owner predicate could not match, and the move was refused —
+        // for every login including the superuser. That made the plan's
+        // "unaccepted results are swept after 90 days" impossible, and made
+        // "accept" mean "agree to keep this permanently".
+        const ninetyDaysAgo = new Date(Date.now() - 91 * 86_400_000).toISOString();
+        const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+        // `control_result_file_sets` is UNIQUE on (tenant_id, attempt_id) — one
+        // set per attempt — so each fixture needs an attempt of its own, and a
+        // native set needs that attempt's harness run, manifest and receipt
+        // (0207's producer guard, B6's rule). Read from the schema rather than
+        // guessed: the error is 23505 on that exact constraint.
+        // Attempt numbers 800-803: `control_attempts` is UNIQUE on (tenant, job,
+        // number) as well as the set's own (tenant, attempt), and the fixtures above
+        // already occupy 1, 2, 100-149, 500-549 and 900.
+        const unaccepted = async (id: string, createdAt: string, number: number) => {
+          const attempt = `attempt:s3-${number}`;
+          await admin(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,
+            node_id,payload,created_at,updated_at) VALUES($1,$2,'job:files-fix',$3,'running',0,NULL,
+            'node:files-fix', jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','running',
+            'version',0,'jobId','job:files-fix','attemptNumber',$3::int,'workerId',NULL::text,
+            'nodeId','node:files-fix'),$4,$4)`, [attempt, TENANT, number, issuedAt]);
+          await admin(`INSERT INTO control_harness_runs(tenant_id,id,project_id,job_id,attempt_id,node_id,
+            adapter_id,harness,native_session_key_digest,state,last_sequence,run_digest,run_auth_tag,payload,
+            created_at,updated_at,last_observed_at) VALUES($1,$2,$3,'job:files-fix',$4,'node:files-fix',$5,
+            'other',$6,'running',0,$7,$8,'{}',$9,$9,$9)`, [TENANT, `run:s3-${number}`, projectId, attempt, ADAPTER,
+            `sha256:${(0x900000 + number).toString(16).padStart(64, "0")}`, `sha256:${"9".repeat(64)}`,
+            `hmac-sha256:${"9".repeat(64)}`, issuedAt]);
+          const artifactId = `artifact:result:${(0xA00000 + number).toString(16).padStart(64, "0")}`;
+          await admin(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,
+            attempt_id,content_hash,state,version,payload,created_at,updated_at) VALUES($1,$2,$3,
+            'workflow:files-fix','job:files-fix',$4,$5,'uploaded',1, jsonb_build_object('id',$1::text,
+            'tenantId',$2::text,'state','uploaded','version',1,'projectId',$3::text,'workflowId',
+            'workflow:files-fix','jobId','job:files-fix','attemptId',$4::text,'contentHash',$5::text),$6,$6)`,
+          [artifactId, TENANT, projectId, attempt, `sha256:${(0xB00000 + number).toString(16).padStart(64, "0")}`, issuedAt]);
+          await admin(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,
+            run_id,artifact_id,receipt,auth_tag) VALUES($1,$2,'job:files-fix',$3,$4,$5,'{}',$6)`,
+          [TENANT, projectId, attempt, `run:s3-${number}`, artifactId, `hmac-sha256:${"e".repeat(64)}`]);
+          return results(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,attempt_id,
+            producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,
+            created_at) VALUES($1,$2,$3,'job:files-fix',$4,'native','control-room-native','declared',
+            'file-store',0,0,$5,'provisional',$6)`, [TENANT, id, projectId, attempt, ZERO, createdAt]);
+        };
+        // (1) REJECTION. An unaccepted set is trashed by a live owner WHO IS
+        // NAMED IN THE ROW, with the time they said no — the answer to the
+        // review's "the owner cannot reject a bad result without first accepting
+        // it", recorded as durably as an acceptance rather than as a silent
+        // delete.
+        const rejected = setId(0x4000);
+        await unaccepted(rejected, issuedAt, 800);
+        await web(`UPDATE control_result_file_sets SET retention_state='trash',
+            accepted_at=$3,accepted_by_identity_id=$4
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, rejected, new Date().toISOString(), OWNER]);
+        const rejectedRow = (await admin<{ retention_state: string; accepted_by_identity_id: string }>
+          ("SELECT retention_state,accepted_by_identity_id FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
+            [TENANT, rejected]))[0]!;
+        assert.equal(rejectedRow.retention_state, "trash",
+          "S3: an owner may REJECT an unaccepted set, without accepting it first");
+        assert.equal(rejectedRow.accepted_by_identity_id, OWNER,
+          "S3: and the rejection records WHO rejected it, so it is as attributable as an acceptance");
+        // Naming someone else is refused: the identity in the row must be a live
+        // owner over THIS project, and a superuser naming nobody is refused for
+        // the same reason it always was.
+        const misnamed = setId(0x4004);
+        await unaccepted(misnamed, issuedAt, 805);
+        await assert.rejects(admin(`UPDATE control_result_file_sets SET retention_state='trash',
+            accepted_at=$3,accepted_by_identity_id=$4
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, misnamed, new Date().toISOString(), AGENT]),
+        (error: unknown) => ["42501", "23514", "23503"].includes(stateOf(error)),
+          "S3: a rejection naming an identity with no owner grant over this project is refused");
+        // And a rejection with NO named identity, inside the window, is refused
+        // too — that is the case 0209 deliberately opened and must not leave
+        // open.
+        await assert.rejects(web(`UPDATE control_result_file_sets SET retention_state='trash'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, misnamed]),
+        (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
+          "S3: trashing without naming a rejecting owner is still refused inside the window");
+        // And trashing is all that was granted: purge still needs an owner, and
+        // after a rejection there is no named ACCEPTOR — the row names the
+        // person who declined it, which is the same identity here, so this
+        // succeeds for exactly the reason the accepted case does. Proved the
+        // other way round: a set trashed by the 90-DAY SWEEP names nobody at
+        // all, and purging THAT is refused, because ninety days of silence is
+        // not consent to destroy.
+        const swept = setId(0x4005);
+        await unaccepted(swept, ninetyDaysAgo, 806);
+        await admin(`UPDATE control_result_file_sets SET retention_state='trash'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, swept]);
+        await assert.rejects(admin(`UPDATE control_result_file_sets SET retention_state='purged'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, swept]),
+        (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
+          "S3: purging a swept set is refused — the irreversible half always needs a named owner");
+        // (2) THE 90-DAY SWEEP, at the database clock, with no identity at all.
+        const old = setId(0x4001);
+        await unaccepted(old, ninetyDaysAgo, 801);
+        await admin(`UPDATE control_result_file_sets SET retention_state='trash'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, old]);
+        assert.equal((await admin<{ retention_state: string }>("SELECT retention_state FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
+        [TENANT, old]))[0]!.retention_state,
+        "trash", "S3: the plan's 90-day sweep is now possible: an unaccepted set older than the window is trashed");
+        // And the window is REAL: yesterday is inside it, and refused for every
+        // login, which is what makes this a retention rule rather than a delete.
+        const recent = setId(0x4002);
+        await unaccepted(recent, yesterday, 802);
+        for (const [label, attempt] of [["the web login", web], ["the publisher login", results],
+          ["a superuser", admin]] as const) {
+          await assert.rejects(attempt(`UPDATE control_result_file_sets SET retention_state='trash'
+            WHERE tenant_id=$1 AND set_id=$2`, [TENANT, recent]),
+          (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
+            `S3: an unaccepted set inside the window is refused for ${label}`);
+        }
+        // The rule is the AGE, read from the server's clock, so a caller cannot
+        // hurry it. 0206 makes a set's scope immutable, `created_at` included,
+        // so the attempt to backdate is refused by the schema itself (23514) long
+        // before it could reach the retention guard. Read from the migration
+        // rather than guessed.
+        await assert.rejects(admin(`UPDATE control_result_file_sets SET created_at=$3
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, recent, ninetyDaysAgo]),
+        (error: unknown) => stateOf(error) === "23514",
+          "S3: a set's creation time cannot be rewritten to bring its window forward");
+        // And the window function really is what the guard reads, so the rule
+        // cannot be quietly edited by a row someone updates: it is a constant
+        // inside an IMMUTABLE SQL function, and changing it is a migration.
+        assert.equal((await admin<{ days: number }>("SELECT public.result_file_unaccepted_retention_days() AS days"))[0]!.days,
+          90, "S3: the retention window is 90 days, and it lives in a migration rather than in a row");
+        // AND the two additions must not have widened anything for an ACCEPTED
+        // set. 0207's own rule still governs those, because every new arm
+        // requires `OLD.accepted_at IS NULL` and an accepted set has one. Proved
+        // with a set the owner HAS accepted and then aged past the window: the
+        // sweep must still refuse it.
+        const acceptedButOld = setId(0x4003);
+        await unaccepted(acceptedButOld, ninetyDaysAgo, 803);
+        await web(`UPDATE control_result_file_sets SET retention_state='retained',accepted_at=$3,accepted_by_identity_id=$4
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, acceptedButOld, new Date().toISOString(), OWNER]);
+        // The sweep cannot reach it: it names an ACCEPTOR, so `OLD.accepted_at IS
+        // NULL` is false and neither new arm can apply however old it is. What is
+        // left is 0207's own rule, and that is the point — 0209 is additive, so
+        // the pre-existing behaviour for an accepted set is exactly what it was.
+        //
+        // That rule is: the identity named as the ACCEPTOR may discard it. The
+        // web login can, because the row still names a live owner and the
+        // database cannot and must not know which connection is that owner's.
+        // (This is the same attribution 0207 already relies on for acceptance
+        // and for the accepted-set disposal above; the role of the web login is
+        // to be unable to reach a set the owner cannot either, not to be unable
+        // to reach every row.)
+        // The acceptance columns are NOT rewritten: 0207 makes a recorded
+        // acceptance permanent (23514), and a disposal that had to rewrite the
+        // acceptance to happen would be a different operation from the one the
+        // guard describes. Only the retention state moves.
+        await web(`UPDATE control_result_file_sets SET retention_state='trash'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, acceptedButOld]);
+        assert.equal((await admin<{ retention_state: string }>("SELECT retention_state FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
+        [TENANT, acceptedButOld]))[0]!.retention_state, "trash",
+        "S3: 0209 did not change anything for an accepted set — its own acceptor may still discard it");
+        assert.equal((await admin<{ retention_state: string }>("SELECT retention_state FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
+        [TENANT, acceptedButOld]))[0]!.retention_state,
+        "trash", "S3: and the identity that accepted it may still throw it away");
+
         // ==== N1: the reviewer's parallel table, on the production binding ===
         //
         // Before the fix (review `files2.md`, live, production binding, fresh

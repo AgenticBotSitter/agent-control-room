@@ -15,13 +15,18 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0208 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
+// Generated from public migrations through 0209 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Recomputed for the fix round after 0206's quota guard
 // gained its per-tenant advisory lock, 0207's producer guard was corrected, and
-// 0207's acceptance guard gained the owner check on discarding a set; catalog
-// query below; not a mutable database marker.
-export const privateWebSchemaDigest = "248fffaff34af736db16bfae1a1f091ee7d3c75789569d00d08c1b87859d2003";
+// 0207's acceptance guard gained the owner check on discarding a set; then again
+// after 0209 gave the acceptance guard a NAMED rejection arm and the plan's
+// 90-day sweep, which closed the review's S3 (an unaccepted set was previously
+// undisposable by anyone, the superuser included). The pre-0209 digest was
+// re-derived with 0209 removed and matched the previous value exactly, so this
+// change is 0209's and only 0209's; catalog query below; not a mutable database
+// marker.
+export const privateWebSchemaDigest = "d15ddf23dbd9d9515bc68d3a2c23f194bd7e559dfb1f6faf97a978ca74f937d1";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
