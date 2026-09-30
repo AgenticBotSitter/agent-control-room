@@ -153,7 +153,7 @@
     "test:windows-launcher-modes": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-launcher-modes.test.mjs",
     "test:voice": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/voice-accessibility.test.tsx",
     "test:polling-discipline": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-polling-discipline.test.ts tests/use-polled-read.test.tsx tests/private-read-validator.test.ts tests/private-read-validator-concurrent.test.ts tests/task-workspace-auth-polling.test.tsx",
-    "test:supervisor": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/supervisor-machine-health.test.ts tests/supervisor-reconciliation.test.ts",
+    "test:supervisor": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/supervisor-machine-health.test.ts tests/supervisor-reconciliation.test.ts tests/operations-mode-auto-resume.test.ts",
     "test:supervisor:postgres": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/supervisor-postgres.test.ts",
     "test:night-kit": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/night-kit.test.ts",
     "test:night-kit:postgres": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/night-kit-postgres.test.ts",

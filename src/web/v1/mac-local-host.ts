@@ -245,7 +245,8 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             // type-checks and then silently never arrives, which is exactly how
             // this wiring stayed invisible for a whole stream.
             ...(service ? { supervisor: { operations: createOperationsModeSupervisorPortV1(
-              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason) } }),
+              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason),
+                resumeAfterMachineHealth: request => service!.resumeAfterMachineHealth(request) } }),
               supervisorId: input.supervisorId ?? MAC_LOCAL_SUPERVISOR_ID_V1 } } : {}) }) : undefined;
         if (workBatches && input.createTaskApplication
           && (!taskApplication?.workBatchAuthority || !taskApplication.workBatchView))

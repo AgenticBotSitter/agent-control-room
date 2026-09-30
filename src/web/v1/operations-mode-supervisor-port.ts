@@ -1,19 +1,27 @@
 import { createHash } from "node:crypto";
-import type { SupervisorOperationsModePortV1, SupervisorOperationsPauseReceiptV1 } from "../../supervisor/v1/operations-mode";
+import type { SupervisorOperationsModePortV1, SupervisorOperationsPauseReceiptV1,
+  SupervisorOperationsResumeReceiptV1 } from "../../supervisor/v1/operations-mode";
 import type { OperationsModeReceiptV1 } from "./operations-mode-wire";
 
 /** The machine-health reason is a fixed, non-secret phrase. It is recorded
  * verbatim in the installation's append-only history next to the owner's own
  * decisions, so the owner can later see why the installation paused itself. */
 export const OPERATIONS_MODE_MACHINE_HEALTH_REASON_V1 =
-  "Paused automatically: this machine failed a health check.";
+  "Paused automatically — this Mac was too busy. It will start again by itself when things calm down.";
+export const OPERATIONS_MODE_MACHINE_HEALTH_CAP_REASON_V1 =
+  "Paused automatically — this Mac was too busy. It needs an owner to start it again after three pauses in an hour.";
+export const OPERATIONS_MODE_MACHINE_HEALTH_RESUME_REASON_V1 =
+  "Started automatically after this Mac stayed calm for five minutes.";
 
-/** The one thing the supervisor may ask of the server-owned mode. It is the
- * narrowest surface that still lets a health check stop new starts: there is no
- * resume here, because a machine that failed a health check must not be able to
- * put itself back to running. Only the owner resumes. */
+export type OperationsModeMachineHealthResumeResultV1 = OperationsModeReceiptV1 | Readonly<{ skipped: true }>;
+
+/** The supervisor can resume only its own, still-current automatic pause. The
+ * service checks that revision under the installation lock, so this cannot
+ * resume an owner pause, drain, stop, or any later owner action. */
 export type OperationsModePauseTargetV1 = Readonly<{
   pauseForMachineHealth(reason: string): Promise<OperationsModeReceiptV1>;
+  resumeAfterMachineHealth(input: Readonly<{ pauseReason: string; resumeReason: string; capReason: string }> ):
+    Promise<OperationsModeMachineHealthResumeResultV1>;
 }>;
 
 /**
@@ -39,7 +47,8 @@ export type OperationsModePauseTargetV1 = Readonly<{
 export function createOperationsModeSupervisorPortV1(input: Readonly<{
   target: OperationsModePauseTargetV1;
 }>): SupervisorOperationsModePortV1 {
-  if (!input || !input.target || typeof input.target.pauseForMachineHealth !== "function")
+  if (!input || !input.target || typeof input.target.pauseForMachineHealth !== "function"
+    || typeof input.target.resumeAfterMachineHealth !== "function")
     throw new Error("operations_mode_supervisor_port_invalid");
   return Object.freeze({
     async pauseNewStarts(request: Readonly<{ reasonCode: "machine_health_failed"; observedAt: string }>):
@@ -51,6 +60,15 @@ export function createOperationsModeSupervisorPortV1(input: Readonly<{
         `${request.reasonCode}:${request.observedAt}`).digest("hex").slice(0, 32)}`;
       const receipt = await input.target.pauseForMachineHealth(OPERATIONS_MODE_MACHINE_HEALTH_REASON_V1);
       return Object.freeze({ state: receipt.replayed ? "already_paused" as const : "paused" as const, receiptId });
+    },
+    async resumeAfterMachineHealth(request: Readonly<{ reasonCode: "machine_health_recovered"; observedAt: string }> ):
+      Promise<SupervisorOperationsResumeReceiptV1> {
+      const receiptId = `supervisor-resume:${createHash("sha256").update(
+        `${request.reasonCode}:${request.observedAt}`).digest("hex").slice(0, 32)}`;
+      const receipt = await input.target.resumeAfterMachineHealth({ pauseReason: OPERATIONS_MODE_MACHINE_HEALTH_REASON_V1,
+        resumeReason: OPERATIONS_MODE_MACHINE_HEALTH_RESUME_REASON_V1, capReason: OPERATIONS_MODE_MACHINE_HEALTH_CAP_REASON_V1 });
+      return Object.freeze({ state: "skipped" in receipt || receipt.replayed ? "not_automatic" as const
+        : receipt.mode === "running" ? "resumed" as const : "pause_limit_reached" as const, receiptId });
     },
   });
 }
