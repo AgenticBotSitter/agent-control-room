@@ -42,6 +42,7 @@ const PROJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
 const BOT_KINDS = Object.freeze(["claude-code", "codex", "hermes", "claude-desktop", "cursor"]);
 const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const ROTATION_LOCK_STALE_MS = 5 * 60_000;
+const INSTALL_LOCK_DEADLINE_MS = 10 * 60_000;
 
 export const sha256 = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 export const newSecret = () => `crf_${randomBytes(32).toString("base64url")}`;
@@ -97,7 +98,7 @@ export function checkServer(value) {
 async function writePrivate(path, value) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   if (process.platform !== "win32") await chmod(dirname(path), 0o700);
-  const temporary = `${path}.${process.pid}.tmp`;
+  const temporary = `${path}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
   const handle = await open(temporary, "w", 0o600);
   try { await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`); await handle.sync(); } finally { await handle.close(); }
   await rename(temporary, path);
@@ -186,7 +187,11 @@ export async function join({ server, code, configPath, fetcher, writeConfig = wr
 }
 
 async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_STALE_MS, waitMs = 25,
-  deadlineMs = 10_000, clock = Date.now, sleep = ms => new Promise(done => setTimeout(done, ms)) } = {}) {
+  deadlineMs = 10_000, clock = Date.now, sleep = ms => new Promise(done => setTimeout(done, ms)),
+  isPidAlive = pid => {
+    try { process.kill(pid, 0); return true; }
+    catch (error) { return error?.code !== "ESRCH"; }
+  } } = {}) {
   const started = clock();
   for (;;) {
     try {
@@ -199,13 +204,23 @@ async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_STALE_MS,
       };
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
-      let age = 0;
-      try { age = clock() - (await stat(lockPath)).mtimeMs; }
+      let age = 0, ownerPid = null;
+      try {
+        const [info, raw] = await Promise.all([stat(lockPath), readFile(lockPath, "utf8")]);
+        age = clock() - info.mtimeMs;
+        const parsed = JSON.parse(raw);
+        if (Number.isSafeInteger(parsed?.pid) && parsed.pid > 0) ownerPid = parsed.pid;
+      }
       catch (readError) { if (readError?.code === "ENOENT") continue; throw readError; }
-      if (age >= staleMs) {
+      // A dead owner can never release its lock, even if the file is fresh. A
+      // live owner is never displaced merely because its work took longer
+      // than expected. Malformed locks fail closed instead of guessing.
+      if (ownerPid !== null && !isPidAlive(ownerPid)) {
         try { await unlink(lockPath); } catch (removeError) { if (removeError?.code !== "ENOENT") throw removeError; }
         continue;
       }
+      if (age >= staleMs && ownerPid === null)
+        throw new Error("The credential lock is stale but has no valid owner PID. Remove it only after checking that no connector is running.");
       if (clock() - started >= deadlineMs) throw new Error("Another session is renewing this bot credential. Try again shortly.");
       await sleep(waitMs);
     }
@@ -257,10 +272,13 @@ export async function recoverPending({ configPath, fetcher, lock }) {
 // ---------------------------------------------------------------------------
 // Per-bot MCP installation
 // ---------------------------------------------------------------------------
-export function runCommand(command, args, { env = process.env } = {}) {
+export function runCommand(command, args, { env = process.env, input, spawnProcess = spawn } = {}) {
+  if (env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI === "1" && ["claude", "codex", "hermes"].includes(command))
+    return Promise.reject(new Error(`Test guard refused to spawn the real ${command} CLI.`));
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { env, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawnProcess(command, args, { env, shell: false, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     let stdout = "", stderr = "";
+    if (input !== undefined) child.stdin.end(input);
     child.stdout.on("data", chunk => { stdout += chunk; });
     child.stderr.on("data", chunk => { stderr += chunk; });
     child.once("error", reject);
@@ -303,6 +321,14 @@ async function writeJsonWithBackup(path, value, { clock = Date.now } = {}) {
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await rename(temporary, path);
   if (process.platform !== "win32") await chmod(path, 0o600);
+  const prefix = `${basename(path)}.backup-`;
+  const backups = [];
+  for (const file of (await readdir(dirname(path))).filter(file => file.startsWith(prefix))) {
+    const backupPath = joinPath(dirname(path), file);
+    backups.push({ path: backupPath, mtimeMs: (await stat(backupPath)).mtimeMs });
+  }
+  backups.sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path));
+  await Promise.all(backups.slice(5).map(backup => rm(backup.path, { force: true })));
 }
 
 export async function secureWindowsCredential(paths, { runner = runCommand, env = process.env } = {}) {
@@ -316,13 +342,63 @@ function registrationArgs(bot, name, shimPath, workspace) {
   const launch = [shimPath, "--profile", name, "--workspace", workspace];
   if (bot === "claude-code") return ["claude", ["mcp", "add", "--scope", "user", server, "--", ...launch]];
   if (bot === "codex") return ["codex", ["mcp", "add", server, "--", ...launch]];
-  if (bot === "hermes") return ["hermes", ["mcp", "add", server, "--", ...launch]];
+  if (bot === "hermes") return ["hermes", ["mcp", "add", server, "--command", shimPath,
+    "--args", "--profile", name, "--workspace", workspace]];
   return null;
+}
+
+function isolatedCliEnv(homeDir, env) {
+  const isolated = Object.fromEntries(Object.entries(env).filter(([key]) =>
+    key !== "HERMES_HOME" && key !== "CODEX_HOME" && key !== "CLAUDE_CONFIG_DIR" && !key.startsWith("XDG_")));
+  return {
+    ...isolated,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    HERMES_HOME: joinPath(homeDir, ".hermes"),
+    CODEX_HOME: joinPath(homeDir, ".codex"),
+    CLAUDE_CONFIG_DIR: joinPath(homeDir, ".claude"),
+    XDG_CONFIG_HOME: joinPath(homeDir, ".config"),
+    XDG_DATA_HOME: joinPath(homeDir, ".local", "share"),
+    XDG_CACHE_HOME: joinPath(homeDir, ".cache"),
+    XDG_STATE_HOME: joinPath(homeDir, ".local", "state"),
+    XDG_RUNTIME_DIR: joinPath(homeDir, ".runtime"),
+  };
+}
+
+function hermesConfigHasServer(raw, server) {
+  const lines = raw.split(/\r?\n/u);
+  const root = lines.findIndex(line => /^mcp_servers:\s*(?:#.*)?$/u.test(line));
+  if (root < 0) return false;
+  const escaped = server.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const entry = new RegExp(`^ {2}(?:${escaped}|["']${escaped}["']):(?:\\s|$)`, "u");
+  for (let index = root + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^\S/u.test(line) && !/^\s*#/u.test(line)) break;
+    if (entry.test(line)) return true;
+  }
+  return false;
+}
+
+async function verifyHermesRegistration(env, server, expected) {
+  const path = joinPath(env.HERMES_HOME, "config.yaml");
+  let raw = "";
+  try { raw = await readFile(path, "utf8"); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
+  if (hermesConfigHasServer(raw, server) !== expected)
+    throw new Error(expected
+      ? `Hermes did not save the MCP registration for ${server}. The bot remains uninstalled and can be retried.`
+      : `Hermes did not remove the MCP registration for ${server}. The credential was kept for a safe retry.`);
 }
 
 async function registerBot({ bot, name, shimPath, workspace, homeDir, env, platform, runner, clock }) {
   const command = registrationArgs(bot, name, shimPath, workspace);
-  if (command) { await runner(command[0], command[1], { env }); return { kind: "cli" }; }
+  if (command) {
+    const cliEnv = isolatedCliEnv(homeDir, env);
+    await mkdir(cliEnv.XDG_RUNTIME_DIR, { recursive: true, mode: 0o700 });
+    await runner(command[0], command[1], { env: cliEnv, ...(bot === "hermes" ? { input: "\n" } : {}) });
+    if (bot === "hermes") await verifyHermesRegistration(cliEnv, botServerName(name), true);
+    return { kind: "cli" };
+  }
   const path = appConfigPath(bot, { homeDir, env, platform });
   const value = await readJsonObject(path);
   const mcpServers = value.mcpServers && typeof value.mcpServers === "object" && !Array.isArray(value.mcpServers)
@@ -334,9 +410,14 @@ async function registerBot({ bot, name, shimPath, workspace, homeDir, env, platf
 
 async function unregisterBot({ bot, name, homeDir, env, platform, runner, clock }) {
   const server = botServerName(name);
-  if (bot === "claude-code") { await runner("claude", ["mcp", "remove", "--scope", "user", server], { env }); return; }
-  if (bot === "codex") { await runner("codex", ["mcp", "remove", server], { env }); return; }
-  if (bot === "hermes") { await runner("hermes", ["mcp", "remove", server], { env }); return; }
+  const cliEnv = isolatedCliEnv(homeDir, env);
+  if (bot === "claude-code") { await runner("claude", ["mcp", "remove", "--scope", "user", server], { env: cliEnv }); return; }
+  if (bot === "codex") { await runner("codex", ["mcp", "remove", server], { env: cliEnv }); return; }
+  if (bot === "hermes") {
+    await runner("hermes", ["mcp", "remove", server], { env: cliEnv });
+    await verifyHermesRegistration(cliEnv, server, false);
+    return;
+  }
   const path = appConfigPath(bot, { homeDir, env, platform });
   const value = await readJsonObject(path);
   const mcpServers = value.mcpServers && typeof value.mcpServers === "object" && !Array.isArray(value.mcpServers)
@@ -380,54 +461,56 @@ export async function installConnector({ server, code, bot, name, workspace, hom
   if (platform !== "win32") { await chmod(paths.botsDir, 0o700); await chmod(paths.workspace, 0o700); }
   if (platform === "win32") await secureWindowsCredential([paths.configRoot, paths.botsDir], { runner, env });
 
-  let config;
-  try { config = await loadConfig(paths.configPath); }
-  catch (error) {
-    if (!String(error?.message ?? "").startsWith("This machine has not joined yet.")) throw error;
-  }
-  if (config?.workerId) {
-    const install = config.installation;
-    if (!install || install.bot !== bot || install.name !== name || install.workspace !== paths.workspace
-      || config.server !== checkServer(server))
-      throw new Error("This bot profile is already connected with different installation settings. Uninstall it first.");
-  } else {
-    await join({ server, code, configPath: paths.configPath, fetcher,
-      writeConfig: async (path, value) => {
-        await writePrivate(path, value);
-        if (platform === "win32") await secureWindowsCredential([path], { runner, env });
-      } });
-    config = await loadConfig(paths.configPath);
-    await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering" } });
-    if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
-  }
+  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });
+  try {
+    let config;
+    try { config = await loadConfig(paths.configPath); }
+    catch (error) {
+      if (!String(error?.message ?? "").startsWith("This machine has not joined yet.")) throw error;
+    }
+    if (config?.workerId) {
+      const install = config.installation;
+      if (!install || install.bot !== bot || install.name !== name || install.workspace !== paths.workspace
+        || config.server !== checkServer(server))
+        throw new Error("This bot profile is already connected with different installation settings. Uninstall it first.");
+    } else {
+      await join({ server, code, configPath: paths.configPath, fetcher,
+        writeConfig: async (path, value) => {
+          await writePrivate(path, value);
+          if (platform === "win32") await secureWindowsCredential([path], { runner, env });
+        } });
+      config = await loadConfig(paths.configPath);
+      await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering" } });
+      if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
+    }
 
-  await writeLauncher(paths, { platform, sourcePath });
-  const registration = await registerBot({ bot, name, shimPath: paths.shimPath, workspace: paths.workspace,
-    homeDir, env, platform, runner, clock });
-  config = await loadConfig(paths.configPath);
-  await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "installed" } });
-  if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
-  const status = await createClient(await loadConfig(paths.configPath), fetcher).heartbeat();
-  return Object.freeze({ paths, registration, status });
+    await writeLauncher(paths, { platform, sourcePath });
+    const registration = await registerBot({ bot, name, shimPath: paths.shimPath, workspace: paths.workspace,
+      homeDir, env, platform, runner, clock });
+    config = await loadConfig(paths.configPath);
+    await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "installed" } });
+    if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
+    const status = await createClient(await loadConfig(paths.configPath), fetcher).heartbeat();
+    return Object.freeze({ paths, registration, status });
+  } finally { await release(); }
 }
 
 export async function uninstallConnector({ bot, name, homeDir, env = process.env, platform = process.platform,
   runner = runCommand, clock = Date.now }) {
   validateInstallInput({ bot });
   const paths = connectorInstallPaths({ homeDir, env, platform, name });
-  const config = await loadConfig(paths.configPath);
-  if (config.installation?.bot !== bot || config.installation?.name !== name)
-    throw new Error("That bot profile does not match the installed credential.");
-  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`);
+  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });
   try {
+    const config = await loadConfig(paths.configPath);
+    if (config.installation?.bot !== bot || config.installation?.name !== name)
+      throw new Error("That bot profile does not match the installed credential.");
     await unregisterBot({ bot, name, homeDir, env, platform, runner, clock });
     await rm(paths.configPath, { force: true });
   } finally { await release(); }
-  let profiles = [];
-  try { profiles = (await readdir(paths.botsDir)).filter(file => file.endsWith(".json")); }
-  catch (error) { if (error?.code !== "ENOENT") throw error; }
-  if (profiles.length === 0) await rm(paths.shimPath, { force: true });
-  return Object.freeze({ removed: name, shimRemoved: profiles.length === 0, workspacePreserved: paths.workspace });
+  // Keep the small, credential-free shim. A bot process that still holds it
+  // can finish cleanly, while a later launch receives the connector's normal
+  // "profile is not connected" refusal instead of an opaque missing-file error.
+  return Object.freeze({ removed: name, shimRemoved: false, workspacePreserved: paths.workspace });
 }
 
 export function idempotencyKeyFor(tool, args) {
