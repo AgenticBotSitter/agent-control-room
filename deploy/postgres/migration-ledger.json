@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "e98da81bba70aac7b179710203bf29d4105dfe903891dfaaf654025029788a28",
+  "digest": "69bb2324bcd22d24d540583d922dd5be9e6483bcc3cd39397d32b9462aa3c37f",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -755,7 +755,7 @@
     {
       "file": "db/migrations/0196_supervisor_incident_outbox_guard.sql",
       "order": 126,
-      "sha256": "15f0bbeedf0bc4f7404f93f5a45e2721873434dc00e4c41d035c4164dc61db00",
+      "sha256": "f457aecd166f393aecfa559767ef10f462bd075bcd0d022102fd851fc0076a5a",
       "kind": "migrate"
     },
     {
