@@ -3,56 +3,56 @@
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "REVOKE ALL ON FUNCTION updater_health_counts() FROM PUBLIC;",
     "replace": "-- mutation: PUBLIC keeps the default EXECUTE",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
     "why": "PostgreSQL grants EXECUTE to PUBLIC on every new function, so without this REVOKE any login on the socket could ask the definer for the counts (R20d: counts only, to the updater)"
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "        AND pg_catalog.pg_get_userbyid(a.grantee) <> 'control_room_deployer') THEN",
     "replace": "        AND true) THEN",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
     "why": "an EXECUTE grantee the design does not name must be refused at apply time, not discovered later"
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "      AND p.prosecdef AND p.provolatile = 's' AND p.prokind = 'f' AND p.pronargs = 0",
     "replace": "      AND p.prokind = 'f'",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
     "why": "the boundary must stay SECURITY DEFINER, STABLE and zero-argument; a VOLATILE or arg-taking function would be a proxy for an arbitrary SELECT through the definer"
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "      AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[])\n    THEN\n    RAISE EXCEPTION 'updater health count function must be STABLE SECURITY DEFINER",
     "replace": "    THEN",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
     "why": "the pinned search_path is what stops candidate SQL shadowing an object the definer's body names (R10b); dropping it must be caught"
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE' AND a.is_grantable\n        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN",
     "replace": "      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE' AND false\n        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
     "why": "a GRANTABLE EXECUTE would let the updater's login hand this definer's reach to anybody, which is the exact authority growth the function exists not to permit"
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "    WHERE b.singleton\n      AND (SELECT count(*) FROM public.workspaces x WHERE x.tenant_id = b.tenant_id) = 1\n  )\n",
     "replace": "    WHERE b.singleton\n",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
     "why": "workspaces has no unique constraint on tenant_id alone, so an ambiguous scope would silently DOUBLE every count -- and a health signal that doubles still says healthy"
   },
   {
     "file": "db/roles/updater_release_reader_roles.sql",
     "find": "    EXECUTE 'GRANT EXECUTE ON FUNCTION public.updater_health_counts() TO control_room_deployer';",
     "replace": "    -- mutation: the updater's login is never granted the health counts",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
     "why": "without this grant the updater's independent read cannot run at all and §8.4's count comparison can never be satisfied"
   },
   {
     "file": "db/down/0238_updater_health_counts.sql",
     "find": "      REVOKE EXECUTE ON FUNCTION updater_health_counts() FROM control_room_deployer;",
     "replace": "      -- mutation: the down migration leaves the grant behind",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
     "why": "a down migration that dropped the function but left a grant behind is not a reversal; it is an upgrade that cannot be rolled back the way it went up"
   },
   {
