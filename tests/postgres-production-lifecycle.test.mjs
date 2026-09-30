@@ -22,7 +22,8 @@ import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.m
 import { computeDatabaseRestoreIdentity, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
-import { applyMacGrantDiffV1, diffMacGrantsV1, readDesiredMacGrantsV1, readMacGrantCatalogV1 } from "../scripts/mac-local/database-upgrade-grants.mjs";
+import { applyMacGrantDiffV1, diffMacGrantsV1, macRolePlan, readDesiredMacGrantsV1, readMacGrantCatalogV1 }
+  from "../scripts/mac-local/database-upgrade-grants.mjs";
 import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
 import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
@@ -888,6 +889,33 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   const queueDown=await readFile(join(ROOT,"db/down/0104_work_batch_agent_queue.sql"),"utf8");
   const ownerDown=await readFile(join(ROOT,"db/down/0102_work_batch_owner_approval.sql"),"utf8");
   const down=await readFile(join(ROOT,"db/down/0093_work_batch_intake.sql"),"utf8");
+  // Every migration that installed a row-level policy, trigger or view READING
+  // work_intake_tenant_binding has to be rolled back before 0093 drops it, or
+  // PostgreSQL refuses with 2BP01. Which migrations those is DERIVED from the
+  // UP migrations — the dependency lives in what they create (a policy whose
+  // USING clause selects the binding), not in what their down file removes —
+  // and never listed, because a list is exactly what goes stale: 0155 added
+  // `installation_operations_mode_revisions_work_intake_scope` and this
+  // teardown began failing with a dependency error naming a migration the test
+  // had never heard of.
+  //
+  // Scanned newest-first by ledger order, so a migration added later is torn
+  // down before the one it depends on. Only down files that exist are applied,
+  // and 0093 itself is excluded because it is the table being dropped.
+  const explicitlyRolledBack = ["0109_pipeline_unattended_advance.sql", "0108_pipeline_build_publications.sql",
+    "0104_work_batch_agent_queue.sql", "0102_work_batch_owner_approval.sql"];
+  const downFiles = new Set((await readdir(join(ROOT, "db/down"))).filter(name => name.endsWith(".sql")));
+  const intakeBindingDeps = [];
+  for (const entry of (await collectLedgerEntries(ROOT)).filter(entry => (entry.kind ?? "migrate") === "migrate")) {
+    const file = entry.file.replace("db/migrations/", "");
+    if (file.startsWith("0093_") || explicitlyRolledBack.includes(file)) continue;
+    // Not every migration ships a down file: the base ones never needed one.
+    if (!downFiles.has(file)) continue;
+    if ((await readFile(join(ROOT, entry.file), "utf8")).includes("work_intake_tenant_binding"))
+      intakeBindingDeps.push(file);
+  }
+  assert.ok(intakeBindingDeps.length>0,
+    "no migration's up file mentions work_intake_tenant_binding; the teardown order is wrong");
   await query(db,"CREATE POLICY test_dependent_policy ON audit_events AS RESTRICTIVE USING (true)");
   await assert.rejects(query(db,down),/shared-ledger RLS policies depend on it/u);
   const retained=(await query(db,`SELECT
@@ -904,6 +932,9 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   await query(db,await readFile(join(ROOT,"db/down/0108_pipeline_build_publications.sql"),"utf8"));
   await query(db,queueDown);
   await query(db,ownerDown);
+  // The derived dependants, newest first, so nothing still reading
+  // work_intake_tenant_binding is attached to it when 0093 drops the table.
+  for (const file of intakeBindingDeps) await query(db, await readFile(join(ROOT, "db/down", file), "utf8"));
   const restoredSearchPath=(await query(db,`SELECT proconfig FROM pg_proc
     WHERE oid='public.guard_initial_work_batch_revision_insert()'::regprocedure`)).rows[0]?.proconfig;
   assert.deepEqual(restoredSearchPath,["search_path=pg_catalog, public, pg_temp"]);
@@ -926,15 +957,24 @@ async function withMacLocalLogins(database,callback){
   const admin=target(database), client=postgresDatabase(admin);
   await applyMigrations({target:admin,bootstrapTarget:bootstrapTarget(database),migrateTarget:migrateTarget(database),
     rootDir:ROOT,env:{...process.env,...passwords}});
-  const logins=["control_room_web","control_room_coordinator","control_room_results","control_room_publisher",
-    "control_room_agent_reviewer_login","control_room_queue_worker"];
+  // The Mac-local login set comes from the role plan the installer itself
+  // provisions from, never from a list restated here.
+  // `provisionMacLocalNarrowRolesV1` refuses any password set that is not
+  // exactly its plan's logins (`narrow_role_login_set_refused`), so a
+  // restatement goes stale the moment the plan gains a login — which is
+  // exactly what happened when 0140/0141 added the two fleet logins, and it
+  // failed sixteen of these tests at once with an error that says nothing
+  // about the login set.
+  const logins=Object.keys(macRolePlan);
+  assert.ok(logins.length>0, "the Mac role plan names no logins");
   const loginPasswords=Object.fromEntries(logins.map((name,index)=>[name,`${index}`.repeat(40)]));
   // The installer's fixed queue shape assumes the cluster superuser is named
   // postgres, as on the documented Mac cluster (see the journey test below).
   const createdPostgres=!(await query(admin,"SELECT 1 FROM pg_roles WHERE rolname='postgres'")).rows.length;
   if (createdPostgres) await query(admin,"CREATE ROLE postgres SUPERUSER LOGIN");
-  const macRoles=[...logins,"control_room_private_web","control_room_task_coordinator","control_room_native_results",
-    "control_room_local_result_publisher","control_room_agent_reviewer","control_room_native_queue_worker"];
+  // Every role the plan installs, logins and the groups they inherit, is
+  // dropped afterwards, so a later test in this cluster cannot inherit one.
+  const macRoles=[...logins,...new Set(Object.values(macRolePlan))];
   // Roles are cluster-wide: the installer refuses any that already exist, and
   // later tests in this cluster must not inherit these logins.
   assert.deepEqual((await query(admin,"SELECT rolname FROM pg_roles WHERE rolname=ANY($1::text[])",[macRoles])).rows,[]);
@@ -1896,10 +1936,18 @@ test("0109 then 0108 down return a head database to exactly the main plus S4 and
   }
 });
 
+// The Mac-local role files this database installs, and the group roles those
+// files confer. Both come from the INSTALLER's own plan, because a restated
+// list is what goes stale: 0140/0141 added `fleet_gateway_roles.sql` to the
+// plan, and the copy here kept installing seven files and six groups while
+// `readDesiredMacGrantsV1` and `provisionMacLocalNarrowRolesV1` moved on to
+// eight and eight. `control_room_private_web` is named explicitly because its
+// read-only fleet SELECTs come from the fleet file, so filtering by the plan's
+// groups alone would drop them and then demand them as missing.
 const MAC_ROLE_FILES = ["private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
-  "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql", "agent_reviewer_roles.sql"];
-const MAC_ROLE_GROUPS = ["control_room_private_web", "control_room_task_coordinator", "control_room_native_results",
-  "control_room_local_result_publisher", "control_room_agent_reviewer", "control_room_native_queue_worker"];
+  "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
+  "agent_reviewer_roles.sql", "fleet_gateway_roles.sql"];
+const MAC_ROLE_GROUPS = [...new Set([...Object.values(macRolePlan), "control_room_private_web"])];
 
 // The grants each withheld migration's DOWN file revokes from a role that
 // already exists. Read from the down file's own `EXECUTE 'REVOKE ...'`
@@ -2073,7 +2121,16 @@ async function installMacRoleFilesWithout(database, withheld) {
       const name = object.replace(/^public\./, "");
       return revocations.has(item) || schema.objects.has(name) || (column && schema.columns.has(`${name}.${column}`));
     };
-    const desired = new Set([...await readDesiredMacGrantsV1()].filter(item => !without(item)));
+    // `readDesiredMacGrantsV1` reads every Mac role file, so it also covers
+    // grants on relations a particular staged release may not have. The
+    // withheld migrations' own work is removed by `without`, and the role
+    // filter keeps the comparison to the roles this database actually has —
+    // without it a grant belonging to a role this baseline never created is
+    // demanded as "missing" for a reason that has nothing to do with the
+    // withheld migrations.
+    const desired = new Set([...await readDesiredMacGrantsV1()]
+      .filter(item => MAC_ROLE_GROUPS.includes(item.split("|")[0]))
+      .filter(item => !without(item)));
     const diff = diffMacGrantsV1(actual, desired);
     assert.deepEqual(diff.missing, [], "the withheld work is the only role difference to remove");
     await applyMacGrantDiffV1(client, { extra: diff.extra, missing: [] });
@@ -3181,17 +3238,19 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   assert.equal(targetDbOwner, dbOwner, "restored database owner matches the source database owner");
   assert.equal(targetDbOwner, "control_room_schema_owner");
 
-  // The Mac-local wrapper adds the six exact restricted roles, hashes the
-  // dump+metadata manifest, and proves the result in its own fresh cluster.
+  // The Mac-local wrapper adds the exact restricted roles the installer creates,
+  // hashes the dump+metadata manifest, and proves the result in its own fresh
+  // cluster. The login set comes from the plan, for the same reason the other
+  // Mac-local fixture derives it: `provisionMacLocalNarrowRolesV1` refuses any
+  // set that is not exactly its plan's, so a restated list fails the moment the
+  // plan gains a login.
   // Queue construction and its guarded cleanup both contain transactions, so
   // provisioning must keep every statement on this one PostgreSQL session.
   const narrowRoleClient = new Client(db);
   await narrowRoleClient.connect();
   try {
-    await provisionMacLocalNarrowRolesV1(narrowRoleClient, Object.fromEntries([
-      "control_room_web", "control_room_coordinator", "control_room_results",
-      "control_room_publisher", "control_room_agent_reviewer_login", "control_room_queue_worker",
-    ].map((name, index) => [name, `${index}`.repeat(40)])));
+    await provisionMacLocalNarrowRolesV1(narrowRoleClient, Object.fromEntries(
+      Object.keys(macRolePlan).map((name, index) => [name, `${index}`.repeat(40)])));
   } finally {
     await narrowRoleClient.end();
   }
