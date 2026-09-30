@@ -306,14 +306,19 @@ test("the execution freshness fence's scope table stays un-lockable, so no lock 
       // source, because it asserts the GRANT, not the SQL. Pin the source
       // itself, so re-adding a row lock on one of these reads fails here.
       //
-      // A statement is only refused when the lock is actually ON the
+      // Each SQL statement is a template literal, and a table name and its
+      // locking clause routinely sit on different lines, so this runs per
+      // statement rather than per line. Comment-only lines are dropped first,
+      // so the notes explaining why each lock was removed are never read as the
+      // lock itself.
+      //
+      // A statement is refused only when the lock is actually ON an
       // un-lockable table. `... FROM control_assignment_lease_scopes ... FOR
       // UPDATE OF l` locks the joined control_leases row instead, which the
-      // coordinator does hold UPDATE on, so that statement stays legal and
-      // must not be flagged. Comment-only lines are dropped first so the notes
-      // explaining why each lock was removed are never read as the lock.
-      const unLockable = ["control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
+      // coordinator does hold UPDATE on, so that statement stays legal.
+      const UNLOCKABLE = ["control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
         "control_assignment_lease_scopes"];
+      const KEYWORDS = /^(?:ON|USING|WHERE|SET|GROUP|ORDER|LEFT|RIGHT|FULL|INNER|CROSS|JOIN|AND|OR|VALUES|SELECT|FOR|LIMIT|OFFSET|RETURNING|HAVING|UNION|EXCEPT|INTERSECT|SKIP|LOCKED|NOWAIT)$/i;
       for (const [label, file] of [
         ["canonical task link store", "src/idea-lab/v1/canonical-task-link-store.ts"],
         ["lease-scope fence", "src/web/v1/task-assignment-coordinator.ts"],
@@ -321,18 +326,19 @@ test("the execution freshness fence's scope table stays un-lockable, so no lock 
         const sql = readFileSync(join(process.cwd(), file), "utf8").split("\n")
           .filter(line => !/^\s*(\*|\/\/|\/\*)/.test(line)).join("\n");
         for (const statement of sql.split("`")) {
-          const locking = /FOR (UPDATE|SHARE|NO KEY UPDATE|KEY SHARE)( OF [\w,\s]+)?/.exec(statement);
+          // An `OF a, b` list names the locked relations and may be followed by
+          // SKIP LOCKED / NOWAIT. Without it, the lock covers every table read.
+          const locking = /FOR (?:UPDATE|SHARE|NO KEY UPDATE|KEY SHARE)(?:\s+OF\s+([\w,\s]+?))?(?=\s+(?:SKIP|NOWAIT)\b|\s*$|\s+[),])/m.exec(statement);
           if (!locking) continue;
-          // An explicit OF list names the locked relations; without one, the
-          // lock applies to every table the statement reads.
-          const only = locking[1] ? locking[1].replace(/^ OF /, "").split(",").map(s => s.trim()) : undefined;
-          const read = [...statement.matchAll(/\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)(?:\s+(\w+))?/gi)]
-            .map(m => ({ table: m[1], alias: m[2] }));
+          const only = locking[1] ? locking[1].split(",").map(s => s.trim()).filter(Boolean) : undefined;
+          const read = [...statement.matchAll(/\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?(\w+))?/gi)]
+            .map(m => ({ table: m[1], alias: m[2] }))
+            .filter(r => !r.alias || !KEYWORDS.test(r.alias));
           const targets = only
             ? read.filter(r => only.includes(r.alias) || only.includes(r.table)).map(r => r.table)
             : read.map(r => r.table);
           for (const table of targets) {
-            if (unLockable.includes(table)) {
+            if (UNLOCKABLE.includes(table)) {
               assert.fail(`${label} must not row-lock ${table}: ${statement.replace(/\s+/g, " ").trim()}`);
             }
           }
