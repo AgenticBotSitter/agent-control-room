@@ -1,14 +1,21 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { connectorReleaseSignatureMaterialV1, releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 
 const SOURCE = resolve("scripts/fleet/connector.mjs");
 const WORKER_ID = `fleet-worker:${"a".repeat(32)}`;
+const RELEASE_KEYS = generateKeyPairSync("ed25519");
+const RELEASE_PUBLIC_KEY = RELEASE_KEYS.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const RELEASE_TRUST = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(RELEASE_PUBLIC_KEY), publicKey: RELEASE_PUBLIC_KEY,
+  versionFloor: connector.CONNECTOR_VERSION, revokedKeyIds: [] });
 
 function code(character) { return `crj_${character.repeat(43)}`; }
 
@@ -23,6 +30,13 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
   const used = new Set();
   const bindings = new Map();
   const state = { enrollments: 0, rotations: 0, digest: null, dropAfterEnroll: false, dropAfterRotate: false };
+  const connectorRelease = readFile(SOURCE).then(bytes => {
+    const unsigned = { version: connector.CONNECTOR_VERSION, file: `connector-${connector.CONNECTOR_VERSION}.mjs`,
+      sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length, builtFrom: "0".repeat(40),
+      minVersion: connector.CONNECTOR_VERSION };
+    return Object.freeze({ ...unsigned,
+      signature: sign(null, connectorReleaseSignatureMaterialV1(unsigned), RELEASE_KEYS.privateKey).toString("base64url") });
+  });
   const fetcher = async (url, init = {}) => {
     const path = new URL(url).pathname;
     const body = init.body ? JSON.parse(init.body) : {};
@@ -39,7 +53,8 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
       }
       return json(true, { workerId: WORKER_ID, displayName: "Fixture bot", projectIds: ["project:test"],
         workerKind: resultWorkerKind ?? body.workerKind, capabilities: ["writing"],
-        credentialExpiresAt: "2099-01-01T00:00:00.000Z" }, 201);
+        credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust: RELEASE_TRUST,
+        connector: await connectorRelease }, 201);
     }
     if (!authenticated) return json(false, "unauthenticated", 401);
     if (path === "/fleet/v1/rotate") {
@@ -51,7 +66,8 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
     }
     if (path === "/fleet/v1/heartbeat") return json(true, { displayName: "Fixture bot", operationsMode: "running" });
     if (path === "/fleet/v1/me") return json(true, { displayName: "Fixture bot",
-      credentialExpiresAt: "2099-02-01T00:00:00.000Z" });
+      credentialExpiresAt: "2099-02-01T00:00:00.000Z", releaseTrust: RELEASE_TRUST,
+      connector: await connectorRelease });
     throw new Error(`unexpected request ${path}`);
   };
   return { fetcher, state };
@@ -96,7 +112,9 @@ test("install registers Claude Code, Codex and Hermes with per-bot credentials a
         bot, name, homeDir, fetcher: gateway.fetcher, runner: commands.runner, sourcePath: SOURCE, platform: "linux", env: {} });
       assert.equal(gateway.state.enrollments, 1);
       const saved = await connector.loadConfig(installed.paths.configPath);
-      assert.deepEqual(saved.installation, { bot, name, workspace: installed.paths.workspace, state: "installed" });
+      assert.deepEqual(saved.installation, { bot, name, workspace: installed.paths.workspace, state: "installed",
+        updates: { releasePublicKey: RELEASE_PUBLIC_KEY, floorVersion: connector.CONNECTOR_VERSION,
+          keyId: RELEASE_TRUST.keyId, epoch: 1, revokedKeyIds: [], paused: false } });
       assert.equal((await stat(installed.paths.configPath)).mode & 0o777, 0o600);
       assert.equal((await stat(dirname(installed.paths.configPath))).mode & 0o777, 0o700);
       assert.equal(commands.calls.length, 1);
@@ -158,6 +176,22 @@ test("a code for another bot is refused before registration and leaves no profil
   await assert.rejects(connector.installConnector(input), /made for codex, not claude-code.*Nothing was installed/u);
   assert.equal(commands.calls.length, 0);
   await assert.rejects(stat(connector.connectorInstallPaths(input).configPath), error => error.code === "ENOENT");
+});
+
+test("join refuses a gateway that omits or changes the installation release key", async t => {
+  for (const [label, releaseTrust] of [["missing", undefined], ["changed", { ...RELEASE_TRUST, publicKey: "bad" }]]) {
+    await t.test(label, async t => {
+      const homeDir = await temporary(t, `connector-release-key-${label}-`), configPath = join(homeDir, "bot.json");
+      const gateway = fakeGateway(), fetcher = async (...args) => {
+        const response = await gateway.fetcher(...args), body = await response.json();
+        if (body?.result) body.result.releaseTrust = releaseTrust;
+        return json(true, body.result, response.status);
+      };
+      await assert.rejects(connector.join({ server: "https://control.example", code: code(label[0].toUpperCase()),
+        workerKind: "codex", configPath, fetcher }), /valid installation release key/u);
+      await assert.rejects(stat(configPath), error => error.code === "ENOENT");
+    });
+  }
 });
 
 test("the fake gateway refuses an unknown worker kind instead of echoing it", async t => {

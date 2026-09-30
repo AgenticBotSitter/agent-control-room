@@ -8,6 +8,7 @@ import { FleetErrorV1, fleetFail } from "./errors";
 import type { FleetGatewayStoreV1, FleetWorkerPrincipalV1 } from "./gateway-store";
 import { FLEET_DIGEST_PATTERN_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1 } from "./identifiers";
+import { captureReleaseTrustV1, type ReleaseTrustV1 } from "../../../scripts/release-signing.mjs";
 
 /**
  * The connector-facing API. Every route except enrollment and the connector
@@ -310,7 +311,8 @@ function decodeFiles(value: unknown) {
 
 export type FleetGatewayHttpOptionsV1 = Readonly<{ store: FleetGatewayStoreV1; proposals?: WorkBatchServiceV1;
   connectorRelease?: Readonly<{ bundle: Uint8Array; manifest: FleetConnectorReleaseManifestV1; manifestBody: string;
-    advertisement: FleetConnectorReleaseAdvertisementV1; releasePublicKey: string }>;
+    advertisement: FleetConnectorReleaseAdvertisementV1 }>;
+  releaseTrust: ReleaseTrustV1;
   now?: () => string;
   admission?: FleetGatewayAdmissionV1;
   /** Operator log for failures that are not a fixed refusal. Never sent to the caller. */
@@ -320,6 +322,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
   const now = options.now ?? (() => new Date().toISOString());
   const admission = options.admission ?? createFleetGatewayAdmissionV1();
   let connectorRelease = options.connectorRelease;
+  const releaseTrust = captureReleaseTrustV1(options.releaseTrust);
   if (connectorRelease) {
     let manifest: FleetConnectorReleaseManifestV1, declared: FleetConnectorReleaseManifestV1;
     try {
@@ -337,7 +340,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       || connectorRelease.advertisement.builtFrom !== manifest.builtFrom)
       throw new Error("fleet_connector_release_refused");
     connectorRelease = Object.freeze({ bundle: connectorRelease.bundle, manifest, manifestBody: connectorRelease.manifestBody,
-      advertisement: connectorRelease.advertisement, releasePublicKey: connectorRelease.releasePublicKey });
+      advertisement: connectorRelease.advertisement });
   }
   const claimRoute = /^\/fleet\/v1\/claims\/(fleet-claim:[a-f0-9]{32})\/(progress|blocker|result)$/u;
   const proposalRoute = /^\/fleet\/v1\/projects\/([^/]+)\/proposals$/u;
@@ -394,8 +397,8 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       try {
         const result = await options.store.enroll(body as never);
         admission.registerCredential(result.workerId, body.credentialDigest as string);
-        return send(response, result.replayed ? 200 : 201, { ok: true, result: release
-          ? { ...result, connector: release.advertisement, releasePublicKey: release.releasePublicKey } : result });
+        return send(response, result.replayed ? 200 : 201, { ok: true,
+          result: { ...result, releaseTrust, ...(release ? { connector: release.advertisement } : {}) } });
       } finally { lease.release(); }
     }
     // Every other route: authenticate first, then read the body.
@@ -423,7 +426,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       response.end(release.bundle); return;
     }
     if (method === "GET" && path === "/fleet/v1/me") return send(response, 200, { ok: true,
-      result: { ...options.store.me(principal), ...(release ? { connector: release.advertisement } : {}) } });
+      result: { ...options.store.me(principal), releaseTrust, ...(release ? { connector: release.advertisement } : {}) } });
     if (method === "GET" && path === "/fleet/v1/work") return send(response, 200, { ok: true, result: await options.store.listWork(principal) });
     if (method === "GET" && path === "/fleet/v1/claims") return send(response, 200, { ok: true, result: await options.store.myClaims(principal) });
     if (method !== "POST") return fleetFail("not_found");
@@ -434,7 +437,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     if (path === "/fleet/v1/heartbeat") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"]);
       return send(response, 200, { ok: true, result: { ...await options.store.heartbeat(principal, body as never),
-        ...(release ? { connector: release.advertisement } : {}) } });
+        releaseTrust, ...(release ? { connector: release.advertisement } : {}) } });
     }
     if (path === "/fleet/v1/rotate") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["newCredentialDigest"]);

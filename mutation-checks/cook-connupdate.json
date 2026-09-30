@@ -1,0 +1,65 @@
+[
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "const release = verifyConnectorReleaseAdvertisementV1(advertised, trust);",
+    "replace": "const release = advertised;",
+    "test": "node --test --test-name-pattern \"real update path verifies\" tests/fleet-connector-update.test.mjs",
+    "why": "the real update path must verify the signed advertisement before downloading"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (!sameTrust(transitioned, proposed)) refused(\"machine_trust_mismatch\");",
+    "replace": "if (false) refused(\"machine_trust_mismatch\");",
+    "test": "node --test --test-name-pattern \"one machine-wide trust refuses\" tests/fleet-connector-update.test.mjs",
+    "why": "a second profile cannot replace the machine-wide release key"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (bytes.length !== release.size || createHash(\"sha256\").update(bytes).digest(\"hex\") !== release.sha256)\n    refused(\"installed_digest\");",
+    "replace": "if (false) refused(\"installed_digest\");",
+    "test": "node --test --test-name-pattern \"launch never waits\" tests/fleet-connector-update.test.mjs",
+    "why": "launch verifies the digest of the exact connector file before spawning it"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "deadlineTimer = setTimer(() => reject(Object.assign(new Error(\"download deadline\"), { code: \"DOWNLOAD_TIMEOUT\" })), remaining);",
+    "replace": "deadlineTimer = setTimer(() => reject(Object.assign(new Error(\"download deadline\"), { code: \"DOWNLOAD_TIMEOUT\" })), remaining + 2_000);",
+    "test": "node --test --test-name-pattern \"stalled body hits\" tests/fleet-connector-update.test.mjs",
+    "why": "a stalled response body is bounded by a held real deadline"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (deadlineMs === 0) refused(\"busy\");",
+    "replace": "if (deadlineMs === 0) { await sleep(2_000); refused(\"busy\"); }",
+    "test": "node --test --test-name-pattern \"launch never waits\" tests/fleet-connector-update.test.mjs",
+    "why": "launch never waits for an updater that holds the machine lock"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (code !== 75 || args[0] !== \"run\") return code;",
+    "replace": "if (true) return code;",
+    "test": "node --test --test-name-pattern \"run launch relaunches\" tests/fleet-connector-update.test.mjs",
+    "why": "a successful run-mode update relaunches the newly selected version"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (config.installation?.updates && env.CONTROL_ROOM_CONNECTOR_LAUNCHED !== \"1\")",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern \"run mode checks\" tests/fleet-connector-update.test.mjs",
+    "why": "an installed unattended worker refuses direct run because only the launcher can relaunch an update"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const trusted = expectedReleaseTrust === null ? gatewayTrust : captureReleaseTrustV1(expectedReleaseTrust);",
+    "replace": "const trusted = gatewayTrust;",
+    "test": "node --import tsx --test --test-name-pattern \"cannot substitute\" tests/fleet-connector-bundle.test.ts",
+    "why": "the gateway enrollment response cannot choose a different release key than the verified bundle"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (priorState?.failedVersion === release.version && Number.isSafeInteger(priorState.failedAt)\n      && clock() - priorState.failedAt < FAILED_RELEASE_BACKOFF_MS)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern \"crashing candidate auto-reverts\" tests/fleet-connector-update.test.mjs",
+    "why": "a failed signed release is backed off instead of downloaded on every poll"
+  }
+]

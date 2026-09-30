@@ -1,18 +1,22 @@
 // Signed, crash-safe connector self-update support. This module deliberately
 // owns the updater state machine; connector.mjs only wires it into commands.
-import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { applyReleaseKeyRevocationsV1, applyReleaseKeyRotationV1, captureReleaseTrustV1, compareReleaseVersionsV1,
+  connectorReleaseSignatureMaterialV1, MAX_CONNECTOR_RELEASE_BYTES_V1,
+  RELEASE_TRUST_SCHEMA_V1, verifyConnectorReleaseAdvertisementV1 } from "../release-signing.mjs";
 
-export const CONNECTOR_UPDATE_SIGNATURE_SCHEMA_V1 = "control-room.fleet-connector-signature/v1";
 export const CONNECTOR_UPDATE_STATE_SCHEMA_V1 = "control-room.fleet-connector-update-state/v1";
-export const MAX_CONNECTOR_RELEASE_BYTES_V1 = 16 * 1024 * 1024;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
-const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
-const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{86}$/u;
-const PUBLIC_KEY_PATTERN = /^[A-Za-z0-9_-]{56,128}$/u;
 const UPDATE_LOCK_WAIT_MS = 30_000;
+const DOWNLOAD_DEADLINE_MS = 30_000;
+const FAILED_RELEASE_BACKOFF_MS = 6 * 60 * 60_000;
+let ownProcessIdentity;
+const SELF_PROCESS_IDENTITY = `process-start-ms:${Math.round(Date.now() - process.uptime() * 1_000)}`;
+
+export { connectorReleaseSignatureMaterialV1, verifyConnectorReleaseAdvertisementV1 };
 
 const refused = reason => {
   const error = new Error(`connector_update_refused:${reason}`);
@@ -22,45 +26,7 @@ const refused = reason => {
 
 export function compareConnectorVersionsV1(left, right) {
   if (!VERSION_PATTERN.test(left ?? "") || !VERSION_PATTERN.test(right ?? "")) refused("version");
-  const a = left.split(".").map(Number), b = right.split(".").map(Number);
-  for (let index = 0; index < 3; index += 1) if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
-  return 0;
-}
-
-function cleanRelease(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) refused("advertisement");
-  const allowed = ["builtFrom", "file", "minVersion", "sha256", "signature", "size", "version"];
-  if (Object.keys(value).sort().join(",") !== allowed.join(",")) refused("advertisement");
-  if (!VERSION_PATTERN.test(value.version ?? "") || value.file !== `connector-${value.version}.mjs`
-    || !VERSION_PATTERN.test(value.minVersion ?? "") || compareConnectorVersionsV1(value.version, value.minVersion) < 0
-    || !DIGEST_PATTERN.test(value.sha256 ?? "") || !SIGNATURE_PATTERN.test(value.signature ?? "")
-    || !Number.isSafeInteger(value.size) || value.size < 1 || value.size > MAX_CONNECTOR_RELEASE_BYTES_V1
-    || typeof value.builtFrom !== "string" || !/^[a-f0-9]{40}$/u.test(value.builtFrom)) refused("advertisement");
-  return Object.freeze({ version: value.version, file: value.file, sha256: value.sha256, size: value.size,
-    builtFrom: value.builtFrom, minVersion: value.minVersion, signature: value.signature });
-}
-
-export function connectorReleaseSignatureMaterialV1(value) {
-  const release = cleanRelease({ ...value, signature: value.signature ?? "A".repeat(86) });
-  return Buffer.from(`${CONNECTOR_UPDATE_SIGNATURE_SCHEMA_V1}\n${release.version}\n${release.file}\n${release.size}\n${release.sha256}\n${release.builtFrom}\n${release.minVersion}\n`, "utf8");
-}
-
-export function validateConnectorReleasePublicKeyV1(value) {
-  if (typeof value !== "string" || !PUBLIC_KEY_PATTERN.test(value)) refused("public_key");
-  let key;
-  try { key = createPublicKey({ key: Buffer.from(value, "base64url"), format: "der", type: "spki" }); }
-  catch { refused("public_key"); }
-  if (key.asymmetricKeyType !== "ed25519") refused("public_key");
-  return value;
-}
-
-export function verifyConnectorReleaseAdvertisementV1(value, pinnedPublicKey) {
-  const release = cleanRelease(value);
-  const key = createPublicKey({ key: Buffer.from(validateConnectorReleasePublicKeyV1(pinnedPublicKey), "base64url"),
-    format: "der", type: "spki" });
-  if (!verify(null, connectorReleaseSignatureMaterialV1(release), key, Buffer.from(release.signature, "base64url")))
-    refused("signature");
-  return release;
+  return compareReleaseVersionsV1(left, right);
 }
 
 export function connectorUpdatePathsV1(installRoot) {
@@ -68,7 +34,8 @@ export function connectorUpdatePathsV1(installRoot) {
   return Object.freeze({ installRoot, launcher: join(installRoot, "launcher.mjs"), versions: join(installRoot, "versions"),
     current: join(installRoot, "current.json"), previous: join(installRoot, "previous.json"),
     pending: join(installRoot, "update.pending.json"), state: join(installRoot, "update-state.json"),
-    policy: join(installRoot, "update-policy.json"), lock: join(installRoot, "update.lock") });
+    policy: join(installRoot, "update-policy.json"), trust: join(installRoot, "release-trust.json"),
+    launcherRelease: join(installRoot, "launcher-release.json"), lock: join(installRoot, "update.lock") });
 }
 
 async function atomicJson(path, value) {
@@ -84,6 +51,60 @@ async function atomicJson(path, value) {
 async function readJson(path, optional = false) {
   try { return JSON.parse(await readFile(path, "utf8")); }
   catch (error) { if (optional && error?.code === "ENOENT") return null; refused("state"); }
+}
+
+function trustFromUpdates(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) refused("trust");
+  return captureReleaseTrustV1({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: value.epoch, keyId: value.keyId,
+    publicKey: value.releasePublicKey ?? value.publicKey, versionFloor: value.floorVersion ?? value.versionFloor,
+    revokedKeyIds: value.revokedKeyIds ?? [] });
+}
+
+function sameTrust(left, right) {
+  return JSON.stringify(captureReleaseTrustV1(left)) === JSON.stringify(captureReleaseTrustV1(right));
+}
+
+async function readMachineTrust(paths) {
+  return captureReleaseTrustV1(await readJson(paths.trust));
+}
+
+export async function pinConnectorReleaseTrustV1({ installRoot, trust: trustValue, rotation, revocations }) {
+  const paths = connectorUpdatePathsV1(installRoot), proposed = captureReleaseTrustV1(trustValue);
+  await mkdir(paths.installRoot, { recursive: true, mode: 0o700 });
+  return withUpdateLock(paths.lock, async () => {
+    const existingValue = await readJson(paths.trust, true);
+    if (!existingValue) { await atomicJson(paths.trust, proposed); return proposed; }
+    const existing = captureReleaseTrustV1(existingValue);
+    if (sameTrust(existing, proposed)) return existing;
+    let transitioned = existing;
+    if (rotation) transitioned = applyReleaseKeyRotationV1(rotation, transitioned);
+    if (revocations) transitioned = applyReleaseKeyRevocationsV1(revocations, transitioned);
+    if (!sameTrust(transitioned, proposed)) refused("machine_trust_mismatch");
+    await atomicJson(paths.trust, proposed);
+    return proposed;
+  });
+}
+
+async function raiseMachineFloor(paths, version) {
+  const trust = await readMachineTrust(paths);
+  if (compareConnectorVersionsV1(version, trust.versionFloor) <= 0) return trust;
+  const raised = captureReleaseTrustV1({ ...trust, versionFloor: version });
+  await atomicJson(paths.trust, raised);
+  return raised;
+}
+
+function releaseRecordPath(paths, version) { return join(paths.versions, version, "connector-release.json"); }
+
+async function verifyInstalledConnector(paths, selected, trust, fallback = false) {
+  const target = fallback ? paths.launcher : join(paths.installRoot, selected.file);
+  const recordPath = fallback ? paths.launcherRelease : releaseRecordPath(paths, selected.version);
+  if (!inside(paths.installRoot, target) || !inside(paths.installRoot, recordPath)) refused("target");
+  const release = verifyConnectorReleaseAdvertisementV1(await readJson(recordPath), trust, "0.0.0");
+  if (release.version !== selected.version) refused("installed_release");
+  const bytes = await readFile(target);
+  if (bytes.length !== release.size || createHash("sha256").update(bytes).digest("hex") !== release.sha256)
+    refused("installed_digest");
+  return target;
 }
 
 function pointer(version) {
@@ -104,13 +125,47 @@ function inside(root, path) {
   return part !== "" && part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part);
 }
 
+function commandOutput(command, args) {
+  return new Promise(resolveOutput => {
+    const child = spawn(command, args, { shell: false, stdio: ["ignore", "pipe", "ignore"] });
+    let output = "", settled = false;
+    const finish = value => { if (settled) return; settled = true; clearTimeout(timer); resolveOutput(value); };
+    const timer = setTimeout(() => { child.kill("SIGKILL"); finish(""); }, 2_000);
+    child.stdout.on("data", chunk => { output += chunk; }); child.once("error", () => finish(""));
+    child.once("close", code => finish(code === 0 ? output.trim() : ""));
+  });
+}
+
+async function processIdentity(pid, platform = process.platform) {
+  try {
+    if (pid === process.pid) return SELF_PROCESS_IDENTITY;
+    if (platform === "linux") {
+      const raw = await readFile(`/proc/${pid}/stat`, "utf8");
+      const fields = raw.slice(raw.lastIndexOf(") ") + 2).trim().split(/\s+/u);
+      return fields[19] ? `linux-start-ticks:${fields[19]}` : null;
+    }
+    if (platform === "win32") {
+      const value = await commandOutput("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+        `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CreationDate.ToFileTimeUtc()`]);
+      return value ? `windows-start-filetime:${value}` : null;
+    }
+    const value = await commandOutput("ps", ["-o", "lstart=", "-p", String(pid)]);
+    return value ? `posix-start:${value.replace(/\s+/gu, " ").trim()}` : null;
+  } catch { return null; }
+}
+
+function currentProcessIdentity() {
+  ownProcessIdentity ??= Promise.resolve(SELF_PROCESS_IDENTITY);
+  return ownProcessIdentity;
+}
+
 async function requireRealDirectory(path) {
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink()) refused("directory");
 }
 
 export async function installConnectorLauncherV1({ installRoot, sourcePath, version, platform = process.platform,
-  nodePath = process.execPath, shimPath }) {
+  nodePath = process.execPath, shimPath, trust: trustValue, advertisement }) {
   const paths = connectorUpdatePathsV1(installRoot), target = join(paths.versions, version, "connector.mjs");
   if (!inside(paths.installRoot, target) || !inside(paths.installRoot, shimPath)
     || !VERSION_PATTERN.test(version ?? "")) refused("version");
@@ -121,6 +176,11 @@ export async function installConnectorLauncherV1({ installRoot, sourcePath, vers
   await mkdir(dirname(shimPath), { recursive: true, mode: 0o700 });
   await requireRealDirectory(dirname(target));
   const bytes = await readFile(sourcePath);
+  const trust = trustValue ? captureReleaseTrustV1(trustValue) : trustFromUpdates(advertisement?.trust);
+  const release = verifyConnectorReleaseAdvertisementV1(advertisement, trust);
+  if (release.version !== version || release.size !== bytes.length
+    || release.sha256 !== createHash("sha256").update(bytes).digest("hex")) refused("installed_release");
+  await pinConnectorReleaseTrustV1({ installRoot, trust });
   const initialTemporary = `${target}.${process.pid}.${randomBytes(5).toString("hex")}.tmp`;
   await writeFile(initialTemporary, bytes, { flag: "wx", mode: 0o700 });
   try { await rename(initialTemporary, target); }
@@ -132,6 +192,12 @@ export async function installConnectorLauncherV1({ installRoot, sourcePath, vers
     if (error?.code !== "ENOENT") throw error;
     try { await writeFile(paths.launcher, bytes, { flag: "wx", mode: 0o700 }); }
     catch (writeError) { if (writeError?.code !== "EEXIST") throw writeError; }
+  }
+  await atomicJson(releaseRecordPath(paths, version), release);
+  try { await stat(paths.launcherRelease); }
+  catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    await atomicJson(paths.launcherRelease, release);
   }
   const existing = await readJson(paths.current, true);
   if (!existing || compareConnectorVersionsV1(capturePointer(existing).version, version) <= 0)
@@ -153,15 +219,21 @@ async function withUpdateLock(path, work, { clock = Date.now, sleep = ms => new 
   for (;;) {
     try {
       const handle = await open(path, "wx", 0o600);
-      try { await handle.writeFile(JSON.stringify({ pid: process.pid, token, createdAt: clock() })); await handle.sync(); }
+      try { await handle.writeFile(JSON.stringify({ pid: process.pid, token, createdAt: clock(),
+        identity: await currentProcessIdentity() })); await handle.sync(); }
       finally { await handle.close(); }
       break;
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
+      if (deadlineMs === 0) refused("busy");
       let owner;
       try { owner = JSON.parse(await readFile(path, "utf8")); } catch {}
       let alive = false;
       if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) try { process.kill(owner.pid, 0); alive = true; } catch (e) { alive = e?.code !== "ESRCH"; }
+      if (alive && typeof owner?.identity === "string") {
+        const observed = await processIdentity(owner.pid);
+        if (observed !== null && observed !== owner.identity) alive = false;
+      }
       let oldEnough = false;
       try { oldEnough = clock() - (await stat(path)).mtimeMs > deadlineMs; } catch {}
       if (!alive && oldEnough) { await rm(path, { force: true }); continue; }
@@ -178,27 +250,63 @@ async function withUpdateLock(path, work, { clock = Date.now, sleep = ms => new 
   }
 }
 
-async function downloadRelease(release, config, fetcher, destination) {
-  const response = await fetcher(`${config.server}/fleet/v1/connector-releases/${encodeURIComponent(release.version)}`, {
-    method: "GET", redirect: "error", signal: AbortSignal.timeout(30_000), headers: {
+async function downloadRelease(release, config, fetcher, destination, { clock = Date.now,
+  deadlineMs = DOWNLOAD_DEADLINE_MS, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  const controller = new AbortController(), deadline = clock() + deadlineMs;
+  let rejectDeadline;
+  const deadlineFailure = new Promise((_, reject) => { rejectDeadline = reject; });
+  const timer = setTimer(() => {
+    controller.abort(); rejectDeadline(Object.assign(new Error("download deadline"), { code: "DOWNLOAD_TIMEOUT" }));
+  }, deadlineMs);
+  try {
+    const response = await Promise.race([fetcher(`${config.server}/fleet/v1/connector-releases/${encodeURIComponent(release.version)}`, {
+    method: "GET", redirect: "error", signal: controller.signal, headers: {
       accept: "text/javascript", authorization: `Bearer ${config.secret}`, "x-control-room-worker": config.workerId,
     },
-  });
+  }), deadlineFailure]);
   if (!response.ok || !response.body) refused(`download_${response.status}`);
   const declared = response.headers.get("content-length");
   if (declared !== null && Number(declared) !== release.size) refused("size");
   const handle = await open(destination, "wx", 0o700);
   const digest = createHash("sha256");
   let size = 0;
+  const reader = response.body.getReader();
   try {
-    for await (const chunk of response.body) {
+    for (;;) {
+      const remaining = deadline - clock();
+      if (controller.signal.aborted || remaining <= 0) { controller.abort(); refused("download_timeout"); }
+      let deadlineTimer;
+      const next = await Promise.race([reader.read(), new Promise((_, reject) => {
+        deadlineTimer = setTimer(() => reject(Object.assign(new Error("download deadline"), { code: "DOWNLOAD_TIMEOUT" })), remaining);
+      })]).finally(() => clearTimer(deadlineTimer));
+      if (next.done) break;
+      const chunk = next.value;
       size += chunk.length;
       if (size > release.size || size > MAX_CONNECTOR_RELEASE_BYTES_V1) refused("size");
       digest.update(chunk); await handle.write(chunk);
     }
     await handle.sync();
-  } finally { await handle.close(); }
+  } catch (error) {
+    if (error?.code === "DOWNLOAD_TIMEOUT") { controller.abort(); refused("download_timeout"); }
+    throw error;
+  } finally { void reader.cancel().catch(() => {}); await handle.close(); }
   if (size !== release.size || digest.digest("hex") !== release.sha256) refused("digest");
+  } catch (error) {
+    if (controller.signal.aborted) refused("download_timeout");
+    throw error;
+  } finally { clearTimer(timer); }
+}
+
+async function sweepTemporaryConnectors(paths) {
+  let versions;
+  try { versions = await readdir(paths.versions, { withFileTypes: true }); }
+  catch (error) { if (error?.code === "ENOENT") return; throw error; }
+  for (const version of versions) {
+    if (!version.isDirectory() || !VERSION_PATTERN.test(version.name)) continue;
+    const directory = join(paths.versions, version.name);
+    for (const name of await readdir(directory)) if (/^connector\.\d+\.[a-f0-9]+\.tmp$/u.test(name))
+      await rm(join(directory, name), { force: true });
+  }
 }
 
 function defaultHealthCheck(path, configPath) {
@@ -222,7 +330,13 @@ async function recoverPendingUnlocked(paths, configPath, healthCheck) {
   const rollback = capturePointer(await readJson(paths.previous));
   if (rollback.version !== from.version) refused("rollback_pointer");
   const candidate = join(paths.installRoot, to.file);
-  const healthy = inside(paths.installRoot, candidate) && await healthCheck(candidate, configPath);
+  let healthy = false;
+  if (inside(paths.installRoot, candidate)) {
+    try {
+      const verified = await verifyInstalledConnector(paths, to, await readMachineTrust(paths));
+      healthy = verified === candidate && await healthCheck(candidate, configPath);
+    } catch { healthy = false; }
+  }
   if (healthy) {
     await rm(paths.pending, { force: true });
     return Object.freeze({ state: "updated", version: to.version });
@@ -239,7 +353,7 @@ export async function recoverPendingConnectorUpdateV1({ installRoot, configPath,
 
 export async function checkForConnectorUpdateV1({ installRoot, configPath, config, advertised, currentVersion,
   fetcher = globalThis.fetch, healthCheck = defaultHealthCheck, fault = async () => {}, clock = Date.now,
-  minimumCheckIntervalMs = 0 }) {
+  minimumCheckIntervalMs = 0, downloadDeadlineMs = DOWNLOAD_DEADLINE_MS }) {
   const paths = connectorUpdatePathsV1(installRoot);
   return withUpdateLock(paths.lock, async () => {
     const recovered = await recoverPendingUnlocked(paths, configPath, healthCheck);
@@ -248,14 +362,15 @@ export async function checkForConnectorUpdateV1({ installRoot, configPath, confi
     if (minimumCheckIntervalMs > 0 && Number.isSafeInteger(priorState?.checkedAt)
       && clock() - priorState.checkedAt < minimumCheckIntervalMs)
       return Object.freeze({ state: "recently_checked" });
+    await sweepTemporaryConnectors(paths);
     const freshConfig = JSON.parse(await readFile(configPath, "utf8"));
     const updates = freshConfig.installation?.updates ?? config.installation?.updates;
     const policy = await readJson(paths.policy, true);
     if (policy && (policy.schema !== CONNECTOR_UPDATE_STATE_SCHEMA_V1 || typeof policy.paused !== "boolean"
       || Object.keys(policy).sort().join(",") !== "paused,schema")) refused("policy");
     if (!updates || policy?.paused === true) return Object.freeze({ state: "paused" });
-    const release = verifyConnectorReleaseAdvertisementV1(advertised, updates.releasePublicKey);
-    if (compareConnectorVersionsV1(release.version, updates.floorVersion) < 0) refused("below_floor");
+    const trust = await readMachineTrust(paths);
+    const release = verifyConnectorReleaseAdvertisementV1(advertised, trust);
     const active = capturePointer(await readJson(paths.current));
     if (active.version !== currentVersion && compareConnectorVersionsV1(active.version, currentVersion) > 0)
       return Object.freeze({ state: "coalesced", version: active.version });
@@ -263,20 +378,26 @@ export async function checkForConnectorUpdateV1({ installRoot, configPath, confi
       await atomicJson(paths.state, { schema: CONNECTOR_UPDATE_STATE_SCHEMA_V1, checkedAt: clock() });
       return Object.freeze({ state: "current", version: active.version });
     }
+    if (priorState?.failedVersion === release.version && Number.isSafeInteger(priorState.failedAt)
+      && clock() - priorState.failedAt < FAILED_RELEASE_BACKOFF_MS)
+      return Object.freeze({ state: "failed_recently", version: release.version });
     const directory = join(paths.versions, release.version), target = join(directory, "connector.mjs");
     if (!inside(paths.installRoot, target)) refused("target");
     await requireRealDirectory(paths.installRoot); await requireRealDirectory(paths.versions);
     await mkdir(directory, { recursive: true, mode: 0o700 }); await requireRealDirectory(directory);
     const temporary = join(directory, `connector.${process.pid}.${randomBytes(5).toString("hex")}.tmp`);
-    try { await downloadRelease(release, freshConfig, fetcher, temporary); await fault("downloaded");
+    try { await downloadRelease(release, freshConfig, fetcher, temporary, { clock, deadlineMs: downloadDeadlineMs }); await fault("downloaded");
       await rm(target, { force: true }); await rename(temporary, target); await fault("version_ready"); }
     catch (error) { await rm(temporary, { force: true }); throw error; }
+    await atomicJson(releaseRecordPath(paths, release.version), release);
     const from = active, to = pointer(release.version);
     await atomicJson(paths.previous, from); await fault("previous_written");
     await atomicJson(paths.pending, { schema: CONNECTOR_UPDATE_STATE_SCHEMA_V1, from, to }); await fault("pending_written");
     await atomicJson(paths.current, to); await fault("pointer_switched");
     const result = await recoverPendingUnlocked(paths, configPath, healthCheck);
-    await atomicJson(paths.state, { schema: CONNECTOR_UPDATE_STATE_SCHEMA_V1, checkedAt: clock() });
+    if (result?.state === "updated") await raiseMachineFloor(paths, result.version);
+    await atomicJson(paths.state, { schema: CONNECTOR_UPDATE_STATE_SCHEMA_V1, checkedAt: clock(),
+      ...(result?.state === "reverted" ? { failedVersion: result.failedVersion, failedAt: clock() } : {}) });
     return result;
   }, { clock });
 }
@@ -302,14 +423,28 @@ export async function connectorUpdatesPausedV1(installRoot) {
 export async function launchCurrentConnectorV1({ installRoot, configPath, args, healthCheck = defaultHealthCheck,
   spawnProcess = spawn }) {
   const paths = connectorUpdatePathsV1(installRoot);
-  await recoverPendingConnectorUpdateV1({ installRoot, configPath, healthCheck });
-  const selected = capturePointer(await readJson(paths.current));
-  const target = join(paths.installRoot, selected.file);
-  if (!inside(paths.installRoot, target)) refused("target");
-  return new Promise((resolveLaunch, reject) => {
-    const child = spawnProcess(process.execPath, [target, ...args], { shell: false, stdio: "inherit", env: process.env });
-    child.once("error", reject); child.once("close", (code, signal) => resolveLaunch(code ?? (signal ? 1 : 0)));
-  });
+  try { await withUpdateLock(paths.lock, () => recoverPendingUnlocked(paths, configPath, healthCheck), { deadlineMs: 0 }); }
+  catch (error) { if (error?.message !== "connector_update_refused:busy") throw error; }
+  const launched = new Set();
+  for (;;) {
+    const trust = await readMachineTrust(paths);
+    let selected = capturePointer(await readJson(paths.current)), target;
+    try { target = await verifyInstalledConnector(paths, selected, trust); }
+    catch {
+      const launcherRelease = verifyConnectorReleaseAdvertisementV1(await readJson(paths.launcherRelease), trust, "0.0.0");
+      selected = pointer(launcherRelease.version);
+      target = await verifyInstalledConnector(paths, selected, trust, true);
+    }
+    const identity = `${selected.version}:${target}`;
+    if (launched.has(identity)) refused("relaunch_loop");
+    launched.add(identity);
+    const code = await new Promise((resolveLaunch, reject) => {
+      const child = spawnProcess(process.execPath, [target, ...args], { shell: false, stdio: "inherit",
+        env: { ...process.env, CONTROL_ROOM_CONNECTOR_LAUNCHED: "1" } });
+      child.once("error", reject); child.once("close", (childCode, signal) => resolveLaunch(childCode ?? (signal ? 1 : 0)));
+    });
+    if (code !== 75 || args[0] !== "run") return code;
+  }
 }
 
 export function connectorInstallRootFromConfigPathV1(configPath, env = process.env, platform = process.platform) {
@@ -319,4 +454,10 @@ export function connectorInstallRootFromConfigPathV1(configPath, env = process.e
   const configRoot = dirname(dirname(resolve(configPath)));
   if (platform === "win32") return resolve(configRoot, "..", "..", "Local", "ControlRoom", "mcp");
   return resolve(configRoot, "..", "share", "control-room", "mcp");
+}
+
+export function connectorInstallRootForLaunchV1(modulePath, configPath, env = process.env, platform = process.platform) {
+  if (typeof modulePath === "string" && ["launcher.mjs", "launcher.js"].includes(modulePath.split(/[\\/]/u).at(-1)))
+    return dirname(resolve(modulePath));
+  return connectorInstallRootFromConfigPathV1(configPath, env, platform);
 }

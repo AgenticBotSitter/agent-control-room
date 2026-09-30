@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 import { execFile as execFileCallback } from "node:child_process";
-import { createHash, createPrivateKey, createPublicKey, sign } from "node:crypto";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { build as esbuild } from "esbuild";
-import { CONNECTOR_UPDATE_SIGNATURE_SCHEMA_V1, connectorReleaseSignatureMaterialV1,
-  validateConnectorReleasePublicKeyV1 } from "./fleet/connector-update.mjs";
+import { captureReleaseTrustV1 } from "./release-signing.mjs";
 
 const run = promisify(execFileCallback);
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -55,7 +54,7 @@ export function assertFleetConnectorBundledLicensesV1(metafile) {
   if ([...packages].sort().join(",") !== "zod") refused();
 }
 
-async function prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome, signingKey, minVersion }) {
+async function prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome, releaseTrust: trustValue }) {
   if (!cleanAbsolute(root)) refused();
   const parent = dirname(root);
   await mkdir(parent, { recursive: true });
@@ -68,9 +67,12 @@ async function prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome, 
   const source = await readFile(sourceConnector, "utf8");
   const version = /export const CONNECTOR_VERSION = "(\d+\.\d+\.\d+)";/u.exec(source)?.[1];
   if (!version) refused();
+  let releaseTrust;
+  try { releaseTrust = captureReleaseTrustV1(trustValue); } catch { refused(); }
   const output = await esbuild({ absWorkingDir: projectRoot, entryPoints: [entryPoint], bundle: true,
     platform: "node", format: "esm", target: "node20", charset: "utf8", legalComments: "none",
     sourcemap: false, minify: false, treeShaking: true, write: false, metafile: true,
+    define: { __CONTROL_ROOM_RELEASE_TRUST_V1__: JSON.stringify(releaseTrust) },
     outfile: `connector-${version}.mjs` });
   if (output.outputFiles.length !== 1) refused();
   assertFleetConnectorBundleImportsV1(output.metafile);
@@ -83,21 +85,12 @@ async function prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome, 
   const manifest = Object.freeze({ schema: RELEASE_SCHEMA, version, file,
     sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length, builtFrom });
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  if (!signingKey || !/^\d+\.\d+\.\d+$/u.test(minVersion ?? "")) refused();
-  const privateKey = signingKey?.type === "private" ? signingKey : createPrivateKey(signingKey);
-  if (privateKey.asymmetricKeyType !== "ed25519") refused();
-  const releasePublicKey = validateConnectorReleasePublicKeyV1(
-    createPublicKey(privateKey).export({ format: "der", type: "spki" }).toString("base64url"));
-  const advertisement = { version, file, sha256: manifest.sha256, size: manifest.size, builtFrom, minVersion };
-  const signature = sign(null, connectorReleaseSignatureMaterialV1(advertisement), privateKey).toString("base64url");
-  const signatureRecord = Object.freeze({ schema: CONNECTOR_UPDATE_SIGNATURE_SCHEMA_V1, minVersion, signature });
-  const signatureBytes = Buffer.from(`${JSON.stringify(signatureRecord, null, 2)}\n`, "utf8");
-  return { root, file, bytes, manifest, manifestBytes, signatureRecord, signatureBytes, releasePublicKey };
+  return { root, file, bytes, manifest, manifestBytes, releaseTrust };
 }
 
 async function writeFleetConnectorReleaseV1(prepared) {
-  const { root, file, bytes, manifest, manifestBytes, signatureBytes } = prepared;
-  for (const [name, contents] of [[file, bytes], ["manifest.json", manifestBytes], ["signature.json", signatureBytes]]) {
+  const { root, file, bytes, manifest, manifestBytes } = prepared;
+  for (const [name, contents] of [[file, bytes], ["manifest.json", manifestBytes]]) {
     const target = join(root, name), temporary = `${target}.${process.pid}.tmp`;
     await writeFile(temporary, contents, { flag: "wx", mode: 0o644 });
     await rename(temporary, target);
@@ -108,20 +101,18 @@ async function writeFleetConnectorReleaseV1(prepared) {
 }
 
 /** Build the release only from a clean checkout, so builtFrom is the commit whose source bytes esbuild read. */
-/** @param {{ root?: string, allowRealHome?: boolean, signingKey?: import("node:crypto").KeyLike,
- * minVersion?: string }} [input] */
-export async function buildFleetConnectorReleaseV1({ root, allowRealHome = false, signingKey, minVersion } = {}) {
+/** @param {{ root?: string, allowRealHome?: boolean, releaseTrust?: object }} [input] */
+export async function buildFleetConnectorReleaseV1({ root, allowRealHome = false, releaseTrust } = {}) {
   const builtFrom = await cleanGitCommit();
-  const prepared = await prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome, signingKey, minVersion });
+  const prepared = await prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome, releaseTrust });
   return writeFleetConnectorReleaseV1(prepared);
 }
 
 /** Deterministic fixture builder. Production and CLI callers must use buildFleetConnectorReleaseV1. */
-/** @param {{ root?: string, builtFrom?: string, allowRealHome?: boolean,
- * signingKey?: import("node:crypto").KeyLike, minVersion?: string }} [input] */
-export async function buildFleetConnectorReleaseForTestV1({ root, builtFrom, allowRealHome = false, signingKey, minVersion } = {}) {
+/** @param {{ root?: string, builtFrom?: string, allowRealHome?: boolean, releaseTrust?: object }} [input] */
+export async function buildFleetConnectorReleaseForTestV1({ root, builtFrom, allowRealHome = false, releaseTrust } = {}) {
   return writeFleetConnectorReleaseV1(await prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome,
-    signingKey, minVersion }));
+    releaseTrust }));
 }
 
 function parse(args) {
@@ -129,8 +120,7 @@ function parse(args) {
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] === "--i-am-the-installer") values.allowRealHome = true;
     else if (args[index] === "--root") values.root = resolve(args[++index] ?? "");
-    else if (args[index] === "--signing-key") values.signingKeyPath = resolve(args[++index] ?? "");
-    else if (args[index] === "--min-version") values.minVersion = args[++index];
+    else if (args[index] === "--release-trust") values.releaseTrustPath = resolve(args[++index] ?? "");
     else refused();
   }
   return values;
@@ -139,11 +129,11 @@ function parse(args) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const parsed = parse(process.argv.slice(2));
   Promise.resolve().then(async () => {
-    if (!parsed.signingKeyPath) refused();
-    const info = await stat(parsed.signingKeyPath);
+    if (!parsed.releaseTrustPath) refused();
+    const info = await stat(parsed.releaseTrustPath);
     if (process.platform !== "win32" && (info.mode & 0o077) !== 0) refused();
     return buildFleetConnectorReleaseV1({ root: parsed.root, allowRealHome: parsed.allowRealHome,
-      signingKey: await readFile(parsed.signingKeyPath), minVersion: parsed.minVersion });
+      releaseTrust: JSON.parse(await readFile(parsed.releaseTrustPath, "utf8")) });
   })
     .then(value => process.stdout.write(`${JSON.stringify(value.manifest)}\n`))
     .catch(() => { process.stderr.write("Control Room connector build refused.\n"); process.exitCode = 1; });

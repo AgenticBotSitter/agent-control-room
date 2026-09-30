@@ -22,11 +22,16 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join as joinPath, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkForConnectorUpdateV1, connectorInstallRootFromConfigPathV1, connectorUpdatesPausedV1, installConnectorLauncherV1,
-  launchCurrentConnectorV1, setConnectorUpdatesPausedV1, validateConnectorReleasePublicKeyV1,
-  verifyConnectorReleaseAdvertisementV1 } from "./connector-update.mjs";
+import { checkForConnectorUpdateV1, connectorInstallRootForLaunchV1, connectorInstallRootFromConfigPathV1,
+  connectorUpdatesPausedV1, installConnectorLauncherV1, launchCurrentConnectorV1,
+  setConnectorUpdatesPausedV1 } from "./connector-update.mjs";
+import { captureReleaseTrustV1, compareReleaseVersionsV1, verifyConnectorReleaseAdvertisementV1 } from "../release-signing.mjs";
+
+export { verifyConnectorReleaseAdvertisementV1 };
 
 export const CONNECTOR_VERSION = "0.4.0";
+const EMBEDDED_RELEASE_TRUST_V1 = typeof __CONTROL_ROOM_RELEASE_TRUST_V1__ === "undefined"
+  ? null : __CONTROL_ROOM_RELEASE_TRUST_V1__;
 const CONFIG_SCHEMA = "control-room.fleet-connector/v1";
 const SECRET_PATTERN = /^crf_[A-Za-z0-9_-]{43}$/u;
 const CODE_PATTERN = /^crj_[A-Za-z0-9_-]{43}$/u;
@@ -61,6 +66,16 @@ let ownProcessIdentity;
 export const sha256 = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 export const newSecret = () => `crf_${randomBytes(32).toString("base64url")}`;
 export const newEnrollmentNonce = () => `crn_${randomBytes(32).toString("base64url")}`;
+
+export function connectorUpdateSettingsFromReleaseTrustV1(value) {
+  const trust = captureReleaseTrustV1(value);
+  return Object.freeze({ releasePublicKey: trust.publicKey, floorVersion: trust.versionFloor,
+    keyId: trust.keyId, epoch: trust.epoch, revokedKeyIds: trust.revokedKeyIds, paused: false });
+}
+
+export function embeddedConnectorReleaseTrustV1() {
+  return EMBEDDED_RELEASE_TRUST_V1 === null ? null : captureReleaseTrustV1(EMBEDDED_RELEASE_TRUST_V1);
+}
 
 function commandOutput(command, args) {
   return new Promise(resolveOutput => {
@@ -230,8 +245,9 @@ export function createClient(config, fetcher = globalThis.fetch) {
 }
 
 /** @param {{ server: string, code: string, workerKind: string, configPath: string, fetcher?: typeof fetch,
- * writeConfig?: (path: string, value: object) => Promise<void> }} options */
-export async function join({ server, code, workerKind, configPath, fetcher, writeConfig = writePrivate }) {
+ * writeConfig?: (path: string, value: object) => Promise<void>, expectedReleaseTrust?: object | null }} options */
+export async function join({ server, code, workerKind, configPath, fetcher, writeConfig = writePrivate,
+  expectedReleaseTrust = embeddedConnectorReleaseTrustV1() }) {
   const origin = checkServer(server);
   if (!CODE_PATTERN.test(code ?? "")) throw new Error("The join code is not valid. Copy it again from the Workers page.");
   if (typeof workerKind !== "string" || !/^[a-z][a-z0-9-]{1,39}$/u.test(workerKind))
@@ -271,12 +287,23 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
     await removeConfigArtifacts(configPath);
     throw new Error(`This code was made for ${result.workerKind ?? "another bot"}, not ${workerKind}. Nothing was installed. Remove the worker in Control Room and create a code for ${workerKind}.`);
   }
+  let updates;
+  try {
+    const gatewayTrust = captureReleaseTrustV1(result.releaseTrust);
+    const trusted = expectedReleaseTrust === null ? gatewayTrust : captureReleaseTrustV1(expectedReleaseTrust);
+    if (expectedReleaseTrust !== null && JSON.stringify(gatewayTrust) !== JSON.stringify(trusted))
+      throw new Error("release trust mismatch");
+    const release = verifyConnectorReleaseAdvertisementV1(result.connector, trusted);
+    updates = connectorUpdateSettingsFromReleaseTrustV1({ ...trusted,
+      versionFloor: compareReleaseVersionsV1(release.minVersion, trusted.versionFloor) > 0
+        ? release.minVersion : trusted.versionFloor });
+  }
+  catch {
+    await removeConfigArtifacts(configPath);
+    throw new Error("The Control Room did not provide a valid installation release key. Nothing was installed.");
+  }
   await writeConfig(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: result.workerId, secret,
-    credentialExpiresAt: result.credentialExpiresAt, workerKind,
-    ...(result.releasePublicKey && result.connector ? { releaseTrust: {
-      releasePublicKey: validateConnectorReleasePublicKeyV1(result.releasePublicKey),
-      floorVersion: verifyConnectorReleaseAdvertisementV1(result.connector, result.releasePublicKey).minVersion,
-    } } : {}) });
+    credentialExpiresAt: result.credentialExpiresAt, workerKind, updates });
   return result;
 }
 
@@ -765,9 +792,12 @@ async function unregisterBot({ bot, name, homeDir, env, platform, runner, clock,
   finally { await releaseRotationLock(release, failure); }
 }
 
-async function writeLauncher(paths, { platform, sourcePath, nodePath = process.execPath }) {
+async function writeLauncher(paths, { platform, sourcePath, nodePath = process.execPath, updates, advertisement }) {
+  const trust = captureReleaseTrustV1({ schema: "control-room.release-trust/v1", epoch: updates.epoch,
+    keyId: updates.keyId, publicKey: updates.releasePublicKey, versionFloor: updates.floorVersion,
+    revokedKeyIds: updates.revokedKeyIds });
   await installConnectorLauncherV1({ installRoot: paths.installRoot, sourcePath, version: CONNECTOR_VERSION,
-    platform, nodePath, shimPath: paths.shimPath });
+    platform, nodePath, shimPath: paths.shimPath, trust, advertisement });
 }
 
 function validateInstallInput({ bot, workspace }) {
@@ -813,7 +843,7 @@ export async function installConnector({ server, code, bot, name, workspace, hom
   if (platform === "win32") await secureWindowsCredential([paths.configRoot, paths.botsDir], { runner, env });
 
   const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });
-  let failure;
+  let failure, joinedRelease;
   try {
     await removeConfigTemporaryFiles(paths.configPath);
     let config;
@@ -827,24 +857,25 @@ export async function installConnector({ server, code, bot, name, workspace, hom
         || config.server !== checkServer(server))
         throw new Error("This bot profile is already connected with different installation settings. Uninstall it first.");
     } else {
-      await join({ server, code, workerKind: bot, configPath: paths.configPath, fetcher,
+      const joined = await join({ server, code, workerKind: bot, configPath: paths.configPath, fetcher,
         writeConfig: async (path, value) => {
           await writePrivate(path, value);
           if (platform === "win32") await secureWindowsCredential([path], { runner, env });
         } });
+      joinedRelease = joined.connector;
       config = await loadConfig(paths.configPath);
-      await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering",
-        ...(config.releaseTrust ? { updates: { ...config.releaseTrust } } : {}) } });
+      const { updates, ...joinedConfig } = config;
+      await writePrivate(paths.configPath, { ...joinedConfig, installation: { bot, name, workspace: paths.workspace,
+        state: "registering", updates } });
       if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     }
 
-    await writeLauncher(paths, { platform, sourcePath });
+    await writeLauncher(paths, { platform, sourcePath, updates: config.installation?.updates ?? config.updates,
+      advertisement: joinedRelease ?? (await createClient(config, fetcher).me()).connector });
     const registration = await registerBot({ bot, name, shimPath: paths.shimPath, workspace: paths.workspace,
       configPath: paths.configPath, homeDir, env, platform, runner, clock, respectExplicitProfiles });
     config = await loadConfig(paths.configPath);
-    const { releaseTrust: _releaseTrust, ...configWithoutTemporaryTrust } = config;
-    await writePrivate(paths.configPath, { ...configWithoutTemporaryTrust, installation: {
-      ...config.installation, bot, name, workspace: paths.workspace, state: "installed" } });
+    await writePrivate(paths.configPath, { ...config, installation: { ...config.installation, state: "installed" } });
     if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     const status = await createClient(await loadConfig(paths.configPath), fetcher).heartbeat();
     return Object.freeze({ paths, registration, status });
@@ -1286,7 +1317,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
     if (me.connector && updateCheck) {
       try {
         const update = await updateCheck(current, me.connector);
-        if (update?.state === "updated") {
+        if (update?.state === "updated" || update?.state === "coalesced") {
           log(`Connector ${update.version} is healthy; restarting run on the new version.`);
           return Object.freeze({ state: "updated", version: update.version });
         }
@@ -1401,8 +1432,11 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   try {
     if (values.profile && !values.config) configPath = connectorInstallPaths({ homeDir, env, platform, name: values.profile }).configPath;
     if (!command || command === "--help" || command === "help") { print(usage); return 0; }
-    const installRoot = runtime.installRoot ?? connectorInstallRootFromConfigPathV1(configPath, env, platform);
-    if (command === "launch") return launchCurrentConnectorV1({ installRoot, configPath, args: rest,
+    const modulePath = fileURLToPath(import.meta.url);
+    const installRoot = runtime.installRoot ?? (command === "launch"
+      ? connectorInstallRootForLaunchV1(modulePath, configPath, env, platform)
+      : connectorInstallRootFromConfigPathV1(configPath, env, platform));
+    if (command === "launch") return await launchCurrentConnectorV1({ installRoot, configPath, args: rest,
       healthCheck: runtime.healthCheck, spawnProcess: runtime.spawnProcess });
     if (command === "install" || command === "uninstall" || command === "unlock") {
       if (resolve(homeDir) === resolve(realHomeDir) && values["i-am-the-installer"] !== true)
@@ -1412,6 +1446,7 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
           name: values.name, workspace: values.workspace, homeDir, env, platform, fetcher: runtime.fetcher,
           runner: runtime.runner, sourcePath: runtime.sourcePath, clock: runtime.clock, realHomeDir });
         print(`Connected as ${values.name}. Open ${values.bot} and ask it to list Control Room work.`);
+        print(`For unattended work, start through the updater launcher: ${process.execPath} ${installed.paths.launcher} launch run --config ${installed.paths.configPath}`);
         if (["claude-desktop", "cursor"].includes(values.bot)) print(`Restart ${values.bot}.`);
         print(installed.status);
       } else if (command === "uninstall") {
@@ -1437,12 +1472,12 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       let updateConfig;
       try { updateConfig = await loadConfig(configPath); } catch { /* serveMcp reports the original validation error */ }
       if (updateConfig?.installation?.updates) {
-        try {
+        void (async () => {
           const advertised = (await createClient(updateConfig, runtime.fetcher).me()).connector;
           if (advertised) await checkForConnectorUpdateV1({ installRoot, configPath, config: updateConfig, advertised,
             currentVersion: CONNECTOR_VERSION, fetcher: runtime.fetcher, healthCheck: runtime.healthCheck,
             minimumCheckIntervalMs: 86_400_000 });
-        } catch (error) { io.err.write(`Connector update check was skipped (${error?.code ?? "unreachable"}).\n`); }
+        })().catch(error => { io.err.write(`Connector update check was skipped (${error?.code ?? "unreachable"}).\n`); });
       }
       await serveMcp({ configPath, workspaceRoot: values.workspace, fetcher: runtime.fetcher }); return 0;
     }
@@ -1489,12 +1524,14 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       return 0;
     }
     if (command === "run") {
+      if (config.installation?.updates && env.CONTROL_ROOM_CONNECTOR_LAUNCHED !== "1")
+        throw new Error("Start unattended work through launcher.mjs launch run so a healthy connector update can relaunch safely.");
       const pass = await runWorker({ configPath, once: values.once === true,
         ...(values.harnesses ? { harnessesPath: resolve(values.harnesses) } : {}),
         log: message => io.err.write(`${message}\n`), updateCheck: (current, advertised) => checkForConnectorUpdateV1({
           installRoot, configPath, config: current, advertised, currentVersion: CONNECTOR_VERSION,
           fetcher: runtime.fetcher, healthCheck: runtime.healthCheck }) });
-      return pass.state === "unreachable" ? 1 : 0;
+      return pass.state === "unreachable" ? 1 : pass.state === "updated" ? 75 : 0;
     }
     io.err.write(usage); return 2;
   } catch (error) {

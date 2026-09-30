@@ -9,6 +9,7 @@
 // reserved port lane (58640-58649), or the test runner's assigned port block
 // so concurrent runs never collide, and destroys it afterwards.
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -29,9 +30,15 @@ import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, see
   seedProposedTask } from "./support/fleet-fixture";
 // The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
+import { releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 
 const PORT = Number(process.env.FLEET_CONNECTOR_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58640);
 const PG = requiresRealPostgres();
+const RELEASE_PUBLIC_KEY = generateKeyPairSync("ed25519").publicKey
+  .export({ format: "der", type: "spki" }).toString("base64url");
+const RELEASE_TRUST = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(RELEASE_PUBLIC_KEY), publicKey: RELEASE_PUBLIC_KEY,
+  versionFloor: connector.CONNECTOR_VERSION, revokedKeyIds: Object.freeze([]) });
 
 function pool(postgres: RealPostgres, role: string) {
   const login = postgres.connection(role);
@@ -64,7 +71,7 @@ test("fleet connector end to end and least privilege, as the production logins",
       afterDecision: () => gateway.reconcile() });
     const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(workIntake.client, new Uint8Array(32).fill(3)));
     const unexpected: unknown[] = [];
-    const handler = createFleetGatewayHandlerV1({ store: gateway, proposals,
+    const handler = createFleetGatewayHandlerV1({ store: gateway, proposals, releaseTrust: RELEASE_TRUST,
       onUnexpectedError: error => { unexpected.push(error); console.error(error); } });
     const server = createServer((request, response) => { void handler.handle(request, response); });
     await new Promise<void>(done => server.listen(0, "127.0.0.1", done));

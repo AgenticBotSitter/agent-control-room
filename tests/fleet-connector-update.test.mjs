@@ -1,19 +1,23 @@
 import assert from "node:assert/strict";
-import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { EventEmitter } from "node:events";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { checkForConnectorUpdateV1, compareConnectorVersionsV1, connectorReleaseSignatureMaterialV1,
   connectorInstallRootFromConfigPathV1, connectorUpdatePathsV1, connectorUpdatesPausedV1, installConnectorLauncherV1,
-  recoverPendingConnectorUpdateV1, setConnectorUpdatesPausedV1,
+  launchCurrentConnectorV1, pinConnectorReleaseTrustV1, recoverPendingConnectorUpdateV1, setConnectorUpdatesPausedV1,
   verifyConnectorReleaseAdvertisementV1 } from "../scripts/fleet/connector-update.mjs";
-import { createConnectorReleaseKeyV1 } from "../scripts/fleet/create-connector-release-key.mjs";
+import { applyReleaseKeyRevocationsV1, applyReleaseKeyRotationV1, createReleaseKeyRevocationsV1,
+  createReleaseKeyRotationV1, releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 import * as connector from "../scripts/fleet/connector.mjs";
 
 const keys = generateKeyPairSync("ed25519");
 const stranger = generateKeyPairSync("ed25519");
 const publicKey = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const trust = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1, keyId: releaseKeyIdV1(publicKey),
+  publicKey, versionFloor: "1.0.0", revokedKeyIds: [] });
 
 function advertised(bytes, overrides = {}, key = keys.privateKey) {
   const unsigned = { version: "1.1.0", file: "connector-1.1.0.mjs", sha256: bytesDigest(bytes), size: bytes.length,
@@ -30,12 +34,15 @@ async function fixture(t, label = "connector-update-") {
   t.after(() => rm(root, { recursive: true, force: true }));
   const installRoot = join(root, "mcp"), configPath = join(root, "config", "bots", "worker.json");
   const sourcePath = join(root, "connector.mjs"), shimPath = join(installRoot, "bin", "control-room-mcp");
-  await writeFile(sourcePath, "export const fixture = true;\n", { mode: 0o700 });
-  await installConnectorLauncherV1({ installRoot, sourcePath, version: "1.0.0", platform: "linux", shimPath });
+  const sourceBytes = Buffer.from("export const fixture = true;\n");
+  await writeFile(sourcePath, sourceBytes, { mode: 0o700 });
+  await installConnectorLauncherV1({ installRoot, sourcePath, version: "1.0.0", platform: "linux", shimPath,
+    trust, advertisement: advertised(sourceBytes, { version: "1.0.0", file: "connector-1.0.0.mjs" }) });
   const config = { schema: "control-room.fleet-connector/v1", server: "http://127.0.0.1:1",
     workerId: `fleet-worker:${"a".repeat(32)}`, secret: `crf_${"A".repeat(43)}`, installation: {
       bot: "codex", name: "fixture", workspace: join(root, "work"), state: "installed",
-      updates: { releasePublicKey: publicKey, floorVersion: "1.0.0" },
+      updates: { releasePublicKey: publicKey, floorVersion: "1.0.0", keyId: trust.keyId, epoch: 1,
+        revokedKeyIds: [], paused: false },
     } };
   await mkdir(join(root, "config", "bots"), { recursive: true });
   await writeFile(configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 }); await chmod(configPath, 0o600);
@@ -81,8 +88,8 @@ test("signed updater installs atomically, keeps the previous version and support
 
 test("hostile advertisements and swapped, truncated or oversized downloads never move current", async t => {
   const f = await fixture(t), bytes = Buffer.from("trusted connector bytes"), valid = advertised(bytes);
-  assert.throws(() => verifyConnectorReleaseAdvertisementV1(advertised(bytes, {}, stranger.privateKey), publicKey), /signature/u);
-  assert.throws(() => verifyConnectorReleaseAdvertisementV1(advertised(bytes, { size: 16 * 1024 * 1024 + 1 }), publicKey),
+  assert.throws(() => verifyConnectorReleaseAdvertisementV1(advertised(bytes, {}, stranger.privateKey), trust), /signature/u);
+  assert.throws(() => verifyConnectorReleaseAdvertisementV1(advertised(bytes, { size: 16 * 1024 * 1024 + 1 }), trust),
     /advertisement/u);
   for (const hostile of [
     { release: advertised(bytes, { version: "0.9.0", file: "connector-0.9.0.mjs", minVersion: "0.9.0" }), fetcher: releaseFetcher(bytes) },
@@ -93,6 +100,28 @@ test("hostile advertisements and swapped, truncated or oversized downloads never
       fetcher: hostile.fetcher, healthCheck: async () => true }));
     assert.equal(await currentVersion(f), "1.0.0");
   }
+});
+
+test("the real update path verifies the advertisement before downloading", async t => {
+  const f = await fixture(t), bytes = Buffer.from("stranger signed bytes"), count = { value: 0 };
+  await assert.rejects(checkForConnectorUpdateV1({ ...f,
+    advertised: advertised(bytes, {}, stranger.privateKey), currentVersion: "1.0.0",
+    fetcher: releaseFetcher(bytes, { count }), healthCheck: async () => true }), /signature/u);
+  assert.equal(count.value, 0, "a bad signature must fail before the download route is called");
+  assert.equal(await currentVersion(f), "1.0.0");
+});
+
+test("a stalled body hits a held download deadline and releases the update lock", async t => {
+  const f = await fixture(t), bytes = Buffer.from("deadline bytes"), release = advertised(bytes);
+  const fetcher = async () => new Response(new ReadableStream({ start(controller) {
+    controller.enqueue(bytes.subarray(0, 1));
+  } }), { status: 200, headers: { "content-length": String(bytes.length) } });
+  const started = Date.now();
+  await assert.rejects(checkForConnectorUpdateV1({ ...f, advertised: release, currentVersion: "1.0.0",
+    fetcher, healthCheck: async () => true, downloadDeadlineMs: 75 }), /download_timeout/u);
+  assert.ok(Date.now() - started < 1_000, "the stalled stream must not outlive its deadline");
+  await assert.rejects(readFile(f.paths.lock), error => error.code === "ENOENT");
+  assert.equal(await currentVersion(f), "1.0.0");
 });
 
 test("disk-full and stopped-halfway downloads clean up and retain the runnable connector", async t => {
@@ -106,12 +135,16 @@ test("disk-full and stopped-halfway downloads clean up and retain the runnable c
 test("a crashing candidate auto-reverts and a retry can replace it", async t => {
   const f = await fixture(t), bytes = Buffer.from("process.exit(1);\n"), release = advertised(bytes);
   const failed = await checkForConnectorUpdateV1({ ...f, advertised: release, currentVersion: "1.0.0",
-    fetcher: releaseFetcher(bytes), healthCheck: async () => false });
+    fetcher: releaseFetcher(bytes), healthCheck: async () => false, clock: () => 1_000 });
   assert.deepEqual(failed, { state: "reverted", version: "1.0.0", failedVersion: "1.1.0" });
   assert.equal(await currentVersion(f), "1.0.0");
   const retry = await checkForConnectorUpdateV1({ ...f, advertised: release, currentVersion: "1.0.0",
-    fetcher: releaseFetcher(bytes), healthCheck: async () => true });
-  assert.deepEqual(retry, { state: "updated", version: "1.1.0" });
+    fetcher: () => { throw new Error("failed release downloaded during backoff"); }, healthCheck: async () => true,
+    clock: () => 1_001 });
+  assert.deepEqual(retry, { state: "failed_recently", version: "1.1.0" });
+  const later = await checkForConnectorUpdateV1({ ...f, advertised: release, currentVersion: "1.0.0",
+    fetcher: releaseFetcher(bytes), healthCheck: async () => true, clock: () => 1_000 + 6 * 60 * 60_000 });
+  assert.deepEqual(later, { state: "updated", version: "1.1.0" });
 });
 
 test("candidate health waits for three consecutive gateway failures before reverting", async t => {
@@ -132,6 +165,11 @@ test("run mode checks between tasks and exits cleanly to restart a healthy updat
         operationsMode: "running", connector: advertised(Buffer.from("new")) } }), { status: 200 });
     }, updateCheck: async () => { checked += 1; return { state: "updated", version: "1.1.0" }; }, log() {} });
   assert.equal(checked, 1); assert.deepEqual(pass, { state: "updated", version: "1.1.0" });
+  let stderr = "";
+  const direct = await connector.main(["run", "--config", f.configPath], {
+    out: { write() {} }, err: { write(value) { stderr += value; } },
+  }, { installRoot: f.installRoot, env: {}, fetcher: async () => { throw new Error("direct run contacted gateway"); } });
+  assert.equal(direct, 1); assert.match(stderr, /through launcher\.mjs launch run/u);
 });
 
 test("MCP-style checks are persisted and happen at most once per day", async t => {
@@ -171,6 +209,45 @@ test("two concurrent updaters on one machine coalesce behind one download", asyn
   assert.deepEqual(calls.map(value => value.state).sort(), ["coalesced", "updated"]);
 });
 
+test("launch never waits for the update lock and verifies bytes before spawning", async t => {
+  const f = await fixture(t), started = Date.now(), calls = [];
+  await writeFile(f.paths.lock, JSON.stringify({ pid: process.pid, token: "held", createdAt: Date.now() }), { mode: 0o600 });
+  const code = await launchCurrentConnectorV1({ ...f, args: ["mcp"], spawnProcess(_command, args) {
+    calls.push(args); const child = new EventEmitter(); setImmediate(() => child.emit("close", 0, null)); return child;
+  } });
+  assert.equal(code, 0); assert.ok(Date.now() - started < 1_000); assert.equal(calls.length, 1);
+  await writeFile(join(f.paths.versions, "1.0.0", "connector.mjs"), "planted\n");
+  let fallback;
+  assert.equal(await launchCurrentConnectorV1({ ...f, args: ["mcp"], spawnProcess(_command, args) {
+    fallback = args[0]; const child = new EventEmitter(); setImmediate(() => child.emit("close", 0, null)); return child;
+  } }), 0);
+  assert.equal(fallback, f.paths.launcher, "a planted current version must not be executed");
+  await rm(f.paths.lock, { force: true });
+});
+
+test("run launch relaunches the newly selected version after the dedicated update exit", async t => {
+  const f = await fixture(t), bytes = Buffer.from("export const next = true;\n"), release = advertised(bytes);
+  await checkForConnectorUpdateV1({ ...f, advertised: release, currentVersion: "1.0.0",
+    fetcher: releaseFetcher(bytes), healthCheck: async () => true });
+  await writeFile(f.paths.current, `${JSON.stringify({ schema: "control-room.fleet-connector-update-state/v1",
+    version: "1.0.0", file: "versions/1.0.0/connector.mjs" })}\n`);
+  const targets = [];
+  const code = await launchCurrentConnectorV1({ ...f, args: ["run"], spawnProcess(_command, args) {
+    targets.push(args[0]); const child = new EventEmitter();
+    setImmediate(async () => {
+      if (targets.length === 1) {
+        await writeFile(f.paths.current, `${JSON.stringify({ schema: "control-room.fleet-connector-update-state/v1",
+          version: "1.1.0", file: "versions/1.1.0/connector.mjs" })}\n`);
+        child.emit("close", 75, null);
+      } else child.emit("close", 0, null);
+    });
+    return child;
+  } });
+  assert.equal(code, 0);
+  assert.deepEqual(targets, [join(f.paths.versions, "1.0.0", "connector.mjs"),
+    join(f.paths.versions, "1.1.0", "connector.mjs")]);
+});
+
 test("a dead updater lock is recovered without trusting a symlinked versions directory", async t => {
   const f = await fixture(t), bytes = Buffer.from("export default 'recovered';\n"), release = advertised(bytes);
   await writeFile(f.paths.lock, JSON.stringify({ pid: 999_999_999, token: "dead", createdAt: 0 }), { mode: 0o600 });
@@ -184,6 +261,16 @@ test("a dead updater lock is recovered without trusting a symlinked versions dir
   await assert.rejects(checkForConnectorUpdateV1({ ...hostile, advertised: release, currentVersion: "1.0.0",
     fetcher: releaseFetcher(bytes), healthCheck: async () => true }), /directory/u);
   assert.deepEqual(await readdir(outside), []);
+});
+
+test("a reused live PID does not preserve a stale updater lock", async t => {
+  const f = await fixture(t), bytes = Buffer.from("export default 'pid-reuse';\n"), release = advertised(bytes);
+  await writeFile(f.paths.lock, JSON.stringify({ pid: process.pid, token: "old-owner", createdAt: 0,
+    identity: "not-this-process-generation" }), { mode: 0o600 });
+  const old = new Date(Date.now() - 60_000); await utimes(f.paths.lock, old, old);
+  const result = await checkForConnectorUpdateV1({ ...f, advertised: release, currentVersion: "1.0.0",
+    fetcher: releaseFetcher(bytes), healthCheck: async () => true });
+  assert.equal(result.state, "updated");
 });
 
 test("twenty connectors update from one fake gateway without sharing locks or state", async t => {
@@ -207,21 +294,43 @@ test("version ordering and Windows launch layout reject downgrade tricks without
   const root = await mkdtemp(join(tmpdir(), "connector-windows-layout-")); t.after(() => rm(root, { recursive: true, force: true }));
   const sourcePath = join(root, "source.mjs"), shimPath = join(root, "mcp", "bin", "control-room-mcp.cmd");
   await writeFile(sourcePath, "export {};\n");
+  const windowsBytes = await readFile(sourcePath);
   const paths = await installConnectorLauncherV1({ installRoot: join(root, "mcp"), sourcePath, version: "1.0.0",
-    platform: "win32", nodePath: "C:\\Program Files\\nodejs\\node.exe", shimPath });
+    platform: "win32", nodePath: "C:\\Program Files\\nodejs\\node.exe", shimPath, trust,
+    advertisement: advertised(windowsBytes, { version: "1.0.0", file: "connector-1.0.0.mjs" }) });
   assert.match(await readFile(shimPath, "utf8"), /launcher\.mjs" launch mcp %\*/u);
   assert.equal(JSON.parse(await readFile(paths.current, "utf8")).file, "versions/1.0.0/connector.mjs");
-  await installConnectorLauncherV1({ installRoot: join(root, "mcp"), sourcePath, version: "0.9.0",
-    platform: "win32", nodePath: "C:\\Program Files\\nodejs\\node.exe", shimPath });
+  await assert.rejects(installConnectorLauncherV1({ installRoot: join(root, "mcp"), sourcePath, version: "0.9.0",
+    platform: "win32", nodePath: "C:\\Program Files\\nodejs\\node.exe", shimPath, trust,
+    advertisement: advertised(windowsBytes, { version: "0.9.0", file: "connector-0.9.0.mjs", minVersion: "0.9.0" }) }));
   assert.equal(JSON.parse(await readFile(paths.current, "utf8")).version, "1.0.0", "an older installer cannot lower current");
 });
 
-test("installation creates one private release key and refuses to replace it", async t => {
-  const root = await mkdtemp(join(tmpdir(), "connector-release-key-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const privateKeyPath = join(root, "protected", "connector-release.pem");
-  const created = await createConnectorReleaseKeyV1({ privateKeyPath });
-  assert.equal(createPublicKey({ key: Buffer.from(created.publicKeySpki, "base64url"), format: "der", type: "spki" }).asymmetricKeyType,
-    "ed25519");
-  if (process.platform !== "win32") assert.equal((await stat(privateKeyPath)).mode & 0o777, 0o600);
-  await assert.rejects(createConnectorReleaseKeyV1({ privateKeyPath }), /EEXIST/u);
+test("one machine-wide trust refuses a second profile with another release key", async t => {
+  const root = await mkdtemp(join(tmpdir(), "connector-machine-trust-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const installRoot = join(root, "mcp");
+  await pinConnectorReleaseTrustV1({ installRoot, trust });
+  const attackerKey = stranger.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  await assert.rejects(pinConnectorReleaseTrustV1({ installRoot, trust: { ...trust,
+    keyId: releaseKeyIdV1(attackerKey), publicKey: attackerKey } }), /machine_trust_mismatch/u);
+  assert.deepEqual(JSON.parse(await readFile(join(installRoot, "release-trust.json"), "utf8")), trust);
+});
+
+test("machine-wide trust changes only through signed rotation and revocation records", async t => {
+  const root = await mkdtemp(join(tmpdir(), "connector-machine-rotation-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const installRoot = join(root, "mcp"), oldKeyPath = join(root, "old.pem"), newKeyPath = join(root, "new.pem");
+  const nextKeys = generateKeyPairSync("ed25519");
+  await writeFile(oldKeyPath, keys.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
+  await writeFile(newKeyPath, nextKeys.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
+  await pinConnectorReleaseTrustV1({ installRoot, trust });
+  const nextPublicKey = nextKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const rotation = await createReleaseKeyRotationV1({ currentTrust: trust, toPublicKey: nextPublicKey,
+    epoch: 2, versionFloor: "1.1.0", oldPrivateKeyPath: oldKeyPath });
+  const rotated = applyReleaseKeyRotationV1(rotation, trust);
+  await pinConnectorReleaseTrustV1({ installRoot, trust: rotated, rotation });
+  const revocations = await createReleaseKeyRevocationsV1({ currentTrust: rotated, epoch: 3,
+    revokedKeyIds: [trust.keyId], privateKeyPath: newKeyPath });
+  const finalTrust = applyReleaseKeyRevocationsV1(revocations, rotated);
+  await pinConnectorReleaseTrustV1({ installRoot, trust: finalTrust, revocations });
+  assert.deepEqual(JSON.parse(await readFile(join(installRoot, "release-trust.json"), "utf8")), finalTrust);
 });

@@ -20,8 +20,10 @@ database password and never gets your login.
    ```
 
    On Windows, use the PowerShell line shown under **Windows** on the same page.
-5. Keep it connected: `node control-room-connector.mjs run`. The machine shows
-   as **Connected** on the Workers page within a minute.
+5. For an installed unattended worker, use the `launcher.mjs launch run` command
+   printed by the installer. The launcher relaunches the selected connector after
+   a healthy update. The machine shows as **Connected** on the Workers page within
+   a minute.
 
 The machine keeps its own key in a private file (`~/.config/control-room/connector.json`,
 readable only by you). The key renews itself every few weeks while `run` is going.
@@ -167,13 +169,13 @@ Room computer: `pnpm fleet:gateway <config.json>`. It listens on this computer
 only (`127.0.0.1`); publish it through Tailscale Serve or your tunnel. Its
 package command serves the already signed, single-file connector release; it
 does not hold the release private key and cannot build or replace a release.
-At installation, create that key once with
-`pnpm fleet:release-key <absolute-protected-key-path>`, save the printed public
-key as `connectorReleasePublicKey` in the gateway config, and keep the private
-file with the upgrader. The upgrader builds a signed release from a clean
-checkout with `pnpm build:fleet-connector -- --signing-key
-<absolute-protected-key-path> --min-version <version>` before restarting the
-gateway. The gateway refuses missing, altered or incorrectly signed release
+At installation, create the shared key and trust record once with
+`pnpm install:release-key`. Keep `releaseTrust` in the gateway config and the
+private key with the upgrader. Build the connector from a clean checkout with
+`pnpm build:fleet-connector -- --release-trust <release-trust.json>`, then sign
+the assembled release with `pnpm release:sign`. The public trust is embedded in
+the verified connector bundle, so enrollment cannot substitute a key. The
+gateway refuses missing, altered or incorrectly signed `connector-release.json`
 files at startup.
 The gateway config names its own database login (`control_room_fleet`), which
 can only do fleet work. Owner enrollment, offer, review and revocation records use a
