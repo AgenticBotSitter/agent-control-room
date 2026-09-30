@@ -253,12 +253,133 @@ test("the write guard refuses: no propose grant, a foreign batch, a stale revisi
       // An agent whose grant is not exactly ["work_batches.propose"].
       await assert.rejects(insert({ proposer: "identity:orch-ungranted", requestKey: "orchestrator-guard-0002" }),
         /work batch split suggestion insert rejected/u);
-      // A batch this identity did not propose.
+      // A batch this identity did not propose. The owner holds no propose grant
+      // AT ALL, so this arm is not isolated by the rejection: the grant check
+      // refuses it first. The arm under test is isolated below, with a SECOND
+      // agent that DOES hold exactly ["work_batches.propose"], so the only thing
+      // left to refuse it is "this identity did not propose this batch".
       await assert.rejects(insert({ proposer: "identity:orch-owner", requestKey: "orchestrator-guard-0003" }),
         /work batch split suggestion insert rejected/u);
-      // A revision the batch has not reached.
+      // A second proposer identity that DOES hold exactly ["work_batches.propose"].
+      // Only the batch-owns-its-proposer arm can refuse this, because every other
+      // condition is satisfied: active agent, correct grant, correct project, the
+      // batch is proposed, and the revision matches.
+      await admin.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+        auth_subject_digest,state,created_at,updated_at) VALUES('identity:orch-second',$1,'agent','Second',
+        'work-intake',$2,'active',$3,$3)`, [scope.tenantId, sha256Digest({ id: "identity:orch-second" }), NOW]);
+      await admin.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,
+        project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+        VALUES('grant:orch-second',$1,'identity:orch-second','work_batch_proposer','["work_batches.propose"]'::jsonb,
+        '["*"]'::jsonb,'low',false,false,$2,$2)`, [scope.tenantId, NOW]);
+      await assert.rejects(insert({ proposer: "identity:orch-second", requestKey: "orchestrator-guard-0003b" }),
+        /work batch split suggestion insert rejected/u,
+      "an agent that holds propose but did not propose THIS batch has no standing to re-split it");
+      // The same identity CAN propose a batch of its own, which proves the refusal
+      // above is about ownership and not about the identity being unusable.
+      const own = await seedBatch(admin, scope, "batch:orch-second", "identity:orch-second");
+      assert.equal((await insertSuggestion(intake, { id: `split-suggestion:${"2".repeat(32)}`,
+        tenantId: scope.tenantId, projectId: scope.projectId, batchId: "batch:orch-second",
+        requestKey: "orchestrator-guard-0003c", revision: 1, revisionDigest: own.digest,
+        proposer: "identity:orch-second", proposal: proposal(3), createdAt: NOW })).rowCount, 1,
+      "its own batch accepts a suggestion from it");
+
+      // Each grant CONDITION in isolation. Every variant identity is given a grant
+      // that is invalid in exactly one way, and the suggestion names THAT identity
+      // -- so the only thing that can refuse it is the condition under test.
+      //
+      // Every batch here is seeded with the VALID proposer, never with the
+      // variant. A variant's grant is deliberately broken, and 0093's work_batches
+      // guard requires a valid one, so seeding a batch as a variant would be
+      // refused by 0093 before 0200 ever ran -- proving nothing about 0200. What
+      // 0200 must refuse is a suggestion whose PROPOSER holds a broken grant,
+      // whatever batch it names; the ownership arm is exercised separately above.
+      const variants: Array<[string, string, string, string]> = [
+        // label,             identity,                     role_key,            allowed_actions
+        ["revoked", "identity:orch-revoked", "work_batch_proposer", '["work_batches.propose"]'],
+        ["expired", "identity:orch-expired", "work_batch_proposer", '["work_batches.propose"]'],
+        ["otherrole", "identity:orch-otherrole", "work_batch_reviewer", '["work_batches.propose"]'],
+        ["extraaction", "identity:orch-extra", "work_batch_proposer",
+          '["work_batches.propose","work_batches.decide"]'],
+        ["highrisk", "identity:orch-highrisk", "work_batch_proposer", '["work_batches.propose"]'],
+        ["external", "identity:orch-external", "work_batch_proposer", '["work_batches.propose"]'],
+        ["strongfactor", "identity:orch-strong", "work_batch_proposer", '["work_batches.propose"]'],
+        ["otherproject", "identity:orch-otherproject", "work_batch_proposer", '["work_batches.propose"]'],
+        ["suspended", "identity:orch-suspended", "work_batch_proposer", '["work_batches.propose"]'],
+        ["humanactor", "identity:orch-human", "work_batch_proposer", '["work_batches.propose"]'],
+      ];
+      for (const [label, identity, roleKey, actions] of variants) {
+        const isHuman = label === "humanactor", isSuspended = label === "suspended";
+        await admin.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+          auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,
+          $3,'Variant','work-intake',$4,'active',$5,$5) ON CONFLICT DO NOTHING`,
+        [identity, scope.tenantId, isHuman ? "human" : "agent", sha256Digest({ id: identity }), NOW]);
+        // 0005 requires expires_at > created_at and revoked_at >= created_at, so an
+        // expired or revoked grant cannot be expressed with a timestamp earlier
+        // than created_at. These grants are therefore dated BEFORE the fixture
+        // clock, which puts revoked_at and expires_at genuinely in the past as far
+        // as statement_timestamp() is concerned -- which is what the guard asks --
+        // while every CHECK still holds.
+        const variantCreated = new Date(Date.parse(NOW) - 7_200_000).toISOString();
+        const variantPast = new Date(Date.parse(NOW) - 60_000).toISOString();
+        await admin.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,
+          project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at,revoked_at,expires_at)
+          VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$10,
+            CASE WHEN $11 THEN $12::timestamptz END,
+            CASE WHEN $13 THEN $12::timestamptz END) ON CONFLICT DO NOTHING`,
+        [`grant:${identity}`, scope.tenantId, identity, roleKey, actions,
+          label === "otherproject" ? JSON.stringify(["project:elsewhere"]) : JSON.stringify(["*"]),
+          label === "highrisk" ? "high" : "low",
+          label === "external", label === "strongfactor", variantCreated,
+          label === "revoked", variantPast, label === "expired"]);
+        // Suspending the identity happens AFTER its grant is in place, so the
+        // grant is what exists and the state is what is wrong.
+        if (isSuspended) await admin.query(
+          "UPDATE control_identities SET state='suspended' WHERE tenant_id=$1 AND id=$2", [scope.tenantId, identity]);
+        const variantBatch = await seedBatch(admin, scope, `batch:${label}`);
+        await assert.rejects(insertSuggestion(intake, {
+          id: `split-suggestion:${label.padEnd(32, "0").slice(0, 32)}`,
+          tenantId: scope.tenantId, projectId: scope.projectId, batchId: `batch:${label}`,
+          requestKey: `orch-guard-${label}-0001`, revision: 1, revisionDigest: variantBatch.digest,
+          proposer: identity, proposal: proposal(3), createdAt: NOW }),
+        /work batch split suggestion insert rejected|policy/u,
+        `a proposer whose grant differs only in "${label}" is refused`);
+      }
+
+      // A revision the batch has not reached. The foreign key refuses this too, so
+      // the version arm is isolated below against a revision that EXISTS.
       await assert.rejects(insert({ revision: 2, requestKey: "orchestrator-guard-0004" }),
-        /work batch split suggestion insert rejected/u);
+        /work batch split suggestion insert rejected|foreign key/u);
+      // The version arm, ISOLATED. Revision 2 is added as a real owner revision --
+      // so the foreign key is satisfied and the bound digest is real -- but the
+      // batch's own version is still 1, because advancing it is exactly what the
+      // owner's revision-append path does in its own transaction. A suggestion
+      // naming revision 2 while the batch is at 1 must be refused by the VERSION
+      // check, and by nothing else: the row is bound to a revision that exists,
+      // carries that revision's digest, is proposed by the batch's own proposer,
+      // holds a correct propose grant, and is on a still-proposed batch.
+      const revised = { ...proposal(2), tasks: [{ ...proposal(2).tasks[0]!, title: "Owner revision part" }] };
+      const revisedDigest = workBatchProposalDigestV1(revised);
+      await admin.query(`INSERT INTO work_batch_revisions(id,tenant_id,batch_id,revision,edited_by_identity_id,
+        edited_at,reason_code,proposal,revision_digest,auth_tag) VALUES($1,$2,'batch:orch-guard',2,
+        'identity:orch-owner',$3,'owner_revision',$4::jsonb,$5,$6)`,
+      ["batch:orch-guard:revision:2", scope.tenantId, LATER, JSON.stringify(revised), revisedDigest,
+        hmacSha256Tag(KEY, { purpose: "work-batch-revision/v1", record: { id: "batch:orch-guard:revision:2",
+          tenantId: scope.tenantId, batchId: "batch:orch-guard", revision: 2,
+          editedByIdentityId: "identity:orch-owner", editedAt: LATER, reasonCode: "owner_revision",
+          proposal: revised, revisionDigest: revisedDigest } })]);
+      await assert.rejects(insert({ revision: 2, revisionDigest: revisedDigest,
+        proposal: revised, requestKey: "orchestrator-guard-0004b" }),
+      /work batch split suggestion insert rejected/u,
+      "a suggestion may not name a revision the batch has not reached, even when that revision exists");
+      // And once the batch's version advances, the same suggestion is accepted:
+      // the refusal above was the version, not the revision's existence.
+      await admin.query("UPDATE work_batches SET version=2, updated_at=$3 WHERE tenant_id=$1 AND id=$2",
+      [scope.tenantId, "batch:orch-guard", LATER]);
+      assert.equal((await insertSuggestion(intake, { id: `split-suggestion:${"3".repeat(32)}`,
+        tenantId: scope.tenantId, projectId: scope.projectId, batchId: "batch:orch-guard",
+        requestKey: "orchestrator-guard-0004c", revision: 2, revisionDigest: revisedDigest,
+        proposer: "identity:orch-agent", proposal: revised, createdAt: NOW })).rowCount, 1,
+      "at the batch's real version the same suggestion is accepted");
       // A real revision, but the wrong digest for it.
       await assert.rejects(insert({ revisionDigest: `sha256:${"0".repeat(64)}`, requestKey: "orchestrator-guard-0005" }),
         /work batch split suggestion insert rejected/u);
@@ -280,8 +401,14 @@ test("the write guard refuses: no propose grant, a foreign batch, a stale revisi
       await seedBatch(admin, scope, "batch:orch-decided", "identity:orch-agent", "rejected");
       await assert.rejects(insert({ batchId: "batch:orch-decided", requestKey: "orchestrator-guard-0008" }),
         /work batch split suggestion insert rejected/u);
-      assert.equal((await admin.query("SELECT count(*)::int AS n FROM work_batch_split_suggestions")).rows[0]!.n, 0,
-        "no refused insert left a row");
+      // The ONLY rows that exist are the ones that were supposed to: the second
+      // proposer's suggestion on its own batch, and one at the batch's real
+      // current version. Every refused insert left nothing.
+      const surviving = await admin.query<{ request_key: string }>(
+        "SELECT request_key FROM work_batch_split_suggestions ORDER BY request_key");
+      assert.deepEqual(surviving.rows.map(row => row.request_key),
+        ["orchestrator-guard-0003c", "orchestrator-guard-0004c"],
+        "exactly the two intended suggestions exist and no refused insert left a row");
     } finally { await intake.end(); await admin.end(); }
   }, { port: PORT + 1, allowedPorts: ALLOWED, boundMs: 180_000 });
 });
