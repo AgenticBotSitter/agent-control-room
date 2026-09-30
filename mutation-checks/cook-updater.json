@@ -1,0 +1,177 @@
+[
+  {
+    "file": "src/updater/v1/fs-safety.mjs",
+    "find": "if (!entry.isFile() || entry.size > maxBytes || entry.nlink !== 1) throw updaterRefuseV1(\"updater_file_refused\");",
+    "replace": "if (!entry.isFile() || entry.size > maxBytes) throw updaterRefuseV1(\"updater_file_refused\");",
+    "test": "node --test --test-name-pattern='R-FS helpers' tests/updater-skeleton.test.mjs",
+    "why": "a root read must reject a hard-linked lower-writable state file"
+  },
+  {
+    "file": "src/updater/v1/fs-safety.mjs",
+    "find": "if (existing.isSymbolicLink() || !existing.isFile() || existing.nlink !== 1)\n      throw updaterRefuseV1(\"updater_file_refused\");",
+    "replace": "if (false)\n      throw updaterRefuseV1(\"updater_file_refused\");",
+    "test": "node --test --test-name-pattern='R-FS helpers' tests/updater-skeleton.test.mjs",
+    "why": "an atomic root write must refuse a planted symlink leaf"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "if (this.#active >= this.maximumConnections) {",
+    "replace": "if (this.#active > this.maximumConnections) {",
+    "test": "node --test --test-name-pattern='50-request burst' tests/updater-control-socket.test.mjs",
+    "why": "control.sock must refuse caller 51 at the configured 50-connection boundary"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "if (!entry.isSocket() || entry.uid !== expectedUid) throw updaterRefuseV1(\"updater_admin_socket_owner_refused\");",
+    "replace": "if (!entry.isSocket()) throw updaterRefuseV1(\"updater_admin_socket_owner_refused\");",
+    "test": "node --test --test-name-pattern='admin socket' tests/updater-control-socket.test.mjs",
+    "why": "root connects to an admin socket only after checking its production service uid"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (selfUpdate !== \"On\") {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
+    "why": "an automatic run must refuse while the root-held self-update flag is Off"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (await this.stateFiles.hasRescueMarker()) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
+    "why": "a rescued run must become uncertain and never resume forward"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "replace": "if (false) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
+    "why": "the updater has one in-process actor under a 50-caller burst"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (!this.#timer) this.#timer = setInterval(() => void this.beat().catch(error => this.onError(error)), this.intervalMs);",
+    "replace": "if (!this.#timer) this.#timer = setInterval(() => void this.beat(), this.intervalMs);",
+    "test": "node --test --test-name-pattern='dropped write' tests/updater-skeleton.test.mjs",
+    "why": "a failed timer write is contained and reported so the next heartbeat can retry"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "} else this.lastOutcome = flag === \"Off\" ? { status: \"idle\", message: \"Self-update is Off.\" }",
+    "replace": "} else this.lastOutcome = false ? { status: \"idle\", message: \"Self-update is Off.\" }",
+    "test": "node --test --test-name-pattern='main loop does not poll' tests/updater-skeleton.test.mjs",
+    "why": "while Off the main loop must not read or advance automatic work"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (digest !== index.planDigest) throw updaterRefuseV1(\"updater_confirm_plan_digest_mismatch\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_confirm_plan_digest_mismatch\");",
+    "test": "node --test --test-name-pattern='CLI keeps status' tests/updater-cli-flip.test.mjs",
+    "why": "the root-rendered confirmation must bind the exact authoritative plan bytes"
+  },
+  {
+    "file": "src/updater/v1/attended-flip.mjs",
+    "find": "if (flag !== \"Off\") throw updaterRefuseV1(\"updater_attended_requires_off\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_attended_requires_off\");",
+    "test": "node --test --test-name-pattern='attended flip refuses' tests/updater-cli-flip.test.mjs",
+    "why": "the attended updater path is available only while automatic self-update is Off"
+  },
+  {
+    "file": "src/updater/v1/attended-flip.mjs",
+    "find": "if (confirmation?.planId !== planId || confirmation?.confirmed !== true)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='attended flip refuses' tests/updater-cli-flip.test.mjs",
+    "why": "the attended flip accepts only the root confirmation for its exact plan id"
+  },
+  {
+    "file": "src/updater/v1/attended-flip.mjs",
+    "find": "if (actual.length !== declared.size || actual.some(path => !declared.has(path)))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='unmanifested file' tests/updater-cli-flip.test.mjs",
+    "why": "Phase A refuses candidate bytes that are absent from the fixed bundle manifest"
+  },
+  {
+    "file": "src/updater/v1/attended-flip.mjs",
+    "find": "if (requested.some(item => !ATTENDED_LINKS_V1.includes(item.link))",
+    "replace": "if (false && requested.some(item => !ATTENDED_LINKS_V1.includes(item.link))",
+    "test": "node --test --test-name-pattern='attended flip refuses' tests/updater-cli-flip.test.mjs",
+    "why": "an attended flip may change only the five fixed updater and runtime links"
+  },
+  {
+    "file": "src/updater/v1/attended-flip.mjs",
+    "find": "if (!await this.operations.fullHealth({ sample })) throw updaterRefuseV1(\"updater_phase_d_health_failed\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_phase_d_health_failed\");",
+    "test": "node --test --test-name-pattern='attended flip refuses' tests/updater-cli-flip.test.mjs",
+    "why": "Phase D must not declare a broken updater healthy"
+  },
+  {
+    "file": "scripts/updater/build-fixed-updater-bundle.mjs",
+    "find": "|| policy.candidateBuildOutputAccepted !== false",
+    "replace": "|| false",
+    "test": "node --test --test-name-pattern='fixed step refuses policy drift' tests/updater-fixed-bundle.test.mjs",
+    "why": "candidate pnpm build output must never become root updater code"
+  },
+  {
+    "file": "scripts/updater/build-fixed-updater-bundle.mjs",
+    "find": "[\"install\", \"--offline\", \"--ignore-scripts\", \"--frozen-lockfile\",",
+    "replace": "[\"install\", \"--offline\", \"--frozen-lockfile\",",
+    "test": "node --test --test-name-pattern='fixed step builds' tests/updater-fixed-bundle.test.mjs",
+    "why": "the updater's private lock is installed offline with package lifecycle scripts disabled"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "valid_id() { /bin/echo \"$1\" | /usr/bin/grep -Eq '^[A-Za-z0-9._-]{1,80}$' || die invalid_id; }",
+    "replace": "valid_id() { :; }",
+    "test": "node --test --test-name-pattern='malformed or injected' tests/updater-guard.test.mjs",
+    "why": "guard validates every link id before invoking ln"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "if [ \"$current_index\" -gt 0 ]; then selected=$((current_index - 1));",
+    "replace": "if [ \"$current_index\" -gt 0 ]; then selected=$current_index;",
+    "test": "node --test --test-name-pattern='pair-aware rescue' tests/updater-guard.test.mjs",
+    "why": "repeated rescue must step backward through known-good pairs rather than reselect live"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "if heartbeat_stale; then revert_upgrade_links; fi",
+    "replace": "if heartbeat_stale; then :; fi",
+    "test": "node --test --test-name-pattern='pair-aware rescue' tests/updater-guard.test.mjs",
+    "why": "a stale updater heartbeat requires every recorded updater and runtime link to revert"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "[ \"$recent\" -lt 3 ] || die restart_limit",
+    "replace": "[ \"$recent\" -lt 30 ] || die restart_limit",
+    "test": "node --test --test-name-pattern='hung updater' tests/updater-guard.test.mjs",
+    "why": "guard kickstarts the updater at most three times in one hour"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "IFS= read -r answer; [ \"$answer\" = YES ] || die owner_declined_data_loss",
+    "replace": "IFS= read -r answer; :",
+    "test": "node --test --test-name-pattern='declining a data-loss rescue' tests/updater-guard.test.mjs",
+    "why": "declining an older database pair refuses before any service is stopped"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "\"$LAUNCHCTL\" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed",
+    "replace": "\"$LAUNCHCTL\" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed\n  \"$LAUNCHCTL\" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed",
+    "test": "node --test --test-name-pattern='hung updater' tests/updater-guard.test.mjs",
+    "why": "each counted guard attempt performs exactly one updater restart"
+  },
+  {
+    "file": "src/updater/v1/store.mjs",
+    "find": "WHERE run_id=$1 AND lease_token=$2 AND finished_at IS NULL RETURNING *`,",
+    "replace": "WHERE run_id=$1 AND finished_at IS NULL RETURNING *`,",
+    "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
+    "why": "a second updater boot must not transition a run without its exact lease token"
+  },
+  {
+    "file": "src/updater/v1/store.mjs",
+    "find": "if (!row || row.current_user !== \"control_room_deployer\" || row.is_deployer !== true",
+    "replace": "if (!row || false",
+    "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
+    "why": "the updater store refuses any connection that is not the production deployer login"
+  }
+]

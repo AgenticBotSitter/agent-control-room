@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { applyUpdaterSchemaV1, updaterDdlFilesV1, type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
+import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 
 // CONTROL_ROOM_PG_TEST_PORT_BASE moves the disposable cluster, as in the module
 // approval lane. 59510 is the block this job was given.
@@ -833,6 +834,45 @@ test("a deployer role that grew a dangerous attribute is refused on the next app
       await privileged.query("REVOKE SELECT, INSERT ON public.tenants FROM control_room_deployer");
       await privileged.end();
     }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("the item-8 store runs every query as the production deployer login", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await seedOwnerSession(postgres);
+    const plan = planId("item8-store");
+    await insertPlan(postgres, plan);
+    const deployer = as(postgres, "deployer");
+    await deployer.connect();
+    try {
+      await deployer.query("UPDATE updater.plans SET state='approved' WHERE plan_id=$1", [plan]);
+      const runId = `run:${randomUUID()}`;
+      await deployer.query("INSERT INTO updater.runs(run_id,plan_id,state,run_class,lease_token) "
+        + "VALUES($1,$2,'approved','code','lease-item8')", [runId, plan]);
+      const store = new PostgresUpdaterStoreV1(deployer);
+      await store.initialize();
+      await store.heartbeat({ bootId: "boot-item8", leaseToken: "lease-item8", state: "running", step: "precheck" });
+      assert.equal((await store.liveRun())?.run_id, runId);
+      await store.transition(runId, "lease-item8", "prechecked", { source: "item8-test" });
+      await store.appendEvent(runId, 1, "prechecked", { source: "item8-test" });
+      assert.deepEqual((await store.events(runId)).map((row: { state: string }) => row.state), ["prechecked"]);
+      await assert.rejects(store.transition(runId, "wrong-lease", "staged"), /updater_run_lease_lost/u,
+        "a second caller cannot take over the production row");
+
+      const requestId = `owner-request:${randomUUID()}`;
+      const web = as(postgres, "web"); await web.connect();
+      try {
+        await web.query("INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest) "
+          + "VALUES($1,'pause',false,$2)", [requestId, OWNER_SESSION]);
+      } finally { await web.end(); }
+      assert.equal((await store.unhandledOwnerRequests())[0]?.id, requestId);
+      assert.equal(await store.finishOwnerRequest(requestId, "acted"), true);
+      assert.equal((await store.unhandledOwnerRequests()).length, 0);
+    } finally { await deployer.end(); }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 

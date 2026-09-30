@@ -86,6 +86,7 @@ test("runtime policy pins the repository's Node, pnpm and esbuild artifacts and 
   assert.equal(new Set(manifest.artifacts.map(item => item.archiveSha256)).size, 3);
   const bundle = await readJson("bundle.json");
   assert.equal(bundle.tool, "runtime/esbuild-current/esbuild");
+  assert.equal(bundle.packageManager, "runtime/pnpm-current/pnpm");
   assert.equal(bundle.candidateBuildOutputAccepted, false);
   assert.deepEqual(bundle.arguments.slice(0, 4), ["--bundle", "--platform=node", "--format=esm", "--target=node22"]);
 });
