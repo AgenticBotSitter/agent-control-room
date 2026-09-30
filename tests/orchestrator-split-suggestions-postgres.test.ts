@@ -11,7 +11,7 @@ import test from "node:test";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
-import { workBatchProposalDigestV1, PostgresIntakePlannerFailureStoreV1,
+import { IntakeCoordinatorV1, workBatchProposalDigestV1, PostgresIntakePlannerFailureStoreV1,
   PostgresIntakeNeedsYouStoreV1, PostgresIntakeOwnerRetryStoreV1, PostgresIntakeSuggestionStoreV1,
   IntakeSuggestionStoreErrorV1,
   UnwiredPlannerAllowanceV1, intakeProjectScopeV1, intakeRequestScopeV1,
@@ -1510,4 +1510,104 @@ test("the unwired S7b allowance port refuses rather than allowing an unmeasured 
   assert.equal(outcome.allowed, false,
     "a missing allowance adapter must never read as an allowed run");
   if (!outcome.allowed) assert.equal(outcome.reasonCode, "planner_allowance_not_configured");
+});
+
+
+test("the REAL coordinator spends a granted latch through the real store, and the next failure is a new escalation", async t => {
+  // The end-to-end half of the retry, and the part no double can prove: the
+  // coordinator reads the latch, SPENDS it by clearing, and only then runs. The
+  // unit lane proves the rule and the store lane proves the SQL; this proves the
+  // two are wired to each other, which is where a "the coordinator never calls
+  // clear" bug would live and neither of the other two would see it.
+  //
+  // The shape that must hold, end to end on real logins:
+  //   2 failures -> escalation -> press is refused, no run
+  //   owner grants a retry -> press runs the planner ONCE
+  //   that run FAILS -> the count is 1, not 2, and a fresh Needs-you item is not
+  //     needed because the description's scope already has one
+  //   and the latch is gone, so the next press is refused again
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    const coordinatorClient = new Client(postgres.connection("coordinator")); await coordinatorClient.connect();
+    try {
+      await seedTenant(admin, scope, { withBinding: true });
+      await seedIdentities(admin, scope, "");
+      const db = database(coordinatorClient);
+      const scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
+      const failures = new PostgresIntakePlannerFailureStoreV1(db, scopeOf, () => LATER);
+      const needsYou = new PostgresIntakeNeedsYouStoreV1(db, () => ({ identityId: "identity:orch-agent" }), () => LATER);
+      const retry = new PostgresIntakeOwnerRetryStoreV1(db);
+      const description = "Reconcile the digest helper with the ledger writer.";
+      const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
+
+      let runs = 0;
+      // The planner double is broken, and stays broken: the point is that the
+      // GRANTED run also fails, so the retry's outcome is a new escalation rather
+      // than a recovery. A double that started working would prove nothing about
+      // the latch.
+      const reply = () => { throw new Error("planner down"); };
+      const agent = { tenantId: scope.tenantId, identityId: "identity:orch-agent", actorType: "agent" as const,
+        authenticatedAt: NOW, expiresAt: LATER };
+      // The coordinator is the real one, over the real stores. The selection is
+      // 0201's shape read through the port, and the submission and suggestion
+      // stores throw rather than returning, because a broken planner never reaches
+      // them -- if one of them is ever called, the test fails loudly instead of
+      // quietly passing on a path that was never taken.
+      const coordinator = new IntakeCoordinatorV1({ read: () => ({ workerId: "worker:chief",
+        workerKind: "codex" as const, modelKey: "model:plan", effort: "high" as const }) },
+      { async run() { runs += 1; return { replyText: reply() }; } },
+      { async consume() { return Object.freeze({ allowed: true as const }); } },
+      failures, needsYou, { async authorizeBeforeBody() {
+        return Object.freeze({ allowed: true as const, workspaceId: scope.workspaceId }); },
+        async submit() { throw new Error("the submission store was reached, which a broken planner cannot do"); } },
+      { async append() { throw new Error("the suggestion store was reached, which a broken planner cannot do"); },
+        prefillForOwner() { throw new Error("not used"); } },
+      [{ workerId: "worker:chief", workerKind: "codex" as const, nodeId: "node:chief",
+        modelPolicy: { models: ["model:plan"], defaultModel: "model:plan",
+          efforts: ["high" as const], defaultEffort: "high" as const } }],
+      ["code.change"]);
+
+      // TWO FAILURES, through the real coordinator, each with a fresh key.
+      assert.equal((await coordinator.coordinateInitial({ principal: agent, projectId: scope.projectId,
+        ownerRequest: description, idempotencyKey: "e2e-fail-0001", now: LATER })).status, "planner_failed");
+      assert.equal((await coordinator.coordinateInitial({ principal: agent, projectId: scope.projectId,
+        ownerRequest: description, idempotencyKey: "e2e-fail-0002", now: LATER })).status, "needs_you");
+      assert.equal(runs, 2);
+      const itemsNow = (await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n;
+      assert.equal(itemsNow, 1, "one Needs-you item for the description");
+
+      // THE ESCALATION IS A WALL, and no run is spent against it.
+      assert.equal((await coordinator.coordinateInitial({ principal: agent, projectId: scope.projectId,
+        ownerRequest: description, idempotencyKey: "e2e-fail-0003", now: LATER })).status, "needs_you");
+      assert.equal(runs, 2, "the refused press spent no run");
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1,
+        "and no second item");
+
+      // THE OWNER ASKS, and the very next press runs the planner.
+      assert.equal(await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "e2e-retry-0001", ownerRequest: description }), 1);
+      const granted = await coordinator.coordinateInitial({ principal: agent, projectId: scope.projectId,
+        ownerRequest: description, idempotencyKey: "e2e-retry-0002", now: LATER });
+      assert.equal(runs, 3, "the granted press ran the planner exactly once");
+      assert.equal(granted.status, "needs_you",
+        "the granted run FAILED, so the outcome is the new escalation's, not a success");
+      // ...and it is the FIRST failure of a new one: the coordinator spent the
+      // latch by clearing, so the count restarted rather than reaching 3.
+      const live = await admin.query<{ failure_count: string; owner_retry_cleared_at: string | null }>(
+        "SELECT failure_count::text, owner_retry_cleared_at FROM control_planner_failure_counters WHERE scope_key=$1",
+      [projectScope]);
+      assert.equal(live.rows[0]!.owner_retry_cleared_at, null, "the latch is spent by the run it authorised");
+      assert.ok(Number(live.rows[0]!.failure_count) < 2,
+        `a failed retry is failure 1 of a NEW escalation, not a third failure (count=${live.rows[0]!.failure_count})`);
+      // And the description's scope still holds exactly ONE item, because the
+      // de-duplication is on the scope and the new escalation names the same one.
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1,
+        "the new escalation re-uses the description's one item rather than adding another");
+      // A second grant is refused, so the whole thing is not a run loop.
+      assert.equal(await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "e2e-retry-0003", ownerRequest: description }), 0,
+      "a retry needs a fresh escalation, and there is none at count 1");
+    } finally { await coordinatorClient.end(); await admin.end(); }
+  }, { port: PORT + 4, allowedPorts: ALLOWED, boundMs: 240_000 });
 });

@@ -419,7 +419,16 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
         $1,$2,$3,'orchestrator_failed_twice',$5::bigint,$6,$7::timestamptz,
         'attention:planner:' || substring(encode(sha256(convert_to($1 || '/' || $2 || '/' || $4,'UTF8')),'hex') from 1 for 32),
         $8,$4)
-      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING`,
+      -- BARE ON CONFLICT, and both indexes matter, which the twenty-press stress
+      -- proved the hard way. Naming only the scope index covers a concurrent
+      -- raise of the same SCOPE, but 19 of 20 concurrent raises of one
+      -- description then failed with a primary-key violation instead: they
+      -- collide on (tenant_id, id), which is a different constraint, and
+      -- PostgreSQL only suppresses the one the target names. The bare form covers
+      -- every unique constraint, which is the only way "twenty presses of one
+      -- description are one item" is true at the database rather than only in
+      -- sequence.
+      ON CONFLICT DO NOTHING`,
     [tenantId, projectId, input.requestKey, String(counter.scope_key),
       Number(counter.failure_count), id, input.now, sha256Digest({ ownerRequest: input.ownerRequest })]);
     // ONE inbox item per escalating scope, and the id is the SAME digest, so a

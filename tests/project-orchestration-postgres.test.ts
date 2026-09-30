@@ -887,7 +887,11 @@ test("STRESS: 20 concurrent presses and owner retries of ONE description stay on
       const client = new Client(postgres.connection("coordinator")); await client.connect(); return client;
     }));
     try {
-      await seedTenant(admin, scope, { withBinding: true }); await seedIdentities(admin, scope, "");
+      // No tenant binding is needed here: this stress drives the COORDINATOR's
+      // failure counter, ledger and retry grant, none of which are intake-table
+      // writes, so 0093's binding policy is not in the path. `seedTenant` in this
+      // file takes no options for exactly that reason.
+      await seedTenant(admin, scope); await seedIdentities(admin, scope, "");
       const description = "Make the release notes match the shipped behaviour.";
       const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
       const scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
@@ -913,11 +917,11 @@ test("STRESS: 20 concurrent presses and owner retries of ONE description stay on
             ownerRequest: description, idempotencyKey: `orchestrator:burst-${String(index).padStart(4, "0")}`,
             now: LATER });
           return value.status;
-        } catch { return "threw" as const; }
+        } catch (error) { return `threw:${String((error as Error).message).slice(0, 90)}` as const; }
       }));
       // EVERY press is refused with Needs-you -- none of them is a run, and none
       // is a submission.
-      assert.deepEqual([...new Set(results)], ["needs_you"],
+      assert.deepEqual([...new Set(results.map(value => value.split(":")[0]))], ["needs_you"],
         `every concurrent press of an escalated description is refused as needs_you, got ${JSON.stringify(results)}`);
       assert.equal(runs, 0, "and not one of them spent a planner run");
 

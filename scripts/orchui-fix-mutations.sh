@@ -266,10 +266,13 @@ mutate B4c-base-revision-not-compared "$STORE" \
 # guard recomputes the scope key in SQL; if the two definitions drift, or the
 # guard stops checking, the raise is either silently dead or silently forged.
 # ---------------------------------------------------------------------------
-mutate E1-needs-you-guard-scope-check-removed "$NEEDSYOU_MIGRATION" \
-  "        AND c.scope_key IN (project_key, request_key_initial, request_key_resplit)) THEN" \
-  "        AND c.scope_key LIKE '%')) THEN" \
-  --lane db --pattern "failure counter is durable"
+# Repointed at 0205 for the same reason as E3: 0204's copy of this guard is
+# REPLACED wholesale by 0205, so mutating 0204 leaves the live guard intact and the
+# lane passes for the wrong reason. The guard that actually runs is the one below.
+mutate E1-needs-you-guard-scope-check-removed "$RETRY_MIGRATION" \
+  "    OR NEW.scope_key NOT IN (project_key_initial, project_key_resplit, request_key_initial, request_key_resplit)" \
+  "    OR false" \
+  --lane db --pattern "one description gives one"
 
 # E2: the SQL scope key stops matching the application's, which kills every
 # escalation while every other assertion still passes.
@@ -280,13 +283,18 @@ mutate E2-scope-key-definitions-drift "$NEEDSYOU_MIGRATION" \
 
 # E3: the guard accepts a raise with no counter at 2, which is the whole
 # property 0202 was written for.
-mutate E3-needs-you-count-check-removed "$NEEDSYOU_MIGRATION" \
+# 0205 REPLACES this guard body wholesale, so a mutation of 0204's copy is dead
+# code: it is created and then overwritten two migrations later, and the lane
+# passes because the live guard is 0205's, not because the check is optional. The
+# mutation below pointed at 0204 and ESCAPED for exactly that reason -- measured,
+# and the fix is to point it at the file whose body survives.
+mutate E3-needs-you-count-check-removed "$RETRY_MIGRATION" \
   "    OR NOT EXISTS (SELECT 1 FROM public.control_planner_failure_counters c
       WHERE c.tenant_id=NEW.tenant_id AND c.project_id=NEW.project_id
-        AND c.failure_count>=NEW.failure_count AND c.cleared_at IS NULL
-        AND c.scope_key IN (project_key, request_key_initial, request_key_resplit)) THEN" \
+        AND c.scope_key=NEW.scope_key
+        AND c.failure_count>=NEW.failure_count AND c.cleared_at IS NULL) THEN" \
   "    OR false THEN" \
-  --lane db --pattern "failure counter is durable"
+  --lane db --pattern "failure counter is durable|one description gives one"
 
 echo
 echo "CAUGHT: $pass   ESCAPED/ERROR: $fail"
@@ -401,6 +409,15 @@ mutate F4c-any-store-is-treated-as-having-a-grant "$COORD" \
 
 # The ledger identity in the ADAPTER: it is what stops one item per press, and the
 # in-memory double cannot stand in for it.
+# The CONFLICT TARGET, which the twenty-press stress found the hard way. Naming
+# the scope index alone leaves the primary key (tenant_id, id) unhandled, and 19 of
+# 20 concurrent raises of one description fail with a primary-key violation -- the
+# de-duplication holding only in sequence.
+mutate F5b-needs-you-conflict-target-names-one-index "$STORE" \\
+  '      ON CONFLICT DO NOTHING`,' \\
+  '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING`,' \\
+  --lane coord --pattern "STRESS: 20 concurrent presses"
+
 mutate F5a-adapter-keys-the-item-on-the-request-key "$STORE" \
   '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING`,' \
   '      ON CONFLICT (tenant_id,project_id,request_key) DO NOTHING`,' \
