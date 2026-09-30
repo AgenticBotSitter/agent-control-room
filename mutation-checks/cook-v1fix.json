@@ -15,8 +15,8 @@
   },
   {
     "file": "src/web/v1/private-database-preflight.ts",
-    "find": "OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)\n              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'\n",
-    "replace": "OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)\n",
+    "find": "p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)\n              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'\n",
+    "replace": "p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)\n",
     "test": "node --import tsx --test --test-name-pattern \"every SECURITY DEFINER function the preflight exempts is owned by the schema owner, unconditionally\" tests/private-web-role-preflight-declaration.test.ts",
     "why": "the agent-review boundary functions stay exempt only while they are owned by control_room_schema_owner for every login kind, not just the reviewer (cook/journey e27bfd68a)"
   },
