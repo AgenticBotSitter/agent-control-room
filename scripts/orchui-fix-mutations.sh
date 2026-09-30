@@ -269,10 +269,14 @@ mutate B4c-base-revision-not-compared "$STORE" \
 # Repointed at 0205 for the same reason as E3: 0204's copy of this guard is
 # REPLACED wholesale by 0205, so mutating 0204 leaves the live guard intact and the
 # lane passes for the wrong reason. The guard that actually runs is the one below.
+# The pattern is the test that carries the ASSERTION, which is the failure-counter
+# test -- the membership rows were added there, not to the round-3 test. Pointing
+# it at "one description gives one" was why E1 still escaped after the assertion
+# existed: the lane ran, but the test that would have failed was filtered out.
 mutate E1-needs-you-guard-scope-check-removed "$RETRY_MIGRATION" \
   "    OR NEW.scope_key NOT IN (project_key_initial, project_key_resplit, request_key_initial, request_key_resplit)" \
   "    OR false" \
-  --lane db --pattern "one description gives one"
+  --lane db --pattern "failure counter is durable"
 
 # E2: the SQL scope key stops matching the application's, which kills every
 # escalation while every other assertion still passes.
