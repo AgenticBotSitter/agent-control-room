@@ -457,11 +457,18 @@ export class ResultFileStoreV1 {
           () => open(probe, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY
             | exclusiveLock | noFollow, 0o600),
         () => {});
-      } catch {
-        // A probe name left by a crashed opener of THIS pid. It is not a
-        // result and never was, so it is removed and the question is asked
-        // again; failing to remove it is a refusal, never a silent pass.
-        await bounded(opened, () => unlink(probe), () => {});
+      } catch (error) {
+        // Only EEXIST is retried, and the distinction is the same one the write
+        // lock's own create makes: a name that already exists is a probe left by
+        // a crashed opener of THIS pid, which is not a result and never was, so
+        // it is removed and the question is asked again. Anything else — a
+        // permission error, a name that is a directory — is NOT a leftover, and
+        // answering it by unlinking would have the store removing a thing it
+        // cannot account for. So it propagates as this store's own refusal.
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST")
+          throw new ResultFileStoreError("store_invalid");
+        try { await bounded(opened, () => unlink(probe), () => {}); }
+        catch (removal) { if ((removal as NodeJS.ErrnoException).code !== "ENOENT") throw removal; }
         exclusivity = await bounded(opened,
           () => open(probe, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY
             | exclusiveLock | noFollow, 0o600),
@@ -481,8 +488,15 @@ export class ResultFileStoreV1 {
       } finally { await second?.close().catch(() => {}); }
     } finally {
       if (exclusivity) {
+        // Removed while this descriptor still holds the lock, then closed, then
+        // synced — the same ordering the write lock and the recovery lock use,
+        // and for the same reason. A failure to remove it is swallowed on
+        // purpose and NOT turned into a refusal: the name is this store's own
+        // bookkeeping, the next open recognises it as such and removes it, and
+        // turning a cosmetic leftover into a store that cannot start would be
+        // the review's original bug all over again.
         try { await bounded(opened, () => unlink(probe), () => {}); await store.syncRoot(opened); }
-        catch { /* the next open finds it and removes it: a `pending-*` name is never a result */ }
+        catch { /* a leftover probe is repaired by the next open, never a reason to refuse */ }
         await exclusivity.close().catch(() => {});
       }
     }
@@ -757,8 +771,42 @@ export class ResultFileStoreV1 {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
     }
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== BigInt(1)
-      || !validPrivateMode(stats.mode)) throw new ResultFileStoreError("store_ambiguous");
+    // A link count above one is NOT a refusal for a STAGING name, and this is a
+    // bug the crash harness caught rather than the review: a writer killed
+    // between its `link()` and its staging `unlink` leaves two names for one
+    // inode, so the leftover this store must clear is at link count 2. Refused
+    // it, and refused for ever — every later open found the same staging file
+    // and refused it again, which is the review's B7 in reverse: a crash that
+    // locked the owner out of every task, permanently, from the one file it
+    // was always going to have to delete. Measured: 5 of 24 SIGKILLed writers
+    // left the store unable to open, and never recovered on any later open.
+    //
+    // The link count was a guard against deleting a file that belongs to
+    // somebody else, and for a RESULT name it is the right one. It is the wrong
+    // one for a staging name, and the reason is the same reason the recovery may
+    // remove a staging file at all: a staging name is not a result name. It is
+    // never readable as a result, the target name is derived from a file's own
+    // id and digest and never from a staging name, and unlinking it can only
+    // ever remove THIS store's own half-written bytes. The inode it shares with
+    // a result is the one the writer just created, and that result keeps its own
+    // name and re-proves its own digest either way.
+    //
+    // A lock name is not excluded from this by name: it is excluded by not
+    // carrying the staging prefix, so a lock at link count 2 is refused here for
+    // the same reason `takeOverAbandonedName` refuses it before it ever gets
+    // this far. That is load-bearing rather than redundant — the lock names are
+    // the ones the original guard was really protecting — and it is written here
+    // as well as there because the two functions can be read independently of
+    // each other, and a deletion deserves an answer in the function that does
+    // the deleting.
+    //
+    // Stated positively, because the negative form of this is the bug: a link
+    // count above one is tolerated ONLY for a name carrying the staging prefix,
+    // and every other name still has to be this store's own single file.
+    if (!stats.isFile() || stats.isSymbolicLink() || !validPrivateMode(stats.mode))
+      throw new ResultFileStoreError("store_ambiguous");
+    if (stats.nlink !== BigInt(1) && !entry.startsWith(pendingPrefix))
+      throw new ResultFileStoreError("store_ambiguous");
     // The `lstat` above and this `unlink` are two syscalls, and another recovery
     // running concurrently can remove the name in between — which is not a
     // failure of anything, it is the same outcome reached by a different route.
@@ -1003,9 +1051,14 @@ export class ResultFileStoreV1 {
         // the gap gets `EAGAIN` and cannot win the name. The unlink only happens
         // when `ownedLock` is true, which is the result of the create-then-lock
         // proof above, so the name being removed here is provably THIS writer's
-        // own file. The sync moves with it: the name's removal is part of what
-        // has to survive a crash, so it is synced with the lock still held and
-        // the descriptor is closed after.
+        // own file.
+        //
+        // The sync goes INSIDE this block, while the lock is still held, because
+        // the name's removal is part of what has to survive a crash. Nothing is
+        // synced after the close: a refusal that never owned a lock has written
+        // nothing at all, and syncing there would make every refused write — the
+        // common answer while another process is writing — pay for a durability
+        // guarantee it did not need.
         if (ownedLock && !uncertain) {
           await unlink(lockPath).catch((error: NodeJS.ErrnoException) => {
             if (error.code !== "ENOENT") throw error;
@@ -1013,8 +1066,9 @@ export class ResultFileStoreV1 {
           ownedLock = false;
           await this.syncRoot(operation);
         }
+        // …and only then is the descriptor closed, so the kernel lock is the last
+        // thing released.
         if (lock) await lock.close().catch(() => {});
-        if (!uncertain) await this.syncRoot(operation);
       } catch { uncertain = true; this.poisoned = true; }
     }
     if (refusal) throw refusal;

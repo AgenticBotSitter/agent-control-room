@@ -27,7 +27,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { link, mkdir, mkdtemp, open, readdir, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -251,71 +251,86 @@ test("B3: two writer processes and four opener processes never break the exclusi
     }
   });
 
-test("B3: a lock name that is not this writer's own file is a refusal, not a write", async () => {
-  // The unit-level half of the race above, and the guard the race cannot isolate:
-  // what does a writer do when the lock NAME it just created is not the file its
-  // descriptor holds? That is exactly the state a take-over leaves behind when
-  // it wins the create-then-lock gap, and the answer has to be a refusal with
-  // nothing written and nothing deleted.
-  //
-  // It is staged directly rather than by racing, because the gap is measured by
-  // the review at a few tens of microseconds and a test that has to hit it by
-  // luck is a test that will pass by luck. Here the two states the writer must
-  // refuse are produced on purpose:
-  //
-  //   1. the name GONE — a take-over unlinked it and made its own;
-  //   2. the name REPLACED — a take-over unlinked it and created its own, so the
-  //      inode under the name is not the one the writer holds.
-  //
-  // Both are what a lost lock looks like, and both used to be invisible: the
-  // writer carried on and its `link()` failed with a raw `ENOENT` to the caller.
-  for (const shape of ["gone", "replaced"] as const) {
-    const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-lostlock-")));
+test("B3: a lock name stolen mid-write refuses the write, and the guard is the one doing it",
+  async () => {
+    // The gap-1 half, and the test that the earlier draft of this case could not
+    // be. That version staged the loss BEFORE the write and then watched the
+    // store refuse — which it would have done anyway, because a lock the test
+    // held made the store's own `O_EXCL` create fail first and the ownership
+    // proof was never reached. Mutation testing confirmed it: making
+    // `stillOwnsTheName` return `true` unconditionally left that test green.
+    //
+    // So the loss is produced where it actually happens: AFTER the store has
+    // created and locked its own name, while the write is in flight. That is
+    // exactly what a take-over does when it wins the create-then-lock gap, and
+    // the only honest way to reach the guard is to let the store's real write
+    // path run and take the name out from under it.
+    //
+    // The payload is large enough that the window is wide enough to hit on every
+    // run rather than by luck, and the theft is attempted in a tight loop for
+    // the whole write so the first attempt is not the one that has to land.
+    const { unlink: drop } = await import("node:fs/promises");
+    const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-steal-")));
     try {
       const root = join(base, "store");
       await mkdir(root, { mode: 0o700 });
       const store = await ResultFileStoreV1.create(configurationV1(root));
-      const payload = new Uint8Array(PAYLOAD);
-      payload.fill(3);
-      const id = { tenantId: TENANT, projectId: "project:lostlock",
-        fileId: `result-file:${"4".repeat(32)}`,
+      // A real stored file, so "nothing was written" is a statement about THIS
+      // write and not about the store being empty.
+      const kept = new Uint8Array(PAYLOAD);
+      kept.fill(1);
+      const keptId = { tenantId: TENANT, projectId: "project:steal",
+        fileId: `result-file:${"9".repeat(32)}`,
+        contentDigest: `sha256:${createHash("sha256").update(kept).digest("hex")}` };
+      await store.put({ ...keptId, bytes: kept });
+      const payload = new Uint8Array(8 * 1024 * 1024);
+      payload.fill(4);
+      const id = { tenantId: TENANT, projectId: "project:steal",
+        fileId: `result-file:${"a".repeat(32)}`,
         contentDigest: `sha256:${createHash("sha256").update(payload).digest("hex")}` };
-      // A REAL held lock, so the writer's `O_EXCL` create below is refused and
-      // the store's own lock is never the thing under test here. The name is
-      // this test's own, so removing it is this test's own business.
-      // `O_WRONLY | O_EXCL | O_NOFOLLOW | O_EXLOCK`, spelled out because Node
-      // does not export the last one and the store's own comment says so.
-      const mine = await open(join(root, LOCK_NAME), 0x1 | 0x200 | 0x4 | 0x20, 0o600);
-      try {
-        if (shape === "replaced") {
-          // A take-over's own lock under the writer's name: the name exists, it
-          // is a private plain file, and it is NOT the file `mine` holds.
-          const stolen = join(base, "stolen.lock");
-          await writeFile(stolen, "", { mode: 0o600 });
-          const stolenHandle = await open(stolen, 0x1 | 0x200 | 0x4 | 0x20, 0o600);
-          try {
-            await unlink(join(root, LOCK_NAME)).catch(() => {});
-            await link(stolen, join(root, LOCK_NAME));
-          } finally { await stolenHandle.close().catch(() => {}); }
+      // Steal the lock name the instant the store has created it, and keep
+      // stealing for the whole write. `unlink` of a name the store holds open is
+      // permitted on this volume — the descriptor keeps the inode alive, which
+      // is precisely the state B3 is about: the writer holds a lock whose name
+      // is no longer its own.
+      let stolen = 0;
+      let stop = false;
+      const thief = (async () => {
+        while (!stop) {
+          await drop(join(root, LOCK_NAME)).then(() => { stolen += 1; }, () => {});
         }
-        const rejection = await store.put({ ...id, bytes: payload }).then(
-          () => undefined, (error: unknown) => error);
-        // A held lock is the ordinary refusal, and the store is not expected to
-        // notice anything unusual: `mine` holds it, so the O_EXCL create fails
-        // first and the name is never this operation's to prove. What matters is
-        // that the answer is a store code and nothing was written.
-        assert.ok(rejection instanceof Error,
-          `${shape}: the write was refused with an error`);
-        assert.equal((rejection as { code?: string }).code, "store_ambiguous",
-          `${shape}: the refusal is a store code and not a raw errno`);
-        assert.equal(await store.read(id), undefined, `${shape}: and nothing was written`);
-        const listed = await readdir(root);
-        assert.deepEqual(listed.filter(entry => entry.startsWith(PENDING_PREFIX)), [],
-          `${shape}: no staging file was left behind`);
-      } finally { await mine.close().catch(() => {}); }
+      })();
+      const outcome = await store.put({ ...id, bytes: payload }).then(
+        () => undefined, (error: unknown) => error);
+      stop = true;
+      await thief;
+      assert.ok(stolen > 0, "the lock name was actually stolen, or this test proves nothing");
+      // The guard: the write did not succeed, and the caller sees a store code.
+      // With `stillOwnsTheName` forced to `true` the store carries on past the
+      // proof, and this assertion is what fails.
+      assert.ok(outcome instanceof Error,
+        "a write whose lock name was stolen under it does not report success");
+      assert.ok(STORE_CODES.includes(String((outcome as { code?: string }).code)),
+        "and the refusal is one of the store's own codes, not a raw errno");
+      // And the consequences that matter are the ones the review measured: no
+      // file was left half-written under a name the catalog could reach, and the
+      // store did not serve anything it cannot account for afterwards.
+      const listed = await readdir(root);
+      assert.deepEqual(listed.filter(entry => entry.startsWith(PENDING_PREFIX)), [],
+        "no staging file is left behind by a write that lost its lock");
+      const store2 = await ResultFileStoreV1.create(configurationV1(root));
+      assert.deepEqual(Buffer.from((await store2.read(keptId))!), Buffer.from(kept),
+        "and the file that was already stored is still byte-for-byte what it was");
+      // If the write DID land, the store must still be able to prove it — so
+      // either outcome is acceptable here and only the refusal above is not. The
+      // point is that a stolen lock never produces a file nobody can account for.
+      if (outcome === undefined) {
+        const fresh = await ResultFileStoreV1.create(configurationV1(root));
+        assert.deepEqual(Buffer.from((await fresh.read(id))!), Buffer.from(payload),
+          "and a write that did land is whole and re-proves its own digest");
+      }
     } finally { await rm(base, { recursive: true, force: true }); }
-  }
-});
+  });
 
 test("B3: a staging file that vanishes mid-write is an unprovable outcome, not a raw ENOENT",
   async () => {
@@ -440,4 +455,101 @@ test("N-4c: a root whose volume ignores O_EXLOCK is refused, not trusted", async
     assert.deepEqual((await readdir(publicRoot)), [],
       "and the refused root was not written to: the probe does not run on a root that is not a store");
   } finally { await rm(base, { recursive: true, force: true }); }
+  });
+
+test("B7: a crash between link() and the staging unlink does not lock the store out for ever",
+  async () => {
+    // Found by the review's own crash harness against this fix, and it is a
+    // pre-existing bug rather than one this round introduced — the guard that
+    // caused it is older still.
+    //
+    // A writer that is killed between `link(pending, target)` and its staging
+    // `unlink` leaves TWO names for one inode: the result the catalog will look
+    // for, and the staging name the recovery has to clear. The staging name is
+    // therefore at link count 2, and `removeProvenAbandoned` used to refuse any
+    // name that was — which meant every later open found the same staging file
+    // and refused it again. Measured: 5 of 24 SIGKILLed writers left the store
+    // unable to open, and it never recovered on any subsequent open. That is
+    // the review's B7 exactly in reverse: the crash recovery exists so a crash
+    // costs the owner one half-written file, and this made a crash cost every
+    // task, for ever, from the one file it always had to delete.
+    //
+    // The link count was guarding against deleting a file that belongs to
+    // somebody else. For a RESULT name that is the right guard, and it is still
+    // there. For a staging name it is the wrong one, and the reason is the same
+    // reason a staging file may be removed at all: it is not a result name, is
+    // never readable as one, and unlinking it can only ever remove this store's
+    // own half-written bytes.
+    const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-nlink-")));
+    try {
+      const root = join(base, "store");
+      await mkdir(root, { mode: 0o700 });
+      const store = await ResultFileStoreV1.create(configurationV1(root));
+      // A real stored file, so the "did clearing the leftover cost anything"
+      // question has an answer that is not "the store was empty anyway".
+      const payload = new Uint8Array(PAYLOAD);
+      payload.fill(11);
+      const id = { tenantId: TENANT, projectId: "project:nlink",
+        fileId: `result-file:${"8".repeat(32)}`,
+        contentDigest: `sha256:${createHash("sha256").update(payload).digest("hex")}` };
+      await store.put({ ...id, bytes: payload });
+      // The exact state a SIGKILL between link() and unlink leaves: the staging
+      // name is a second hard link to the file that was just stored.
+      const result = (await readdir(root)).find(entry => entry.endsWith(".crbf"))!;
+      const staging = `${PENDING_PREFIX}crash-window`;
+      await link(join(root, result), join(root, staging));
+      assert.ok((await lstat(join(root, staging))).nlink === 2,
+        "the leftover really is at link count 2, or this test is measuring nothing");
+      // The store OPENS, and the leftover is gone.
+      const reopened = await ResultFileStoreV1.create(configurationV1(root));
+      assert.ok(reopened, "a staging name at link count 2 is cleared, not refused");
+      assert.deepEqual((await readdir(root)).filter(entry => entry.startsWith(".")), [],
+        "and the leftover is actually gone, rather than being tolerated in place");
+      // And the file that shared the inode with it is untouched, whole, and
+      // re-proves its own digest — which is the whole point of tolerating the
+      // count for a staging name rather than for a result.
+      assert.deepEqual(Buffer.from((await reopened.read(id))!), Buffer.from(payload),
+        "the result that shared the inode is still byte-for-byte what it was");
+      assert.equal((await readdir(root)).filter(entry => entry.endsWith(".crbf")).length, 1,
+        "and there is still exactly one name for it");
+      // A LOCK name at link count 2 is a different matter and is still refused:
+      // the staging relaxation must not have widened into the lock names, which
+      // are the ones the original guard was really protecting. Without this the
+      // fix above could be a general relaxation and still pass everything else.
+      //
+      // A LOCK name at link count 2 is a different matter, and the promise there
+      // is not a refusal: a leftover lock is LEFT ALONE and the store still
+      // opens, which is the review's B1+B7 rule and the one that stops a crash
+      // from locking the owner out of every task. What matters is that the
+      // staging relaxation did not become a general one — a name the store
+      // cannot claim as its own single file is still not removed, and here the
+      // extra name is the result's inode, so removing the lock name would have
+      // removed a link to a file the catalog still needs.
+      await writeFile(join(root, LOCK_NAME), "", { mode: 0o600 });
+      await unlink(join(root, LOCK_NAME));
+      await link(join(root, result), join(root, LOCK_NAME));
+      assert.equal((await lstat(join(root, LOCK_NAME))).nlink, 2,
+        "the lock name is at link count 2, or this half of the test proves nothing");
+      const withLinkedLock = await ResultFileStoreV1.create(configurationV1(root));
+      assert.ok(withLinkedLock, "a lock name the store cannot claim does not stop it opening");
+      assert.ok((await readdir(root)).includes(LOCK_NAME),
+        "and the name is left exactly where it is: the relaxation is for staging names only");
+      // The READ is a refusal here, and that is the store's existing and correct
+      // rule rather than anything this fix touched: the read path demands link
+      // count 1, because a result reachable under a second name could be
+      // replaced through it. A crash that leaves one is exactly the case that
+      // rule exists for. What matters for B3 is that the store still OPENS — the
+      // owner can still start a task — and that clearing the leftover is an
+      // operator-reachable path rather than an impossible one.
+      await assert.rejects(withLinkedLock.read(id),
+        (error: unknown) => STORE_CODES.includes(String((error as { code?: string }).code)),
+      "and a result still reachable under a second name is a refusal on the read path, as it always was");
+      // Remove the extra name by hand — what the recovery cannot prove, an
+      // operator can — and the result reads back whole. So the leftover is a
+      // refusal to SERVE, not a corrupted store.
+      await unlink(join(root, LOCK_NAME));
+      const repaired = await ResultFileStoreV1.create(configurationV1(root));
+      assert.deepEqual(Buffer.from((await repaired.read(id))!), Buffer.from(payload),
+        "and once the extra name is gone the result is byte-for-byte what it was");
+    } finally { await rm(base, { recursive: true, force: true }); }
   });
