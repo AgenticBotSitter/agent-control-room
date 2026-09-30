@@ -128,10 +128,28 @@ test("describe maps proposal, failure, stop and bad input without granting autho
   await assert.rejects(proposed.service.describe(identity, projectId, { description: "x".repeat(16_001) },
     "request:test-over-limit"), /invalid_request/);
   await assert.rejects(proposed.service.describe(identity, projectId, { description: "valid" }, "short"), /invalid_request/);
-  const failed = await fixture({ result: { status: "planner_failed", reasonCode: "planner_run_failed", failureCount: 1,
-    startsWork: false, grantsExecutionAuthority: false } }).service.describe(identity, projectId,
+  // B3: the two failure states must be told apart, because only one of them has
+  // raised a Needs-you item. The old test asserted that a FIRST failure reported
+  // needsYou and said "Needs-you", which is a label for an item that did not
+  // exist -- and on a permanently broken planner that is the message the owner
+  // reads on every press, forever.
+  const firstFailure = await fixture({ result: { status: "planner_failed", reasonCode: "planner_run_failed",
+    failureCount: 1, startsWork: false, grantsExecutionAuthority: false } }).service.describe(identity, projectId,
     { description: "Prepare it" }, "request:test-0003");
-  assert.deepEqual(failed.status === "failed" ? [failed.needsYou, failed.message.includes("Needs-you")] : [], [true, true]);
+  assert.equal(firstFailure.status, "failed");
+  if (firstFailure.status === "failed") {
+    assert.equal(firstFailure.needsYou, false, "a first failure has raised nothing, so it must not claim Needs-you");
+    assert.equal(firstFailure.message.includes("Needs-you"), false,
+      "... and it must not name Needs-you in the copy either");
+    assert.match(firstFailure.message, /try again/u, "a first failure tells the owner to try again");
+  }
+  // The escalated state DOES say it, because at that point an item exists.
+  const escalated = await fixture({ result: { status: "needs_you", reasonCode: "orchestrator_failed_twice",
+    startsWork: false, grantsExecutionAuthority: false } }).service.describe(identity, projectId,
+    { description: "Prepare it" }, "request:test-0005");
+  assert.deepEqual(escalated.status === "failed"
+    ? [escalated.needsYou, escalated.message.includes("Needs-you")] : [], [true, true],
+  "an escalated failure is the one that may say Needs-you, and it is the one that has raised an item");
   const stopped = await fixture({ result: { status: "stopped", startsWork: false, grantsExecutionAuthority: false } }).service
     .describe(identity, projectId, { description: "Prepare it" }, "request:test-0004");
   assert.equal(stopped.status, "stopped");

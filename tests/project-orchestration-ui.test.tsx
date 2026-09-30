@@ -194,18 +194,40 @@ test("Use this issues no revision save; it only pre-fills the owner's own form",
     assert.equal(posts.some(post => post.body.includes('"operation":"revise"')), false,
       "Use this must never write a revision");
     // The owner's own form now holds the suggested plan, open, with the reason.
-    const textarea = view.document.querySelector("textarea") as HTMLTextAreaElement | null;
-    assert.ok(textarea, "the revision form is on the page");
-    assert.match(textarea.value, /First part/);
+    //
+    // The revision form's textarea is the "Advanced proposal JSON" draft, named
+    // by its own label. It used to be the ONLY textarea on the page, and
+    // `querySelector("textarea")` was enough -- until cook/v1's
+    // ProposalGraphEditor added per-task instructions/criteria/tests textareas
+    // above it, at which point that selector silently picked the first task's
+    // instructions and this assertion started failing on unrelated content.
+    // Selecting by the field the assertion is about is the fix, and the "it must
+    // be the JSON draft" half is asserted too so the next added textarea cannot
+    // move the target again.
+    const textareas = [...view.document.querySelectorAll("textarea")] as HTMLTextAreaElement[];
+    const jsonDraft = textareas.find(candidate =>
+      candidate.closest("label")?.textContent?.includes("Strict proposal JSON") === true);
+    assert.ok(jsonDraft, "the revision form's strict-JSON draft is on the page");
+    assert.match(jsonDraft.value, /First part/);
     assert.equal(view.document.querySelector("details[open]")?.textContent?.includes("Revise this proposal"), true);
     // The reason code the prefill set is the INPUT's value, which textContent does
     // not carry; read it as the browser would.
     const reason = [...view.document.querySelectorAll("input")].find(input =>
       input.getAttribute("pattern") === "[a-z][a-z0-9_]{2,63}");
     assert.equal(reason?.value, "chief_of_staff_split", "the prefill records WHY the revision is being made");
-    // The only save button on the page is the pre-existing revision save, and it
-    // was never pressed: an empty decision set keeps it disabled.
-    assert.equal(buttonNamed(view.document, "Save all item decisions")?.disabled, true);
+    // The save control on the page is the revision save, and it was never
+    // pressed: "Use this" must only fill the form, never submit it.
+    //
+    // This used to look for a button named "Save all item decisions", which no
+    // longer exists in either this branch or cook/v1 -- the reviewer's M17
+    // mutation and the "no revision save" property are both about the revision
+    // save, so that is the button asserted here. The POST list above is the
+    // stronger half of the same property (exactly one POST, the prefill read),
+    // and this is the half that would catch a click being wired to the wrong
+    // handler.
+    assert.equal(buttonNamed(view.document, "Save revision")?.disabled, false,
+      "the revision save is enabled but untouched: Use this made the form editable, not saved");
+    assert.equal(posts.length, 1, "still exactly one POST after the form is ready to save, so nothing was saved");
   } finally { await view.close(); }
   // The static markup proves the same card renders on the batch detail component
   // directly, with the reason code the prefill set.
@@ -319,16 +341,42 @@ test("a dropped response retains the request: Prepare stays disabled until it is
 test("a planner failure is a plain Needs-you alert", async () => {
   const failed = await mount(createElement(ProjectOrchestrationPanel, { projectId,
     client: recordingClient(settings("selected"), noCalls(), async () => ({ status: "failed", needsYou: true,
-      message: "Needs-you: the chief of staff could not prepare a proposal.", startsWork: false,
-      grantsExecutionAuthority: false })) }));
+      message: "Needs-you: the chief of staff failed twice on this description, so it has stopped and raised an item for you.",
+      startsWork: false, grantsExecutionAuthority: false })) }));
   try {
     const textarea = failed.document.querySelector("textarea") as HTMLTextAreaElement;
     await failed.act(async () => { enter(failed.window, textarea, "Plan this"); });
     await failed.act(async () => { buttonNamed(failed.document, "Prepare proposal")?.click(); await Promise.resolve(); });
     const alert = failed.document.querySelector("[role='alert']");
     assert.ok(alert);
-    assert.match(alert.textContent ?? "", /Needs-you: the chief of staff could not prepare a proposal/);
+    assert.match(alert.textContent ?? "", /Needs-you: the chief of staff failed twice/);
   } finally { await failed.close(); }
+});
+
+test("a FIRST planner failure is not announced as a Needs-you, because none exists", async () => {
+  // The owner-facing contract this pins: an escalation is a thing that HAPPENED,
+  // and the panel announces it as an alert. A first failure has raised nothing,
+  // so it is reported as a status with copy that says so. Announcing it as a
+  // Needs-you is a label for an item that does not exist, and on a permanently
+  // broken planner that is what the owner reads on every single press.
+  const first = await mount(createElement(ProjectOrchestrationPanel, { projectId,
+    client: recordingClient(settings("selected"), noCalls(), async () => ({ status: "failed", needsYou: false,
+      message: "The chief of staff could not prepare a proposal this time. Your description is still here; try again, or choose another chief of staff.",
+      startsWork: false, grantsExecutionAuthority: false })) }));
+  try {
+    const textarea = first.document.querySelector("textarea") as HTMLTextAreaElement;
+    await first.act(async () => { enter(first.window, textarea, "Plan this"); });
+    await first.act(async () => { buttonNamed(first.document, "Prepare proposal")?.click(); await Promise.resolve(); });
+    assert.equal(first.document.querySelector("[role='alert']"), null,
+      "a first failure is not an alert: nothing needs the owner's urgent attention yet");
+    const status = first.document.querySelector("[role='status']");
+    assert.ok(status, "it is still reported, as a status");
+    assert.match(status.textContent ?? "", /could not prepare a proposal this time/u);
+    assert.doesNotMatch(status.textContent ?? "", /Needs-you/u,
+      "and it must not name a Needs-you item that was never raised");
+    // The owner still has their description, which is the thing a retry needs.
+    assert.equal((first.document.querySelector("textarea") as HTMLTextAreaElement).value, "Plan this");
+  } finally { await first.close(); }
 });
 
 test("hostile planner text is rendered as text, never as markup", () => {

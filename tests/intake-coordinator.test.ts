@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { workBatchProposalDigestV1, InMemoryIntakePlannerFailureStoreV1,
-  InMemoryIntakeSuggestionStoreV1, IntakeCoordinatorV1,
-  type IntakePlannerPortV1, type WorkBatchProposalV1, type WorkBatchQueueCatalogV1 } from
+  InMemoryIntakeSuggestionStoreV1, IntakeCoordinatorV1, intakeProjectScopeV1, intakeRequestScopeV1,
+  type IntakeCompletionLookupPortV1, type IntakePlannerPortV1, type WorkBatchProposalV1,
+  type WorkBatchQueueCatalogV1 } from
   "../src/work-intake/v1";
 import type { AuthenticatedPrincipal } from "../src/security";
 
@@ -29,7 +30,7 @@ function proposal(overrides: Partial<WorkBatchProposalV1> = {}): WorkBatchPropos
 
 type HarnessOptions = Readonly<{ reply?: () => Promise<string> | string; configured?: boolean;
   allowanceAllowed?: boolean; authorized?: boolean; submissionRefused?: boolean;
-  failures?: InMemoryIntakePlannerFailureStoreV1 }>;
+  failures?: InMemoryIntakePlannerFailureStoreV1; completions?: IntakeCompletionLookupPortV1 }>;
 
 function harness(options: HarnessOptions = {}) {
   const calls = { selection: 0, planner: 0, allowance: [] as unknown[], needsYou: [] as unknown[],
@@ -68,7 +69,7 @@ function harness(options: HarnessOptions = {}) {
         JSON.parse(input.rawProposal) as WorkBatchProposalV1), revision: 1 as const, replayed: false,
       startsWork: false as const, grantsExecutionAuthority: false as const };
     }
-  }, suggestions, catalog, ["code.change", "code.review"]);
+  }, suggestions, catalog, ["code.change", "code.review"], options.completions);
   const initial = (changes: Partial<Parameters<IntakeCoordinatorV1["coordinateInitial"]>[0]> = {}) =>
     coordinator.coordinateInitial({ principal, projectId: "project:test", ownerRequest: "Build and independently check it.",
       idempotencyKey: "planner-request-0001", now: NOW, ...changes });
@@ -163,8 +164,107 @@ test("a retry after one failure can succeed and clears the failure count", async
   } });
   assert.equal((await f.initial()).status, "planner_failed");
   assert.equal((await f.initial()).status, "submitted");
-  assert.equal(f.failures.count("initial:tenant:test:project:test:planner-request-0001"), 0);
+  // A success clears BOTH scopes, so neither can escalate a later, unrelated
+  // failure of the same description on a counter that already saw a recovery.
+  assert.equal(f.failures.count(intakeRequestScopeV1("initial", "tenant:test", "project:test", "planner-request-0001")), 0);
+  assert.equal(f.failures.count(intakeProjectScopeV1("initial", "tenant:test", "project:test",
+    "Build and independently check it.")), 0);
   assert.equal(f.calls.needsYou.length, 0);
+});
+
+test("B2: a repeat of a completed request is answered from storage, with no run and no allowance", async () => {
+  // A durable store that has recorded this request's completion, as
+  // PostgresIntakeCompletionLookupV1 does from control_idempotency.
+  const lookups: Array<{ requestKey: string; identityId: string }> = [];
+  const completions: IntakeCompletionLookupPortV1 = { completed(input) {
+    lookups.push({ requestKey: input.requestKey, identityId: input.identityId });
+    return { status: "submitted", startsWork: false, grantsExecutionAuthority: false,
+      submission: { schema: "control-room.work-batch-receipt/v1", batchId: "batch:planned",
+        projectId: "project:test", state: "proposed", proposalDigest: workBatchProposalDigestV1(proposal()),
+        revision: 1, replayed: true, startsWork: false, grantsExecutionAuthority: false },
+      flagsByLocalId: { build: [], check: [] } };
+  } };
+  const f = harness({ completions });
+  const first = await f.initial();
+  const second = await f.initial();
+  assert.equal(first.status, "submitted");
+  assert.equal(second.status, "submitted");
+  assert.deepEqual(lookups, [{ requestKey: "planner-request-0001", identityId: "identity:planner" },
+    { requestKey: "planner-request-0001", identityId: "identity:planner" }],
+  "the lookup is keyed by request AND identity, because 0093 scopes the durable row per identity");
+  assert.equal(f.calls.planner, 0, "an already-completed request never spends a planner run");
+  assert.equal(f.calls.allowance.length, 0, "...nor an allowance unit");
+  assert.equal(f.calls.submissions.length, 0, "...nor a second submission");
+  // And the stored result is handed back AS IS, so the caller can tell a receipt
+  // returned from storage from one produced now.
+  if (first.status === "submitted" && second.status === "submitted")
+    assert.equal(second.submission.replayed, true, "the stored receipt keeps its replayed marker");
+});
+
+test("B2: without a completion lookup a repeat still runs, and that is the safe direction", async () => {
+  // The lookup port is optional. Its ABSENCE must mean "cannot tell", never
+  // "never completed": a fabricated receipt would hand the owner a batch id that
+  // does not exist, which is worse than an extra run. So an unconfigured
+  // coordinator behaves exactly as it did before the port existed.
+  const f = harness();
+  assert.equal((await f.initial()).status, "submitted");
+  assert.equal((await f.initial()).status, "submitted");
+  assert.equal(f.calls.planner, 2, "without the port a repeat is not answered from storage");
+  assert.equal(f.calls.submissions.length, 2);
+});
+
+test("B3: a fresh idempotency key per press still reaches Needs-you on the second failure", async () => {
+  // This is what the PANEL does: the browser mints `orchestrator:<uuid>` on every
+  // press, and a confirmed planner_failed releases the retained key, so the
+  // per-request scope was fresh at 1 forever and nothing escalated. Measured
+  // against the real coordinator before the fix: four presses, four runs, zero
+  // Needs-you items.
+  const f = harness({ reply: () => { throw new Error("planner is down"); } });
+  const first = await f.initial({ idempotencyKey: "orchestrator:press-one-0001" });
+  const second = await f.initial({ idempotencyKey: "orchestrator:press-two-0002" });
+  assert.equal(first.status, "planner_failed");
+  assert.equal(second.status, "needs_you",
+    "the second press with a DIFFERENT key must still escalate: that is the owner's repeat");
+  assert.equal(f.calls.needsYou.length, 1, "one escalation, not one per press");
+  assert.equal(f.calls.planner, 2);
+  const third = await f.initial({ idempotencyKey: "orchestrator:press-three-0003" });
+  assert.equal(third.status, "needs_you");
+  assert.equal(f.calls.planner, 2, "and the third press costs no further run");
+});
+
+test("B3: a different description in the same project has its own counter and does not escalate", async () => {
+  // The project scope digests the description, so a failing description cannot
+  // escalate an unrelated one, and a second description failing twice escalates
+  // only itself.
+  const f = harness({ reply: () => { throw new Error("planner is down"); } });
+  assert.equal((await f.initial({ idempotencyKey: "orchestrator:a-first-00001", ownerRequest: "First job." })).status,
+    "planner_failed");
+  // A different description, first failure: a separate counter, so still a
+  // first failure and not an escalation of the first description.
+  assert.equal((await f.initial({ idempotencyKey: "orchestrator:b-first-00001", ownerRequest: "Second job." })).status,
+    "planner_failed");
+  // ... and the SECOND failure of the second description escalates that one.
+  assert.equal((await f.initial({ idempotencyKey: "orchestrator:b-second-0002", ownerRequest: "Second job." })).status,
+    "needs_you");
+  assert.deepEqual(f.calls.needsYou.map(call => (call as { ownerRequest: string }).ownerRequest), ["Second job."],
+    "only the description that actually failed twice is escalated");
+});
+
+test("B3: a 180-character request key still produces a legal scope key", async () => {
+  // The owner adapter accepts {11,179} characters. Spelled out as a string, the
+  // old scope was longer than 0202's 180-character CHECK, so record() raised
+  // 23514, the failure was never counted, and the second failure could never
+  // escalate at all. A digest is a fixed length whatever the caller's key is.
+  const long = `k${"x".repeat(179)}`;
+  const f = harness({ reply: () => { throw new Error("planner is down"); } });
+  const scope = intakeRequestScopeV1("initial", "tenant:test", "project:test", long);
+  assert.match(scope, /^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u,
+    "a digest scope always fits 0202's scope_key CHECK");
+  assert.ok(scope.length < 100, `the scope is short and fixed, not derived from the key's length: ${scope.length}`);
+  assert.equal((await f.initial({ idempotencyKey: long })).status, "planner_failed");
+  assert.equal(f.failures.count(scope), 1, "the long key's failure was counted, not refused by the CHECK");
+  assert.equal((await f.initial({ idempotencyKey: long })).status, "needs_you",
+    "so the second failure under that key can escalate");
 });
 
 test("no orchestrator is a manual path with no planner, allowance, or submission call", async () => {
