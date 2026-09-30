@@ -1012,6 +1012,17 @@ function acquireToolSlot(state, signal) {
 }
 function releaseToolSlot(state) { const next = state.queue.shift(); if (next) { next.signal?.removeEventListener("abort", next.onAbort); next.resolve(); } else state.active -= 1; }
 
+async function restoreToolWorkPermissions(path) {
+  let info;
+  try { info = await lstat(path); } catch { return; }
+  try {
+    if (info.isDirectory()) {
+      await chmod(path, 0o700);
+      for (const entry of await readdir(path)) await restoreToolWorkPermissions(joinPath(path, entry));
+    } else if (!info.isSymbolicLink()) await chmod(path, 0o600);
+  } catch { /* removal below remains best effort and must not retain the slot */ }
+}
+
 export function createLocalToolAdapterRunner(registry, options = {}) {
   if (!registry?.adapters || !Number.isSafeInteger(registry.maxConcurrent)) throw new Error("tool_adapter_registry_invalid");
   const state = { active: 0, limit: registry.maxConcurrent, queue: [] }, spawner = options.spawner ?? spawn;
@@ -1051,7 +1062,7 @@ export function createLocalToolAdapterRunner(registry, options = {}) {
       const needles = secretNeedles(options.secrets ?? []); if (containsSecret(stdout, needles) || containsSecret(stderr, needles)) throw toolError("tool_adapter_secret_refused", "The local tool output contained secret material.");
       const files = await collectToolOutputs(outputRoot, [...outputPaths.values()], adapter.maxOutputBytes, needles); const summary = storableText(stdout);
       return Object.freeze({ adapterId: adapter.id, capability: adapter.capability, summary: summary && Buffer.byteLength(summary, "utf8") <= MAX_RESULT_BYTES ? summary : `Local tool ${adapter.id} completed.`, files });
-    } finally { try { if (work) await removeWork(work, { recursive: true, force: true }); } catch (error) { log(`Could not remove a local tool work directory: ${error?.code ?? "unknown"}`); } finally { releaseToolSlot(state); } }
+    } finally { try { if (work) { await restoreToolWorkPermissions(work); await removeWork(work, { recursive: true, force: true }); } } catch (error) { log(`Could not remove a local tool work directory: ${error?.code ?? "unknown"}`); } finally { releaseToolSlot(state); } }
   } });
 }
 

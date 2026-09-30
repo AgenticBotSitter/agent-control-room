@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn as nodeSpawn } from "node:child_process";
-import { chmod, link, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -267,6 +267,14 @@ test("rechecks executable identity, refuses output hard links, and cleanup failu
   const runner = connector.createLocalToolAdapterRunner(cleanRegistry, { removeWork: async () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); } });
   await runner.execute(input());
   assert.equal(runner.active, 0, "cleanup trouble does not retain a concurrency slot");
+
+  const locked = await executable(dir, `import { chmodSync, mkdirSync } from "node:fs";
+mkdirSync(process.argv[3] + "/locked"); chmodSync(process.argv[3] + "/locked", 0);`);
+  const lockedRunner = connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
+    [entry(locked)], 1, "locked.json")), { temporaryRoot: dir });
+  await assert.rejects(lockedRunner.execute(input()), /EACCES/u);
+  assert.equal((await readdir(dir)).some(name => name.startsWith("control-room-tool-")), false,
+    "cleanup restores user access before removing a tool-owned locked directory");
 });
 
 test("stress: 50 runs cap at four with one third aborted", { timeout: 30_000 }, async t => {
