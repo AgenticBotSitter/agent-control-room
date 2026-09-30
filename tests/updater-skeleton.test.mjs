@@ -291,16 +291,18 @@ test("the main loop does not poll the runner while Off and rejects a risk-increa
   }));
   const stateFiles = new UpdaterStateFilesV1(root, "lease-one"), store = new MemoryStore(undefined);
   store.requests = [{ id: "owner-request:00000000-0000-4000-8000-000000000001", request_kind: "resume" }];
-  let runnerCalls = 0, actionCalls = 0;
+  let runnerCalls = 0, actionCalls = 0, watcherCalls = 0;
   const loop = new UpdaterMainLoopV1({ runner: { async runOnce() { runnerCalls += 1; return { status: "idle" }; } }, store, stateFiles,
-    mode: new UpdaterModeV1(), ownerActions: { async handle() { actionCalls += 1; } } });
+    mode: new UpdaterModeV1(), ownerActions: { async handle() { actionCalls += 1; } }, watcher: { async tick() { watcherCalls += 1; } } });
   assert.equal((await loop.tick()).status, "idle"); assert.equal(runnerCalls, 0); assert.equal(actionCalls, 0);
+  assert.equal(watcherCalls, 0, "Off never invokes the source watcher");
   assert.equal(store.finished[1], "refused");
   const status = JSON.parse(await readFile(join(root, "status/status.json"), "utf8"));
   assert.equal(status.releaseId, "r7"); assert.equal(status.updaterRestartsLastHour, 2);
   await writeFile(join(root, "updater-state/rescued.json"), "{}\n");
   assert.equal((await loop.tick()).status, "uncertain", "the Off flag cannot hide a rescue marker");
   assert.equal(runnerCalls, 1, "a rescued active run is measured, never advanced by the watcher/build path");
+  assert.equal(watcherCalls, 0, "even the rescue path does not wake the watcher while Off");
 });
 
 test("a busy result with a live run is published as needs_attention", async () => {

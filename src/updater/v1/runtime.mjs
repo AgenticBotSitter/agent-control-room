@@ -62,9 +62,9 @@ const RISK_REDUCING_WHILE_OFF_V1 = new Set(["pause", "stop", "backup_now", "chec
 
 export class UpdaterMainLoopV1 {
   #timer; #ticking = false;
-  constructor({ runner, store, stateFiles, mode, ownerActions, intervalMs = 5_000, onError = () => {} }) {
+  constructor({ runner, store, stateFiles, mode, ownerActions, watcher = null, intervalMs = 5_000, onError = () => {} }) {
     this.runner = runner; this.store = store; this.stateFiles = stateFiles; this.mode = mode;
-    this.ownerActions = ownerActions; this.intervalMs = intervalMs; this.onError = onError;
+    this.ownerActions = ownerActions; this.watcher = watcher; this.intervalMs = intervalMs; this.onError = onError;
     this.lastOutcome = { status: "idle" };
   }
   async #requests(flag) {
@@ -86,6 +86,7 @@ export class UpdaterMainLoopV1 {
       await this.#requests(flag);
       // R5iii: while Off, do not read approval rows, watch sources or invoke a
       // builder. Only timer work and risk-reducing owner requests run.
+      if (flag === "On" && this.watcher) await this.watcher.tick();
       const rescued = await this.stateFiles.hasRescueMarker();
       if (rescued) {
         const measured = await this.runner.runOnce();
