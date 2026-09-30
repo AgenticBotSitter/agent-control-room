@@ -439,6 +439,10 @@ test("0109, 0108 and 0105 down migrations refuse retained policy/history and rem
   await populated.db.exec(publicationDown);
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
+  // 0160's improvement desk and 0161's candidate evidence reference pipeline_runs,
+  // so the reviewed recovery order takes 0162-0160 off first, newest first.
+  for (const file of ["0162_validate_update_candidate_evidence.sql", "0161_update_candidate_evidence.sql",
+    "0160_improve_control_room_desk.sql"]) await empty.db.exec(await readFile(`db/down/${file}`, "utf8"));
   await empty.db.exec(unattendedDown);
   await empty.db.exec(publicationDown);
   await empty.db.exec(agentReviewDown);
