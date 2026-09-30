@@ -3,133 +3,133 @@
     "file": "db/migrations/0209_result_upload_sessions.sql",
     "find": "  IF NOT public.fleet_claim_is_live(NEW.tenant_id,NEW.claim_id,NEW.worker_id) THEN\n    RAISE EXCEPTION 'result upload session rejected' USING ERRCODE = '42501';\n  END IF;",
     "replace": "  IF false THEN\n    RAISE EXCEPTION 'result upload session rejected' USING ERRCODE = '42501';\n  END IF;",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a revoked worker, an elapsed lease, a released claim or an expired credential cannot reserve an upload"
   },
   {
     "file": "db/migrations/0209_result_upload_sessions.sql",
     "find": "  IF mode IS NOT NULL AND mode<>'running' THEN",
     "replace": "  IF false THEN",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "Pause and Drain refuse a NEW upload reservation, exactly as they refuse a new claim"
   },
   {
     "file": "db/migrations/0209_result_upload_sessions.sql",
     "find": "  IF NEW.expected_size_bytes IS DISTINCT FROM owner_file.size_bytes\n    OR NEW.expected_content_digest IS DISTINCT FROM owner_file.content_digest\n    OR owner_file.state<>'declared' OR owner_file.stored_at IS NOT NULL THEN",
     "replace": "  IF false THEN",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a reservation's promise is the OWNER's approved size and digest, never the caller's restatement"
   },
   {
     "file": "db/migrations/0209_result_upload_sessions.sql",
     "find": "  IF declared.ordinal IS NULL OR owner_file.ordinal IS NULL\n    OR owner_file.display_name IS DISTINCT FROM declared.display_name\n    OR owner_file.declared_media_type IS DISTINCT FROM declared.declared_media_type THEN",
     "replace": "  IF false THEN",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a worker cannot upload something the owner did not declare as an output of this part"
   },
   {
     "file": "db/migrations/0209_result_upload_sessions.sql",
     "find": "    IF (SELECT count(*) FROM public.control_result_upload_chunks c\n          WHERE c.tenant_id=OLD.tenant_id AND c.upload_id=OLD.upload_id)<>OLD.expected_chunks",
     "replace": "    IF false AND (SELECT count(*) FROM public.control_result_upload_chunks c\n          WHERE c.tenant_id=OLD.tenant_id AND c.upload_id=OLD.upload_id)<>OLD.expected_chunks",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a session becomes received only with exactly the chunks that tile its promise - a dropped connection is not a complete upload"
   },
   {
     "file": "db/migrations/0209_result_upload_sessions.sql",
     "find": "  IF NOT public.fleet_claim_is_live(session.tenant_id,session.claim_id,session.worker_id) THEN\n    RAISE EXCEPTION 'result upload chunk rejected' USING ERRCODE = '42501';\n  END IF;",
     "replace": "  IF false THEN\n    RAISE EXCEPTION 'result upload chunk rejected' USING ERRCODE = '42501';\n  END IF;",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a claim that dies mid-upload stops mid-upload, rather than at finalise"
   },
   {
     "file": "db/migrations/0209_result_upload_sessions.sql",
     "find": "  IF session.expires_at<=NEW.received_at OR NEW.received_at<=pg_catalog.statement_timestamp()-interval '5 minutes' THEN",
     "replace": "  IF NEW.received_at<=pg_catalog.statement_timestamp()-interval '5 minutes' THEN",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "an upload nobody finished inside its 24 hours is not a promise any more, and its late bytes are refused"
   },
   {
     "file": "db/migrations/0210_result_upload_publication.sql",
     "find": "  IF NEW.state<>'stored' OR OLD.state<>'declared' THEN\n    RAISE EXCEPTION 'result file state rejected' USING ERRCODE = '42501';\n  END IF;",
     "replace": "  IF false THEN\n    RAISE EXCEPTION 'result file state rejected' USING ERRCODE = '42501';\n  END IF;",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a fleet publisher may only ever move a file forward into 'stored' - it cannot quarantine or mark the OWNER's bytes missing"
   },
   {
     "file": "db/migrations/0210_result_upload_publication.sql",
     "find": "  IF owner_set.state NOT IN ('declared','stored') OR stored_files<>owner_set.file_count",
     "replace": "  IF false",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a manifest publishes only when EVERY promised file is present and stored"
   },
   {
     "file": "db/migrations/0210_result_upload_publication.sql",
     "find": "  IF owner_set.file_count>0 AND EXISTS (SELECT 1 FROM public.control_result_files f",
     "replace": "  IF false AND EXISTS (SELECT 1 FROM public.control_result_files f",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "every promised file must have a PUBLISHED upload vouching for exactly its digest and size"
   },
   {
     "file": "db/migrations/0210_result_upload_publication.sql",
     "find": "  IF NEW.state='stored' AND OLD.state IS DISTINCT FROM 'stored' AND NOT EXISTS (\n      SELECT 1 FROM public.control_result_upload_sessions u",
     "replace": "  IF false AND NOT EXISTS (\n      SELECT 1 FROM public.control_result_upload_sessions u",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a file row cannot be marked stored without its own published upload session"
   },
   {
     "file": "db/migrations/0210_result_upload_publication.sql",
     "find": "  IF attempt_worker IS NULL OR owner_set.producer_kind<>'fleet'\n    OR owner_set.producer_id IS DISTINCT FROM attempt_worker",
     "replace": "  IF false",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "the publisher is the attempt's own recorded worker, checked against the canonical attempt"
   },
   {
     "file": "db/migrations/0211_job_artifact_inputs.sql",
     "find": "  IF job_state IS NULL OR job_state NOT IN ('proposed','ready') THEN\n    RAISE EXCEPTION 'task declared input rejected' USING ERRCODE = '23514';\n  END IF;",
     "replace": "  IF false THEN\n    RAISE EXCEPTION 'task declared input rejected' USING ERRCODE = '23514';\n  END IF;",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a declared input is frozen before the work starts, like a declared output"
   },
   {
     "file": "db/migrations/0211_job_artifact_inputs.sql",
     "find": "  IF NOT EXISTS (SELECT 1 FROM public.control_job_dependencies d\n      WHERE d.tenant_id=NEW.tenant_id AND d.job_id=NEW.job_id AND d.depends_on_job_id=NEW.producer_job_id) THEN",
     "replace": "  IF false THEN",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a declared input names a real dependency: 2.3's graph IS the edges, so a claim no scheduler enforces is refused"
   },
   {
     "file": "db/migrations/0211_job_artifact_inputs.sql",
     "find": "      AND s.state='stored' AND s.retention_state='retained'\n      AND f.display_name=declared.display_name AND f.state='stored'",
     "replace": "      AND s.state='stored'\n      AND f.display_name=declared.display_name AND f.state='stored'",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "unreviewed bytes are never combined: only an ACCEPTED file binds to a declared input"
   },
   {
     "file": "db/migrations/0211_job_artifact_inputs.sql",
     "find": "  IF bound<>declared THEN",
     "replace": "  IF bound>declared THEN",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a combine job cannot go ready or running with a hole in its declared inputs"
   },
   {
     "file": "db/roles/fleet_gateway_roles.sql",
     "find": "GRANT UPDATE (state, stored_at) ON control_result_files TO control_room_fleet_gateway;",
     "replace": "GRANT UPDATE (state, stored_at, display_name, content_digest, size_bytes) ON control_result_files TO control_room_fleet_gateway;",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a fleet publisher records what it stored and nothing else: no name, no digest, no size, no storage key"
   },
   {
     "file": "db/roles/fleet_gateway_roles.sql",
     "find": "GRANT SELECT ON control_task_declared_outputs, control_task_declared_inputs, control_job_artifact_inputs\n  TO control_room_fleet_gateway;",
     "replace": "GRANT SELECT, INSERT ON control_task_declared_outputs, control_task_declared_inputs, control_job_artifact_inputs\n  TO control_room_fleet_gateway;",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a machine can neither write a plan nor bind a file to itself"
   },
   {
     "file": "db/roles/production_table_grants.sql",
     "find": "REVOKE ALL ON control_result_file_sets, control_result_files, control_result_file_download_grants,\n  control_result_publications, control_task_declared_outputs, control_task_declared_inputs,\n  control_job_artifact_inputs, control_result_upload_sessions, control_result_upload_chunks\n  FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions,\n  control_room_github_broker, control_room_work_intake;",
     "replace": "REVOKE ALL ON control_result_file_sets, control_result_files, control_result_file_download_grants\n  FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions,\n  control_room_github_broker, control_room_work_intake;\nREVOKE ALL ON control_result_publications, control_task_declared_outputs, control_task_declared_inputs,\n  control_job_artifact_inputs, control_result_upload_sessions, control_result_upload_chunks\n  FROM control_room_schedule_admissions, control_room_github_broker, control_room_work_intake;",
-    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "a shared login cannot read a project's result-file names, digests, storage keys or upload state"
   },
   {
