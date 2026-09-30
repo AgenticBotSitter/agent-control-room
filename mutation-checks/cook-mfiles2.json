@@ -136,35 +136,35 @@
     "file": "src/fleet/v1/upload-store.ts",
     "find": "  if (!secretScannableMediaTypes.has(mediaType)) return false;",
     "replace": "  if (!secretScannableMediaTypes.has(mediaType)) return true;",
-    "test": "node --import tsx --test tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "only text-like types are scanned, so a 256 MiB video is not turned into a memory event"
   },
   {
     "file": "src/fleet/v1/upload-store.ts",
     "find": "    if (bytes.byteLength !== expectedSize || bytesSha256V1(bytes) !== read.expected_content_digest)\n      return fleetFail(\"invalid\");",
     "replace": "    if (bytes.byteLength !== expectedSize)\n      return fleetFail(\"invalid\");",
-    "test": "node --import tsx --test tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "the assembled file's whole digest is re-proved against the OWNER's promise before it is stored"
   },
   {
     "file": "src/fleet/v1/upload-store.ts",
     "find": "    if (this.carriesSecretMaterial(read, bytes)) return fleetFail(\"refused_secret_material\");",
     "replace": "    if (false) return fleetFail(\"refused_secret_material\");",
-    "test": "node --import tsx --test tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "the assembled file is re-scanned, so a secret split across chunks is still refused"
   },
   {
     "file": "src/fleet/v1/upload-store.ts",
     "find": "    if (!row || row.worker_id !== principal.workerId || row.claim_id !== claim.claim_id\n      || row.project_id !== claim.project_id || row.job_id !== claim.job_id\n      || row.attempt_id !== claim.attempt_id) return fleetFail(\"not_found\");",
     "replace": "    if (!row || row.worker_id !== principal.workerId) return fleetFail(\"not_found\");",
-    "test": "node --import tsx --test tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "an upload is the CLAIM's, not the worker's: one worker cannot finalise another's reservation"
   },
   {
     "file": "src/fleet/v1/upload-store.ts",
     "find": "        if (prior.chunk_digest !== chunkDigest || prior.size_bytes !== String(bytes.byteLength))\n          return fleetFail(\"conflict\");",
     "replace": "        if (false) return fleetFail(\"conflict\");",
-    "test": "node --import tsx --test tests/result-upload-ingress-postgres.test.ts",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
     "why": "an exact chunk retry replays and a SUBSTITUTED chunk is a conflict, told apart by the recorded digest"
   },
   {
