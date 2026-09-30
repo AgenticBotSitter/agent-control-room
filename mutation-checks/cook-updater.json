@@ -155,8 +155,8 @@
   },
   {
     "file": "src/updater/v1/guard/guard.sh",
-    "find": "\"$LAUNCHCTL\" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed",
-    "replace": "\"$LAUNCHCTL\" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed\n  \"$LAUNCHCTL\" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed",
+    "find": "\"$LAUNCHCTL\" kickstart -k \"system/$LABEL_PREFIX.updater\" >/dev/null 2>&1 || die kickstart_failed",
+    "replace": "\"$LAUNCHCTL\" kickstart -k \"system/$LABEL_PREFIX.updater\" >/dev/null 2>&1 || die kickstart_failed\n  \"$LAUNCHCTL\" kickstart -k \"system/$LABEL_PREFIX.updater\" >/dev/null 2>&1 || die kickstart_failed",
     "test": "node --test --test-name-pattern='hung updater' tests/updater-guard.test.mjs",
     "why": "each counted guard attempt performs exactly one updater restart"
   },

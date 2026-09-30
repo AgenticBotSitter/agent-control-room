@@ -1,0 +1,19 @@
+{
+  "schema": "control-room.updater-rehearsal-config/v1",
+  "mode": "throwaway",
+  "rehearsalRoot": "/private/tmp/control-room-rehearsal-example",
+  "rehearsalHostname": "control-room-rehearsal.invalid",
+  "expectedOrigin": "https://control-room-rehearsal.invalid:59400",
+  "ports": {
+    "web": 59400,
+    "gateway": 59410,
+    "postgres": 59420
+  },
+  "accounts": {
+    "service": "_rehearsal_service",
+    "database": "_rehearsal_database",
+    "builder": "_rehearsal_builder"
+  },
+  "daemonLabelPrefix": "xyz.agentcontrolroom.rehearsal.example",
+  "allowRealRoot": false
+}

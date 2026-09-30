@@ -1,0 +1,37 @@
+[
+  {
+    "file": "src/updater/v1/rehearsal/config.mjs",
+    "find": "if (root === \"/\" || root === \"/Library\" || root === \"/Library/Application Support\"\n      || root === \"/Library/Application Support/Control Room\") refuse(\"rehearsal_live_root_refused\");",
+    "replace": "if (false) refuse(\"rehearsal_live_root_refused\");",
+    "test": "node --test --test-name-pattern='config refuses live roots' tests/updater-rehearsal.test.mjs",
+    "why": "the harness must refuse the live installation root before it creates evidence or invokes a scenario"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/config.mjs",
+    "find": "|| FORBIDDEN_REHEARSAL_PORTS_V1.has(port)) || new Set(ports).size !== ports.length)",
+    "replace": "|| FORBIDDEN_REHEARSAL_PORTS_V1.has(port)) || false)",
+    "test": "node --test --test-name-pattern='config refuses live roots' tests/updater-rehearsal.test.mjs",
+    "why": "web, gateway and database must use distinct rehearsal ports"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/config.mjs",
+    "find": "if (!await ownersEnabled(config.rehearsalRoot)) refuse(\"rehearsal_disk_owners_disabled\");",
+    "replace": "if (false) refuse(\"rehearsal_disk_owners_disabled\");",
+    "test": "node --test --test-name-pattern='requires owners' tests/updater-rehearsal.test.mjs",
+    "why": "ownership-disabled media would make isolation checks pass for the wrong reason"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/harness.mjs",
+    "find": "const status = counts.fail > 0 ? \"fail\" : counts.pending > 0 ? \"pending\" : \"pass\";",
+    "replace": "const status = counts.fail > 0 ? \"fail\" : \"pass\";",
+    "test": "node --test --test-name-pattern='never promotes pending' tests/updater-rehearsal.test.mjs",
+    "why": "an unavailable future item must remain pending and must never be reported as a pass"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/config.mjs",
+    "find": "if (!entry.isDirectory() || entry.isSymbolicLink() || entry.uid !== 0 || (entry.mode & 0o022) !== 0)",
+    "replace": "if (!entry.isDirectory() || entry.isSymbolicLink())",
+    "test": "node --test --test-name-pattern='real-root ancestry' tests/updater-rehearsal.test.mjs",
+    "why": "every real rehearsal-root ancestor must remain root-owned and non-writable by lower identities"
+  }
+]

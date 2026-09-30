@@ -1,0 +1,94 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import test from "node:test";
+import { REHEARSAL_CASES_V1 } from "../src/updater/v1/rehearsal/catalog.mjs";
+import { assertRehearsalAncestryV1, parseRehearsalConfigV1, prepareRehearsalRootV1 }
+  from "../src/updater/v1/rehearsal/config.mjs";
+import { runUpdaterRehearsalV1 } from "../src/updater/v1/rehearsal/harness.mjs";
+
+async function fixture(t) {
+  const root = join("/private/tmp", `control-room-rehearsal-test-${randomUUID()}`);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = parseRehearsalConfigV1({ schema: "control-room.updater-rehearsal-config/v1", mode: "throwaway",
+    rehearsalRoot: root, rehearsalHostname: "unit-rehearsal.invalid",
+    expectedOrigin: "https://unit-rehearsal.invalid:59400",
+    ports: { web: 59400, gateway: 59410, postgres: 59420 },
+    accounts: { service: "_rehearsal_service", database: "_rehearsal_database", builder: "_rehearsal_builder" },
+    daemonLabelPrefix: "xyz.agentcontrolroom.rehearsal.unit", allowRealRoot: false });
+  return { root, config };
+}
+
+test("rehearsal config refuses live roots, production ports, aliases, hostile origins and unconfigured accounts", async t => {
+  const { config } = await fixture(t), changed = patch => ({ ...config, ...patch });
+  assert.throws(() => parseRehearsalConfigV1(changed({ rehearsalRoot: "/Library/Application Support/Control Room" })),
+    /rehearsal_live_root_refused/u);
+  assert.throws(() => parseRehearsalConfigV1(changed({ ports: { web: 7864, gateway: 59410, postgres: 59420 },
+    expectedOrigin: "https://unit-rehearsal.invalid:7864" })), /rehearsal_ports_refused/u);
+  assert.throws(() => parseRehearsalConfigV1(changed({ ports: { web: 59400, gateway: 59400, postgres: 59420 } })),
+    /rehearsal_ports_refused/u);
+  assert.throws(() => parseRehearsalConfigV1(changed({ expectedOrigin: "https://different-rehearsal.invalid:59400" })),
+    /rehearsal_expected_origin_refused/u);
+  assert.throws(() => parseRehearsalConfigV1(changed({ accounts: { ...config.accounts, service: "_service" } })),
+    /rehearsal_accounts_refused/u);
+  assert.throws(() => parseRehearsalConfigV1(changed({ daemonLabelPrefix: "xyz.agentcontrolroom" })),
+    /rehearsal_daemon_labels_refused/u);
+  assert.throws(() => parseRehearsalConfigV1(changed({ mode: "real-root", allowRealRoot: false })),
+    /rehearsal_real_root_authority_refused/u);
+});
+
+test("rehearsal root requires owners and an exact marker before reuse", async t => {
+  const { root, config } = await fixture(t);
+  await assert.rejects(prepareRehearsalRootV1(config, { ownersEnabled: async () => false }),
+    /rehearsal_disk_owners_disabled/u);
+  await mkdir(root); await assert.rejects(prepareRehearsalRootV1(config), /rehearsal_root_marker_refused/u);
+  await rm(root, { recursive: true }); await prepareRehearsalRootV1(config);
+  const marker = JSON.parse(await readFile(join(root, ".control-room-rehearsal-root.json"), "utf8"));
+  assert.equal(marker.rehearsalHostname, config.rehearsalHostname);
+  await writeFile(join(root, ".control-room-rehearsal-root.json"), JSON.stringify({ ...marker,
+    rehearsalHostname: "wrong-rehearsal.invalid" }));
+  await assert.rejects(prepareRehearsalRootV1(config), /rehearsal_root_marker_refused/u);
+});
+
+test("real-root ancestry must be root-owned, non-writable directories without symlinks", async () => {
+  const safe = { isDirectory: () => true, isSymbolicLink: () => false, uid: 0, mode: 0o40755 };
+  assert.equal(await assertRehearsalAncestryV1("/Volumes/CRRehearsal/install", { lstatPath: async () => safe }), true);
+  await assert.rejects(assertRehearsalAncestryV1("/Volumes/CRRehearsal/install", { lstatPath: async path =>
+    path.endsWith("/install") ? { ...safe, uid: 501 } : safe }), /rehearsal_root_ancestry_refused/u);
+  await assert.rejects(assertRehearsalAncestryV1("/Volumes/CRRehearsal/install", { lstatPath: async path =>
+    path.endsWith("/install") ? { ...safe, mode: 0o40777 } : safe }), /rehearsal_root_ancestry_refused/u);
+});
+
+test("catalog names every v2 hostile and rescue case and keeps future items explicitly pending", () => {
+  const ids = new Set(REHEARSAL_CASES_V1.flatMap(item => item.scenarios.map(scenario => scenario.id)));
+  for (const id of ["P7.cron-at", "P7.adoption-race", "P7.runner-patch", "P7.export-ignore", "P7.rename",
+    "P7.updater-symlink", "P7.fixed-step-wins", "P8.sudo-shim", "P8.origin-and-port",
+    "P8.registration-race", "P8.approval-flood", "P8.health-auth", "P8.push-host",
+    "P9.all-links-revert", "P9.pg-pin", "P11.rescue-db-points", "P11.failed-heartbeat-links",
+    "P13.environment", "P13.profile-shape", "P13.running-identities", "P13.provider-module",
+    "P13.static-process-scan", "DB-R8.preimage", "DB-R8.restore"]) assert.ok(ids.has(id), id);
+  const future = REHEARSAL_CASES_V1.flatMap(item => item.scenarios).filter(item => item.pending);
+  assert.ok(future.some(item => item.pending.includes("item 10a")));
+  assert.ok(future.some(item => item.pending.includes("item 11a")));
+  assert.ok(future.some(item => item.pending.includes("item 14")));
+  assert.ok(future.some(item => item.pending.includes("item 18")));
+});
+
+test("throwaway harness runs all available scenarios, records four evidence files per case and never promotes pending", { timeout: 120_000 }, async t => {
+  const { config } = await fixture(t), phases = [];
+  const result = await runUpdaterRehearsalV1(config, { onPhase: phase => phases.push(phase) });
+  assert.equal(result.failed, 0); assert.ok(result.passed >= 18); assert.ok(result.pending > 0);
+  assert.equal(result.acceptanceReady, false); assert.equal(phases.length, 15);
+  assert.ok(phases.every(phase => phase.status === "pending"));
+  for (const phase of phases) {
+    for (const file of ["result.json", "journal.jsonl", "links.json", "status.json"])
+      await readFile(join(result.runRoot, phase.id, file));
+    for (const scenario of phase.scenarios) {
+      for (const file of ["result.json", "journal.jsonl", "links.json", "status.json"])
+        await readFile(join(result.runRoot, phase.id, "scenarios", scenario.id, file));
+    }
+  }
+  assert.match(result.markdown, /\| P7 Hostile candidate \| pending \|/u);
+  assert.doesNotMatch(result.markdown, /\/Users\//u);
+});
