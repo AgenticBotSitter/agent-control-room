@@ -1,11 +1,11 @@
 {
   "schema": "control-room.runtime-license-artifact-inventory/v1",
-  "manifestSha256": "1dfabd87b09dde431146771f6b2a3d4b5b0108dba0fafa8b970d6e0007ed3513",
-  "lockSha256": "dc832741910730eea61d34bee78ea65acdfc83adb84c3455b88f8a7b2778491f",
-  "inventoryDigest": "c10974ff0ba36626f55c45b7bc77309a96806b2669d80311cccaac8e6bd7d621",
+  "manifestSha256": "2e22afa04502d84cca884109115d366513fd50bc81fef87c9b643043e0fc3761",
+  "lockSha256": "925f85760746f0ebbc84281792ec8692acf811451150e100fc1725b3e595f67a",
+  "inventoryDigest": "4cf293978f7037ae2c5ef2b8960a9b35f20c1024ea1ccad8fadc1fb999a7f410",
   "completeDistributionClearance": true,
   "scope": "complete for the declared artifact inputs only; #64 independently verifies the assembled release tree",
-  "repository": "acr-cook-license",
+  "repository": "acr-cook-bundle",
   "installed": {
     "count": 200,
     "rootTextCollected": 195,

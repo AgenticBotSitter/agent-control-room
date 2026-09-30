@@ -12,6 +12,7 @@ const run = promisify(execFileCallback);
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const entryPoint = fileURLToPath(new URL("fleet/connector-bundle-entry.mjs", import.meta.url));
 const sourceConnector = fileURLToPath(new URL("fleet/connector.mjs", import.meta.url));
+const zodLicense = fileURLToPath(new URL("../third_party/zod/LICENSE", import.meta.url));
 const RELEASE_SCHEMA = "control-room.fleet-connector-release/v1";
 const refused = () => { throw new Error("fleet_connector_build_refused"); };
 
@@ -20,10 +21,16 @@ function cleanAbsolute(value) {
     && value !== "/" && !/[\u0000-\u001f\u007f]/u.test(value);
 }
 
-async function gitCommit() {
+async function cleanGitCommit() {
+  const options = { cwd: projectRoot, encoding: "utf8", timeout: 5_000, maxBuffer: 1024 * 1024,
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } };
+  const { stdout: dirty } = await run("git", ["status", "--porcelain", "--untracked-files=all", "--", "."], options);
+  if (dirty.trim()) refused();
   const { stdout } = await run("git", ["rev-parse", "HEAD"], { cwd: projectRoot, encoding: "utf8",
     timeout: 5_000, maxBuffer: 4_096, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
-  return stdout.trim();
+  const commit = stdout.trim();
+  if (!/^[a-f0-9]{40}$/u.test(commit)) refused();
+  return commit;
 }
 
 export function assertFleetConnectorBundleImportsV1(metafile) {
@@ -34,8 +41,19 @@ export function assertFleetConnectorBundleImportsV1(metafile) {
   if (nonNodeImports.length) refused();
 }
 
-/** @param {{ root?: string, builtFrom?: string, allowRealHome?: boolean }} [input] */
-export async function buildFleetConnectorReleaseV1({ root, builtFrom, allowRealHome = false } = {}) {
+export function assertFleetConnectorBundledLicensesV1(metafile) {
+  const inputs = metafile && typeof metafile === "object" ? metafile.inputs : null;
+  const packages = new Set();
+  if (inputs && typeof inputs === "object") for (const input of Object.keys(inputs)) {
+    const marker = "node_modules/", start = input.lastIndexOf(marker);
+    if (start < 0) continue;
+    const parts = input.slice(start + marker.length).split("/");
+    packages.add(parts[0]?.startsWith("@") ? `${parts[0]}/${parts[1] ?? ""}` : parts[0]);
+  }
+  if ([...packages].sort().join(",") !== "zod") refused();
+}
+
+async function prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome }) {
   if (!cleanAbsolute(root)) refused();
   const parent = dirname(root);
   await mkdir(parent, { recursive: true });
@@ -44,8 +62,7 @@ export async function buildFleetConnectorReleaseV1({ root, builtFrom, allowRealH
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) refused();
   const canonicalHome = await realpath(homedir()).catch(() => resolve(homedir()));
   if (await realpath(root) === canonicalHome && allowRealHome !== true) refused();
-  const commit = builtFrom ?? await gitCommit();
-  if (!/^[a-f0-9]{40}$/u.test(commit)) refused();
+  if (!/^[a-f0-9]{40}$/u.test(builtFrom)) refused();
   const source = await readFile(sourceConnector, "utf8");
   const version = /export const CONNECTOR_VERSION = "(\d+\.\d+\.\d+)";/u.exec(source)?.[1];
   if (!version) refused();
@@ -55,11 +72,20 @@ export async function buildFleetConnectorReleaseV1({ root, builtFrom, allowRealH
     outfile: `connector-${version}.mjs` });
   if (output.outputFiles.length !== 1) refused();
   assertFleetConnectorBundleImportsV1(output.metafile);
-  const bytes = Buffer.from(output.outputFiles[0].contents);
+  assertFleetConnectorBundledLicensesV1(output.metafile);
+  const license = (await readFile(zodLicense, "utf8")).trimEnd().split("\n").map(line => `// ${line}`).join("\n");
+  const bundled = Buffer.from(output.outputFiles[0].contents).toString("utf8");
+  const shebangEnd = bundled.indexOf("\n") + 1;
+  const bytes = Buffer.from(`${bundled.slice(0, shebangEnd)}// Bundled third-party licence notice: zod@4.1.12\n${license}\n\n${bundled.slice(shebangEnd)}`, "utf8");
   const file = `connector-${version}.mjs`;
   const manifest = Object.freeze({ schema: RELEASE_SCHEMA, version, file,
-    sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length, builtFrom: commit });
+    sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length, builtFrom });
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return { root, file, bytes, manifest, manifestBytes };
+}
+
+async function writeFleetConnectorReleaseV1(prepared) {
+  const { root, file, bytes, manifest, manifestBytes } = prepared;
   for (const [name, contents] of [[file, bytes], ["manifest.json", manifestBytes]]) {
     const target = join(root, name), temporary = `${target}.${process.pid}.tmp`;
     await writeFile(temporary, contents, { flag: "wx", mode: 0o644 });
@@ -70,12 +96,25 @@ export async function buildFleetConnectorReleaseV1({ root, builtFrom, allowRealH
   return Object.freeze({ root, manifest });
 }
 
+/** Build the release only from a clean checkout, so builtFrom is the commit whose source bytes esbuild read. */
+/** @param {{ root?: string, allowRealHome?: boolean }} [input] */
+export async function buildFleetConnectorReleaseV1({ root, allowRealHome = false } = {}) {
+  const builtFrom = await cleanGitCommit();
+  const prepared = await prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome });
+  return writeFleetConnectorReleaseV1(prepared);
+}
+
+/** Deterministic fixture builder. Production and CLI callers must use buildFleetConnectorReleaseV1. */
+/** @param {{ root?: string, builtFrom?: string, allowRealHome?: boolean }} [input] */
+export async function buildFleetConnectorReleaseForTestV1({ root, builtFrom, allowRealHome = false } = {}) {
+  return writeFleetConnectorReleaseV1(await prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome }));
+}
+
 function parse(args) {
   const values = { allowRealHome: false };
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] === "--i-am-the-installer") values.allowRealHome = true;
     else if (args[index] === "--root") values.root = resolve(args[++index] ?? "");
-    else if (args[index] === "--built-from") values.builtFrom = args[++index];
     else refused();
   }
   return values;

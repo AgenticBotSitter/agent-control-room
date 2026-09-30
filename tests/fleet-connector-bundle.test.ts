@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test, { after, before } from "node:test";
-import { assertFleetConnectorBundleImportsV1, buildFleetConnectorReleaseV1 } from "../scripts/build-fleet-connector.mjs";
+import { assertFleetConnectorBundledLicensesV1, assertFleetConnectorBundleImportsV1,
+  buildFleetConnectorReleaseForTestV1 } from "../scripts/build-fleet-connector.mjs";
 import { loadFleetConnectorReleaseV1 } from "../scripts/run-fleet-gateway";
 import { createFleetGatewayHandlerV1, type FleetGatewayStoreV1 } from "../src/fleet/v1";
 import { captureFleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
@@ -16,13 +17,13 @@ import { FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1 } from "../src/web/v1/fleet-o
 
 const builtFrom = "1".repeat(40);
 let sandbox: string, firstRoot: string, secondRoot: string;
-let release: Awaited<ReturnType<typeof buildFleetConnectorReleaseV1>>;
+let release: Awaited<ReturnType<typeof buildFleetConnectorReleaseForTestV1>>;
 
 before(async () => {
   sandbox = await mkdtemp(join(tmpdir(), "fleet-bundle-test-"));
   firstRoot = join(sandbox, "first"); secondRoot = join(sandbox, "second");
-  release = await buildFleetConnectorReleaseV1({ root: firstRoot, builtFrom });
-  await buildFleetConnectorReleaseV1({ root: secondRoot, builtFrom });
+  release = await buildFleetConnectorReleaseForTestV1({ root: firstRoot, builtFrom });
+  await buildFleetConnectorReleaseForTestV1({ root: secondRoot, builtFrom });
 });
 after(async () => { if (sandbox) await rm(sandbox, { recursive: true, force: true }); });
 
@@ -48,14 +49,21 @@ test("connector build is byte-identical and its manifest binds version, size, di
   assert.equal(release.manifest.sha256, createHash("sha256").update(firstBundle).digest("hex"));
   assert.equal(release.manifest.builtFrom, builtFrom);
   assert.match(firstBundle.toString("utf8"), /createFleetHarnessAdapter/u, "the harness adapters are in the one file");
+  assert.match(firstBundle.toString("utf8"), /Bundled third-party licence notice: zod@4\.1\.12/u);
+  assert.match(firstBundle.toString("utf8"), /Copyright \(c\) 2025 Colin McDonnell/u);
+  assert.match(firstBundle.toString("utf8"), /Permission is hereby granted, free of charge/u);
   assert.throws(() => assertFleetConnectorBundleImportsV1({ outputs: { out: { imports: [
     { path: "left-in-worker-package", external: true },
   ] } } }), /fleet_connector_build_refused/u);
   assert.doesNotThrow(() => assertFleetConnectorBundleImportsV1({ outputs: { out: { imports: [
     { path: "node:crypto", external: true },
   ] } } }));
-  await assert.rejects(buildFleetConnectorReleaseV1({ root: join(sandbox, "bad-commit"), builtFrom: "not-a-commit" }),
-    /fleet_connector_build_refused/u);
+  assert.doesNotThrow(() => assertFleetConnectorBundledLicensesV1({ inputs: {
+    "node_modules/.pnpm/zod@4.1.12/node_modules/zod/index.js": {},
+  } }));
+  assert.throws(() => assertFleetConnectorBundledLicensesV1({ inputs: {
+    "node_modules/.pnpm/other@1.0.0/node_modules/other/index.js": {},
+  } }), /fleet_connector_build_refused/u);
 });
 
 test("standalone bundle runs help and an MCP handshake from a repo-free directory with a fake gateway", async t => {
@@ -120,6 +128,9 @@ test("gateway serves only the captured bundle and manifest through a burst, a dr
   assert.throws(() => createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1,
     connectorRelease: { ...captured, bundle: changedBundle } }),
   /fleet_connector_release_refused/u);
+  assert.throws(() => createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1,
+    connectorRelease: { ...captured, manifest: { ...captured.manifest, builtFrom: "2".repeat(40) } } }),
+  /fleet_connector_release_refused/u);
   assert.throws(() => captureFleetConnectorReleaseManifestV1({ ...captured.manifest, extra: true }),
     /fleet_connector_release_refused/u);
   const handler = createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1, connectorRelease: captured });
@@ -140,6 +151,13 @@ test("gateway serves only the captured bundle and manifest through a burst, a dr
   await new Promise<void>(done => dropped.once("close", () => done()));
   const retry = await fetch(`${origin}/fleet/v1/${release.manifest.file}`);
   assert.equal(retry.status, 200); assert.equal((await retry.arrayBuffer()).byteLength, release.manifest.size);
+
+  const withoutRelease = createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1 });
+  const absentServer = createServer((request, response) => { void withoutRelease.handle(request, response); });
+  await new Promise<void>(done => absentServer.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => absentServer.close(() => done())));
+  const absentPort = (absentServer.address() as AddressInfo).port;
+  assert.equal((await fetch(`http://127.0.0.1:${absentPort}/fleet/v1/connector-manifest.json`)).status, 404);
 });
 
 test("build CLI refuses an injected real home without the installer acknowledgement", async () => {
@@ -149,4 +167,16 @@ test("build CLI refuses an injected real home without the installer acknowledgem
     env: { PATH: process.env.PATH, HOME: home, NODE_ENV: "test" }, cwd: sandbox });
   assert.equal(result.code, 1); assert.match(result.stderr, /build refused/u);
   assert.deepEqual(await readdir(home), []);
+});
+
+test("build CLI refuses to claim HEAD when tracked or untracked checkout input is dirty", async () => {
+  const dirty = resolve(`scripts/fleet/.connector-dirty-test-${process.pid}`);
+  await writeFile(dirty, "export const dirty = true;\n");
+  let result;
+  try {
+    result = await child(process.execPath, [resolve("scripts/build-fleet-connector.mjs"), "--root", join(sandbox, "dirty-build")]);
+  } finally {
+    await unlink(dirty);
+  }
+  assert.equal(result.code, 1); assert.match(result.stderr, /build refused/u);
 });

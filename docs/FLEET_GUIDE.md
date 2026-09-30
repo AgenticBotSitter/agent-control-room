@@ -165,8 +165,12 @@ Files are only sent from inside the folder the agent was started in, at most
 The connector talks to the **fleet gateway**, a small service on the Control
 Room computer: `pnpm fleet:gateway <config.json>`. It listens on this computer
 only (`127.0.0.1`); publish it through Tailscale Serve or your tunnel. Its
-config names its own database login (`control_room_fleet`), which can only do
-fleet work. Owner enrollment, offer, review and revocation records use a
+package command first builds the ignored, single-file connector release from a
+clean checkout and then starts the gateway. Fresh checkouts and installed
+releases must use this package command; invoking `scripts/run-fleet-gateway.ts`
+directly skips that required build step and is unsupported.
+The gateway config names its own database login (`control_room_fleet`), which
+can only do fleet work. Owner enrollment, offer, review and revocation records use a
 different protected login in `control_room_fleet_owner_authority`; the normal
 web and gateway logins have no direct write grant on those records. Workers
 never see either login.
