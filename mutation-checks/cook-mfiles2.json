@@ -50,10 +50,10 @@
   },
   {
     "file": "db/migrations/0210_result_upload_publication.sql",
-    "find": "  IF NEW.state<>'stored' OR OLD.state<>'declared' THEN\n    RAISE EXCEPTION 'result file state rejected' USING ERRCODE = '42501';\n  END IF;",
-    "replace": "  IF false THEN\n    RAISE EXCEPTION 'result file state rejected' USING ERRCODE = '42501';\n  END IF;",
+    "find": "  IF producer_kind IS DISTINCT FROM 'fleet' OR OLD.state IS DISTINCT FROM 'declared'\n    OR NEW.state IS DISTINCT FROM 'stored' THEN\n    RAISE EXCEPTION 'result file state rejected' USING ERRCODE = '42501';",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'result file state rejected' USING ERRCODE = '42501';",
     "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
-    "why": "a fleet publisher may only ever move a file forward into 'stored' - it cannot quarantine or mark the OWNER's bytes missing"
+    "why": "the fleet gateway may only move a FLEET file declared -> stored: it cannot quarantine, lose or re-stamp any project's file, native or accepted (files2up B1)"
   },
   {
     "file": "db/migrations/0210_result_upload_publication.sql",
@@ -134,8 +134,8 @@
   },
   {
     "file": "src/artifacts/v1/result-upload-staging.ts",
-    "find": "      if (bytesDigest(existing) !== bytesDigest(bytes) || existing.byteLength !== bytes.byteLength)\n        throw new ResultUploadStagingError(\"staging_conflict\");",
-    "replace": "      if (false) throw new ResultUploadStagingError(\"staging_conflict\");",
+    "find": "    if (bytesDigest(existing) !== bytesDigest(bytes) || existing.byteLength !== bytes.byteLength)\n      throw new ResultUploadStagingError(\"staging_conflict\");",
+    "replace": "    if (false) throw new ResultUploadStagingError(\"staging_conflict\");",
     "test": "node --import tsx --test tests/result-upload-staging.test.ts",
     "why": "a staged chunk is create-once: a different chunk for the same ordinal is refused, and the earlier bytes are left as the evidence"
   },
@@ -166,5 +166,110 @@
     "replace": "    if (false) throw new ResultUploadStagingError(\"staging_ambiguous\");",
     "test": "node --import tsx --test tests/result-upload-staging.test.ts",
     "why": "the root's device and inode are re-checked on every operation, so a root swapped mid-upload fails closed instead of diverting the bytes"
+  },
+  {
+    "file": "db/migrations/0210_result_upload_publication.sql",
+    "find": "  IF OLD.producer_kind IS DISTINCT FROM 'fleet' OR OLD.state IS DISTINCT FROM 'declared'\n    OR NEW.state IS DISTINCT FROM 'stored' THEN\n    RAISE EXCEPTION 'result file set state rejected' USING ERRCODE = '42501';",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'result file set state rejected' USING ERRCODE = '42501';",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "why": "the fleet gateway cannot quarantine or rewrite any result SET, native or owner-accepted; its one set move is a fleet set's publication (files2up B1)"
+  },
+  {
+    "file": "db/migrations/0210_result_upload_publication.sql",
+    "find": "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles g\n      JOIN pg_catalog.pg_roles login ON login.rolname IN (session_user, current_user)\n      WHERE g.rolname='control_room_fleet_gateway' AND NOT login.rolsuper\n        AND pg_catalog.pg_has_role(login.oid, g.oid, 'MEMBER')) THEN\n    RETURN NEW;\n  END IF;\n  SELECT s.producer_kind INTO producer_kind",
+    "replace": "  IF false THEN\n    RETURN NEW;\n  END IF;\n  SELECT s.producer_kind INTO producer_kind",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "why": "the file guard confines the GATEWAY only: the owner, a restore and the superuser can still quarantine a remote file or mark it missing (files2up S1)"
+  },
+  {
+    "file": "db/migrations/0210_result_upload_publication.sql",
+    "find": "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles g\n      JOIN pg_catalog.pg_roles login ON login.rolname IN (session_user, current_user)\n      WHERE g.rolname='control_room_fleet_gateway' AND NOT login.rolsuper\n        AND pg_catalog.pg_has_role(login.oid, g.oid, 'MEMBER')) THEN\n    RETURN NEW;\n  END IF;\n  SELECT s.producer_kind INTO producer_kind",
+    "replace": "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles g\n      JOIN pg_catalog.pg_roles login ON login.rolname IN (session_user, current_user)\n      WHERE g.rolname='control_room_fleet_gateway'\n        AND pg_catalog.pg_has_role(login.oid, g.oid, 'MEMBER')) THEN\n    RETURN NEW;\n  END IF;\n  SELECT s.producer_kind INTO producer_kind",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "why": "a superuser is never confined by the gateway guard: it is the operator's repair path for a remote machine's file (files2up S1)"
+  },
+  {
+    "file": "db/migrations/0210_result_upload_publication.sql",
+    "find": "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles g\n      JOIN pg_catalog.pg_roles login ON login.rolname IN (session_user, current_user)\n      WHERE g.rolname='control_room_fleet_gateway' AND NOT login.rolsuper\n        AND pg_catalog.pg_has_role(login.oid, g.oid, 'MEMBER')) THEN\n    RETURN NEW;\n  END IF;\n  SELECT s.producer_kind INTO producer_kind",
+    "replace": "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles g\n      JOIN pg_catalog.pg_roles login ON login.rolname = session_user\n      WHERE g.rolname='control_room_fleet_gateway' AND NOT login.rolsuper\n        AND pg_catalog.pg_has_role(login.oid, g.oid, 'MEMBER')) THEN\n    RETURN NEW;\n  END IF;\n  SELECT s.producer_kind INTO producer_kind",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "why": "SET ROLE into the gateway group borrows the gateway's confinement along with its privileges"
+  },
+  {
+    "file": "db/migrations/0210_result_upload_publication.sql",
+    "find": "  IF NEW.state IS DISTINCT FROM 'stored' OR OLD.state IS NOT DISTINCT FROM 'stored' THEN RETURN NEW; END IF;",
+    "replace": "  IF NEW.state<>'stored' OR OLD.state IS DISTINCT FROM 'stored' THEN RETURN NEW; END IF;",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
+    "why": "a fleet file reaches 'stored' only through its own PUBLISHED upload; the original early return skipped exactly declared -> stored (files2up B2)"
+  },
+  {
+    "file": "db/down/0210_result_upload_publication.sql",
+    "find": "    EXECUTE 'REVOKE UPDATE (state, stored_at) ON control_result_files FROM control_room_fleet_gateway';\n",
+    "replace": "",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-downgrade-postgres.test.ts",
+    "why": "a downgrade past 0210 takes the gateway's column UPDATE on part 1's file catalog with the guards that narrowed it (files2up B3)"
+  },
+  {
+    "file": "db/down/0210_result_upload_publication.sql",
+    "find": "    EXECUTE 'REVOKE UPDATE (state, stored_at, manifest_digest) ON control_result_file_sets FROM control_room_fleet_gateway';\n",
+    "replace": "",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-downgrade-postgres.test.ts",
+    "why": "a downgrade past 0210 takes the gateway's column UPDATE on part 1's set catalog with the guards that narrowed it (files2up B3)"
+  },
+  {
+    "file": "src/fleet/v1/upload-store.ts",
+    "find": "u.state IN ('received','published')",
+    "replace": "u.state='published'",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-store-postgres.test.ts",
+    "why": "a complete, received upload can be published to the owner (files2up B4)"
+  },
+  {
+    "file": "src/fleet/v1/upload-store.ts",
+    "find": "    const state = databaseSqlStateV1(error);",
+    "replace": "    const state = (error as { code?: string }).code;",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-store-postgres.test.ts",
+    "why": "a guard refusal through the production driver is a fixed refusal code, never 'database unavailable' (files2up B5)"
+  },
+  {
+    "file": "src/fleet/v1/upload-store.ts",
+    "find": "        { \"55000\": \"paused\" });",
+    "replace": "        {});",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-store-postgres.test.ts",
+    "why": "a paused or draining installation answers `paused` to a new reservation, so the connector waits rather than giving up (files2up B5)"
+  },
+  {
+    "file": "src/fleet/v1/upload-store.ts",
+    "find": "    if (ordinal > session.expected_chunks || bytes.byteLength !== chunkSizeFor(session, ordinal))\n      return fleetFail(\"invalid\");\n",
+    "replace": "",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-store-postgres.test.ts",
+    "why": "a chunk past the promise or of the wrong size is refused before a byte reaches the Mac's disk (files2up B6)"
+  },
+  {
+    "file": "src/fleet/v1/upload-store.ts",
+    "find": "      if (!recorded) await this.staging.discardChunk(identity).catch(() => {});\n",
+    "replace": "",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-store-postgres.test.ts",
+    "why": "a chunk the database refuses after staging is removed again, so it neither fills the disk nor wedges the retry (files2up B6)"
+  },
+  {
+    "file": "src/fleet/v1/upload-store.ts",
+    "find": "    const stagedChunk = await this.stageChunk(session, ordinal, bytes);",
+    "replace": "    const stagedChunk = await this.db.transaction(async () => this.stageChunk(session, ordinal, bytes));",
+    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-store-postgres.test.ts",
+    "why": "a chunk is staged with no database transaction open, so slow disk never holds a gateway pool connection (files2up S3)"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "    try { await link(scratch, target); }",
+    "replace": "    try { await (await import(\"node:fs/promises\")).rename(scratch, target); }",
+    "test": "node --import tsx --test --test-concurrency=1 tests/result-upload-race.test.ts",
+    "why": "create-once holds across PROCESSES: two writers racing different bytes for one chunk never both hear 'created' (files2up S2)"
+  },
+  {
+    "file": "src/artifacts/v1/result-upload-staging.ts",
+    "find": "    for (let ordinal = 1; ordinal <= 32; ordinal += 1)\n      if (await this.discardChunk",
+    "replace": "    for (let ordinal = 1; ordinal <= 1; ordinal += 1)\n      if (await this.discardChunk",
+    "test": "node --import tsx --test tests/result-upload-staging.test.ts",
+    "why": "discarding a session sweeps every ordinal the grammar allows, not only the ones it promised (files2up B6)"
   }
 ]

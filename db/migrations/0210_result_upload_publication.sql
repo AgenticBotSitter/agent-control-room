@@ -219,30 +219,53 @@ CREATE CONSTRAINT TRIGGER control_result_file_sets_published
   AFTER UPDATE ON control_result_file_sets
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.enforce_result_set_published();
 
--- The catalog's one writable transition for a FLEET publisher is
--- 'declared' -> 'stored', and that is all it may make. It holds UPDATE on
--- `state` because the transition is a state change, so the column grant alone
--- would also let it write 'quarantined' or 'missing' — which are decisions
--- about the OWNER's bytes, taken on the web path by a grant-checked owner or by
--- the native publisher. This trigger is what turns the column grant back into
--- the single transition it was meant to be, and it belongs here rather than in
--- 0209 because 0209 reserves uploads and 0210 is what makes a fleet file
--- 'stored' at all.
+-- The catalog's one writable transition for the FLEET GATEWAY is
+-- 'declared' -> 'stored', on a fleet set's file or on the fleet set itself, and
+-- that is all it may make. It holds UPDATE on `state` and `stored_at` because the
+-- transition is a state change, and a column grant cannot say "only forward,
+-- only fleet": on its own it would also let the gateway write 'quarantined' or
+-- 'missing' on ANY project's file or set, including a native one or one the
+-- owner already accepted, because 0206's transition list allows
+-- 'stored' -> 'quarantined' and the CHECK only needs `stored_at` cleared too.
+-- Those are decisions about the OWNER's bytes, taken on the web path by a
+-- grant-checked owner, by the native publisher, or by a restore. These two
+-- triggers are what turn the gateway's column grants back into the single
+-- transition they were meant to be.
 --
--- A native publisher, the web login and a restore all move a stored file to
--- 'quarantined' or 'missing', so the rule is stated as "a file in a FLEET set
--- may only ever move forward into 'stored'", not as an absolute. A native-text
--- set has no fleet producer and is untouched by this guard, which is exactly
--- right: it never has a worker in the story.
+-- The rule is scoped to the GATEWAY LOGIN, not to fleet rows. A first version
+-- scoped it to "a file in a fleet set" for every role, which refused the owner,
+-- a restore and even the superuser a quarantine or a 'missing' mark on a remote
+-- machine's file -- exactly the moves 0206's transition list exists for. Every
+-- other role keeps 0206's list; the gateway gets one edge.
+--
+-- WHO IS THE GATEWAY. Membership of `control_room_fleet_gateway`, tested for the
+-- session login and for the current role, so `SET ROLE` into the group is caught
+-- as well as a login that inherits it. A superuser is never confined: it is the
+-- operator's repair path. The role is looked up in `pg_roles` rather than named
+-- to `pg_has_role`, which raises on a role that does not exist, so a database
+-- provisioned without the fleet roles runs these guards as a no-op instead of
+-- failing every catalog update. It is NOT the 0140 anchor ACL: the shared reader,
+-- backup and application roles receive SELECT on every table, the anchor
+-- included, and confining them here would take the quarantine away from the
+-- logins that legitimately hold it.
 CREATE FUNCTION guard_result_file_producer_state() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
-DECLARE producer_id text;
+DECLARE producer_kind text;
 BEGIN
-  IF NEW.state IS NOT DISTINCT FROM OLD.state THEN RETURN NEW; END IF;
-  SELECT s.producer_id INTO producer_id FROM public.control_result_file_sets s
-    WHERE s.tenant_id = NEW.tenant_id AND s.set_id = NEW.set_id AND s.producer_kind = 'fleet';
-  IF producer_id IS NULL THEN RETURN NEW; END IF;
-  IF NEW.state<>'stored' OR OLD.state<>'declared' THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles g
+      JOIN pg_catalog.pg_roles login ON login.rolname IN (session_user, current_user)
+      WHERE g.rolname='control_room_fleet_gateway' AND NOT login.rolsuper
+        AND pg_catalog.pg_has_role(login.oid, g.oid, 'MEMBER')) THEN
+    RETURN NEW;
+  END IF;
+  SELECT s.producer_kind INTO producer_kind FROM public.control_result_file_sets s
+    WHERE s.tenant_id = NEW.tenant_id AND s.set_id = NEW.set_id;
+  -- Every gateway update of a file is this one edge. An update that leaves the
+  -- state alone is refused too: the gateway's only reason to touch a file row
+  -- is to store it, and a no-op rewrite of `stored_at` on a stored file is a
+  -- change to the owner's record, not a publication.
+  IF producer_kind IS DISTINCT FROM 'fleet' OR OLD.state IS DISTINCT FROM 'declared'
+    OR NEW.state IS DISTINCT FROM 'stored' THEN
     RAISE EXCEPTION 'result file state rejected' USING ERRCODE = '42501';
   END IF;
   RETURN NEW;
@@ -251,29 +274,53 @@ REVOKE ALL ON FUNCTION public.guard_result_file_producer_state() FROM PUBLIC;
 CREATE TRIGGER control_result_files_producer_state_guard BEFORE UPDATE ON control_result_files
   FOR EACH ROW EXECUTE FUNCTION public.guard_result_file_producer_state();
 
+-- The same edge for the SET. Before this guard existed nothing narrowed the
+-- gateway's `UPDATE (state, stored_at, manifest_digest)` on the set table at all,
+-- so the remote-machine login could quarantine the owner's accepted results in
+-- every project (review files2up B1). 0206's own set guard still runs after this
+-- one and still proves the manifest, the files and the quota; this one only says
+-- the gateway may not ask for anything but a fleet set's publication.
+CREATE FUNCTION guard_result_file_set_producer_state() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles g
+      JOIN pg_catalog.pg_roles login ON login.rolname IN (session_user, current_user)
+      WHERE g.rolname='control_room_fleet_gateway' AND NOT login.rolsuper
+        AND pg_catalog.pg_has_role(login.oid, g.oid, 'MEMBER')) THEN
+    RETURN NEW;
+  END IF;
+  IF OLD.producer_kind IS DISTINCT FROM 'fleet' OR OLD.state IS DISTINCT FROM 'declared'
+    OR NEW.state IS DISTINCT FROM 'stored' THEN
+    RAISE EXCEPTION 'result file set state rejected' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_result_file_set_producer_state() FROM PUBLIC;
+CREATE TRIGGER control_result_file_sets_producer_state_guard BEFORE UPDATE ON control_result_file_sets
+  FOR EACH ROW EXECUTE FUNCTION public.guard_result_file_set_producer_state();
+
 -- A file row is only 'stored' through its own PUBLISHED session. Enforced on
 -- the file's own UPDATE, so the guarantee holds whichever order a publisher
 -- chooses to write in: it cannot mark one file stored and rely on the set's
 -- later update to notice.
--- VOLATILE, not STABLE, and that is load-bearing rather than a default.
+-- VOLATILE (plpgsql's default), because this BEFORE trigger reads upload
+-- sessions the same transaction may have published a statement earlier.
 --
--- This guard is a BEFORE UPDATE trigger that reads the upload sessions table to
--- decide whether the row it is guarding may become 'stored'. A STABLE function
--- takes its snapshot at the start of the STATEMENT that called it, so a session
--- published moments earlier in the SAME transaction is invisible to it - and
--- worse, a STABLE function's plan is trusted to be consistent, so the guard
--- silently answered "no published session" for a row that was being published in
--- that very transaction, and the first version of this guard never fired at all,
--- for the superuser or for the gateway.
---
--- VOLATILE is the honest volatility for a BEFORE trigger: it must see the
--- transaction's own writes. It is still a per-row guard on a single UPDATE, so
--- the cost is one indexed existence check per stored file.
+-- A correction to the record. An earlier comment here said the first version of
+-- this guard "never fired" because it was STABLE. That was a misdiagnosis: it
+-- never fired because its early return skipped the 'declared' -> 'stored' move
+-- (review files2up B2, fixed below), and the ingress lane now proves the refusal
+-- with a file whose set has no published session.
 CREATE FUNCTION guard_result_file_upload_stored() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE producer_kind text;
 BEGIN
-  IF NEW.state<>'stored' OR OLD.state IS DISTINCT FROM 'stored' THEN RETURN NEW; END IF;
+  -- Only the MOVE into 'stored' is checked, which is every move this guard
+  -- exists for: 'declared' -> 'stored' at publication and 'missing' -> 'stored'
+  -- at a restore. (The first version returned early for exactly that move --
+  -- `OLD.state IS DISTINCT FROM 'stored'` -- and so only ever checked
+  -- 'stored' -> 'stored', which is to say never; review files2up B2.)
+  IF NEW.state IS DISTINCT FROM 'stored' OR OLD.state IS NOT DISTINCT FROM 'stored' THEN RETURN NEW; END IF;
   -- Only a FLEET set's file gets here through an upload session. A native-text
   -- set, a restore and a republish all store bytes by their own path and have no
   -- chunked upload behind them, and requiring one of those would refuse the

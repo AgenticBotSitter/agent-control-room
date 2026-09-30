@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, open, readdir, realpath, rename, unlink, type FileHandle } from "node:fs/promises";
+import { link, lstat, open, readdir, realpath, unlink, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 /**
@@ -71,12 +71,12 @@ const projectPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
 const uploadPattern = /^result-upload:[a-f0-9]{32}$/u;
 const onDiskPattern = /^[a-f0-9]{64}\.chunk$/u;
 const suffix = ".chunk";
-// An in-flight scratch file, written under a name of its own and renamed into
-// place. It is tolerated by the accounting rather than refused, because a chunk
-// arriving in parallel would otherwise be refused by a reader that caught the
-// write in progress. It is never READ (a read only ever uses a derived chunk
-// name) and it carries its session's own hash, so a discard can reclaim the
-// leftovers of a process that died mid-write.
+// An in-flight scratch file, written under a name of its own and then LINKED
+// into place. It is tolerated by the accounting rather than refused, because a
+// chunk arriving in parallel would otherwise be refused by a reader that caught
+// the write in progress. It is never READ (a read only ever uses a derived chunk
+// name). A process killed mid-write leaves its scratch behind; nothing reclaims
+// it yet (review files2up S4), and the accounting tolerates it meanwhile.
 const scratchPattern = /^\.staging-[a-f0-9]{64}-[a-z0-9]+-\d+\.part$/u;
 const noFollow = constants.O_NOFOLLOW ?? 0;
 const nonBlock = constants.O_NONBLOCK ?? 0;
@@ -195,9 +195,10 @@ export class ResultUploadStagingV1 {
     return (await readdir(this.root)).filter((entry) => onDiskPattern.test(entry)).sort();
   }
 
-  /** Writes one chunk, create-once. An exact retry replays; different bytes for
-   * an ordinal already staged are refused and the earlier chunk is left intact,
-   * because it is the record of what the first attempt sent. */
+  /** Writes one chunk, create-once, across processes as well as within one. An
+   * exact retry replays; different bytes for an ordinal already staged are
+   * refused and the earlier chunk is left intact, because it is the record of
+   * what the first attempt sent. */
   async stage(identity: StagedChunkIdentityV1, bytes: Uint8Array): Promise<{ digest: string; replayed: boolean }> {
     const name = stagedChunkNameV1(identity.tenantId, identity.projectId, identity.uploadId, identity.ordinal);
     if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1
@@ -214,15 +215,15 @@ export class ResultUploadStagingV1 {
     const target = join(this.root, name);
     await this.assertAccountedFor(operation);
     const existing = await this.readFile(target, operation, true);
-    if (existing) {
-      if (bytesDigest(existing) !== bytesDigest(bytes) || existing.byteLength !== bytes.byteLength)
-        throw new ResultUploadStagingError("staging_conflict");
-      return { digest: bytesDigest(bytes), replayed: true };
-    }
-    // Written to a name of its own and then renamed into place: `rename` is
-    // atomic and overwrites, so a partial chunk is never visible under a name a
-    // reader would accept. A reader that arrives between the two sees the
-    // missing chunk, not a short one.
+    if (existing) return this.settleAgainst(existing, bytes);
+    // Written to a name of its own, then LINKED into place. `link` refuses with
+    // EEXIST when the name is already taken, so exactly one writer's bytes ever
+    // become the chunk, even across processes: the loser reads the winner's
+    // bytes and answers replay or conflict from them. An earlier version used
+    // `rename`, which OVERWRITES -- two processes racing different bytes for one
+    // chunk both answered "created" in 30 of 320 rounds (review files2up S2),
+    // and the second silently replaced the first. A partial chunk is still never
+    // visible under the final name, because the link happens after the fsync.
     const scratch = join(this.root,
       `.staging-${name.slice(0, 64)}-${process.pid.toString(36)}-${bytes.byteLength}.part`);
     let handle: FileHandle | undefined;
@@ -230,18 +231,38 @@ export class ResultUploadStagingV1 {
       handle = await open(scratch, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600);
       await handle.writeFile(bytes);
       await handle.sync();
+    } catch (error) {
+      // A scratch name left by an earlier process with a reused pid answers
+      // EEXIST here; that, and any other errno, is one of this area's codes.
+      if (handle) await unlink(scratch).catch(() => {});
+      throw safe(error);
     } finally { await handle?.close().catch(() => {}); }
+    let won = true;
+    try { await link(scratch, target); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        await unlink(scratch).catch(() => {});
+        throw safe(error);
+      }
+      won = false;
+    }
     try {
-      await rename(scratch, target);
+      await unlink(scratch);
       const directory = await open(this.root, constants.O_RDONLY | noFollow);
       try { await directory.sync(); } finally { await directory.close().catch(() => {}); }
-    } catch (error) {
-      await unlink(scratch).catch(() => {});
-      throw safe(error);
+    } catch (error) { throw safe(error); }
+    if (!won) {
+      // Another writer holds the name. Its bytes ARE the chunk; ours are either
+      // the same (a replay) or a conflict. A winner still between its own link
+      // and its scratch unlink has two links for a moment, which the read below
+      // refuses as ambiguous -- an honest refusal, never a second "created".
+      const winner = await this.readFile(target, operation, true).catch((error: unknown) => { throw safe(error); });
+      if (!winner) throw new ResultUploadStagingError("staging_ambiguous");
+      return this.settleAgainst(winner, bytes);
     }
-    // Re-read the chunk that was just renamed into place, and prove it. The
+    // Re-read the chunk that was just linked into place, and prove it. The
     // `false` is deliberate and stays deliberate: a chunk that vanished between
-    // the rename and this proof has NOT been proven, and `staging_ambiguous` is
+    // the link and this proof has NOT been proven, and `staging_ambiguous` is
     // the honest answer -- which is why this call cannot translate ENOENT into
     // "absent". What it must not do is leak the errno either.
     let proven: Uint8Array | undefined;
@@ -254,6 +275,14 @@ export class ResultUploadStagingV1 {
     if (!proven || bytesDigest(proven) !== bytesDigest(bytes))
       throw new ResultUploadStagingError("staging_ambiguous");
     return { digest: bytesDigest(bytes), replayed: false };
+  }
+
+  /** The answer for a writer that found the name already taken: the same bytes
+   * are a replay, anything else is a conflict and the earlier chunk stays. */
+  private settleAgainst(existing: Uint8Array, bytes: Uint8Array) {
+    if (bytesDigest(existing) !== bytesDigest(bytes) || existing.byteLength !== bytes.byteLength)
+      throw new ResultUploadStagingError("staging_conflict");
+    return { digest: bytesDigest(bytes), replayed: true };
   }
 
   /** One staged chunk, proven unchanged across the read, or a refusal. */
@@ -304,39 +333,46 @@ export class ResultUploadStagingV1 {
     return assembled;
   }
 
-  /** Removes one session's staged chunks. Used after a finalise, and by the
-   * sweeper for an expired or voided session. It removes exactly the names this
-   * area derives for that one upload and PROVES each one is this area's own
-   * chunk before it unlinks it, so it cannot be pointed at anything else; an
-   * already-absent chunk is done, and two processes removing the same name at
-   * once is the ordinary race rather than a failure. */
-  async discardSession(identity: Omit<StagedChunkIdentityV1, "ordinal">, maxChunks: number): Promise<number> {
-    if (!Number.isSafeInteger(maxChunks) || maxChunks < 0 || maxChunks > 32)
-      throw new ResultUploadStagingError("staging_invalid");
+  /** Removes one session's staged chunks: EVERY ordinal the grammar allows,
+   * 1..32, not just the ones the session promised. A chunk refused by the
+   * database after it was staged, or one sent for an ordinal past the promise,
+   * is exactly the leftover a promise-bounded sweep would miss (review files2up
+   * B6), and the name derivation means nothing here can reach another upload. */
+  async discardSession(identity: Omit<StagedChunkIdentityV1, "ordinal">): Promise<number> {
     let removed = 0;
-    for (let ordinal = 1; ordinal <= Math.max(maxChunks, 1); ordinal += 1) {
-      const name = stagedChunkNameV1(identity.tenantId, identity.projectId, identity.uploadId, ordinal);
-      const path = join(this.root, name);
-      // The name is proved to be this area's OWN chunk before it is removed: a
-      // regular file, not a symlink, with exactly one link. Without that proof a
-      // discard can remove something in this root that is not a staged chunk --
-      // and a hard-linked name would be unlinked while another link to the same
-      // bytes survived elsewhere, which is the store's `stillOwnsTheName`
-      // lesson applied to a second writer of the same directory.
-      let listed: BigIntStats | undefined;
-      try { listed = await lstat(path, { bigint: true }); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw safe(error); }
-      if (!listed) continue;                       // already gone: nothing to do
-      if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1))
-        throw new ResultUploadStagingError("staging_ambiguous");
-      try { await unlink(path); removed += 1; } catch (error) {
-        // Another process removing the same name at the same moment is the
-        // ordinary race, not a failure: the chunk is gone either way, which is
-        // the whole point of the call.
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw safe(error);
-      }
-    }
+    for (let ordinal = 1; ordinal <= 32; ordinal += 1)
+      if (await this.discardChunk({ ...identity, ordinal })) removed += 1;
     return removed;
+  }
+
+  /** Removes one staged chunk. Used after a finalise, by the sweeper, and by
+   * the upload path when the database refuses a chunk that was already staged.
+   * It PROVES the name is this area's own chunk before it unlinks it, so it
+   * cannot be pointed at anything else; an already-absent chunk is done, and two
+   * processes removing the same name at once is the ordinary race rather than a
+   * failure. */
+  async discardChunk(identity: StagedChunkIdentityV1): Promise<boolean> {
+    const name = stagedChunkNameV1(identity.tenantId, identity.projectId, identity.uploadId, identity.ordinal);
+    const path = join(this.root, name);
+    // The name is proved to be this area's OWN chunk before it is removed: a
+    // regular file, not a symlink, with exactly one link. Without that proof a
+    // discard can remove something in this root that is not a staged chunk --
+    // and a hard-linked name would be unlinked while another link to the same
+    // bytes survived elsewhere, which is the store's `stillOwnsTheName`
+    // lesson applied to a second writer of the same directory.
+    let listed: BigIntStats | undefined;
+    try { listed = await lstat(path, { bigint: true }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw safe(error); }
+    if (!listed) return false;                     // already gone: nothing to do
+    if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1))
+      throw new ResultUploadStagingError("staging_ambiguous");
+    try { await unlink(path); return true; } catch (error) {
+      // Another process removing the same name at the same moment is the
+      // ordinary race, not a failure: the chunk is gone either way, which is
+      // the whole point of the call.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw safe(error);
+      return false;
+    }
   }
 
   private async readFile(path: string, operation: Operation, missingAllowed: boolean): Promise<Uint8Array | undefined> {

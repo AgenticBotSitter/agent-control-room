@@ -81,12 +81,10 @@ SET LOCAL statement_timeout = '5s';
 -- answers "no such row" for a row that exists, and the protection it was written
 -- to provide is simply absent.
 --
--- 0210's per-file guard is the case that proved it. Marked STABLE, it never
--- fired at all: not for the fleet gateway, and not for the schema owner either,
--- so the "a file cannot be stored without a published upload" refusal was being
--- asserted by a test that was passing for an unrelated reason. VOLATILE is the
--- honest volatility for a BEFORE trigger, and the cost is one indexed existence
--- check per guarded row.
+-- (A note once here said 0210's per-file guard "never fired" because it was
+-- STABLE. It never fired because of a typo in its early return -- review
+-- files2up B2 -- and the ingress lane now proves that refusal directly. VOLATILE
+-- is still the honest volatility; it was not the bug.)
 --
 CREATE TABLE control_task_declared_outputs (
   tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,

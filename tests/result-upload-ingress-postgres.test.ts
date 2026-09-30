@@ -438,22 +438,19 @@ test("upload sessions, chunks, publication and combine bindings hold their refus
 
       // ==== 5. a manifest publishes only when every file is present ===
       //
-      // 0210's per-file guard is proved by its EFFECT, which is the only
-      // observable that distinguishes it from a neighbouring guard: a FLEET
-      // file cannot reach 'stored' until its own session is published, and the
-      // refusal is reproducible for a file whose session is still 'received'.
-      //
-      // KNOWN LIMIT, recorded rather than papered over: with the gateway's
-      // column UPDATE on (state, stored_at), PostgreSQL's per-row BEFORE
-      // trigger evaluation for this exact statement is not reproducible on the
-      // live cluster in a way this test could pin down - the same statement was
-      // refused for one ordinal and accepted for the other in the same session,
-      // with identical session state, identical digests and an identical row
-      // shape. Rather than assert a refusal that does not reproduce, this
-      // asserts the property that IS reproducible and load-bearing: the file is
-      // not 'stored' until the set has its publication receipt, which is
-      // 0206/0210's own deferred completeness check and is proved below by the
-      // set refusing to reach 'stored' while a file is still 'declared'.
+      // 0210's per-file guard, proved by its own refusal: a FLEET file cannot
+      // reach 'stored' until its own session is PUBLISHED. Both sessions are only
+      // 'received' here, so the gateway's store statement must be refused, and
+      // refused for this reason -- the producer-state guard allows the edge, so
+      // nothing else can be what answers. (A comment here once called this
+      // refusal "not reproducible" and recorded it as a KNOWN LIMIT. It was the
+      // guard's own typo, review files2up B2, and it is now asserted outright.)
+      await guard(fleet, { sql: markFileStored, params: [FLEET_TENANT, set, issuedAt, 1],
+        what: "a fleet file whose session is only 'received' cannot be stored", states: ["23514"] });
+      await guard(fleet, { sql: markFileStored, params: [FLEET_TENANT, set, issuedAt, 2],
+        what: "and the same for the other ordinal", states: ["23514"] });
+      await guard(admin, { sql: markFileStored, params: [FLEET_TENANT, set, issuedAt, 1],
+        what: "not even the schema owner stores a fleet file without a published upload", states: ["23514"] });
       const beforePublish = await admin<{ ordinal: number; state: string }>(
         "SELECT ordinal,state FROM control_result_files WHERE tenant_id=$1 AND set_id=$2 ORDER BY ordinal",
         [FLEET_TENANT, set]);
@@ -749,6 +746,64 @@ test("upload sessions, chunks, publication and combine bindings hold their refus
       assert.equal((await admin<{ state: string }>("SELECT state FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
         [FLEET_TENANT, nativeSet]))[0]!.state, "stored",
         "a native producer's file-store set still stores without an upload receipt (0210's guard is fleet-only)");
+
+      // ---- B1: the gateway may make ONE catalog move, fleet declared->stored ----
+      // Every probe clears `stored_at` too, so 0206's CHECK is satisfied and the
+      // only thing that can refuse is 0210's gateway guard. A probe that left
+      // `stored_at` set would be refused by the CHECK and prove nothing -- which
+      // is how the first version of this lane passed while the hole was open
+      // (review files2up B1). The targets are the two the hole reached: a NATIVE
+      // set and its file, and a FLEET set the owner has already ACCEPTED.
+      assert.equal((await admin<{ retention_state: string }>(
+        "SELECT retention_state FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
+        [FLEET_TENANT, set]))[0]!.retention_state, "retained", "the fleet set really is accepted before the probe");
+      for (const [target, label] of [[nativeSet, "a native"], [set, "an accepted fleet"]] as const) {
+        for (const next of ["quarantined", "missing"] as const) {
+          await guard(fleet, { sql: `UPDATE control_result_files SET state='${next}',stored_at=NULL
+            WHERE tenant_id=$1 AND set_id=$2`, params: [FLEET_TENANT, target],
+          what: `the gateway cannot mark ${label} set's file ${next}`, states: ["42501"] });
+        }
+        await guard(fleet, { sql: `UPDATE control_result_file_sets SET state='quarantined',stored_at=NULL
+          WHERE tenant_id=$1 AND set_id=$2`, params: [FLEET_TENANT, target],
+        what: `the gateway cannot quarantine ${label} set`, states: ["42501"] });
+        // Nor rewrite a stored row without changing its state: the gateway's
+        // only reason to touch the catalog is a publication.
+        await guard(fleet, { sql: `UPDATE control_result_files SET stored_at=$3 WHERE tenant_id=$1 AND set_id=$2`,
+          params: [FLEET_TENANT, target, new Date().toISOString()],
+          what: `the gateway cannot re-stamp ${label} set's stored file`, states: ["42501"] });
+        await guard(fleet, { sql: `UPDATE control_result_file_sets SET manifest_digest=$3 WHERE tenant_id=$1 AND set_id=$2`,
+          params: [FLEET_TENANT, target, ONE],
+          what: `the gateway cannot rewrite ${label} set's manifest`, states: ["42501"] });
+      }
+      // The same refusal for a superuser that has `SET ROLE` into the gateway
+      // group: the guard reads the CURRENT role as well as the session login,
+      // so borrowing the gateway's privileges borrows its confinement too.
+      // Simple-protocol, so both statements share the one session.
+      await guard(admin, { sql: `SET ROLE control_room_fleet_gateway;
+        UPDATE control_result_files SET state='quarantined',stored_at=NULL
+          WHERE tenant_id='${FLEET_TENANT}' AND set_id='${nativeSet}'`, params: [],
+      what: "a superuser SET ROLE into the gateway is confined like the gateway", states: ["42501"] });
+      const untouched = await admin<{ set_id: string; state: string }>(`SELECT set_id,state FROM control_result_files
+        WHERE tenant_id=$1 AND set_id = ANY($2::text[]) ORDER BY set_id,ordinal`, [FLEET_TENANT, [nativeSet, set]]);
+      assert.ok(untouched.length === 3 && untouched.every(row => row.state === "stored"),
+        `every probed file is still stored: ${JSON.stringify(untouched)}`);
+
+      // ---- S1: the operator CAN still quarantine or lose a remote file -------
+      // The guard is the gateway's, not the fleet row's: 0206's transition list
+      // is how a restore marks a lost file missing and how the owner quarantines
+      // a malicious upload, and the superuser is the repair path for both.
+      await admin(`UPDATE control_result_files SET state='quarantined',stored_at=NULL
+        WHERE tenant_id=$1 AND set_id=$2 AND ordinal=2`, [FLEET_TENANT, set]);
+      await admin(`UPDATE control_result_files SET state='missing',stored_at=NULL
+        WHERE tenant_id=$1 AND set_id=$2 AND ordinal=1`, [FLEET_TENANT, set]);
+      // And a restore puts the missing one back: 'missing' -> 'stored' is a move
+      // INTO stored, so B2's guard checks it, and it passes because this file's
+      // upload really was published.
+      await admin(`UPDATE control_result_files SET state='stored',stored_at=$3
+        WHERE tenant_id=$1 AND set_id=$2 AND ordinal=1`, [FLEET_TENANT, set, issuedAt]);
+      assert.deepEqual((await admin<{ ordinal: number; state: string }>(`SELECT ordinal,state FROM control_result_files
+        WHERE tenant_id=$1 AND set_id=$2 ORDER BY ordinal`, [FLEET_TENANT, set])).map(row => [row.ordinal, row.state]),
+      [[1, "stored"], [2, "quarantined"]], "the superuser quarantined one fleet file and restored the other");
       // And the guarantee itself: a FLEET set that skips the receipt is refused.
       // A set of its OWN, because `set` is already published by this point and a
       // published set cannot move back into 'stored' -- so reusing it would prove
@@ -760,6 +815,10 @@ test("upload sessions, chunks, publication and combine bindings hold their refus
       // worker in one project is 0100's ownership-lease collision, which is
       // correct and is not what this file is about.
       const unreceiptedTask = await seedProposedTask(db, PROJECT_E, "upload-unreceipted");
+      // Declared before the claim, as every output must be: the receipt half of
+      // this proof below reserves a real upload for it.
+      await web(declareOutput, [FLEET_TENANT, PROJECT_E, unreceiptedTask.jobId, 1, "unreceipted.txt", "text/plain",
+        OWNER, issuedAt]);
       const unreceiptedJob = await enrollAndClaim(db, owner, gateway, postgres, PROJECT_E, "upload-unreceipted");
       await db.transaction(async tx => {
         await tx.query(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,attempt_id,
@@ -773,9 +832,32 @@ test("upload sessions, chunks, publication and combine bindings hold their refus
           [FLEET_TENANT, unreceiptedSet, PROJECT_E, unreceiptedJob.jobId, fileIdOf(9), bytes.byteLength,
             hash, ZERO, issuedAt]);
       });
-      await assert.rejects(admin(`UPDATE control_result_files SET state='stored',stored_at='${issuedAt}'
+      // B2's refusal first, for the gateway and for the superuser alike: this set
+      // has NO upload session at all, so its file may not become 'stored' by any
+      // statement. That is review files2up P1 -- the gateway moved exactly this
+      // file to 'stored' on the unfixed guard.
+      await guard(fleet, { sql: markFileStored, params: [FLEET_TENANT, unreceiptedSet, issuedAt, 1],
+        what: "the gateway cannot store a fleet file that has no upload session at all", states: ["23514"] });
+      await assert.rejects(admin(markFileStored, [FLEET_TENANT, unreceiptedSet, issuedAt, 1]), (error: unknown) => {
+        assert.match(String((error as { message?: string }).message ?? ""), /without a published upload/u,
+          "refused by the per-file upload guard");
+        return true;
+      }, "not even the schema owner stores a fleet file with no published upload");
+      // Now the receipt guard on its own: give the file a real published upload
+      // (claim live, one chunk, received, published), store it, and try to store
+      // the SET with no publication receipt. Only the receipt rule is left to
+      // answer, so the refusal proves that one.
+      const unreceiptedUpload = uploadIdOf(0x99);
+      const freshly = new Date().toISOString();
+      await admin(insertSession, [FLEET_TENANT, unreceiptedUpload, PROJECT_E, unreceiptedJob.jobId,
+        unreceiptedJob.attemptId, unreceiptedSet, 1, unreceiptedJob.workerId, unreceiptedJob.claimId,
+        bytes.byteLength, hash, CHUNK, 1, freshly, inHours(24)]);
+      await admin(insertChunk, [FLEET_TENANT, unreceiptedUpload, 1, bytes.byteLength, hash, freshly]);
+      await admin(markReceived, [FLEET_TENANT, unreceiptedUpload, freshly]);
+      await admin(markPublished, [FLEET_TENANT, unreceiptedUpload, freshly]);
+      await assert.rejects(admin(`UPDATE control_result_files SET state='stored',stored_at='${freshly}'
           WHERE tenant_id='${FLEET_TENANT}' AND set_id='${unreceiptedSet}';
-        UPDATE control_result_file_sets SET state='stored',stored_at='${issuedAt}',manifest_digest=
+        UPDATE control_result_file_sets SET state='stored',stored_at='${freshly}',manifest_digest=
           (SELECT 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(string_agg(
             ordinal::text || ':' || storage_key || ':' || content_digest || ':' || size_bytes::text,
             E'\\n' ORDER BY ordinal), 'UTF8')), 'hex') FROM control_result_files

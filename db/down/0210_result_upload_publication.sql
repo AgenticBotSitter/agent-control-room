@@ -1,7 +1,8 @@
 -- Down for 0210 only. It removes exactly what 0210 created and granted: the
--- publication table, its guard, and the two triggers it installed on 0206's
--- catalog tables. It touches nothing 0209 or 0211 added, and 0210 is the only
--- migration that ever installed those two triggers, so neither is recreated.
+-- publication table, its guard, the four triggers it installed on 0206's
+-- catalog tables, and the gateway's column UPDATE grants on that catalog. It
+-- touches nothing 0209 or 0211 added, and 0210 is the only migration that ever
+-- installed those triggers, so none is recreated.
 --
 -- The role grants it revokes are the ones on control_result_publications. 0210
 -- is also the migration that adds this table to
@@ -17,6 +18,17 @@ DO $$ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') THEN
     EXECUTE 'REVOKE SELECT, INSERT ON control_result_publications FROM control_room_fleet_gateway';
+  END IF;
+  -- The gateway's column UPDATE grants on part 1's catalog belong to 0210: they
+  -- exist only so the gateway can PUBLISH a fleet set (declared -> stored), and
+  -- 0210's two producer-state guards are what narrow them to that one edge. The
+  -- guards are dropped below, so leaving the grants would hand a rolled-back
+  -- install a gateway that can move native files to 'stored' and quarantine
+  -- anything -- more write power than part 1 ever gave it (review files2up B3).
+  -- The downgrade lane compares role_column_grants to prove they are gone.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') THEN
+    EXECUTE 'REVOKE UPDATE (state, stored_at) ON control_result_files FROM control_room_fleet_gateway';
+    EXECUTE 'REVOKE UPDATE (state, stored_at, manifest_digest) ON control_result_file_sets FROM control_room_fleet_gateway';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_native_results') THEN
     EXECUTE 'REVOKE SELECT, INSERT ON control_result_publications FROM control_room_native_results';
@@ -38,6 +50,7 @@ END $$;
 -- migration that installed it.
 DROP TRIGGER control_result_files_upload_stored_guard ON control_result_files;
 DROP TRIGGER control_result_files_producer_state_guard ON control_result_files;
+DROP TRIGGER control_result_file_sets_producer_state_guard ON control_result_file_sets;
 DROP TRIGGER control_result_file_sets_published ON control_result_file_sets;
 DROP TRIGGER control_result_publications_no_truncate ON control_result_publications;
 DROP TRIGGER control_result_publications_no_delete ON control_result_publications;
@@ -47,6 +60,7 @@ DROP INDEX control_result_publications_project;
 DROP TABLE control_result_publications;
 DROP FUNCTION guard_result_file_upload_stored();
 DROP FUNCTION guard_result_file_producer_state();
+DROP FUNCTION guard_result_file_set_producer_state();
 DROP FUNCTION enforce_result_set_published();
 DROP FUNCTION guard_result_publication_insert();
 -- The publication's UPDATE guard, which is what makes a receipt immutable once

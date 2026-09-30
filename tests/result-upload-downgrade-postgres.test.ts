@@ -153,6 +153,19 @@ const grants = async (db: Querier) => (await db(`SELECT table_name,grantee,privi
   .map((row) => `${String(row.table_name)}|${String(row.grantee)}|${String(row.privilege_type)}|`
     + `${String(row.is_grantable)}`);
 
+/** Every role's COLUMN privileges, the same way. `role_table_grants` does not
+ * list a column grant at all, so a down file that forgot `REVOKE UPDATE (col)`
+ * passed the table comparison above while the gateway kept write access to
+ * part 1's catalog after a rollback (review files2up B3). This view expands a
+ * table-level grant into one row per column as well, so it is a superset of the
+ * table comparison for the column-capable privileges, and it is compared whole. */
+const columnGrants = async (db: Querier) => (await db(`SELECT table_name,column_name,grantee,privilege_type,
+  is_grantable FROM information_schema.role_column_grants
+  WHERE table_schema='public' AND grantee = ANY($1::text[])
+  ORDER BY table_name,column_name,grantee,privilege_type`, [ROLES])).rows
+  .map((row) => `${String(row.table_name)}|${String(row.column_name)}|${String(row.grantee)}|`
+    + `${String(row.privilege_type)}|${String(row.is_grantable)}`);
+
 const relations = async (db: Querier) => (await db(`SELECT c.relname FROM pg_class c
   JOIN pg_namespace n ON n.oid=c.relnamespace
   WHERE n.nspname='public' AND c.relkind IN ('r','v','m','p') ORDER BY c.relname`)).rows
@@ -181,45 +194,6 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
       try {
         return { rows: (await client.query(sql, params as unknown[])).rows };
       } finally { await client.end(); }
-    // Step two, as production does it: reconcile the narrow logins' grants from
-    // the role files. Reading the desired set from the FILES rather than from a
-    // restated list is the point - a grant added to a role file has to arrive
-    // here without anyone editing this test.
-    //
-    // Only the two role files 0209-0211 grant through. The attack-kit cluster
-    // carries the role names but not every login the reconciler can write for -
-    // `control_room_agent_reviewer` and the rest belong to subsystems this
-    // stream does not touch, and the reconciler is right to refuse them here.
-    // Scoping to the files that matter keeps the assertion about MY grants, and
-    // the narrow provisioning path that grants the rest is the lifecycle
-    // test's, not this one's.
-    // `desiredMacGrantsV1` refuses a source set that is not the full list of
-    // role files, because a partial set would reconcile a login's grants down
-    // to nothing. So it gets every file, and the filter below is what scopes the
-    // RESULT to the relations this stream added.
-    const sources = Object.fromEntries(await Promise.all(ROLE_FILES.map(async (name) =>
-      [name, await readFile(join(REPOSITORY_ROOT, "db", "roles", name), "utf8")])));
-    const reconciler = new Client(postgres.admin());
-    await reconciler.connect();
-    try {
-      const desired = desiredMacGrantsV1(sources);
-      const actual = new Set([...(await readMacGrantCatalogV1(reconciler))]);
-      const diff = diffMacGrantsV1(actual, desired);
-      assert.ok(diff.missing.length > 0,
-        "the downgrade really did take grants away, so this re-apply is doing work");
-      // The tuples for the six relations this stream added, PLUS the two
-      // catalog SELECTs 0209's SECURITY INVOKER guard required - those are on
-      // part 1's tables but they are 0209's grant, which is the whole reason
-      // 0209's down file revokes them and this test checks it comes back. The
-      // other grants in those two files belong to tables other migrations own,
-      // and reconciling them here would be asserting about another subsystem.
-      const reconciled = new Set([...addedRelations, "control_result_file_sets", "control_result_files"]);
-      const mine = (item: string) => reconciled.has(item.split("|")[2]?.split(".").pop() ?? "");
-      await applyMacGrantDiffV1(reconciler, {
-        extra: diff.extra.filter(mine),
-        missing: diff.missing.filter(mine),
-      });
-    } finally { await reconciler.end(); }
     };
 
     // --- the state with 0209-0211 applied ---------------------------------
@@ -246,6 +220,7 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
     const installedTriggers = await triggersInstalledByUpFiles();
     const addedFunctions = await addedFromUpFiles(FUNCTION_IN_UP);
     const grantsBefore = await grants(db);
+    const columnGrantsBefore = await columnGrants(db);
     const relationsBefore = await relations(db);
     const triggersBefore = await triggers(db);
     const functionsBefore = await functions(db);
@@ -323,6 +298,7 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
     const targetTriggers = await triggers(db);
     const targetFunctions = await functions(db);
     const targetGrants = await grants(db);
+    const targetColumnGrants = await columnGrants(db);
     await db(`DELETE FROM control_room_schema_migrations WHERE ledger_order >= $1`, [appliedThree[0]!.ledger_order]);
     for (const name of DOWN_FILES) {
       const sql = await readFile(join(REPOSITORY_ROOT, "db", "down", name), "utf8");
@@ -394,6 +370,31 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
         || catalog(grantsAfter).includes(grant),
       `the downgrade removed part 1's ${grant}`);
 
+    // --- the column grants -------------------------------------------------
+    // The same three rules for column privileges: nothing granted, nothing
+    // revoked on a table 0209-0211 cannot justify, and -- the one B3 was about --
+    // the gateway's column UPDATE on part 1's catalog is gone with the guards
+    // that narrowed it. Part 1 never gave the gateway any write on the catalog,
+    // so after the downgrade it must hold none.
+    const columnGrantsAfter = await columnGrants(db);
+    assert.deepEqual(columnGrantsAfter.filter((grant) => !targetColumnGrants.includes(grant)), [],
+      "a downgrade grants no column privilege");
+    for (const gone of targetColumnGrants.filter((grant) => !columnGrantsAfter.includes(grant))) {
+      const [table] = gone.split("|");
+      assert.ok(addedRelations.includes(String(table)) || justifiedOnForeignTables.has(String(table)),
+        `the downgrade revoked column privilege ${gone}, which 0209-0211 cannot justify`);
+    }
+    const gatewayCatalogWrites = (rows: string[]) => rows.filter((grant) => {
+      const [table, , grantee, privilege] = grant.split("|");
+      return (table === "control_result_files" || table === "control_result_file_sets")
+        && grantee === "control_room_fleet_gateway" && privilege !== "SELECT";
+    });
+    assert.ok(gatewayCatalogWrites(targetColumnGrants).length >= 5,
+      `the gateway held its catalog column UPDATEs before the downgrade, so the check below is not vacuous: ${
+        JSON.stringify(gatewayCatalogWrites(targetColumnGrants))}`);
+    assert.deepEqual(gatewayCatalogWrites(columnGrantsAfter), [],
+      "after the downgrade the gateway holds no write privilege on any column of part 1's catalog");
+
     // --- and it re-applies ------------------------------------------------
     // The applier is the real one, so this proves a retried upgrade works after
     // a failed one, not that a hand-written CREATE TABLE works.
@@ -454,6 +455,8 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
     assert.deepEqual(await functions(db), functionsBefore, "and every function");
     assert.deepEqual(await grants(db), grantsBefore,
       "and every grant, from the role file, for both roles");
+    assert.deepEqual(await columnGrants(db), columnGrantsBefore,
+      "and every column grant, including the gateway's catalog UPDATEs");
 
     // --- the down files are all still on disk ----------------------------
     // A down file that deletes itself, or a typo that made this test read a

@@ -124,11 +124,11 @@ test("the upload staging area is create-once, derived and accounted for", async 
     "a chunk that was never staged reads as absent");
 
     // --- discard removes exactly one session's chunks ---------------------
-    const removed = await staging.discardSession(identity, 4);
+    const removed = await staging.discardSession(identity);
     assert.equal(removed, 4, "discard removes exactly the names this session derives");
     assert.deepEqual(await readdir(root), [], "and the root is empty afterwards");
     // An already-absent chunk is done, not an error.
-    assert.equal(await staging.discardSession(identity, 4), 0, "discarding twice is not a failure");
+    assert.equal(await staging.discardSession(identity), 0, "discarding twice is not a failure");
 
     // --- an entry the area cannot account for is a REFUSAL ---------------
     await writeFile(join(root, "stray.txt"), "not mine\n", { mode: 0o600 });
@@ -388,8 +388,8 @@ test("fifty writers and readers at once, and the queue does not lie", async () =
     const reopened = await openRoot(root);
     assert.equal((await reopened.stagedNames()).length, CHUNKS + 32,
       "both sessions' chunks are present and a new area agrees on the count");
-    assert.equal((await staging.discardSession(identity, CHUNKS)), CHUNKS);
-    assert.equal((await staging.discardSession(otherIdentity, 32)), 32);
+    assert.equal((await staging.discardSession(identity)), CHUNKS);
+    assert.equal((await staging.discardSession(otherIdentity)), 32);
     assert.deepEqual(await staging.stagedNames(), [], "and both sessions clean up completely");
   } finally {
     await rm(base.path, { recursive: true, force: true });

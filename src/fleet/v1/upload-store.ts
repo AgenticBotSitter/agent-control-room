@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { appendAuditWith } from "../../audit/audit-store";
 import { bytesSha256V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1 } from "./identifiers";
 import { fleetFail, type FleetErrorCodeV1 } from "./errors";
 import type { FleetWorkerPrincipalV1 } from "./gateway-store";
 import { containsSecretMaterial } from "../../security/redaction";
 import type { ResultFileStoreV1 } from "../../artifacts/v1/result-file-store";
-import type { ResultUploadStagingV1 } from "../../artifacts/v1/result-upload-staging";
+import { ResultUploadStagingError, type ResultUploadStagingV1 } from "../../artifacts/v1/result-upload-staging";
 
 /**
  * The ingress half of "Save to my Mac" for a joined machine (plan v4.3 §2.6,
@@ -114,9 +114,13 @@ export type FleetUploadFinaliseV1 = Readonly<{
 
 /** A statement the server refused, mapped from the SQLSTATE a guard raised.
  * 0209-0211 use fixed states on purpose; this table is the whole translation,
- * and a state that is not listed becomes a generic `conflict` rather than
- * passing through to a connector. `object_not_in_prerequisite_state` is the one
- * operations mode raises, and it is what a paused installation answers. */
+ * and a state that is not listed is an unexpected failure rather than a refusal.
+ *
+ * The state is read with `databaseSqlStateV1`, never from `error.code`: the
+ * production driver sanitizes every failure to `code: "database_unavailable"`
+ * and keeps the SQLSTATE on `sqlState`, so reading `code` turned every guard
+ * refusal into an outage and a connector retried forever instead of stopping
+ * (review files2up B5). */
 const refusalByState: Readonly<Record<string, FleetErrorCodeV1>> = Object.freeze({
   "42501": "forbidden",
   "23514": "invalid",
@@ -125,22 +129,49 @@ const refusalByState: Readonly<Record<string, FleetErrorCodeV1>> = Object.freeze
   "55000": "conflict",
   "2BP01": "conflict",
   "P0001": "conflict",
-  "object_not_in_prerequisite_state": "paused",
 });
 
-function refusal(error: unknown, fallback: FleetErrorCodeV1 = "conflict"): FleetErrorCodeV1 {
-  return refusalByState[String((error as { code?: string }).code ?? "")] ?? fallback;
-}
+type RefusalOverridesV1 = Readonly<Record<string, FleetErrorCodeV1>>;
 
-/** Runs `work` and maps a guard's SQLSTATE to a fixed refusal code. A driver
- * that reports no state at all is an unexpected failure, not a refusal, and is
- * logged by the caller rather than dressed up as one. */
-async function guarded<T>(work: () => Promise<T>, fallback?: FleetErrorCodeV1): Promise<T> {
+/** Runs `work` and maps a guard's SQLSTATE to a fixed refusal code. `overrides`
+ * is how one statement says what a shared state MEANS for it: 55000 from the
+ * reservation guard is Pause or Drain, and from the chunk guard it is a session
+ * that no longer takes bytes. A failure with no state at all is an unexpected
+ * failure, not a refusal, and is logged by the caller rather than dressed up as
+ * one. */
+async function guarded<T>(work: () => Promise<T>, overrides: RefusalOverridesV1 = {}): Promise<T> {
   try { return await work(); }
   catch (error) {
-    if (!refusalByState[String((error as { code?: string }).code ?? "")]) throw error;
-    return fleetFail(refusal(error, fallback));
+    const state = databaseSqlStateV1(error);
+    const code = state === undefined ? undefined : overrides[state] ?? refusalByState[state];
+    if (!code) throw error;
+    return fleetFail(code);
   }
+}
+
+/** The staging area's four codes, as the connector's. A raw staging error used
+ * to escape as a 500 (review files2up B6); `staging_ambiguous` is "try again
+ * later", because it is what a read racing a writer's link honestly answers. */
+const stagingRefusal: Readonly<Record<string, FleetErrorCodeV1>> = Object.freeze({
+  staging_invalid: "invalid", staging_missing: "not_found", staging_conflict: "conflict",
+  staging_ambiguous: "unavailable",
+});
+async function staged<T>(work: () => Promise<T>): Promise<T> {
+  try { return await work(); }
+  catch (error) {
+    if (error instanceof ResultUploadStagingError) return fleetFail(stagingRefusal[error.code] ?? "unavailable");
+    throw error;
+  }
+}
+
+/** The exact size chunk `ordinal` must have under this session's tiling: full
+ * chunks, then one short remainder. The same expression 0209's chunk guard, the
+ * session CHECK and its update guard use. */
+function chunkSizeFor(session: Pick<UploadRow, "expected_size_bytes" | "chunk_size_bytes" | "expected_chunks">,
+  ordinal: number): number {
+  const expected = Number(session.expected_size_bytes);
+  return ordinal < session.expected_chunks ? session.chunk_size_bytes
+    : expected - session.chunk_size_bytes * (session.expected_chunks - 1);
 }
 
 export class FleetUploadStoreV1 {
@@ -306,25 +337,42 @@ export class FleetUploadStoreV1 {
       const chunkSizeBytes = FLEET_UPLOAD_LIMITS_V1.chunkBytes;
       const expectedChunks = Math.ceil(sizeBytes / chunkSizeBytes);
       if (expectedChunks > FLEET_UPLOAD_LIMITS_V1.maximumChunks) return fleetFail("too_large");
+      // 55000 here is 0209's operations-mode refusal: a paused or draining
+      // installation takes no new reservation, and the connector must hear
+      // `paused` (and wait) rather than `conflict` (and give up) or an outage.
       await guarded(() => tx.query(
         `INSERT INTO control_result_upload_sessions(tenant_id,upload_id,project_id,job_id,attempt_id,set_id,
           ordinal,worker_id,claim_id,expected_size_bytes,expected_content_digest,chunk_size_bytes,
           expected_chunks,state,created_at,expires_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'reserved',$14,$15)`,
         [this.tenantId, uploadId, claim.project_id, claim.job_id, claim.attempt_id, target.set_id, ordinal,
-          principal.workerId, claim.claim_id, sizeBytes, digest, chunkSizeBytes, expectedChunks, now, expiresAt]));
+          principal.workerId, claim.claim_id, sizeBytes, digest, chunkSizeBytes, expectedChunks, now, expiresAt]),
+        { "55000": "paused" });
       return Object.freeze({ uploadId, setId: target.set_id, fileId: target.file_id, ordinal, chunkSizeBytes,
         expectedChunks, expectedSizeBytes: sizeBytes, expectedContentDigest: digest, expiresAt, replayed: false });
     });
   }
 
   /**
-   * One chunk. The bytes are written to the staging area BEFORE the row is
-   * written, so a row never claims a chunk that is not on disk; and the row is
-   * written before the call returns, so a caller that retries knows whether its
-   * chunk was recorded. The two are ordered deliberately: a crash between them
-   * leaves staged bytes with no row, which the sweeper removes, rather than a
-   * row with no bytes, which would finalise into a file that is not there.
+   * One chunk, in three steps, and only the first and last touch the database.
+   *
+   *   1. A short transaction reads the claim, the session and any row already
+   *      recorded for this ordinal. The ordinal and the exact byte length are
+   *      checked against the session HERE, before a byte reaches the disk: a
+   *      chunk past the promise, or of the wrong size for its position, used to
+   *      be staged first and refused afterwards, and its bytes stayed on the Mac
+   *      forever and wedged the correct retry (review files2up B6).
+   *   2. The bytes are staged with NO transaction open. Staging queues behind
+   *      the process-wide write queue and fsyncs up to 8 MiB, and holding a pool
+   *      connection across that starved heartbeats and claims under parallel
+   *      uploads (review files2up S3).
+   *   3. A short transaction records the row. If the database refuses it, the
+   *      staged bytes are removed again -- unless the refusal was a concurrent,
+   *      identical request recording the very same chunk first, which is a
+   *      replay and keeps them.
+   *
+   * A crash between 2 and 3 leaves staged bytes with no row, never a row with
+   * no bytes; the next exact retry finds the bytes and records them.
    *
    * An exact retry replays, and it says so by NAME: the caller gets back the
    * digest the server recorded, so a connector that is out of sync learns WHICH
@@ -336,37 +384,70 @@ export class FleetUploadStoreV1 {
       || (input.ordinal as number) > FLEET_UPLOAD_LIMITS_V1.maximumChunks) return fleetFail("invalid");
     if (!(input.bytes instanceof Uint8Array) || input.bytes.byteLength < 1
       || input.bytes.byteLength > FLEET_UPLOAD_LIMITS_V1.chunkBytes) return fleetFail("invalid");
+    const ordinal = input.ordinal as number;
     const bytes = Uint8Array.from(input.bytes);
+    const chunkDigest = bytesSha256V1(bytes);
     const now = this.now();
-    return this.db.transaction(async tx => {
+    const read = await this.db.transaction(async tx => {
       const claim = await this.claim(tx, principal, input.claimId);
       const session = await this.session(tx, claim, principal, input.uploadId);
-      if (session.state !== "reserved") return fleetFail("conflict");
-      const chunkDigest = bytesSha256V1(bytes);
-      const prior = (await tx.query<{ chunk_digest: string; size_bytes: string }>(
-        `SELECT chunk_digest,size_bytes FROM control_result_upload_chunks
-        WHERE tenant_id=$1 AND upload_id=$2 AND ordinal=$3`,
-        [this.tenantId, session.upload_id, input.ordinal as number])).rows[0];
-      if (prior) {
-        if (prior.chunk_digest !== chunkDigest || prior.size_bytes !== String(bytes.byteLength))
-          return fleetFail("conflict");
-        // The row is there; the bytes are proved present again rather than
-        // assumed, because a staging area that lost a file is exactly the case
-        // finalise must not discover for itself.
-        const staged = await this.staging.read({ tenantId: this.tenantId, projectId: session.project_id,
-          uploadId: session.upload_id, ordinal: input.ordinal as number });
-        if (!staged || bytesSha256V1(staged) !== chunkDigest) return fleetFail("conflict");
-        return Object.freeze({ uploadId: session.upload_id, ordinal: input.ordinal as number, chunkDigest,
-          sizeBytes: bytes.byteLength, replayed: true });
-      }
-      const staged = await this.stageChunk(session, input.ordinal as number, bytes);
-      await guarded(() => tx.query(
-        `INSERT INTO control_result_upload_chunks(tenant_id,upload_id,ordinal,size_bytes,chunk_digest,received_at)
-        VALUES($1,$2,$3,$4,$5,$6)`,
-        [this.tenantId, session.upload_id, input.ordinal as number, bytes.byteLength, chunkDigest, now]));
-      return Object.freeze({ uploadId: session.upload_id, ordinal: input.ordinal as number, chunkDigest,
-        sizeBytes: bytes.byteLength, replayed: false, ...(staged.replayed ? { stagedReplay: true } : {}) });
+      return { session, prior: await this.recordedChunk(tx, session.upload_id, ordinal) };
     });
+    const { session } = read;
+    const identity = { tenantId: this.tenantId, projectId: session.project_id, uploadId: session.upload_id, ordinal };
+    if (read.prior) return this.replayChunk(read.prior, identity, bytes, chunkDigest);
+    if (session.state !== "reserved") return fleetFail("conflict");
+    if (Date.parse(iso(session.expires_at)) <= Date.parse(now)) return fleetFail("expired");
+    if (ordinal > session.expected_chunks || bytes.byteLength !== chunkSizeFor(session, ordinal))
+      return fleetFail("invalid");
+    const stagedChunk = await this.stageChunk(session, ordinal, bytes);
+    try {
+      await this.db.transaction(async tx => {
+        await this.claim(tx, principal, input.claimId);
+        await guarded(() => tx.query(
+          `INSERT INTO control_result_upload_chunks(tenant_id,upload_id,ordinal,size_bytes,chunk_digest,received_at)
+          VALUES($1,$2,$3,$4,$5,$6)`,
+          [this.tenantId, session.upload_id, ordinal, bytes.byteLength, chunkDigest, now]));
+      });
+    } catch (error) {
+      const recorded = await this.recordedChunk(this.db, session.upload_id, ordinal).catch(() => undefined);
+      if (recorded && recorded.chunk_digest === chunkDigest && recorded.size_bytes === String(bytes.byteLength))
+        return Object.freeze({ uploadId: session.upload_id, ordinal, chunkDigest, sizeBytes: bytes.byteLength,
+          replayed: true });
+      // Nothing recorded this ordinal, so the staged bytes are no chunk of any
+      // upload. They go now rather than waiting for a sweeper that does not
+      // exist yet; a failed removal is left to that sweeper, and the refusal
+      // itself is still the answer.
+      if (!recorded) await this.staging.discardChunk(identity).catch(() => {});
+      throw error;
+    }
+    return Object.freeze({ uploadId: session.upload_id, ordinal, chunkDigest,
+      sizeBytes: bytes.byteLength, replayed: false, ...(stagedChunk.replayed ? { stagedReplay: true } : {}) });
+  }
+
+  private async recordedChunk(session: DatabaseSession, uploadId: string, ordinal: number) {
+    return (await session.query<{ chunk_digest: string; size_bytes: string }>(
+      `SELECT chunk_digest,size_bytes FROM control_result_upload_chunks
+      WHERE tenant_id=$1 AND upload_id=$2 AND ordinal=$3`,
+      [this.tenantId, uploadId, ordinal])).rows[0];
+  }
+
+  /** A chunk whose row already exists. The bytes must be the recorded ones, and
+   * they are proved present again rather than assumed, because a staging area
+   * that lost a file is exactly the case finalise must not discover for itself.
+   * A row whose bytes are gone from disk is healed from THIS request -- its
+   * digest is the row's, so they are provably the same bytes -- rather than
+   * wedging the upload on a chunk nobody can resend. */
+  private async replayChunk(prior: { chunk_digest: string; size_bytes: string },
+    identity: { tenantId: string; projectId: string; uploadId: string; ordinal: number },
+    bytes: Uint8Array, chunkDigest: string) {
+    if (prior.chunk_digest !== chunkDigest || prior.size_bytes !== String(bytes.byteLength))
+      return fleetFail("conflict");
+    const onDisk = await staged(() => this.staging.read(identity));
+    if (!onDisk) await staged(() => this.staging.stage(identity, bytes));
+    else if (bytesSha256V1(onDisk) !== chunkDigest) return fleetFail("conflict");
+    return Object.freeze({ uploadId: identity.uploadId, ordinal: identity.ordinal, chunkDigest,
+      sizeBytes: bytes.byteLength, replayed: true });
   }
 
   /** Stages one chunk and scans it when it is text-like. The scan happens
@@ -376,8 +457,8 @@ export class FleetUploadStoreV1 {
    * than sending 32 chunks of it first. */
   private async stageChunk(session: UploadRow, ordinal: number, bytes: Uint8Array) {
     if (this.carriesSecretMaterial(session, bytes)) return fleetFail("refused_secret_material");
-    return this.staging.stage({ tenantId: this.tenantId, projectId: session.project_id,
-      uploadId: session.upload_id, ordinal }, bytes);
+    return staged(() => this.staging.stage({ tenantId: this.tenantId, projectId: session.project_id,
+      uploadId: session.upload_id, ordinal }, bytes));
   }
 
   private carriesSecretMaterial(session: UploadRow, bytes: Uint8Array): boolean {
@@ -407,7 +488,7 @@ export class FleetUploadStoreV1 {
       return await this.session(tx, claim, principal, input.uploadId);
     });
     if (read.state === "published" || read.state === "received")
-      return await this.publish(read, input.publish === true);
+      return await this.publish(read, input.publish === true, true);
     if (read.state !== "reserved") return fleetFail("conflict");
     const expectedSize = Number(read.expected_size_bytes);
     const expectedChunks = read.expected_chunks;
@@ -424,8 +505,8 @@ export class FleetUploadStoreV1 {
       return fleetFail("invalid");
     }
     if (expectedSize < 1) return fleetFail("invalid");
-    const bytes = await guarded(() => this.staging.assemble({ tenantId: this.tenantId,
-      projectId: read.project_id, uploadId: read.upload_id }, expectedChunks), "not_found");
+    const bytes = await staged(() => this.staging.assemble({ tenantId: this.tenantId,
+      projectId: read.project_id, uploadId: read.upload_id }, expectedChunks));
     // The whole-file proof, over the assembled bytes and before anything is
     // stored. §2.6's "unreviewed bytes are never combined" and 0209's promise
     // are the same statement: these are the bytes the owner approved.
@@ -435,9 +516,9 @@ export class FleetUploadStoreV1 {
     // The store writes create-once and re-proves the digest on the way in and
     // on the way out, so a file that is visible is a file that hashes to what
     // the catalog says.
-    await guarded(() => this.store.put({ tenantId: this.tenantId, projectId: read.project_id,
+    await this.store.put({ tenantId: this.tenantId, projectId: read.project_id,
       fileId: read.file_id, contentDigest: read.expected_content_digest, bytes,
-      setBytes: expectedSize, setFiles: 1 }), "unavailable");
+      setBytes: expectedSize, setFiles: 1 });
     const received = await this.db.transaction(async tx => {
       // Re-read the session under this transaction and lock it: another caller
       // may have finalised it while the bytes were being assembled. The lock is
@@ -454,20 +535,20 @@ export class FleetUploadStoreV1 {
         WHERE u.tenant_id=$1 AND u.upload_id=$2 AND u.claim_id=$3 AND u.worker_id=$4 FOR UPDATE OF u`,
         [this.tenantId, read.upload_id, read.claim_id, principal.workerId])).rows[0];
       if (!current) return fleetFail("not_found");
-      if (current.state === "received" || current.state === "published") return current;
+      if (current.state === "received" || current.state === "published") return { ...current, replayed: true };
       if (current.state !== "reserved") return fleetFail("conflict");
       await guarded(() => tx.query(
         `UPDATE control_result_upload_sessions SET state='received',received_at=$3
         WHERE tenant_id=$1 AND upload_id=$2 AND state='reserved'`,
         [this.tenantId, read.upload_id, now]));
-      return { ...current, state: "received", received_at: now };
+      return { ...current, state: "received", received_at: now, replayed: false };
     });
     // The staged chunks are no longer needed the moment the file exists in the
     // store; their removal is a cleanup, so a failure here is not a failure of
     // the finalise and is left to the sweeper.
     void this.staging.discardSession({ tenantId: this.tenantId, projectId: read.project_id,
-      uploadId: read.upload_id }, expectedChunks).catch(() => {});
-    return await this.publish(received, input.publish === true);
+      uploadId: read.upload_id }).catch(() => {});
+    return await this.publish(received, input.publish === true, received.replayed);
   }
 
   /**
@@ -483,9 +564,9 @@ export class FleetUploadStoreV1 {
    * leaves the set 'declared' and the owner seeing an incomplete result rather
    * than a complete one with a missing file.
    */
-  private async publish(session: UploadRow, requested: boolean): Promise<FleetUploadFinaliseV1> {
+  private async publish(session: UploadRow, requested: boolean, replayed: boolean): Promise<FleetUploadFinaliseV1> {
     const view = { uploadId: session.upload_id, setId: session.set_id, fileId: session.file_id,
-      ordinal: session.ordinal, state: session.state as "received" | "published", replayed: true };
+      ordinal: session.ordinal, state: session.state as "received" | "published", replayed };
     if (session.state === "published") return view;
     if (!requested) return view;
     const now = this.now();
@@ -500,14 +581,20 @@ export class FleetUploadStoreV1 {
         // session state is the answer, and it is idempotent.
         return { ...view, state: "published" as const };
       }
-      // Every promised file, published through its own upload. A set with one
-      // file that is still 'reserved' is a result the owner must be told is
-      // incomplete, not one that goes 'stored' with a hole.
+      // Every promised file has arrived through its own upload: RECEIVED (its
+      // bytes are in the store, ready to publish in the loop below) or already
+      // PUBLISHED. A set with one file still 'reserved' is a result the owner
+      // must be told is incomplete, not one that goes 'stored' with a hole.
+      //
+      // This asked for 'published' only in its first version -- but a session
+      // becomes 'published' INSIDE the loop that follows, so the check refused
+      // every complete, verified upload and no remote file could ever reach the
+      // owner (review files2up B4).
       const pending = (await tx.query<{ ordinal: number }>(
         `SELECT f.ordinal FROM control_result_files f
         WHERE f.tenant_id=$1 AND f.set_id=$2 AND NOT EXISTS (
           SELECT 1 FROM control_result_upload_sessions u WHERE u.tenant_id=f.tenant_id
-            AND u.set_id=f.set_id AND u.ordinal=f.ordinal AND u.state='published'
+            AND u.set_id=f.set_id AND u.ordinal=f.ordinal AND u.state IN ('received','published')
               AND u.expected_size_bytes=f.size_bytes AND u.expected_content_digest=f.content_digest)
         ORDER BY f.ordinal`, [this.tenantId, session.set_id])).rows;
       if (pending.length) return fleetFail("conflict");
@@ -584,7 +671,7 @@ export class FleetUploadStoreV1 {
       // The bytes go too. A voided upload's staged chunks are exactly the ones
       // this session's own ordinals name, so nothing else can be removed.
       void this.staging.discardSession({ tenantId: this.tenantId, projectId: session.project_id,
-        uploadId: session.upload_id }, session.expected_chunks).catch(() => {});
+        uploadId: session.upload_id }).catch(() => {});
       return Object.freeze({ uploadId: session.upload_id, state: "voided", replayed: false });
     });
   }
@@ -594,9 +681,11 @@ export class FleetUploadStoreV1 {
    *
    * Every row comes from `control_job_artifact_inputs`, whose columns were
    * DERIVED by 0211's binding guard from the accepted catalog row. The gateway
-   * holds no privilege on the catalog at all, so this read cannot be widened
-   * into "any file of this project": it names only what the owner declared as
-   * this claim's inputs, and only what the owner already accepted. The project
+   * does hold SELECT on the catalog (0209's SECURITY INVOKER reservation guard
+   * reads it; review files2up S6 asks whether a narrower read should replace
+   * that), but THIS read cannot be widened into "any file of this project": it
+   * names only what the owner declared as this claim's inputs, and only what
+   * the owner already accepted. The project
    * scope is the CLAIM's, not the caller's, and a mismatch is a refusal rather
    * than a filter, so there is no way to observe that another project's binding
    * exists.
@@ -642,8 +731,8 @@ export class FleetUploadStoreV1 {
       if (!row) return fleetFail("not_found");
       return { projectId: claim.project_id, row };
     });
-    const bytes = await guarded(() => this.store.read({ tenantId: this.tenantId, projectId: read.projectId,
-      fileId: read.row.file_id, contentDigest: read.row.content_digest }), "not_found");
+    const bytes = await this.store.read({ tenantId: this.tenantId, projectId: read.projectId,
+      fileId: read.row.file_id, contentDigest: read.row.content_digest });
     if (!bytes || bytes.byteLength !== Number(read.row.size_bytes)) return fleetFail("not_found");
     return Object.freeze({ ordinal: read.row.ordinal, displayName: read.row.display_name,
       contentDigest: read.row.content_digest, sizeBytes: bytes.byteLength, bytes });

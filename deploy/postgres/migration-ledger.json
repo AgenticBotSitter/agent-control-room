@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "9a00cdadadaa41352ab4f7998d3d5be1395cd461ccc44b466b42619e36ec53d0",
+  "digest": "5b9f672a825505f72eb700d4ff2469e5791848344264eba6b7a5344eb44363e7",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -809,13 +809,13 @@
     {
       "file": "db/migrations/0209_result_upload_sessions.sql",
       "order": 135,
-      "sha256": "b4ef28742885fcf636eda8aff507fe27b44e92b28d1685af2ba62b6797f44038",
+      "sha256": "de098c4b63d6b372342c9dba95d39e3b3645d6d735a4c3f2565267a7f7d33c89",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0210_result_upload_publication.sql",
       "order": 136,
-      "sha256": "f4eb15ba445d8fb55b17f9e201fa05517b0a3c107f000c7c39354e7ca1ad78ae",
+      "sha256": "d31ed45993c96873aef402167737c5eb44468769b9f22fe06c9b6f06c4fa72d8",
       "kind": "migrate"
     },
     {

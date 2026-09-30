@@ -125,7 +125,11 @@ GRANT SELECT, INSERT ON control_result_publications TO control_room_fleet_gatewa
 GRANT UPDATE (state, received_at, published_at, voided_at, void_reason)
   ON control_result_upload_sessions TO control_room_fleet_gateway;
 -- A file becomes 'stored' only through its own published upload (0210's guard),
--- and a set becomes 'stored' only with its publication receipt. Two columns each,
+-- and a set becomes 'stored' only with its publication receipt. A column grant
+-- cannot say "only fleet, only forward", so 0210's two producer-state guards
+-- confine THIS role to the single edge declared -> stored on a fleet set and its
+-- files; every other catalog move (quarantine, missing, a re-stamp) is refused
+-- to it, and db/down/0210 revokes these grants with those guards. Two columns each,
 -- and no DELETE anywhere: the catalog is append-only and this role cannot write
 -- a name, a digest, a size, a storage key or a producer. A column grant is enough
 -- to run the UPDATE - the role may read the tenant, set and ordinal columns it

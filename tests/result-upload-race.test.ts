@@ -149,7 +149,7 @@ const writerScriptV1 = (root: string, seed: number) => `
         const actual = read ? "sha256:" + createHash("sha256").update(read).digest("hex") : null;
         if (actual === expected && read && read.byteLength === PAYLOAD) codes.ok = (codes.ok ?? 0) + 1;
         else if (actual !== null) { codes.torn = (codes.torn ?? 0) + 1; console.log("TORN " + JSON.stringify({ expected, actual })); }
-        await staging.discardSession({ tenantId: TENANT, projectId: PROJECT, uploadId: id }, 1);
+        await staging.discardSession({ tenantId: TENANT, projectId: PROJECT, uploadId: id });
       } catch (error) {
         const key = error && error.code ? error.code : (error ? error.name : "unknown");
         codes[key] = (codes[key] ?? 0) + 1;
@@ -265,6 +265,99 @@ test("the upload staging area survives two writers and four openers racing one d
       const reopened = await openResultUploadStagingV1(configurationV1(root));
       assert.deepEqual(await reopened.stagedNames(), [],
         "the racing leaves no chunk behind, and the area reopens on a directory it can account for");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+/** Rounds for the different-bytes race, and how long each one lasts. Each round
+ * is a fresh upload id shared by both writers, started on the same wall-clock
+ * slot, so the two really are inside one chunk's write at once rather than one
+ * trailing the other by a whole iteration. 320 rounds is the count the review's
+ * own probe used (files2up S2: 30 of 320 double-creates under `rename`). */
+const DIFFERENT_ROUNDS = 320;
+const DIFFERENT_SLOT_MS = 100;
+
+/** A writer that sends ITS OWN bytes for every round's one chunk and never
+ * discards, so the parent can read afterwards exactly which bytes each round
+ * kept. Its outcome per round is printed as `ROUND <k> <outcome>`. */
+const differentWriterScriptV1 = (root: string, seed: number, startAt: number) => `
+  const { openResultUploadStagingV1 } = await import(${JSON.stringify(STAGING_MODULE)});
+  const STAGING_CODES = new Set(${JSON.stringify(STAGING_CODES)});
+  const TENANT = ${JSON.stringify(TENANT)}, PROJECT = ${JSON.stringify(PROJECT)};
+  const PAYLOAD = ${PAYLOAD}, SEED = ${seed};
+  const bytes = new Uint8Array(PAYLOAD);
+  for (let i = 0; i < PAYLOAD; i += 1) bytes[i] = (SEED * 97 + i) % 251;
+  const staging = await openResultUploadStagingV1(${JSON.stringify(configurationV1(root))});
+  const startAt = ${startAt};
+  for (let round = 0; round < ${DIFFERENT_ROUNDS}; round += 1) {
+    const slot = startAt + round * ${DIFFERENT_SLOT_MS};
+    const wait = slot - Date.now();
+    if (wait > 0) await new Promise((settle) => setTimeout(settle, wait));
+    const uploadId = "result-upload:" + round.toString(16).padStart(32, "0");
+    let outcome;
+    try {
+      const result = await staging.stage({ tenantId: TENANT, projectId: PROJECT, uploadId, ordinal: 1 }, bytes);
+      outcome = result.replayed ? "replayed" : "created";
+    } catch (error) {
+      const key = error && error.code ? error.code : (error ? error.name : "unknown");
+      outcome = STAGING_CODES.has(key) ? key : "RAW:" + key;
+    }
+    console.log("ROUND " + round + " " + outcome);
+  }`;
+
+test("two writers racing DIFFERENT bytes for one chunk: at most one ever creates it, and its bytes are the chunk",
+  { timeout: 300_000 }, async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "cr-upload-staging-race-different-")));
+    try {
+      const root = join(base, "staging");
+      await mkdir(root, { mode: 0o700 });
+      // Far enough ahead that both children have imported the module before the
+      // first slot, so round 0 is as contended as round 319.
+      const startAt = Date.now() + 5_000;
+      const racers = [1, 2].map((seed) => racerV1(differentWriterScriptV1(root, seed, startAt)));
+      const exits = await Promise.all(racers.map((racer) => racer.exited));
+      const outputs = racers.map((racer) => racer.output());
+      assert.deepEqual(exits, [0, 0], `both writers exited cleanly\n${outputs.join("\n")}`);
+      const outcomes = outputs.map((text) => new Map(text.split("\n").filter((line) => line.startsWith("ROUND "))
+        .map((line) => { const [, round, outcome] = line.split(" "); return [Number(round), outcome!] as const; })));
+      for (const [index, map] of outcomes.entries())
+        assert.equal(map.size, DIFFERENT_ROUNDS, `writer ${index + 1} reported every round\n${outputs[index]}`);
+
+      const payloadFor = (seed: number) => {
+        const bytes = new Uint8Array(PAYLOAD);
+        for (let i = 0; i < PAYLOAD; i += 1) bytes[i] = (seed * 97 + i) % 251;
+        return bytes;
+      };
+      const { openResultUploadStagingV1 } = await import(STAGING_MODULE);
+      const staging = await openResultUploadStagingV1(configurationV1(root));
+      const doubleCreated: number[] = [], raw: string[] = [], wrongBytes: number[] = [], replays: number[] = [];
+      let contended = 0;
+      for (let round = 0; round < DIFFERENT_ROUNDS; round += 1) {
+        const [first, second] = [outcomes[0]!.get(round)!, outcomes[1]!.get(round)!];
+        for (const outcome of [first, second]) if (outcome.startsWith("RAW:")) raw.push(`${round}:${outcome}`);
+        // Different bytes can never be a replay of each other.
+        if (first === "replayed" || second === "replayed") replays.push(round);
+        if (first === "created" && second === "created") doubleCreated.push(round);
+        if (first !== "created" || second !== "created") contended += Number(first !== second);
+        const creator = first === "created" ? 1 : second === "created" ? 2 : undefined;
+        const kept = await staging.read({ tenantId: TENANT, projectId: PROJECT,
+          uploadId: "result-upload:" + round.toString(16).padStart(32, "0"), ordinal: 1 });
+        if (creator !== undefined && (!kept || !Buffer.from(kept).equals(Buffer.from(payloadFor(creator)))))
+          wrongBytes.push(round);
+      }
+      const report = { rounds: DIFFERENT_ROUNDS, contended, doubleCreated: doubleCreated.length,
+        wrongBytes: wrongBytes.length, replays: replays.length, raw: raw.length };
+      // The measurement happened: in most rounds one writer lost, which is only
+      // possible if both were writing that round's chunk.
+      assert.ok(contended > DIFFERENT_ROUNDS / 2, `the two writers really contended: ${JSON.stringify(report)}`);
+      assert.deepEqual(raw, [], `no raw errno escaped: ${JSON.stringify(report)}`);
+      assert.deepEqual(replays, [], `different bytes were never answered as a replay: ${JSON.stringify(report)}`);
+      assert.deepEqual(doubleCreated, [],
+        `both writers were told they CREATED the same chunk: ${JSON.stringify(report)}`);
+      assert.deepEqual(wrongBytes, [],
+        `a round kept bytes other than the writer that was told it created them: ${JSON.stringify(report)}`);
+      console.log(`different-bytes race: ${JSON.stringify(report)}`);
     } finally {
       await rm(base, { recursive: true, force: true });
     }

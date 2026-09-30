@@ -32,7 +32,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // Recomputed once more after 0210's stored-set guard was corrected to key on
 // `producer_kind` rather than `source_kind`, so the digest records THAT and not
 // 0209-0211's arrival alone.
-export const privateWebSchemaDigest = "95705581e8bdcc51acdab51b0be8b953ffb9288d3104271e9222e26f48d1a515";
+export const privateWebSchemaDigest = "45393cc6221f1a613b8dce8fb9f676821ba1cdb15ea7ae0f828b666ebc2df24a";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
