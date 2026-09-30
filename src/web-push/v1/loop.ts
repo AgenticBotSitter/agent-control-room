@@ -8,6 +8,25 @@ import type { DatabaseClient } from "../../persistence/database";
 export const OWNER_PUSH_DISPATCH_INTERVAL_MS_V1 = 30_000;
 
 /**
+ * A reason code, and nothing else.
+ *
+ * An error from the push library carries the endpoint it was sent to, which is
+ * a bearer-token-shaped secret, and may carry the payload or a task title, which
+ * is the owner's private data. Neither may reach a host log. Only the leading
+ * `owner_push_*` / SQLSTATE-shaped token survives, capped, on one line.
+ */
+export function ownerPushCycleFailureV1(error: unknown): Error {
+  const message = typeof error === "object" && error !== null && "message" in error
+    ? String((error as { message: unknown }).message).trim() : "";
+  // The WHOLE message must be a bare code, not just its first line: a message
+  // whose first line looks safe and whose second line carries a quoted endpoint
+  // is exactly the shape that gets past a first-line-only reduction, so a
+  // newline anywhere means the whole message is dropped.
+  const safe = /^[A-Za-z0-9][A-Za-z0-9._:]{2,80}$/.test(message) ? message : "owner_push_cycle_failed";
+  return new Error(safe);
+}
+
+/**
  * The owner phone alert loop (MIG-I, plan v4.3 §2.11).
  *
  * A Needs-you item -- the second lease lapse on a job, or a service incident --
@@ -46,14 +65,19 @@ export function startOwnerPushLoopV1(input: Readonly<{
     throw new Error("owner_push_loop_input_invalid");
   const dispatcher = new OwnerPushDispatcherV1({ db: input.db, tenantId: input.tenantId,
     store: input.store, channel: input.channel, ...(input.clock ? { clock: input.clock } : {}) });
-  const report = input.report ?? ((error: unknown) => {
-    // A reason code only. A push endpoint URL, an HTTP body or a task text must
-    // never reach the host log.
-    const code = typeof error === "object" && error !== null && "message" in error
-      ? String((error as { message: unknown }).message).split("\n")[0]!.slice(0, 120)
-      : "owner_push_cycle_failed";
-    process.stderr.write(`owner_push_cycle_unavailable ${code}\n`);
-  });
+  // The report is handed a SAFE ERROR, never the raw one.
+  //
+  // Sanitising only inside the default reporter was not enough: the loop calls
+  // the INJECTED reporter, so any other caller -- a test, a wrapper, a future
+  // host -- would have received the original error, with the push endpoint URL
+  // and whatever the push library put in the message. An endpoint is
+  // bearer-token-shaped and must not reach a log; task text must not either. So
+  // the reduction happens here, at the seam, and the reporter is only a sink.
+  const report = (error: unknown) => {
+    const safe = ownerPushCycleFailureV1(error);
+    if (input.report) input.report(safe);
+    else process.stderr.write(`owner_push_cycle_unavailable ${safe.message}\n`);
+  };
   return startSupervisorLoopV1({
     toleratesFirstCycleFailure: true,
     intervalMs: input.intervalMs ?? OWNER_PUSH_DISPATCH_INTERVAL_MS_V1,

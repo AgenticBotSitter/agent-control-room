@@ -1,0 +1,107 @@
+[
+  {
+    "file": "db/roles/private_web_roles.sql",
+    "find": "GRANT UPDATE (state, attempt_count, next_attempt_at, reserved_at, last_attempt_at, completed_at,\n  safe_reason_code, updated_at) ON control_owner_push_attempt_heads TO control_room_private_web;",
+    "replace": "-- MUTATED: the dispatcher's update grant is removed",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the dispatcher settles every outcome through that column-scoped UPDATE, so without it no item can ever be recorded as delivered and every send fails 42501"
+  },
+  {
+    "file": "src/web-push/v1/postgres-store.ts",
+    "find": "        SET state='reserved',status_code=NULL,completed_at=NULL\n        WHERE owner_web_push_deliveries.state='failed'",
+    "replace": "        SET state='reserved',status_code=NULL,completed_at=NULL\n        WHERE owner_web_push_deliveries.state='never_matches'",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "a failed send must be re-sendable; without the upgrade clause the retry is read as an existing row, a dead endpoint is reported as delivered, and the phone is never rung"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "        WHERE tenant_id=$1 AND action_inbox_id=ANY($3::text[]) AND state='pending'",
+    "replace": "        WHERE tenant_id=$1 AND action_inbox_id=ANY($3::text[])",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the reserve is the compare-and-set that makes a claim exclusive; without the state test two racing dispatchers both reserve the same item and both send"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "        WHERE h.tenant_id=$1 AND h.state='pending' AND h.next_attempt_at<=$2",
+    "replace": "        WHERE h.tenant_id=$1 AND h.state IN ('pending','reserved') AND h.next_attempt_at<=$2",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "only 'pending' is claimable: a 'reserved' row is a send in flight RIGHT NOW, and re-claiming it is a second push for one stall"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "      WHERE tenant_id=$1 AND h.state='reserved' AND h.reserved_at<=$2",
+    "replace": "      WHERE tenant_id=$1 AND h.state='reserved' AND h.reserved_at<=$2 AND false",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "a dispatcher killed between the reservation and the settle leaves a row no tick can ever pick up, so that stall is never pushed for at all"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "    const terminal = disposition === \"delivered\" || disposition === \"failed\" || spent >= OWNER_PUSH_ATTEMPT_LIMIT_V1;",
+    "replace": "    const terminal = disposition === \"delivered\" || disposition === \"failed\";",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the attempt bound must stop retrying for good, so a permanently dead endpoint cannot send for ever"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "      if (deliveredCount === 0 && result.deduplicated === 0 && result.removed === 0)",
+    "replace": "      if (false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
+    "why": "no-subscription is distinguished from send-failure by the failure report, never by the counters alone"
+  },
+  {
+    "file": "db/migrations/0225_owner_push_attempt_guards.sql",
+    "find": "    OR (OLD.state='delivered' AND NEW.state<>'delivered')",
+    "replace": "    OR (OLD.state='delivered' AND false)",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "a delivered head must be terminal: without this a caller can rewind it to pending and re-alert the owner for a stall they already answered"
+  },
+  {
+    "file": "db/migrations/0225_owner_push_attempt_guards.sql",
+    "find": "    OR NEW.attempt_count<OLD.attempt_count",
+    "replace": "    OR false AND NEW.attempt_count<OLD.attempt_count",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the attempt count may never be rewound, so a delivered item cannot be made to look like it was never tried"
+  },
+  {
+    "file": "db/migrations/0224_owner_push_attempt_heads.sql",
+    "find": "  attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 8),",
+    "replace": "  attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the bound is also enforced by the column, independently of the guard, so a path the guard misses still cannot retry for ever"
+  },
+  {
+    "file": "db/migrations/0224_owner_push_attempt_heads.sql",
+    "find": "  link text NOT NULL CHECK (link ~ '^/(?:needs-me|morning|settings)$'),",
+    "replace": "  link text NOT NULL CHECK (link ~ '^/'),",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the stored deep link is a local product path only, so a push can never be an open redirect even if the row were written by a compromised caller"
+  },
+  {
+    "file": "db/migrations/0224_owner_push_attempt_heads.sql",
+    "find": "  PRIMARY KEY (tenant_id, action_inbox_id),",
+    "replace": "  PRIMARY KEY (tenant_id, action_inbox_id, link),",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "the primary key is the idempotence guarantee: one stall owns exactly one head for its whole life"
+  },
+  {
+    "file": "src/web-push/v1/loop.ts",
+    "find": "  const safe = /^[A-Za-z0-9][A-Za-z0-9._:]{2,80}$/.test(message) ? message : \"owner_push_cycle_failed\";",
+    "replace": "  const safe = message || \"owner_push_cycle_failed\";",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-push-dispatch.test.ts",
+    "why": "a push failure is reported as a bare reason code; a raw message would carry the push endpoint URL and the quoted task text into the host log"
+  },
+  {
+    "file": "src/web-push/v1/loop.ts",
+    "find": "    toleratesFirstCycleFailure: true,",
+    "replace": "    toleratesFirstCycleFailure: false,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-push-dispatch.test.ts",
+    "why": "a down push service at host startup must not fail the host's startup path; the items are still in the inbox and the next tick picks them up"
+  },
+  {
+    "file": "src/web-push/v1/dispatcher.ts",
+    "find": "    if (sendFailure.removed) return this.#settle(id, \"failed\", spent, now, \"owner_push_subscription_gone\");",
+    "replace": "    if (false) return this.#settle(id, \"failed\", spent, now, \"owner_push_subscription_gone\");",
+    "test": "pnpm run test:owner-push:postgres",
+    "why": "a 404/410 means the browser subscription is gone and has already been removed, so the item must stop for good rather than spend the bounded attempts reaching nothing"
+  }
+]
