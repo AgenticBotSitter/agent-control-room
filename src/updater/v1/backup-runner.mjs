@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, opendir, rename, rm, statfs } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, opendir, rename, rm, statfs } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { updaterRefuseV1 } from "./contracts.mjs";
 import { assertNoSymlinkBelowV1 } from "./fs-safety.mjs";
@@ -53,6 +53,8 @@ const plainMessage = Object.freeze({
   updater_backup_lock_busy: "A database update already holds the backup lock, so tonight's backup did not run.",
   updater_backup_disk_full: "There was not enough room to write the backup, so it did not complete.",
   updater_backup_dump_failed: "The database could not be read in one piece, so no backup was written.",
+  updater_backup_shape_digest_mismatch: "The backup was written but the restored database is not shaped the same, so it was thrown away.",
+  updater_backup_row_counts_mismatch: "The backup was written but some rows did not come back, so it was thrown away.",
   updater_backup_verify_failed: "The backup was written but did not restore cleanly, so it was thrown away.",
   updater_backup_not_due: "Tonight's backup is not due yet.",
 });
@@ -75,7 +77,20 @@ export function resolveBackupRootPolicyV1({ installRoot, backupRoot, seal = true
       || backupRoot.includes("\0"))
     throw updaterRefuseV1("updater_backup_root_refused");
   const inside = backupRoot === installRoot || backupRoot.startsWith(`${installRoot}${sep}`);
-  if (backupRoot === "/") throw updaterRefuseV1("updater_backup_root_refused");
+  // The install root ITSELF is refused, not accepted as "inside". A backup root
+  // equal to the install root would put `gen-…` directories and a `.inprogress-`
+  // directory beside `releases/`, `pg/` and `updater-state/` — and the sweep
+  // walks that root, so it would be walking the directory everything else
+  // lives in. §3 puts backups in their own root-owned `backups/`.
+  if (backupRoot === "/" || backupRoot === installRoot)
+    throw updaterRefuseV1("updater_backup_root_refused");
+  // H15 again, in the place the carry-forward puts it. A backup root under the
+  // owner's home is a root the owner can RENAME and replace, which is the whole
+  // reason the install root moved to /Library. The owner's external drive is
+  // `/Volumes/…`, not `/Users/…`, so refusing /Users costs nothing and closes
+  // the case where a bot writes a plaintext dump somewhere it can swap.
+  if (backupRoot === "/Users" || backupRoot.startsWith("/Users/"))
+    throw updaterRefuseV1("updater_backup_root_refused");
   return Object.freeze({
     backupRoot,
     insideInstallRoot: inside,
@@ -102,10 +117,10 @@ export async function freeBytesAtV1(path) {
  * refuses to count a directory without one.
  */
 export function backupManifestV1({ generationId, createdAt, dumpSha256, dumpBytes, fileSha256,
-  schemaDigest, rowCounts, snapshotXid, encrypted, pgVersion, installRoot }) {
+  shapeDigest, rowCounts, snapshotXid, encrypted, pgVersion, installRoot }) {
   if (pgVersion !== "control-room.pg-version/v1") throw updaterRefuseV1("updater_backup_manifest_refused");
   assertGenerationIdV1(generationId, "updater_backup_manifest_refused");
-  for (const digest of [dumpSha256, fileSha256, schemaDigest]) {
+  for (const digest of [dumpSha256, fileSha256, shapeDigest]) {
     if (typeof digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(digest))
       throw updaterRefuseV1("updater_backup_manifest_refused");
   }
@@ -121,7 +136,7 @@ export function backupManifestV1({ generationId, createdAt, dumpSha256, dumpByte
     dumpSha256,
     dumpBytes,
     fileSha256,
-    schemaDigest,
+    shapeDigest,
     rowCounts,
     rowCountsDigest: `sha256:${createHash("sha256").update(JSON.stringify(rowCounts)).digest("hex")}`,
     snapshotXid,
@@ -132,6 +147,25 @@ export function backupManifestV1({ generationId, createdAt, dumpSha256, dumpByte
     pgVersion,
     installRoot,
   });
+}
+
+/**
+ * A bounded, single-line slice of a failure's own message.
+ *
+ * The `failure_detail` column is 200 characters and the store refuses anything
+ * longer, so the slice happens here rather than being caught by a constraint at
+ * run time — a failed backup must never fail to record WHY it failed.
+ *
+ * A SQLSTATE is useless on its own to whoever reads the ledger next week. The
+ * message is what says "permission denied for schema pg_catalog" instead of
+ * "42501", and this lane found four real bugs whose entire cost was that
+ * difference. Newlines and tabs become spaces so one failure stays one row, and
+ * control characters are dropped rather than trusted to render.
+ */
+function boundedDetailV1(error) {
+  const raw = error && typeof error.message === "string" ? error.message : "";
+  if (raw === "") return null;
+  return raw.replace(/[\u0000-\u001f\u007f]/gu, " ").replace(/\s+/gu, " ").trim().slice(0, 200) || null;
 }
 
 /** A generation directory's two readable names, both derived from the id. */
@@ -182,6 +216,12 @@ export async function assertSafeGenerationV1(backupRoot, generationId, { require
     const child = await lstat(join(paths.final, name));
     if (child.isSymbolicLink() || !child.isFile() || child.nlink !== 1)
       throw updaterRefuseV1("updater_backup_generation_refused");
+    // The mode check: the dump is written by a CHILD PROCESS, so its mode is
+    // whatever `pg_dump` chose under the updater's umask, and this is a real
+    // constraint rather than a stylistic one — a group- or world-readable dump
+    // on a root's disk is the thing the whole design is about. The port is
+    // required to chmod the file it wrote, and the check below is what proves
+    // it did. The manifest the port writes is 0400 already.
     if ((child.mode & 0o777) & 0o077) throw updaterRefuseV1("updater_backup_generation_refused");
   }
   if (!requireManifest) return Object.freeze({ ...paths, entries: names.sort() });
@@ -289,8 +329,27 @@ export class UpdaterBackupV1 {
       return outcome;
     } catch (error) {
       const code = typeof error?.code === "string" ? error.code : "updater_backup_failed";
+      // A trace hook, off unless the environment asks. It is how this lane
+      // found that a failure can be raised BEFORE an attempt exists — in which
+      // case there is no row to record a detail on, and a bare SQLSTATE in the
+      // test output is the only clue. Set CONTROL_ROOM_BACKUP_TRACE=1 to get one
+      // line per failure with the driver's own message.
+      if (process.env.CONTROL_ROOM_BACKUP_TRACE === "1")
+        process.stderr.write(`BACKUP-TRACE ${code} :: ${error?.message ?? ""}`
+          + `${typeof error?.evidence === "string" ? ` :: ${error.evidence}` : ""}\n`);
       if (generationId) {
-        await this.store.failAttempt({ generationId, code, detail: null }).catch(() => {});
+        // The detail is a BOUNDED, sanitised slice of the driver's message, and
+        // that is a deliberate trade worth stating. Without it, a failure like
+        // "permission denied for schema pg_catalog" arrives as a bare `42501`,
+        // which is undiagnosable both for an operator reading the ledger and for
+        // a test trying to work out which step broke — the whole reason this
+        // lane's first four real bugs each cost a run. The bound (200 chars, the
+        // column's own CHECK) and the fact that it is only ever a PostgreSQL
+        // error's own text — never a file content, a command line or an argument
+        // — are what keep it from becoming a channel. It is stored, never
+        // rendered to the owner: the plain words come from `plainMessage`.
+        const detail = boundedDetailV1(error);
+        await this.store.failAttempt({ generationId, code, detail }).catch(() => {});
         await this.#done({ generationId, phase: "complete", state: "failed", code }).catch(() => {});
         const paths = generationPathsV1(this.policy.backupRoot, generationId);
         await this.#discardInProgress(paths);
@@ -332,17 +391,43 @@ export class UpdaterBackupV1 {
     // subprocess in it, and this is a root-held file.
     const fileSha256 = await sha256FileV1(dumpPath, undefined);
     if (fileSha256 !== dumped.sha256) throw UpdaterBackupV1.#refuse("updater_backup_dump_digest_mismatch");
+    // TIGHTEN THE MODE, here rather than in the port. `pg_dump` is a child
+    // process and chooses its own output mode under the updater's umask — a real
+    // 0644 was observed on this Mac — so a group- or world-readable dump on
+    // root's disk is possible unless root tightens it itself. The port is
+    // untrusted for exactly the reason the digest re-read above is: it contains a
+    // subprocess. `assertSafeGenerationV1` then refuses any generation whose dump
+    // is still loose, so a port that skipped this is caught on the next sweep
+    // rather than trusted here.
+    await chmod(dumpPath, 0o400);
+    // The evidence is the SHAPE digest and the row counts, not the release's
+    // ownership-bearing schema digest. A restore runs with `--no-owner` (R9.3
+    // step 4: `--no-owner --role=control_room_migrator`), so every restored object
+    // belongs to whoever ran `pg_restore`; comparing the source's ownership-
+    // bearing digest against that can never match, and would refuse every good
+    // backup in the world. See src/updater/v1/backup-evidence.mjs for the
+    // measured digests and the reason.
     const source = dumped.evidence;
-    if (!source || typeof source.schemaDigest !== "string" || !Array.isArray(source.rowCounts)
-        || source.rowCounts.length < 1) throw UpdaterBackupV1.#refuse("updater_backup_evidence_refused");
+    if (!source || typeof source.shapeDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(source.shapeDigest)
+        || !Array.isArray(source.rowCounts) || source.rowCounts.length < 1)
+      throw UpdaterBackupV1.#refuse("updater_backup_evidence_refused");
 
     const verified = await this.ports.restoreVerify({ generationId, dumpPath, scratchId: generationId,
-      expectedSchemaDigest: source.schemaDigest, expectedRowCounts: source.rowCounts });
-    if (verified?.schemaDigest !== source.schemaDigest)
-      throw UpdaterBackupV1.#refuse("updater_backup_verify_failed");
+      expectedShapeDigest: source.shapeDigest, expectedRowCounts: source.rowCounts });
+    // WHICH half disagreed, and by how much, is recorded. "updater_backup_verify_failed"
+    // on its own left this lane's only clue as a bare refusal name, and the two
+    // halves fail for entirely different reasons: a schema digest difference
+    // means the restore did not recreate the objects (a real problem), while a
+    // row-count difference means data was lost OR that the two sides counted
+    // different table sets (usually a fixture problem). Telling them apart from
+    // the ledger next week is worth the three extra bounded fields.
+    if (verified?.shapeDigest !== source.shapeDigest) {
+      const refusal = UpdaterBackupV1.#refuse("updater_backup_shape_digest_mismatch");
+      refusal.evidence = `source=${source.shapeDigest} restored=${verified?.shapeDigest}`;
+      throw refusal;
+    }
     if (JSON.stringify(verified.rowCounts) !== JSON.stringify(source.rowCounts))
-      throw UpdaterBackupV1.#refuse("updater_backup_verify_failed");
-
+      throw UpdaterBackupV1.#refuse("updater_backup_row_counts_mismatch");
     const sealPolicy = resolveBackupRootPolicyV1(this.policy);
     const mustSeal = sealPolicy.sealRequired || sealPolicy.seal;
     const encrypted = mustSeal ? await this.ports.seal({ path: dumpPath, generationId }) === true : false;
@@ -351,18 +436,34 @@ export class UpdaterBackupV1 {
     // The file digest AFTER sealing, so the manifest records the bytes that are
     // actually on disk. The plaintext digest above is what the source evidence
     // is compared against, which is why both exist.
+    // The seal port also rewrites the dump through a child process, so the mode
+    // is tightened again after it. Doing it once before the seal would leave the
+    // SEALED file at whatever mode `openssl` chose, which is the file that stays
+    // on the external drive.
+    if (encrypted) await chmod(dumpPath, 0o400);
     const sealedSha256 = encrypted ? await sha256FileV1(dumpPath, undefined) : fileSha256;
     const manifest = backupManifestV1({ generationId, createdAt: this.clock().toISOString(),
       dumpSha256: dumped.sha256, dumpBytes: dumped.bytes, fileSha256: sealedSha256,
-      schemaDigest: source.schemaDigest, rowCounts: source.rowCounts, snapshotXid: source.snapshotXid ?? null,
+      shapeDigest: source.shapeDigest, rowCounts: source.rowCounts, snapshotXid: source.snapshotXid ?? null,
       encrypted, pgVersion: "control-room.pg-version/v1", installRoot: this.policy.installRoot });
     await this.ports.writeManifest({ path: join(paths.inProgress, MANIFEST_FILE_V1), manifest, generationId });
-    // PROMOTE. The rename is the atomic commit point: before it the generation
-    // is invisible to retention and to any operator, and after it the generation
-    // is real. There is no window in which a partial generation is countable.
+    // PROMOTE, THEN RECORD — in that order, and the order is the recovery
+    // property, not a detail.
+    //
+    // The rename is the atomic commit point: before it the generation is
+    // invisible to retention and to any operator, and after it the generation is
+    // real. There is no window in which a partial generation is countable.
+    //
+    // The ledger row is written AFTER the rename, deliberately. A crash between
+    // the two leaves a real directory the ledger does not know about, and the
+    // sweep then ignores it forever (`known` is the ledger's set) — a wasted
+    // dump, reported as `damaged`, which is a safe failure. The reverse order
+    // would leave a `verified` row pointing at a directory that does not exist,
+    // which is worse: the badge would read fresh because of a dump that is gone,
+    // and §9.5's "blocks DB plans until fixed" would be satisfied by a lie.
     await rename(paths.inProgress, paths.final);
     await this.store.completeAttempt({ generationId, dumpSha256: dumped.sha256, dumpBytes: dumped.bytes,
-      fileSha256: sealedSha256, schemaDigest: source.schemaDigest, rowCounts: source.rowCounts,
+      fileSha256: sealedSha256, shapeDigest: source.shapeDigest, rowCounts: source.rowCounts,
       snapshotXid: source.snapshotXid ?? null, encrypted });
     const retained = await this.sweep({ policy });
     return Object.freeze({ status: "verified", generationId, dumpBytes: dumped.bytes,

@@ -60,9 +60,34 @@
 -- {table,count} objects, bounded at 64 KiB: a database with tens of thousands
 -- of tables would exceed that, and a verify that cannot be bounded is a verify
 -- that can be used to make the updater do unbounded work.
+--
+-- The per-table row-count array's shape, as an IMMUTABLE function rather than
+-- an inline CHECK expression.
+--
+-- PostgreSQL refuses a subquery inside a CHECK constraint ("cannot use subquery
+-- in check constraint", SQLSTATE 0A000), and the check genuinely needs to look
+-- at the ARRAY'S ELEMENTS rather than at the array as a whole. An IMMUTABLE
+-- SQL function is the supported way to express that, and it is safe here for
+-- the reason the language is IMMUTABLE and it reads no table: PostgreSQL may
+-- evaluate it during a restore of a dumped row, and a constraint that changed
+-- its verdict between install and reload would be a worse defect than a missing
+-- one. Anything this function cannot decide is false.
+CREATE OR REPLACE FUNCTION updater.backup_row_counts_shape(value jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, updater, pg_temp AS $$
+  SELECT pg_catalog.jsonb_typeof(value) = 'array'
+     AND pg_catalog.jsonb_array_length(value) BETWEEN 1 AND 4096
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.jsonb_array_elements(value) AS entry
+        WHERE pg_catalog.jsonb_typeof(entry) <> 'object'
+           OR pg_catalog.jsonb_typeof(entry -> 'table') <> 'string'
+           OR pg_catalog.jsonb_typeof(entry -> 'count') <> 'number'
+           OR entry ->> 'table' !~ '^[a-z0-9_]{1,63}$'
+           OR (entry ->> 'count')::bigint < 0)
+$$;
+
 CREATE TABLE IF NOT EXISTS updater.backup_generations (
   generation_id text PRIMARY KEY CHECK (generation_id ~
-    '^backup:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}Z$'),
+    '^backup:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{3}Z$'),
   -- 'verified' means the dump was written, hashed, restore-verified into a
   -- scratch cluster and compared. Nothing else may ever set it: see
   -- guard_backup_generation_immutable() and the shape constraint.
@@ -77,9 +102,11 @@ CREATE TABLE IF NOT EXISTS updater.backup_generations (
   dump_sha256 text CHECK (dump_sha256 IS NULL OR dump_sha256 ~ '^sha256:[a-f0-9]{64}$'),
   dump_bytes bigint CHECK (dump_bytes IS NULL OR (dump_bytes > 0 AND dump_bytes < 1099511627776)),
   file_sha256 text CHECK (file_sha256 IS NULL OR file_sha256 ~ '^sha256:[a-f0-9]{64}$'),
-  schema_digest text CHECK (schema_digest IS NULL OR schema_digest ~ '^sha256:[a-f0-9]{64}$'),
-  row_counts jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(row_counts) = 'array'
-    AND octet_length(row_counts::text) <= 65536),
+  -- The SHAPE digest, not the release's ownership-bearing schema digest: a
+  -- restore runs with --no-owner, so ownership is not in the dump and cannot
+  -- be compared across one. See src/updater/v1/backup-evidence.mjs.
+  shape_digest text CHECK (shape_digest IS NULL OR shape_digest ~ '^sha256:[a-f0-9]{64}$'),
+  row_counts jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (octet_length(row_counts::text) <= 65536),
   row_counts_digest text CHECK (row_counts_digest IS NULL OR row_counts_digest ~ '^sha256:[a-f0-9]{64}$'),
   -- Whether the dump is sealed on disk. Required when the backup root is
   -- outside the install root: the owner's external drive has ownership
@@ -103,7 +130,7 @@ CREATE TABLE IF NOT EXISTS updater.backup_generations (
     (state = 'verified'
       AND completed_at IS NOT NULL
       AND dump_sha256 IS NOT NULL AND dump_bytes IS NOT NULL AND file_sha256 IS NOT NULL
-      AND schema_digest IS NOT NULL AND row_counts_digest IS NOT NULL
+      AND shape_digest IS NOT NULL AND row_counts_digest IS NOT NULL
       AND jsonb_array_length(row_counts) > 0
       AND failure_code IS NULL)
     OR
@@ -111,15 +138,14 @@ CREATE TABLE IF NOT EXISTS updater.backup_generations (
       AND completed_at IS NOT NULL
       AND failure_code IS NOT NULL
       AND dump_sha256 IS NULL AND dump_bytes IS NULL AND file_sha256 IS NULL
-      AND schema_digest IS NULL AND row_counts_digest IS NULL)
+      AND shape_digest IS NULL AND row_counts_digest IS NULL)
   ),
   CONSTRAINT backup_generation_completed_after_created CHECK (completed_at IS NULL OR completed_at >= created_at),
   CONSTRAINT backup_generation_retention_pin CHECK (retain_until IS NULL OR retain_until > created_at),
+  -- A `verified` row must carry real counts; a `failed` row carries none.
   CONSTRAINT backup_generation_counts_shape CHECK (
-    row_counts = '[]'::jsonb
-    OR (SELECT bool_and(jsonb_typeof(entry) = 'object' AND entry ? 'table' AND entry ? 'count'
-                         AND jsonb_typeof(entry -> 'count') = 'number')
-        FROM jsonb_array_elements(row_counts) entry)
+    (state = 'verified' AND updater.backup_row_counts_shape(row_counts))
+    OR (state = 'failed' AND row_counts = '[]'::jsonb)
   )
 );
 
@@ -137,9 +163,13 @@ CREATE INDEX IF NOT EXISTS backup_generations_attempted
 -- `max_age_seconds` and `kept_generations` are the running policy's values, not
 -- constants frozen into this file, so a policy change in updater/current/policy
 -- takes effect on the next start without an updater-class plan just to widen a
--- number. They are bounded here, and the guard below refuses a jump larger than
--- one step, so a compromised caller cannot turn "26 hours" into "100 years" and
--- make the freshness rule vacuous.
+-- number. They are bounded by their own CHECKs, which is the load-bearing part:
+-- the freshness rule is "a verified dump within `max_age_seconds`", so a caller
+-- that could set it to 604800 (seven days) would make the rule much weaker
+-- than §9.5's 26 hours while still satisfying the type. The one-hour floor keeps
+-- it impossible to make the rule vacuous, and the updater's own store reads the
+-- value back through `policy()`, which re-applies the same bounds rather than
+-- trusting the row.
 CREATE TABLE IF NOT EXISTS updater.backup_state (
   singleton boolean PRIMARY KEY CHECK (singleton),
   max_age_seconds integer NOT NULL CHECK (max_age_seconds BETWEEN 3600 AND 604800),
@@ -236,23 +266,44 @@ CREATE OR REPLACE TRIGGER plans_backup_fresh_guard BEFORE INSERT OR UPDATE ON up
   FOR EACH ROW EXECUTE FUNCTION updater.guard_plan_backup_fresh();
 
 -- ---------------------------------------------------------------------------
--- A generation row is written once
--- ---------------------------------------------------------------------------
--- A failed attempt is not an abandoned draft: it is the durable evidence that
--- the backup did not happen, which is what turns the badge red and what the
--- operator reads afterwards. So it is kept — and it is kept immutable, because
--- the alternative is a `failed` row that somebody (or something) later UPDATEs
--- into a `verified` one with no dump behind it, which is the same empty
--- generation defect wearing a different hat.
+-- A generation row is written once, EXCEPT for exactly one transition.
 --
--- `retain_until` is the single mutable column, and only upwards: item 18 pins a
--- pre-update dump and never unpins it, so the retention rule can never lose a
--- pin that already exists.
+-- The exception is the point. The row is born `failed` with
+-- `failure_code='backup_in_progress'` BEFORE any dump byte exists (so a
+-- `kill -9` mid-dump leaves a durable red record rather than an empty
+-- directory), and the SAME row is completed to `verified` at the end. Without
+-- this exception the durability is worthless: the row could never be completed
+-- and every backup would be recorded as a failure.
+--
+-- So the guard permits precisely: `failed`/`backup_in_progress` ->
+-- `verified`/NULL, on the row's own primary key, and nothing else. Every other
+-- UPDATE is refused, and in particular:
+--   * a `verified` row can never become `failed` again, and
+--   * a completed `failed` row can never be revived, so a retried or replayed
+--     completion cannot resurrect a generation with no dump behind it.
+-- That is the daemons4 empty-generation defect closed at the storage layer: the
+-- only way to reach `verified` is through a run that really finished.
+--
+-- `retain_until` is separately mutable, and only upwards: item 18 pins a
+-- pre-image dump until the next successful database update plus seven days, and
+-- the retention rule must never be able to unpin one that already exists.
 CREATE OR REPLACE FUNCTION updater.guard_backup_generation_immutable() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$
 BEGIN
-  IF (to_jsonb(NEW) - ARRAY['retain_until']) IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['retain_until']) THEN
-    RAISE EXCEPTION 'updater backup generation content is immutable' USING ERRCODE = '23514';
+  IF NEW.generation_id IS DISTINCT FROM OLD.generation_id THEN
+    RAISE EXCEPTION 'updater backup generation id is immutable' USING ERRCODE = '23514';
+  END IF;
+  IF OLD.state <> 'failed' OR OLD.failure_code <> 'backup_in_progress' THEN
+    IF (to_jsonb(NEW) - ARRAY['retain_until']) IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['retain_until']) THEN
+      RAISE EXCEPTION 'updater backup generation content is immutable' USING ERRCODE = '23514';
+    END IF;
+  ELSE
+    -- The one permitted transition, stated rather than left to the shape
+    -- constraint: an in-flight attempt may complete, and it may complete only
+    -- into `verified` with the failure cleared.
+    IF NEW.state <> 'verified' OR NEW.failure_code IS NOT NULL THEN
+      RAISE EXCEPTION 'updater backup generation may only complete in flight' USING ERRCODE = '23514';
+    END IF;
   END IF;
   IF NEW.retain_until IS NOT NULL AND OLD.retain_until IS NOT NULL AND NEW.retain_until < OLD.retain_until THEN
     RAISE EXCEPTION 'updater backup generation retention pin cannot move backwards' USING ERRCODE = '23514';

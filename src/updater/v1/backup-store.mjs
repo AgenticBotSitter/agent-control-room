@@ -53,7 +53,10 @@ export function assertGenerationIdV1(value, code = "updater_backup_generation_re
  */
 export function generationLeafV1(generationId) {
   assertGenerationIdV1(generationId, "updater_backup_generation_refused");
-  return generationId.slice("backup:".length).replace("T", "_").replaceAll(":", "-");
+  // The trailing `Z` goes too, not just the `backup:` prefix. Keeping it would
+  // be harmless for uniqueness, but a leaf that reads `...-471Z` invites
+  // someone to strip it in an operator command and then find nothing.
+  return generationId.slice("backup:".length, -1).replace("T", "_").replaceAll(":", "-");
 }
 
 /**
@@ -67,8 +70,19 @@ export function generationLeafV1(generationId) {
  * the DDL's caller, not of a strftime on this machine.
  */
 export async function nextGenerationIdV1(client) {
+  // The three trailing digits are zero-PADDED. `floor(random()*1000)::int::text`
+  // yields "47" as often as "875", and an unpadded two-digit value fails the
+  // `{3}` group in the DDL's CHECK — so roughly two attempts in three were
+  // refused at INSERT. Measured on a real cluster:
+  // `backup:2026-09-30T13-39-28-47Z`.
+  //
+  // `lpad` is applied to a `text` cast, not to an integer: the integer form has
+  // no width to pad. Uniqueness is a tiebreak, not the property — the primary
+  // key is the guarantee, and two attempts inside one millisecond are refused
+  // rather than merged.
   const result = await client.query(`SELECT 'backup:' || to_char(pg_catalog.now(),
-    'YYYY-MM-DD"T"HH24-MI-SS') || '-' || (floor(random()*1000)::int)::text || 'Z' AS generation_id`);
+    'YYYY-MM-DD"T"HH24-MI-SS') || '-' || lpad((floor(pg_catalog.random()*1000)::int)::text, 3, '0')
+    || 'Z' AS generation_id`);
   const id = result.rows[0]?.generation_id;
   return assertGenerationIdV1(id, "updater_backup_generation_id_refused");
 }
@@ -102,7 +116,7 @@ function generationFromRowV1(row) {
     dumpSha256: row.dump_sha256,
     dumpBytes: row.dump_bytes === null || row.dump_bytes === undefined ? null : Number(row.dump_bytes),
     fileSha256: row.file_sha256,
-    schemaDigest: row.schema_digest,
+    shapeDigest: row.shape_digest,
     rowCountsDigest: row.row_counts_digest,
     encrypted: row.encrypted === true,
     snapshotXid: row.snapshot_xid,
@@ -209,13 +223,13 @@ export class PostgresBackupStoreV1 {
    * retry cannot complete a row a later attempt already rewrote), and requires
    * no previous success newer than this one.
    */
-  async completeAttempt({ generationId, dumpSha256, dumpBytes, fileSha256, schemaDigest, rowCounts,
+  async completeAttempt({ generationId, dumpSha256, dumpBytes, fileSha256, shapeDigest, rowCounts,
     snapshotXid = null, encrypted = false, retainedFor = null }) {
     assertGenerationIdV1(generationId, "updater_backup_completion_refused");
     const digest = assertOptionalDigestV1(dumpSha256, "updater_backup_completion_refused");
     const fileDigest = assertOptionalDigestV1(fileSha256, "updater_backup_completion_refused");
-    const schema = assertOptionalDigestV1(schemaDigest, "updater_backup_completion_refused");
-    if (digest === null || fileDigest === null || schema === null)
+    const shape = assertOptionalDigestV1(shapeDigest, "updater_backup_completion_refused");
+    if (digest === null || fileDigest === null || shape === null)
       throw updaterRefuseV1("updater_backup_completion_refused");
     if (!Number.isSafeInteger(dumpBytes) || dumpBytes <= 0 || dumpBytes >= 1_099_511_627_776)
       throw updaterRefuseV1("updater_backup_completion_refused");
@@ -234,12 +248,12 @@ export class PostgresBackupStoreV1 {
     const xid = snapshotXid === null ? null : (typeof snapshotXid === "string" && XID_V1.test(snapshotXid)
       ? snapshotXid : (() => { throw updaterRefuseV1("updater_backup_completion_refused"); })());
     const result = await this.client.query(`UPDATE updater.backup_generations SET state='verified',
-        completed_at=pg_catalog.now(), dump_sha256=$2, dump_bytes=$3, file_sha256=$4, schema_digest=$5,
+        completed_at=pg_catalog.now(), dump_sha256=$2, dump_bytes=$3, file_sha256=$4, shape_digest=$5,
         row_counts=$6::jsonb, row_counts_digest=$7, snapshot_xid=$8,
         encrypted=$9, retain_until=$10, failure_code=NULL, failure_detail=NULL
       WHERE generation_id=$1 AND state='failed' AND failure_code='backup_in_progress'
       RETURNING generation_id`,
-    [generationId, digest, dumpBytes, fileDigest, schema, rowCountsJson, rowCountsDigest, xid, encrypted === true, retainedFor]);
+    [generationId, digest, dumpBytes, fileDigest, shape, rowCountsJson, rowCountsDigest, xid, encrypted === true, retainedFor]);
     if (result.rows.length !== 1) throw updaterRefuseV1("updater_backup_completion_refused");
     await this.client.query(`UPDATE updater.backup_state SET last_success_at=pg_catalog.now(),
       last_failure_at=NULL, last_failure_code=NULL, consecutive_failures=0,
