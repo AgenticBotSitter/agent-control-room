@@ -59,14 +59,14 @@
     "file": "src/persistence/database.ts",
     "find": "  for (const key of [\"sqlState\", \"code\"] as const) {",
     "replace": "  for (const key of [\"code\"] as const) {",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/lapse-stress-postgres.test.ts",
+    "test": "pnpm run test:fleet:lapse-stress",
     "why": "the production driver sanitizes the SQLSTATE onto sqlState, so reading only code turns a scope collision into an opaque refusal"
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
     "find": "        if (databaseSqlStateIsAnyV1(error, [\"23P01\", \"23514\"])) return fleetFail(\"conflict\");",
     "replace": "        throw error;",
-    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/lapse-stress-postgres.test.ts",
+    "test": "pnpm run test:fleet:lapse-stress",
     "why": "a claim overlapping a live ownership lease is the clean conflict it always was, not a crash"
   }
 ]
