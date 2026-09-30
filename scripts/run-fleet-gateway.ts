@@ -8,7 +8,8 @@
 // connector authenticates with its own machine credential). The config file
 // holds the fleet gateway database login and must be readable only by you.
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat, open, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -119,6 +120,38 @@ export function captureFleetGatewayConfigurationV1(value: unknown): FleetGateway
     trustedProxyAddresses: Object.freeze([...(trustedProxyAddresses as string[])]) });
 }
 
+async function readProtectedConfigurationFileV1(path: string, maxBytes: number) {
+  const refused = () => { throw new Error("fleet_gateway_configuration_refused"); };
+  const before = await lstat(path).catch(refused);
+  if (!before?.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size < 1 || before.size > maxBytes
+    || process.platform !== "win32" && (before.mode & 0o037) !== 0) refused();
+  const handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)).catch(refused);
+  try {
+    const opened = await handle.stat();
+    if (opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) refused();
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    if (bytes.length !== before.size || after.dev !== before.dev || after.ino !== before.ino
+      || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) refused();
+    return bytes.toString("utf8");
+  } finally { await handle.close(); }
+}
+
+/** The public release trust has its own root-written, group-readable file.
+ * Keeping it out of gateway.json lets key rotation update trust without
+ * rewriting the gateway's unrelated database and ingress configuration. */
+export async function loadFleetGatewayConfigurationFileV1(path: string): Promise<FleetGatewayConfigurationV1> {
+  let input: Record<string, unknown>;
+  try { input = JSON.parse(await readProtectedConfigurationFileV1(path, 1024 * 1024)) as Record<string, unknown>; }
+  catch { throw new Error("fleet_gateway_configuration_refused"); }
+  const trustPath = join(dirname(path), "release-trust.json");
+  let trust: ReleaseTrustV1;
+  try { trust = captureReleaseTrustV1(JSON.parse(await readProtectedConfigurationFileV1(trustPath, 64 * 1024))); }
+  catch { throw new Error("fleet_gateway_configuration_refused"); }
+  if (input.releaseTrust !== undefined) throw new Error("fleet_gateway_configuration_refused");
+  return captureFleetGatewayConfigurationV1({ ...input, releaseTrust: trust });
+}
+
 /** Composes the standalone gateway with the same authenticated operations-mode
  * journal reader as the Mac host. A configuration without the installation
  * key still gets a provider, but that provider fails closed as "unknown". */
@@ -137,9 +170,7 @@ export function createFleetGatewayStoreFromConfigurationV1(database: DatabaseCli
 
 async function main(path: string | undefined) {
   if (!path) throw new Error("Usage: pnpm fleet:gateway <protected-config.json>");
-  const info = await stat(path);
-  if (process.platform !== "win32" && (info.mode & 0o077) !== 0) throw new Error("The gateway config must be readable only by its owner.");
-  const config = captureFleetGatewayConfigurationV1(JSON.parse(await readFile(path, "utf8")));
+  const config = await loadFleetGatewayConfigurationFileV1(path);
   const fleetDatabase = createPrivatePostgresDatabase(config.database);
   const intakeDatabase = config.workIntake ? createPrivatePostgresDatabase(config.workIntake.database) : undefined;
   const projectEvents = config.harnessIntegrityKey ? new TaskProjectEventWriterV1(new ProjectEventStoreV1(

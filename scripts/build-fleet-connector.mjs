@@ -131,7 +131,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   Promise.resolve().then(async () => {
     if (!parsed.releaseTrustPath) refused();
     const info = await stat(parsed.releaseTrustPath);
-    if (process.platform !== "win32" && (info.mode & 0o077) !== 0) refused();
+    if (process.platform !== "win32" && (info.mode & 0o037) !== 0) refused();
     return buildFleetConnectorReleaseV1({ root: parsed.root, allowRealHome: parsed.allowRealHome,
       releaseTrust: JSON.parse(await readFile(parsed.releaseTrustPath, "utf8")) });
   })

@@ -5,7 +5,7 @@
 // production logins in tests/fleet-connector-postgres.test.ts.
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -20,7 +20,7 @@ import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, fleetGatewa
   type FleetOperationsModeV1 } from "../src/fleet/v1";
 import { captureFleetGatewayConfigurationV1, FLEET_GATEWAY_CONFIGURATION_V1,
   FLEET_GATEWAY_SERVER_OPTIONS_V1, createFleetGatewayStoreFromConfigurationV1, fleetGatewayAdmissionFromConfigurationV1,
-  prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
+  loadFleetGatewayConfigurationFileV1, prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { SupervisorReconcilerV1 } from "../src/supervisor/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
@@ -165,6 +165,32 @@ test("gateway protected configuration defaults to no proxy trust and validates e
   const admission = fleetGatewayAdmissionFromConfigurationV1(configured);
   const lease = admission.enter(requestFrom("127.0.0.1", { "x-forwarded-for": "2001:db8:2:3::1" }), "authenticate");
   lease.completeAuthentication(null);
+});
+
+test("gateway loads public release trust beside a group-readable configuration and refuses substitution", async t => {
+  const root = await mkdtemp(join(tmpdir(), "fleet-gateway-release-trust-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = join(root, "gateway.json"), trustPath = join(root, "release-trust.json");
+  const config = { schema: FLEET_GATEWAY_CONFIGURATION_V1, tenantId: FLEET_TENANT, port: 8443,
+    database: { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_fleet",
+      password: "fixture-value", majorVersion: 17 as const } };
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, { mode: 0o640 });
+  await writeFile(trustPath, `${JSON.stringify(RELEASE_TRUST)}\n`, { mode: 0o640 });
+  await chmod(configPath, 0o640); await chmod(trustPath, 0o640);
+  assert.deepEqual((await loadFleetGatewayConfigurationFileV1(configPath)).releaseTrust, RELEASE_TRUST);
+
+  const stranger = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  await writeFile(configPath, `${JSON.stringify({ ...config, releaseTrust: { ...RELEASE_TRUST,
+    keyId: releaseKeyIdV1(stranger), publicKey: stranger } })}\n`, { mode: 0o640 });
+  await assert.rejects(loadFleetGatewayConfigurationFileV1(configPath), /fleet_gateway_configuration_refused/u);
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, { mode: 0o640 });
+  await chmod(trustPath, 0o660);
+  await assert.rejects(loadFleetGatewayConfigurationFileV1(configPath), /fleet_gateway_configuration_refused/u);
+  await chmod(trustPath, 0o640);
+  const outsideTrust = join(root, "outside-trust.json");
+  await writeFile(outsideTrust, `${JSON.stringify(RELEASE_TRUST)}\n`, { mode: 0o640 });
+  await rm(trustPath); await symlink(outsideTrust, trustPath);
+  await assert.rejects(loadFleetGatewayConfigurationFileV1(configPath), /fleet_gateway_configuration_refused/u);
 });
 
 test("gateway operations mode reports every decision and fails closed when its provider is absent or fails", async () => {

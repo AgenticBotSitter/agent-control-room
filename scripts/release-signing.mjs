@@ -8,7 +8,7 @@ import {
   verify,
 } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { chmod, lstat, mkdir, open, realpath, rename } from "node:fs/promises";
+import { chmod, chown, lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export const RELEASE_SIGNING_CONFIG_SCHEMA_V1 = "control-room.release-signing-config/v1";
@@ -163,10 +163,11 @@ async function signingConfiguration(path, expectedUid = process.geteuid?.()) {
   return Object.freeze({ schema: RELEASE_SIGNING_CONFIG_SCHEMA_V1, privateKeyPath: config.privateKeyPath });
 }
 
-function releaseSumsSignatureMaterialV1(version, sumsSha256) {
+function releaseSumsSignatureMaterialV1(version, builtFrom, sumsSha256) {
   versionParts(version);
+  if (!COMMIT_PATTERN.test(builtFrom ?? "")) refuse("built_from");
   if (!DIGEST_PATTERN.test(sumsSha256 ?? "")) refuse("sums_digest");
-  return Buffer.from(`${RELEASE_SUMS_SIGNATURE_SCHEMA_V1}\n${version}\n${sumsSha256}\n`, "utf8");
+  return Buffer.from(`${RELEASE_SUMS_SIGNATURE_SCHEMA_V1}\n${version}\n${builtFrom}\n${sumsSha256}\n`, "utf8");
 }
 
 function cleanConnectorRelease(value, signatureOptional = false) {
@@ -207,15 +208,17 @@ export function verifyConnectorReleaseAdvertisementV1(value, trustValue, require
   return release;
 }
 
-async function writeOnceOrMatch(path, bytes, mode) {
+async function writeOnceOrMatch(path, bytes, mode, options = {}) {
   try {
     const handle = await open(path, "wx", mode);
     try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
     if (process.platform !== "win32") await chmod(path, mode);
-    return;
+    return true;
   } catch (error) { if (error?.code !== "EEXIST") throw error; }
-  const existing = await stableFile(path, Math.max(bytes.length, 1) + 1, { exactMode: mode });
+  const existing = await stableFileRetry(path, Math.max(bytes.length, 1) + 1,
+    { exactMode: mode, expectedUid: options.expectedUid });
   if (!existing.bytes.equals(Buffer.from(bytes))) refuse("output_exists");
+  return false;
 }
 
 function directChild(path, root) {
@@ -258,12 +261,6 @@ export async function signReleaseArtifactsV1(input, options = {}) {
     artifacts.push(Object.freeze({ role, path, file: basename(path), size: captured.size, sha256: captured.sha256 }));
   }
   if (new Set(artifacts.map(item => item.file)).size !== artifacts.length) refuse("artifact_name");
-  const sumsBytes = Buffer.from(artifacts.map(item => `${item.sha256}  ${item.file}\n`).join(""), "utf8");
-  if (sumsBytes.length > MAX_RELEASE_SUMS_BYTES_V1) refuse("sums_too_large");
-  const sumsSha256 = sha256(sumsBytes);
-  const signature = sign(null, releaseSumsSignatureMaterialV1(input.version, sumsSha256), key).toString("base64url");
-  const signatureRecord = Object.freeze({ schema: RELEASE_SUMS_SIGNATURE_SCHEMA_V1, version: input.version,
-    keyId, sumsSha256, signature });
   const connectorManifestPath = cleanAbsolutePath(input.connectorManifestPath, "connector_manifest_path");
   if (!directChild(await realpath(connectorManifestPath).catch(() => refuse("file_missing")), releaseDirectory))
     refuse("artifact_location");
@@ -273,6 +270,14 @@ export async function signReleaseArtifactsV1(input, options = {}) {
   catch { refuse("connector_manifest"); }
   const connector = artifacts.find(item => item.role === "connector");
   const capturedManifest = parseConnectorManifest(connectorManifest, connector);
+  if (capturedManifest.version !== input.version) refuse("connector_manifest");
+  const sumsBytes = Buffer.from(artifacts.map(item => `${item.sha256}  ${item.file}\n`).join(""), "utf8");
+  if (sumsBytes.length > MAX_RELEASE_SUMS_BYTES_V1) refuse("sums_too_large");
+  const sumsSha256 = sha256(sumsBytes);
+  const signature = sign(null, releaseSumsSignatureMaterialV1(input.version, capturedManifest.builtFrom, sumsSha256), key)
+    .toString("base64url");
+  const signatureRecord = Object.freeze({ schema: RELEASE_SUMS_SIGNATURE_SCHEMA_V1, version: input.version,
+    keyId, builtFrom: capturedManifest.builtFrom, sumsSha256, signature });
   const connectorAdvertisement = Object.freeze({ version: capturedManifest.version, file: capturedManifest.file,
     size: capturedManifest.size, sha256: capturedManifest.sha256, builtFrom: capturedManifest.builtFrom,
     minVersion: input.connectorMinVersion, signature: "" });
@@ -307,18 +312,30 @@ export async function verifySignedReleaseV1(input) {
   const suppliedRootStat = await lstat(suppliedReleaseDirectory).catch(() => refuse("release_directory"));
   if (!suppliedRootStat.isDirectory() || suppliedRootStat.isSymbolicLink()) refuse("release_directory");
   const releaseDirectory = await realpath(suppliedReleaseDirectory);
+  const rootStat = await lstat(releaseDirectory);
+  const expectedUid = input.expectedUid ?? process.geteuid?.();
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()
+    || process.platform !== "win32" && (rootStat.uid !== expectedUid || (rootStat.mode & 0o777) !== 0o700))
+    refuse("release_directory_custody");
   const trust = captureReleaseTrustV1(input.trust);
+  versionParts(input.installedVersion);
+  if (input.allowRollback !== undefined && typeof input.allowRollback !== "boolean") refuse("rollback_authority");
+  if (!COMMIT_PATTERN.test(input.expectedBuiltFrom ?? "")) refuse("built_from");
   const sums = await stableFile(join(releaseDirectory, "SHA256SUMS"), MAX_RELEASE_SUMS_BYTES_V1);
   const signatureFile = await stableFile(join(releaseDirectory, "SHA256SUMS.sig"), 16 * 1024);
   let signature;
   try { signature = JSON.parse(signatureFile.bytes.toString("utf8")); } catch { refuse("signature_record"); }
-  signature = exact(signature, ["schema", "version", "keyId", "sumsSha256", "signature"], "signature_record");
+  signature = exact(signature, ["schema", "version", "keyId", "builtFrom", "sumsSha256", "signature"], "signature_record");
   if (signature.schema !== RELEASE_SUMS_SIGNATURE_SCHEMA_V1 || !VERSION_PATTERN.test(signature.version ?? "")
-    || signature.keyId !== trust.keyId || signature.sumsSha256 !== sums.sha256
+    || signature.keyId !== trust.keyId || signature.builtFrom !== input.expectedBuiltFrom
+    || !COMMIT_PATTERN.test(signature.builtFrom ?? "") || signature.sumsSha256 !== sums.sha256
     || !SIGNATURE_PATTERN.test(signature.signature ?? "") || trust.revokedKeyIds.includes(signature.keyId))
     refuse("signature_record");
-  if (compareReleaseVersionsV1(signature.version, trust.versionFloor) < 0) refuse("version_floor");
-  if (!verify(null, releaseSumsSignatureMaterialV1(signature.version, signature.sumsSha256), cleanPublicKey(trust.publicKey),
+  if (input.allowRollback !== true && compareReleaseVersionsV1(signature.version, trust.versionFloor) < 0)
+    refuse("version_floor");
+  if (input.allowRollback !== true && compareReleaseVersionsV1(signature.version, input.installedVersion) <= 0)
+    refuse("installed_version");
+  if (!verify(null, releaseSumsSignatureMaterialV1(signature.version, signature.builtFrom, signature.sumsSha256), cleanPublicKey(trust.publicKey),
     Buffer.from(signature.signature, "base64url"))) refuse("signature");
   const entries = parseSums(sums.bytes), artifacts = [];
   for (const entry of entries) {
@@ -329,16 +346,18 @@ export async function verifySignedReleaseV1(input) {
     if (captured.sha256 !== entry.sha256) refuse("artifact_digest");
     artifacts.push(Object.freeze({ file: entry.file, size: captured.size, sha256: captured.sha256 }));
   }
-  return Object.freeze({ verified: true, version: signature.version, keyId: signature.keyId,
+  return Object.freeze({ verified: true, version: signature.version, builtFrom: signature.builtFrom, keyId: signature.keyId,
     sumsSha256: signature.sumsSha256, artifacts: Object.freeze(artifacts) });
 }
 
 export async function verifySignedReleaseFromTrustFileV1(input, options = {}) {
   const captured = await stableFile(cleanAbsolutePath(input.trustPath, "trust_path"), 64 * 1024,
-    { exactMode: 0o600, expectedUid: options.expectedUid ?? process.geteuid?.() });
+    { exactMode: 0o640, expectedUid: options.expectedUid ?? process.geteuid?.() });
   let trust;
   try { trust = JSON.parse(captured.bytes.toString("utf8")); } catch { refuse("trust"); }
-  return verifySignedReleaseV1({ releaseDirectory: input.releaseDirectory, trust: captureReleaseTrustV1(trust) });
+  return verifySignedReleaseV1({ releaseDirectory: input.releaseDirectory, trust: captureReleaseTrustV1(trust),
+    installedVersion: input.installedVersion, expectedBuiltFrom: input.expectedBuiltFrom,
+    allowRollback: input.allowRollback, expectedUid: options.expectedUid ?? process.geteuid?.() });
 }
 
 function rotationMaterial(value) {
@@ -368,7 +387,8 @@ export function applyReleaseKeyRotationV1(value, currentValue) {
     || !verify(null, rotationMaterial(input), cleanPublicKey(current.publicKey), Buffer.from(input.signature, "base64url")))
     refuse("rotation");
   return captureReleaseTrustV1({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: input.epoch, keyId: input.toKeyId,
-    publicKey: input.toPublicKey, versionFloor: input.versionFloor, revokedKeyIds: current.revokedKeyIds });
+    publicKey: input.toPublicKey, versionFloor: input.versionFloor,
+    revokedKeyIds: [...new Set([...current.revokedKeyIds, current.keyId])].sort() });
 }
 
 function revocationMaterial(value) {
@@ -421,13 +441,84 @@ async function securePrivateDirectory(path, expectedUid) {
     refuse("private_directory");
 }
 
-async function atomicJson(path, value, mode = 0o600) {
+async function atomicJson(path, value, mode = 0o600, gid) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   const handle = await open(temporary, "wx", mode);
   try { await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`); await handle.sync(); } finally { await handle.close(); }
   if (process.platform !== "win32") await chmod(temporary, mode);
+  if (process.platform !== "win32" && gid !== undefined) await chown(temporary, process.geteuid?.() ?? 0, gid);
   await rename(temporary, path);
+}
+
+async function secureSharedDirectory(path, expectedUid) {
+  let created = false;
+  try { await mkdir(path, { mode: 0o750 }); created = true; }
+  catch (error) { if (error?.code !== "EEXIST") throw error; }
+  if (created && process.platform !== "win32") await chmod(path, 0o750);
+  const info = await lstat(path).catch(() => refuse("shared_directory"));
+  const canonical = await realpath(path).catch(() => refuse("shared_directory"));
+  if (!info.isDirectory() || info.isSymbolicLink() || canonical !== path
+    || process.platform !== "win32" && (info.uid !== expectedUid || (info.mode & 0o027) !== 0))
+    refuse("shared_directory");
+  return info;
+}
+
+async function existingTrust(path, expectedUid) {
+  let info;
+  try { info = await lstat(path); } catch (error) { if (error?.code === "ENOENT") return null; throw error; }
+  if (!info.isFile()) refuse("trust_exists");
+  const captured = await stableFile(path, 64 * 1024, { exactMode: 0o640, expectedUid });
+  try { return captureReleaseTrustV1(JSON.parse(captured.bytes.toString("utf8"))); }
+  catch { refuse("trust_exists"); }
+}
+
+function sameTrust(left, right) { return JSON.stringify(captureReleaseTrustV1(left)) === JSON.stringify(captureReleaseTrustV1(right)); }
+
+async function withTrustLock(path, work, options = {}) {
+  const lockPath = `${path}.lock`, attempts = options.attempts ?? 500, token = randomBytes(16).toString("hex");
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const handle = await open(lockPath, "wx", 0o600);
+      try { await handle.writeFile(`${JSON.stringify({ pid: process.pid, token })}\n`); await handle.sync(); }
+      finally { await handle.close(); }
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST" || attempt >= attempts) refuse("trust_busy");
+      let owner;
+      try { owner = JSON.parse((await stableFile(lockPath, 4096, { exactMode: 0o600 })).bytes.toString("utf8")); }
+      catch { await new Promise(resolveWait => setTimeout(resolveWait, 10)); continue; }
+      if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) {
+        let alive = true;
+        try { process.kill(owner.pid, 0); } catch (ownerError) { alive = ownerError?.code !== "ESRCH"; }
+        if (!alive) { await rm(lockPath, { force: true }); continue; }
+      }
+      await new Promise(resolveWait => setTimeout(resolveWait, 10));
+    }
+  }
+  try { return await work(); } finally {
+    let owner;
+    try { owner = JSON.parse((await stableFile(lockPath, 4096, { exactMode: 0o600 })).bytes.toString("utf8")); }
+    catch { refuse("trust_lock_owner_changed"); }
+    if (owner.pid !== process.pid || owner.token !== token) refuse("trust_lock_owner_changed");
+    await rm(lockPath, { force: true });
+  }
+}
+
+export async function raiseReleaseTrustFloorV1(input, options = {}) {
+  const trustPath = cleanAbsolutePath(input.trustPath, "trust_path");
+  versionParts(input.installedVersion);
+  const expectedUid = options.expectedUid ?? process.geteuid?.();
+  return withTrustLock(trustPath, async () => {
+    const captured = await stableFile(trustPath, 64 * 1024, { exactMode: 0o640, expectedUid });
+    let trust;
+    try { trust = captureReleaseTrustV1(JSON.parse(captured.bytes.toString("utf8"))); }
+    catch { refuse("trust"); }
+    if (compareReleaseVersionsV1(input.installedVersion, trust.versionFloor) <= 0) return trust;
+    const raised = captureReleaseTrustV1({ ...trust, versionFloor: input.installedVersion });
+    await atomicJson(trustPath, raised, 0o640, captured.stat.gid);
+    return raised;
+  }, options);
 }
 
 export async function generateInstallationReleaseKeyV1(input, options = {}) {
@@ -438,34 +529,45 @@ export async function generateInstallationReleaseKeyV1(input, options = {}) {
   const rootInfo = await lstat(protectedRoot);
   const expectedUid = options.expectedUid ?? 0;
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()
-    || process.platform !== "win32" && (rootInfo.uid !== expectedUid || (rootInfo.mode & 0o077) !== 0)) refuse("protected_root");
+    || process.platform !== "win32" && (rootInfo.uid !== expectedUid || (rootInfo.mode & 0o022) !== 0)) refuse("protected_root");
   versionParts(input.versionFloor);
-  const privateKeyPath = join(protectedRoot, "updater", "release-signing-key.pem");
+  const installationRoot = dirname(protectedRoot);
+  const privateKeyPath = join(installationRoot, "updater-state", "release-signing-key.pem");
   const trustPath = join(protectedRoot, "config", "release-trust.json");
-  const configPath = join(protectedRoot, "updater", "release-signing.json");
+  const configPath = join(installationRoot, "updater-state", "release-signing.json");
   await securePrivateDirectory(dirname(privateKeyPath), expectedUid);
-  await securePrivateDirectory(dirname(trustPath), expectedUid);
-  const generated = generateKeyPairSync("ed25519");
-  const privateBytes = generated.privateKey.export({ format: "pem", type: "pkcs8" });
-  await writePrivateKeyOnce(privateKeyPath, privateBytes);
-  await options.fault?.("private_key_written");
-  const key = await privateSigningKey(privateKeyPath, expectedUid);
+  const trustDirectory = await secureSharedDirectory(dirname(trustPath), expectedUid);
+  const priorTrust = await existingTrust(trustPath, expectedUid);
+  let key;
+  if (priorTrust) {
+    try { key = await privateSigningKey(privateKeyPath, expectedUid); }
+    catch { refuse("trust_exists"); }
+  } else {
+    const generated = generateKeyPairSync("ed25519");
+    const privateBytes = generated.privateKey.export({ format: "pem", type: "pkcs8" });
+    await writePrivateKeyOnce(privateKeyPath, privateBytes);
+    await options.fault?.("private_key_written");
+    key = await privateSigningKey(privateKeyPath, expectedUid);
+  }
   const publicKey = createPublicKey(key).export({ format: "der", type: "spki" }).toString("base64url");
   const trust = captureReleaseTrustV1({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1, keyId: releaseKeyIdV1(publicKey),
     publicKey, versionFloor: input.versionFloor, revokedKeyIds: [] });
-  await atomicJson(configPath, { schema: RELEASE_SIGNING_CONFIG_SCHEMA_V1, privateKeyPath });
-  await atomicJson(trustPath, trust);
+  if (priorTrust && !sameTrust(priorTrust, trust)) refuse("trust_exists");
+  await writeOnceOrMatch(configPath, Buffer.from(`${JSON.stringify({ schema: RELEASE_SIGNING_CONFIG_SCHEMA_V1,
+    privateKeyPath }, null, 2)}\n`), 0o600, { expectedUid });
+  const trustCreated = await writeOnceOrMatch(trustPath, Buffer.from(`${JSON.stringify(trust, null, 2)}\n`), 0o640,
+    { expectedUid });
+  if (trustCreated && process.platform !== "win32") await chown(trustPath, expectedUid, trustDirectory.gid);
   if (input.gatewayConfigPath) {
     const gatewayPath = cleanAbsolutePath(input.gatewayConfigPath, "gateway_config_path");
     const gatewayCanonical = await realpath(gatewayPath).catch(() => refuse("gateway_config"));
-    const gatewayRelative = relative(protectedRoot, gatewayCanonical);
-    if (gatewayRelative === "" || gatewayRelative === ".." || gatewayRelative.startsWith(`..${sep}`)
-      || isAbsolute(gatewayRelative)) refuse("gateway_config");
-    const gatewayFile = await stableFileRetry(gatewayPath, 1024 * 1024, { exactMode: 0o600, expectedUid });
+    if (gatewayCanonical !== join(protectedRoot, "config", "gateway.json")) refuse("gateway_config");
+    const gatewayFile = await stableFileRetry(gatewayPath, 1024 * 1024, { expectedUid });
+    if (process.platform !== "win32" && (gatewayFile.stat.mode & 0o037) !== 0) refuse("gateway_config");
     let gateway;
     try { gateway = JSON.parse(gatewayFile.bytes.toString("utf8")); } catch { refuse("gateway_config"); }
     if (!gateway || typeof gateway !== "object" || Array.isArray(gateway)) refuse("gateway_config");
-    await atomicJson(gatewayPath, { ...gateway, releaseTrust: trust });
+    if (Object.hasOwn(gateway, "releaseTrust")) refuse("gateway_config");
   }
   return Object.freeze({ schema: INSTALLATION_RELEASE_KEY_SCHEMA_V1, privateKeyPath, configPath, trustPath, trust });
 }
