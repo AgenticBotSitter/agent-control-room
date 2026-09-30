@@ -84,6 +84,15 @@ GRANT UPDATE (planner_mode, planner_worker_id, planner_worker_kind, planner_mode
 -- new columns.
 GRANT SELECT ON work_batch_current_split_suggestions, control_planner_open_needs_you,
   control_project_planner_selections TO control_room_private_web;
+-- MIG-A 0203: the same EXECUTE the intake login holds, and for the same measured
+-- reason -- a view's WHERE clause is checked against session_user, so the owner
+-- login needs EXECUTE on the visibility predicate to read the current-split view
+-- it already has SELECT on. Without it the owner's own batch page 500s on a
+-- plain SELECT. The predicate is not a widening for this login: it returns one
+-- boolean about values the caller supplied, and its non-intake branch defers, so
+-- the owner's read is unchanged by 0203.
+GRANT EXECUTE ON FUNCTION work_intake_split_suggestion_visible(text, text, text)
+  TO control_room_private_web;
 -- Project coordination page (attentionList, readDependencies): exactly the
 -- read, filter and join columns the composer names. No payload, deep_link or
 -- source columns and no writes; tenant scoping is the composer's WHERE clause.

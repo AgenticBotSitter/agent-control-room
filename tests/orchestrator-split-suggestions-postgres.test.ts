@@ -13,7 +13,8 @@ import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from 
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { workBatchProposalDigestV1, PostgresIntakePlannerFailureStoreV1,
   PostgresIntakeNeedsYouStoreV1, PostgresIntakeSuggestionStoreV1, IntakeSuggestionStoreErrorV1,
-  UnwiredPlannerAllowanceV1, type WorkBatchProposalV1 } from "../src/work-intake/v1";
+  UnwiredPlannerAllowanceV1, intakeProjectScopeV1, intakeRequestScopeV1,
+  type WorkBatchProposalV1 } from "../src/work-intake/v1";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 
 // Reserved disposable-cluster lane for MIG-A: 59370-59379, or the test runner's
@@ -231,6 +232,141 @@ test("the intake login may append a current suggestion, and only a current one",
       } finally { webAfter.end(); }
     } finally { await intake.end(); await admin.end(); }
   }, { port: PORT, allowedPorts: ALLOWED, boundMs: 180_000 });
+});
+
+test("the current-suggestion VIEW is tenant-bound: the intake login bound to A cannot read B's proposal", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    // The intake login is bound to `scope` (tenant A) by the fixture, and tenant B
+    // is a real second tenant in the same cluster -- so "cannot read B" is proved
+    // against rows that exist, not against a table that happens to be empty.
+    const intake = new Client(postgres.connection("control_room_work_intake_agent")); await intake.connect();
+    try {
+      await seedTenant(admin, scope, { withBinding: true });
+      await seedTenant(admin, other);
+      await seedIdentities(admin, scope, "");
+      await seedIdentities(admin, other, "-other");
+      await seedBatch(admin, scope, "batch:orch-tenant-a");
+      const foreignBatch = await seedBatch(admin, other, "batch:orch-tenant-b", "identity:orch-agent-other");
+      // Tenant B's proposal text, marked so a leak is unambiguous. The suggestion's
+      // OWN proposal differs from the batch's; its `base_revision_digest` is still
+      // the batch's stored revision digest, which is what the guard compares.
+      const secret = "SECRET-B-TENANT-ONLY";
+      const foreign = { ...proposal(2), projectId: other.projectId, tasks: proposal(2).tasks.map(task =>
+        ({ ...task, title: secret })) } as WorkBatchProposalV1;
+      // Seeded as the SCHEMA OWNER, deliberately. The intake login is bound to
+      // tenant A, and 0200's policy refuses its INSERT for tenant B -- which is the
+      // write side working. To prove the READ side we need tenant B's row to exist
+      // at all, so the schema owner writes it; the row is then real, current, and
+      // carried by the view, and the assertions below are about whether the bound
+      // login can see it.
+      await insertSuggestion(admin, { id: `split-suggestion:${"7".repeat(32)}`,
+        tenantId: other.tenantId, projectId: other.projectId, batchId: "batch:orch-tenant-b",
+        requestKey: "orchestrator-tenant-b-1", revision: 1, revisionDigest: foreignBatch.digest,
+        proposer: "identity:orch-agent-other", proposal: foreign, createdAt: NOW });
+      // And the same insert through the bound intake login is refused, which is the
+      // write-side half of the same rule.
+      await assert.rejects(insertSuggestion(intake, { id: `split-suggestion:${"9".repeat(32)}`,
+        tenantId: other.tenantId, projectId: other.projectId, batchId: "batch:orch-tenant-b",
+        requestKey: "orchestrator-tenant-b-2", revision: 1, revisionDigest: foreignBatch.digest,
+        proposer: "identity:orch-agent-other", proposal: foreign, createdAt: NOW }),
+      /work batch split suggestion insert rejected/u,
+      "the bound intake login cannot append for another tenant either");
+      const ownBatch = await seedBatch(admin, scope, "batch:orch-tenant-a-2");
+      await insertSuggestion(intake, { id: `split-suggestion:${"8".repeat(32)}`,
+        tenantId: scope.tenantId, projectId: scope.projectId, batchId: "batch:orch-tenant-a-2",
+        requestKey: "orchestrator-tenant-a-1", revision: 1, revisionDigest: ownBatch.digest,
+        proposer: "identity:orch-agent", proposal: proposal(2), createdAt: NOW });
+
+      // Precondition, asserted as the schema owner: both rows really exist, and
+      // the view really carries both. Without this a "0 rows" result below would
+      // be indistinguishable from a fixture that seeded nothing.
+      const seeded = await admin.query<{ base: string; view: string }>(`SELECT
+        (SELECT count(*)::text FROM work_batch_split_suggestions WHERE tenant_id=$1) AS base,
+        (SELECT count(*)::text FROM work_batch_current_split_suggestions WHERE tenant_id=$1) AS view`,
+      [other.tenantId]);
+      assert.equal(seeded.rows[0]!.base, "1", "tenant B's suggestion exists");
+      assert.equal(seeded.rows[0]!.view, "1", "and it is current, so the view would carry it");
+      assert.equal((await admin.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM work_batches WHERE tenant_id=$1", [other.tenantId])).rows[0]!.n, "1",
+      "and tenant B's batch exists, so the view's join can succeed");
+
+      // THE ASSERTION. As the production intake login, bound to tenant A: tenant
+      // B's row is not in the view, and none of B's material is readable.
+      const leaked = await intake.query<{ n: string; text: string }>(
+        `SELECT count(*)::text AS n, coalesce(string_agg(proposal::text, ' '),'') AS text
+         FROM work_batch_current_split_suggestions WHERE tenant_id=$1`, [other.tenantId]);
+      assert.equal(leaked.rows[0]!.n, "0", "the bound intake login sees no other tenant's current suggestion");
+      assert.equal(leaked.rows[0]!.text.includes(secret), false,
+        "no other tenant's proposal text is readable through the view");
+      // And the same query with no tenant filter at all -- the shape a careless
+      // adapter would send -- still cannot see it.
+      const unfiltered = await intake.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM work_batch_current_split_suggestions");
+      assert.equal(unfiltered.rows[0]!.n, "1", "an unfiltered read sees only the bound tenant's single row");
+      // The base table was never readable across tenants either, and 0203 must not
+      // have widened it: the login's own row comes back, tenant B's does not.
+      const base = await intake.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM work_batch_split_suggestions");
+      assert.equal(base.rows[0]!.n, "1", "the base table is bounded too, and the view is not a way around it");
+      // A request key is integrity material about another tenant's work, and it
+      // must be unreachable even when the caller knows it exactly.
+      const byKey = await intake.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM work_batch_current_split_suggestions WHERE request_key=$1",
+      ["orchestrator-tenant-b-1"]);
+      assert.equal(byKey.rows[0]!.n, "0", "a known other-tenant request key still returns nothing");
+      // The login's OWN row is still readable: the fix bounds, it does not blind.
+      const own = await intake.query<{ id: string; starts_work: boolean }>(
+        "SELECT id,starts_work FROM work_batch_current_split_suggestions WHERE tenant_id=$1", [scope.tenantId]);
+      assert.equal(own.rowCount, 1, "the bound tenant's own current suggestion is still readable");
+      assert.equal(own.rows[0]!.starts_work, false, "and it still grants no authority");
+
+      // THE OWNER PATH IS NOT REGRESSED. The web login holds no privilege on the
+      // base table (0200's design) and reads the same view, and it must still see
+      // its own tenant's row -- otherwise 0203 would have broken the owner path to
+      // fix a leak on the intake path.
+      const web = new Client(postgres.connection("web")); await web.connect();
+      try {
+        const forWeb = await web.query<{ n: string }>(
+          "SELECT count(*)::text AS n FROM work_batch_current_split_suggestions WHERE tenant_id=$1",
+        [scope.tenantId]);
+        assert.equal(forWeb.rows[0]!.n, "1", "the owner web login still reads its own tenant's current suggestion");
+        await assert.rejects(web.query("SELECT * FROM work_batch_split_suggestions"), /permission denied/u,
+          "the web login still holds nothing on the base table");
+        // EXECUTE on the predicate, by contrast, it MUST hold: a view's WHERE
+        // clause is privilege-checked against session_user, not the view's owner,
+        // so revoking the function from PUBLIC and granting it to the intake login
+        // alone silently breaks the OWNER's read of the same view. Measured, and
+        // this assertion is what keeps the next editor from re-introducing it.
+        const predicate = await web.query<{ visible: boolean }>(
+          "SELECT work_intake_split_suggestion_visible($1,$2,$3) AS visible",
+        [scope.tenantId, "batch:orch-tenant-a-2", "identity:orch-agent"]);
+        assert.equal(typeof predicate.rows[0]!.visible, "boolean",
+          "the owner login holds EXECUTE and sees one boolean, never a row");
+        // And the predicate is still the TENANT rule, not a bypass: a work-intake
+        // session is the only thing it bounds, and this session is not one.
+        assert.equal(predicate.rows[0]!.visible, true,
+          "for the owner login the predicate defers to the non-intake branch, so the owner's read is unchanged");
+      } finally { await web.end(); }
+
+      // The rule is ONE definition. If the view's predicate and the table's policy
+      // were spelled separately, a future edit to one would not move the other,
+      // and this file's whole claim would quietly become false.
+      const shape = await admin.query<{ policy: string; view: string }>(`SELECT
+        (SELECT pg_get_expr(polqual, polrelid) FROM pg_policy WHERE polname='work_batch_split_suggestions_work_intake_scope')
+          AS policy,
+        (SELECT pg_get_viewdef('work_batch_current_split_suggestions'::regclass, true)) AS view`);
+      assert.match(shape.rows[0]!.policy, /work_intake_split_suggestion_visible/u,
+        "the table's RESTRICTIVE policy is the shared predicate");
+      assert.match(shape.rows[0]!.view, /work_intake_split_suggestion_visible/u,
+        "and the view calls the same predicate, so the two cannot drift");
+      // The predicate itself returns ONE boolean and no row: it is not a window.
+      const oneBoolean = await admin.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM (SELECT work_intake_split_suggestion_visible('t','b','p')) s");
+      assert.equal(oneBoolean.rows[0]!.n, 1, "the predicate is a single boolean projection, not a row source");
+    } finally { await intake.end(); await admin.end(); }
+  }, { port: PORT + 8, allowedPorts: ALLOWED, boundMs: 180_000 });
 });
 
 test("the write guard refuses: no propose grant, a foreign batch, a stale revision, a wrong digest, a decided batch, another tenant", async t => {
@@ -549,6 +685,32 @@ test("the production suggestion store is idempotent, immutable and honest about 
         /read only|readonly/u, "the returned proposal is deeply immutable");
       const replay = await store.append(input);
       assert.equal(replay.suggestionId, first.suggestionId, "an exact replay returns the same record");
+      // B4: a DIFFERING replay under a used key is refused, not answered with the
+      // row that is already there. Measured against this adapter before the fix:
+      // the pre-read returned any existing row without comparing, so asking for a
+      // 4-part plan under the 3-part plan's key came back as SUCCESS carrying 3
+      // parts. The in-memory double refused it, so the double was the only thing
+      // holding the contract.
+      const conflict = (error: unknown) => error instanceof IntakeSuggestionStoreErrorV1
+        && error.safeReasonCode === "intake_suggestion_replay_conflict";
+      await assert.rejects(Promise.resolve().then(() => store.append({ ...input, proposal: proposal(4),
+        proposalDigest: workBatchProposalDigestV1(proposal(4)) })), conflict,
+      "a differing proposal under a used key is refused");
+      // ... and it is refused for the base revision too, not only the proposal.
+      await assert.rejects(Promise.resolve().then(() => store.append({ ...input, baseRevision: 2 })), conflict,
+      "a differing base revision under a used key is refused");
+      // ... and for the revision DIGEST, which is the third bound value and the
+      // one a same-proposal replay would slip past a proposal-only comparison.
+      await assert.rejects(Promise.resolve().then(() => store.append({ ...input,
+        baseRevisionDigest: `sha256:${"0".repeat(64)}` })), conflict,
+      "a differing base revision digest under a used key is refused");
+      // The refusals wrote nothing, and the stored row is still the one that was
+      // asked for first -- a refusal is not a partial write.
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM work_batch_split_suggestions")).rows[0]!.n, 1,
+        "three refused replays left no second row");
+      const survivor = await store.append(input);
+      assert.equal(survivor.suggestionId, first.suggestionId,
+        "and the exact replay still returns the same record after the refusals");
       const different = await store.append({ ...input, requestKey: "orchestrator-store-0002",
         proposal: proposal(4), proposalDigest: workBatchProposalDigestV1(proposal(4)) });
       assert.notEqual(different.suggestionId, first.suggestionId);
@@ -666,7 +828,14 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       await seedTenant(admin, scope, { withBinding: true });
       await seedIdentities(admin, scope, "");
       const db = database(coordinator);
-      const scopeKey = "initial:tenant:orch:project:orch:planner-store-0001";
+      // The failure scope is a DIGEST, not a readable string: the coordinator
+      // counts per request AND per project+description, and a readable scope
+      // either overflowed 0202's 180-character CHECK for a long request key or
+      // was unreachable from the panel because every press mints a fresh key.
+      const requestKey = "planner-store-0001";
+      const description = "Make the release notes match the shipped behaviour.";
+      const scopeKey = intakeRequestScopeV1("initial", scope.tenantId, scope.projectId, requestKey);
+      const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
       const scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
       const failures = new PostgresIntakePlannerFailureStoreV1(db, scopeOf, () => LATER);
       const needsYou = new PostgresIntakeNeedsYouStoreV1(db, () => ({ identityId: "identity:orch-agent" }), () => LATER);
@@ -674,18 +843,69 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       assert.equal(await failures.record(scopeKey), 1);
       assert.equal(await failures.count(scopeKey), 1);
       assert.equal(await failures.record(scopeKey), 2, "the second failure is the escalation point");
+
+      // THE SCOPE KEY IS THE SAME STRING ON BOTH SIDES. 0204's guard trigger
+      // recomputes it in SQL from the same values the coordinator digests in
+      // TypeScript, and if the two disagree then EVERY raise is refused -- the
+      // whole escalation path silently dies while every unit test still passes.
+      // So this asserts the SQL function against the TypeScript value directly,
+      // for both shapes, rather than trusting that they "should" agree.
+      // The `$N` parameters are CAST to text because jsonb_build_object cannot
+      // infer a bare parameter's type, and it raises 42P18 ("could not determine
+      // data type of parameter") rather than guessing. Measured, not assumed.
+      //
+      // `ownerRequest` is the DESCRIPTION'S DIGEST, exactly as the application
+      // hashes it and exactly as the raise stores it, because the project scope
+      // has to be recomputable from the stored digest alone. Passing the text
+      // here would produce a different key and the comparison would fail in a way
+      // that reads like a guard bug rather than a shape mismatch.
+      const fromSql = await admin.query<{ request: string; project: string }>(`SELECT
+        planner_failure_scope_key('initial', jsonb_build_object(
+          'tenantId',$1::text,'projectId',$2::text,'requestKey',$3::text)) AS request,
+        planner_failure_scope_key('project', jsonb_build_object(
+          'kind','initial','tenantId',$1::text,'projectId',$2::text,'ownerRequest',$4::text)) AS project`,
+      [scope.tenantId, scope.projectId, requestKey, sha256Digest({ ownerRequest: description })]);
+      assert.equal(fromSql.rows[0]!.request, scopeKey,
+        "the SQL scope key and the TypeScript scope key must be byte-identical for the request scope");
+      assert.equal(fromSql.rows[0]!.project, projectScope,
+        "... and for the project scope, or 0204's guard would refuse every escalation");
+      // And both fit the CHECK that a 180-character request key used to overflow.
+      assert.match(scopeKey, /^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u, "a digest scope is always a legal scope_key");
+      assert.match(projectScope, /^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u);
+
       // A raise is idempotent by request key: two raises are one Needs-you item.
       await needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
-        requestKey: "planner-store-0001", reasonCode: "orchestrator_failed_twice", now: LATER });
+        requestKey, reasonCode: "orchestrator_failed_twice", ownerRequest: description, now: LATER });
       await needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
-        requestKey: "planner-store-0001", reasonCode: "orchestrator_failed_twice", now: LATER });
+        requestKey, reasonCode: "orchestrator_failed_twice", ownerRequest: description, now: LATER });
       assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1);
       assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_action_inbox WHERE kind='failure'"))
         .rows[0]!.n, 1, "one action-inbox item, not two");
+      // The ledger stores the description DIGEST and never the text, so raising a
+      // Needs-you still cannot put the owner's words in a table the web login can
+      // read.
+      const stored = await admin.query<{ owner_request_digest: string; text: string }>(
+        "SELECT owner_request_digest, coalesce(owner_request_digest,'') AS text FROM control_planner_needs_you_items");
+      assert.equal(stored.rows[0]!.owner_request_digest, sha256Digest({ ownerRequest: description }));
+      assert.equal((await admin.query("SELECT count(*)::text AS n FROM information_schema.columns WHERE table_name='control_planner_needs_you_items' AND column_name='owner_request'")).rows[0]!.n, "0",
+        "the ledger has no column for the description text at all");
       // A raise with no live counter at 2 is refused: an escalation must be earned.
       await assert.rejects(needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
-        requestKey: "planner-store-9999", reasonCode: "orchestrator_failed_twice", now: LATER }),
+        requestKey: "planner-store-9999", reasonCode: "orchestrator_failed_twice",
+        ownerRequest: description, now: LATER }),
       /planner_needs_you_not_escalated/u);
+      // A DIFFERENT description has its own project scope, so a counter earned by
+      // one description cannot license an escalation for another. This is the
+      // bound the 0204 guard re-checks in SQL, and it is the reason the project
+      // scope digests the text rather than just naming the project.
+      const otherScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, "A different description.");
+      assert.notEqual(otherScope, projectScope,
+        "two descriptions in one project are two scopes, so neither can escalate the other");
+      await assert.rejects(needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "planner-store-0002", reasonCode: "orchestrator_failed_twice",
+        ownerRequest: "A different description.", now: LATER }),
+      /planner_needs_you_not_escalated/u,
+      "another description's project counter is not this request's counter");
       // A successful run clears the count, and a stale raise is then refused too.
       await failures.clear(scopeKey);
       assert.equal(await failures.count(scopeKey), 0);
@@ -744,7 +964,9 @@ test("twenty concurrent failure records produce one counter with twenty, and twe
         const client = new Client(postgres.connection("coordinator")); await client.connect(); return client;
       }));
       try {
-        const scopeKey = "initial:tenant:orch:project:orch:planner-race-0001";
+        const raceKey = "planner-race-0001";
+        const raceDescription = "A description under twenty concurrent failures.";
+        const scopeKey = intakeRequestScopeV1("initial", scope.tenantId, scope.projectId, raceKey);
         const counts = await Promise.all(clients.map(client => new PostgresIntakePlannerFailureStoreV1(
           database(client), () => ({ tenantId: scope.tenantId, projectId: scope.projectId }), () => LATER)
           .record(scopeKey)));
@@ -761,7 +983,8 @@ test("twenty concurrent failure records produce one counter with twenty, and twe
         const raiseClients = clients.slice(0, 8);
         await Promise.allSettled(raiseClients.map(client => new PostgresIntakeNeedsYouStoreV1(database(client),
           () => ({ identityId: "identity:orch-agent" }), () => LATER).raise({ tenantId: scope.tenantId,
-          projectId: scope.projectId, requestKey: "planner-race-0001", reasonCode: "orchestrator_failed_twice", now: LATER })));
+          projectId: scope.projectId, requestKey: raceKey, reasonCode: "orchestrator_failed_twice",
+          ownerRequest: raceDescription, now: LATER })));
         assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1,
           "idempotency holds under concurrency, not only under a sequential retry");
         assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_action_inbox WHERE kind='failure'"))

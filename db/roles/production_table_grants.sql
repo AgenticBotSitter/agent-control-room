@@ -146,3 +146,16 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM control_room_work_intake;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;
+-- MIG-A 0203: EXECUTE on the split-suggestion visibility predicate, granted HERE
+-- rather than in the migration. This file runs after every migration and after
+-- the ALTER DEFAULT PRIVILEGES above, which is the only place a function grant
+-- survives a fresh install and an upgrade alike -- a grant inside 0203 is
+-- re-revoked by that line before anybody connects.
+--
+-- The intake login needs it because 0203 now calls the predicate from the view's
+-- WHERE clause, and a view's WHERE clause is privilege-checked against
+-- session_user, not against the view's owner. The predicate returns one boolean
+-- about three values the caller already supplied, so this is not a window onto
+-- work_batches or work_intake_tenant_binding.
+GRANT EXECUTE ON FUNCTION work_intake_split_suggestion_visible(text, text, text)
+  TO control_room_work_intake;

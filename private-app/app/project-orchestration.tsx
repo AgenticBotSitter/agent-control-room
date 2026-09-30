@@ -9,8 +9,13 @@ import type { ProjectOrchestrationDescribeResultV1, ProjectOrchestrationSettings
   ProjectOrchestrationSuggestionV1 } from "../../src/web/v1/project-orchestration-wire";
 
 type Client = ReturnType<typeof createProjectOrchestrationBrowserClient>;
+/** Announce only what raised something. `failed` with a real Needs-you item is
+ * an escalation the owner must act on; a first failure is a "try again", and
+ * announcing it as a Needs-you on every press is a label for an item that was
+ * never raised. */
 const announced = (result: ProjectOrchestrationDescribeResultV1) =>
-  result.status === "failed" || (result.status === "refused" && result.allowanceRefused);
+  (result.status === "failed" && result.needsYou)
+  || (result.status === "refused" && result.allowanceRefused);
 
 export function ProjectOrchestrationPanel({ projectId, client: suppliedClient }: { projectId: string; client?: Client }) {
   const [client] = useState(() => suppliedClient ?? createProjectOrchestrationBrowserClient());

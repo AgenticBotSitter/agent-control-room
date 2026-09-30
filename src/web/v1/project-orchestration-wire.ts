@@ -66,7 +66,13 @@ export const projectOrchestrationDescribeResultSchemaV1 = z.discriminatedUnion("
     startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict(),
   z.object({ status: z.literal("manual"), message: z.string().min(1).max(400),
     startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict(),
-  z.object({ status: z.literal("failed"), needsYou: z.literal(true), message: z.string().min(1).max(400),
+  /** The planner run did not produce a proposal. `needsYou` is true ONLY when the
+   * coordinator actually raised a Needs-you item (the escalated second failure),
+   * and false on a first failure, where nothing has been raised. It is a real
+   * flag rather than a constant true because the panel announces it, and an
+   * announcement that says "Needs-you" when no item exists is a label for
+   * something that did not happen. */
+  z.object({ status: z.literal("failed"), needsYou: z.boolean(), message: z.string().min(1).max(400),
     startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict(),
   /** The planner run was refused before it started, because no allowance is
    * configured or this project's allowance is spent. `allowanceRefused` is true

@@ -259,9 +259,23 @@ export function createProjectOrchestrationOwnerAdapterV1(options: Readonly<{ ten
       if (result.status === "submitted") return Object.freeze({ ...common, status: "proposal" as const,
         batchId: result.submission.batchId,
         href: `/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(result.submission.batchId)}` });
-      if (result.status === "planner_failed" || result.status === "needs_you") return Object.freeze({ ...common,
-        status: "failed" as const, needsYou: true as const,
-        message: "Needs-you: the chief of staff could not prepare a proposal. Your description is still here; try again or choose another chief of staff." });
+      // B3: "Needs-you" is said only when a Needs-you item EXISTS.
+      //
+      // `needs_you` is the escalated outcome: the coordinator has raised one item
+      // and refuses to run a third time, so naming it is accurate. `planner_failed`
+      // is the FIRST failure: the counter is at 1, nothing has been raised, and
+      // the owner is being told to try again. It used to be announced with a
+      // message that began "Needs-you:", which described something that had not
+      // happened -- and on a permanently broken planner that label is what the
+      // owner reads on every single press, forever, with no item behind it. The
+      // two states get different sentences and different roles, so the panel
+      // announces only the one that raised something.
+      if (result.status === "needs_you") return Object.freeze({ ...common, status: "failed" as const,
+        needsYou: true as const,
+        message: "Needs-you: the chief of staff failed twice on this description, so it has stopped and raised an item for you. Your description is still here." });
+      if (result.status === "planner_failed") return Object.freeze({ ...common, status: "failed" as const,
+        needsYou: false as const,
+        message: "The chief of staff could not prepare a proposal this time. Your description is still here; try again, or choose another chief of staff." });
       if (result.status === "manual") return Object.freeze({ ...common, status: "manual" as const,
         message: "No chief of staff is selected. Choose one in Project settings." });
       if (result.status === "stopped") return Object.freeze({ ...common, status: "stopped" as const,

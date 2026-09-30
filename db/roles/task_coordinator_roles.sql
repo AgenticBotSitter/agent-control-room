@@ -139,4 +139,17 @@ GRANT SELECT, INSERT ON control_planner_failure_counters TO control_room_task_co
 GRANT UPDATE (failure_count, last_failure_at, cleared_at, version, updated_at)
   ON control_planner_failure_counters TO control_room_task_coordinator;
 GRANT SELECT, INSERT ON control_planner_needs_you_items TO control_room_task_coordinator;
+-- MIG-A 0204: EXECUTE on the failure-scope key helper. 0204's guard trigger calls
+-- it as the table owner, but the coordinator's own INSERT fires that trigger, and
+-- PostgreSQL checks EXECUTE for the INSERTing role as well -- measured: without
+-- this every escalation is refused with "permission denied for function
+-- planner_failure_scope_key", which reads as a broken guard rather than a missing
+-- grant. The grant is issued HERE rather than in the migration for the same reason
+-- the intake login's predicate grant is: this file runs after
+-- `ALTER DEFAULT PRIVILEGES ... REVOKE ALL ON FUNCTIONS FROM PUBLIC`, and it is
+-- the only file where the coordinator role exists.
+--
+-- The helper is IMMUTABLE and a pure function of a kind plus a jsonb preimage the
+-- caller already holds, so EXECUTE discloses nothing the login could not compute.
+GRANT EXECUTE ON FUNCTION planner_failure_scope_key(text, jsonb) TO control_room_task_coordinator;
 COMMIT;

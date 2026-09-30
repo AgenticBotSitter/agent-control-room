@@ -1,13 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseClient } from "../../persistence/database";
-import { hmacSha256Tag } from "../../security";
+import { hmacSha256Tag, sha256Digest } from "../../security";
 import { workBatchProposalDigestV1 } from "./digest";
 import { computeIntakeFlagsV1, type IntakeFlagV1 } from "./intake-gate";
 import {
-  InMemoryIntakePlannerFailureStoreV1, type IntakePlannerFailureStoreV1, type IntakePlannerNeedsYouPortV1,
+  common, InMemoryIntakePlannerFailureStoreV1, plannerNeedsYouScopeKeysV1,
+  type IntakeCompletionLookupPortV1, type IntakeCoordinatorResultV1,
+  type IntakePlannerFailureStoreV1, type IntakePlannerNeedsYouPortV1,
   type IntakePlannerRunAllowancePortV1, type IntakeSuggestionRecordV1, type IntakeSuggestionStoreV1,
 } from "./intake-coordinator";
-import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "./schemas";
+import { workBatchProposalSchemaV1, workBatchReceiptSchemaV1, type WorkBatchProposalV1 } from "./schemas";
 
 // The production adapters for the three IntakeCoordinatorV1 ports that need a
 // database. Everything here is proposal-only: an append to an append-only
@@ -106,15 +108,33 @@ export class PostgresIntakeSuggestionStoreV1 implements IntakeSuggestionStoreV1 
     const proposal = workBatchProposalSchemaV1.parse(input.proposal);
     if (workBatchProposalDigestV1(proposal) !== input.proposalDigest)
       throw new IntakeSuggestionStoreErrorV1("intake_suggestion_rejected");
-    // An exact replay is answered from the stored row, not re-inserted. The
-    // unique index is the real guarantee; this read is what makes a retry cheap
-    // and what turns "already stored" into the same record rather than an error.
+    // A request key names ONE suggestion, and a request key already used must not
+    // be able to name a second, different one. An EXACT replay is answered from
+    // the stored row; a DIFFERING one is refused, in the same place, before any
+    // write.
+    //
+    // The comparison is over all THREE bound values, and it is `||` rather than
+    // `&&`: a replay that changed the proposal, or the revision it answers, or
+    // the digest of that revision, is a different request wearing a used key. This
+    // was measured against production before it was written: the pre-read used
+    // to return ANY existing row under the key without comparing anything, so a
+    // same-key different-proposal replay came back as the FIRST record and the
+    // caller was told it had stored a 3-part plan when it had asked for 4. The
+    // in-memory double refused that case, so every coordinator test passed on a
+    // contract production did not keep. A missing row is a replay of nothing and
+    // goes on to the insert.
     const existing = (await this.db.query<SuggestionRow>(`SELECT id,tenant_id,project_id,batch_id,
       request_key,base_revision,base_revision_digest,proposed_by_identity_id,proposal,proposal_digest,
       suggestion_digest,auth_tag,created_at FROM work_batch_split_suggestions
       WHERE tenant_id=$1 AND project_id=$2 AND batch_id=$3 AND request_key=$4`,
     [input.tenantId, input.projectId, input.batchId, input.requestKey])).rows[0];
-    if (existing) return this.#record(existing);
+    if (existing) {
+      if (Number(existing.base_revision) !== input.baseRevision
+        || existing.base_revision_digest !== input.baseRevisionDigest
+        || existing.proposal_digest !== input.proposalDigest)
+        throw new IntakeSuggestionStoreErrorV1("intake_suggestion_replay_conflict");
+      return this.#record(existing);
+    }
     const id = suggestionId();
     const material = this.#material({ suggestionId: id, tenantId: input.tenantId, projectId: input.projectId,
       batchId: input.batchId, requestKey: input.requestKey, baseRevision: input.baseRevision,
@@ -144,11 +164,20 @@ export class PostgresIntakeSuggestionStoreV1 implements IntakeSuggestionStoreV1 
       suggestion_digest,auth_tag,created_at FROM work_batch_split_suggestions
       WHERE tenant_id=$1 AND project_id=$2 AND batch_id=$3 AND request_key=$4`,
     [input.tenantId, input.projectId, input.batchId, input.requestKey])).rows[0];
-    // DO NOTHING with a differing body is exactly the replay conflict the
-    // database's own trigger raises; if the row that is there is not ours, this
-    // must not be reported as a success under a different content.
-    if (!stored || (stored.proposal_digest !== input.proposalDigest
-      && stored.base_revision_digest !== input.baseRevisionDigest))
+    // The insert can lose a race it did not expect: `DO NOTHING` means a
+    // concurrent append of the SAME key under different content leaves the other
+    // caller's row in place and this statement inserts nothing. Reporting that as
+    // a success would return the other caller's plan under this caller's name.
+    //
+    // `||` is the whole fix, and it is the same rule as the pre-read above. With
+    // `&&` this branch only fired when BOTH the proposal digest and the revision
+    // digest differed -- so a replay that changed the base REVISION but carried a
+    // colliding proposal digest, or vice versa, was reported as a success. Every
+    // one of the three bound values must match for this to be our own row; any
+    // difference, or a row that is not there at all, is a refusal.
+    if (!stored || Number(stored.base_revision) !== input.baseRevision
+      || stored.base_revision_digest !== input.baseRevisionDigest
+      || stored.proposal_digest !== input.proposalDigest)
       throw new IntakeSuggestionStoreErrorV1("intake_suggestion_replay_conflict");
     return this.#record(stored);
   }
@@ -273,29 +302,52 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
     private readonly now: () => string) {}
 
   async raise(input: Readonly<{ tenantId: string; projectId: string; requestKey: string;
-    reasonCode: "orchestrator_failed_twice"; now: string }>): Promise<void> {
+    reasonCode: "orchestrator_failed_twice"; ownerRequest: string; now: string }>): Promise<void> {
     const { tenantId, projectId } = input;
     const id = this.principal().identityId;
     // The escalation must be TRUE, and for THIS request: the counter has to be
-    // at 2 or more, live, and scoped to a key that ends in this request key. A
-    // project can have several planner requests in flight, and the second failure
-    // of one of them must not license an escalation for another. The guard trigger
-    // re-checks exactly this; reading it here too means a caller that got the
-    // scope wrong is refused before it writes anything.
+    // at 2 or more and live. The counter is matched on the RAISED request, not
+    // merely the project: one project can have several planner requests in
+    // flight, and the second failure of one of them must not license an
+    // escalation for another.
+    //
+    // The scope key is a DIGEST (`initial:<hex>` or `project:<hex>`), not a
+    // readable string ending in the request key, so the old
+    // `scope_key LIKE '%:' || $3` test no longer identifies it. The digest is
+    // recomputed here from the same three values the coordinator used, which is
+    // why this adapter takes the description's part of the scope rather than
+    // trusting a caller-supplied key string.
+    //
+    // The guard trigger in 0202 re-checks exactly this and its own predicate
+    // needs the same treatment; `plannerNeedsYouScopeKeysV1` is the single
+    // definition of "which counters may license this raise", shared by the
+    // adapter and the migration, and a mismatch fails the raise rather than
+    // passing quietly.
+    const counters = plannerNeedsYouScopeKeysV1(tenantId, projectId, input.requestKey, input.ownerRequest);
+    // $3 is the array. The parameters are numbered without a gap so PostgreSQL can
+    // infer every type: an unused placeholder is not allowed in a parameter list,
+    // and `= ANY($N::text[])` needs the array itself, not a joined string.
     const counter = (await this.db.query<CounterRow>(
       `SELECT failure_count FROM control_planner_failure_counters
        WHERE tenant_id=$1 AND project_id=$2 AND failure_count>=2 AND cleared_at IS NULL
-         AND scope_key LIKE '%:' || $3
+         AND scope_key = ANY($3::text[])
        ORDER BY failure_count DESC LIMIT 1`,
-    [tenantId, projectId, input.requestKey])).rows[0];
+    [tenantId, projectId, counters])).rows[0];
     if (!counter) throw new Error("planner_needs_you_not_escalated");
+    // The description DIGEST, never the description: 0204's guard recomputes the
+    // project scope from it, and the Needs-you ledger stays content-free exactly
+    // as 0202's header promised. sha256Digest is the same sha256 over the same
+    // canonical JSON the SQL helper computes, which the production test proves by
+    // requiring this INSERT to be accepted.
     await this.db.query(`INSERT INTO control_planner_needs_you_items
-      (id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at,action_item_id)
+      (id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at,
+        action_item_id,owner_request_digest)
       VALUES('planner-needs-you:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32),
         $1,$2,$3,'orchestrator_failed_twice',$4::bigint,$5,$6::timestamptz,
-        'attention:planner:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32))
+        'attention:planner:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32),$7)
       ON CONFLICT (tenant_id,project_id,request_key) DO NOTHING`,
-    [tenantId, projectId, input.requestKey, Number(counter.failure_count), id, input.now]);
+    [tenantId, projectId, input.requestKey, Number(counter.failure_count), id, input.now,
+      sha256Digest({ ownerRequest: input.ownerRequest })]);
     await this.db.query(`INSERT INTO control_action_inbox
       (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
       VALUES('attention:planner:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32),
@@ -313,6 +365,59 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
       -- and it reads as a missing index rather than a wrong conflict target.
       ON CONFLICT (tenant_id,id) DO NOTHING`,
     [tenantId, projectId, input.requestKey, input.now]);
+  }
+}
+
+/** The durable completion lookup behind 0093's control_idempotency row.
+ *
+ * `WorkBatchStoreV1.create` already writes the receipt there: it inserts the row
+ * with status 'processing', writes the batch, then sets status 'completed' with
+ * the receipt as the result, all in one transaction. So "has this request already
+ * produced a proposal?" is a read of one row by the SAME key the submission uses,
+ * and the answer is already durable.
+ *
+ * Only a COMPLETED row counts. A 'processing' row is a submission that was in
+ * flight when the process died, and answering from it would hand the owner a
+ * receipt for a batch that may never have been committed -- so it reads as "not
+ * completed" and the caller runs, which the store's own idempotency check then
+ * resolves or refuses. That is the safe direction: an extra run over a
+ * fabricated receipt.
+ *
+ * The scope string is built to match `WorkBatchStoreV1.create` exactly. It is
+ * duplicated rather than imported because the store builds it inline inside a
+ * transaction and exports nothing for it; the two are held together by the
+ * production test in tests/project-orchestration-postgres.test.ts, which
+ * submits through the real service and then retries through this adapter and
+ * requires the SAME batchId back. If either side changes its spelling, that test
+ * fails rather than the retry silently re-running the planner. */
+export class PostgresIntakeCompletionLookupV1 implements IntakeCompletionLookupPortV1 {
+  constructor(private readonly db: DatabaseClient) {}
+
+  async completed(input: Readonly<{ tenantId: string; projectId: string; identityId: string; requestKey: string }>):
+    Promise<IntakeCoordinatorResultV1 | null> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u.test(input.requestKey)) return null;
+    const row = (await this.db.query<{ result: unknown }>(`SELECT result FROM control_idempotency
+      WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3 AND status='completed'`,
+    [input.tenantId, `work-batches.propose/v1:${input.identityId}`, input.requestKey])).rows[0];
+    const receipt = workBatchReceiptSchemaV1.safeParse(row?.result);
+    if (!row || !receipt.success) return null;
+    // The stored receipt is re-parsed, never passed through: `result` is a jsonb
+    // column, and a row that does not parse is not a receipt this adapter is
+    // willing to hand the owner. It is also scoped to the project that was asked
+    // about: a completed receipt for a DIFFERENT project is not this project's
+    // proposal, and answering with it would send the owner to somebody else's
+    // batch page.
+    if (receipt.data.projectId !== input.projectId) return null;
+    // The stored receipt carries no proposal and no flags -- it is deliberately
+    // the minimal answer to "which batch did this request produce", and it is
+    // `.strict()`, so nothing else can be smuggled into the column. That is
+    // exactly right for a retry: the owner is sent to the batch page, which is
+    // where the proposal is read from, and the flags are recomputed there from
+    // the batch. Reporting an empty flag map rather than a fabricated one is the
+    // honest answer, and the only caller of this path is the retry.
+    return Object.freeze({ ...common, status: "submitted" as const,
+      submission: Object.freeze({ ...receipt.data, replayed: true }),
+      flagsByLocalId: Object.freeze({}) });
   }
 }
 

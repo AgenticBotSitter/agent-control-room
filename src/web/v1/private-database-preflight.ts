@@ -19,8 +19,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script and cross-checked against a real PostgreSQL 17 cluster
 // installed the production way; both agree. Catalog query below; not a mutable
-// database marker. Recomputed after the chief-of-staff migrations.
-export const privateWebSchemaDigest = "ee04b1e328d412bead6ce9052a36fc91bcaff09098d7a033d9b7bb814b68b4b3";
+// database marker. Recomputed after the chief-of-staff migrations, and again
+// after 0203 made the current-split-suggestion view tenant-bound.
+export const privateWebSchemaDigest = "4eb349cfb99f4e3c2013d4017f530e8c7f5a3f5f0d5ad21750ae2dde2a4d384a";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -561,6 +562,32 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                     'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
                     'control_room_idea_creation','control_room_news_coordinator','control_room_fleet_gateway',
                     'control_room_fleet_owner_authority'))))
+            /* MIG-A 0203: the split-suggestion visibility predicate. It is a
+               SECURITY DEFINER function because it is called from a VIEW's WHERE
+               clause, and a view runs with its OWNER's rights -- the intake login
+               holds no grant at all on work_batches or
+               work_intake_tenant_binding, so without SECURITY DEFINER the
+               predicate could not read the binding it exists to enforce. It is
+               safe to exempt for the same reason the fleet redemption function
+               is: it returns ONE boolean about three values the caller already
+               supplied, so it is not a window onto the two tables it reads, and it
+               reads them with no row-level policy of their own in the predicate
+               body (the bound tenant and the batch's own proposer are named by
+               the caller, then confirmed by EXISTS). It is pinned here the same
+               way: owner, SECURITY DEFINER, STABLE, a pinned search_path, no
+               grant to PUBLIC, and an ACL that admits only the two logins 0200
+               already granted the view to -- so a future grant to a third party
+               fails the private-web preflight rather than passing quietly. */
+            OR (p.oid='work_intake_split_suggestion_visible(text,text,text)'::regprocedure
+              AND p.prosecdef AND p.provolatile='s' AND p.prokind='f' AND p.prorettype='boolean'::regtype
+              AND p.pronargs=3 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND p.proname='work_intake_split_suggestion_visible'
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee) NOT IN ('control_room_work_intake','control_room_private_web'))))
             OR (p.oid='redeem_fleet_enrollment(text,text,text,text,timestamptz)'::regprocedure
               AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND NOT p.proleakproof AND p.proparallel='u'
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
