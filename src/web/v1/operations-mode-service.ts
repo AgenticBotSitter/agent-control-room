@@ -159,7 +159,7 @@ export class WebOperationsModeServiceV1 {
       // not enough and 0155's trigger refuses anything but a live human owner.
       actor.require("operations.read", undefined, true);
       actor.require("operations.set_mode", undefined, true);
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       return this.#decide(tx, { id: actor.id, now: actor.now }, value);
     });
     return this.#finish(decided);
@@ -223,7 +223,7 @@ export class WebOperationsModeServiceV1 {
     if (!parsed.success) throw new WebAccessError("invalid_request");
     const now = new Date(this.#clock()).toISOString();
     const decided = await this.db.transaction(async tx => {
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       const owner = await this.#liveOwnerInSession(tx, now);
       const current = owner.modes.record;
       if (!machineHealthAutoResumeAllowedV1(current, parsed.data.pauseReason))
