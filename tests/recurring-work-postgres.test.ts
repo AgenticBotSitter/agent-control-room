@@ -59,7 +59,13 @@ async function seed(admin: Client) {
   // agent under any other provider makes the shared intake login's INSERT
   // raise `new row violates row-level security policy`, which the service
   // surfaces as a privilege error and the scheduler records as a failed
-  // proposal — the rule then silently never proposes anything.
+  // proposal — the rule then silently never proposes anything, with no error
+  // the owner can act on.
+  //
+  // Observed while fixing this: the earlier failure reached the same refusal
+  // (42501) but the guard trigger's `proposal-only work batch insert rejected`
+  // message won the race, so the refusal text is not a reliable way to tell
+  // the two mechanisms apart. The fix is the seed, not either message.
   for (const [identity, actor, subject, authProvider] of [
     [ids.owner, "human", "owner", provider], [ids.agent, "agent", "agent", "work-intake"],
   ] as const)
@@ -159,7 +165,9 @@ test("recurring work and skill versions run through their exact production login
       await directIntake.connect();
       try {
         // Same bound tenant, but an identity registered under a non-intake
-        // provider: refused by the RESTRICTIVE policy, not by the grant.
+        // provider. Observed on this cluster: refused, though which mechanism
+        // refuses first (the RESTRICTIVE policy or the proposal-only trigger)
+        // is the database's business, not this test's.
         await assert.rejects(directIntake.query(`INSERT INTO work_batches(id,tenant_id,project_id,
           proposed_by_identity_id,proposed_by_actor_type,proposed_at,state,proposal,queue_depth_limit,
           batch_digest,auth_tag,version,created_at,updated_at)
