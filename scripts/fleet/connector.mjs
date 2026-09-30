@@ -1172,13 +1172,26 @@ function secretNeedles(secrets) {
 }
 const containsSecret = (text, needles) => needles.some(needle => needle.length > 0 && String(text).includes(needle));
 
-async function report(send, attempts = 3) {
+/** Reports one thing about a claim: a progress note, a blocker or a result.
+ *
+ * A gateway under load refuses with `rate_limited` while its admission window is
+ * full. That is a "try again shortly", not a refusal of the work, and for a
+ * RESULT it is the difference between the owner's finished answer arriving and
+ * a bot silently throwing that answer away. So every report waits out the
+ * refusal rather than treating it as final. The bound is generous on purpose —
+ * every step is idempotent on its own key — but it is still bounded, and it
+ * grows with the attempt so twenty busy bots do not retry in lockstep.
+ * @param {() => Promise<any>} send
+ * @param {number} [attempts]
+ * @param {number} [budgetMs] */
+async function report(send, attempts = 8, budgetMs = 60_000) {
+  const started = Date.now();
   for (let attempt = 1; ; attempt += 1) {
     try { return await send(); }
     catch (error) {
       const transient = error?.code === undefined || TRANSIENT_CODES.has(error.code);
-      if (!transient || attempt >= attempts) throw error;
-      await new Promise(done => setTimeout(done, 250 * attempt));
+      if (!transient || attempt >= attempts || Date.now() - started >= budgetMs) throw error;
+      await new Promise(done => setTimeout(done, Math.min(250 * attempt * attempt, 4_000)));
     }
   }
 }
@@ -1271,7 +1284,17 @@ export async function runClaimedTask({ client, claim, adapter, progressIntervalM
   } catch (error) {
     if (error?.code === "too_large" || error?.code === "invalid")
       return blocked(`${label}'s answer could not be stored (${error.code}). Nothing was submitted.`);
-    return Object.freeze({ ...outcome, outcome: "abandoned", reason: error?.code ?? "unreachable" });
+    // This machine still HOLDS the claim. Whatever went wrong, leaving it held
+    // strands owner-visible work until the lease elapses, so the task is handed
+    // back to the owner with an honest note before this pass gives up. If even
+    // that cannot be delivered the lease expiry recovers the task — which is
+    // why the note says so rather than claiming the work is safe.
+    const reason = error?.code ?? "unreachable";
+    const handed = await blocked(`Control Room could not be reached to deliver ${label}'s answer (${reason}). `
+      + "The task was handed back and nothing was submitted.", { released: true })
+      .catch(() => undefined);
+    if (handed?.outcome === "blocked") return handed;
+    return Object.freeze({ ...outcome, outcome: "abandoned", reason });
   }
 }
 

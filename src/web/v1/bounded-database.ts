@@ -3,7 +3,16 @@ import { databaseOperationSignal, withDatabaseOperationSignal } from "../../pers
 
 export const privateDatabaseLimits = Object.freeze({ connections: 8, checkoutMs: 5000,
   statementMs: 5000, transactionMs: 10000, closeMs: 5000 });
-export type PrivateDatabaseRollbackSqlState = "40P01" | "40001";
+/** Server-aborted transactions whose outcome is fully known: the statement was
+ * rejected, the transaction is already aborted, and the lease stays reusable.
+ * 40P01 (deadlock) and 40001 (serialization failure) are two transactions
+ * colliding. 55P03 (lock_not_available) is the pool's own deliberate
+ * `lock_timeout` firing under the same contention — the production setting is a
+ * 2 second wait, and twenty bots claiming on one project genuinely exceed it.
+ * All three rolled back whole, so the operation did nothing and may be replayed;
+ * none of them is an outage. */
+export type PrivateDatabaseRollbackSqlState = "40P01" | "40001" | "55P03";
+const ROLLBACK_SQL_STATES: ReadonlySet<string> = new Set(["40P01", "40001", "55P03"]);
 export class PrivateDatabaseError extends Error {
   constructor(readonly code: "database_unavailable" | "database_outcome_uncertain" | "database_close_uncertain",
     /** PostgreSQL's sanitized five-character SQLSTATE. It proves that the
@@ -11,7 +20,8 @@ export class PrivateDatabaseError extends Error {
      * is known and must not quarantine every connection in the pool. */
     readonly sqlState?: string) { super(code); }
   get rollbackSqlState(): PrivateDatabaseRollbackSqlState | undefined {
-    return this.sqlState === "40P01" || this.sqlState === "40001" ? this.sqlState : undefined;
+    return this.sqlState !== undefined && ROLLBACK_SQL_STATES.has(this.sqlState)
+      ? this.sqlState as PrivateDatabaseRollbackSqlState : undefined;
   }
 }
 export interface PrivateDatabaseLease extends DatabaseSession { release(): void }

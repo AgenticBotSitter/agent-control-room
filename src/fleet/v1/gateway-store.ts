@@ -69,6 +69,20 @@ export type FleetGatewayStoreOptionsV1 = Readonly<{ tenantId: string; clock?: ()
    * in the audit log and worker events, but not shown on the Activity page. */
   projectEvents?: Pick<TaskProjectEventWriterV1, "appendInSession"> }>;
 
+/** PostgreSQL aborts a transaction when two of them contend (40P01), when the
+ * engine cannot order their writes (40001), or when the pool's own
+ * `lock_timeout` elapses under that same contention (55P03). The whole
+ * transaction rolled back and the bounded pool proved the connection reusable,
+ * so the operation did nothing and may be replayed verbatim — every
+ * worker-facing write here is idempotent on its own key. This is contention,
+ * not an outage, and the only correct answer is to try again rather than to
+ * tell a worker its completed work was lost. */
+const ROLLBACK_SQL_STATES_V1 = Object.freeze(["40P01", "40001", "55P03"]);
+const isRollbackContention = (error: unknown) => ROLLBACK_SQL_STATES_V1.includes(databaseSqlStateV1(error) ?? "");
+/** Bounded and jittered: under twenty bots the same statement can collide more
+ * than once, and an unbounded retry would hide a genuine deadlock instead. */
+const RETRYABLE_FLEET_TRANSACTION_ATTEMPTS_V1 = 4;
+
 export class FleetGatewayStoreV1 {
   readonly #tenantId: string;
   readonly #clock: () => number;
@@ -84,6 +98,25 @@ export class FleetGatewayStoreV1 {
     this.#projectEvents = options.projectEvents;
     if (!Number.isSafeInteger(this.#leaseMs) || this.#leaseMs < 30_000 || this.#leaseMs > 3_600_000)
       throw new Error("fleet_gateway_configuration_invalid");
+  }
+
+  /** Runs one worker-facing transaction, replaying it a bounded number of
+   * times when PostgreSQL rolled the whole thing back under contention. A
+   * claim maps the final contention to an ordinary conflict so a worker moves
+   * to its next offer; every other write either replays to completion or
+   * reports the contention honestly rather than losing completed work. */
+  async #contending<T>(work: () => Promise<T>, onGiveUp?: (error: unknown) => T): Promise<T> {
+    for (let attempt = 1; ; attempt += 1) {
+      try { return await work(); }
+      catch (error) {
+        if (!isRollbackContention(error)) throw error;
+        if (attempt >= RETRYABLE_FLEET_TRANSACTION_ATTEMPTS_V1) {
+          if (onGiveUp) return onGiveUp(error);
+          throw error;
+        }
+        await new Promise(done => setTimeout(done, 10 * attempt * attempt));
+      }
+    }
   }
 
   #now(): string {
@@ -294,7 +327,7 @@ export class FleetGatewayStoreV1 {
       ? input.connectorVersion : fleetFail("invalid");
     const platform = platforms[input.platform as keyof typeof platforms] ?? "other";
     const now = this.#now();
-    await this.db.transaction(tx => this.#presence(tx, principal.workerId, version, platform, now));
+    await this.#contending(() => this.db.transaction(tx => this.#presence(tx, principal.workerId, version, platform, now)));
     const operationsMode = await this.operationsMode();
     return Object.freeze({ ...this.me(principal), operationsMode, claimsAllowed: operationsMode === "running" });
   }
@@ -365,21 +398,15 @@ export class FleetGatewayStoreV1 {
     // connection, and reading it inside would hold two per claim. The 0156
     // trigger still decides inside the transaction, so a race costs nothing.
     const mode = await this.operationsMode();
-    try {
-      return await this.#claimInTransaction(principal, offerId, idempotencyKey, mode, now);
-    } catch (error) {
-      // A deadlock (40P01) or a serialization failure (40001) is a
-      // CLAIM-LEVEL collision, not an outage: some other claim transaction on
-      // this project won, and this one rolled back entirely. The bounded
-      // database pool already proved the lease reusable by rolling back
-      // cleanly, so the correct answer is the same ordinary 409 a worker
-      // already knows to handle by moving to its next offer. Without this the
-      // refusal travels as `400 refused`, which the connector reads as
-      // terminal and ends the whole pass, stranding the job it had begun.
-      if (databaseSqlStateV1(error) === "40P01" || databaseSqlStateV1(error) === "40001")
-        return fleetFail("conflict");
-      throw error;
-    }
+    // A deadlock (40P01) or a serialization failure (40001) is claim-level
+    // contention, not an outage: some other claim transaction on this project
+    // won, and this one rolled back entirely. It is replayed a bounded number
+    // of times, and if it never wins the worker gets the same ordinary 409 it
+    // already knows to handle by moving to its next offer. Without this the
+    // refusal travels as `400 refused`, which the connector reads as terminal
+    // and ends the whole pass, stranding the job it had begun.
+    return this.#contending(() => this.#claimInTransaction(principal, offerId, idempotencyKey, mode, now),
+      () => fleetFail("conflict"));
   }
 
   async #claimInTransaction(principal: FleetWorkerPrincipalV1, offerId: string, idempotencyKey: string,
@@ -533,7 +560,9 @@ export class FleetGatewayStoreV1 {
   async progress(principal: FleetWorkerPrincipalV1, input: Readonly<{ claimId: unknown; message: unknown; idempotencyKey: unknown }>) {
     const message = text(input.message, FLEET_RESULT_LIMITS_V1.messageChars), idempotencyKey = key(input.idempotencyKey);
     const now = this.#now();
-    return this.db.transaction(async tx => {
+    // A progress note also renews the lease, so losing it to contention would
+    // shorten the worker's own runway. Replay it instead.
+    return this.#contending(() => this.db.transaction(async tx => {
       const claim = await this.#liveClaim(tx, principal, input.claimId);
       const replay = (await tx.query(`SELECT 1 FROM fleet_worker_events WHERE tenant_id=$1 AND worker_id=$2 AND idempotency_key=$3`,
         [this.#tenantId, principal.workerId, idempotencyKey])).rows.length > 0;
@@ -550,7 +579,7 @@ export class FleetGatewayStoreV1 {
         leaseExpiresAt = renewed.lease.expiresAt;
       }
       return { ...event, leaseExpiresAt };
-    });
+    }));
   }
 
   /** A blocker is reported honestly. With release, the task goes back to the
@@ -560,7 +589,9 @@ export class FleetGatewayStoreV1 {
     const message = text(input.message, FLEET_RESULT_LIMITS_V1.messageChars), idempotencyKey = key(input.idempotencyKey);
     if (input.release !== undefined && typeof input.release !== "boolean") return fleetFail("invalid");
     const now = this.#now();
-    return this.db.transaction(async tx => {
+    // A blocker with release is how a failed run hands its task back. Losing it
+    // to contention would abandon owner-visible work instead, so replay it.
+    return this.#contending(() => this.db.transaction(async tx => {
       const claim = await this.#liveClaim(tx, principal, input.claimId);
       const event = await this.#event(tx, principal, claim, "blocker", message, idempotencyKey, now);
       if (event.replayed || input.release !== true) return { ...event, released: false };
@@ -591,7 +622,7 @@ export class FleetGatewayStoreV1 {
           safeDetail: message.length > 800 ? `${message.slice(0, 799)}…` : message });
       }
       return { ...event, released: true };
-    });
+    }));
   }
 
   /** Stores one bounded result and moves the task to "awaiting review". The
@@ -622,7 +653,10 @@ export class FleetGatewayStoreV1 {
     const contentDigest = sha256Digest({ summary, files: files.map(file => ({ name: file.name, mediaType: file.mediaType,
       digest: bytesSha256V1(file.content) })) });
     const now = this.#now();
-    return this.db.transaction(async tx => {
+    // A result is finished work. Losing it to contention would tell a worker
+    // its completed answer was never delivered, so it is replayed: every step
+    // below is idempotent on `idempotencyKey` or on the derived result id.
+    return this.#contending(() => this.db.transaction(async tx => {
       const claim = await this.#liveClaim(tx, principal, input.claimId);
       const prior = (await tx.query<{ result_id: string; claim_id: string; content_digest: string }>(`SELECT result_id,claim_id,
         content_digest FROM fleet_results WHERE tenant_id=$1 AND (claim_id=$2 OR (worker_id=$3 AND idempotency_key=$4))`,
@@ -657,7 +691,7 @@ export class FleetGatewayStoreV1 {
         targetType: "job", targetId: claim.job_id, occurredAt: now,
         safeMetadata: { claimId: claim.claim_id, resultId, contentDigest, fileCount: files.length, totalFileBytes: total } });
       return Object.freeze({ resultId, replayed: false, taskState: "waiting_approval", accepted: false });
-    });
+    }));
   }
 
   /** The worker's own claims and the owner's decision on each, so a revision
