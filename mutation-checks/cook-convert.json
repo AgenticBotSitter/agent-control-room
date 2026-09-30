@@ -1,0 +1,191 @@
+[
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "if (bytes.length > inputLimit(format, this.#configuration.limits)) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='oversize and missing inputs' tests/text-copy-converter.test.ts",
+    "why": "oversize source bytes must be refused before any converter process starts"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    const bytes = request?.sourceBytes instanceof Uint8Array ? new Uint8Array(request.sourceBytes) : new Uint8Array();",
+    "replace": "    const bytes = request?.sourceBytes instanceof Uint8Array ? request.sourceBytes : new Uint8Array();",
+    "test": "node --import tsx --test --test-name-pattern='source digest and bytes are detached' tests/text-copy-converter.test.ts",
+    "why": "the digest and converted bytes must describe one immutable source snapshot"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "if (bytes.length === 0) return result(sourceDigest, identity, \"no_text_copy\", \"invalid_input\");",
+    "replace": "if (false) return result(sourceDigest, identity, \"no_text_copy\", \"invalid_input\");",
+    "test": "node --import tsx --test --test-name-pattern='oversize and missing inputs' tests/text-copy-converter.test.ts",
+    "why": "missing source bytes must return a typed refusal instead of reaching a converter"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "if (format === \"docx\" || format === \"pptx\" || format === \"audio\") {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='explicit not-supported-yet stubs' tests/text-copy-converter.test.ts",
+    "why": "below-cut-line formats must never fall through into an active converter"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    if (!([\"html\", \"pdf\", \"docx\", \"pptx\", \"audio\"] as const).includes(format)) {",
+    "replace": "    if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='invalid runtime formats' tests/text-copy-converter.test.ts",
+    "why": "unknown runtime format values must fail as typed invalid input"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "  if (!isAbsolute(checked)) throw new Error(`text_copy_configuration_invalid:${name}`);",
+    "replace": "  if (false) throw new Error(`text_copy_configuration_invalid:${name}`);",
+    "test": "node --import tsx --test --test-name-pattern='invalid runtime formats' tests/text-copy-converter.test.ts",
+    "why": "converter and sandbox executable paths must be fixed absolute paths"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "  if (typeof value !== \"string\" || value.length === 0 || value.includes(\"\\0\") || value.includes(\"\\n\") || value.includes(\"\\r\")) {",
+    "replace": "  if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='invalid runtime formats' tests/text-copy-converter.test.ts",
+    "why": "fixed executable and prefix arguments must reject empty or control-character input"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`text_copy_configuration_invalid:${name}`);",
+    "replace": "  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`text_copy_configuration_invalid:${name}`);",
+    "test": "node --import tsx --test --test-name-pattern='invalid runtime formats' tests/text-copy-converter.test.ts",
+    "why": "zero or malformed resource bounds must be refused at configuration time"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    \"(deny default)\",",
+    "replace": "    \"(allow default)\",",
+    "test": "node --import tsx --test --test-name-pattern='generated sandbox is deny-by-default' tests/text-copy-converter.test.ts",
+    "why": "the converter sandbox must start from deny-by-default"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    \"(deny network*)\",",
+    "replace": "    \"(allow network*)\",",
+    "test": "node --import tsx --test --test-name-pattern='generated sandbox is deny-by-default' tests/text-copy-converter.test.ts",
+    "why": "converter processes must have no network permission"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "        executable: sandboxExecutable,",
+    "replace": "        executable: converterExecutable,",
+    "test": "node --import tsx --test --test-name-pattern='fixed no-shell argv template' tests/text-copy-converter.test.ts",
+    "why": "the fixed converter command must always pass through the sandbox executable"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "        env: fixedEnvironment(command.tempDirectory, !dependencies.skipNetworkDenialProbe),",
+    "replace": "        env: fixedEnvironment(command.tempDirectory, false),",
+    "test": "node --import tsx --test --test-name-pattern='require the worker.*denied-network proof' tests/text-copy-converter.test.ts",
+    "why": "production HTML conversions must actively prove that the sandbox denied a network syscall"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "  return Object.freeze({\n    HOME: tempDirectory,",
+    "replace": "  return Object.freeze({\n    ...process.env,\n    HOME: tempDirectory,",
+    "test": "node --import tsx --test --test-name-pattern='fixed child environment' tests/text-copy-converter.test.ts",
+    "why": "service environment variables and credentials must never cross into a converter child"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "[\"--max-old-space-size=96\", worker, inputPath, outputPath]",
+    "replace": "[\"--max-old-space-size=512\", worker, inputPath, outputPath]",
+    "test": "node --import tsx --test --test-name-pattern='HTML to Markdown returns' tests/text-copy-converter.test.ts",
+    "why": "the Node HTML worker must retain its fixed heap ceiling"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "process.kill(-pid!, signal);",
+    "replace": "process.kill(pid!, signal);",
+    "test": "node --import tsx --test --test-name-pattern='timeout kills.*complete process group' tests/text-copy-converter.test.ts",
+    "why": "a deadline must kill the converter leader and every descendant in its process group"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "timeoutTimer = setTimeout(() => stop(\"timeout\"), limits.timeoutMs);",
+    "replace": "timeoutTimer = setTimeout(() => stop(\"timeout\"), limits.timeoutMs + 2_000);",
+    "test": "node --import tsx --test --test-name-pattern='timeout kills.*complete process group' tests/text-copy-converter.test.ts",
+    "why": "the configured wall-clock deadline must be enforced rather than silently widened"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "          if (bytes === undefined) stop(\"resource_monitor_unavailable\");",
+    "replace": "          if (false) stop(\"resource_monitor_unavailable\");",
+    "test": "node --import tsx --test --test-name-pattern='unavailable resident-memory monitor' tests/text-copy-converter.test.ts",
+    "why": "a missing memory monitor must fail closed instead of leaving the converter unbounded"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "          else if (bytes > limits.memoryBytes) stop(\"memory_limit\");",
+    "replace": "          else if (false) stop(\"memory_limit\");",
+    "test": "node --import tsx --test --test-name-pattern='memory and markdown output bounds' tests/text-copy-converter.test.ts",
+    "why": "a converter that exceeds the resident-memory limit must be terminated"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "      const capture = (chunk: Buffer) => { if (!diagnostic.add(chunk)) stop(\"output_too_large\"); };",
+    "replace": "      const capture = (chunk: Buffer) => { if (false) stop(\"output_too_large\"); };",
+    "test": "node --import tsx --test --test-name-pattern='memory and markdown output bounds' tests/text-copy-converter.test.ts",
+    "why": "untrusted stdout and stderr must remain bounded"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    if (details.size > limits.markdownBytes) return { category: \"output_too_large\" };",
+    "replace": "    if (false) return { category: \"output_too_large\" };",
+    "test": "node --import tsx --test --test-name-pattern='memory and markdown output bounds' tests/text-copy-converter.test.ts",
+    "why": "an oversized derived text file must never be returned"
+  },
+  {
+    "file": "scripts/converter/html-to-markdown-worker.mjs",
+    "find": "new TextDecoder(\"utf-8\", { fatal: true }).decode(await readFile(inputPath))",
+    "replace": "new TextDecoder(\"utf-8\", { fatal: false }).decode(await readFile(inputPath))",
+    "test": "node --import tsx --test --test-name-pattern='malformed UTF-8 HTML' tests/text-copy-converter.test.ts",
+    "why": "malformed source bytes must be refused instead of silently becoming replacement text"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    try { new TextDecoder(\"utf-8\", { fatal: true }).decode(output); }\n    catch { return { category: \"conversion_failed\" }; }",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='memory and markdown output bounds' tests/text-copy-converter.test.ts",
+    "why": "converter output must be valid UTF-8 before it is exposed as Markdown bytes"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    if (details.isSymbolicLink() || !details.isFile()) return { category: \"conversion_failed\" };",
+    "replace": "    if (false) return { category: \"conversion_failed\" };",
+    "test": "node --import tsx --test --test-name-pattern='memory and markdown output bounds' tests/text-copy-converter.test.ts",
+    "why": "a converter output symlink must never make the service read another file"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    if (format === \"pdf\" && (!configuredPdfExecutable || !(await executableExists(configuredPdfExecutable)))) {",
+    "replace": "    if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='unavailable PDF executable' tests/text-copy-converter.test.ts",
+    "why": "a missing pdftotext binary must return No text copy without attempting a process"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    if (!(await executableExists(this.#configuration.sandboxExecutable)) || !(await executableExists(this.#configuration.nodeExecutable))) {",
+    "replace": "    if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='unavailable PDF executable' tests/text-copy-converter.test.ts",
+    "why": "missing sandbox or Node executables must fail closed before resolving or spawning"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "        detached: true,\n        shell: false,\n        env: fixedEnvironment(command.tempDirectory, !dependencies.skipNetworkDenialProbe),",
+    "replace": "        detached: true,\n        shell: true,\n        env: fixedEnvironment(command.tempDirectory, !dependencies.skipNetworkDenialProbe),",
+    "test": "node --import tsx --test --test-name-pattern='fixed no-shell argv template' tests/text-copy-converter.test.ts",
+    "why": "converter arguments must never be interpreted by a shell"
+  },
+  {
+    "file": "src/converter/v1/text-copy-service.ts",
+    "find": "    signal?.addEventListener(\"abort\", onAbort, { once: true });",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern='abort stops a conversion halfway' tests/text-copy-converter.test.ts",
+    "why": "a caller stop must retire the in-flight converter and its descendants"
+  }
+]
