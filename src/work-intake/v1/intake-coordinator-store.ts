@@ -174,6 +174,10 @@ export class PostgresIntakeSuggestionStoreV1 implements IntakeSuggestionStoreV1 
       grantsExecutionAuthority: false; savesRevision: false }>> {
     if (input.actorType !== "human" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u.test(input.ownerIdentityId))
       throw new IntakeSuggestionStoreErrorV1("intake_suggestion_owner_required");
+    // The view is the CURRENT-revision read, so it is the only thing a stale
+    // suggestion can be looked up in -- which is why a stale one is "not found"
+    // rather than "found and rejected". It carries the integrity material too, so
+    // a tampered row is refused here rather than handed to the owner.
     const row = (await this.db.query<SuggestionRow>(`SELECT s.id,s.tenant_id,s.project_id,s.batch_id,
       s.request_key,s.base_revision,s.base_revision_digest,s.proposed_by_identity_id,s.proposal,
       s.proposal_digest,s.suggestion_digest,s.auth_tag,s.created_at
@@ -192,10 +196,17 @@ export class PostgresIntakeSuggestionStoreV1 implements IntakeSuggestionStoreV1 
   }
 
   /** Map the database's own refusals onto the port's safe reason codes. A
-   * refusal the store cannot classify is still a refusal, never a success. */
+   * refusal the store cannot classify is still a refusal, never a success.
+   *
+   * The replay refusal is the request-key unique index (0200), so it arrives as
+   * PostgreSQL's own 23505 naming that index. The index name is matched, not the
+   * message prose, so a localised or reworded server message does not change what
+   * the caller is told -- and a DIFFERING content under a used key is the same
+   * refusal as an exact one, because the key is the whole contract. */
   #refusal(error: unknown): IntakeSuggestionStoreErrorV1 {
     const text = error instanceof Error ? error.message : String(error);
-    if (text.includes("work_batch_split_suggestion_replay_conflict"))
+    if (text.includes("work_batch_split_suggestions_request_key_unique")
+      || text.includes("work_batch_split_suggestion_replay_conflict"))
       return new IntakeSuggestionStoreErrorV1("intake_suggestion_replay_conflict");
     if (text.includes("work batch split suggestion insert rejected"))
       return new IntakeSuggestionStoreErrorV1("intake_suggestion_rejected");
@@ -265,15 +276,18 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
     reasonCode: "orchestrator_failed_twice"; now: string }>): Promise<void> {
     const { tenantId, projectId } = input;
     const id = this.principal().identityId;
-    // The escalation must be TRUE: the counter has to be at 2 or more and live.
-    // Reading it here rather than trusting a caller's count is what makes a
-    // fabricated "it failed twice" impossible at the adapter, as well as in the
-    // guard trigger that would otherwise catch it.
+    // The escalation must be TRUE, and for THIS request: the counter has to be
+    // at 2 or more, live, and scoped to a key that ends in this request key. A
+    // project can have several planner requests in flight, and the second failure
+    // of one of them must not license an escalation for another. The guard trigger
+    // re-checks exactly this; reading it here too means a caller that got the
+    // scope wrong is refused before it writes anything.
     const counter = (await this.db.query<CounterRow>(
       `SELECT failure_count FROM control_planner_failure_counters
        WHERE tenant_id=$1 AND project_id=$2 AND failure_count>=2 AND cleared_at IS NULL
+         AND scope_key LIKE '%:' || $3
        ORDER BY failure_count DESC LIMIT 1`,
-    [tenantId, projectId])).rows[0];
+    [tenantId, projectId, input.requestKey])).rows[0];
     if (!counter) throw new Error("planner_needs_you_not_escalated");
     await this.db.query(`INSERT INTO control_planner_needs_you_items
       (id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at,action_item_id)
@@ -285,15 +299,19 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
     await this.db.query(`INSERT INTO control_action_inbox
       (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
       VALUES('attention:planner:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32),
-        $1,$2,'planner:' || $3,'planner_failed','open','delivered',$4::timestamptz,NULL,
+        $1,$2,'planner:' || $3,'failure','open','delivered',$4::timestamptz,NULL,
         json_build_object('id','attention:planner:' || substring(md5($1 || '/' || $2 || '/' || $3) from 1 for 32),
-          'tenantId',$1,'projectId',$2,'workItemId','planner:' || $3,'kind','planner_failed','state','open',
+          'tenantId',$1,'projectId',$2,'workItemId','planner:' || $3,'kind','failure','state','open',
           'requestedAction','Review the orchestrator failure','reasonCode','orchestrator_failed_twice',
           'blockedWorkItemIds','[]'::jsonb,
           'legalResponses',json_build_array(json_build_object('id','open:' || $3,'kind','open_source',
             'label','Open the failed request','requiresConfirmation',false,'available',true)),
           'evidence','[]'::jsonb,'deliveryState','delivered','createdAt',$4::timestamptz))
-      ON CONFLICT (id) DO NOTHING`,
+      -- The action inbox's key is (tenant_id, id), not (id) alone: 0019 declares
+      -- it that way, and naming only the id column raises 42P10 ("no unique or
+      -- exclusion constraint matching the ON CONFLICT specification") -- measured,
+      -- and it reads as a missing index rather than a wrong conflict target.
+      ON CONFLICT (tenant_id,id) DO NOTHING`,
     [tenantId, projectId, input.requestKey, input.now]);
   }
 }

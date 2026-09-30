@@ -142,10 +142,14 @@ BEGIN
         AND i.actor_type='agent' AND i.state='active')
     -- The escalation is a claim about a COUNTER, so it must be true: a raise that
     -- does not match a live counter at or above the count it names is a caller
-    -- inventing an escalation, not reporting one.
+    -- inventing an escalation, not reporting one. The counter is matched on the
+    -- RAISED request, not merely the project: one project can have many planner
+    -- requests in flight, and the second failure of request A must not license an
+    -- escalation for request B.
     OR NOT EXISTS (SELECT 1 FROM public.control_planner_failure_counters c
       WHERE c.tenant_id=NEW.tenant_id AND c.project_id=NEW.project_id
-        AND c.failure_count>=NEW.failure_count AND c.cleared_at IS NULL) THEN
+        AND c.failure_count>=NEW.failure_count AND c.cleared_at IS NULL
+        AND c.scope_key LIKE '%:' || NEW.request_key) THEN
     RAISE EXCEPTION 'planner needs-you insert rejected';
   END IF;
   RETURN NEW;

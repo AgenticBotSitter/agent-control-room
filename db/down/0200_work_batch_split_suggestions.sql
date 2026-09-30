@@ -11,17 +11,16 @@ DO $$ BEGIN
     EXECUTE 'REVOKE SELECT ON work_batch_current_split_suggestions FROM control_room_private_web';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_work_intake') THEN
+    EXECUTE 'REVOKE SELECT ON work_batch_current_split_suggestions FROM control_room_work_intake';
     EXECUTE 'REVOKE SELECT, INSERT ON work_batch_split_suggestions FROM control_room_work_intake';
   END IF;
 END $$;
 DROP VIEW work_batch_current_split_suggestions;
 DROP POLICY work_batch_split_suggestions_work_intake_scope ON work_batch_split_suggestions;
 DROP POLICY work_batch_split_suggestions_existing_access ON work_batch_split_suggestions;
-DROP TRIGGER work_batch_split_suggestions_replay_conflict ON work_batch_split_suggestions;
 DROP TRIGGER work_batch_split_suggestions_no_truncate ON work_batch_split_suggestions;
 DROP TRIGGER work_batch_split_suggestions_append_only ON work_batch_split_suggestions;
 DROP TRIGGER work_batch_split_suggestions_guard ON work_batch_split_suggestions;
-DROP FUNCTION guard_work_batch_split_suggestion_replay_conflict();
 DROP FUNCTION guard_work_batch_split_suggestion_insert();
 DROP TABLE work_batch_split_suggestions;
 -- The key 0200 added and nothing else uses.

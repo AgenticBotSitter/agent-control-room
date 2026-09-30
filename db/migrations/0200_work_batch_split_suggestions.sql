@@ -60,7 +60,6 @@ CREATE TABLE work_batch_split_suggestions (
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
   created_at timestamptz NOT NULL,
   PRIMARY KEY (tenant_id,id),
-  UNIQUE (tenant_id,project_id,batch_id,request_key),
   FOREIGN KEY (tenant_id,batch_id,project_id) REFERENCES work_batches(tenant_id,id,project_id) ON DELETE RESTRICT,
   FOREIGN KEY (tenant_id,proposed_by_identity_id) REFERENCES control_identities(tenant_id,id) ON DELETE RESTRICT,
   -- The bound revision is a real revision of THIS batch, and its stored digest is
@@ -120,32 +119,38 @@ CREATE TRIGGER work_batch_split_suggestions_no_truncate BEFORE TRUNCATE
   FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 REVOKE ALL ON work_batch_split_suggestions FROM PUBLIC;
 
--- An exact replay returns the stored row; a replay that carries DIFFERENT content
--- under a request key already used is refused rather than silently overwriting the
--- record the owner may already be looking at. The uniqueness constraint already
--- makes the second insert impossible, so this turns a raw constraint violation
--- (23505) into the operation's own safe reason code.
-CREATE FUNCTION guard_work_batch_split_suggestion_replay_conflict() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM public.work_batch_split_suggestions s
-    WHERE s.tenant_id=NEW.tenant_id AND s.project_id=NEW.project_id
-      AND s.batch_id=NEW.batch_id AND s.request_key=NEW.request_key
-      AND (s.base_revision<>NEW.base_revision
-        OR s.base_revision_digest<>NEW.base_revision_digest
-        OR s.proposal_digest<>NEW.proposal_digest
-        OR s.proposed_by_identity_id<>NEW.proposed_by_identity_id)
-  ) THEN
-    RAISE EXCEPTION USING ERRCODE = 'unique_violation',
-      MESSAGE = 'work_batch_split_suggestion_replay_conflict';
-  END IF;
-  RETURN NULL;
-END $$;
-REVOKE ALL ON FUNCTION public.guard_work_batch_split_suggestion_replay_conflict() FROM PUBLIC;
-CREATE TRIGGER work_batch_split_suggestions_replay_conflict BEFORE INSERT
-  ON public.work_batch_split_suggestions
-  FOR EACH ROW EXECUTE FUNCTION public.guard_work_batch_split_suggestion_replay_conflict();
+-- A replay that carries DIFFERENT content under a request key already used must be
+-- refused, and it must be refused by a rule rather than by luck.
+--
+-- A request key names ONE suggestion, and that is the whole idempotency contract:
+-- a second append under a key already used is refused, whatever it carries. The
+-- unique index on (tenant, project, batch, request key) says exactly that, with
+-- no trigger and no second code path to get wrong.
+--
+-- Two trigger designs were measured and abandoned before arriving here, and the
+-- reasons are why this is an index:
+--
+--   - A row-level BEFORE trigger that SELECTs the table to find the existing row
+--     deadlocks against `ON CONFLICT`: the statement has already taken the index
+--     lock that read wants. Measured -- twenty concurrent inserts on one batch
+--     HUNG until the statement timeout fired.
+--   - A statement-level BEFORE trigger with a transition table cannot exist.
+--     PostgreSQL refuses it outright: "transition table name can only be
+--     specified for an AFTER trigger", so there is nothing to compare against.
+--   - An AFTER trigger cannot help either, because the unique index has already
+--     aborted the statement by then.
+--
+-- The content is deliberately NOT part of this key, and the reason is that a
+-- differing replay must be refused rather than admitted: a request key that
+-- already carries one suggestion must not be able to carry a second, different
+-- one, whoever asks. Putting the content in the key would have made the two
+-- cases indistinguishable to the database and let the second one in.
+--
+-- The cost, stated plainly: the refusal arrives as PostgreSQL's own 23505 with
+-- this index's name, not as a bespoke reason code. The adapter maps it
+-- (intake_suggestion_replay_conflict), so the application never reads the text.
+CREATE UNIQUE INDEX work_batch_split_suggestions_request_key_unique
+  ON public.work_batch_split_suggestions (tenant_id,project_id,batch_id,request_key);
 
 -- Confine the shared intake login to the bound tenant and to suggestions of a batch
 -- it can already see, as 0093 confines the batches and 0102 the items. Without this
@@ -178,9 +183,16 @@ CREATE POLICY work_batch_split_suggestions_work_intake_scope ON work_batch_split
 -- the owner a plan against a revision that no longer exists. starts_work and
 -- grants_execution_authority are literal false columns, so a caller cannot mistake
 -- this read for an approval.
+--
+-- suggestion_digest and auth_tag ARE carried. The read adapter re-derives both
+-- before it hands a plan to the owner, and a view that could not return them would
+-- make that verification impossible on exactly the path where a tampered row would
+-- do the most damage. They are integrity material over a proposal the owner is
+-- already entitled to read, not a new disclosure.
 CREATE VIEW work_batch_current_split_suggestions AS
-  SELECT s.tenant_id, s.project_id, s.batch_id, s.id, s.base_revision, s.base_revision_digest,
-    s.proposal, s.proposal_digest, s.proposed_by_identity_id, s.created_at,
+  SELECT s.tenant_id, s.project_id, s.batch_id, s.id, s.request_key, s.base_revision,
+    s.base_revision_digest, s.proposal, s.proposal_digest, s.suggestion_digest,
+    s.proposed_by_identity_id, s.auth_tag, s.created_at,
     false AS starts_work, false AS grants_execution_authority
   FROM public.work_batch_split_suggestions s
   JOIN public.work_batches b ON b.tenant_id=s.tenant_id AND b.id=s.batch_id
@@ -189,10 +201,12 @@ CREATE VIEW work_batch_current_split_suggestions AS
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_work_intake') THEN
     -- The shared intake login is the proposer the orchestrator runs as, so it
-    -- appends one suggestion and reads back only the ones still current. It is
-    -- granted no UPDATE, DELETE or TRUNCATE, and the triggers above would refuse a
-    -- mutation even for a role that had one.
+    -- appends one suggestion and reads back the CURRENT one -- which is the view,
+    -- because a stale suggestion must not be readable back as if it were live. It
+    -- is granted no UPDATE, DELETE or TRUNCATE on the table, and the triggers
+    -- above would refuse a mutation even for a role that had one.
     EXECUTE 'GRANT SELECT, INSERT ON work_batch_split_suggestions TO control_room_work_intake';
+    EXECUTE 'GRANT SELECT ON work_batch_current_split_suggestions TO control_room_work_intake';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_private_web') THEN
     -- The owner web login reads the CURRENT view and holds NO privilege at all on

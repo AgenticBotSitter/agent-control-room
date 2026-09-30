@@ -132,6 +132,7 @@ GRANT INSERT ON control_action_inbox TO control_room_work_intake;
 -- appends one split suggestion and reads back only the ones still bound to the
 -- batch's current revision. It is granted NO counter and NO Needs-you row.
 GRANT SELECT, INSERT ON work_batch_split_suggestions TO control_room_work_intake;
+GRANT SELECT ON work_batch_current_split_suggestions TO control_room_work_intake;
 REVOKE ALL ON control_planner_failure_counters, control_planner_needs_you_items FROM control_room_work_intake;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;

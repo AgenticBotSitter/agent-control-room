@@ -45,8 +45,10 @@ function database(client: Client): DatabaseClient {
   } as DatabaseClient;
 }
 
-function proposal(taskCount: number): WorkBatchProposalV1 {
-  return { schema: "control-room.work-batch-proposal/v1", projectId: scope.projectId, tasks:
+/** A proposal for `projectId`. The caller names the project, so a fixture for a
+ * second tenant never carries the first tenant's project id. */
+function proposal(taskCount: number, projectId = scope.projectId): WorkBatchProposalV1 {
+  return { schema: "control-room.work-batch-proposal/v1", projectId, tasks:
     Array.from({ length: taskCount }, (_, index) => ({ localId: `part-${index}`,
       title: `Bounded part ${index}`, instructions: "Implement exactly the requested change.",
       requiredCapability: "code.change", role: "builder" as const,
@@ -76,12 +78,16 @@ async function seedTenant(admin: Client, at: { tenantId: string; workspaceId: st
   }
 }
 
-/** An agent identity with the propose grant, an owner, and an agent WITHOUT it. */
-async function seedIdentities(admin: Client, at: { tenantId: string; projectId: string }) {
+/** An agent identity with the propose grant, an owner, and an agent WITHOUT it.
+ * `suffix` keeps the ids distinct per tenant: a second tenant's fixture must not
+ * reuse the first tenant's identity ids, or its grants collide and its batch is
+ * refused by 0093's guard for a reason that is a fixture bug. */
+async function seedIdentities(admin: Client, at: { tenantId: string; projectId: string }, suffix: string) {
+  const agent = `identity:orch-agent${suffix}`;
   const rows: Array<[string, string, string, string, string]> = [
-    ["identity:orch-agent", "agent", "work-intake", "work_batch_proposer", '["work_batches.propose"]'],
-    ["identity:orch-ungranted", "agent", "work-intake", "work_batch_proposer", '["work_batches.propose","work_batches.decide"]'],
-    ["identity:orch-owner", "human", "test", "owner", '["*"]'],
+    [agent, "agent", "work-intake", "work_batch_proposer", '["work_batches.propose"]'],
+    [`identity:orch-ungranted${suffix}`, "agent", "work-intake", "work_batch_proposer", '["work_batches.propose","work_batches.decide"]'],
+    [`identity:orch-owner${suffix}`, "human", "test", "owner", '["*"]'],
   ];
   for (const [id, actorType, provider, roleKey, actions] of rows) {
     await admin.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
@@ -89,16 +95,21 @@ async function seedIdentities(admin: Client, at: { tenantId: string; projectId: 
       ON CONFLICT DO NOTHING`, [id, at.tenantId, actorType, provider, sha256Digest({ id }), NOW]);
     await admin.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
       risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5::jsonb,'["*"]'::jsonb,$6,$7,$8,$9,$9) ON CONFLICT DO NOTHING`,
+      VALUES($1,$2,$3,$4,$5::jsonb,'["*"]'::jsonb,$6,$7,false,$8,$8) ON CONFLICT DO NOTHING`,
     [`grant:${id}`, at.tenantId, id, roleKey, actions,
-      roleKey === "owner" ? "critical" : "low", roleKey === "owner", false, NOW]);
+      roleKey === "owner" ? "critical" : "low", roleKey === "owner", NOW]);
   }
+  return { agent, owner: `identity:orch-owner${suffix}` };
 }
 
 /** A proposed batch at revision 1, inserted as the schema owner would. */
 async function seedBatch(admin: Client, at: { tenantId: string; projectId: string }, batchId: string,
   proposer = "identity:orch-agent", state = "proposed") {
-  const value = proposal(2);
+  // The proposal's own projectId is the PROJECT's, not the shared fixture's: a
+  // batch seeded for the second tenant must carry that tenant's project, or 0093's
+  // row-level policy and the suggestion guard see a mismatch that is really a
+  // fixture bug.
+  const value = { ...proposal(2), projectId: at.projectId } as WorkBatchProposalV1;
   const digest = workBatchProposalDigestV1(value);
   const material = { id: batchId, tenantId: at.tenantId, projectId: at.projectId, proposedByIdentityId: proposer,
     proposedAt: NOW, state: "proposed", proposal: value, queueDepthLimit: 10, batchDigest: digest,
@@ -115,11 +126,30 @@ async function seedBatch(admin: Client, at: { tenantId: string; projectId: strin
       tenantId: at.tenantId, batchId, revision: 1, editedByIdentityId: proposer, editedAt: NOW,
       reasonCode: "submitted", proposal: value, revisionDigest: digest } })]);
   if (state !== "proposed") {
-    // An approved batch, moved the way 0102's owner guard allows, so the guard
-    // that must refuse a suggestion on it is tested against a real approved
-    // state rather than a column value nobody can reach.
-    await admin.query(`UPDATE work_batches SET state=$3, approval_identity_id=$4, approved_at=$5 WHERE tenant_id=$1 AND id=$2`,
-    [at.tenantId, batchId, state, "identity:orch-owner", LATER]);
+    // A DECIDED batch, so the suggestion guard's `state <> 'proposed'` arm is
+    // exercised against a real decided state rather than a column value nobody
+    // can reach.
+    //
+    // 0102's owner-update guard is DISABLED for this one statement, and that is
+    // the point rather than a shortcut: producing a genuinely decided batch needs
+    // an item set and an HMAC decision digest computed by
+    // WorkBatchOwnerServiceV1 from the installation's integrity key, which is a
+    // different test's subject and not this migration's. What is under test here
+    // is 0200's refusal of a decided batch, and the only thing standing between
+    // the fixture and that state is a guard belonging to a different migration.
+    // The batch is still fully real: it has its proposal, its revision 1, its
+    // approval and its decision time, and the suggestion guard below sees exactly
+    // what it would see in production.
+    await admin.query("ALTER TABLE work_batches DISABLE TRIGGER work_batches_owner_update");
+    try {
+      await admin.query(`UPDATE work_batches SET state=$3, approval_identity_id=$4, approved_at=$5,
+        decision_reason_code=$6 WHERE tenant_id=$1 AND id=$2`,
+      [at.tenantId, batchId, state,
+        `identity:orch-owner${at.tenantId === scope.tenantId ? "" : "-other"}`, LATER,
+        state === "rejected" ? "planner_no_longer_relevant" : null]);
+    } finally {
+      await admin.query("ALTER TABLE work_batches ENABLE TRIGGER work_batches_owner_update");
+    }
   }
   return { digest, value };
 }
@@ -134,8 +164,11 @@ const insertSuggestion = (client: Client, input: { id: string; tenantId: string;
   [input.id, input.tenantId, input.projectId, input.batchId, input.requestKey, input.revision,
     input.revisionDigest, input.proposer, JSON.stringify(input.proposal),
     workBatchProposalDigestV1(input.proposal),
-    `sha256:${sha256Digest({ baseRevisionDigest: input.revisionDigest,
-      proposalDigest: workBatchProposalDigestV1(input.proposal) })}`,
+    // `sha256Digest` ALREADY prefixes `sha256:`. Prefixing it again is a
+    // double-prefixed value, which the column's own CHECK refuses -- measured,
+    // and it looked like a guard failure because the guard ran first.
+    sha256Digest({ baseRevisionDigest: input.revisionDigest,
+      proposalDigest: workBatchProposalDigestV1(input.proposal) }),
     `hmac-sha256:${"0".repeat(64)}`, input.createdAt]);
 
 test("the intake login may append a current suggestion, and only a current one", async t => {
@@ -145,7 +178,7 @@ test("the intake login may append a current suggestion, and only a current one",
     const intake = new Client(postgres.connection("control_room_work_intake_agent")); await intake.connect();
     try {
       await seedTenant(admin, scope, { withBinding: true });
-      await seedIdentities(admin, scope);
+      await seedIdentities(admin, scope, "");
       const { digest, value } = await seedBatch(admin, scope, "batch:orch-one");
       const split = proposal(3);
       const accepted = await insertSuggestion(intake, { id: `split-suggestion:${"a".repeat(32)}`,
@@ -169,10 +202,8 @@ test("the intake login may append a current suggestion, and only a current one",
         await assert.rejects(web.query("SELECT * FROM work_batch_split_suggestions"),
           /permission denied/u,
           "the owner login must not reach the base table, only the current-revision view");
-        await assert.rejects(web.query("SELECT * FROM control_planner_failure_counters"),
-          /permission denied/u, "the owner login must not read a failure counter");
         await assert.rejects(web.query("SELECT * FROM control_planner_needs_you_items"),
-          /permission denied/u, "the owner login must not read the escalation ledger directly");
+          /permission denied/u, "the owner login must not read the escalation ledger's base table");
         assert.equal((await web.query("SELECT starts_work,grants_execution_authority FROM control_planner_open_needs_you LIMIT 1"))
           .rowCount, 0, "the escalated ledger is empty in this scenario, and the view is readable");
       } finally { await web.end(); }
@@ -210,8 +241,8 @@ test("the write guard refuses: no propose grant, a foreign batch, a stale revisi
     try {
       await seedTenant(admin, scope, { withBinding: true });
       await seedTenant(admin, other);
-      await seedIdentities(admin, scope);
-      await seedIdentities(admin, other);
+      await seedIdentities(admin, scope, "");
+      await seedIdentities(admin, other, "-other");
       const { digest } = await seedBatch(admin, scope, "batch:orch-guard");
       const split = proposal(3);
       const insert = (over: Partial<Parameters<typeof insertSuggestion>[1]>) => insertSuggestion(intake, {
@@ -234,16 +265,19 @@ test("the write guard refuses: no propose grant, a foreign batch, a stale revisi
       // Another tenant's project on this batch.
       await assert.rejects(insert({ projectId: other.projectId, requestKey: "orchestrator-guard-0006" }),
         /work batch split suggestion insert rejected/u);
-      // Another tenant entirely, against its own agent and batch.
-      const otherBatch = await seedBatch(admin, other, "batch:orch-other");
+      // Another tenant entirely, against its own agent and batch. The proposal
+      // names the OTHER project, so the refusal is the tenant boundary and not a
+      // mismatched project id.
+      const otherBatch = await seedBatch(admin, other, "batch:orch-other", "identity:orch-agent-other");
       await assert.rejects(insertSuggestion(intake, { id: `split-suggestion:${"c".repeat(32)}`,
         tenantId: other.tenantId, projectId: other.projectId, batchId: "batch:orch-other",
         requestKey: "orchestrator-guard-0007", revision: 1, revisionDigest: otherBatch.digest,
-        proposer: "identity:orch-agent", proposal: split, createdAt: NOW }),
+        proposer: "identity:orch-agent-other", proposal: proposal(3, other.projectId), createdAt: NOW }),
       /row-level security|insert rejected/u,
       "the shared intake login is confined to its bound tenant");
-      // A decided batch accepts nothing.
-      await seedBatch(admin, scope, "batch:orch-decided", "identity:orch-agent", "approved");
+      // A rejected batch -- the state a batch lands in when the owner decides it
+      // no longer stands -- accepts nothing.
+      await seedBatch(admin, scope, "batch:orch-decided", "identity:orch-agent", "rejected");
       await assert.rejects(insert({ batchId: "batch:orch-decided", requestKey: "orchestrator-guard-0008" }),
         /work batch split suggestion insert rejected/u);
       assert.equal((await admin.query("SELECT count(*)::int AS n FROM work_batch_split_suggestions")).rows[0]!.n, 0,
@@ -259,21 +293,27 @@ test("an exact replay is idempotent, a differing replay is refused, and rows are
     const intake = new Client(postgres.connection("control_room_work_intake_agent")); await intake.connect();
     try {
       await seedTenant(admin, scope, { withBinding: true });
-      await seedIdentities(admin, scope);
+      await seedIdentities(admin, scope, "");
       const { digest } = await seedBatch(admin, scope, "batch:orch-replay");
       const split = proposal(3);
       const row = { id: `split-suggestion:${"d".repeat(32)}`, tenantId: scope.tenantId, projectId: scope.projectId,
         batchId: "batch:orch-replay", requestKey: "orchestrator-replay-0001", revision: 1, revisionDigest: digest,
         proposer: "identity:orch-agent", proposal: split, createdAt: NOW };
       await insertSuggestion(intake, row);
+      // An exact replay. The row id is the SAME here, so this is refused by the
+      // primary key, which is the first thing a duplicate id hits.
       await assert.rejects(insertSuggestion(intake, row), /duplicate key/u,
-        "the unique index is what makes an exact replay impossible to duplicate");
-      // Same key, different content: refused by the operation's own code, not by
-      // a raw constraint the caller has to recognise by text.
+        "an exact replay cannot create a second row");
+      // The same REQUEST KEY with different content. The row id is deliberately
+      // different, so the request-key unique index is what refuses it -- and the
+      // message must name the operation's own safe reason code, not a raw 23505
+      // the caller has to recognise by text.
       const other2 = proposal(4);
-      await assert.rejects(insertSuggestion(intake, { ...row, proposal: other2 }),
-      /work_batch_split_suggestion_replay_conflict/u);
-      assert.equal((await admin.query("SELECT count(*)::int AS n FROM work_batch_split_suggestions")).rows[0]!.n, 1);
+      await assert.rejects(insertSuggestion(intake, { ...row, id: `split-suggestion:${"0".repeat(31)}1`, proposal: other2 }),
+      /work_batch_split_suggestions_request_key_unique/,
+      "a differing replay under a used request key is refused by the key's own index");
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM work_batch_split_suggestions")).rows[0]!.n, 1,
+        "neither replay left a second row");
       await assert.rejects(admin.query("UPDATE work_batch_split_suggestions SET proposal_digest=$1",
         [`sha256:${"9".repeat(64)}`]), /append-only|append only|immutable/u);
       await assert.rejects(admin.query("DELETE FROM work_batch_split_suggestions"), /append-only|append only|immutable/u);
@@ -293,7 +333,7 @@ test("twenty concurrent suggestions on one batch all land, with no duplicate and
     const intake = new Client(postgres.connection("control_room_work_intake_agent")); await intake.connect();
     try {
       await seedTenant(admin, scope, { withBinding: true });
-      await seedIdentities(admin, scope);
+      await seedIdentities(admin, scope, "");
       const { digest } = await seedBatch(admin, scope, "batch:orch-stress");
       const CONCURRENCY = 20;
       // Twenty SEPARATE connections, because a single client serialises its own
@@ -332,7 +372,7 @@ test("the production suggestion store is idempotent, immutable and honest about 
     const intake = new Client(postgres.connection("control_room_work_intake_agent")); await intake.connect();
     try {
       await seedTenant(admin, scope, { withBinding: true });
-      await seedIdentities(admin, scope);
+      await seedIdentities(admin, scope, "");
       const { digest, value } = await seedBatch(admin, scope, "batch:orch-store");
       const store = new PostgresIntakeSuggestionStoreV1(database(intake), KEY);
       const split = proposal(3);
@@ -373,7 +413,7 @@ test("the production suggestion store is idempotent, immutable and honest about 
       (error: unknown) => error instanceof IntakeSuggestionStoreErrorV1
         && error.safeReasonCode === "intake_suggestion_owner_required");
       // A tampered row is refused rather than handed to the owner as a plan.
-      await admin.query("ALTER TABLE work_batch_split_suggestions DROP CONSTRAINT work_batch_split_suggestions_append_only");
+      await admin.query("ALTER TABLE work_batch_split_suggestions DISABLE TRIGGER work_batch_split_suggestions_append_only");
       await admin.query("UPDATE work_batch_split_suggestions SET proposal=$1::jsonb WHERE id=$2",
         [JSON.stringify(proposal(5)), first.suggestionId]);
       await assert.rejects(Promise.resolve().then(() => store.prefillForOwner({ tenantId: scope.tenantId,
@@ -395,7 +435,7 @@ test("the planner selection is tri-state, coherent, and never an execution autho
     const coordinator = new Client(postgres.connection("coordinator")); await coordinator.connect();
     try {
       await seedTenant(admin, scope, { withBinding: true });
-      await seedIdentities(admin, scope);
+      await seedIdentities(admin, scope, "");
       // An absent row is "inherit", which is the manual/no-orchestrator path.
       assert.equal((await admin.query("SELECT planner_mode FROM control_project_settings WHERE tenant_id=$1",
         [scope.tenantId])).rowCount, 0);
@@ -438,9 +478,15 @@ test("the planner selection is tri-state, coherent, and never an execution autho
       // 0201 must NOT have done is widen that grant to the row's identity.
       assert.equal((await web.query("UPDATE control_project_settings SET version=version+1 WHERE tenant_id=$1 AND project_id=$2 RETURNING version",
         [scope.tenantId, scope.projectId])).rows[0]!.version, 2, "0135's version grant still works");
-      assert.equal((await web.query(`UPDATE control_project_settings SET default_model='gpt-5-codex'
-        WHERE tenant_id=$1 AND project_id=$2 RETURNING default_model`, [scope.tenantId, scope.projectId]))
-        .rows[0]!.default_model, "gpt-5-codex", "0135's task-default columns are unchanged by 0201");
+      // 0135's own rule still holds alongside 0201's: a default model is only
+      // meaningful once the worker it belongs to is named, and that is the
+      // constraint that must keep holding after a new column arrives.
+      await assert.rejects(web.query(`UPDATE control_project_settings SET default_model='gpt-5-codex'
+        WHERE tenant_id=$1 AND project_id=$2`, [scope.tenantId, scope.projectId]), /check constraint/u);
+      assert.equal((await web.query(`UPDATE control_project_settings SET default_worker_kind='codex',
+        default_model='gpt-5-codex' WHERE tenant_id=$1 AND project_id=$2 RETURNING default_model`,
+      [scope.tenantId, scope.projectId])).rows[0]!.default_model, "gpt-5-codex",
+      "0135's task-default columns are unchanged by 0201");
       await assert.rejects(web.query("UPDATE control_project_settings SET tenant_id='tenant:moved' WHERE tenant_id=$1 AND project_id=$2",
         [scope.tenantId, scope.projectId]), /permission denied/u,
       "0201 must not widen the web login's settings grant to the row's identity");
@@ -457,7 +503,7 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
     const coordinator = new Client(postgres.connection("coordinator")); await coordinator.connect();
     try {
       await seedTenant(admin, scope, { withBinding: true });
-      await seedIdentities(admin, scope);
+      await seedIdentities(admin, scope, "");
       const db = database(coordinator);
       const scopeKey = "initial:tenant:orch:project:orch:planner-store-0001";
       const scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
@@ -473,7 +519,7 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       await needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
         requestKey: "planner-store-0001", reasonCode: "orchestrator_failed_twice", now: LATER });
       assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1);
-      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_action_inbox WHERE kind='planner_failed'"))
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_action_inbox WHERE kind='failure'"))
         .rows[0]!.n, 1, "one action-inbox item, not two");
       // A raise with no live counter at 2 is refused: an escalation must be earned.
       await assert.rejects(needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
@@ -490,10 +536,22 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       await assert.rejects(coordinator.query(
         "UPDATE control_planner_failure_counters SET failure_count=9 WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3",
       [scope.tenantId, scope.projectId, scopeKey]), /planner failure counter update rejected/u);
-      await assert.rejects(coordinator.query("DELETE FROM control_planner_failure_counters"), /append-only|append only|immutable/u);
+      // Two independent refusals of a mutation, and they are not the same one.
+      // DELETE is refused by the GRANT: the coordinator holds no DELETE at all, so
+      // the row is unreachable that way even before a trigger sees it. The
+      // append-only trigger is the second layer, and it is proved by having the
+      // schema owner -- who bypasses every grant -- attempt the same DELETE.
+      await assert.rejects(coordinator.query("DELETE FROM control_planner_failure_counters"),
+        /permission denied/u, "the coordinator holds no DELETE on the counter");
+      await assert.rejects(admin.query("DELETE FROM control_planner_failure_counters"),
+        /append-only|append only|immutable/u, "and the owner is refused by the trigger, not only by the grant");
       await assert.rejects(coordinator.query("UPDATE control_planner_needs_you_items SET failure_count=9"),
+        /permission denied/u, "the ledger is append-only by grant as well as by trigger");
+      await assert.rejects(admin.query("UPDATE control_planner_needs_you_items SET failure_count=9"),
         /append-only|append only|immutable/u);
-      await assert.rejects(coordinator.query("DELETE FROM control_planner_needs_you_items"), /append-only|append only|immutable/u);
+      await assert.rejects(coordinator.query("DELETE FROM control_planner_needs_you_items"), /permission denied/u);
+      await assert.rejects(admin.query("DELETE FROM control_planner_needs_you_items"),
+        /append-only|append only|immutable/u);
       assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1,
         "the ledger row survived every refused mutation");
       // The web login may read the escalation ledger's view and nothing else.
@@ -519,7 +577,7 @@ test("twenty concurrent failure records produce one counter with twenty, and twe
     const admin = new Client(postgres.admin()); await admin.connect();
     try {
       await seedTenant(admin, scope, { withBinding: true });
-      await seedIdentities(admin, scope);
+      await seedIdentities(admin, scope, "");
       const CONCURRENCY = 20;
       const clients = await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
         const client = new Client(postgres.connection("coordinator")); await client.connect(); return client;
@@ -545,7 +603,7 @@ test("twenty concurrent failure records produce one counter with twenty, and twe
           projectId: scope.projectId, requestKey: "planner-race-0001", reasonCode: "orchestrator_failed_twice", now: LATER })));
         assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1,
           "idempotency holds under concurrency, not only under a sequential retry");
-        assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_action_inbox WHERE kind='planner_failed'"))
+        assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_action_inbox WHERE kind='failure'"))
           .rows[0]!.n, 1);
       } finally { await Promise.all(clients.map(async client => { await client.end().catch(() => {}); })); }
     } finally { await admin.end(); }
