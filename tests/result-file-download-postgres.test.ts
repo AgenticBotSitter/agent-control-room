@@ -611,6 +611,53 @@ test("the real download path, the grant it writes, two sessions one file, the qu
         (error: unknown) => ["42501", "23514"].includes(stateOf(error)),
           "trashing an unaccepted set is refused even for a superuser");
 
+        // The ALLOW direction, because a guard that refuses everything is not a
+        // guard. A set the OWNER accepted may then be trashed by that same
+        // owner: acceptance said keep it, and the owner may still discard it.
+        const acceptedSet = setId(0x3000);
+        // A native set needs a receipt (B6's own rule), so this attempt gets
+        // its own harness run, manifest and receipt like every other native set
+        // in this fixture.
+        await admin(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,payload,created_at,updated_at)
+          VALUES('attempt:disposal',$1,'job:files-fix',900,'running',0,NULL,'node:files-fix',
+            jsonb_build_object('id','attempt:disposal','tenantId',$1::text,'state','running','version',0,
+              'jobId','job:files-fix','attemptNumber',900,'workerId',NULL::text,'nodeId','node:files-fix'),$2,$2)`,
+        [TENANT, issuedAt]);
+        await admin(`INSERT INTO control_harness_runs(tenant_id,id,project_id,job_id,attempt_id,node_id,adapter_id,
+          harness,native_session_key_digest,state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+          VALUES($1,'run:disposal',$2,'job:files-fix','attempt:disposal','node:files-fix',$3,'other',$4,'running',0,$5,$6,'{}',$7,$7,$7)`,
+        [TENANT, projectId, ADAPTER, `sha256:${"4".repeat(64)}`, `sha256:${"3".repeat(64)}`,
+          `hmac-sha256:${"3".repeat(64)}`, issuedAt]);
+        await admin(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,
+          content_hash,state,version,payload,created_at,updated_at)
+          VALUES($1,$2,$3,'workflow:files-fix','job:files-fix','attempt:disposal',$4,'uploaded',1,
+            jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','uploaded','version',1,'projectId',$3::text,
+              'workflowId','workflow:files-fix','jobId','job:files-fix','attemptId','attempt:disposal','contentHash',$4::text),$5,$5)`,
+        ["artifact:result:" + "d".repeat(64), TENANT, projectId, `sha256:${"3".repeat(64)}`, issuedAt]);
+        await admin(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,
+          artifact_id,receipt,auth_tag) VALUES($1,$2,'job:files-fix','attempt:disposal','run:disposal',$3,'{}',$4)`,
+        [TENANT, projectId, "artifact:result:" + "d".repeat(64), `hmac-sha256:${"e".repeat(64)}`]);
+        await results(`INSERT INTO control_result_file_sets(tenant_id,set_id,project_id,job_id,attempt_id,
+          producer_kind,producer_id,state,source_kind,file_count,total_bytes,manifest_digest,retention_state,created_at)
+          VALUES($1,$2,$3,'job:files-fix','attempt:disposal','native','control-room-native','declared','file-store',0,0,$4,
+          'provisional',$5)`, [TENANT, acceptedSet, projectId, ZERO, issuedAt]);
+        await web(`UPDATE control_result_file_sets SET retention_state='retained',accepted_at=$3,accepted_by_identity_id=$4
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, acceptedSet, new Date().toISOString(), OWNER]);
+        // Trash, then purge, by the owner who accepted it. Both must succeed, or
+        // the bytes could never be reclaimed.
+        await web(`UPDATE control_result_file_sets SET retention_state='trash'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, acceptedSet]);
+        await web(`UPDATE control_result_file_sets SET retention_state='purged'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, acceptedSet]);
+        assert.equal((await admin<{ retention_state: string }>("SELECT retention_state FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
+          [TENANT, acceptedSet]))[0]!.retention_state, "purged",
+        "the owner who accepted a set may trash and purge it: the guard discriminates, it does not block");
+        // And it is terminal: a purged set cannot be brought back.
+        await assert.rejects(web(`UPDATE control_result_file_sets SET retention_state='retained'
+          WHERE tenant_id=$1 AND set_id=$2`, [TENANT, acceptedSet]),
+        (error: unknown) => ["23514", "42501"].includes(stateOf(error)),
+          "a purged set cannot be brought back");
+
         // ==== a cross-project read is still refused, after every fix ========
         // The fixes must not have widened anything. An identity without the
         // owner grant cannot mint, and another project's set is unreachable.
