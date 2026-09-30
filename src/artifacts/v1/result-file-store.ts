@@ -527,12 +527,14 @@ export class ResultFileStoreV1 {
       }
       await this.syncRoot(operation);
     } finally {
-      // The recovery's OWN lock is retired the same way it was taken: the
-      // descriptor that holds it is still open, so nothing can create the name
-      // and lock it in the gap between the close and the unlink, and nothing can
-      // be unlinked by somebody else in the gap either. Close first, then unlink
-      // the now-unlocked name — there is no other opener inside this critical
-      // section, because the recovery lock is what kept them out.
+      // The recovery's own lock is retired with its descriptor still open, so
+      // the name cannot be created-and-locked by anyone in the gap between the
+      // close and the unlink. That is NOT the same race the write lock's
+      // take-over closes, though it looks like it: the recovery lock is what
+      // kept every other opener out of this whole critical section, so the only
+      // writer that could appear here is one that started before the lock was
+      // taken — and it was refused at its own O_EXCL create. Close, then unlink
+      // the now-unlocked name.
       await recovery.close().catch(() => {});
       await bounded(operation, () => unlink(recoveryPathOf(this.root)).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;
