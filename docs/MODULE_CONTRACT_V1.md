@@ -1,6 +1,6 @@
 # Control Room Module Contract v1
 
-Status: first contract and parser slice. Schema id: `control-room.module-manifest/v1`.
+Status: contract, parser, bundle verifier, and owner approval ledger. Schema id: `control-room.module-manifest/v1`.
 
 This contract is the one boundary between a module and Control Room. A module
 does not become trusted because it has a manifest, appears in a project pack,
@@ -245,12 +245,52 @@ detailed mapping before making it downloadable.
 | Disable/uninstall races | Canonical lifecycle ledger, stop new intake, drain/reconcile in-flight work, explicit keep/delete choice |
 | Denial of service | Manifest, array, text, notification, attention, schedule, settings, migration, and runtime ceilings |
 
-## First-slice code boundary
+## Bundle verification and owner approval (second slice)
 
-The v1 implementation provides the strict parser, immutable registry, exact
-lookup, project-data permission helper, and project-pack v2 parser/builder. It
-does not yet provide a downloader, signature verifier, installer, approval
-store, migration runner, event broker, or module file loader. Existing module
-code remains built in. Those later components must consume this contract and
-must not introduce a second scheduler, database authority, task path, or trust
-decision.
+`src/modules/v1/bundle.ts` verifies a `control-room.module-bundle/v1` bundle:
+`{ schema, manifest, files: [{ path, contentBase64 }] }`. Paths are lowercase,
+relative, at most eight segments, and every segment starts with a letter or
+digit, so `.`/`..`, absolute paths, and case collisions cannot occur. Content
+must use canonical base64; each file is at most 1 MiB, the bundle at most
+8 MiB and 256 files. The digest is order-independent and covers the parsed
+manifest plus each file's path, length, and content digest.
+
+A signature is `{ schema: "control-room.module-signature/v1", keyId,
+bundleDigest, signature }`: Ed25519 over the canonical JSON of the purpose, key
+id, bundle digest, module id, and version. The verifier recomputes the digest,
+refuses an envelope naming any other digest, and checks the signature only
+against the key the owner's trust policy holds for that key id, which must also
+be allowed to vouch for that module id. A present signature is never ignored:
+an untrusted or invalid signature fails even on a DECLARATIVE bundle.
+DECLARATIVE bundles may carry only UTF-8 `.json`, `.md`, and `.txt` text and
+may not declare migrations. CODE bundles need a trusted signature or an exact
+reviewed-digest pin, and every declared migration file must be present. The
+host version must satisfy `controlRoomCompatibility`.
+
+`control_module_install_approvals` (migration 0195) records each owner
+approval: exact bundle digest, parsed manifest, authority-surface digest,
+trust source and signer, acknowledged CODE warning, and the permission diff the
+owner saw. Approvals for one module form an append-only chain (one root, at
+most one successor per approval), so the chain head is the current approval,
+two concurrent approvals of the same head cannot both land, and a superseded
+approval never becomes current again. The private web login alone holds
+SELECT and INSERT. A trigger requires the active human owner with a
+tenant-wide `modules.install` grant (critical for CODE) and a current
+timestamp. Rows carry a record digest and HMAC tag and fail closed when read.
+
+`ModuleInstallApprovalServiceV1` re-verifies the bundle on every call. Approval
+requires the digest, current approval, and permission-diff digest the owner was
+shown, plus the CODE warning acknowledgement. `assertApproved` is the gate for
+a later installer: a different version, byte, permission surface, trust
+source, or signer, or a signer the owner no longer trusts, all need a new
+approval. Nothing in this slice loads, stages, executes, or migrates a module.
+
+## Code boundary
+
+The implementation provides the strict parser, immutable registry, exact
+lookup, project-data permission helper, project-pack v2 parser/builder, the
+bundle verifier, and the approval ledger. It does not yet provide a
+downloader, owner approval screen, installer, migration runner, event broker,
+or module file loader. Existing module code remains built in. Those later
+components must consume this contract and must not introduce a second
+scheduler, database authority, task path, or trust decision.
