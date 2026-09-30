@@ -1,4 +1,4 @@
-import type { BrowserFailureCode } from "./browser-client";
+import { BrowserRequestError } from "./browser-client";
 
 /** Structural mirror of cook/files' result-file-wire.ts. */
 export type ResultFileMediaType = "text/plain" | "text/markdown" | "text/csv" | "text/html"
@@ -48,8 +48,10 @@ export type ResultFileDownloadLink = Readonly<{ href: string; expiresAt: string 
 
 /** The only UI-to-storage seam for the result-file catalog. Production mints
  * a fresh, short-lived link on demand; it never supplies one during render.
- * `kind` exists solely to keep the disposable demo's fixed data URL out of
- * every production adapter. */
+ * Implementations throw BrowserRequestError so the shared owner-facing failure
+ * copy survives the browser-client adapter. Text copies are deferred to MIG-E:
+ * the shipped catalog wire has no derivation record for them yet. `kind` exists
+ * solely to keep the disposable demo's fixed data URL out of every production adapter. */
 export interface ResultFilesClientPort {
   readonly kind: "production" | "demo";
   list(scope: ResultFilesScope, signal?: AbortSignal): Promise<ResultFileCatalog>;
@@ -57,21 +59,15 @@ export interface ResultFilesClientPort {
     signal?: AbortSignal): Promise<ResultFileDownloadLink>;
 }
 
-export class ResultFilesUnavailableError extends Error {
-  constructor(readonly code: BrowserFailureCode = "unavailable") {
-    super(code); this.name = "ResultFilesUnavailableError";
-  }
-}
-
 const unavailableResultFilesClient = Object.freeze({
   kind: "production" as const,
   async list(_scope: ResultFilesScope, signal?: AbortSignal) {
     signal?.throwIfAborted();
-    throw new ResultFilesUnavailableError();
+    throw new BrowserRequestError("unavailable");
   },
   async requestDownload(_projectId: string, _resultSetId: string, _fileId: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
-    throw new ResultFilesUnavailableError();
+    throw new BrowserRequestError("unavailable");
   },
 }) satisfies ResultFilesClientPort;
 
@@ -111,7 +107,7 @@ export function createInMemoryResultFilesClient(
     async list(scope: ResultFilesScope, signal?: AbortSignal) {
       await abortableDelay(options.delayMs ?? 0, signal);
       signal?.throwIfAborted();
-      if (readFailuresRemaining > 0) { readFailuresRemaining -= 1; throw new ResultFilesUnavailableError(); }
+      if (readFailuresRemaining > 0) { readFailuresRemaining -= 1; throw new BrowserRequestError("unavailable"); }
       return Object.freeze({ projectId: scope.projectId, ...(scope.taskId ? { jobId: scope.taskId } : {}),
         sets: structuredClone(selected(scope)), additionalSetsOmitted: false, catalogSource: "configured" as const,
         observedAt: "2026-01-01T00:00:00.000Z", startsWork: false as const,
@@ -120,11 +116,11 @@ export function createInMemoryResultFilesClient(
     async requestDownload(projectId: string, resultSetId: string, fileId: string, signal?: AbortSignal) {
       await abortableDelay(options.delayMs ?? 0, signal);
       signal?.throwIfAborted();
-      if (downloadFailuresRemaining > 0) { downloadFailuresRemaining -= 1; throw new ResultFilesUnavailableError(); }
+      if (downloadFailuresRemaining > 0) { downloadFailuresRemaining -= 1; throw new BrowserRequestError("unavailable"); }
       const set = sets.find(candidate => candidate.projectId === projectId && candidate.setId === resultSetId);
       const file = set?.files.find(candidate => candidate.fileId === fileId);
       if (!set || set.state === "quarantined" || !file || file.state !== "stored")
-        throw new ResultFilesUnavailableError("not_found");
+        throw new BrowserRequestError("not_found");
       return { href: "data:application/octet-stream,", expiresAt: "2026-01-01T00:05:00.000Z" };
     },
   } satisfies ResultFilesClientPort;

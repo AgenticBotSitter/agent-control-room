@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  ResultFilesUnavailableError,
   resultFilesClientV1,
   type ResultFileCatalog,
   type ResultFileItem,
@@ -10,7 +9,7 @@ import {
   type ResultFilesClientPort,
   type ResultFilesScope,
 } from "../../src/web/v1/result-files-client-port";
-import type { BrowserFailureCode } from "../../src/web/v1/browser-client";
+import { BrowserRequestError, type BrowserFailureCode } from "../../src/web/v1/browser-client";
 
 export type DeliveredFilesState = Readonly<
   { state: "loading" } | { state: "ready"; value: ResultFileCatalog }
@@ -58,9 +57,9 @@ function startBrowserDownload(href: string, displayName: string) {
 }
 
 function downloadProblem(error: unknown) {
-  if (error instanceof ResultFilesUnavailableError && error.code === "authentication_required")
+  if (error instanceof BrowserRequestError && error.code === "authentication_required")
     return "Your session has ended. Sign in again to download this file.";
-  if (error instanceof ResultFilesUnavailableError && error.code === "access_denied")
+  if (error instanceof BrowserRequestError && error.code === "access_denied")
     return "Your current access does not include this file.";
   return "This file could not be downloaded. Nothing was changed. Try again in a moment.";
 }
@@ -82,7 +81,7 @@ export function ResultFileRow({ file, set, scope, client }: {
       const result = await client.requestDownload(scope.projectId, set.setId, file.fileId, controller.signal);
       if (controller.signal.aborted) return;
       const href = safeDownloadHref(result.href, client.kind);
-      if (!href) throw new ResultFilesUnavailableError();
+      if (!href) throw new BrowserRequestError("unavailable");
       startBrowserDownload(href, file.displayName);
     } catch (error) {
       if (!controller.signal.aborted) setProblem(downloadProblem(error));
@@ -91,14 +90,16 @@ export function ResultFileRow({ file, set, scope, client }: {
       if (!controller.signal.aborted) setPending(false);
     }
   }
-  const attention = file.state === "missing" || file.state === "quarantined";
+  const held = set.state === "quarantined";
+  const attention = held || file.state === "missing" || file.state === "quarantined";
+  const label = held ? "Delivery refused" : stateLabel(file.state);
   const mismatched = file.declaredMediaType !== file.detectedMediaType;
   return <li className={`private-delivered-file${attention ? " is-attention" : ""}`}>
     <div className="private-delivered-file-main">
       <div className="private-delivered-file-heading">
         <h4 className="private-delivered-file-name" title={file.displayName}>{file.displayName}</h4>
         <span className={`private-chip ${attention ? "is-bad" : file.state === "stored" ? "is-good" : "is-warn"}`}>
-          {stateLabel(file.state)}
+          {label}
         </span>
       </div>
       <p className="private-delivered-file-meta"><span>{file.declaredMediaType}</span>
@@ -156,9 +157,16 @@ export function DeliveredFilesPanel({ scope, data, client = resultFilesClientV1,
     <p className="private-note">Downloads are exact originals and open as attachments. File contents are never displayed inline here.</p>
     <div className="private-delivered-sets">{sets.map(set => <section key={set.setId} className="private-delivered-set">
       {showTask && <h3>Task {set.jobId}</h3>}
-      {set.state === "incomplete" && <p className="private-delivered-file-problem">Not all files arrived.</p>}
-      <ul className="private-delivered-file-list">{set.files.map(file => <ResultFileRow key={file.fileId} file={file}
-        set={set} scope={scope} client={client} />)}</ul>
+      <p className="private-note">{set.files.length} file{set.files.length === 1 ? "" : "s"}
+        {set.sourceKind === "native-text" ? " · from the result text" : ""}
+        {set.retentionState === "retained" ? " · accepted" : ""}</p>
+      {set.state === "incomplete" && <p className="private-delivered-file-problem">Not all files arrived. The files below did arrive
+        and can be downloaded; the rest are not on the Mac.</p>}
+      {set.state === "quarantined" && <p className="private-delivered-file-problem" role="alert">This set was held back and will not
+        be offered for download. Its catalog record is kept.</p>}
+      {set.state === "declared" && <p className="private-note">Still arriving. These files have not landed yet.</p>}
+      {set.files.length > 0 && <ul className="private-delivered-file-list">{set.files.map(file => <ResultFileRow key={file.fileId} file={file}
+        set={set} scope={scope} client={client} />)}</ul>}
       {set.additionalFilesOmitted && <p className="private-note">More files remain in this set than are shown here.</p>}
     </section>)}</div>
     {data.value.additionalSetsOmitted && <p className="private-note">More result sets are saved than are shown here.</p>}
@@ -175,7 +183,7 @@ export function DeliveredFilesRegion({ scope, client = resultFilesClientV1, show
     void client.list(scope, controller.signal).then(value => {
       if (!controller.signal.aborted) setData({ state: "ready", value });
     }, error => { if (!controller.signal.aborted) setData({ state: "unavailable",
-      code: error instanceof ResultFilesUnavailableError ? error.code : "unavailable" }); });
+      code: error instanceof BrowserRequestError ? error.code : "unavailable" }); });
     return () => controller.abort();
   }, [client, scope.projectId, scope.taskId, generation]);
   return <><DeliveredFilesPanel scope={scope} data={data} client={client} showTask={showTask} />

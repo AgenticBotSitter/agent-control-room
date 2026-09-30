@@ -9,12 +9,12 @@ import { DeliveredFilesPanel, DeliveredFilesRegion, ResultFileRow, safeDownloadH
   from "../private-app/app/delivered-files";
 import { ProjectFilesWithCatalog } from "../private-app/app/project-files-workspace";
 import {
-  ResultFilesUnavailableError,
   createInMemoryResultFilesClient,
   type ResultFileCatalog,
   type ResultFileSet,
   type ResultFilesClientPort,
 } from "../src/web/v1/result-files-client-port";
+import { BrowserRequestError } from "../src/web/v1/browser-client";
 
 const projectId = "project:files-ui";
 const taskId = "job:delivered";
@@ -87,6 +87,25 @@ test("missing, quarantined, and declared files cannot request or expose download
   assert.match(html, /Delivery refused/); assert.match(html, /No unverified bytes are offered/);
 });
 
+test("a held-back set says so and never presents its files as ready", () => {
+  const held: ResultFileSet = { ...sets[0]!, state: "quarantined", files: [files[0]!] };
+  const html = render([held]);
+  assert.match(html, /held back.*will not be offered for download/i);
+  assert.doesNotMatch(html, /Ready to download/);
+  assert.match(html, /Delivery refused/);
+  assert.match(html, /private-chip is-bad/);
+});
+
+test("set state copy identifies declared and incomplete sets and zero-file sets are not blank", () => {
+  const declared: ResultFileSet = { ...sets[0]!, state: "declared", files: [] };
+  const incomplete: ResultFileSet = { ...sets[0]!, state: "incomplete", files: [files[0]!] };
+  const html = render([declared, incomplete]);
+  assert.match(html, /0 files/);
+  assert.match(html, /Still arriving\. These files have not landed yet/);
+  assert.match(html, /Not all files arrived\. The files below did arrive and can be downloaded/);
+  assert.equal((html.match(/<ul /g) ?? []).length, 1, "the zero-file set has no empty list");
+});
+
 test("production download hrefs are exact same-origin relative API paths", () => {
   assert.equal(safeDownloadHref("/api/v1/projects/p/result-files/s/f/download?token=one", "production"),
     "/api/v1/projects/p/result-files/s/f/download?token=one");
@@ -146,8 +165,8 @@ test("unsafe minted links are refused, concurrent clicks coalesce, and a failed 
     const button = view.dom.window.document.querySelector("button")!;
     await React.act(async () => { button.click(); button.click(); button.click(); await Promise.resolve(); });
     assert.equal(calls, 1, "a burst starts one request");
-    await React.act(async () => { reject(new ResultFilesUnavailableError()); await Promise.resolve(); });
-    assert.match(view.dom.window.document.body.textContent ?? "", /could not be downloaded/);
+    await React.act(async () => { reject(new BrowserRequestError("authentication_required")); await Promise.resolve(); });
+    assert.match(view.dom.window.document.body.textContent ?? "", /session has ended.*Sign in again to download this file/i);
     await React.act(async () => { button.click(); await Promise.resolve(); });
     assert.equal(calls, 2, "retry starts one new request");
     await React.act(async () => { settle({ href: "https://other.example/x", expiresAt: at }); await Promise.resolve(); });
@@ -167,7 +186,7 @@ test("the mounted region aborts replaced and stopped reads without painting stal
         pending.push({ scope, signal, resolve });
       });
     },
-    async requestDownload() { throw new ResultFilesUnavailableError(); },
+    async requestDownload() { throw new BrowserRequestError("unavailable"); },
   } satisfies ResultFilesClientPort;
   const view = await mount(<DeliveredFilesRegion scope={{ projectId, taskId: "job:first" }} client={client} />);
   try {
@@ -201,9 +220,9 @@ test("the in-memory demo scopes reads, survives load, retries, and aborts slow w
   assert.ok(downloads.every(value => value.href === "data:application/octet-stream,"));
 
   const retry = createInMemoryResultFilesClient(sets, { failFirstReads: 1, failFirstDownloads: 1 });
-  await assert.rejects(retry.list({ projectId }), ResultFilesUnavailableError);
+  await assert.rejects(retry.list({ projectId }), BrowserRequestError);
   assert.equal((await retry.list({ projectId })).sets.length, 1);
-  await assert.rejects(retry.requestDownload(projectId, sets[0]!.setId, files[0]!.fileId), ResultFilesUnavailableError);
+  await assert.rejects(retry.requestDownload(projectId, sets[0]!.setId, files[0]!.fileId), BrowserRequestError);
   assert.match((await retry.requestDownload(projectId, sets[0]!.setId, files[0]!.fileId)).href, /^data:/);
 
   const slow = createInMemoryResultFilesClient(sets, { delayMs: 50 });
@@ -211,6 +230,20 @@ test("the in-memory demo scopes reads, survives load, retries, and aborts slow w
   const stopped = slow.requestDownload(projectId, sets[0]!.setId, files[0]!.fileId, controller.signal);
   controller.abort();
   await assert.rejects(stopped, error => error instanceof DOMException && error.name === "AbortError");
+});
+
+test("shared browser request failures preserve owner sign-in copy", async () => {
+  const client = { kind: "production" as const,
+    async list() { throw new BrowserRequestError("authentication_required"); },
+    async requestDownload() { throw new BrowserRequestError("authentication_required"); },
+  } satisfies ResultFilesClientPort;
+  const view = await mount(<DeliveredFilesRegion scope={{ projectId, taskId }} client={client} />);
+  try {
+    await React.act(async () => { await Promise.resolve(); });
+    assert.match(view.dom.window.document.body.textContent ?? "", /session has ended.*Sign in again to see delivered files/i);
+  } finally {
+    await view.restore();
+  }
 });
 
 test("Project Files keeps the existing saved receipt view below the catalog", () => {
