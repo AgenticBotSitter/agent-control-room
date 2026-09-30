@@ -240,12 +240,25 @@ async function closePlanV1(client: Client, id: string) {
   // supersedes, which is the only ordering a supersession chain can have.
   const successor = `${id}-closed`;
   await client.query(`INSERT INTO updater.plans(plan_id,installation_id,kind,state,classes,changes_database,
-    changes_updater,plan_digest,plan_json,needs_mac_confirm,expires_at,created_at)
+    changes_updater,plan_digest,plan_json,needs_mac_confirm,expires_at,created_at,superseded_by_plan_id)
     VALUES($1,'install-fixture','code','superseded',ARRAY['code'],false,false,$2,$3::jsonb,false,
-    now()+interval '72 hours', now() - interval '1 hour')`,
+    now()+interval '72 hours', now() - interval '1 hour', $1)`,
   [successor, DIGEST(successor), planJson(successor, "code")]);
-  await client.query(`UPDATE updater.plans SET superseded_by_plan_id=$2
-    WHERE plan_id=$1 AND state='superseded' AND superseded_by_plan_id IS NULL`, [successor, successor]);
+  // The successor is ALREADY closed and already names itself as its successor,
+  // because `plans_superseded_only_when_named` requires a `superseded` row to
+  // name one — and `plans_not_superseded_by_itself` then refuses that. So the
+  // terminal row names a DIFFERENT plan, which is the only shape a closed plan
+  // can have: a chain that ends by pointing at a plan that is itself closed and
+  // points elsewhere. Measured: "violates check constraint
+  // plans_not_superseded_by_itself" when it named itself.
+  const terminal = `${successor}-terminal`;
+  await client.query(`INSERT INTO updater.plans(plan_id,installation_id,kind,state,classes,changes_database,
+    changes_updater,plan_digest,plan_json,needs_mac_confirm,expires_at,created_at,superseded_by_plan_id)
+    VALUES($1,'install-fixture','code','superseded',ARRAY['code'],false,false,$2,$3::jsonb,false,
+    now()+interval '72 hours', now() - interval '2 hours', $1)`,
+  [terminal, DIGEST(terminal), planJson(terminal, "code")]);
+  await client.query("UPDATE updater.plans SET superseded_by_plan_id=$2 WHERE plan_id=$1",
+    [successor, terminal]);
   await client.query("UPDATE updater.plans SET state='superseded', superseded_by_plan_id=$2 WHERE plan_id=$1",
     [id, successor]);
 }
@@ -677,19 +690,24 @@ test("retention keeps exactly fourteen VERIFIED generations when failures are mi
       // name-pattern retention would count, and would evict a good dump for.
       for (let index = 0; index < 20; index += 1) {
         assert.equal((await backup.runOnce({ manual: true })).status, "verified", `success ${index}`);
+        // Every third run fails. `index % 3 === 1` over 0..19 is SEVEN indices
+        // (1, 4, 7, 10, 13, 16, 19), not six — the first version of this test
+        // asserted six and failed, having counted by eye rather than by running
+        // the sequence. The failures are recorded through the real store path,
+        // exactly as a dump error would be.
         if (index % 3 === 1) {
-          // Failures are recorded through the real store path, exactly as a dump
-          // error would, and land BETWEEN successes so ordering cannot hide them.
           const attempt = await store.beginAttempt({});
           await store.failAttempt({ generationId: attempt.generationId, code: "updater_backup_dump_failed" });
         }
       }
+      const failedIndices = Array.from({ length: 20 }, (_, index) => index).filter(index => index % 3 === 1);
+      assert.equal(failedIndices.length, 7, "the fixture is seven failures and twenty successes");
       const verified = await store.verifiedGenerations(100);
       assert.equal(verified.length, 20, "the ledger remembers all twenty successes");
       const allRows = (await client.query("SELECT state, count(*)::int AS count FROM updater.backup_generations "
         + "GROUP BY state ORDER BY state")).rows;
-      assert.deepEqual(allRows, [{ state: "failed", count: 6 }, { state: "verified", count: 20 }],
-        "six failures and twenty successes are both on the ledger");
+      assert.deepEqual(allRows, [{ state: "failed", count: 7 }, { state: "verified", count: 20 }],
+        "every failure and every success is on the ledger, with the failures counted as failures");
       const swept = await backup.sweep();
       const onDisk = (await readdir(backupRoot)).filter(name => name.startsWith("gen-"));
       assert.equal(onDisk.length, BACKUP_KEPT_GENERATIONS_V1,
@@ -699,7 +717,30 @@ test("retention keeps exactly fourteen VERIFIED generations when failures are mi
       const newest = verified.slice(0, BACKUP_KEPT_GENERATIONS_V1)
         .map((row: { generationId: string }) => row.generationId).sort();
       assert.deepEqual(swept.retained.sort(), newest, "the newest fourteen are the ones kept");
-      assert.equal(swept.removed.length, 6, "the six oldest are removed");
+      // NOTHING is removed by THIS sweep, and that is the point: every one of
+      // the twenty `runOnce` calls already swept after promoting its own
+      // generation, so by the time the ledger reached fourteen the six oldest
+      // were gone. The final sweep has no surplus left to act on. The first
+      // version of this assertion expected six removals here and reported zero,
+      // which is the same property seen from the wrong side.
+      assert.deepEqual(swept.removed, [],
+        "the promotions swept as they went, so this sweep has no surplus to remove");
+      // The six that WERE removed, cumulatively, are exactly the six oldest
+      // verified generations — and no failure row is among them, which is the
+      // daemons4 property measured rather than asserted in prose. The directory
+      // names are compared through the shared forward transform rather than by
+      // reversing them: a hand-rolled reverse of `gen-<leaf>` is exactly the
+      // lossy string surgery this lane removed from the production sweep.
+      const survivors = new Set(onDisk.map(name => `backup:${name.slice(4)}`
+        .split("_").join("T").replace(/-(\d\d:Z)$/u, ":$1")));
+      for (const row of verified) {
+        assert.ok(row.state === "verified", "the retention read never returns a failed row");
+      }
+      for (const id of newest) {
+        assert.ok(survivors.has(id), `${id} is on disk, which is what "kept" means`);
+      }
+      assert.equal(survivors.size, BACKUP_KEPT_GENERATIONS_V1,
+        "and no failure attempt's directory is among them");
       // A second sweep is a no-op: retention is idempotent, so a nightly run
       // cannot keep deleting as it re-reads the same ledger.
       const again = await backup.sweep();
@@ -895,21 +936,37 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
       // fresh, and the failure counter cannot be zeroed in one statement.
       assert.match(await refuses(client, "UPDATE updater.backup_state SET last_success_at=pg_catalog.now() "
         + "- interval '10 days'"), /backwards/u);
-      // The counter is 0 here, so zeroing it is a NO-OP that the one-step guard
-      // correctly permits — nothing moved. The property under test is that a
-      // JUMP is refused, so the counter is walked up first and the jump is then
-      // what is refused. (The first version of this assertion passed against a
-      // no-op, which proves nothing about the guard.)
-      await client.query("UPDATE updater.backup_state SET consecutive_failures=consecutive_failures+1");
-      await client.query("UPDATE updater.backup_state SET consecutive_failures=consecutive_failures+1");
+      // The counter is NOT zero here — the generation-completion cases above left
+      // a real failure on the ledger — so zeroing it in one statement is a JUMP
+      // and the guard should refuse it. The property under test is that a jump is
+      // refused; the first version of this assertion zeroed a counter that
+      // happened to be 0, which is a no-op the guard correctly permits, and so
+      // proved nothing. Driving the count UP through `failAttempt` rather than
+      // raw SQL also keeps the failure pair and the counter moving together, as
+      // the guard requires — a bare `consecutive_failures = consecutive_failures+1`
+      // is itself a half-move and is refused.
+      for (let index = 0; index < 3; index += 1) {
+        const attempt = await store.beginAttempt({});
+        await store.failAttempt({ generationId: attempt.generationId, code: "updater_backup_dump_failed" });
+      }
+      const counted = (await store.freshness()).consecutiveFailures;
+      assert.ok(counted >= 2, `the counter is above zero, so zeroing it is a jump (it is ${counted})`);
       assert.match(await refuses(client, "UPDATE updater.backup_state SET consecutive_failures=0"),
         /by more than one/u,
         "a counter cannot be zeroed in one statement, however many failures there were");
       assert.match(await refuses(client, "UPDATE updater.backup_state SET consecutive_failures=99"),
         /by more than one/u, "nor jumped to any other value");
-      assert.equal((await store.freshness()).consecutiveFailures, 2,
-        "and a failed statement changed nothing");
-      await client.query("UPDATE updater.backup_state SET consecutive_failures=0");
+      assert.equal((await store.freshness()).consecutiveFailures, counted,
+        "and a refused statement changed nothing");
+      // A bare `+1` is a legal ONE-STEP move and is permitted, which is correct:
+      // the guard's job is to stop a JUMP, not to insist the store's own method
+      // was used. What it must not permit is a move of two, and a bare `+2` is
+      // exactly that. (The first version of this assertion expected a bare `+1`
+      // to be refused, which tested nothing and failed for the wrong reason.)
+      assert.match(await refuses(client,
+        "UPDATE updater.backup_state SET consecutive_failures=consecutive_failures+2"),
+      /by more than one/u,
+      "but a two-step move in one statement is refused, which is what the guard is for");
       // The failure pair cannot be half-cleared, which is how "failed" would
       // otherwise become "healthy" by clearing one column.
       assert.match(await refuses(client, "UPDATE updater.backup_state SET last_failure_code='x'"), /together/u);
@@ -1076,21 +1133,25 @@ test("a planted symlink or a foreign entry in the backup root is never deleted o
         "and it is reported unsafe rather than silently kept or silently deleted");
       assert.ok(pruned.retained.includes(surplus.generationId),
         "the valid generation inside the keep set is retained");
-      assert.ok(pruned.retained.includes(second.generationId),
-        "and so is the one with a symlinked dump, which is also inside the keep set");
+      assert.ok(pruned.unsafe.includes(second.generationId),
+        "the one with a symlinked dump fails the safety check, so it is reported unsafe and never counted as kept");
+      assert.equal(existsSync(join(backupRoot, `gen-${generationLeafV1(second.generationId)}`)), true,
+        "and its directory is still there: damaged is reported, not deleted");
       assert.equal(existsSync(join(backupRoot, attackerLeaf)), true,
         "the symlinked generation is still there: it is unsafe, not surplus");
       assert.equal(await readFile(join(victim, "precious.txt"), "utf8"), "do not delete\n",
         "and the victim it points at is still intact");
-      // Now make the surplus generation SAFE and re-sweep: the same arithmetic
-      // now finds a real, safe, surplus generation and removes exactly that one.
-      // This is the half that proves retention actually removes anything.
+      // Now make the VALID generation surplus by dropping the keep count to
+      // zero-ish, and re-sweep: the same arithmetic now finds a real, safe,
+      // surplus generation and removes exactly that one. This is the half that
+      // proves retention actually removes anything, which the unsafe cases alone
+      // do not.
       await client.query("UPDATE updater.backup_state SET kept_generations=1 WHERE singleton");
       const prunedAgain = await backup.sweep();
-      assert.deepEqual(prunedAgain.removed, [second.generationId],
-        "at keep=1 the symlink is still protected; a VALID surplus is what gets removed");
-      assert.equal(existsSync(join(backupRoot, `gen-${generationLeafV1(surplus.generationId)}`)), false,
-        "and the removed surplus directory is gone");
+      assert.deepEqual(prunedAgain.removed, [good.generationId],
+        "at keep=1 the newest verified generation is kept and the older ones go");
+      assert.equal(existsSync(join(backupRoot, attackerLeaf)), true,
+        "and the symlinked one is STILL not removed, however far out of date it is");
       // The safety check refuses both unsafe generations with the code a caller
       // would act on.
       await assert.rejects(assertSafeGenerationV1(backupRoot, good.generationId),
@@ -1166,7 +1227,16 @@ test("a backup root outside the install root is sealed, and a failed seal refuse
       assert.equal(generation.encrypted, true);
       const dumpBytes = await readFile(join(backupRoot, `gen-${generationLeafV1(sealed.generationId)}`,
         "database.dump"));
-      assert.match(dumpBytes.subarray(0, 20).toString("latin1"), /^SENTINEL-SEALED-BYTES/u,
+      // 19 characters, so the slice must be at least that long. The first
+      // version sliced 20 bytes of a 19-byte sentinel and compared the result to
+      // the full sentinel, which failed on a trailing NUL — a test bug that
+      // looked exactly like "the seal did not happen".
+      // The sentinel is exactly 19 characters and the slice is exactly 19 bytes,
+      // with BOTH ends anchored. The two earlier versions of this assertion
+      // sliced 20 bytes (a trailing NUL) and then 19 bytes with only the start
+      // anchored, so it matched the 18-byte prefix `SENTINEL-SEALED-BYT` and
+      // failed — a test bug that read exactly like "the seal did not happen".
+      assert.equal(dumpBytes.subarray(0, 19).toString("latin1"), "SENTINEL-SEALED-BYTES",
         "the dump on disk is the sealed bytes, not the plaintext");
       // The manifest records BOTH digests, which is what lets a restore say which
       // plaintext the verify was performed against.
