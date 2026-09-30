@@ -183,14 +183,26 @@ export class IdeaLabCanonicalTaskLinkStoreV1 {
       // the winner's row and applies exactly the same verification. Both paths
       // converge on the same unique link, so a duplicate can never fork.
       const tag = this.#tag("idea_task_link", link.tenantId, link.taskKey, link.linkDigest);
-      const inserted = await tx.query<{ payload: unknown; link_auth_tag: string }>(
-        `INSERT INTO control_idea_canonical_task_links(tenant_id,task_key,session_id,session_digest,workspace_id,project_id,
-          participant_id,round,task_plan_digest,task_input_digest,job_id,request_id,link_digest,link_auth_tag,payload,created_at)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16)
-         ON CONFLICT (tenant_id,task_key) DO NOTHING RETURNING payload,link_auth_tag`,
-        [link.tenantId, link.taskKey, link.sessionId, link.sessionDigest, link.workspaceId, link.projectId,
-          link.participantId, link.round, link.taskPlanDigest, link.taskInputDigest, link.jobId, link.requestId,
-          link.linkDigest, tag, JSON.stringify(link), link.createdAt]);
+      let inserted: { rows: readonly { payload: unknown; link_auth_tag: string }[] };
+      try {
+        inserted = await tx.query<{ payload: unknown; link_auth_tag: string }>(
+          `INSERT INTO control_idea_canonical_task_links(tenant_id,task_key,session_id,session_digest,workspace_id,project_id,
+            participant_id,round,task_plan_digest,task_input_digest,job_id,request_id,link_digest,link_auth_tag,payload,created_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16)
+           ON CONFLICT (tenant_id,task_key) DO NOTHING RETURNING payload,link_auth_tag`,
+          [link.tenantId, link.taskKey, link.sessionId, link.sessionDigest, link.workspaceId, link.projectId,
+            link.participantId, link.round, link.taskPlanDigest, link.taskInputDigest, link.jobId, link.requestId,
+            link.linkDigest, tag, JSON.stringify(link), link.createdAt]);
+      } catch (error) {
+        // A DIFFERENT link for a task key that is already taken loses the
+        // primary-key race, which PostgreSQL raises as a unique violation
+        // rather than resolving through ON CONFLICT (that clause only covers
+        // the caller's own key). Report it as the duplicate the caller must
+        // tell apart from a replay, rather than as a driver error carrying an
+        // internal constraint name toward the browser boundary.
+        if ((error as { code?: unknown }).code === "23505") throw new IdeaLabErrorV1("duplicate_record");
+        throw error;
+      }
       // Read back inside this transaction whether or not the INSERT won, so the
       // stored row - never the caller's own values - is what gets verified.
       const existing = inserted.rows.length ? inserted
