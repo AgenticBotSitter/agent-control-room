@@ -1363,7 +1363,13 @@ test("one description gives one Needs-you item however many times it is pressed,
       const db = database(coordinator), scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
       const failures = new PostgresIntakePlannerFailureStoreV1(db, scopeOf, () => LATER);
       const needsYou = new PostgresIntakeNeedsYouStoreV1(db, () => ({ identityId: "identity:orch-agent" }), () => LATER);
-      const retry = new PostgresIntakeOwnerRetryStoreV1(db);
+      // The retry store runs on the OWNER'S WEB LOGIN, not the coordinator's, and
+      // that is the product's authority rather than a test convenience: after
+      // round 4's REVOKE the only login holding EXECUTE on
+      // `control_room_planner_grant_owner_retry` is `control_room_private_web`. A
+      // store built on the coordinator pool fails 42501 here, which is the property
+      // worth keeping.
+      const retry = new PostgresIntakeOwnerRetryStoreV1(database(web));
       const description = "Make the release notes match the shipped behaviour.";
       const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
 
@@ -1648,6 +1654,11 @@ test("ONE owner grant and twenty concurrent presses is ONE run, and nineteen hon
       // Two failures to reach the escalation, on ONE connection: this part is
       // sequential on purpose, because the defect is not in the counting.
       const setup = new Client(postgres.connection("coordinator")); await setup.connect();
+      // The grant is the OWNER's act and runs on the owner's web login: after
+      // round 4's REVOKE that is the only login holding EXECUTE on
+      // `control_room_planner_grant_owner_retry`, so a coordinator pool here would
+      // fail 42501 -- which is the property, not an obstacle.
+      const ownerLogin = new Client(postgres.connection("web")); await ownerLogin.connect();
       const setupDb = database(setup);
       const broken = build(setupDb, { async run() { throw new Error("planner down"); } },
         { async submit() { throw new Error("a broken planner cannot submit"); } });
@@ -1661,13 +1672,12 @@ test("ONE owner grant and twenty concurrent presses is ONE run, and nineteen hon
       // login holding EXECUTE on it is `control_room_private_web`; a test that
       // granted over the coordinator pool would have passed before the REVOKE and
       // fails 42501 after it, which is the property worth keeping.
-      const ownerPool = new Client(postgres.connection("web")); await ownerPool.connect();
-      const grant = () => new PostgresIntakeOwnerRetryStoreV1(database(ownerPool)).grant({ tenantId: scope.tenantId,
+      const grant = () => new PostgresIntakeOwnerRetryStoreV1(database(ownerLogin)).grant({ tenantId: scope.tenantId,
         projectId: scope.projectId, requestKey: "p3-retry-0001", ownerRequest: description });
       assert.equal(await grant(), 1);
       // A second grant is refused, so the twenty presses below cannot be spending
       // twenty latches -- the bound has to be in the GRANT as well as the spend.
-      assert.equal(await new PostgresIntakeOwnerRetryStoreV1(database(ownerPool)).grant({ tenantId: scope.tenantId,
+      assert.equal(await new PostgresIntakeOwnerRetryStoreV1(database(ownerLogin)).grant({ tenantId: scope.tenantId,
         projectId: scope.projectId, requestKey: "p3-retry-0002", ownerRequest: description }), 0,
       "one escalation earns one retry");
       // THE COORDINATOR IS REFUSED, and this is the assertion that holds the
@@ -1684,7 +1694,7 @@ test("ONE owner grant and twenty concurrent presses is ONE run, and nineteen hon
       // claiming otherwise would break the retry it exists to protect.
       await assert.doesNotReject(() => database(setup)
         .query("UPDATE control_planner_failure_counters SET owner_retry_cleared_at=NULL WHERE false"));
-      await setup.end(); await ownerPool.end();
+      await setup.end(); await ownerLogin.end();
 
       const clients = await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
         const client = new Client(postgres.connection("coordinator")); await client.connect(); return client;
@@ -1776,7 +1786,14 @@ test("the REAL coordinator spends a granted latch through the real store, and th
       const scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
       const failures = new PostgresIntakePlannerFailureStoreV1(db, scopeOf, () => LATER);
       const needsYou = new PostgresIntakeNeedsYouStoreV1(db, () => ({ identityId: "identity:orch-agent" }), () => LATER);
-      const retry = new PostgresIntakeOwnerRetryStoreV1(db);
+      // On the OWNER'S WEB LOGIN, not the coordinator's: after round 4's REVOKE that
+      // is the only login holding EXECUTE on
+      // `control_room_planner_grant_owner_retry`. Everything else in this test runs
+      // on the coordinator, which is the point of the test -- the grant is the
+      // owner's act and the spend is the coordinator's, and they are different
+      // authorities precisely because they are different logins.
+      const ownerLogin = new Client(postgres.connection("web")); await ownerLogin.connect();
+      const retry = new PostgresIntakeOwnerRetryStoreV1(database(ownerLogin));
       const description = "Reconcile the digest helper with the ledger writer.";
       const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
 
