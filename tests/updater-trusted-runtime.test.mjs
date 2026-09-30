@@ -1,0 +1,353 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import test from "node:test";
+import {
+  SERVICE_PROFILE_ROLES,
+  TRUSTED_RUNTIME_MANIFEST_SCHEMA,
+  XCRUN_TOOL_NAMES,
+  assertT1Executable,
+  assertT1Path,
+  buildServiceProfileParameters,
+  buildTrustedEnvironment,
+  isAlwaysStrippedEnvironmentName,
+  parseOtoolLibraries,
+  parseOtoolRpaths,
+  resolveDeveloperTools,
+  resolveXcrunTools,
+  spawnTrusted,
+  trustedToolEnvironment,
+  validateTrustedRuntimeManifest,
+} from "../src/updater/v1/trusted-runtime.mjs";
+import { vendorTrustedRuntime } from "../scripts/updater/vendor-trusted-runtime.mjs";
+
+const repositoryRoot = dirname(dirname(new URL(import.meta.url).pathname));
+const policyRoot = join(repositoryRoot, "src/updater/v1/policy");
+const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+const readJson = async name => JSON.parse(await readFile(join(policyRoot, name), "utf8"));
+
+function fakeEntry({ uid = 0, mode = 0o100555, type = "file" } = {}) {
+  return { uid, mode,
+    isFile: () => type === "file", isDirectory: () => type === "directory", isSymbolicLink: () => type === "symlink" };
+}
+
+function fakeRuntime(overrides = {}, realpaths = {}) {
+  const entries = new Map(Object.entries({
+    "/": fakeEntry({ mode: 0o040755, type: "directory" }),
+    "/usr": fakeEntry({ mode: 0o040755, type: "directory" }),
+    "/usr/bin": fakeEntry({ mode: 0o040755, type: "directory" }),
+    "/usr/lib": fakeEntry({ mode: 0o040755, type: "directory" }),
+    "/usr/bin/xcrun": fakeEntry(),
+    "/usr/bin/sandbox-exec": fakeEntry(),
+    "/usr/bin/xcode-select": fakeEntry(),
+    "/usr/lib/libSystem.B.dylib": fakeEntry({ mode: 0o100444 }),
+    "/runtime": fakeEntry({ mode: 0o040555, type: "directory" }),
+    "/runtime/node": fakeEntry({ mode: 0o040555, type: "directory" }),
+    "/runtime/node/bin": fakeEntry({ mode: 0o040555, type: "directory" }),
+    "/runtime/node/bin/node": fakeEntry(),
+    "/runtime/node/lib": fakeEntry({ mode: 0o040555, type: "directory" }),
+    "/runtime/node/lib/libtrusted.dylib": fakeEntry({ mode: 0o100444 }),
+    "/updater": fakeEntry({ mode: 0o040555, type: "directory" }),
+    "/updater/policy": fakeEntry({ mode: 0o040555, type: "directory" }),
+    "/updater/policy/service-builder.sb": fakeEntry({ mode: 0o100444 }),
+    ...overrides,
+  }));
+  return {
+    realpath: async path => realpaths[path] ?? path,
+    lstat: async path => entries.has(path) ? entries.get(path) : Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" })),
+  };
+}
+
+async function cleanupRoot(root) {
+  const entry = await lstat(root).catch(() => undefined);
+  if (!entry) return;
+  const makeWritable = async path => {
+    const item = await lstat(path);
+    if (!item.isDirectory() || item.isSymbolicLink()) return;
+    await chmod(path, 0o700);
+    for (const name of await readdir(path)) await makeWritable(join(path, name));
+  };
+  await makeWritable(root);
+  await rm(root, { recursive: true, force: true });
+}
+
+test("runtime policy pins the repository's Node, pnpm and esbuild artifacts and fixed bundle tool", async () => {
+  const manifest = validateTrustedRuntimeManifest(await readJson("runtime.json"));
+  assert.equal(manifest.schema, TRUSTED_RUNTIME_MANIFEST_SCHEMA);
+  assert.deepEqual(manifest.artifacts.map(item => `${item.tool}@${item.version}`),
+    ["node@22.13.0", "pnpm@11.19.0", "esbuild@0.28.2"]);
+  assert.equal(new Set(manifest.artifacts.map(item => item.archiveSha256)).size, 3);
+  const bundle = await readJson("bundle.json");
+  assert.equal(bundle.tool, "runtime/esbuild-current/esbuild");
+  assert.equal(bundle.candidateBuildOutputAccepted, false);
+  assert.deepEqual(bundle.arguments.slice(0, 4), ["--bundle", "--platform=node", "--format=esm", "--target=node22"]);
+});
+
+test("runtime manifest rejects a duplicate, unpinned, insecure or escaping artifact", async () => {
+  const base = await readJson("runtime.json");
+  for (const mutate of [
+    value => { value.artifacts[2].tool = "node"; },
+    value => { value.artifacts[0].archiveSha256 = "0".repeat(63); },
+    value => { value.artifacts[1].url = "http://example.invalid/pnpm"; },
+    value => { value.artifacts[2].executableRelativePath = "../escape"; },
+  ]) {
+    const value = structuredClone(base); mutate(value);
+    assert.throws(() => validateTrustedRuntimeManifest(value), /trusted_runtime_manifest_invalid/u);
+  }
+});
+
+test("spawn environments start empty and strip every design-listed injection family", () => {
+  const names = ["PATH", "NODE_OPTIONS", "NODE_PATH", "DYLD_INSERT_LIBRARIES", "HOME", "npm_config_registry",
+    "GIT_CONFIG_GLOBAL", "DEVELOPER_DIR", "SDKROOT", "OPENSSL_CONF", "SSL_CERT_FILE", "KRB5_CONFIG",
+    "PGSERVICE", "TMPDIR", "BASH_ENV", "ENV"];
+  for (const name of names) {
+    assert.equal(isAlwaysStrippedEnvironmentName(name), true, name);
+    assert.throws(() => buildTrustedEnvironment({ [name]: "hostile" }), /trusted_spawn_environment_refused/u);
+  }
+  process.env.NODE_OPTIONS = "--require=/untrusted/module";
+  try { assert.deepEqual(buildTrustedEnvironment({ NODE_ENV: "production" }), { LANG: "C", LC_ALL: "C", NODE_ENV: "production" }); }
+  finally { delete process.env.NODE_OPTIONS; }
+  assert.deepEqual(trustedToolEnvironment("git"), {
+    LANG: "C", LC_ALL: "C", HOME: "/var/empty", GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null",
+  });
+  assert.equal(trustedToolEnvironment("pnpm").NPM_CONFIG_USERCONFIG, "/dev/null");
+});
+
+test("T1 checks root ownership, ancestor modes, init files and the dynamic-library closure", async () => {
+  const runtime = fakeRuntime();
+  const result = await assertT1Executable("/runtime/node/bin/node", {
+    allowedRoots: ["/runtime"], initConfigFiles: ["/dev/null"], runtime,
+    inspectLibraries: async image => image.endsWith("/node")
+      ? ["@loader_path/../lib/libtrusted.dylib", "/usr/lib/libSystem.B.dylib"] : ["/usr/lib/libSystem.B.dylib"],
+  });
+  assert.deepEqual(result.images, ["/runtime/node/bin/node", "/runtime/node/lib/libtrusted.dylib"]);
+
+  await assert.rejects(assertT1Path("/runtime/node/bin/node", { allowedRoots: ["/runtime"], executable: true,
+    runtime: fakeRuntime({ "/runtime/node": fakeEntry({ uid: 501, mode: 0o040555, type: "directory" }) }) }), /t1_path_writable/u);
+  await assert.rejects(assertT1Path("/runtime/node/bin/node", { allowedRoots: ["/runtime"], executable: true,
+    runtime: fakeRuntime({ "/runtime/node": fakeEntry({ mode: 0o040575, type: "directory" }) }) }), /t1_path_writable/u);
+  await assert.rejects(assertT1Path("/runtime/node/bin/node", { allowedRoots: ["/runtime"], executable: true,
+    runtime: { ...fakeRuntime(), inspectAcl: async path => path === "/runtime/node" ? ["0: group:staff allow write"] : [] } }),
+  /t1_path_writable/u);
+  await assert.rejects(assertT1Path("/runtime/node/bin/node", { allowedRoots: ["/updater"], executable: true, runtime }),
+    /t1_path_outside_roots/u);
+  await assert.rejects(assertT1Executable("/runtime/node/bin/node", { allowedRoots: ["/runtime"], runtime,
+    inspectLibraries: async () => ["@rpath/libhostile.dylib"] }), /t1_library_unresolved/u);
+  await assert.rejects(assertT1Executable("/runtime/node/bin/node", { allowedRoots: ["/runtime"],
+    initConfigFiles: ["/runtime/node/init.conf"],
+    runtime: fakeRuntime({ "/runtime/node/init.conf": fakeEntry({ uid: 501, mode: 0o100444 }) }),
+    inspectLibraries: async () => [] }), /t1_path_writable/u);
+});
+
+test("otool parser accepts exact dependency rows and refuses ambiguous output", () => {
+  assert.deepEqual(parseOtoolLibraries("/runtime/node:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\n"),
+    ["/usr/lib/libSystem.B.dylib"]);
+  assert.throws(() => parseOtoolLibraries("image:\n  hostile\n"), /t1_otool_output_invalid/u);
+  assert.deepEqual(parseOtoolRpaths("Load command 1\n          cmd LC_RPATH\n      cmdsize 40\n         path @executable_path/../lib (offset 12)\n"),
+    ["@executable_path/../lib"]);
+  assert.throws(() => parseOtoolRpaths("cmd LC_RPATH\nmissing\n"), /t1_otool_output_invalid/u);
+});
+
+test("xcrun resolution uses a clean environment and T1-checks every resolved tool and ancestor", async () => {
+  const developerEntries = {
+    "/Library": fakeEntry({ mode: 0o040755, type: "directory" }),
+    "/Library/Developer": fakeEntry({ mode: 0o040755, type: "directory" }),
+    "/Library/Developer/CommandLineTools": fakeEntry({ mode: 0o040755, type: "directory" }),
+    "/Library/Developer/CommandLineTools/usr": fakeEntry({ mode: 0o040755, type: "directory" }),
+    "/Library/Developer/CommandLineTools/usr/bin": fakeEntry({ mode: 0o040755, type: "directory" }),
+  };
+  for (const tool of XCRUN_TOOL_NAMES) developerEntries[`/Library/Developer/CommandLineTools/usr/bin/${tool}`] = fakeEntry();
+  const calls = [], runtime = { ...fakeRuntime(developerEntries), inspectLibraries: async () => [], execFile: async (file, args, options) => {
+    calls.push({ file, args, options });
+    return { stdout: `/Library/Developer/CommandLineTools/usr/bin/${args[1]}\n`, stderr: "" };
+  } };
+  const resolved = await resolveXcrunTools({ allowedRoots: ["/Library/Developer/CommandLineTools"], runtime });
+  assert.deepEqual(Object.keys(resolved), XCRUN_TOOL_NAMES);
+  assert.equal(calls.every(call => !Object.hasOwn(call.options.env, "DEVELOPER_DIR") && !Object.hasOwn(call.options.env, "SDKROOT")), true);
+
+  const hostile = { ...runtime, lstat: async path => path === "/Library/Developer"
+    ? fakeEntry({ uid: 501, mode: 0o040755, type: "directory" }) : runtime.lstat(path) };
+  await assert.rejects(resolveXcrunTools({ allowedRoots: ["/Library/Developer/CommandLineTools"], runtime: hostile }), /t1_path_writable/u);
+});
+
+test("the current Mac resolves every xcrun shim to a root-owned developer tool", { skip: process.platform === "darwin" ? false : "macOS xcrun only" }, async () => {
+  const result = await resolveDeveloperTools();
+  assert.equal(result.developerDirectory.startsWith("/Library/Developer/"), true);
+  assert.deepEqual(Object.keys(result.tools), XCRUN_TOOL_NAMES);
+  for (const path of Object.values(result.tools)) assert.equal(path.startsWith(result.developerDirectory) || path.startsWith("/usr/bin/"), true);
+});
+
+test("spawn helper drops uid before sandbox-exec and cannot inherit a hostile environment", async () => {
+  let observed;
+  const runtime = { ...fakeRuntime(), spawn: (...args) => { observed = args; return { pid: 42 }; } };
+  const profileParameters = buildServiceProfileParameters("builder", { installRoot: "/install", jobId: "one" });
+  process.env.DEVELOPER_DIR = "/untrusted/Xcode.app";
+  try {
+    const child = await spawnTrusted({ role: "builder", executable: "/runtime/node/bin/node", args: ["--version"],
+      profile: "/updater/policy/service-builder.sb", allowedRoots: ["/runtime", "/updater"], uid: 301, gid: 301,
+      environment: { NODE_ENV: "production" }, profileParameters, inspectLibraries: async () => [] }, runtime);
+    assert.equal(child.pid, 42);
+  } finally { delete process.env.DEVELOPER_DIR; }
+  assert.equal(observed[0], "/usr/bin/sandbox-exec");
+  assert.deepEqual(observed[1].slice(-3), ["--", "/runtime/node/bin/node", "--version"]);
+  assert.equal(observed[2].uid, 301); assert.equal(observed[2].gid, 301); assert.equal(observed[2].shell, false);
+  assert.deepEqual(observed[2].env, { LANG: "C", LC_ALL: "C", NODE_ENV: "production" });
+  await assert.rejects(spawnTrusted({ role: "builder", executable: "/runtime/node/bin/node", args: [],
+    profile: "/updater/policy/service-builder.sb", allowedRoots: ["/runtime", "/updater"], uid: 301, gid: 301,
+    environment: { NODE_OPTIONS: "--require=/bad" }, profileParameters, inspectLibraries: async () => [] }, runtime),
+  /trusted_spawn_environment_refused/u);
+  await assert.rejects(spawnTrusted({ role: "builder", executable: "/runtime/node/bin/node", args: [],
+    profile: "/updater/policy/service-builder.sb", allowedRoots: ["/runtime", "/updater"], uid: 301, gid: 301,
+    profileParameters: [["JOB_ROOT", "/"]], inspectLibraries: async () => [] }, runtime),
+  /trusted_spawn_input_invalid/u);
+});
+
+test("service profile parameters are role-bound and cannot widen writes to owner or global roots", () => {
+  assert.deepEqual(buildServiceProfileParameters("postgres", { installRoot: "/install", dataId: "blue" }), [
+    ["DATA_ROOT", "/install/pg/data-blue"], ["SOCKET_ROOT", "/install/pg/socket"],
+    ["OUT_LOG", "/install/logs/postgres/out.log"], ["ERR_LOG", "/install/logs/postgres/err.log"],
+  ]);
+  for (const installRoot of ["/", "/Users/owner/runtime", "/opt/homebrew/runtime", "/usr/local/runtime"])
+    assert.throws(() => buildServiceProfileParameters("builder", { installRoot, jobId: "one" }),
+      /trusted_spawn_profile_parameter_invalid/u);
+  for (const jobId of ["", "../escape", "UPPER", "x".repeat(65)])
+    assert.throws(() => buildServiceProfileParameters("builder", { installRoot: "/install", jobId }),
+      /trusted_spawn_profile_parameter_invalid/u);
+});
+
+const parametersFor = (role, root) => ({
+  supervisor: [["RUNTIME_STATE", join(root, "state")], ["OUT_LOG", join(root, "out")], ["ERR_LOG", join(root, "err")]],
+  gateway: [["RUNTIME_STATE", join(root, "state")], ["OUT_LOG", join(root, "out")], ["ERR_LOG", join(root, "err")]],
+  postgres: [["DATA_ROOT", join(root, "data")], ["SOCKET_ROOT", join(root, "socket")], ["OUT_LOG", join(root, "out")], ["ERR_LOG", join(root, "err")]],
+  builder: [["JOB_ROOT", join(root, "job")], ["TMPDIR", join(root, "job/tmp")], ["OUT_LOG", join(root, "out")], ["ERR_LOG", join(root, "err")]],
+  upgrader: [["SCRATCH_ROOT", join(root, "scratch")], ["SOCKET_ROOT", join(root, "socket")], ["OUT_LOG", join(root, "out")], ["ERR_LOG", join(root, "err")]],
+})[role];
+
+test("every service profile denies Homebrew, local and owner-home reads and bounds writes", async () => {
+  for (const role of SERVICE_PROFILE_ROLES) {
+    const source = await readFile(join(policyRoot, `service-${role}.sb`), "utf8");
+    assert.match(source, /\(subpath "\/opt\/homebrew"\)/u, role);
+    assert.match(source, /\(subpath "\/Users"\)/u, role);
+    assert.match(source, /\(subpath "\/usr\/local"\)/u, role);
+    assert.match(source, /\(literal "\/usr\/local\/bin\/control-room"\)/u, role);
+    assert.match(source, /\(deny file-write\*/u, role);
+  }
+});
+
+test("macOS loads every service profile and denied trees fail closed at run time", { skip: process.platform === "darwin" ? false : "macOS Seatbelt only" }, async t => {
+  const probe = spawnSync("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"],
+    { encoding: "utf8", env: {} });
+  const nestedProfilesBlocked = probe.status === 71 && probe.stderr.includes("sandbox_apply: Operation not permitted");
+  const root = await mkdtemp(join(tmpdir(), "acr-service-profiles-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const role of SERVICE_PROFILE_ROLES) {
+    const parameters = parametersFor(role, root);
+    const args = parameters.flatMap(([name, value]) => ["-D", `${name}=${value}`]);
+    const profile = join(policyRoot, `service-${role}.sb`);
+    const okay = spawnSync("/usr/bin/sandbox-exec", [...args, "-f", profile, "/usr/bin/true"], { encoding: "utf8", env: {} });
+    if (nestedProfilesBlocked) {
+      assert.equal(okay.status, 71, `${role} did not parse before sandbox_apply`);
+      assert.match(okay.stderr, /sandbox_apply: Operation not permitted/u, role);
+      continue;
+    }
+    assert.equal(okay.status, 0, `${role}: ${okay.stderr}`);
+    for (const denied of [repositoryRoot, "/usr/local", "/opt/homebrew"]) {
+      const result = spawnSync("/usr/bin/sandbox-exec", [...args, "-f", profile, "/bin/ls", denied], { encoding: "utf8", env: {} });
+      assert.notEqual(result.status, 0, `${role} read ${denied}`);
+    }
+    const writable = parameters[0][1];
+    await mkdir(writable, { recursive: true });
+    const allowed = spawnSync("/usr/bin/sandbox-exec", [...args, "-f", profile, "/usr/bin/touch", join(writable, `seatbelt-${role}`)],
+      { encoding: "utf8", env: {} });
+    assert.equal(allowed.status, 0, `${role} allowed write: ${allowed.stderr}`);
+    const blocked = spawnSync("/usr/bin/sandbox-exec", [...args, "-f", profile, "/usr/bin/touch", join(dirname(root), `seatbelt-${role}-outside`)],
+      { encoding: "utf8", env: {} });
+    assert.notEqual(blocked.status, 0, `${role} outside write`);
+  }
+  if (nestedProfilesBlocked) t.skip("profiles parsed; the calling sandbox forbids their run-time application");
+});
+
+async function fixtureArchives(root) {
+  const source = join(root, "source"), trees = join(root, "trees");
+  await mkdir(source); await mkdir(trees);
+  const definitions = [
+    { tool: "node", archiveName: "node.tgz", executableRelativePath: "bin/node", archiveRoot: "node-v1.2.3", archiveFile: "node-v1.2.3/bin/node" },
+    { tool: "pnpm", archiveName: "pnpm.tgz", executableRelativePath: "pnpm", archiveRoot: ".", archiveFile: "pnpm" },
+    { tool: "esbuild", archiveName: "esbuild.tgz", executableRelativePath: "esbuild", archiveRoot: ".", archiveFile: "package/bin/esbuild" },
+  ];
+  const artifacts = [];
+  for (const definition of definitions) {
+    const tree = join(trees, definition.tool), file = join(tree, definition.archiveFile);
+    await mkdir(dirname(file), { recursive: true });
+    const body = `#!/bin/sh\nprintf '${definition.tool} 1.2.3\\n'\n`;
+    await writeFile(file, body, { mode: 0o755 }); await chmod(file, 0o755);
+    const archive = join(source, definition.archiveName);
+    const tarArgs = definition.archiveRoot === "." ? ["-czf", archive, "-C", tree, definition.archiveFile.split("/")[0]]
+      : ["-czf", archive, "-C", tree, definition.archiveRoot];
+    const packed = spawnSync("/usr/bin/tar", tarArgs, { encoding: "utf8" });
+    assert.equal(packed.status, 0, packed.stderr);
+    artifacts.push({ tool: definition.tool, version: "1.2.3", archiveName: definition.archiveName,
+      url: `https://example.invalid/${definition.archiveName}`, archiveSha256: digest(await readFile(archive)),
+      executableRelativePath: definition.executableRelativePath, executableSha256: digest(Buffer.from(body)) });
+  }
+  return { source, manifest: { schema: TRUSTED_RUNTIME_MANIFEST_SCHEMA, platform: "darwin", architecture: "arm64", artifacts } };
+}
+
+test("vendor step verifies bytes, emits a per-file manifest and seals the complete runtime", async t => {
+  const root = await mkdtemp(join(tmpdir(), "acr-runtime-vendor-")); t.after(() => cleanupRoot(root));
+  const fixture = await fixtureArchives(root), destination = join(root, "install/runtime");
+  const result = await vendorTrustedRuntime({ ...fixture, sourceDirectory: fixture.source, runtimeDirectory: destination });
+  assert.ok(result.fileCount > 3);
+  const installed = JSON.parse(await readFile(join(destination, "manifest.json"), "utf8"));
+  assert.equal(installed.schema, "control-room.installed-trusted-runtime/v1");
+  assert.deepEqual(Object.keys(installed.installed), ["node", "pnpm", "esbuild"]);
+  for (const tool of ["node", "pnpm", "esbuild"]) {
+    const executable = join(destination, installed.installed[tool].executable);
+    assert.equal((await lstat(executable)).mode & 0o777, 0o555);
+    assert.equal(spawnSync(executable, [], { encoding: "utf8", env: {} }).stdout.trim(), `${tool} 1.2.3`);
+  }
+  assert.equal((await lstat(destination)).mode & 0o777, 0o555);
+});
+
+test("vendor step is fail-closed for corruption, interruption, retry and concurrent callers", async t => {
+  const root = await mkdtemp(join(tmpdir(), "acr-runtime-vendor-stress-")); t.after(() => cleanupRoot(root));
+  const fixture = await fixtureArchives(root);
+  const missing = structuredClone(fixture.manifest);
+  missing.artifacts[0].archiveName = "missing.tgz";
+  await assert.rejects(vendorTrustedRuntime({ sourceDirectory: fixture.source, manifest: missing,
+    runtimeDirectory: join(root, "missing") }), /runtime_vendor_archive_missing/u);
+  const wrongExecutable = structuredClone(fixture.manifest);
+  wrongExecutable.artifacts[0].executableSha256 = "0".repeat(64);
+  await assert.rejects(vendorTrustedRuntime({ sourceDirectory: fixture.source, manifest: wrongExecutable,
+    runtimeDirectory: join(root, "wrong-executable") }), /trusted_runtime_digest_mismatch/u);
+  await writeFile(join(fixture.source, "node.tgz"), "corrupt");
+  await assert.rejects(vendorTrustedRuntime({ ...fixture, sourceDirectory: fixture.source, runtimeDirectory: join(root, "bad") }),
+    /trusted_runtime_digest_mismatch/u);
+  await rm(fixture.source, { recursive: true });
+  await mkdir(join(root, "retry"));
+  const restored = await fixtureArchives(join(root, "retry"));
+  const halfway = join(root, "halfway");
+  await assert.rejects(vendorTrustedRuntime({ ...restored, sourceDirectory: restored.source, runtimeDirectory: halfway }, {
+    afterArtifact: tool => { if (tool === "node") throw new Error("injected_stop"); },
+  }), /injected_stop/u);
+  await assert.rejects(lstat(halfway), error => error?.code === "ENOENT");
+  await vendorTrustedRuntime({ ...restored, sourceDirectory: restored.source, runtimeDirectory: halfway });
+  await assert.rejects(vendorTrustedRuntime({ ...restored, sourceDirectory: restored.source, runtimeDirectory: halfway }),
+    /runtime_vendor_destination_exists/u);
+
+  const destinations = Array.from({ length: 20 }, (_, index) => join(root, `parallel-${index}`));
+  await Promise.all(destinations.map(runtimeDirectory => vendorTrustedRuntime({ ...restored,
+    sourceDirectory: restored.source, runtimeDirectory })));
+  const one = join(root, "one-winner");
+  const burst = await Promise.allSettled(Array.from({ length: 20 }, () => vendorTrustedRuntime({ ...restored,
+    sourceDirectory: restored.source, runtimeDirectory: one })));
+  assert.equal(burst.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(burst.filter(result => result.status === "rejected").length, 19);
+  assert.deepEqual((await readdir(root)).filter(name => name.startsWith(".runtime-stage-")), []);
+});

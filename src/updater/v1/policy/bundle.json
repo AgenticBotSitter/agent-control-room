@@ -1,0 +1,15 @@
+{
+  "schema": "control-room.updater-bundle-policy/v1",
+  "tool": "runtime/esbuild-current/esbuild",
+  "arguments": [
+    "--bundle",
+    "--platform=node",
+    "--format=esm",
+    "--target=node22",
+    "--packages=bundle",
+    "--log-level=warning",
+    "--outfile=updater.mjs",
+    "src/updater/v1/updater.mjs"
+  ],
+  "candidateBuildOutputAccepted": false
+}
