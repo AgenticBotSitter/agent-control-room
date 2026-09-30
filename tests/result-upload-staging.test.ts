@@ -358,15 +358,20 @@ test("fifty writers and readers at once, and the queue does not lie", async () =
         staging.stage({ ...otherIdentity, ordinal }, noiseByOrdinal[ordinal - 1]))),
       Promise.all(Array.from({ length: 50 }, (_unused, index) =>
         staging.read({ ...identity, ordinal: (index % CHUNKS) + 1 })
-          .then((value) => ({ ok: true, value }))
-          .catch((error: unknown) => ({ ok: false, code: (error as { code?: string }).code })))),
+          .then((value) => ({ ok: true, value } as const))
+          .catch((error: unknown) =>
+            ({ ok: false, code: (error as { code?: string }).code } as const)))),
     ]);
     assert.equal(reads.length, 50, "all 50 reads answered, none hung");
     for (const [index, read] of reads.entries()) {
       const expected = bodies[index % CHUNKS];
       if (read.ok) {
-        // A read is EITHER the exact chunk for that ordinal or it is refused.
-        // A short, mixed or wrong-session read is the bug this proves absent.
+        // A read is EITHER the exact chunk for that ordinal or it is absent or
+        // it is refused. A short, mixed or wrong-session read is the bug this
+        // proves absent, and every chunk here was staged in burst one, so an
+        // absent chunk would be a bug too.
+        assert.notEqual(read.value, undefined,
+          `reader ${index} found ordinal ${(index % CHUNKS) + 1} absent, but burst one staged it`);
         assert.deepEqual(Buffer.from(read.value!), Buffer.from(expected),
           `reader ${index} got exactly the bytes for ordinal ${(index % CHUNKS) + 1}`);
       } else {
