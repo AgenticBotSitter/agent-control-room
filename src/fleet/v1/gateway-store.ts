@@ -419,9 +419,9 @@ export class FleetGatewayStoreV1 {
           idempotencyKey, now]);
       } catch (error) {
         // The database guards refuse revoked, out-of-scope, over-capacity and
-        // doubly-leased claims, each with a SQLSTATE the store reads off
-        // `sqlState`. At the ceiling this is a conflict the connector moves past
-        // to the next offer, not a fault that ends the pass.
+        // doubly-leased claims, each with a SQLSTATE the store reads wherever
+        // the transport put it. At the ceiling this is a conflict the connector
+        // moves past to the next offer, not a fault that ends the pass.
         if (isFleetClaimRefusalV1(error)) return fleetFail("conflict");
         throw error;
       }
@@ -441,7 +441,7 @@ export class FleetGatewayStoreV1 {
           claimed.attempt.id, principal.nodeId, scope.scope_kind, scope.path_fold]);
       } catch (error) {
         // The same rewrite as the claim above: 0100 raises 23P01 and 23514, and
-        // the bounded database carries them on `sqlState`, not `code`.
+        // the bounded database carries them on `sqlState` rather than `code`.
         if (isFleetClaimRefusalV1(error)) return fleetFail("conflict");
         throw error;
       }
