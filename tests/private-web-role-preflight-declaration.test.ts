@@ -746,6 +746,46 @@ test("every SECURITY DEFINER trigger a migration creates is pinned in the live p
     "the retry function's ACL no longer admits exactly one login");
   assert.doesNotMatch(retryBranch, /control_room_task_coordinator/u,
     "the coordinator is back in the retry function's ACL, which round 4 measured as a way to set the latch");
+
+  // THE THIRD PIN, and the one whose properties had to be READ rather than
+  // assumed: `planner_failure_scope_key`, which 0204 grants to the coordinator and
+  // which the first attempt at this fix pinned with a search_path it does not have.
+  // The pin's correctness is a property of the FUNCTION, so a pin that does not
+  // match it silently stops matching -- which is the failure R4-B1 itself was. So
+  // every property the pin names is asserted here, in the direction that matters:
+  // each one has to be what the real function IS, not what the pin would like.
+  const scopeKeyStart = source.indexOf("OR (p.oid='planner_failure_scope_key(text,jsonb)'::regprocedure");
+  assert.ok(scopeKeyStart > 0, "the failure-scope key's pinned branch was not found in the preflight");
+  let scopeKeyDepth = 0, scopeKeyEnd = scopeKeyStart;
+  for (let index = scopeKeyStart + 3; index < source.length; index += 1) {
+    if (source[index] === "(") scopeKeyDepth += 1;
+    else if (source[index] === ")") { scopeKeyDepth -= 1; if (scopeKeyDepth === 0) { scopeKeyEnd = index + 1; break; } }
+  }
+  const scopeKeyBranch = source.slice(scopeKeyStart, scopeKeyEnd);
+  // NOT SECURITY DEFINER is the load-bearing one: a pin that claimed otherwise
+  // would exempt a function that runs as its CALLER, which is the one thing the
+  // whole allowlist exists to prevent.
+  assert.match(scopeKeyBranch, /AND NOT p\.prosecdef/u,
+    "the scope-key pin no longer states that the helper is NOT SECURITY DEFINER");
+  // proconfig IS NULL, because 0204 created it without a SET clause. Pinning a
+  // search_path it does not have refuses every correct database -- the same shape
+  // of failure as R4-B1, one function over, and it is the mistake this assertion
+  // was written for.
+  assert.match(scopeKeyBranch, /AND p\.proconfig IS NULL/u,
+    "the scope-key pin no longer pins the ABSENCE of a search_path, which is what the function has");
+  assert.doesNotMatch(scopeKeyBranch, /p\.proconfig=ARRAY/u,
+    "the scope-key pin demands a search_path the function does not have, which refuses every correct database");
+  assert.match(scopeKeyBranch, /p\.provolatile='i'/u, "the scope-key pin no longer pins IMMUTABLE");
+  assert.match(scopeKeyBranch, /p\.proparallel='u'/u,
+    "the scope-key pin no longer pins the parallelism the function really has (measured: unsafe)");
+  assert.match(scopeKeyBranch, /pg_get_userbyid\(a\.grantee\)<>'control_room_task_coordinator'/u,
+    "the scope-key pin's ACL no longer admits exactly the one login the role file grants it to");
+  assert.match(retryBranch, /has_function_privilege\('control_room_private_web',p\.oid,'EXECUTE'\)/u,
+    "the retry function's pin no longer requires the owner's web login to hold EXECUTE on it");
+  assert.match(retryBranch, /pg_get_userbyid\(a\.grantee\)<>'control_room_private_web'/u,
+    "the retry function's ACL no longer admits exactly one login");
+  assert.doesNotMatch(retryBranch, /control_room_task_coordinator/u,
+    "the coordinator is back in the retry function's ACL, which round 4 measured as a way to set the latch");
   // The parenthesis balance was checked by the depth count that READ the branch
   // above, and that count is the assertion. This is the failure round 4's first
   // attempt at this fix made and did not catch: an unbalanced `OR (...)` does not
