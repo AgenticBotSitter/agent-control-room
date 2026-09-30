@@ -105,6 +105,9 @@ test("success: run claims the offered task, the enabled harness answers, and the
   assert.equal(shown[0]!.decision, null, "submitting accepts nothing");
   assert.deepEqual((await events(f, task.jobId)).map(event => event.kind), ["progress"]);
   assert.match((await events(f, task.jobId))[0]!.message, /^Started on Codex on this machine\.$/u);
+  const seenByOwner = (await f.owner.listWorkers(ownerIdentity())).workers[0]!.latestNote;
+  assert.equal(seenByOwner?.kind, "progress");
+  assert.equal(seenByOwner?.message, "Started on Codex on this machine.");
 
   // The adapter got the task text and a cancel signal, and nothing that grants
   // authority: not the credential, not the server address, not the claim.
@@ -137,6 +140,11 @@ test("failure: a harness that fails reports a blocker, hands the task back, and 
   assert.equal(await jobState(f, task.jobId), "ready", "released back to the open offer");
   const blocker = (await events(f, task.jobId)).find(event => event.kind === "blocker");
   assert.match(blocker!.message, /^The Codex run did not finish \(failed:process_or_output_refused\)\. Nothing was submitted\.$/u);
+  // The owner sees the blocker on the Workers page, with the task it is about.
+  const board = await f.owner.listWorkers(ownerIdentity());
+  const note = board.workers.find(worker => worker.displayName === "Failing")!.latestNote;
+  assert.deepEqual({ kind: note?.kind, message: note?.message, taskTitle: note?.taskTitle },
+    { kind: "blocker", message: blocker!.message, taskTitle: "Task handoff-fail" });
 
   // The same run loop does not pick the task it just handed back.
   const logs: string[] = [];
@@ -218,7 +226,8 @@ test("pause: Pause, Drain, Stop and an unreadable switch all stop new claims", a
     assert.equal((await worker.client.heartbeat()).operationsMode, expected);
     const { pass, logs } = await runOnce(f, worker, path);
     assert.equal(pass.state, "paused", mode);
-    assert.match(logs.join("\n"), new RegExp(`Control Room is ${expected}, so no new work is taken`, "u"));
+    assert.match(logs.join("\n"), mode === "throw" ? /Control Room could not read its Pause switch, so no new work is taken/u
+      : new RegExp(`Control Room is ${expected}, so no new work is taken`, "u"));
     // The server refuses the claim too, so an MCP agent or an old connector cannot slip past.
     await assert.rejects(worker.client.claim(task.offerId, `pause-claim-${mode}-000000`), /\(paused\)/u);
   }

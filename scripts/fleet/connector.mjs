@@ -564,7 +564,8 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
         + `Enable it in ${harnessesPath}.`);
       pass = { state: "not_enabled" };
     } else if (mode !== "running") {
-      say(`Connected as ${me.displayName}. Control Room is ${mode}, so no new work is taken.`);
+      say(`Connected as ${me.displayName}. ${mode === "unknown" ? "Control Room could not read its Pause switch"
+        : `Control Room is ${mode}`}, so no new work is taken.`);
       pass = { state: "paused", mode };
     } else {
       // Load before claiming, so a broken local setup never strands a task.

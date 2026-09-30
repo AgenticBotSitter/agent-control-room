@@ -125,6 +125,9 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
       const blocker = await asWeb(`SELECT e.message FROM fleet_worker_events e JOIN fleet_claims c ON c.tenant_id=e.tenant_id
         AND c.claim_id=e.claim_id WHERE c.job_id=$1 AND e.kind='blocker'`, [failing.jobId]);
       assert.match(blocker[0].message, /^The Codex run did not finish/u);
+      const note = (await owner.listWorkers(ownerIdentity())).workers[0]!.latestNote;
+      assert.equal(note?.kind, "blocker", "the owner-authority login sees the blocker on the Workers page");
+      assert.equal(note?.taskTitle, "Task handoff-pg-fail");
 
       assert.ok(requests.every(url => url.startsWith(`${origin}/fleet/v1/`)), "the connector spoke only to the gateway");
       assert.deepEqual(unexpected, []);
