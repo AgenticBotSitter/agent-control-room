@@ -225,11 +225,10 @@ export async function applyUpdaterSchemaV1(options: UpdaterSchemaOptionsV1): Pro
           OR has_table_privilege('control_room_deployer', c.oid, 'TRUNCATE'))
       ORDER BY c.relname`);
   const reachable = releaseReach.rows.map(row => String(row.relname));
-  const unexpectedReach = reachable.filter(table => !updaterReleaseReadTablesV1.includes(table));
-  if (unexpectedReach.length > 0) refused(`release_reach:${unexpectedReach.join(",")}`);
-  const missingReach = updaterReleaseReadTablesV1.filter(table => !reachable.includes(table));
-  if (missingReach.length > 0) refused(`release_reach_missing:${missingReach.join(",")}`);
-  // And no write privilege at all in the release schema, on anything.
+  // The write check comes FIRST, so a grant that is both a new reach AND a write
+  // is reported as the more serious of the two. With the order the other way, a
+  // write privilege added to a table outside the allowed three is reported as
+  // "unexpected reach" — technically true, and it hides the half that matters.
   const releaseWrite = await options.bootstrap.query(
     `SELECT count(*)::int AS count FROM pg_catalog.pg_class c
        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -241,6 +240,10 @@ export async function applyUpdaterSchemaV1(options: UpdaterSchemaOptionsV1): Pro
           OR has_table_privilege('control_room_deployer', c.oid, 'DELETE')
           OR has_table_privilege('control_room_deployer', c.oid, 'TRUNCATE'))`);
   if (Number(releaseWrite.rows[0]?.count ?? 0) !== 0) refused("release_write_privilege");
+  const unexpectedReach = reachable.filter(table => !updaterReleaseReadTablesV1.includes(table));
+  if (unexpectedReach.length > 0) refused(`release_reach:${unexpectedReach.join(",")}`);
+  const missingReach = updaterReleaseReadTablesV1.filter(table => !reachable.includes(table));
+  if (missingReach.length > 0) refused(`release_reach_missing:${missingReach.join(",")}`);
 
   return { appliedFiles: Object.freeze(applied), tables: tables.length, triggers: Number(triggers.rows[0]?.count ?? 0) };
 }

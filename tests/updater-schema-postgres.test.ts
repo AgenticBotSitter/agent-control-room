@@ -752,6 +752,76 @@ test("50 concurrent approval inserts on one plan leave no duplicate effects", as
     boundMs: 600_000 });
 });
 
+test("a deployer role that grew a dangerous attribute is refused on the next apply", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    const privileged = new Client(postgres.admin());
+    await privileged.connect();
+    try {
+      // The role's attributes are re-asserted on EVERY apply, and this is what
+      // makes the check non-vacuous: without this test the assertion in 0001 would
+      // be one that never fails, which is the shape of a guard that only exists to
+      // look like a guard. Two attributes are tried because they are the two that
+      // matter most: SUPERUSER is total, and BYPASSRLS defeats every row-level
+      // policy in the release schema.
+      for (const [attribute, grant, revoke] of [
+        ["SUPERUSER", "ALTER ROLE control_room_deployer SUPERUSER", "ALTER ROLE control_room_deployer NOSUPERUSER"],
+        ["BYPASSRLS", "ALTER ROLE control_room_deployer BYPASSRLS", "ALTER ROLE control_room_deployer NOBYPASSRLS"],
+      ] as const) {
+        await privileged.query(grant);
+        const message = await (async () => {
+          try {
+            await installUpdaterSchema(postgres);
+            return null;
+          } catch (error) { return (error as Error).message; }
+        })();
+        assert.match(message ?? "", /updater deployer role attributes refused/u,
+          `an apply with rol${attribute.toLowerCase()} set must be refused by the fixed DDL`);
+        // Restored, so the next attribute is measured from a clean role and the
+        // refusal above is attributable to the attribute and not to a leftover.
+        await privileged.query(revoke);
+        await installUpdaterSchema(postgres);
+      }
+
+      // A fourth reachable release table is refused too, which is the other half
+      // of the loader's two-way assertion. `tenants` is chosen because the deployer
+      // has no business reading it and every service role does.
+      await privileged.query("GRANT SELECT ON public.tenants TO control_room_deployer");
+      const widened = await (async () => {
+        try {
+          await installUpdaterSchema(postgres);
+          return null;
+        } catch (error) { return (error as Error).message; }
+      })();
+      assert.match(widened ?? "", /updater_schema_refused:release_reach:tenants/u,
+        "a fourth readable release table must fail the updater at startup, not sit unnoticed");
+      await privileged.query("REVOKE SELECT ON public.tenants FROM control_room_deployer");
+      await installUpdaterSchema(postgres);
+
+      // And a write privilege in the release schema is refused, because the whole
+      // point of the three grants is that they are reads.
+      await privileged.query("GRANT INSERT ON public.tenants TO control_room_deployer");
+      const wrote = await (async () => {
+        try {
+          await installUpdaterSchema(postgres);
+          return null;
+        } catch (error) { return (error as Error).message; }
+      })();
+      assert.match(wrote ?? "", /updater_schema_refused:release_write_privilege/u,
+        "any write privilege in the release schema must fail the updater at startup");
+    } finally {
+      // The role is left as the fixed DDL requires it, so the cluster's teardown
+      // and anything else that runs after this test sees the documented state.
+      await privileged.query("ALTER ROLE control_room_deployer NOSUPERUSER NOBYPASSRLS");
+      await privileged.query("REVOKE SELECT, INSERT ON public.tenants FROM control_room_deployer");
+      await privileged.end();
+    }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
 test("the lane ran on a real cluster, not a skip", () => {
   // The attack kit's own rule: a lane with the binaries must not report green
   // without having run. Kept as its own assertion so a future `PG_BIN` accident
