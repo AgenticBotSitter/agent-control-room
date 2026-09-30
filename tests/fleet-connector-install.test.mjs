@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
 
@@ -19,6 +19,7 @@ function json(ok, result, status = ok ? 200 : 409) {
 }
 
 function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
+  const workerKinds = new Set(["codex", "claude-code", "hermes", "claude-desktop", "cursor", "mcp-agent"]);
   const used = new Set();
   const bindings = new Map();
   const state = { enrollments: 0, rotations: 0, digest: null, dropAfterEnroll: false, dropAfterRotate: false };
@@ -28,6 +29,7 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
     const bearer = String(init.headers?.authorization ?? "").replace(/^Bearer /u, "");
     const authenticated = state.digest && connector.sha256(bearer) === state.digest;
     if (path === "/fleet/v1/enroll") {
+      if (!workerKinds.has(body.workerKind)) return json(false, "invalid", 400);
       const prior = bindings.get(body.code);
       if (used.has(body.code) && (prior?.clientNonce !== body.clientNonce || prior?.credentialDigest !== body.credentialDigest))
         return json(false, "code_used", 409);
@@ -158,6 +160,13 @@ test("a code for another bot is refused before registration and leaves no profil
   await assert.rejects(stat(connector.connectorInstallPaths(input).configPath), error => error.code === "ENOENT");
 });
 
+test("the fake gateway refuses an unknown worker kind instead of echoing it", async t => {
+  const homeDir = await temporary(t, "connector-unknown-kind-"), configPath = join(homeDir, "unknown.json");
+  await assert.rejects(connector.join({ server: "https://control.example", code: code("u"),
+    workerKind: "unknown-bot", configPath, fetcher: fakeGateway().fetcher }), /\(invalid\)/u);
+  await assert.rejects(stat(configPath), error => error.code === "ENOENT");
+});
+
 test("a definitive enrollment refusal is cleanly retryable and a transport-pending profile can be uninstalled", async t => {
   const homeDir = await temporary(t, "connector-refused-enrollment-"), pathsInput = { homeDir, platform: "linux", env: {}, name: "refused" };
   let refuse = true;
@@ -180,6 +189,34 @@ test("a definitive enrollment refusal is cleanly retryable and a transport-pendi
     platform: "linux", env: {}, runner: recorder().runner });
   assert.match(removed.ownerAction, /Control Room.*Workers/u);
   await assert.rejects(stat(pendingPath), error => error.code === "ENOENT");
+});
+
+test("rate limits and timeout responses preserve pending enrollment for an exact retry", async t => {
+  for (const [index, [errorCode, status]] of [["rate_limited", 429], [null, 408], [null, 429]].entries()) {
+    await t.test(errorCode ?? `http_${status}`, async t => {
+      const homeDir = await temporary(t, `connector-transient-${status}-${index}-`), gateway = fakeGateway();
+      let first = true;
+      const fetcher = async (...args) => {
+        if (!first) return gateway.fetcher(...args);
+        first = false;
+        return new Response(JSON.stringify(errorCode ? { ok: false, error: errorCode } : { ok: false }), {
+          status, headers: { "content-type": "application/json" },
+        });
+      };
+      const configPath = join(homeDir, "pending.json"), joinCode = code(String.fromCharCode(114 + index));
+      await assert.rejects(connector.join({ server: "https://control.example", code: joinCode,
+        workerKind: "cursor", configPath, fetcher }), error => {
+        assert.equal(error.code, errorCode ?? `http_${status}`);
+        return true;
+      });
+      const pending = await connector.loadConfig(configPath);
+      assert.equal(pending.workerId, null);
+      const result = await connector.join({ server: "https://control.example", code: joinCode,
+        workerKind: "cursor", configPath, fetcher });
+      assert.equal(result.workerKind, "cursor");
+      assert.equal(gateway.state.enrollments, 1);
+    });
+  }
 });
 
 test("Hermes zero exit without a saved entry is not reported as installed", async t => {
@@ -244,6 +281,39 @@ test("Claude Desktop and Cursor JSON merges preserve other servers, back up firs
       assert.equal((await stat(installed.paths.workspace)).isDirectory(), true, "uninstall preserves user work");
     });
   }
+});
+
+test("desktop configuration updates serialize across profiles and preserve a symlinked target", async t => {
+  const homeDir = await temporary(t, "connector-shared-desktop-");
+  const cursorDir = join(homeDir, ".cursor"), targetDir = join(homeDir, "dotfiles");
+  const configPath = join(cursorDir, "mcp.json"), targetPath = join(targetDir, "cursor.json");
+  await mkdir(cursorDir, { recursive: true });
+  await mkdir(targetDir, { recursive: true });
+  await writeFile(targetPath, `${JSON.stringify({ mcpServers: { existing: { command: "existing" } } })}\n`);
+  await symlink(targetPath, configPath);
+  const installs = Array.from({ length: 20 }, async (_, index) => {
+    const gateway = fakeGateway(), name = `shared-${index}`;
+    return connector.installConnector({ server: "https://control.example", code: code(String.fromCharCode(65 + index)),
+      bot: "cursor", name, homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher,
+      runner: recorder().runner, sourcePath: SOURCE });
+  });
+  await Promise.all(installs);
+  assert.equal((await lstat(configPath)).isSymbolicLink(), true);
+  const saved = JSON.parse(await readFile(targetPath, "utf8"));
+  assert.deepEqual(saved.mcpServers.existing, { command: "existing" });
+  assert.equal(Object.keys(saved.mcpServers).filter(name => name.startsWith("control-room-shared-")).length, 20);
+});
+
+test("a dangling desktop configuration symlink is refused without replacing it", async t => {
+  const homeDir = await temporary(t, "connector-dangling-desktop-"), cursorDir = join(homeDir, ".cursor");
+  const configPath = join(cursorDir, "mcp.json");
+  await mkdir(cursorDir, { recursive: true });
+  await symlink(join(homeDir, "missing", "cursor.json"), configPath);
+  const gateway = fakeGateway();
+  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("Z"), bot: "cursor",
+    name: "dangling", homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher,
+    runner: recorder().runner, sourcePath: SOURCE }), /dangling symbolic link/u);
+  assert.equal((await lstat(configPath)).isSymbolicLink(), true);
 });
 
 test("Windows installation constructs current-user-only icacls commands and a cmd shim", async t => {
@@ -434,7 +504,11 @@ test("ten concurrent rotations make exactly one server rotation and stale locks 
   await mkdir(stale);
   await utimes(stale, old, old);
   await assert.rejects(connector.rotate({ configPath: path, fetcher: gateway.fetcher,
-    lock: { staleMs: 1, deadlineMs: 100, waitMs: 5 } }), /stale but has no owner record/u);
+    lock: { staleMs: 1, deadlineMs: 100, waitMs: 5 } }), error => {
+    assert.match(error.message, /stale but has no owner record/u);
+    assert.ok(error.message.includes(stale), "the owner receives the exact stale-lock path");
+    return true;
+  });
   assert.equal(gateway.state.rotations, 2);
   await rm(stale, { recursive: true });
 
@@ -550,7 +624,7 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
   assert.equal(state.rotations, 1);
   assert.equal(state.maximumActiveRotations, 1);
   assert.equal(results.filter(result => JSON.parse(result.stdout).coalesced === true).length, 49);
-  assert.deepEqual((await readdir(homeDir)).filter(file => file.includes(".rotate.lock")), []);
+  assert.deepEqual((await readdir(homeDir)).filter(file => file.endsWith(".rotate.lock") || file.endsWith(".tmp")), []);
 
   blockedStarted = new Promise(resolveStarted => { blockedRequestStarted = resolveStarted; });
   blockedAllowed = new Promise(resolveAllowed => { allowBlockedRequest = resolveAllowed; });
@@ -574,7 +648,7 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
   assert.equal(state.rotations, 2);
   assert.equal(state.maximumActiveRotations, 1);
   assert.equal(recovered.filter(result => JSON.parse(result.stdout).coalesced === true).length, 50);
-  assert.deepEqual((await readdir(homeDir)).filter(file => file.includes(".rotate.lock")), []);
+  assert.deepEqual((await readdir(homeDir)).filter(file => file.endsWith(".rotate.lock") || file.endsWith(".tmp")), []);
 });
 
 test("directory election admits only one contender before owner publication", async t => {
@@ -602,6 +676,36 @@ test("directory election admits only one contender before owner publication", as
     releaseFirst();
     await Promise.allSettled([first, second]);
   }
+});
+
+test("a publication failure never blindly removes the elected lock directory", async t => {
+  const homeDir = await temporary(t, "connector-publication-failure-");
+  const configPath = join(homeDir, "bot.json"), secret = `crf_${"F".repeat(43)}`;
+  await writeFile(configPath, `${JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: WORKER_ID, secret, credentialExpiresAt: "2026-01-01T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  const lockPath = `${configPath}.rotate.lock`;
+  await assert.rejects(connector.rotate({ configPath, fetcher: fakeGateway().fetcher,
+    lock: { afterDirectoryElection: async () => { throw new Error("publication stopped"); } } }), /publication stopped/u);
+  assert.equal((await stat(lockPath)).isDirectory(), true);
+  assert.deepEqual(await readdir(lockPath), []);
+  await rm(lockPath, { recursive: true });
+});
+
+test("an elected cleaner rechecks the observed generation and dead PID before removing it", async t => {
+  const homeDir = await temporary(t, "connector-cleaner-recheck-"), lockPath = join(homeDir, "bot.rotate.lock");
+  const deadToken = "b".repeat(32), ownerPath = join(lockPath, `owner-${deadToken}.json`);
+  await mkdir(lockPath);
+  await writeFile(ownerPath, `${JSON.stringify({ pid: 777777, token: deadToken })}\n`, { mode: 0o600 });
+  let replaced = false;
+  await assert.rejects(connector.acquireRotationLock(lockPath, { deadlineMs: 50, waitMs: 5,
+    isPidAlive: pid => pid === process.pid,
+    beforeDeadOwnerCleanup: async () => {
+      if (replaced) return;
+      replaced = true;
+      await writeFile(ownerPath, `${JSON.stringify({ pid: process.pid, token: deadToken })}\n`, { mode: 0o600 });
+    },
+  }), /Another session/u);
+  assert.equal(JSON.parse(await readFile(ownerPath, "utf8")).pid, process.pid);
 });
 
 test("rotation release refuses to remove a lock whose ownership token changed", async t => {
@@ -682,6 +786,8 @@ test("two dead-owner cleaners cannot remove a later lock generation", async t =>
   const results = await Promise.all([cleaner, lagger]);
   assert.equal(gateway.state.rotations, 1);
   assert.equal(results.filter(result => result.coalesced === true).length, 1);
+  assert.equal((await readdir(homeDir)).filter(file => file === `${basename(lockPath)}.reap-${deadToken}`).length, 1,
+    "one exclusive marker elects the cleaner for the observed generation");
 });
 
 test("a losing stale cleaner cannot remove a new winner before owner publication", async t => {
@@ -750,6 +856,8 @@ test("uninstall validates the current profile only after obtaining its mutation 
   const removing = connector.uninstallConnector({ bot: "codex", name: "locked", homeDir,
     platform: "linux", env: {}, runner: commands.runner });
   await new Promise(done => setTimeout(done, 40));
+  assert.equal((await readdir(dirname(lockPath))).filter(file => file.startsWith(`${basename(lockPath)}.`)
+    && file.endsWith(".tmp")).length, 1, "a waiting acquisition reuses one contender record across polls");
   const current = await connector.loadConfig(installed.paths.configPath);
   await writeFile(installed.paths.configPath, `${JSON.stringify({ ...current,
     installation: { ...current.installation, name: "changed" } }, null, 2)}\n`, { mode: 0o600 });

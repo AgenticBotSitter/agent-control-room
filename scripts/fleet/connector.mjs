@@ -15,7 +15,7 @@
 // widen permissions: the gateway has no such routes.
 
 import { createHash, randomBytes } from "node:crypto";
-import { copyFile, mkdir, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join as joinPath, relative, resolve, sep } from "node:path";
@@ -189,7 +189,9 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
   } catch (error) {
     // A refusal is final for this code. Network failures and server failures
     // retain the nonce and secret because the redemption may have committed.
-    if (typeof error?.code === "string" && !/^http_5\d\d$/u.test(error.code)) await removeConfigArtifacts(configPath);
+    const transient = typeof error?.code === "string" && (error.code === "rate_limited"
+      || ["http_408", "http_429"].includes(error.code) || /^http_5\d\d$/u.test(error.code));
+    if (typeof error?.code === "string" && !transient) await removeConfigArtifacts(configPath);
     throw error;
   }
   if (result.workerKind !== workerKind) {
@@ -212,10 +214,39 @@ async function removeConfigTemporaryFiles(configPath) {
   catch (error) { if (error?.code === "ENOENT") return; throw error; }
   const prefix = `${basename(configPath)}.`;
   await Promise.all(entries.filter(entry => entry.startsWith(prefix) && entry.endsWith(".tmp"))
+    .filter(entry => !entry.startsWith(`${basename(configPath)}.rotate.lock.`))
     .map(entry => rm(joinPath(dirname(configPath), entry), { force: true })));
 }
 
-async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_STALE_MS, waitMs = 25,
+function lockGeneration(info, token = "") {
+  if (/^[a-f0-9]{32}$/u.test(token)) return token;
+  return createHash("sha256").update(JSON.stringify([String(info.dev), String(info.ino), info.birthtimeMs,
+    info.mtimeMs, info.size])).digest("hex").slice(0, 32);
+}
+
+async function pruneReaperMarkers(lockPath, staleMs, clock) {
+  let entries;
+  try { entries = await readdir(dirname(lockPath)); }
+  catch (error) { if (error?.code === "ENOENT") return; throw error; }
+  const prefix = `${basename(lockPath)}.reap-`;
+  await Promise.all(entries.filter(entry => entry.startsWith(prefix)).map(async entry => {
+    const path = joinPath(dirname(lockPath), entry);
+    try { if (clock() - (await stat(path)).mtimeMs >= staleMs) await rm(path, { force: true }); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+  }));
+}
+
+async function electGenerationCleaner(lockPath, generation, clock) {
+  const markerPath = `${lockPath}.reap-${generation}`;
+  let handle;
+  try { handle = await open(markerPath, "wx", 0o600); }
+  catch (error) { if (error?.code === "EEXIST") return false; throw error; }
+  try { await handle.writeFile(`${JSON.stringify({ pid: process.pid, electedAt: new Date(clock()).toISOString() })}\n`); await handle.sync(); }
+  finally { await handle.close(); }
+  return true;
+}
+
+export async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_STALE_MS, waitMs = 25,
   deadlineMs = 10_000, clock = Date.now, sleep = ms => new Promise(done => setTimeout(done, ms)),
   beforeDeadOwnerCleanup = async () => {}, afterDirectoryElection = async () => {},
   afterOwnerPublication = async () => {},
@@ -223,112 +254,115 @@ async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_STALE_MS,
     try { process.kill(pid, 0); return true; }
     catch (error) { return error?.code !== "ESRCH"; }
   } } = {}) {
-  const started = clock();
-  for (;;) {
-    const token = randomBytes(16).toString("hex");
-    const contenderPath = `${lockPath}.${process.pid}.${token}.tmp`;
-    const ownerPath = joinPath(lockPath, `owner-${token}.json`);
-    const owner = { pid: process.pid, acquiredAt: new Date(clock()).toISOString(), token };
-    const handle = await open(contenderPath, "wx", 0o600);
-    try { await handle.writeFile(`${JSON.stringify(owner)}\n`); await handle.sync(); }
-    finally { await handle.close(); }
-    let ownsDirectory = false;
-    try {
-      // mkdir is the atomic election: exactly one contender can own the
-      // canonical path. The complete owner record is then atomically renamed
-      // into it before that contender begins any protected work.
-      await mkdir(lockPath, { mode: 0o700 });
-      ownsDirectory = true;
-      await afterDirectoryElection({ lockPath, token });
-      await rename(contenderPath, ownerPath);
-      await afterOwnerPublication({ lockPath, ownerPath, token });
-      return async () => {
-        try {
-          const current = JSON.parse(await readFile(ownerPath, "utf8"));
-          if (current?.token !== token) throw new Error("The credential lock changed owners before it could be released.");
-          await unlink(ownerPath);
-          await rmdir(lockPath);
-        } catch (error) {
-          if (error?.code !== "ENOENT") throw error;
-        }
-      };
-    } catch (error) {
-      try { await unlink(contenderPath); } catch (removeError) {
-        if (removeError?.code !== "ENOENT") throw removeError;
-      }
-      if (ownsDirectory) {
-        try { await rmdir(lockPath); } catch (removeError) {
-          if (removeError?.code !== "ENOENT" && removeError?.code !== "ENOTEMPTY") throw removeError;
-        }
-        if (error?.code === "ENOENT") continue;
-        throw error;
-      }
-      if (error?.code !== "EEXIST") throw error;
-      let age = 0, ownerPid = null, lockIsDirectory = false, ownerMissing = false, observedOwnerPath = null;
+  const started = clock(), token = randomBytes(16).toString("hex");
+  const contenderPath = `${lockPath}.${process.pid}.${token}.tmp`;
+  const ownerPath = joinPath(lockPath, `owner-${token}.json`);
+  const owner = { pid: process.pid, acquiredAt: new Date(clock()).toISOString(), token };
+  const handle = await open(contenderPath, "wx", 0o600);
+  try { await handle.writeFile(`${JSON.stringify(owner)}\n`); await handle.sync(); }
+  finally { await handle.close(); }
+  await pruneReaperMarkers(lockPath, staleMs, clock);
+  try {
+    for (;;) {
       try {
-        const info = await stat(lockPath);
-        age = clock() - info.mtimeMs;
-        lockIsDirectory = info.isDirectory();
-        let raw;
-        if (lockIsDirectory) {
-          const entries = await readdir(lockPath);
-          const owners = entries.filter(entry => /^owner-[a-f0-9]{32}\.json$/u.test(entry));
-          if (entries.length === 0) ownerMissing = true;
-          else if (entries.length === 1 && owners.length === 1) {
-            observedOwnerPath = joinPath(lockPath, owners[0]);
-            raw = await readFile(observedOwnerPath, "utf8");
-          }
-        } else {
-          raw = await readFile(lockPath, "utf8");
-        }
-        if (!ownerMissing && raw !== undefined) {
+        // mkdir is the atomic election: exactly one contender can own the
+        // canonical path. The complete owner record is then atomically renamed
+        // into it before that contender begins any protected work.
+        await mkdir(lockPath, { mode: 0o700 });
+        await afterDirectoryElection({ lockPath, token });
+        await rename(contenderPath, ownerPath);
+        await afterOwnerPublication({ lockPath, ownerPath, token });
+        return async () => {
           try {
-            const parsed = JSON.parse(raw);
-            if (Number.isSafeInteger(parsed?.pid) && parsed.pid > 0) ownerPid = parsed.pid;
-          } catch {
-            // Older connector versions exposed the lock before writing its JSON.
-            // A fresh partial record is retried; a stale one still fails closed.
-            ownerPid = null;
+            const current = JSON.parse(await readFile(ownerPath, "utf8"));
+            if (current?.token !== token) throw new Error("The credential lock changed owners before it could be released.");
+            await unlink(ownerPath);
+            await rmdir(lockPath);
+          } catch (error) {
+            if (error?.code !== "ENOENT") throw error;
+          }
+        };
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+        let age = 0, ownerPid = null, ownerToken = "", lockIsDirectory = false, ownerMissing = false;
+        let observedOwnerPath = null, lockInfo;
+        try {
+          lockInfo = await stat(lockPath);
+          age = clock() - lockInfo.mtimeMs;
+          lockIsDirectory = lockInfo.isDirectory();
+          let raw;
+          if (lockIsDirectory) {
+            const entries = await readdir(lockPath);
+            const owners = entries.filter(entry => /^owner-[a-f0-9]{32}\.json$/u.test(entry));
+            if (entries.length === 0) ownerMissing = true;
+            else if (entries.length === 1 && owners.length === 1) {
+              observedOwnerPath = joinPath(lockPath, owners[0]);
+              ownerToken = owners[0].slice("owner-".length, -".json".length);
+              raw = await readFile(observedOwnerPath, "utf8");
+            }
+          } else {
+            raw = await readFile(lockPath, "utf8");
+          }
+          if (!ownerMissing && raw !== undefined) {
+            try {
+              const parsed = JSON.parse(raw);
+              if (Number.isSafeInteger(parsed?.pid) && parsed.pid > 0
+                && (!lockIsDirectory || parsed.token === ownerToken)) ownerPid = parsed.pid;
+            } catch {
+              // Older connector versions exposed the lock before writing its JSON.
+              // A fresh partial record is retried; a stale one still fails closed.
+              ownerPid = null;
+            }
           }
         }
-      }
-      catch (readError) {
-        if (["ENOENT", "EISDIR", "ENOTDIR"].includes(readError?.code)) continue;
-        throw readError;
-      }
-      // A dead owner can never release its lock, even if the file is fresh. A
-      // live owner is never displaced merely because its work took longer
-      // than expected. Malformed locks fail closed instead of guessing.
-      if (ownerPid !== null && !isPidAlive(ownerPid)) {
-        await beforeDeadOwnerCleanup({ lockPath, observedOwnerPath });
-        if (lockIsDirectory) {
-          try { await unlink(observedOwnerPath); } catch (removeError) {
-            if (removeError?.code !== "ENOENT") throw removeError;
-            // Another cleaner removed the generation we observed. It alone may
-            // remove the directory; it may already belong to a newer winner.
-            continue;
-          }
-          try { await rmdir(lockPath); } catch (removeError) {
-            if (removeError?.code !== "ENOENT" && removeError?.code !== "ENOTEMPTY") throw removeError;
-          }
-        } else {
-          try { await unlink(lockPath); } catch (removeError) {
-            if (!["ENOENT", "EISDIR", "EPERM"].includes(removeError?.code)) throw removeError;
-          }
+        catch (readError) {
+          if (["ENOENT", "EISDIR", "ENOTDIR"].includes(readError?.code)) continue;
+          throw readError;
         }
-        continue;
+        // A dead owner can never release its lock, even if the file is fresh. A
+        // live owner is never displaced merely because its work took longer
+        // than expected. Malformed locks fail closed instead of guessing.
+        if (ownerPid !== null && !isPidAlive(ownerPid)) {
+          await beforeDeadOwnerCleanup({ lockPath, observedOwnerPath });
+          const generation = lockGeneration(lockInfo, ownerToken);
+          if (!await electGenerationCleaner(lockPath, generation, clock)) continue;
+          if (lockIsDirectory) {
+            let current;
+            try { current = JSON.parse(await readFile(observedOwnerPath, "utf8")); }
+            catch (removeError) {
+              if (removeError?.code === "ENOENT") continue;
+              throw removeError;
+            }
+            if (current?.token !== ownerToken || current?.pid !== ownerPid || isPidAlive(ownerPid)) continue;
+            await unlink(observedOwnerPath);
+            try { await rmdir(lockPath); } catch (removeError) {
+              if (removeError?.code !== "ENOENT" && removeError?.code !== "ENOTEMPTY") throw removeError;
+            }
+          } else {
+            const currentInfo = await stat(lockPath);
+            if (String(currentInfo.dev) !== String(lockInfo.dev) || String(currentInfo.ino) !== String(lockInfo.ino)) continue;
+            let current;
+            try { current = JSON.parse(await readFile(lockPath, "utf8")); } catch { continue; }
+            if (current?.pid !== ownerPid || isPidAlive(ownerPid)) continue;
+            await unlink(lockPath);
+          }
+          continue;
+        }
+        if (ownerMissing && age >= staleMs) {
+          // Removing an empty directory after observing it is not conditional:
+          // another cleaner could replace it with a winner's fresh directory.
+          // Fail closed instead of compromising mutual exclusion.
+          throw new Error(`The credential lock ${lockPath} is stale but has no owner record. Remove that exact directory only after checking that no connector is running for this profile.`);
+        }
+        if (age >= staleMs && ownerPid === null)
+          throw new Error(`The credential lock ${lockPath} is stale but has no valid owner PID. Remove that exact path only after checking that no connector is running for this profile.`);
+        if (clock() - started >= deadlineMs) throw new Error("Another session is renewing this bot credential. Try again shortly.");
+        await sleep(waitMs);
       }
-      if (ownerMissing && age >= staleMs) {
-        // Removing an empty directory after observing it is not conditional:
-        // another cleaner could replace it with a winner's fresh directory.
-        // Fail closed instead of compromising mutual exclusion.
-        throw new Error("The credential lock is stale but has no owner record. Remove it only after checking that no connector is running.");
-      }
-      if (age >= staleMs && ownerPid === null)
-        throw new Error("The credential lock is stale but has no valid owner PID. Remove it only after checking that no connector is running.");
-      if (clock() - started >= deadlineMs) throw new Error("Another session is renewing this bot credential. Try again shortly.");
-      await sleep(waitMs);
     }
+  } catch (error) {
+    try { await unlink(contenderPath); } catch (removeError) { if (removeError?.code !== "ENOENT") throw removeError; }
+    throw error;
   }
 }
 
@@ -432,6 +466,20 @@ async function readJsonObject(path) {
   }
 }
 
+async function resolvedJsonConfigPath(path) {
+  try { return await realpath(path); }
+  catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    try {
+      if ((await lstat(path)).isSymbolicLink())
+        throw new Error(`The MCP configuration ${path} is a dangling symbolic link. Repair its target before installing.`);
+    } catch (linkError) {
+      if (linkError?.code !== "ENOENT") throw linkError;
+    }
+    return path;
+  }
+}
+
 async function writeJsonWithBackup(path, value, { clock = Date.now } = {}) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   try { await copyFile(path, timestampedBackup(path, clock)); }
@@ -524,14 +572,20 @@ async function registerBot({ bot, name, shimPath, workspace, configPath, homeDir
     if (bot === "hermes") await verifyHermesRegistration(cliEnv, botServerName(name), true);
     return { kind: "cli" };
   }
-  const path = appConfigPath(bot, { homeDir, env, platform });
-  const value = await readJsonObject(path);
-  const mcpServers = value.mcpServers && typeof value.mcpServers === "object" && !Array.isArray(value.mcpServers)
-    ? value.mcpServers : {};
-  await writeJsonWithBackup(path, { ...value, mcpServers: { ...mcpServers,
-    [botServerName(name)]: { command: shimPath,
-      args: ["--profile", name, "--config", configPath, "--workspace", workspace] } } }, { clock });
-  return { kind: "json", configPath: path };
+  const path = await resolvedJsonConfigPath(appConfigPath(bot, { homeDir, env, platform }));
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const release = await acquireRotationLock(`${path}.control-room.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });
+  let failure;
+  try {
+    const value = await readJsonObject(path);
+    const mcpServers = value.mcpServers && typeof value.mcpServers === "object" && !Array.isArray(value.mcpServers)
+      ? value.mcpServers : {};
+    await writeJsonWithBackup(path, { ...value, mcpServers: { ...mcpServers,
+      [botServerName(name)]: { command: shimPath,
+        args: ["--profile", name, "--config", configPath, "--workspace", workspace] } } }, { clock });
+    return { kind: "json", configPath: path };
+  } catch (error) { failure = error; throw error; }
+  finally { await releaseRotationLock(release, failure); }
 }
 
 function missingRegistration(error) {
@@ -553,12 +607,18 @@ async function unregisterBot({ bot, name, homeDir, env, platform, runner, clock,
     await verifyHermesRegistration(cliEnv, server, false);
     return;
   }
-  const path = appConfigPath(bot, { homeDir, env, platform });
-  const value = await readJsonObject(path);
-  const mcpServers = value.mcpServers && typeof value.mcpServers === "object" && !Array.isArray(value.mcpServers)
-    ? { ...value.mcpServers } : {};
-  delete mcpServers[server];
-  await writeJsonWithBackup(path, { ...value, mcpServers }, { clock });
+  const path = await resolvedJsonConfigPath(appConfigPath(bot, { homeDir, env, platform }));
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const release = await acquireRotationLock(`${path}.control-room.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });
+  let failure;
+  try {
+    const value = await readJsonObject(path);
+    const mcpServers = value.mcpServers && typeof value.mcpServers === "object" && !Array.isArray(value.mcpServers)
+      ? { ...value.mcpServers } : {};
+    delete mcpServers[server];
+    await writeJsonWithBackup(path, { ...value, mcpServers }, { clock });
+  } catch (error) { failure = error; throw error; }
+  finally { await releaseRotationLock(release, failure); }
 }
 
 function quoteSh(value) { return `'${String(value).replace(/'/gu, `'\\''`)}'`; }

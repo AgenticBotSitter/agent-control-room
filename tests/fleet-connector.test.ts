@@ -8,7 +8,7 @@ import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { readdir, readFile } from "node:fs/promises";
@@ -294,6 +294,45 @@ test("server-side redemption refuses the wrong bot kind without consuming the co
   assert.equal((await f.query("SELECT 1 FROM fleet_workers")).length, 0);
   const joined = await connector.join({ server: f.origin, code: code.code, workerKind: "codex", configPath });
   assert.equal(joined.workerKind, "codex");
+});
+
+test("every connector install target enrolls through the real kind-bound gateway", async t => {
+  const f = await fixture({ admission: createFleetGatewayAdmissionV1({ enrollPerIp: 20, enrollGlobal: 20 }) });
+  t.after(() => f.close());
+  const kinds = ["claude-code", "codex", "hermes", "claude-desktop", "cursor"] as const;
+  const runner = async (command: string, args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}) => {
+    assert.ok(["claude", "codex", "hermes"].includes(command), `unexpected executable ${command}`);
+    if (command === "hermes") {
+      const path = join(options.env!.HERMES_HOME!, "config.yaml");
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, `mcp_servers:\n  ${args[2]}:\n    command: fixture\n`, { mode: 0o600 });
+    }
+    return { stdout: "", stderr: "" };
+  };
+  for (const [index, kind] of kinds.entries()) await t.test(kind, async () => {
+    const issued = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: `Install ${kind}`,
+      workerKind: kind, projectIds: [PROJECT_A], capabilities: ["code.change"] });
+    const homeDir = join(f.dir, `install-${kind}`);
+    await mkdir(homeDir);
+    const installed = await connector.installConnector({ server: f.origin, code: issued.code, bot: kind,
+      name: `real-${kind}`, homeDir, realHomeDir: join(f.dir, "not-the-real-home"), platform: "darwin",
+      env: { ...process.env, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" }, runner,
+      workspace: undefined, fetcher: fetch, sourcePath: resolve("scripts/fleet/connector.mjs") });
+    assert.equal((await connector.loadConfig(installed.paths.configPath)).workerKind, kind);
+
+    const otherKind = kind === "codex" ? "cursor" : "codex";
+    const wrong = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: `Wrong ${kind} ${index}`,
+      workerKind: otherKind, projectIds: [PROJECT_A], capabilities: ["code.change"] });
+    const wrongHome = join(f.dir, `wrong-${kind}`);
+    await mkdir(wrongHome);
+    await assert.rejects(connector.installConnector({ server: f.origin, code: wrong.code, bot: kind,
+      name: `wrong-${kind}`, homeDir: wrongHome, realHomeDir: join(f.dir, "not-the-real-home"), platform: "darwin",
+      env: { ...process.env, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" }, runner,
+      workspace: undefined, fetcher: fetch, sourcePath: resolve("scripts/fleet/connector.mjs") }),
+    /worker_kind_mismatch/u);
+    assert.deepEqual(await f.query<{ state: string }>("SELECT state FROM fleet_enrollment_codes WHERE id=$1", [wrong.codeId]),
+      [{ state: "issued" }]);
+  });
 });
 
 test("a lost enrollment response is recovered with the same pending secret and nonce", async t => {

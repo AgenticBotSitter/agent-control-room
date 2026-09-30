@@ -160,6 +160,7 @@
     "night:shadow": "node --import tsx scripts/night-kit.ts shadow",
     "fleet:gateway": "node --import tsx scripts/run-fleet-gateway.ts",
     "fleet:connector": "node scripts/fleet/connector.mjs",
+    "stress:fleet-lock": "node scripts/fleet/stress-connector-lock.mjs",
     "fleet:worker": "node --import tsx scripts/fleet/connector.mjs run",
     "test:fleet": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-mcp-server.test.ts tests/fleet-connector-install.test.mjs tests/fleet-connector.test.ts tests/fleet-owner-web-route.test.ts tests/fleet-harness-handoff.test.ts tests/fleet-connector-postgres.test.ts tests/fleet-harness-handoff-postgres.test.ts"
   },
