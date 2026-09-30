@@ -420,10 +420,12 @@ test("automatic health pauses resume only their own revision, record activity, a
 
       // A burst of recovery calls (retries or two overlapping supervisor
       // cycles) serializes at the tenant lock: exactly one may append running.
-      const burst = await Promise.all(Array.from({ length: 20 }, () => port.resumeAfterMachineHealth({
+      // 12 stays inside the private web pool's 8 active + 8 queued admission bound,
+      // so every call reaches the lock instead of being refused at admission.
+      const burst = await Promise.all(Array.from({ length: 12 }, () => port.resumeAfterMachineHealth({
         reasonCode: "machine_health_recovered", observedAt: new Date().toISOString() })));
       assert.equal(burst.filter(item => item.state === "resumed").length, 1);
-      assert.equal(burst.filter(item => item.state === "not_automatic").length, 19);
+      assert.equal(burst.filter(item => item.state === "not_automatic").length, 11);
       assert.equal((await service.read(ownerIdentity())).reason, OPERATIONS_MODE_MACHINE_HEALTH_RESUME_REASON_V1);
 
       // A second automatic recovery is permitted. The third automatic pause
