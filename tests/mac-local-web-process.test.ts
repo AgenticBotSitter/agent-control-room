@@ -152,6 +152,14 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     "idempotency-key": "mac-local-project-foreign-port-001" }, body: JSON.stringify({ title: "Foreign port", summary: "Must be refused" }) }),
   () => new Response("unused"));
   assert.equal(foreignPort.status, 403);
+  // The push subscribe route is only mounted when push is configured, so
+  // without it the route is a 404 -- which is itself worth asserting, because a
+  // push install must not silently accept a subscribe it cannot honour.
+  const pushWithoutConfig = await app.handle(request("/api/v1/owner-web-push", { method: "POST", headers: {
+    cookie: cookie!, origin, "content-type": "application/json" },
+  body: JSON.stringify({ endpoint: "https://fcm.googleapis.com/fcm/send/x", expirationTime: null,
+    keys: { p256dh: "A".repeat(87), auth: "B".repeat(22) } }) }), () => new Response("unused"));
+  assert.equal(pushWithoutConfig.status, 404, "an install with no push configuration does not accept subscriptions");
   const created = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin, "content-type": "application/json",
     "idempotency-key": "mac-local-project-create-001" }, body: JSON.stringify({ title: "Local wrapper project", summary: "Disposable route proof" }) }),
   () => new Response("unused"));
