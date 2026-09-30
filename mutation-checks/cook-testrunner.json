@@ -68,5 +68,103 @@
     "replace": "if (true) {",
     "test": "node --test --test-name-pattern='output cap guard' tests/test-runner-service.test.mjs",
     "why": "untrusted command output must remain bounded"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "`(allow network-outbound (remote unix-socket (subpath \"${tempReal}\")))`,",
+    "replace": "\"(allow network-outbound (remote unix-socket))\",",
+    "test": "node --test --test-name-pattern='S1\\)' tests/test-runner-service.test.mjs",
+    "why": "a test must not connect to a Unix socket outside its run, such as a local PostgreSQL, ssh-agent or Docker socket"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "const deniedRoots = [home, ...READ_DENIED_ROOTS];",
+    "replace": "const deniedRoots = [...READ_DENIED_ROOTS];",
+    "test": "node --test --test-name-pattern='denies reads under' tests/test-runner-service.test.mjs",
+    "why": "nothing under the service account's home may be readable unless it is one of the run's own roots"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "`(deny file-read* file-write* file-map-executable ${protectedFilter})`,",
+    "replace": "\"\",",
+    "test": "node --test --test-name-pattern='built-in credential' tests/test-runner-service.test.mjs",
+    "why": "credential, agent, private-plan and live-app folders stay closed even when they sit inside an allowed root"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "\"(deny default)\",",
+    "replace": "\"(allow default)\",",
+    "test": "node --test --test-name-pattern='S3\\)' tests/test-runner-service.test.mjs",
+    "why": "the run's sandbox must start from deny-by-default, not allow-by-default"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "\"(allow process-fork)\",",
+    "replace": "\"(allow process-fork) (allow process-exec)\",",
+    "test": "node --test --test-name-pattern='S3\\)' tests/test-runner-service.test.mjs",
+    "why": "only allowlisted programs may be executed, never launchctl, osascript or open"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "\"(allow signal (target same-sandbox))\",",
+    "replace": "\"(allow signal)\",",
+    "test": "node --test --test-name-pattern='S3\\)' tests/test-runner-service.test.mjs",
+    "why": "a test may signal only processes inside its own sandbox, never the live app or the runner"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    await killByRunMarker(runId);\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='run-id reaper' tests/test-runner-service.test.mjs",
+    "why": "a detached grandchild that kept the worktree as its cwd must not outlive its run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (await portBlockHeld(portBlock)) ports.quarantine(portBlock);\n      else ports.release(portBlock);",
+    "replace": "ports.release(portBlock);",
+    "test": "node --test --test-name-pattern='port quarantine' tests/test-runner-service.test.mjs",
+    "why": "a port block that an escaped process still holds must not be handed to the next run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (readRoots.some(root => inside(real, root))) throw refuseProfile();",
+    "replace": "if (readRoots.some(root => inside(real, root))) continue;",
+    "test": "node --test --test-name-pattern='fails closed' tests/test-runner-service.test.mjs",
+    "why": "a protected folder that contains the worktree must refuse the run, not be silently dropped"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (overlapsWorktree || inside(real, tmpReal)) throw new Error(",
+    "replace": "if (false) throw new Error(",
+    "test": "node --test --test-name-pattern='configuration guard refuses' tests/test-runner-service.test.mjs",
+    "why": "a configuration whose private folders contain the worktrees or /tmp must be refused at startup"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    ATTACK_KIT_SOCKET_ROOT: tempDirectory,\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='socket root guard' tests/test-runner-service.test.mjs",
+    "why": "the attack kit's short sockets must live inside the run, not in a shared /tmp pattern"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (!ownRoots.some(root => inside(root, dataDirectory))) continue;",
+    "replace": "",
+    "test": "node --test --test-name-pattern='S7\\)' tests/test-runner-service.test.mjs",
+    "why": "cleanup must never pg_ctl-stop a cluster whose data directory resolves outside the run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (controller.signal.aborted || response.destroyed) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='S8\\)' tests/test-runner-service.test.mjs",
+    "why": "a client that disconnects before its run starts must not start a run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    response.once(\"close\", onResponseClose);\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='S8\\)' tests/test-runner-service.test.mjs",
+    "why": "a client disconnect must be noticed from the start of the request"
   }
 ]
