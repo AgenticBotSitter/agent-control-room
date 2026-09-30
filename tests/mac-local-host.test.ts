@@ -38,6 +38,7 @@ test("loads then verifies workers before it opens the authority database", async
     openDatabase() { trace.push("database"); return { client: {} as never, async close() { trace.push("database-close"); } }; },
     assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
+    hostProcessId: 4_243,
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
   });
   // Construction itself has no filesystem, database, listener, or worker effect.

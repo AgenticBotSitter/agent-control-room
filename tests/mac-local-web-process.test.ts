@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
+import { hmacSha256Tag, InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
@@ -24,6 +24,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
       trustedOrigin },
     database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    hostProcessId: 4_243,
     workBatchIntegrityKey: new Uint8Array(32).fill(7),
     taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(1),
       results: { integrityKey: new Uint8Array(32).fill(2), storageClass: "local", storage: { read: async () => undefined } } },
@@ -48,6 +49,25 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   }
   const signedOutWrite = await app.handle(request("/projects", { method: "POST" }), () => new Response("unused"));
   assert.equal(signedOutWrite.status, 401);
+  const nonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const wrongHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce: "short" }) }),
+  () => new Response("unused"));
+  assert.equal(wrongHealth.status, 400); assert.equal(wrongHealth.headers.get("set-cookie"), null);
+  const unsignedHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(unsignedHealth.status, 403, "even the correct code needs the exact loopback Origin");
+  const remoteHealth = await app.handle(new Request(`${trustedOrigin}/api/v1/local-host-health`, { method: "POST", headers: {
+    origin: trustedOrigin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(remoteHealth.status, 403, "the readiness oracle exists only on the loopback origin");
+  const health = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(health.status, 200); assert.equal(health.headers.get("set-cookie"), null);
+  assert.deepEqual(await health.json(), { schema: "control-room.local-host-health/v1", ready: true, pid: 4_243, nonce,
+    tag: hmacSha256Tag(Buffer.from(sha256Digest({ ownerCode }), "utf8"),
+      { purpose: "local-host-health/v1", nonce, pid: 4_243 }) });
+  const healthRead = await app.handle(request("/api/v1/local-host-health"), () => new Response("unused"));
+  assert.equal(healthRead.status, 404, "health is an authenticated POST, not a public read");
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);

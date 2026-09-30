@@ -1,6 +1,6 @@
 import type { DatabaseClient } from "../../persistence/database";
 import { WebAccessError } from "./access-verifier";
-import { privateResponseHeaders, webFailure } from "./http-common";
+import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, readLocalOwnerCodeV1,
   renderLocalOwnerSignInPageV1, renderLocalOwnerSignOutPageV1, type LocalOwnerSessionProfileV1 } from "./local-owner-session";
 import { WebProjectService } from "./project-service";
@@ -40,6 +40,7 @@ import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
+import { hmacSha256Tag } from "../../security";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -107,6 +108,10 @@ export interface MacLocalWebProcessOptionsV1 {
    * those tables. The hook only asks the gateway to reconcile afterward. */
   fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string; afterDecision?: () => Promise<unknown> }>;
   clock?: () => number;
+  /** Present only in the real task-host process. The authenticated readiness
+   * route returns this pid so mac:up can bind the listener to the supervisor's
+   * private child record instead of trusting an arbitrary open port. */
+  hostProcessId?: number;
 }
 
 /** Existing controller operations supplied by the host.  This is deliberately
@@ -130,6 +135,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // same in-session proposal service. Refuse a partial composition instead of
   // mounting a review that succeeds for ordinary accepts but cannot follow up.
   if (options.ownerReviews && !options.taskService) throw new Error("mac_local_web_process_config_invalid");
+  if (options.hostProcessId !== undefined
+    && (!Number.isSafeInteger(options.hostProcessId) || options.hostProcessId <= 1))
+    throw new Error("mac_local_web_process_config_invalid");
   const clock = options.clock ?? Date.now;
   const allowedOrigins = new Set([options.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : []),
     ...(profile.remoteOrigins ?? [])]);
@@ -336,6 +344,24 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             "set-cookie": `${"control_room_local_owner"}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0` } });
         }
         throw new WebAccessError("invalid_request");
+      }
+      if (url.pathname === "/api/v1/local-host-health") {
+        if (request.method !== "POST" || url.search || options.hostProcessId === undefined)
+          throw new WebAccessError("not_found");
+        if (url.origin !== options.origin) throw new WebAccessError("access_denied");
+        sessions.assertLocalRequest(request, true);
+        if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
+          || !request.body) throw new WebAccessError("invalid_request");
+        const body = await readBoundedJson(request.body, 256);
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.getPrototypeOf(body) !== Object.prototype
+          || Object.keys(body).length !== 1 || typeof (body as { nonce?: unknown }).nonce !== "string"
+          || !/^[A-Za-z0-9_-]{43}$/u.test((body as { nonce: string }).nonce))
+          throw new WebAccessError("invalid_request");
+        const nonce = (body as { nonce: string }).nonce, pid = options.hostProcessId;
+        const tag = hmacSha256Tag(Buffer.from(profile.ownerCodeDigest, "utf8"),
+          { purpose: "local-host-health/v1", nonce, pid });
+        return Response.json({ schema: "control-room.local-host-health/v1", ready: true, pid, nonce, tag },
+          { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/local-workers") {
         if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");
