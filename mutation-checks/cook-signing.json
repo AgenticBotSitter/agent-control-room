@@ -1,0 +1,79 @@
+[
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (exactMode !== undefined && process.platform !== \"win32\" && (before.mode & 0o777) !== exactMode) refuse(\"file_mode\");",
+    "replace": "if (false) refuse(\"file_mode\");",
+    "test": "node --test --test-name-pattern \"release private key\" tests/release-signing.test.mjs",
+    "why": "release signing keys and their selecting config must be exactly 0600"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (compareReleaseVersionsV1(signature.version, trust.versionFloor) < 0) refuse(\"version_floor\");",
+    "replace": "if (false) refuse(\"version_floor\");",
+    "test": "node --test --test-name-pattern \"tampered sums, another key\" tests/release-signing.test.mjs",
+    "why": "an otherwise valid older signed release cannot cross the installation version floor"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (!verify(null, releaseSumsSignatureMaterialV1(signature.version, signature.sumsSha256), cleanPublicKey(trust.publicKey),\n    Buffer.from(signature.signature, \"base64url\"))) refuse(\"signature\");",
+    "replace": "if (false) refuse(\"signature\");",
+    "test": "node --test --test-name-pattern \"tampered sums, another key\" tests/release-signing.test.mjs",
+    "why": "the installer must cryptographically verify the signed checksum set"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (captured.sha256 !== entry.sha256) refuse(\"artifact_digest\");",
+    "replace": "if (false) refuse(\"artifact_digest\");",
+    "test": "node --test --test-name-pattern \"tampered sums, another key\" tests/release-signing.test.mjs",
+    "why": "every artifact must still match the digest in the authenticated checksum set"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (!verify(null, connectorReleaseSignatureMaterialV1(release), cleanPublicKey(trust.publicKey),\n    Buffer.from(release.signature, \"base64url\"))) refuse(\"signature\");",
+    "replace": "if (false) refuse(\"signature\");",
+    "test": "node --test --test-name-pattern \"exact signature\" tests/release-signing.test.mjs",
+    "why": "the connector updater must verify its release advertisement with the key pinned at join"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "|| !verify(null, rotationMaterial(input), cleanPublicKey(current.publicKey), Buffer.from(input.signature, \"base64url\")))",
+    "replace": "|| false)",
+    "test": "node --test --test-name-pattern \"rotation is signed\" tests/release-signing.test.mjs",
+    "why": "a replacement release key is trusted only when the old key signed it"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "|| !verify(null, revocationMaterial({ ...input, revokedKeyIds: [...input.revokedKeyIds].sort() }), cleanPublicKey(current.publicKey),\n      Buffer.from(input.signature, \"base64url\"))) refuse(\"revocations\");",
+    "replace": "|| false) refuse(\"revocations\");",
+    "test": "node --test --test-name-pattern \"rotation is signed\" tests/release-signing.test.mjs",
+    "why": "the active installation key must authenticate the key revocation list"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "throw new Error(\"The Control Room did not provide a valid installation release key. Nothing was installed.\");",
+    "replace": "return result;",
+    "test": "node --test --test-name-pattern \"omits or changes\" tests/fleet-connector-install.test.mjs",
+    "why": "a joined connector must not install without pinning the installation release public key"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (!info.isDirectory() || info.isSymbolicLink() || canonical !== path\n    || process.platform !== \"win32\" && (info.uid !== expectedUid || (info.mode & 0o777) !== 0o700))\n    refuse(\"private_directory\");",
+    "replace": "if (false) refuse(\"private_directory\");",
+    "test": "node --test --test-name-pattern \"cannot escape Protected\" tests/release-signing.test.mjs",
+    "why": "the private key directory cannot be redirected through a symbolic link"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "if (gatewayRelative === \"\" || gatewayRelative === \"..\" || gatewayRelative.startsWith(`..${sep}`)\n      || isAbsolute(gatewayRelative)) refuse(\"gateway_config\");",
+    "replace": "if (false) refuse(\"gateway_config\");",
+    "test": "node --test --test-name-pattern \"cannot escape Protected\" tests/release-signing.test.mjs",
+    "why": "key publication cannot overwrite a gateway file outside Protected"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "return { core: match.slice(1, 4).map(BigInt), prerelease: match[4]?.split(\".\") ?? [] };",
+    "replace": "return { core: match.slice(1, 4).map(Number), prerelease: match[4]?.split(\".\") ?? [] };",
+    "test": "node --test --test-name-pattern \"arbitrary-size SemVer\" tests/release-signing.test.mjs",
+    "why": "a large version number cannot round across the anti-replay floor"
+  }
+]

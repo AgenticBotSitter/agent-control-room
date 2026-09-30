@@ -22,6 +22,9 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join as joinPath, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { captureReleaseTrustV1, verifyConnectorReleaseAdvertisementV1 } from "../release-signing.mjs";
+
+export { verifyConnectorReleaseAdvertisementV1 };
 
 export const CONNECTOR_VERSION = "0.4.0";
 const CONFIG_SCHEMA = "control-room.fleet-connector/v1";
@@ -58,6 +61,12 @@ let ownProcessIdentity;
 export const sha256 = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 export const newSecret = () => `crf_${randomBytes(32).toString("base64url")}`;
 export const newEnrollmentNonce = () => `crn_${randomBytes(32).toString("base64url")}`;
+
+export function connectorUpdateSettingsFromReleaseTrustV1(value) {
+  const trust = captureReleaseTrustV1(value);
+  return Object.freeze({ releasePublicKey: trust.publicKey, floorVersion: trust.versionFloor,
+    keyId: trust.keyId, epoch: trust.epoch, revokedKeyIds: trust.revokedKeyIds, paused: false });
+}
 
 function commandOutput(command, args) {
   return new Promise(resolveOutput => {
@@ -267,8 +276,14 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
     await removeConfigArtifacts(configPath);
     throw new Error(`This code was made for ${result.workerKind ?? "another bot"}, not ${workerKind}. Nothing was installed. Remove the worker in Control Room and create a code for ${workerKind}.`);
   }
+  let updates;
+  try { updates = connectorUpdateSettingsFromReleaseTrustV1(result.releaseTrust); }
+  catch {
+    await removeConfigArtifacts(configPath);
+    throw new Error("The Control Room did not provide a valid installation release key. Nothing was installed.");
+  }
   await writeConfig(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: result.workerId, secret,
-    credentialExpiresAt: result.credentialExpiresAt, workerKind });
+    credentialExpiresAt: result.credentialExpiresAt, workerKind, updates });
   return result;
 }
 
@@ -838,7 +853,9 @@ export async function installConnector({ server, code, bot, name, workspace, hom
           if (platform === "win32") await secureWindowsCredential([path], { runner, env });
         } });
       config = await loadConfig(paths.configPath);
-      await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering" } });
+      const { updates, ...joinedConfig } = config;
+      await writePrivate(paths.configPath, { ...joinedConfig, installation: { bot, name, workspace: paths.workspace,
+        state: "registering", updates } });
       if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     }
 
@@ -846,7 +863,7 @@ export async function installConnector({ server, code, bot, name, workspace, hom
     const registration = await registerBot({ bot, name, shimPath: paths.shimPath, workspace: paths.workspace,
       configPath: paths.configPath, homeDir, env, platform, runner, clock, respectExplicitProfiles });
     config = await loadConfig(paths.configPath);
-    await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "installed" } });
+    await writePrivate(paths.configPath, { ...config, installation: { ...config.installation, state: "installed" } });
     if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     const status = await createClient(await loadConfig(paths.configPath), fetcher).heartbeat();
     return Object.freeze({ paths, registration, status });

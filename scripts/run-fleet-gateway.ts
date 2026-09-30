@@ -23,6 +23,7 @@ import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycl
 import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 import { readInstallationOperationsModeV1 } from "../src/web/v1/operations-mode-service";
 import { captureFleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
+import { captureReleaseTrustV1, type ReleaseTrustV1 } from "./release-signing.mjs";
 
 export const FLEET_GATEWAY_CONFIGURATION_V1 = "control-room.fleet-gateway/v1";
 export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 15_000, headersTimeout: 5_000,
@@ -36,6 +37,9 @@ export type FleetGatewayConfigurationV1 = Readonly<{ schema: typeof FLEET_GATEWA
    * holds. Without it, hand-off notes still record in the audit log and worker
    * events, but never reach the owner's task timeline. */
   harnessIntegrityKey?: string;
+  /** Public release trust is sent during one-time enrollment. The private key
+   * is held by the root updater and never appears in this gateway process. */
+  releaseTrust?: ReleaseTrustV1;
   trustedProxyAddresses: readonly string[]; trustedClientHeader: FleetGatewayTrustedClientHeaderV1 }>;
 
 export function fleetGatewayAdmissionFromConfigurationV1(config:
@@ -84,6 +88,11 @@ export function captureFleetGatewayConfigurationV1(value: unknown): FleetGateway
       throw new Error("fleet_gateway_configuration_refused");
     harnessIntegrityKey = input.harnessIntegrityKey;
   }
+  let releaseTrust: ReleaseTrustV1 | undefined;
+  if (input.releaseTrust !== undefined) {
+    try { releaseTrust = captureReleaseTrustV1(input.releaseTrust); }
+    catch { throw new Error("fleet_gateway_configuration_refused"); }
+  }
   const trustedClientHeader = input.trustedClientHeader ?? "none";
   const trustedProxyAddresses = input.trustedProxyAddresses ?? [];
   if (!(["cf-connecting-ip", "x-forwarded-for-rightmost", "none"] as const).includes(trustedClientHeader as never)
@@ -97,6 +106,7 @@ export function captureFleetGatewayConfigurationV1(value: unknown): FleetGateway
   } catch { throw new Error("fleet_gateway_configuration_refused"); }
   return Object.freeze({ schema: FLEET_GATEWAY_CONFIGURATION_V1, tenantId: input.tenantId, port: input.port as number,
     database, ...(workIntake ? { workIntake } : {}), ...(harnessIntegrityKey ? { harnessIntegrityKey } : {}),
+    ...(releaseTrust ? { releaseTrust } : {}),
     trustedClientHeader: trustedClientHeader as FleetGatewayTrustedClientHeaderV1,
     trustedProxyAddresses: Object.freeze([...(trustedProxyAddresses as string[])]) });
 }
@@ -136,6 +146,7 @@ async function main(path: string | undefined) {
   const connectorRelease = await loadFleetConnectorReleaseV1();
   const handler = createFleetGatewayHandlerV1({ store, ...(proposals ? { proposals } : {}),
     admission: await prepareFleetGatewayAdmissionV1(config, store),
+    ...(config.releaseTrust ? { releaseTrust: config.releaseTrust } : {}),
     connectorRelease,
     onUnexpectedError: error => { process.stderr.write(`fleet gateway: ${error instanceof Error ? error.name : "error"} ${(error as { code?: string }).code ?? ""}\n`); } });
   const server = createServer(FLEET_GATEWAY_SERVER_OPTIONS_V1,

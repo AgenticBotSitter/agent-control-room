@@ -7,6 +7,7 @@
 // tests/fleet-harness-handoff-postgres.test.ts repeats the end-to-end path as
 // the production logins.
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -19,10 +20,16 @@ import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, 
 import { createFleetHarnessAdapter } from "../src/fleet/v1/harness-adapters";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 import * as fake from "./support/fleet-fake-harness-adapter.mjs";
 
 const FAKE_MODULE = resolve("tests/support/fleet-fake-harness-adapter.mjs");
 const REAL_MODULE = resolve("src/fleet/v1/harness-adapters.ts");
+const RELEASE_PUBLIC_KEY = generateKeyPairSync("ed25519").publicKey
+  .export({ format: "der", type: "spki" }).toString("base64url");
+const RELEASE_TRUST = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(RELEASE_PUBLIC_KEY), publicKey: RELEASE_PUBLIC_KEY,
+  versionFloor: connector.CONNECTOR_VERSION, revokedKeyIds: Object.freeze([]) });
 
 type Mode = FleetOperationsModeV1 | "throw";
 
@@ -39,7 +46,7 @@ async function fixture() {
   } });
   const owner = new FleetOwnerServiceV1(db, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
     afterDecision: () => gateway.reconcile() });
-  const handler = createFleetGatewayHandlerV1({ store: gateway });
+  const handler = createFleetGatewayHandlerV1({ store: gateway, releaseTrust: RELEASE_TRUST });
   const server: Server = createServer((request, response) => { void handler.handle(request, response); });
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

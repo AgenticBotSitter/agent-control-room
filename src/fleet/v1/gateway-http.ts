@@ -7,6 +7,7 @@ import { FleetErrorV1, fleetFail } from "./errors";
 import type { FleetGatewayStoreV1, FleetWorkerPrincipalV1 } from "./gateway-store";
 import { FLEET_DIGEST_PATTERN_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1 } from "./identifiers";
+import { captureReleaseTrustV1, type ReleaseTrustV1 } from "../../../scripts/release-signing.mjs";
 
 /**
  * The connector-facing API. Every route except enrollment and the connector
@@ -309,6 +310,7 @@ function decodeFiles(value: unknown) {
 
 export type FleetGatewayHttpOptionsV1 = Readonly<{ store: FleetGatewayStoreV1; proposals?: WorkBatchServiceV1;
   connectorRelease?: Readonly<{ bundle: Uint8Array; manifest: FleetConnectorReleaseManifestV1; manifestBody: string }>;
+  releaseTrust?: ReleaseTrustV1;
   now?: () => string;
   admission?: FleetGatewayAdmissionV1;
   /** Operator log for failures that are not a fixed refusal. Never sent to the caller. */
@@ -318,6 +320,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
   const now = options.now ?? (() => new Date().toISOString());
   const admission = options.admission ?? createFleetGatewayAdmissionV1();
   let connectorRelease = options.connectorRelease;
+  const releaseTrust = options.releaseTrust === undefined ? undefined : captureReleaseTrustV1(options.releaseTrust);
   if (connectorRelease) {
     let manifest: FleetConnectorReleaseManifestV1, declared: FleetConnectorReleaseManifestV1;
     try {
@@ -386,7 +389,8 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       try {
         const result = await options.store.enroll(body as never);
         admission.registerCredential(result.workerId, body.credentialDigest as string);
-        return send(response, result.replayed ? 200 : 201, { ok: true, result });
+        return send(response, result.replayed ? 200 : 201, { ok: true,
+          result: releaseTrust ? { ...result, releaseTrust } : result });
       } finally { lease.release(); }
     }
     // Every other route: authenticate first, then read the body.

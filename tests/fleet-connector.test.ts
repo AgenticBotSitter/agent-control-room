@@ -4,7 +4,7 @@
 // database with every migration applied. The same guards are exercised as the
 // production logins in tests/fleet-connector-postgres.test.ts.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
@@ -28,9 +28,15 @@ import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, see
 // The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
 import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1 } from "../src/fleet/v1/connector-release";
+import { releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 const CF_PROXY = Object.freeze({ trustedProxyAddresses: ["127.0.0.1"], trustedClientHeader: "cf-connecting-ip" as const });
+const RELEASE_PUBLIC_KEY = generateKeyPairSync("ed25519").publicKey
+  .export({ format: "der", type: "spki" }).toString("base64url");
+const RELEASE_TRUST = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(RELEASE_PUBLIC_KEY), publicKey: RELEASE_PUBLIC_KEY,
+  versionFloor: connector.CONNECTOR_VERSION, revokedKeyIds: Object.freeze([]) });
 
 function requestFrom(address: string, values: Record<string, string> = {}) {
   return { socket: { remoteAddress: address }, headers: values } as unknown as IncomingMessage;
@@ -147,7 +153,10 @@ test("gateway protected configuration defaults to no proxy trust and validates e
   assert.throws(() => captureFleetGatewayConfigurationV1({ ...base, trustedClientHeader: "cf-connecting-ip" }),
     /fleet_gateway_configuration_refused/u);
   const configured = captureFleetGatewayConfigurationV1({ ...base, trustedClientHeader: "x-forwarded-for-rightmost",
-    trustedProxyAddresses: ["127.0.0.1"] });
+    trustedProxyAddresses: ["127.0.0.1"], releaseTrust: RELEASE_TRUST });
+  assert.deepEqual(configured.releaseTrust, RELEASE_TRUST);
+  assert.throws(() => captureFleetGatewayConfigurationV1({ ...base, releaseTrust: { ...RELEASE_TRUST, publicKey: "bad" } }),
+    /fleet_gateway_configuration_refused/u);
   const admission = fleetGatewayAdmissionFromConfigurationV1(configured);
   const lease = admission.enter(requestFrom("127.0.0.1", { "x-forwarded-for": "2001:db8:2:3::1" }), "authenticate");
   lease.completeAuthentication(null);
@@ -226,6 +235,7 @@ async function fixture(options: { gatewayClock?: () => number; admission?: Fleet
     sha256: createHash("sha256").update(fixtureBundle).digest("hex"), size: fixtureBundle.length,
     builtFrom: "0".repeat(40) } as const;
   const handler = createFleetGatewayHandlerV1({ store: gateway, proposals,
+    releaseTrust: RELEASE_TRUST,
     connectorRelease: { bundle: fixtureBundle, manifest: fixtureManifest,
       manifestBody: `${JSON.stringify(fixtureManifest, null, 2)}\n` },
     ...(options.admission ? { admission: options.admission } : {}) });
@@ -269,6 +279,8 @@ test("one-command join: a single-use code enrolls a machine whose secret never l
   const worker = await joinWorker(f, "Laptop");
   assert.match(worker.joined.workerId, /^fleet-worker:[a-f0-9]{32}$/u);
   assert.deepEqual(worker.joined.projectIds, [PROJECT_A]);
+  assert.equal(worker.config.updates.releasePublicKey, RELEASE_PUBLIC_KEY);
+  assert.equal(worker.config.updates.floorVersion, connector.CONNECTOR_VERSION);
   if (process.platform !== "win32") assert.equal((await stat(worker.configPath)).mode & 0o077, 0, "credential file is private");
   // Only the digest is stored; the secret itself is nowhere in the database.
   const dump = JSON.stringify(await f.query("SELECT * FROM fleet_worker_credentials"));
