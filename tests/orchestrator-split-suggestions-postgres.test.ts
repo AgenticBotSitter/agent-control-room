@@ -18,6 +18,13 @@ import { IntakeCoordinatorV1, workBatchProposalDigestV1, PostgresIntakePlannerFa
   UnwiredPlannerAllowanceV1, intakeProjectScopeV1, intakeRequestScopeV1,
   type WorkBatchProposalV1 } from "../src/work-intake/v1";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+import type { IntakePlannerPortV1 } from "../src/work-intake/v1/intake-coordinator";
+import type { WorkBatchServiceV1 } from "../src/work-intake/v1/service";
+
+/** The submission half of the coordinator's port, named from the service's own
+ * type so a change to `submit`'s signature fails HERE rather than being cast away
+ * at the call site. */
+type IntakeSubmissionPort = Pick<WorkBatchServiceV1, "authorizeBeforeBody" | "submit">;
 
 // Reserved disposable-cluster lane for MIG-A: 59370-59379, or the test runner's
 // assigned port block, so concurrent runs never collide.
@@ -1579,6 +1586,159 @@ test("twenty concurrent failure records produce one counter with twenty, and twe
       } finally { await Promise.all(clients.map(async client => { await client.end().catch(() => {}); })); }
     } finally { await admin.end(); }
   }, { port: PORT + 7, allowedPorts: ALLOWED, boundMs: 240_000 });
+});
+
+test("ONE owner grant and twenty concurrent presses is ONE run, and nineteen honest refusals (R4-M1)", async t => {
+  // The shape round 4 measured as a defect, reproduced here so it stays fixed.
+  //
+  // WHAT WAS MEASURED BEFORE THIS FIX, on the real coordinator over the real
+  // stores, one project and one grant:
+  //
+  //   planner still broken : planner runs = 20, counter = 20, 19 needs_you + 1 refused
+  //   planner fixed        : planner runs = 15, new batches = 15, 15 submitted,
+  //                          5 THREW planner_needs_you_not_escalated
+  //
+  // The cause was `#escalated` reading the latch and then calling `clear()` without
+  // reading whether `clear()` had cleared anything: every press that read the latch
+  // before the first clear landed got a run. The five throws are the same race seen
+  // from the other end -- a press that had already decided "escalated" raised after
+  // a peer's clear had zeroed the counter, so the adapter refused.
+  //
+  // BOTH HALVES ARE ASSERTED HERE, and separately, because either alone would pass
+  // while the bug is still live: the run count proves the latch was spent once, and
+  // the status set proves a lost race answers `needs_you` instead of throwing. The
+  // planner double SUCCEEDS here, which is the harder case -- it is the one that
+  // produced 15 batches and 5 throws, so a fix that only handles the broken-planner
+  // path would still fail this.
+  //
+  // Each press gets its OWN connection, because that is what makes them concurrent.
+  // A shared client would serialise them through one socket and prove nothing about
+  // a race that lives between two statements.
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    try {
+      await seedTenant(admin, scope, { withBinding: true });
+      await seedIdentities(admin, scope, "");
+      const CONCURRENCY = 20;
+      const description = "One grant, twenty presses, one run.";
+      const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
+      const agent = { tenantId: scope.tenantId, identityId: "identity:orch-agent", actorType: "agent" as const,
+        authenticatedAt: NOW, expiresAt: LATER };
+      const selection = [{ workerId: "worker:chief", workerKind: "codex" as const, nodeId: "node:chief",
+        modelPolicy: { models: ["model:plan"], defaultModel: "model:plan",
+          efforts: ["high" as const], defaultEffort: "high" as const } }];
+      const choose = () => ({ workerId: "worker:chief", workerKind: "codex" as const,
+        modelKey: "model:plan", effort: "high" as const });
+      const allow = { async consume() { return Object.freeze({ allowed: true as const }); } };
+      const ownerAuthority = { async authorizeBeforeBody() {
+        return Object.freeze({ allowed: true as const, workspaceId: scope.workspaceId }); } };
+      const scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
+      let runs = 0;
+      const working = JSON.stringify(proposal(1));
+      const build = (db: DatabaseClient, planner: IntakePlannerPortV1, submissions: Pick<IntakeSubmissionPort, "submit">) =>
+        new IntakeCoordinatorV1({ read: choose }, planner, allow,
+          new PostgresIntakePlannerFailureStoreV1(db, scopeOf, () => LATER),
+          new PostgresIntakeNeedsYouStoreV1(db, () => ({ identityId: "identity:orch-agent" }), () => LATER),
+          { ...ownerAuthority, ...submissions },
+          { async append() { throw new Error("the suggestion store was reached, which an initial request cannot do"); },
+            prefillForOwner() { throw new Error("not used"); } },
+          selection, ["code.change"]);
+
+      // Two failures to reach the escalation, on ONE connection: this part is
+      // sequential on purpose, because the defect is not in the counting.
+      const setup = new Client(postgres.connection("coordinator")); await setup.connect();
+      const setupDb = database(setup);
+      const broken = build(setupDb, { async run() { throw new Error("planner down"); } },
+        { async submit() { throw new Error("a broken planner cannot submit"); } });
+      assert.equal((await broken.coordinateInitial({ principal: agent, projectId: scope.projectId,
+        ownerRequest: description, idempotencyKey: "p3-fail-0001", now: LATER })).status, "planner_failed");
+      assert.equal((await broken.coordinateInitial({ principal: agent, projectId: scope.projectId,
+        ownerRequest: description, idempotencyKey: "p3-fail-0002", now: LATER })).status, "needs_you");
+      // ONE GRANT, on the OWNER'S WEB LOGIN and not the coordinator's -- which is
+      // the shape the product has and the one round 4's revocation made exact. The
+      // grant is 0205's SECURITY DEFINER function, and after the REVOKE the only
+      // login holding EXECUTE on it is `control_room_private_web`; a test that
+      // granted over the coordinator pool would have passed before the REVOKE and
+      // fails 42501 after it, which is the property worth keeping.
+      const ownerPool = new Client(postgres.connection("web")); await ownerPool.connect();
+      const grant = () => new PostgresIntakeOwnerRetryStoreV1(database(ownerPool)).grant({ tenantId: scope.tenantId,
+        projectId: scope.projectId, requestKey: "p3-retry-0001", ownerRequest: description });
+      assert.equal(await grant(), 1);
+      // A second grant is refused, so the twenty presses below cannot be spending
+      // twenty latches -- the bound has to be in the GRANT as well as the spend.
+      assert.equal(await new PostgresIntakeOwnerRetryStoreV1(database(ownerPool)).grant({ tenantId: scope.tenantId,
+        projectId: scope.projectId, requestKey: "p3-retry-0002", ownerRequest: description }), 0,
+      "one escalation earns one retry");
+      // THE COORDINATOR IS REFUSED, and this is the assertion that holds the
+      // REVOKE in db/roles/task_coordinator_roles.sql. Round 4 measured that the
+      // coordinator could set the latch itself, which contradicted both 0205's
+      // header and the store's comment; the revocation removed a grant nothing
+      // called, and this proves the removal rather than trusting the file.
+      await assert.rejects(() => new PostgresIntakeOwnerRetryStoreV1(database(setup))
+        .grant({ tenantId: scope.tenantId, projectId: scope.projectId, requestKey: "p3-retry-denied",
+          ownerRequest: description }), /permission denied for function/iu,
+      "the coordinator login must not be able to grant itself a retry");
+      // ...and the column is still UPDATE-able by the coordinator, because the
+      // store's SPEND needs it. The revocation is on the FUNCTION, not the column:
+      // claiming otherwise would break the retry it exists to protect.
+      await assert.doesNotReject(() => database(setup)
+        .query("UPDATE control_planner_failure_counters SET owner_retry_cleared_at=NULL WHERE false"));
+      await setup.end(); await ownerPool.end();
+
+      const clients = await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
+        const client = new Client(postgres.connection("coordinator")); await client.connect(); return client;
+      }));
+      try {
+        // EVERY press carries a FRESH idempotency key, exactly as the browser's
+        // panel mints one per press. A shared key would be answered from the
+        // coordinator's in-flight map and would never reach the latch at all.
+        const outcomes = await Promise.all(clients.map(async (client, index) => {
+          const working_ = build(database(client), { async run() { runs += 1; return { replyText: working }; } },
+            { async submit() {
+              // A receipt of the REAL schema shape, not a hand-written object with
+              // three of its fields: the coordinator returns this straight to the
+              // owner, and a double that answers with a partial receipt would let a
+              // missing-field regression pass here and fail in the panel.
+              return Object.freeze({ schema: "control-room.work-batch-receipt/v1" as const,
+                batchId: `batch:p3-${index}`, projectId: scope.projectId, state: "proposed" as const,
+                proposalDigest: sha256Digest({ proposal: working }), revision: 1 as const, replayed: false,
+                startsWork: false as const, grantsExecutionAuthority: false as const });
+            } });
+          return (await working_.coordinateInitial({ principal: agent, projectId: scope.projectId,
+            ownerRequest: description, idempotencyKey: `p3-press-${String(index).padStart(4, "0")}`, now: LATER })).status;
+        }));
+        assert.equal(runs, 1,
+          `one owner grant authorised ${runs} planner runs under twenty concurrent presses; it must authorise exactly one`);
+        const statuses = outcomes.reduce<Record<string, number>>((acc, status) => {
+          acc[status] = (acc[status] ?? 0) + 1; return acc;
+        }, {});
+        // The other nineteen are REFUSALS, not throws. `Promise.all` would have
+        // rejected on the pre-fix `planner_needs_you_not_escalated`, which is the
+        // whole point of the second half of the fix.
+        assert.equal(outcomes.filter(status => status === "submitted").length, 1,
+          `exactly one press may submit: ${JSON.stringify(statuses)}`);
+        assert.equal(outcomes.filter(status => status === "needs_you").length, CONCURRENCY - 1,
+          `every press that did not get the latch is a needs_you: ${JSON.stringify(statuses)}`);
+        assert.equal(outcomes.filter(status => status === "stopped" || status === "refused").length, 0,
+          `no press may be stopped or refused here: ${JSON.stringify(statuses)}`);
+        // The latch is spent and the escalation is not a run loop: twenty presses
+        // of one description are still ONE Needs-you item, and a fresh grant is
+        // refused because a success is not a fresh escalation.
+        const live = await admin.query<{ failure_count: string; owner_retry_cleared_at: string | null }>(
+          "SELECT failure_count::text, owner_retry_cleared_at FROM control_planner_failure_counters WHERE scope_key=$1",
+        [projectScope]);
+        assert.equal(live.rows[0]!.owner_retry_cleared_at, null, "the latch is spent by the run it authorised");
+        assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1,
+          "twenty presses of one description are still one Needs-you item");
+        const after = new Client(postgres.connection("web")); await after.connect();
+        assert.equal(await new PostgresIntakeOwnerRetryStoreV1(database(after)).grant({ tenantId: scope.tenantId,
+          projectId: scope.projectId, requestKey: "p3-retry-0003", ownerRequest: description }), 0,
+        "a retry needs a fresh escalation, and a success is not one");
+        await after.end();
+      } finally { await Promise.all(clients.map(async client => { await client.end().catch(() => {}); })); }
+    } finally { await admin.end(); }
+  }, { port: PORT + 9, allowedPorts: ALLOWED, boundMs: 240_000 });
 });
 
 test("the unwired S7b allowance port refuses rather than allowing an unmeasured run", async () => {
