@@ -7,6 +7,7 @@
 // asked for; every authority assertion is made from the intake, coordinator and
 // private-web logins.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
@@ -1112,15 +1113,15 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       // has to be recomputable from the stored digest alone. Passing the text
       // here would produce a different key and the comparison would fail in a way
       // that reads like a guard bug rather than a shape mismatch.
-      const fromSql = await admin.query<{ request: string; project: string }>(`SELECT
+      const fromSqlRow = await admin.query<{ request: string; project: string }>(`SELECT
         planner_failure_scope_key('initial', jsonb_build_object(
           'tenantId',$1::text,'projectId',$2::text,'requestKey',$3::text)) AS request,
         planner_failure_scope_key('project', jsonb_build_object(
           'kind','initial','tenantId',$1::text,'projectId',$2::text,'ownerRequest',$4::text)) AS project`,
       [scope.tenantId, scope.projectId, requestKey, sha256Digest({ ownerRequest: description })]);
-      assert.equal(fromSql.rows[0]!.request, scopeKey,
+      assert.equal(fromSqlRow.rows[0]!.request, scopeKey,
         "the SQL scope key and the TypeScript scope key must be byte-identical for the request scope");
-      assert.equal(fromSql.rows[0]!.project, projectScope,
+      assert.equal(fromSqlRow.rows[0]!.project, projectScope,
         "... and for the project scope, or 0204's guard would refuse every escalation");
       // And both fit the CHECK that a 180-character request key used to overflow.
       assert.match(scopeKey, /^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u, "a digest scope is always a legal scope_key");
@@ -1147,6 +1148,58 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
         requestKey: "planner-store-9999", reasonCode: "orchestrator_failed_twice",
         ownerRequest: description, now: LATER }),
       /planner_needs_you_not_escalated/u);
+      // THE GUARD'S OWN SCOPE-MEMBERSHIP CHECK, reached directly. The adapter
+      // refuses an unearned raise on its own read -- `planner_needs_you_not_escalated`
+      // -- so the trigger's `NEW.scope_key NOT IN (...)` arm is only reachable by a
+      // hand-written INSERT. That matters: without this assertion the trigger would
+      // accept a raise naming a scope it did not recompute, as long as SOME live
+      // counter in the project was at 2, and every adapter-level test would still
+      // pass. E1's mutation (the membership check replaced by `OR false`) escaped
+      // until this assertion existed -- measured, which is the only reason it is here.
+      //
+      // Every other arm of the guard is satisfied on purpose: a live counter at 2
+      // exists (the one just recorded), the id and action_item_id are the correct
+      // digests OF THE FORGED SCOPE, the reason code is right, and the raiser is a
+      // real active agent. So the only thing that can refuse this row is the
+      // membership check, and the only thing that can admit it is its absence.
+      const forged = intakeRequestScopeV1("initial", scope.tenantId, scope.projectId, "forged-scope-0001");
+      const forgedDigest = (value: string) => 'planner-needs-you:' + createHash("sha256")
+        .update(`${scope.tenantId}/${scope.projectId}/${value}`, "utf8").digest("hex").slice(0, 32);
+      await assert.rejects(admin.query(`INSERT INTO control_planner_needs_you_items
+        (id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at,
+          owner_request_digest,scope_key,action_item_id)
+        VALUES($1,$2,$3,'forged-scope-0001','orchestrator_failed_twice',2,'identity:orch-agent',$4,$5,$6,$7)`,
+      [forgedDigest(forged), scope.tenantId, scope.projectId, LATER,
+        sha256Digest({ ownerRequest: description }), forged,
+        'attention:planner:' + forgedDigest(forged).slice("planner-needs-you:".length)]),
+      /planner needs-you insert rejected/u,
+      "a raise naming a scope the trigger did not recompute is refused, even with a live counter at 2");
+      // The CONTROL, and it is the row the refused one is only meaningful against.
+      // Every arm is the same except the scope: this one names a scope the trigger
+      // DID recompute, and it is accepted. Without it the refusal above could be a
+      // row that was always going to fail for some unrelated reason.
+      const legitimate = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
+      assert.equal((await admin.query("SELECT failure_count::text FROM control_planner_failure_counters WHERE scope_key=$1",
+        [legitimate])).rows.length, 0,
+        "precondition: this description's own project counter does not exist yet");
+      await admin.query(`INSERT INTO control_planner_failure_counters(tenant_id,project_id,scope_key,failure_count,
+        last_failure_at,cleared_at,version,updated_at,created_at) VALUES($1,$2,$3,1,$4,NULL,1,$4,$4)`,
+      [scope.tenantId, scope.projectId, legitimate, LATER]);
+      await admin.query(`UPDATE control_planner_failure_counters SET failure_count=2, version=version+1, updated_at=$4
+        WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3`, [scope.tenantId, scope.projectId, legitimate, LATER]);
+      await admin.query(`INSERT INTO control_planner_needs_you_items
+        (id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at,
+          owner_request_digest,scope_key,action_item_id)
+        VALUES($1,$2,$3,'legitimate-scope-0001','orchestrator_failed_twice',2,'identity:orch-agent',$4,$5,$6,$7)`,
+      [forgedDigest(legitimate), scope.tenantId, scope.projectId, LATER,
+        sha256Digest({ ownerRequest: description }), legitimate,
+        'attention:planner:' + forgedDigest(legitimate).slice("planner-needs-you:".length)]);
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items WHERE scope_key=$1",
+        [legitimate])).rows[0]!.n, 1,
+        "the same row, naming a scope the trigger computed, is accepted -- so the refusal above was the membership check and not something else");
+      // And the forged row left nothing behind.
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items WHERE scope_key=$1",
+        [forged])).rows[0]!.n, 0, "the refused row left no trace");
       // A DIFFERENT description has its own project scope, so a counter earned by
       // one description cannot license an escalation for another. This is the
       // bound the 0204 guard re-checks in SQL, and it is the reason the project
@@ -1206,8 +1259,10 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       [scope.tenantId, scope.projectId, LATER, sha256Digest({ ownerRequest: description })]),
       /check constraint|planner needs-you insert rejected/u,
       "any other reason code is refused by the column's own CHECK");
-      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1,
-        "none of the three forged raises left a row");
+      // The count is 2, not 1: the scope-membership assertion above ADDED a
+      // legitimate row of its own, on purpose, as the control for the refused one.
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 2,
+        "none of the three forged raises left a row, and the membership control's own row is the other one");
       // A NEW failure after a clear starts again at 1, not 3.
       assert.equal(await failures.record(scopeKey), 1);
       // The guard refuses a hand-written count: this is the whole point of it.
@@ -1230,16 +1285,18 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       await assert.rejects(coordinator.query("DELETE FROM control_planner_needs_you_items"), /permission denied/u);
       await assert.rejects(admin.query("DELETE FROM control_planner_needs_you_items"),
         /append-only|append only|immutable/u);
-      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1,
-        "the ledger row survived every refused mutation");
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 2,
+        "both legitimate rows survived every refused mutation");
       // The web login may read the escalation ledger's view and nothing else.
       const web = new Client(postgres.connection("web")); await web.connect();
       try {
         const seen = await web.query<{ request_key: string; reason_code: string; failure_count: string }>(
           "SELECT request_key, reason_code, failure_count FROM control_planner_open_needs_you WHERE tenant_id=$1",
         [scope.tenantId]);
-        assert.equal(seen.rowCount, 1);
-        assert.equal(seen.rows[0]!.reason_code, "orchestrator_failed_twice");
+        // TWO, not one: the round-2 raise, plus the scope-membership control's own
+        // legitimate row. Both are real escalations of a live counter at 2.
+        assert.equal(seen.rowCount, 2);
+        for (const row of seen.rows) assert.equal(row.reason_code, "orchestrator_failed_twice");
         await assert.rejects(web.query("UPDATE control_planner_failure_counters SET failure_count=0"),
           /permission denied/u, "the owner must not be able to clear the coordinator's counter");
         await assert.rejects(web.query("INSERT INTO control_planner_needs_you_items(id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at) SELECT 'planner-needs-you:0000000000000000000000000000000a',tenant_id,project_id,'forged-request-key','orchestrator_failed_twice',9,raised_by_identity_id,raised_at FROM control_planner_needs_you_items LIMIT 1"),
@@ -1590,8 +1647,8 @@ test("the REAL coordinator spends a granted latch through the real store, and th
       const granted = await coordinator.coordinateInitial({ principal: agent, projectId: scope.projectId,
         ownerRequest: description, idempotencyKey: "e2e-retry-0002", now: LATER });
       assert.equal(runs, 3, "the granted press ran the planner exactly once");
-      assert.equal(granted.status, "needs_you",
-        "the granted run FAILED, so the outcome is the new escalation's, not a success");
+      assert.equal(granted.status, "planner_failed",
+        "the granted run FAILED, and at count 1 that is a FIRST failure of a new escalation -- not an immediate re-escalation, which is what makes the bound work");
       // ...and it is the FIRST failure of a new one: the coordinator spent the
       // latch by clearing, so the count restarted rather than reaching 3.
       const live = await admin.query<{ failure_count: string; owner_retry_cleared_at: string | null }>(
