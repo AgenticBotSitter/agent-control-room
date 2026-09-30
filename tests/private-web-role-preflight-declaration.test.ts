@@ -317,33 +317,71 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
   // Trigger functions are excluded, and deliberately so. A trigger function
   // cannot be invoked directly — it has no SQL-callable signature — and it
   // executes as the owner of the table it is attached to, so the web login can
-  // never reach it however its ACL reads. Only 0093, 0106, 0141 create
-  // SECURITY DEFINER functions a login can call, and those are exactly the four
-  // the scan names.
+  // never reach it however its ACL reads.
+  //
+  // SECURITY DEFINER is read PER FUNCTION, from each function's own header.
+  // It used to be read per FILE — `if (!/SECURITY\s+DEFINER/i.test(sql)) continue`
+  // — and that is wrong for every migration that creates both kinds, because
+  // 0106 (and 0093) declare an IMMUTABLE helper next to a SECURITY DEFINER
+  // boundary function and one `test()` over the file body attributes SECURITY
+  // DEFINER to all of them. The consequence was not cosmetic: the phantom
+  // set then held six signatures where only four are SECURITY DEFINER, and
+  // 0227's two pure SQL helpers were not in it at all even though the
+  // preflight exempts them. The four below were read off a live PostgreSQL 17
+  // (`SELECT proname, prosecdef FROM pg_proc WHERE prorettype<>'trigger'`),
+  // which is the authority this check is standing in for: the required set is
+  // exactly the four names that query returns.
   const shipped = new Map<string, string>();
+  // Every non-trigger function a migration creates, whether or not it is
+  // SECURITY DEFINER. The phantom check below has to run against THIS set: an
+  // allowlist entry naming a function no migration creates is a hole whatever
+  // kind the phantom would have been, so restricting the set to the SECURITY
+  // DEFINER ones would have made that check unable to see 0227 at all.
+  const created = new Map<string, string>();
   for (const file of (await readdir(join(process.cwd(), "db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
     const sql = await readFile(join(process.cwd(), "db/migrations", file), "utf8");
-    if (!/SECURITY\s+DEFINER/i.test(sql)) continue;
-    // `RETURNS trigger` is what marks a function as a trigger function.
-    const triggers = [...sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION[\s\S]*?RETURNS\s+trigger/gi)].length;
-    for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)RETURNS\s+([a-z ]+)/gi)) {
-      if (match[4]!.trim().toLowerCase() === "trigger") continue;
+    // The header runs from the signature to the body opener (`AS $$` or
+    // `AS '...'`), so attributes in the header belong to THIS function and a
+    // following function's attributes cannot leak backwards into it.
+    for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)AS\s+(?:\$\$|')/giu)) {
+      const header = match[3]!;
+      // `RETURNS trigger` is what marks a function as a trigger function.
+      const returned = /RETURNS\s+([a-z ]+)/iu.exec(header);
+      if (returned && returned[1]!.trim().toLowerCase() === "trigger") continue;
       const args = match[2]!.split(",").map(argument => argument.trim().split(/\s+/)[0]!.toLowerCase())
         .filter(argument => argument !== "");
-      shipped.set(`${match[1]!.toLowerCase()}(${args.join(",")})`, file);
+      const signature = `${match[1]!.toLowerCase()}(${args.join(",")})`;
+      created.set(signature, file);
+      if (!/SECURITY\s+DEFINER/iu.test(header)) continue;
+      shipped.set(signature, file);
     }
-    void triggers;
   }
+  // The set is not allowed to drift from what PostgreSQL actually reports, so
+  // it is pinned by name. A migration that adds a fifth SECURITY DEFINER
+  // function a login can call fails here, and has to add its allowlist entry at
+  // the same time — which is the change that would otherwise be forgotten.
+  assert.deepEqual([...shipped.keys()].map(signature =>
+    signature.replace(/\(.*\)/u, "")).sort(),
+  ["commit_agent_review", "is_work_intake_session", "read_agent_review_plan", "redeem_fleet_enrollment"],
+    "the shipped SECURITY DEFINER function set changed; a login-callable one needs a preflight allowlist entry");
   // The shipped names carry SQL argument NAMES; the preflight carries TYPES.
   // Compare on shape, so a rename of a parameter is not a finding and a new
-  // function is.
+  // function is. The shape comparison is what lets the four above be matched
+  // against the preflight's typed spellings, so it is asserted to be real
+  // rather than a shape that matches everything: each of the four must map to
+  // exactly one shipped signature of the same arity, by name.
   const shape = (signature: string) => signature.replace(/\(([^)]*)\)/u, (all, args: string) =>
     `(${args.split(",").length})`);
-  const shapes = new Set([...shipped.keys()].map(shape));
-  assert.deepEqual([...shipped.keys()].filter(signature => !exempted.has(signature) && !shapes.has(shape(signature))).sort(), [],
-    "a SECURITY DEFINER function a migration creates is not on the preflight's allowlist, so a correct database is refused");
+  const shapes = new Set([...created.keys()].map(shape));
   assert.deepEqual([...exempted].filter(signature => !shapes.has(shape(signature))).sort(), [],
     "the preflight exempts a function no migration creates; a renamed or removed function is now a hole in the scan");
+  for (const name of ["commit_agent_review", "is_work_intake_session", "read_agent_review_plan",
+    "redeem_fleet_enrollment"]) {
+    const signatures = [...shipped.keys()].filter(signature => signature.startsWith(`${name}(`));
+    assert.equal(signatures.length, 1, `${name} has ${signatures.length} shipped signatures, not one`);
+    assert.ok(exempted.has(signatures[0]!) || shapes.has(shape(signatures[0]!)),
+      `${name} is a shipped SECURITY DEFINER function with no preflight allowlist entry`);
+  }
 
   // The specific shape that broke: the owner check may not sit inside the
   // reviewer-only disjunct, or these two functions are exempt for every kind.
