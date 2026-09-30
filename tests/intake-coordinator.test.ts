@@ -163,13 +163,48 @@ test("a retry after one failure can succeed and clears the failure count", async
     return JSON.stringify(proposal());
   } });
   assert.equal((await f.initial()).status, "planner_failed");
+  // Before the retry, BOTH scopes are at 1. Asserting that here is what makes the
+  // clearing assertion below meaningful: a mutation that clears only one scope
+  // leaves the other at 1, and "the count is 0" for the scope that was cleared
+  // would still pass without this line.
+  assert.equal(f.failures.count(intakeRequestScopeV1("initial", "tenant:test", "project:test", "planner-request-0001")), 1);
+  assert.equal(f.failures.count(intakeProjectScopeV1("initial", "tenant:test", "project:test",
+    "Build and independently check it.")), 1);
   assert.equal((await f.initial()).status, "submitted");
   // A success clears BOTH scopes, so neither can escalate a later, unrelated
   // failure of the same description on a counter that already saw a recovery.
+  // Both are asserted, not one: the mutation that drops the second clear leaves
+  // the project scope live, and that scope is the one the panel's repeat reaches.
   assert.equal(f.failures.count(intakeRequestScopeV1("initial", "tenant:test", "project:test", "planner-request-0001")), 0);
   assert.equal(f.failures.count(intakeProjectScopeV1("initial", "tenant:test", "project:test",
     "Build and independently check it.")), 0);
   assert.equal(f.calls.needsYou.length, 0);
+});
+
+test("B3: a success clears the project scope, so a later failure starts again at 1", async () => {
+  // The two counters the coordinator keeps, and the one property only BOTH
+  // clearing gives: recover, then fail twice again, and escalate only on the
+  // SECOND failure after the recovery. If a success left the project scope live
+  // at 1, the very next failure would escalate -- an owner whose planner worked
+  // once and then broke would get a Needs-you for a first failure.
+  let failing = true;
+  const f = harness({ reply: async () => {
+    if (failing) throw new Error("planner is down");
+    return JSON.stringify(proposal());
+  } });
+  const description = "Build and independently check it.";
+  assert.equal((await f.initial({ idempotencyKey: "orchestrator:recover-0001" })).status, "planner_failed");
+  // Recover.
+  failing = false;
+  assert.equal((await f.initial({ idempotencyKey: "orchestrator:recover-0002" })).status, "submitted");
+  // Break again, with fresh keys, and the count must start from 0.
+  failing = true;
+  assert.equal((await f.initial({ idempotencyKey: "orchestrator:rebreak-0003" })).status, "planner_failed",
+    "the first failure after a recovery is a first failure, not an escalation");
+  assert.equal(f.calls.needsYou.length, 0, "and it raises nothing");
+  // The second failure after the recovery escalates.
+  assert.equal((await f.initial({ idempotencyKey: "orchestrator:rebreak-0004" })).status, "needs_you");
+  assert.equal(f.failures.count(intakeProjectScopeV1("initial", "tenant:test", "project:test", description)), 2);
 });
 
 test("B2: a repeat of a completed request is answered from storage, with no run and no allowance", async () => {

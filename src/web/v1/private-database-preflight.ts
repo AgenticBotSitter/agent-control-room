@@ -20,7 +20,8 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // PGlite digest script and cross-checked against a real PostgreSQL 17 cluster
 // installed the production way; both agree. Catalog query below; not a mutable
 // database marker. Recomputed after the chief-of-staff migrations, and again
-// after 0203 made the current-split-suggestion view tenant-bound.
+// after 0203 (tenant-bound split-suggestion read) and 0204 (digest failure
+// scopes on the Needs-you ledger).
 export const privateWebSchemaDigest = "4eb349cfb99f4e3c2013d4017f530e8c7f5a3f5f0d5ad21750ae2dde2a4d384a";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.

@@ -600,6 +600,36 @@ test("B2: retrying a describe that already succeeded returns the stored receipt,
       assert.equal((await admin.query(`SELECT count(*)::int AS n FROM work_batches
         WHERE tenant_id=$1 AND project_id=$2`, [scope.tenantId, scope.projectId])).rows[0].n, 1,
         "one batch, and no duplicate from the retries");
+
+      // A SUBMISSION THAT DIED IN FLIGHT. `WorkBatchStoreV1.create` writes the
+      // control_idempotency row with status 'processing' before the batch and
+      // 'completed' after, in one transaction -- so a row left in 'processing' is
+      // a process that died between the two. The lookup must read it as "not
+      // completed" and let the caller run, because answering from it would hand
+      // the owner a receipt for a batch that was never committed. The row is
+      // written here as the intake login, which is the identity that owns it.
+      await intake.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status)
+        VALUES($1,$2,$3,$4,'processing') ON CONFLICT DO NOTHING`,
+        [scope.tenantId, `work-batches.propose/v1:${agentId}`, "orchestrator:describe-crashed-0003",
+          `sha256:${"d".repeat(64)}`]);
+      const crashed = await new PostgresIntakeCompletionLookupV1(database(intake)).completed(
+        { tenantId: scope.tenantId, projectId: scope.projectId, identityId: agentId,
+          requestKey: "orchestrator:describe-crashed-0003" });
+      assert.equal(crashed, null,
+        "a 'processing' row is not a completed request, so no receipt is invented from it");
+      // ... and a row that is not a receipt at all is refused the same way.
+      await intake.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status,result)
+        VALUES($1,$2,$3,$4,'completed','{"schema":"not-a-receipt"}'::jsonb) ON CONFLICT DO NOTHING`,
+        [scope.tenantId, `work-batches.propose/v1:${agentId}`, "orchestrator:describe-garbage-0004",
+          `sha256:${"e".repeat(64)}`]);
+      assert.equal(await new PostgresIntakeCompletionLookupV1(database(intake)).completed(
+        { tenantId: scope.tenantId, projectId: scope.projectId, identityId: agentId,
+          requestKey: "orchestrator:describe-garbage-0004" }), null,
+        "a 'completed' row whose result is not a receipt is not one either");
+      // A receipt for a DIFFERENT project is not this project's proposal.
+      assert.equal(await new PostgresIntakeCompletionLookupV1(database(intake)).completed(
+        { tenantId: scope.tenantId, projectId: otherProject.projectId, identityId: agentId, requestKey: key }),
+        null, "a stored receipt is not answered for a project it was not made for");
     } finally { await tasks.end(); await intake.end(); await admin.end(); }
   }, { port: PORT + 7, allowedPorts: ALLOWED, boundMs: 240_000 });
 });

@@ -715,8 +715,75 @@ test("the production suggestion store is idempotent, immutable and honest about 
         proposal: proposal(4), proposalDigest: workBatchProposalDigestV1(proposal(4)) });
       assert.notEqual(different.suggestionId, first.suggestionId);
       assert.equal((await admin.query("SELECT count(*)::int AS n FROM work_batch_split_suggestions")).rows[0]!.n, 2);
-      assert.equal((await admin.query("SELECT count(*)::int AS n FROM work_batch_revisions WHERE batch_id=$1",
+      assert.equal((await admin.query(`SELECT count(*)::int AS n FROM work_batch_revisions WHERE batch_id=$1`,
         ["batch:orch-store"])).rows[0]!.n, 1, "a suggestion never writes a work_batch_revision");
+
+      // THE POST-INSERT ARM, which the pre-read cannot reach. `append` does
+      // pre-read, then INSERT ... ON CONFLICT DO NOTHING, then read back. The
+      // window between the pre-read and the insert is where a CONCURRENT append
+      // of the same key under different content lands: the insert does nothing,
+      // the other caller's row is in place, and the read-back finds a row that is
+      // not ours. That arm used `&&` where it needed `||`, so it only fired when
+      // BOTH digests differed.
+      //
+      // It is driven here as a genuine race: two coordinators race the same key
+      // with different proposals, and the loser must be refused rather than
+      // handed the winner's record. `store` and the racing store are separate
+      // adapters on separate connections, which is what makes the pre-reads
+      // genuinely concurrent.
+      const racer = new Client(postgres.connection("control_room_work_intake_agent"));
+      await racer.connect();
+      try {
+        // Two adapters, two connections, and an EXPLICIT barrier between the
+        // pre-read and the insert, because the post-insert arm is otherwise
+        // unreachable from a test.
+        //
+        // Both `append` calls are the same code, so the only way to make one of
+        // them lose the race -- pass its pre-read, then find the other's row where
+        // its own insert would have gone -- is to hold the RIVAL between its two
+        // database round trips. Its `query` blocks on a promise the test
+        // releases, so the interleaving is exact rather than hoped for: without
+        // the barrier, both runs of this test took the pre-read arm and the
+        // post-insert `||` was never executed at all (which is why its mutation
+        // escaped the first time).
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        let gated = false;
+        const blocking = {
+          query: async (sql: string, values?: unknown[]) => {
+            // The RIVAL's pre-read is the one that must see nothing, so it is
+            // held and released only after the winner has inserted.
+            if (!gated && sql.includes("FROM work_batch_split_suggestions")) {
+              gated = true;
+              await gate;
+            }
+            return racer.query(sql, values as never[]);
+          },
+        } as unknown as ReturnType<typeof database>;
+        const rival = new PostgresIntakeSuggestionStoreV1(blocking, KEY);
+        const base = { ...input, requestKey: "orchestrator-store-race-0003" };
+        // The RIVAL carries DIFFERENT content under the SAME key, so the second
+        // caller is not an exact replay -- which is the case the contract refuses.
+        // Two adapters with identical content would both be correct: the second
+        // is an exact replay and must be answered with the first's record.
+        const winner = store.append(base);
+        // Let the winner finish its pre-read and insert before the rival reads.
+        await new Promise(resolve => setImmediate(resolve));
+        const other = proposal(4);
+        const loser = rival.append({ ...base, proposal: other, proposalDigest: workBatchProposalDigestV1(other) });
+        await new Promise(resolve => setImmediate(resolve));
+        release();
+        const settled = await Promise.allSettled([winner, loser]);
+        const rejected = settled.filter(r => r.status === "rejected");
+        assert.equal(rejected.length, 1,
+          `exactly one caller is refused, the other stores the row: ${JSON.stringify(settled.map(r => r.status))}`);
+        for (const outcome of rejected) assert.ok(outcome.reason instanceof Error
+          && /intake_suggestion_replay_conflict/u.test(outcome.reason.message),
+        `and the refusal names the replay conflict, not a raw database error: ${String(outcome.reason)}`);
+        assert.equal((await admin.query(`SELECT count(*)::int AS n FROM work_batch_split_suggestions
+          WHERE request_key=$1`, ["orchestrator-store-race-0003"])).rows[0]!.n, 1,
+          "the race left exactly one row, never two plans under one request key");
+      } finally { await racer.end(); }
 
       const prefill = await store.prefillForOwner({ tenantId: scope.tenantId, projectId: scope.projectId,
         batchId: "batch:orch-store", suggestionId: first.suggestionId, ownerIdentityId: "identity:orch-owner",
@@ -911,6 +978,50 @@ test("the failure counter is durable, atomic, and the escalation is idempotent",
       assert.equal(await failures.count(scopeKey), 0);
       assert.ok((await admin.query("SELECT cleared_at FROM control_planner_failure_counters WHERE scope_key=$1",
         [scopeKey])).rows[0]!.cleared_at, "a cleared counter is retained with the time it was cleared");
+
+      // THE COUNT CHECK, in the database, through the real trigger. The adapter
+      // refuses an unearned raise on its own read, so a hand-written INSERT is the
+      // only way to reach the guard's `failure_count >= NEW.failure_count` arm --
+      // and that arm is the one 0202 exists for: a raise must be a claim about a
+      // COUNTER, so a caller that inserts one without a live counter at that
+      // count is inventing an escalation rather than reporting one.
+      //
+      // The digest is taken from a real, already-cleared counter, so the scope
+      // match would pass and the COUNT is the only thing that can refuse this.
+      // (The row was cleared above, so its live count is 0.) Every other arm is
+      // satisfied on purpose: a real active agent, the correct deterministic id,
+      // and the correct reason code.
+      const liveCount = (await admin.query<{ failure_count: string; cleared_at: string | null }>(
+        "SELECT failure_count::text, cleared_at FROM control_planner_failure_counters WHERE scope_key=$1",
+        [scopeKey])).rows[0]!;
+      assert.ok(liveCount.cleared_at, "the counter this forged raise points at is cleared, so its count is 0");
+      await assert.rejects(admin.query(`INSERT INTO control_planner_needs_you_items(id,tenant_id,project_id,
+        request_key,reason_code,failure_count,raised_by_identity_id,raised_at,owner_request_digest)
+        VALUES('planner-needs-you:' || substring(md5($1 || '/' || $2 || '/forged-count-0001') from 1 for 32),
+          $1,$2,'forged-count-0001','orchestrator_failed_twice',2,'identity:orch-agent',$3,$4)`,
+      [scope.tenantId, scope.projectId, LATER, sha256Digest({ ownerRequest: description })]),
+      /planner needs-you insert rejected/u,
+      "a raise naming a counter at 0 is refused: an escalation must be earned");
+      // The counter the forged raise named is a REAL scope for a real request, so
+      // the only arm that could refuse it is the count. A different id, a human
+      // actor, or a wrong reason code are refused too, and each is a separate
+      // property -- so they are asserted separately rather than lumped in.
+      await assert.rejects(admin.query(`INSERT INTO control_planner_needs_you_items(id,tenant_id,project_id,
+        request_key,reason_code,failure_count,raised_by_identity_id,raised_at,owner_request_digest)
+        VALUES('planner-needs-you:' || substring(md5($1 || '/' || $2 || '/forged-owner-0002') from 1 for 32),
+          $1,$2,'forged-owner-0002','orchestrator_failed_twice',9,'identity:orch-owner',$3,$4)`,
+      [scope.tenantId, scope.projectId, LATER, sha256Digest({ ownerRequest: description })]),
+      /planner needs-you insert rejected/u,
+      "a HUMAN raiser is refused: only the coordinator's own agent escalates");
+      await assert.rejects(admin.query(`INSERT INTO control_planner_needs_you_items(id,tenant_id,project_id,
+        request_key,reason_code,failure_count,raised_by_identity_id,raised_at,owner_request_digest)
+        VALUES('planner-needs-you:' || substring(md5($1 || '/' || $2 || '/forged-reason-0003') from 1 for 32),
+          $1,$2,'forged-reason-0003','planner_no_longer_relevant',2,'identity:orch-agent',$3,$4)`,
+      [scope.tenantId, scope.projectId, LATER, sha256Digest({ ownerRequest: description })]),
+      /check constraint|planner needs-you insert rejected/u,
+      "any other reason code is refused by the column's own CHECK");
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n, 1,
+        "none of the three forged raises left a row");
       // A NEW failure after a clear starts again at 1, not 3.
       assert.equal(await failures.record(scopeKey), 1);
       // The guard refuses a hand-written count: this is the whole point of it.

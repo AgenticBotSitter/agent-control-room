@@ -26,7 +26,12 @@ PORT_BASE="${CONTROL_ROOM_PG_TEST_PORT_BASE:-59450}"
 export CONTROL_ROOM_PG_TEST_PORT_BASE="$PORT_BASE"
 export PG_BIN="${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}"
 export TMPDIR="${TMPDIR:-/tmp}"
-UNIT_LANE=(tests/intake-coordinator.test.ts tests/project-orchestration-owner.test.ts)
+# The panel lives in a .tsx test, so the UI lane has to include it. Without it
+# the B3f mutation below "escapes" for the boring reason that no test in the
+# lane renders the panel at all -- measured, and the fix is to run the test that
+# does.
+UNIT_LANE=(tests/intake-coordinator.test.ts tests/project-orchestration-owner.test.ts
+  tests/project-orchestration-ui.test.tsx)
 DB_LANE="tests/orchestrator-split-suggestions-postgres.test.ts"
 COORD_LANE="tests/project-orchestration-postgres.test.ts"
 COORD=src/work-intake/v1/intake-coordinator.ts
