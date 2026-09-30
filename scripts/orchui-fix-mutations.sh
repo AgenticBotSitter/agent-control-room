@@ -173,7 +173,7 @@ mutate B2b-lookup-always-null "$STORE" \
 # Round 3 added N8's refusal, so this anchor moved: the SELECT now names
 # `request_digest` as well, and the status filter is on the next line.
 mutate B2c-lookup-ignores-status "$STORE" \
-  " WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3 AND status='completed'\@TICK@," \
+  " WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3 AND status='completed'@TICK@," \
   " WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3@TICK@," \
   --lane coord --pattern "B2:"
 
@@ -456,7 +456,7 @@ mutate F6a-completion-lookup-answers-a-different-description "$STORE" \
   --lane coord --pattern "completion lookup answers only a COMPLETED request"
 
 mutate F6b-completion-lookup-answers-an-unfinished-request "$STORE" \
-  " AND status='completed'\@TICK@," \
+  " AND status='completed'@TICK@," \
   " @TICK@," \
   --lane coord --pattern "completion lookup answers only a COMPLETED request"
 
