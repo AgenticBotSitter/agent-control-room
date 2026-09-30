@@ -248,6 +248,30 @@ test("pause: Pause, Drain, Stop and an unreadable switch all stop new claims", a
   assert.equal((await runOnce(f, worker, path)).pass.outcome, "submitted");
 });
 
+test("a legacy heartbeat with no operations mode is unknown and takes no claim", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const worker = await joinWorker(f, "Legacy-safe");
+  const task = await offer(f, "handoff-missing-mode");
+  const path = await settings(f, "missing-mode", fakeCodex("success"));
+  const withoutMode: typeof fetch = async (input, init) => {
+    const response = await f.fetcher(input, init);
+    if (!String(input).endsWith("/fleet/v1/heartbeat")) return response;
+    const body = await response.json() as { result?: { operationsMode?: unknown; claimsAllowed?: unknown } };
+    if (body.result) {
+      delete body.result.operationsMode;
+      delete body.result.claimsAllowed;
+    }
+    return Response.json(body, { status: response.status });
+  };
+  fake.calls.length = 0;
+  const { pass, logs } = await runOnce(f, worker, path, { fetcher: withoutMode });
+  assert.deepEqual(pass, { state: "paused", mode: "unknown" });
+  assert.match(logs.join("\n"), /Control Room could not read its Pause switch, so no new work is taken/u);
+  assert.equal(fake.calls.length, 0);
+  assert.equal(await jobState(f, task.jobId), "proposed");
+  assert.equal((await f.query<{ count: number }>("SELECT count(*)::int AS count FROM fleet_claims"))[0]!.count, 0);
+});
+
 test("stop during a run: the harness is cancelled and a blocker hands the task back", { timeout: 20_000 }, async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Stoppable");

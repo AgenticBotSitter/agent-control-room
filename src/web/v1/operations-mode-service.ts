@@ -65,6 +65,20 @@ async function journal(tx: DatabaseSession, key: Uint8Array, tenantId: string) {
 
 const DEFAULT_VIEW = Object.freeze({ mode: "running" as const, revision: 0, reason: "",
   setByIdentityId: "", setAt: "" });
+type InstallationOperationsModeViewV1 = OperationsModeRecordV1 | typeof DEFAULT_VIEW;
+const isRecordedModeV1 = (value: InstallationOperationsModeViewV1): value is OperationsModeRecordV1 =>
+  value.revision > 0;
+
+/**
+ * Reads the installation's authenticated, server-owned mode. The Mac host,
+ * supervisor and fleet gateway all use this reader so they cannot derive
+ * different answers from the same revision journal.
+ */
+export async function readInstallationOperationsModeV1(tx: DatabaseSession, tenantId: string,
+  integrityKey: Uint8Array) {
+  if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) fail();
+  return (await journal(tx, integrityKey, tenantId)).at(-1) ?? DEFAULT_VIEW;
+}
 
 /**
  * The installation-wide Pause / Drain / Stop switch, server-side.
@@ -122,7 +136,7 @@ export class WebOperationsModeServiceV1 {
       // Reading the mode is an owner-visible read of an already-recorded fact.
       // It schedules, assigns, reserves and authorizes nothing.
       actor.require("operations.read", undefined, true);
-      const current = (await journal(tx, this.#key, this.scope.tenantId)).at(-1) ?? DEFAULT_VIEW;
+      const current = await readInstallationOperationsModeV1(tx, this.scope.tenantId, this.#key);
       return operationsModeViewSchemaV1.parse({ schema: "control-room.installation-operations-mode-view/v1",
         mode: current.mode, reason: current.reason, setByIdentityId: current.setByIdentityId ?? "",
         setAt: current.setAt, revision: current.revision, replayed: false,
@@ -204,9 +218,9 @@ export class WebOperationsModeServiceV1 {
         AND (g.expires_at IS NULL OR g.expires_at > $2::timestamptz)
       ORDER BY i.id LIMIT 2`, [this.scope.tenantId, at])).rows;
     if (rows.length !== 1) throw new Error("operations_mode_owner_unavailable");
-    const revisions = await journal(tx, this.#key, this.scope.tenantId);
+    const current = await readInstallationOperationsModeV1(tx, this.scope.tenantId, this.#key);
     return Object.freeze({ identityId: rows[0]!.id,
-      modes: Object.freeze({ current: revisions.at(-1)?.mode ?? "running", record: revisions.at(-1) }) });
+      modes: Object.freeze({ current: current.mode, record: isRecordedModeV1(current) ? current : undefined }) });
   }
 
   /** The decision itself, shared by both entry points so the owner session and
@@ -217,18 +231,20 @@ export class WebOperationsModeServiceV1 {
     if (!parsed.success) throw new WebAccessError("invalid_request");
     const mode = parsed.data.mode, reason = parsed.data.reason.trim();
     {
-      const current = (await journal(tx, this.#key, this.scope.tenantId)).at(-1);
+      const current = await readInstallationOperationsModeV1(tx, this.scope.tenantId, this.#key);
       // An exact repeat is a replay, not a second decision. The same mode with a
       // different reason is a new recorded decision, which is what the owner
       // means by pressing the button again with new words.
-      if (current && current.mode === mode && current.reason === reason) return { record: current, replayed: true };
+      if (isRecordedModeV1(current) && current.mode === mode && current.reason === reason)
+        return { record: current, replayed: true };
       // The tenant row is the existing lock order for an installation-wide
       // decision, so this cannot deadlock against assignment (which takes the
       // same first lock), and it serializes two owners setting the mode at once.
-      const latest = (await journal(tx, this.#key, this.scope.tenantId)).at(-1);
-      if (latest && latest.mode === mode && latest.reason === reason) return { record: latest, replayed: true };
+      const latest = await readInstallationOperationsModeV1(tx, this.scope.tenantId, this.#key);
+      if (isRecordedModeV1(latest) && latest.mode === mode && latest.reason === reason)
+        return { record: latest, replayed: true };
       const record: OperationsModeRecordV1 = { schema: "control-room.installation-operations-mode/v1",
-        tenantId: this.scope.tenantId, revision: (latest?.revision ?? 0) + 1, mode, reason,
+        tenantId: this.scope.tenantId, revision: latest.revision + 1, mode, reason,
         setByIdentityId: actor.id, setAt: actor.now };
       assertNoSecretMaterial(record, "operations mode record");
       const inserted = await tx.query(`INSERT INTO installation_operations_mode_revisions
@@ -240,7 +256,7 @@ export class WebOperationsModeServiceV1 {
       await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope, actorId: actor.id, actorType: "human",
         action: `operations.mode.${record.mode}`, targetType: "installation", targetId: this.scope.tenantId,
         occurredAt: record.setAt, safeMetadata: { revision: record.revision, mode: record.mode,
-          previousMode: latest?.mode ?? "running", reason, admitsNewWork: record.mode === "running" } });
+          previousMode: latest.mode, reason, admitsNewWork: record.mode === "running" } });
       return { record, replayed: false };
     }
   }
