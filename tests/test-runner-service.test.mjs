@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { connect as netConnect, createServer } from "node:net";
@@ -651,6 +652,83 @@ test("sandbox guard refuses exec of launchctl, osascript and open, and signals t
   assert.equal(result.status, 200);
   assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
   assert.equal(victim.exitCode, null, "the outside process must still be running");
+});
+
+// Native code is the real threat: the worktree is writable and the esbuild
+// exec path (or a dlopen'd addon) runs whatever the helper put there.
+const CC_AVAILABLE = spawnSync("/usr/bin/xcode-select", ["-p"], { stdio: "ignore" }).status === 0;
+const PROCESS_INFO_PROBE = String.raw`
+#include <errno.h>
+#include <libproc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/sysctl.h>
+#include <unistd.h>
+static char buffer[1 << 20];
+static void procargs(const char *label, int which, pid_t pid, const char *marker) {
+  int mib[3] = {CTL_KERN, which, pid};
+  size_t size = sizeof buffer, length = strlen(marker);
+  int rc = sysctl(mib, 3, buffer, &size, NULL, 0), found = 0;
+  for (size_t i = 0; rc == 0 && length > 0 && i + length <= size; i++) if (!memcmp(buffer + i, marker, length)) found = 1;
+  printf("%s=%d/%d/%d\n", label, rc, rc ? errno : 0, found);
+}
+int main(int argc, char **argv) {
+  pid_t other = atoi(argv[1]);
+  procargs("other.procargs2", KERN_PROCARGS2, other, argv[2]);
+  procargs("other.procargs", KERN_PROCARGS, other, argv[2]);
+  procargs("service.procargs2", KERN_PROCARGS2, atoi(argv[3]), "");
+  procargs("self.procargs2", KERN_PROCARGS2, getpid(), "");
+  struct proc_vnodepathinfo cwd;
+  printf("other.cwd=%d\n", proc_pidinfo(other, PROC_PIDVNODEPATHINFO, 0, &cwd, sizeof cwd) > 0);
+  printf("self.cwd=%d\n", proc_pidinfo(getpid(), PROC_PIDVNODEPATHINFO, 0, &cwd, sizeof cwd) > 0);
+  int all[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+  size_t size = sizeof buffer;
+  printf("process.table=%d\n", sysctl(all, 3, buffer, &size, NULL, 0) == 0);
+  return 0;
+}
+`;
+
+test("sandbox guard keeps other processes' argv and environment unreadable, even to native code (T1)", { skip: CC_AVAILABLE ? false : "needs a C compiler" }, async t => {
+  const f = await fixture(t);
+  const marker = `T1_MARKER_${randomBytes(8).toString("hex")}`;
+  // Stands in for the live app, this service or an agent session: a process of
+  // the same user whose environment holds a credential.
+  const victim = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { env: { [marker]: "secret" }, stdio: "ignore" });
+  t.after(() => { try { victim.kill("SIGKILL"); } catch { /* already gone */ } });
+  const worktree = await f.makeWorktree("procargs", {
+    "tests/procargs.test.mjs": `
+      import assert from "node:assert/strict";
+      import { spawnSync } from "node:child_process";
+      import test from "node:test";
+      test("native code reads only its own process details", () => {
+        const probe = new URL("../node_modules/@esbuild/darwin-probe/bin/esbuild", import.meta.url).pathname;
+        const run = spawnSync(probe, ${JSON.stringify([String(victim.pid), `${marker}=secret`, String(process.pid)])}, { encoding: "utf8" });
+        assert.equal(run.status, 0, run.stderr);
+        const seen = Object.fromEntries(run.stdout.trim().split("\\n").map(line => line.split("=")));
+        assert.deepEqual(seen, {
+          "other.procargs2": "-1/1/0", "other.procargs": "-1/1/0", "service.procargs2": "-1/1/0",
+          "self.procargs2": "0/0/0", "other.cwd": "0", "self.cwd": "1", "process.table": "0",
+        });
+        assert.equal(spawnSync("/usr/sbin/lsof", ["-v"]).error?.code, "EPERM");
+      });
+    `,
+  });
+  const source = join(f.root, "probe.c");
+  const binary = join(worktree, "node_modules", "@esbuild", "darwin-probe", "bin", "esbuild");
+  await writeFile(source, PROCESS_INFO_PROBE);
+  await mkdir(dirname(binary), { recursive: true });
+  const compiled = spawnSync("/usr/bin/cc", ["-o", binary, source], { encoding: "utf8" });
+  assert.equal(compiled.status, 0, compiled.stderr);
+  // Control: outside the sandbox the same probe really does see the secret,
+  // so a pass below means the profile refused it, not that the probe is blind.
+  const outside = spawnSync(binary, [String(victim.pid), `${marker}=secret`, String(process.pid)], { encoding: "utf8" });
+  assert.match(outside.stdout, /^other\.procargs2=0\/0\/1$/mu);
+  assert.match(outside.stdout, /^service\.procargs2=0\/0\/0$/mu);
+  const result = await f.call({ worktree, file: "tests/procargs.test.mjs" });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
+  assert.doesNotMatch(result.body.logExcerpt, new RegExp(marker, "u"));
 });
 
 test("run-id reaper kills a detached grandchild that kept the worktree as its cwd (S4)", async t => {

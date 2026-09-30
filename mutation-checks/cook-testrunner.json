@@ -166,5 +166,33 @@
     "replace": "",
     "test": "node --test --test-name-pattern='client disconnects before it finishes' tests/test-runner-service.test.mjs",
     "why": "a client that disconnects mid-run must abort the run and free its slot"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    \"(deny process-info*)\",\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='T1\\)' tests/test-runner-service.test.mjs",
+    "why": "a test must not read the argv, environment, cwd or open files of a process outside its own sandbox; (deny default) does not cover process-info"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "\"(allow process-info* (target same-sandbox))\",",
+    "replace": "\"(allow process-info*)\",",
+    "test": "node --test --test-name-pattern='T1\\)' tests/test-runner-service.test.mjs",
+    "why": "process details are reopened only for the run's own processes, never for the service, the live app or an agent session"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    '(deny sysctl-read (sysctl-name-prefix \"kern.procargs\") (sysctl-name-prefix \"kern.proc.\"))',\n",
+    "replace": "",
+    "test": "node --test --test-name-pattern='T1\\)' tests/test-runner-service.test.mjs",
+    "why": "kern.procargs2 hands out another process's argv and environment whenever the sysctl read is allowed, even with process-info denied"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "  \"/usr/bin/true\", \"/usr/bin/uname\",\n]);",
+    "replace": "  \"/usr/bin/true\", \"/usr/bin/uname\", \"/usr/sbin/lsof\",\n]);",
+    "test": "node --test --test-name-pattern='T1\\)' tests/test-runner-service.test.mjs",
+    "why": "lsof maps every process's files, working directory and sockets, and no test needs it"
   }
 ]

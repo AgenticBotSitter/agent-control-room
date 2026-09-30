@@ -41,10 +41,11 @@ const PROTECTED_HOME_NAME_PREFIXES = Object.freeze(["work/acr-package-"]);
 // The only programs a run may exec besides node and the PostgreSQL binaries.
 // launchctl, open, osascript and ssh are deliberately absent. /bin/ps is too:
 // it is setuid, and macOS refuses a setuid exec under any Seatbelt profile.
+// lsof is absent because no test needs it and it maps every process's files.
 const EXEC_ALLOWED_LITERALS = Object.freeze([
   "/bin/sh", "/bin/bash", "/bin/dash", "/bin/zsh", "/bin/cat", "/bin/echo", "/bin/kill", "/bin/ls",
   "/bin/mkdir", "/bin/rm", "/bin/sleep", "/usr/bin/env", "/usr/bin/false", "/usr/bin/ipcs",
-  "/usr/bin/true", "/usr/bin/uname", "/usr/sbin/lsof",
+  "/usr/bin/true", "/usr/bin/uname",
 ]);
 // Services a child must never reach even though (deny default) already
 // refuses them: launching work through launchd/LaunchServices is how a job
@@ -668,6 +669,9 @@ function refuseProfile() {
  *    directory, and binds/listens only on those;
  *  - execs only node, the PostgreSQL binaries, esbuild from the worktree's
  *    node_modules, and a short list of shell tools (never launchctl or open);
+ *  - reads argv, environment, open files and working directory only of
+ *    processes in its own sandbox (never the service's, the live app's or an
+ *    agent session's, whose environments hold credentials);
  *  - signals only processes in its own sandbox, and reaches only the mach
  *    services `system.sb` lists (never launchd job submission, LaunchServices
  *    or Apple Events), so it cannot hand work to anything unsandboxed.
@@ -725,9 +729,17 @@ export async function buildSeatbeltProfile(config, { worktree, tempDirectory, po
       + ` ${EXEC_ALLOWED_LITERALS.map(path => `(literal "${path}")`).join(" ")}`
       + ` (regex #"^${sandboxRegexLiteral(worktreeReal)}/node_modules/(\\.pnpm/[^/]+/node_modules/)?@esbuild/darwin-[a-z0-9]+/bin/esbuild$"))`,
     "(allow signal (target same-sandbox))",
+    // (deny default) does not cover process-info on this macOS, so deny it
+    // explicitly, then reopen it for this run's own processes only. Measured:
+    // the kernel hands out another process's argv and environment through
+    // kern.procargs2 when EITHER process-info-pidinfo OR that sysctl-read is
+    // allowed, so both denies below are needed; either alone leaks secrets.
+    "(deny process-info*)",
     "(allow process-info* (target same-sandbox))",
-    "(allow process-info-listpids)",
     "(allow sysctl-read)",
+    // kern.proc.* is the process table (kern.proc.pid for this process still
+    // works through the process-info allow above).
+    '(deny sysctl-read (sysctl-name-prefix "kern.procargs") (sysctl-name-prefix "kern.proc."))',
     // ipcs iterates SysV segments through these two write-shaped sysctls.
     '(allow sysctl-write (sysctl-name "kern.sysv.ipcs.shm") (sysctl-name "kern.sysv.ipcs.sem"))',
     "(allow ipc-sysv-shm ipc-sysv-sem ipc-posix-shm ipc-posix-sem)",
