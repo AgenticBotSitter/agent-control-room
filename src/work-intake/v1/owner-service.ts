@@ -655,6 +655,10 @@ export class WorkBatchOwnerServiceV1 {
         proposal: currentProposal, revisions, items: publicItems, queue,
         queueDepthLimit: Number(batch.queue_depth_limit),
         flagsByLocalId: Object.fromEntries(openFlags),
+        routingOptions: this.#queueCatalog.map(worker => ({ workerId: worker.workerId,
+          workerKind: worker.workerKind, nodeId: worker.nodeId,
+          modelKeys: !worker.modelPolicy ? [] : "profiles" in worker.modelPolicy
+            ? worker.modelPolicy.profiles.map(profile => profile.name) : [...worker.modelPolicy.models] })),
         startsWork: false, grantsExecutionAuthority: false });
     });
   }
