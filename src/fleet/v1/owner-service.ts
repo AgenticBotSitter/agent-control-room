@@ -8,10 +8,12 @@ import { FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_LIFETIME_MS_V1, FLEET_ENTITY_ID
   plainSha256V1, randomHexV1 } from "./identifiers";
 
 /** Worker kinds offered in the owner form. "mcp-agent" is any other agent
- * that connects only through the MCP tools. */
-export const FLEET_WORKER_KINDS_V1 = Object.freeze(["codex", "claude-code", "hermes", "mcp-agent"] as const);
+ * that connects only through the MCP tools; "tool" runs only an owner-written
+ * local adapter manifest. */
+export const FLEET_WORKER_KINDS_V1 = Object.freeze(["codex", "claude-code", "hermes", "mcp-agent", "tool"] as const);
 /** Plain capability labels an owner can grant and an offer can require. */
-export const FLEET_CAPABILITIES_V1 = Object.freeze(["code.change", "code.review", "research", "writing", "testing"] as const);
+export const FLEET_CAPABILITIES_V1 = Object.freeze(["code.change", "code.review", "research", "writing", "testing",
+  "tool.whisper"] as const);
 
 const iso = (value: string | Date) => new Date(value).toISOString();
 const displayPattern = /^[^\u0000-\u001F\u007F]{1,80}$/u;

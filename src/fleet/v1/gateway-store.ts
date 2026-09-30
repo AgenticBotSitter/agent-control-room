@@ -11,6 +11,7 @@ import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILI
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1, randomHexV1 } from "./identifiers";
 import type { TaskProjectEventWriterV1 } from "../../project-events/v1/task-lifecycle";
+import type { FleetToolCapabilityEvidencePortV1, FleetToolTaskBindingPortV1 } from "./tool-capability-evidence";
 
 /** Authenticated machine principal. It is derived from the credential digest
  * and the stored worker row only; nothing in a request body can change it. */
@@ -49,6 +50,11 @@ function entityId(value: unknown, prefix: string): string {
   return typeof value === "string" && FLEET_ENTITY_ID_PATTERN_V1.test(value) && value.startsWith(`fleet-${prefix}:`)
     ? value : fleetFail("not_found");
 }
+function observedToolCapabilities(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > 32 || value.some(item => typeof item !== "string"
+    || !FLEET_CAPABILITY_PATTERN_V1.test(item)) || new Set(value).size !== value.length) return fleetFail("invalid");
+  return Object.freeze([...value].sort());
+}
 
 type WorkerRow = { worker_id: string; node_id: string; identity_id: string; worker_kind: string; display_name: string;
   project_ids: string[]; capabilities: string[]; max_concurrent: number; state: string };
@@ -67,7 +73,13 @@ export type FleetGatewayStoreOptionsV1 = Readonly<{ tenantId: string; clock?: ()
   operationsMode?: () => Promise<FleetOperationsModeV1>;
   /** Presentation-only task timeline. Without it, a hand-off is still recorded
    * in the audit log and worker events, but not shown on the Activity page. */
-  projectEvents?: Pick<TaskProjectEventWriterV1, "appendInSession"> }>;
+  projectEvents?: Pick<TaskProjectEventWriterV1, "appendInSession">;
+  /** Connector-declared local tool capabilities. Evidence only: this port is
+   * deliberately separate from the worker's owner-approved capability set. */
+  toolCapabilityEvidence?: FleetToolCapabilityEvidencePortV1;
+  /** Owner-approved structured adapter id and inputs. Task prose is never
+   * consulted for local executable selection or argument construction. */
+  toolTasks?: FleetToolTaskBindingPortV1 }>;
 
 export class FleetGatewayStoreV1 {
   readonly #tenantId: string;
@@ -75,6 +87,8 @@ export class FleetGatewayStoreV1 {
   readonly #leaseMs: number;
   readonly #operationsMode: (() => Promise<FleetOperationsModeV1>) | undefined;
   readonly #projectEvents: Pick<TaskProjectEventWriterV1, "appendInSession"> | undefined;
+  readonly #toolCapabilityEvidence: FleetToolCapabilityEvidencePortV1 | undefined;
+  readonly #toolTasks: FleetToolTaskBindingPortV1 | undefined;
   constructor(private readonly db: DatabaseClient, options: FleetGatewayStoreOptionsV1) {
     if (!FLEET_PROJECT_ID_PATTERN_V1.test(options.tenantId)) throw new Error("fleet_gateway_configuration_invalid");
     this.#tenantId = options.tenantId;
@@ -82,6 +96,8 @@ export class FleetGatewayStoreV1 {
     this.#leaseMs = options.leaseMs ?? FLEET_LEASE_MS_V1;
     this.#operationsMode = options.operationsMode;
     this.#projectEvents = options.projectEvents;
+    this.#toolCapabilityEvidence = options.toolCapabilityEvidence;
+    this.#toolTasks = options.toolTasks;
     if (!Number.isSafeInteger(this.#leaseMs) || this.#leaseMs < 30_000 || this.#leaseMs > 3_600_000)
       throw new Error("fleet_gateway_configuration_invalid");
   }
@@ -155,7 +171,7 @@ export class FleetGatewayStoreV1 {
   /** Redeems one enrollment code. The machine generated its credential locally
    * and sends only the digest, so no secret travels back in the response. */
   async enroll(input: Readonly<{ code: unknown; credentialDigest: unknown; platform: unknown; architecture: unknown;
-    connectorVersion: unknown; clientNonce: unknown }>) {
+    connectorVersion: unknown; clientNonce: unknown; adapterCapabilities?: unknown }>) {
     const code = typeof input.code === "string" && FLEET_CODE_PATTERN_V1.test(input.code) ? input.code : fleetFail("unauthenticated");
     const credentialDigest = typeof input.credentialDigest === "string" && FLEET_DIGEST_PATTERN_V1.test(input.credentialDigest)
       ? input.credentialDigest : fleetFail("invalid");
@@ -166,9 +182,10 @@ export class FleetGatewayStoreV1 {
       ? input.connectorVersion : fleetFail("invalid");
     const clientNonce = typeof input.clientNonce === "string" && /^crn_[A-Za-z0-9_-]{43}$/u.test(input.clientNonce)
       ? input.clientNonce : fleetFail("invalid");
+    const adapterCapabilities = observedToolCapabilities(input.adapterCapabilities ?? []);
     const clientNonceDigest = plainSha256V1(clientNonce);
     const now = this.#now();
-    return this.db.transaction(async tx => {
+    const result = await this.db.transaction(async tx => {
       const row = (await tx.query<{ id: string; purpose: "join" | "rekey"; worker_id: string; worker_kind: string;
         display_name: string; project_ids: string[]; capabilities: string[]; max_concurrent: number;
         redeemed_at: string | Date; replayed: boolean }>(`SELECT * FROM redeem_fleet_enrollment($1,$2,$3,$4,$5)`,
@@ -240,6 +257,9 @@ export class FleetGatewayStoreV1 {
         workerKind: row.worker_kind, projectIds: row.project_ids, capabilities: row.capabilities,
         maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: expiresAt, purpose: row.purpose, replayed: false });
     });
+    await this.#toolCapabilityEvidence?.observe(Object.freeze({ tenantId: this.#tenantId, workerId: result.workerId,
+      observedAt: now, phase: "enrollment", connectorVersion, platform, capabilities: adapterCapabilities }));
+    return result;
   }
 
   async #presence(tx: DatabaseSession, workerId: string, connectorVersion: string, platform: string, now: string) {
@@ -284,12 +304,16 @@ export class FleetGatewayStoreV1 {
       maxConcurrent: Number(row.max_concurrent), credentialId: row.credential_id, credentialExpiresAt: iso(row.expires_at) });
   }
 
-  async heartbeat(principal: FleetWorkerPrincipalV1, input: Readonly<{ connectorVersion: unknown; platform: unknown }>) {
+  async heartbeat(principal: FleetWorkerPrincipalV1, input: Readonly<{ connectorVersion: unknown; platform: unknown;
+    adapterCapabilities?: unknown }>) {
     const version = typeof input.connectorVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/u.test(input.connectorVersion)
       ? input.connectorVersion : fleetFail("invalid");
     const platform = platforms[input.platform as keyof typeof platforms] ?? "other";
+    const adapterCapabilities = observedToolCapabilities(input.adapterCapabilities ?? []);
     const now = this.#now();
     await this.db.transaction(tx => this.#presence(tx, principal.workerId, version, platform, now));
+    await this.#toolCapabilityEvidence?.observe(Object.freeze({ tenantId: this.#tenantId, workerId: principal.workerId,
+      observedAt: now, phase: "heartbeat", connectorVersion: version, platform, capabilities: adapterCapabilities }));
     const operationsMode = await this.operationsMode();
     return Object.freeze({ ...this.me(principal), operationsMode, claimsAllowed: operationsMode === "running" });
   }
@@ -347,9 +371,12 @@ export class FleetGatewayStoreV1 {
         AND NOT EXISTS (SELECT 1 FROM control_leases l WHERE l.tenant_id=j.tenant_id AND l.job_id=j.id AND l.state='active')
       ORDER BY j.priority DESC,o.created_at LIMIT 50`,
     [this.#tenantId, [...principal.projectIds], [...principal.capabilities], principal.workerId])).rows;
-    return rows.map(row => Object.freeze({ offerId: row.offer_id, projectId: row.project_id, jobId: row.job_id,
-      capability: row.capability, title: String(row.payload.title ?? ""),
-      objective: String(row.payload.objective ?? "").slice(0, 600) }));
+    return Promise.all(rows.map(async row => {
+      const binding = principal.workerKind === "tool" ? await this.#toolTasks?.read(this.#tenantId, row.job_id) : undefined;
+      return Object.freeze({ offerId: row.offer_id, projectId: row.project_id, jobId: row.job_id,
+        capability: row.capability, title: String(row.payload.title ?? ""),
+        objective: String(row.payload.objective ?? "").slice(0, 600), ...(binding ? { adapterId: binding.adapterId } : {}) });
+    }));
   }
 
   /** Claims one offered task through the shared canonical claim path. */
@@ -457,9 +484,11 @@ export class FleetGatewayStoreV1 {
       JOIN control_requests r ON r.tenant_id=wf.tenant_id AND r.id=wf.request_id
       JOIN control_leases l ON l.tenant_id=j.tenant_id AND l.id=$3
       WHERE j.tenant_id=$1 AND j.id=$2`, [this.#tenantId, row.job_id, row.lease_id])).rows[0];
+    const binding = await this.#toolTasks?.read(this.#tenantId, row.job_id);
     return Object.freeze({ claimId: row.claim_id, offerId: row.offer_id, projectId: row.project_id, jobId: row.job_id,
       title: detail?.title ?? "", instructions: detail?.objective ?? "", leaseState: detail?.lease_state ?? "unknown",
       leaseExpiresAt: detail ? iso(detail.lease_expires_at) : null, taskState: detail?.job_state ?? "unknown",
+      ...(binding ? { adapterId: binding.adapterId, inputs: binding.inputs } : {}),
       replayed, grantsApproval: false, grantsMerge: false });
   }
 

@@ -15,7 +15,8 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
-import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
+import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, InMemoryFleetToolTaskBindingsV1,
+  type FleetOperationsModeV1 } from "../src/fleet/v1";
 import { createFleetHarnessAdapter } from "../src/fleet/v1/harness-adapters";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import * as connector from "../scripts/fleet/connector.mjs";
@@ -33,10 +34,11 @@ async function fixture() {
   const db: DatabaseClient = adaptPglite(raw);
   await seedFleetTenant((sql, params) => raw.query(sql, params));
   const state = { mode: "running" as Mode };
+  const toolTasks = new InMemoryFleetToolTaskBindingsV1();
   const gateway = new FleetGatewayStoreV1(db, { tenantId: FLEET_TENANT, operationsMode: async () => {
     if (state.mode === "throw") throw new Error("mode store unreachable");
     return state.mode;
-  } });
+  }, toolTasks });
   const owner = new FleetOwnerServiceV1(db, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
     afterDecision: () => gateway.reconcile() });
   const handler = createFleetGatewayHandlerV1({ store: gateway });
@@ -47,23 +49,23 @@ async function fixture() {
   // Every request the connector makes, so a test can prove it spoke only to the gateway.
   const requests: string[] = [];
   const fetcher: typeof fetch = async (input, init) => { requests.push(String(input)); return fetch(input, init); };
-  return { raw, db, gateway, owner, origin, dir, state, requests, fetcher,
+  return { raw, db, gateway, owner, origin, dir, state, requests, fetcher, toolTasks,
     query: <T>(sql: string, params?: unknown[]) => raw.query<T>(sql, params).then(r => r.rows),
     async close() { await new Promise(done => server.close(done)); await raw.close(); await rm(dir, { recursive: true, force: true }); } };
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 
-async function joinWorker(f: Fixture, name: string, workerKind = "codex") {
+async function joinWorker(f: Fixture, name: string, workerKind = "codex", capability = "writing") {
   const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: name, workerKind,
-    projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
+    projectIds: [PROJECT_A], capabilities: [capability], maxConcurrent: 1 });
   const configPath = join(f.dir, `${name}.json`);
   const joined = await connector.join({ server: f.origin, code: code.code, configPath, fetcher: f.fetcher });
   return { configPath, joined, client: connector.createClient(await connector.loadConfig(configPath), f.fetcher) };
 }
 
-async function offer(f: Fixture, name: string) {
+async function offer(f: Fixture, name: string, capability = "writing") {
   const task = await seedProposedTask(f.db, PROJECT_A, name);
-  const offered = await f.owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: task.jobId, capability: "writing" });
+  const offered = await f.owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: task.jobId, capability });
   return { ...task, offerId: offered.offerId };
 }
 
@@ -434,4 +436,29 @@ test("the repository adapter module maps only the three harnesses, each through 
   assert.throws(() => createFleetHarnessAdapter({ harness: "codex", configuration: { ...configuration, executablePath: "codex" } }));
   assert.throws(() => createFleetHarnessAdapter({ harness: "codex", configuration: { ...configuration, shell: true } }));
   assert.throws(() => createFleetHarnessAdapter({ harness: "hermes", configuration }));
+});
+
+test("tool worker end to end: a structured adapter id runs the local manifest and submits only its output", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const script = join(f.dir, "fake-whisper.mjs");
+  await writeFile(script, `import { readFileSync, writeFileSync } from "node:fs";
+writeFileSync(process.argv[3] + "/transcript.txt", "Transcript: " + readFileSync(process.argv[2], "utf8"));
+console.log("Whisper finished.");`, { mode: 0o700 });
+  await writeFile(join(f.dir, "tool-adapters.json"), JSON.stringify({ schema: "control-room.local-tool-adapters/v1",
+    maxConcurrent: 1, adapters: [{ id: "whisper_local", capability: "tool.whisper", executable: process.execPath,
+      arguments: [script, "{input:audio}", "{output:transcript}"], timeoutMs: 2_000, maxOutputBytes: 65_536,
+      envAllowlist: [] }] }), { mode: 0o600 });
+  const worker = await joinWorker(f, "Whisper Mac", "tool", "tool.whisper");
+  const task = await offer(f, "transcribe", "tool.whisper");
+  f.toolTasks.put({ tenantId: FLEET_TENANT, jobId: task.jobId, adapterId: "whisper_local",
+    inputs: { audio: { name: "interview.wav", contentBase64: Buffer.from("hello audio").toString("base64") } } });
+  const { pass } = await runOnce(f, worker, join(f.dir, "no-harnesses.json"));
+  assert.equal(pass.outcome, "submitted", JSON.stringify(pass));
+  assert.equal(await jobState(f, task.jobId), "waiting_approval");
+  const shown = await f.owner.listResults(ownerIdentity(), { awaitingOnly: true });
+  assert.equal(shown[0]!.summary, "Whisper finished.");
+  assert.equal(shown[0]!.fileCount, 1);
+  const files = await f.owner.listResultFiles(ownerIdentity(), shown[0]!.resultId);
+  const downloaded = await f.owner.readResultFile(ownerIdentity(), shown[0]!.resultId, files[0]!.ordinal);
+  assert.equal(Buffer.from(downloaded.content).toString("utf8"), "Transcript: hello audio");
 });
