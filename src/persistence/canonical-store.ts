@@ -253,6 +253,13 @@ function databaseMethod(value: object, name: "query" | "transaction" | "transact
   return undefined;
 }
 
+/** A task cannot be claimed while its model selection is unresolved. Named, not
+ * a bare Error, so a caller with a fixed refusal vocabulary (the fleet gateway)
+ * reports a refusal to its worker instead of logging a server fault. */
+export class TaskModelSelectionUnresolvedError extends Error {
+  constructor() { super("Task model selection is unresolved"); this.name = "TaskModelSelectionUnresolvedError"; }
+}
+
 export class CanonicalStore {
   readonly #session: DatabaseSession;
   readonly #transaction: DatabaseClient["transaction"];
@@ -664,7 +671,7 @@ export class CanonicalStore {
       };
       let requireFreshAtPreCommit = true;
       const result = await this.#transactionWithPreCommitCheck(async (tx) => {
-      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [input.tenantId]);
+      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [input.tenantId]);
       if (!tenant.rows[0]) throw new Error("Ready frontier tenant not found");
       const priorRequest = await tx.query<{ request_digest: string; status: string; result: {
         receiptDigest?: string; jobId?: string; reservationId?: string; handoffId?: string } }>(
@@ -895,11 +902,28 @@ export class CanonicalStore {
           effort: NonNullable<AttemptRecord["modelSelection"]>["effort"] | null;
           provider: string | null; profile: string | null }>(`SELECT worker_kind,selection_key,model,effort,provider,profile
           FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`, [input.tenantId, input.jobId])).rows[0];
-        if (selected && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {
-          throw new Error("Task model selection is unresolved");
+        // 0091 allows exactly three row shapes, and the CHECK makes the hostile
+        // half rows (a worker_kind without the rest, or a model without a
+        // worker_kind) unreachable, so this is the only unresolved state that
+        // can exist here:
+        //   (a) every column NULL — nothing was ever requested;
+        //   (b) worker_kind/model/provider/profile NULL with selection_key
+        //       and/or effort set — the owner's request, still unresolved;
+        //   (c) fully resolved.
+        // WebTaskService writes shape (b) whenever the owner picks a model or
+        // an effort for a task, and the execution planner reads exactly that
+        // `worker_kind IS NULL` row back as a real owner request. So shape (b)
+        // is NOT "nothing was chosen": it is a chosen model this worker cannot
+        // honour. Claiming it would silently drop the owner's explicit choice,
+        // so it is refused. Shape (a) is claimable: a task proposed without a
+        // model carries no request to drop.
+        if (selected && (selected.worker_kind || selected.selection_key || selected.effort)
+          && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {
+          throw new TaskModelSelectionUnresolvedError();
         }
-        if (selected) modelSelection = { workerKind: selected.worker_kind!, selectionKey: selected.selection_key!,
-          model: selected.model!, effort: selected.effort!, ...(selected.provider ? { provider: selected.provider } : {}),
+        if (selected?.worker_kind) modelSelection = { workerKind: selected.worker_kind,
+          selectionKey: selected.selection_key!, model: selected.model!, effort: selected.effort!,
+          ...(selected.provider ? { provider: selected.provider } : {}),
           ...(selected.profile ? { profile: selected.profile } : {}) };
       }
 
@@ -1436,7 +1460,7 @@ export class CanonicalStore {
   }
 
   async #lockTenantProjectV1(tx: DatabaseSession, tenantId: string, projectId: string): Promise<void> {
-    const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+    const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [tenantId]);
     if (!tenant.rows[0]) failProjectCoordinationV1("invalid_input");
     const project = (await tx.query<{ lifecycle: string }>(
       `SELECT h.lifecycle FROM projects p
@@ -2697,7 +2721,7 @@ export class CanonicalStore {
 
     // Every new ready transition shares this tenant lock so policy-bound ready counts cannot race a generic canonical transition.
     if (input.kind === "job" && input.toState === "ready") {
-      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [input.tenantId]);
+      const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [input.tenantId]);
       if (!tenant.rows[0]) throw new Error("Ready transition tenant not found");
     }
 

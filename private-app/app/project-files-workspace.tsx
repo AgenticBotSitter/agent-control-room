@@ -8,7 +8,7 @@ import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { taskResultHrefV1 } from "./task-results";
-import { PrivateResultFiles } from "./delivered-files";
+import { PrivateResultFiles } from "./result-files-panel";
 
 type State = { state: "loading" } | { state: "ready"; value: TaskProjectFiles }
   | { state: "unavailable"; code: BrowserRequestError["code"] };

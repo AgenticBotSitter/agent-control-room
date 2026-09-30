@@ -15,16 +15,20 @@ database password and never gets your login.
    command into a terminal. It looks like this:
 
    ```sh
-   curl -fsSL https://<your-control-room>/fleet/v1/connector.mjs -o control-room-connector.mjs \
-     && node control-room-connector.mjs join --server https://<your-control-room> --code crj_…
+   # Use the complete line shown by Control Room. It downloads the versioned
+   # connector and manifest, verifies their displayed digest, then joins.
    ```
 
    On Windows, use the PowerShell line shown under **Windows** on the same page.
-5. Keep it connected: `node control-room-connector.mjs run`. The machine shows
-   as **Connected** on the Workers page within a minute.
+5. Keep it connected: `node control-room-connector.mjs run`. Or select
+   **Let this bot pick up approved work on its own** to add `--unattended` to
+   the verified line and install one profile-scoped per-user login service on
+   macOS, Windows or Linux. The task host never starts the bot. The machine
+   shows as **Connected** within a minute.
 
-The machine keeps its own key in a private file (`~/.config/control-room/connector.json`,
-readable only by you). The key renews itself every few weeks while `run` is going.
+Each installed bot keeps its own key in a private file
+(`~/.config/control-room/bots/<name>.json`, readable only by you). The key
+renews itself every few weeks while `run` is going.
 
 **If something goes wrong**
 
@@ -68,13 +72,13 @@ time, gives it to that bot on the machine, and sends the answer back to you
 for review.
 
 It only does this when the person at that machine has switched the bot on.
-Write a settings file next to the key file
-(`~/.config/control-room/harnesses.json`) that only you can change:
+The per-bot installer writes a private settings file beside that bot's key
+(`~/.config/control-room/bots/<name>.harnesses.json`). A manual connector can
+use the same schema with `run --harnesses <path>`:
 
 ```json
 {
   "schema": "control-room.fleet-harnesses/v1",
-  "adapterModule": "/path/to/control-room/src/fleet/v1/harness-adapters.ts",
   "harnesses": {
     "codex": { "enabled": true, "executablePath": "/opt/homebrew/bin/codex",
       "workingDirectory": "/path/to/an/empty/work/folder", "deadlineMs": 1800000 }
@@ -82,8 +86,18 @@ Write a settings file next to the key file
 }
 ```
 
-Then, from a Control Room checkout on that machine: `pnpm fleet:worker`
-(the same as `node --import tsx scripts/fleet/connector.mjs run`).
+Then run the downloaded connector with `run`, or select **Let this bot pick up
+approved work on its own** on the Connect a bot page to install a per-user
+login worker that runs it for this profile. Its reviewed Codex, Claude Code and
+Hermes adapters are inside the same file; the machine needs no Control Room
+checkout and the settings cannot select a replacement adapter module. The
+login worker re-reads this file, so it is safe to enable or disable the harness
+after installation.
+
+Hermes unattended setup asks for its local profile, model and provider before
+creating the join code. Invalid or missing worker choices, executable paths,
+deadlines, service platforms and per-user identities are refused before the
+single-use code can be redeemed.
 
 - `deadlineMs` is the longest one task may run (at most one hour).
 - Codex and Claude Code can also take `"model"` and `"effort"`
@@ -165,8 +179,12 @@ Files are only sent from inside the folder the agent was started in, at most
 The connector talks to the **fleet gateway**, a small service on the Control
 Room computer: `pnpm fleet:gateway <config.json>`. It listens on this computer
 only (`127.0.0.1`); publish it through Tailscale Serve or your tunnel. Its
-config names its own database login (`control_room_fleet`), which can only do
-fleet work. Owner enrollment, offer, review and revocation records use a
+package command first builds the ignored, single-file connector release from a
+clean checkout and then starts the gateway. Fresh checkouts and installed
+releases must use this package command; invoking `scripts/run-fleet-gateway.ts`
+directly skips that required build step and is unsupported.
+The gateway config names its own database login (`control_room_fleet`), which
+can only do fleet work. Owner enrollment, offer, review and revocation records use a
 different protected login in `control_room_fleet_owner_authority`; the normal
 web and gateway logins have no direct write grant on those records. Workers
 never see either login.

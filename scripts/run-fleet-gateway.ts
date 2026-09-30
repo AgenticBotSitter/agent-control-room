@@ -22,8 +22,11 @@ import { ProjectEventStoreV1 } from "../src/project-events/v1/store";
 import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycle";
 import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 import { readInstallationOperationsModeV1 } from "../src/web/v1/operations-mode-service";
+import { captureFleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
 
 export const FLEET_GATEWAY_CONFIGURATION_V1 = "control-room.fleet-gateway/v1";
+// requestTimeout limits receipt of a request body; it does not limit how long
+// a body-less long-poll response may remain open.
 export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 15_000, headersTimeout: 5_000,
   connectionsCheckingInterval: 1_000, maxHeaderSize: 8192, highWaterMark: 8 * 1024 });
 export type FleetGatewayConfigurationV1 = Readonly<{ schema: typeof FLEET_GATEWAY_CONFIGURATION_V1; tenantId: string; port: number;
@@ -49,6 +52,17 @@ export async function prepareFleetGatewayAdmissionV1(config:
   for (const credential of await store.activeAdmissionCredentials())
     admission.registerCredential(credential.workerId, credential.credentialDigest);
   return admission;
+}
+
+export async function loadFleetConnectorReleaseV1(root = join(dirname(fileURLToPath(import.meta.url)), "fleet", "release")) {
+  const manifestBody = await readFile(join(root, "manifest.json"), "utf8");
+  let parsed: unknown;
+  try { parsed = JSON.parse(manifestBody); } catch { throw new Error("fleet_connector_release_refused"); }
+  const manifest = captureFleetConnectorReleaseManifestV1(parsed);
+  const bundle = await readFile(join(root, manifest.file));
+  const digest = createHash("sha256").update(bundle).digest("hex");
+  if (bundle.length !== manifest.size || digest !== manifest.sha256) throw new Error("fleet_connector_release_refused");
+  return Object.freeze({ bundle, manifest, manifestBody });
 }
 
 export function captureFleetGatewayConfigurationV1(value: unknown): FleetGatewayConfigurationV1 {
@@ -121,10 +135,10 @@ async function main(path: string | undefined) {
     process.stderr.write("fleet gateway: operations mode unreadable, so no new claims: check workIntake.integrityKey\n");
   const proposals = intakeDatabase && config.workIntake ? new WorkBatchServiceV1(new WorkBatchStoreV1(intakeDatabase.client,
     new Uint8Array(Buffer.from(config.workIntake.integrityKey, "base64url")))) : undefined;
-  const script = await readFile(join(dirname(fileURLToPath(import.meta.url)), "fleet", "connector.mjs"), "utf8");
+  const connectorRelease = await loadFleetConnectorReleaseV1();
   const handler = createFleetGatewayHandlerV1({ store, ...(proposals ? { proposals } : {}),
     admission: await prepareFleetGatewayAdmissionV1(config, store),
-    connectorScript: { body: script, digest: `sha256:${createHash("sha256").update(script).digest("hex")}` },
+    connectorRelease,
     onUnexpectedError: error => { process.stderr.write(`fleet gateway: ${error instanceof Error ? error.name : "error"} ${(error as { code?: string }).code ?? ""}\n`); } });
   const server = createServer(FLEET_GATEWAY_SERVER_OPTIONS_V1,
     (request, response) => { void handler.handle(request, response); });

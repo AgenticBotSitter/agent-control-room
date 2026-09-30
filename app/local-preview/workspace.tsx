@@ -12,8 +12,6 @@ import { TaskResultsPanel } from "../../private-app/app/task-results";
 import type { TaskResultsPage, TaskResultContent } from "../../src/web/v1/task-result-wire";
 import { ContributorSimulation } from "../components/contributor-simulation";
 import { LocalControlRoomWorkboard } from "./control-room-workboard";
-import { DeliveredFilesPanel } from "../../private-app/app/delivered-files";
-import { createInMemoryResultFilesClient, type ResultFileSet } from "../../src/web/v1/result-files-client-port";
 
 export function localPreviewHref(projectId?: string, jobId?: string, after?: string) {
   const query = new URLSearchParams();
@@ -105,20 +103,6 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
   }
   const project = page?.project ?? detail?.project;
   const held = pending || uncertain || reading;
-  const demoFileSets: readonly ResultFileSet[] = projectId && jobId ? [{
-    setId: `result-set:${"1".repeat(32)}`, projectId, jobId, state: "stored", sourceKind: "file-store",
-    producerKind: "native", producerId: "demo-local", manifestDigest: `sha256:${"c".repeat(64)}`,
-    retentionState: "provisional", additionalFilesOmitted: false, files: [
-      { fileId: `result-file:${"1".repeat(32)}`, ordinal: 1, displayName: "owner-summary.md",
-        declaredMediaType: "text/markdown", detectedMediaType: "text/markdown", sizeBytes: 18432,
-        contentDigest: `sha256:${"a".repeat(64)}`, state: "stored", receivedAt: "2026-01-01T00:00:00.000Z" },
-      { fileId: `result-file:${"2".repeat(32)}`, ordinal: 2,
-        displayName: "research-notes-🌎-long-filename-for-phone-width-checking.json",
-        declaredMediaType: "application/json", detectedMediaType: "application/json", sizeBytes: 245812,
-        contentDigest: `sha256:${"b".repeat(64)}`, state: "stored", receivedAt: "2026-01-01T00:00:00.000Z" },
-    ],
-  }] : [];
-  const demoFiles = createInMemoryResultFilesClient(demoFileSets);
   return <div className="private-shell"><main id="private-main" tabIndex={-1}>
     <div className="private-heading"><h1>{project?.title ?? "Local project preview"}</h1>
       <p>Local Control Room workboard. Projects and proposals are saved locally; it cannot assign or start agents.</p></div>
@@ -163,9 +147,5 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
     {detail && results && <TaskResultsPanel page={results} content={content} pending={reading}
       onOpen={artifactId => { void openResult(artifactId); }}
       onClose={() => { generation.current++; setContent(undefined); }} />}
-    {contributorDemo && detail && projectId && jobId && <DeliveredFilesPanel scope={{ projectId, taskId: jobId }}
-      data={{ state: "ready", value: { projectId, jobId, sets: demoFileSets, additionalSetsOmitted: false,
-        catalogSource: "configured", observedAt: "2026-01-01T00:00:00.000Z", startsWork: false,
-        grantsExecutionAuthority: false } }} client={demoFiles} />}
   </main></div>;
 }

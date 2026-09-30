@@ -127,6 +127,28 @@ test("find must match exactly once, rejecting both zero and multiple matches", (
   }
 });
 
+test("running one manifest fails when an anchor in any declared manifest is unresolved", () => {
+  const root = fixture();
+  try {
+    const selected = manifest(root);
+    writeFileSync(join(root, "mutation-checks", "stale.json"), `${JSON.stringify([{
+      file: "src/guard.mjs",
+      find: "anchor that is no longer present",
+      replace: "replacement",
+      test: 'node -e "process.exit(0)"',
+      why: "every declared mutation remains live",
+    }], null, 2)}\n`);
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "stale second manifest");
+    const result = run(root, selected);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /mutation-checks\/stale\.json:.*find matched 0 times; expected exactly once/u);
+    assert.doesNotMatch(output(result), /Baseline \[1\]/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a crashed test is caught, reported distinctly, and restores a clean checkout", () => {
   const root = fixture();
   try {

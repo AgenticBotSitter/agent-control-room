@@ -24,6 +24,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
 import { Client } from "pg";
+import { privilegeClassMarkerTables, revokeMarkerClassesSql } from "./support/privilege-class-markers";
 import type { DatabaseClient } from "../src/persistence/database";
 import { createPrivatePgDatabase } from "../src/web/v1/private-pg-database";
 import {
@@ -114,6 +115,12 @@ before(async () => {
     PASSWORD 'ccwrite'`);
   await admin.query(`GRANT ALL ON ALL TABLES IN SCHEMA public TO cc_writer`);
   await admin.query(`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO cc_writer`);
+  // Holding SELECT on a privilege-class marker table IS membership of that
+  // class, so GRANT ALL ON ALL TABLES has just made this fixture login a fleet
+  // gateway and a work-intake login. The guards would then refuse the
+  // coordination fixtures' own writes. Production reaches a marker only by
+  // inheriting the single group its role file names.
+  await admin.query(revokeMarkerClassesSql("cc_writer", await privilegeClassMarkerTables(ROOT)));
 
   writer = new Client(WRITER);
   await writer.connect();

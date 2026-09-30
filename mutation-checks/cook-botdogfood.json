@@ -1,0 +1,44 @@
+[
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "        if (error instanceof WorkIntakeErrorV1 && WORK_INTAKE_REFUSALS_V1[error.safeCode])\n          return fleetFail(WORK_INTAKE_REFUSALS_V1[error.safeCode]!);\n        throw error;",
+    "replace": "        throw error;",
+    "test": "node --import tsx --test --test-name-pattern \"named fleet refusal\" tests/fleet-intake-refusal-translation.test.ts",
+    "why": "a bot that reuses one idempotency key for different work is told a named conflict, not an untyped 400 the gateway logs as a server fault"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "    credential_inactive: \"forbidden\",\n    no_matching_grant: \"forbidden\",",
+    "replace": "    credential_inactive: \"unauthenticated\",\n    no_matching_grant: \"unauthenticated\",",
+    "test": "node --import tsx --test --test-name-pattern \"named fleet refusal\" tests/fleet-intake-refusal-translation.test.ts",
+    "why": "a credential the intake login will not act for is forbidden, not unauthenticated: the machine authenticated, its authority does not reach the action"
+  },
+  {
+    "file": "src/persistence/canonical-store.ts",
+    "find": "        if (selected && (selected.worker_kind || selected.selection_key || selected.effort)\n          && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {\n          throw new TaskModelSelectionUnresolvedError();\n        }",
+    "replace": "        if (selected && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {\n          throw new TaskModelSelectionUnresolvedError();\n        }",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=59620 node --import tsx --test --test-timeout=300000 tests/bot-claim-eligibility-postgres.test.ts",
+    "why": "an all-NULL model-selection row is 0091's 'nothing was requested' state, so a task proposed without an explicit model is still claimable; only a row that names a model or an effort is an owner request the worker cannot honour"
+  },
+  {
+    "file": "src/work-intake/v1/store.ts",
+    "find": "      if (!durable || durable.request_digest !== requestDigest) failWorkIntakeV1(\"replay_conflict\");",
+    "replace": "      if (!durable) failWorkIntakeV1(\"replay_conflict\");",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=59620 node --import tsx --test --test-timeout=300000 tests/bot-dogfood-postgres.test.ts",
+    "why": "one idempotency key must not carry two different proposals; dropping the request_digest comparison accepts the second, and the journey must fail rather than still print 'no'"
+  },
+  {
+    "file": "src/work-intake/v1/owner-service.ts",
+    "find": "    for (const task of proposal.tasks) if (approved.has(task.localId)\n      && (openFlags.get(task.localId) ?? []).some(flag => !flag.dismissed)) throw new WebAccessError(\"flagged_items_unresolved\");",
+    "replace": "    void openFlags;",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=59620 node --import tsx --test --test-timeout=300000 tests/bot-dogfood-postgres.test.ts",
+    "why": "the owner cannot approve a task whose intake flags are still open; skipping the check approves a flagged batch, and the journey must fail rather than still print 'no'"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      if (settings?.eligible_worker_kinds !== null && settings?.eligible_worker_kinds !== undefined\n        && !settings.eligible_worker_kinds.includes(principal.workerKind)) return fleetFail(\"conflict\");",
+    "replace": "      if (settings?.eligible_worker_kinds === null || settings?.eligible_worker_kinds === undefined\n        || !settings.eligible_worker_kinds.includes(principal.workerKind)) return fleetFail(\"conflict\");",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=59620 node --import tsx --test --test-timeout=300000 tests/bot-claim-eligibility-postgres.test.ts",
+    "why": "the guard is an allow-list, not a blanket refusal: a project with no eligible_worker_kinds configured must stay claimable, and only a configured list that omits this worker's kind refuses"
+  }
+]

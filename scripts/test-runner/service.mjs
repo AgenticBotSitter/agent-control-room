@@ -408,10 +408,27 @@ class BoundedOutput {
 
 export function tapSummary(text) {
   const number = label => {
-    const matches = [...text.matchAll(new RegExp(`^# ${label} (\\d+)\\s*$`, "gmu"))];
+    // Two reporter formats, because Node ships both and the default changed.
+    //
+    // `--test-reporter=tap` writes the spec's `# tests 1`; the DEFAULT reporter
+    // (and therefore any plain `node --test` run) writes `ℹ tests 1` in this
+    // Node version. Matching only the `#` form meant the summary of a perfectly
+    // healthy run came back all zeros, and the caller had no way to tell that
+    // apart from a run that produced no TAP at all.
+    //
+    // Both anchors are line-anchored and both require a whole number, so a count
+    // embedded in prose or in a test name cannot be picked up. The last match
+    // wins: a nested or repeated summary block ends with the outermost one, which
+    // is the run's real total.
+    const matches = [...text.matchAll(new RegExp(`^(?:#|ℹ) ${label} (\\d+)\\s*$`, "gmu"))];
     return matches.length ? Number(matches.at(-1)[1]) : 0;
   };
-  const failing = [...text.matchAll(/^\s*not ok \d+ - (.+)$/gmu)].map(match => match[1].trim()).slice(0, 50);
+  const failing = [
+    // Spec: `not ok 4 - name`. Default reporter: `✖ name (12ms)`, which has no
+    // ordinal and a trailing duration.
+    ...[...text.matchAll(/^\s*not ok \d+ - (.+)$/gmu)].map(match => match[1].trim()),
+    ...[...text.matchAll(/^✖ (.+?) \(\d[\d.,]*(?:ms|s|m)\)$/gmu)].map(match => match[1].trim()),
+  ].slice(0, 50);
   return Object.freeze({ tests: number("tests"), pass: number("pass"), fail: number("fail"), failingTests: failing });
 }
 

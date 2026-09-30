@@ -2,7 +2,7 @@ import { mutableNightOperationsModeV1, runNightKitV1, type NightKitModeV1 } from
 import { loadMacLocalProtectedConfigurationFromRootV1 } from "../src/web/v1/mac-local-protected-loader";
 import { createMacLocalWorkBatchQueueCatalogV1 } from "../src/web/v1/mac-local-host";
 import { verifyOwnerTrustedLocalEnablementV1 } from "../src/harness/v1/owner-trusted-local-enablements";
-import { readPinnedMacExecutableVersion, verifyPinnedMacModelPolicy } from "./mac-local/start-web-host.mjs";
+import { readPinnedMacExecutableVersion, verifyPinnedMacModelPolicy } from "./mac-local/bot-executable-inspection.mjs";
 
 async function main(): Promise<void> {
   const requested = process.argv[2];
