@@ -293,7 +293,10 @@ function advanceService(coordinator, own, key, { accepted = new Set(), cost = { 
       : coordinator.client.query(sql, params) } : coordinator.client;
   const service = new PipelineAdvanceServiceV1(client, own.scope, key,
     { unattendedEnabled: () => true, capability }, () => webNow);
-  return { service, accepted, queuedCount: () => queued };
+  // `capability` and `client` are exposed so a test that needs a second service
+  // over the SAME production composition -- a second sweep racing the first --
+  // is built the way the real installer builds it rather than a lookalike.
+  return { service, accepted, capability, client, queuedCount: () => queued };
 }
 
 /** The run's current stage moves back to an earlier stage, which is what a
@@ -795,6 +798,101 @@ test("the loop-attention guard does not silently cancel an ordinary inbox delete
     const cleared = await admin.query("DELETE FROM control_action_inbox WHERE id=$1", [openId]);
     assert.equal(cleared.rowCount, 1, "a resolved pipeline loop item is deletable");
   });
+
+test("two overlapping sweeps that stop the same run raise one item, not a 23505", needsPg, async t => {
+  // Reviewer follow-up 5: both sweeps pre-check the same stopped run before
+  // either has committed its item, so both reach the INSERT. The item id is per
+  // run, so without `ON CONFLICT DO NOTHING` the second insert raises a 23505
+  // that is NOT a `PipelineAdvanceErrorV1`, and `advanceReady` rethrows it --
+  // which aborts the REST of that sweep, not just this run. The bug is in the
+  // sweep, so the test has to drive the sweep.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(78);
+  // A ceiling of ONE round beyond the first, so the next entry is past it and
+  // the run stops. The stop is NEVER raised from this test's own hands: the two
+  // racing sweeps below are the first callers to pre-check this stopped run, so
+  // both reach the INSERT. That is the whole race -- there is no prior item to
+  // short-circuit the second sweep on the `SELECT ... FOR UPDATE` path.
+  const own = await seedInstallation(admin, "sweeprace", key, new Date(webNow).toISOString(), { maxLoops: 1 });
+  await ownerSetsUp(web, own, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  // Round 0 and round 1, both inside the ceiling, so nothing has stopped yet.
+  const composed = advanceService(coordinator, own, key);
+  assert.equal((await composed.service.advance(own.pipeline.runId, own.policyId)).startsWork, true, "round 0");
+  await rewindRunTo(admin, own, 0, key);
+  await reenterStage(admin, own, 0, key);
+  assert.equal((await composed.service.advance(own.pipeline.runId, own.policyId)).startsWork, true, "round 1");
+  // One more re-entry puts the next round past max_loops 1, and no advance is
+  // called from here: the sweeps below are the first to see that.
+  await rewindRunTo(admin, own, 0, key);
+  await reenterStage(admin, own, 0, key);
+  assert.equal((await admin.query("SELECT count(*)::int count FROM control_action_inbox WHERE tenant_id=$1",
+    [own.tenantId])).rows[0].count, 0, "no Needs Attention item exists before the sweeps");
+
+  // One more consented run in the SAME installation, so a sweep has healthy work
+  // AFTER the stopped run. A 23505 from the stopped run aborts the REST of that
+  // sweep, so this is what distinguishes "handled" from "survived".
+  const healthy = await seedSecondRun(admin, own, key);
+  await ownerConsents(web, healthy, key);
+
+  // Two sweep services over the SAME production composition and the SAME
+  // connection pool, so the collision is on the real table under real
+  // concurrency rather than on a fake query router.
+  //
+  // Two sweeps that merely start together do not reliably interleave: whichever
+  // reaches the insert first usually commits before the other has read, and the
+  // loser short-circuits on the `SELECT payload` that finds the prior item, so
+  // the collision is timing-dependent and the test would prove nothing. This
+  // client wraps the TRANSACTION SESSION -- the read is issued on the session,
+  // not the client -- and puts a BARRIER on that one read: both sweeps are held
+  // there until both have arrived, so both are provably past the "is it already
+  // raised?" check when the first INSERT commits. Nothing else is intercepted:
+  // the read, the insert, the 0154 guards, the unique index and the error class
+  // `advanceReady` rethrows are all the production ones.
+  let waiting = 0;
+  let release = () => {};
+  const bothArrived = new Promise(resolve => { release = resolve; });
+  const holdOnAttentionRead = (session) => ({ query: (sql, params) => {
+    if (/FROM control_action_inbox/.test(String(sql)) && /SELECT payload/.test(String(sql))) {
+      waiting += 1;
+      if (waiting >= 2) release();
+      return bothArrived.then(() => session.query(sql, params));
+    }
+    return session.query(sql, params);
+  } });
+  const barrier = { ...composed.client,
+    transaction: work => composed.client.transaction(tx => work(holdOnAttentionRead(tx))),
+    transactionWithPreCommitCheck: (work, check) =>
+      composed.client.transactionWithPreCommitCheck(tx => work(holdOnAttentionRead(tx)), check) };
+  const sweep = () => new PipelineAdvanceServiceV1(barrier, own.scope, key,
+    { unattendedEnabled: () => true, capability: composed.capability }, () => webNow);
+  const outcomes = await Promise.allSettled([sweep().advanceReady(8), sweep().advanceReady(8)]);
+  assert.equal(waiting, 2, "both sweeps must have reached the attention read, or nothing was raced");
+  // Neither sweep may reject: a 23505 from the shared item is not a
+  // PipelineAdvanceErrorV1, so `advanceReady` rethrows it.
+  for (const [index, outcome] of outcomes.entries()) {
+    assert.equal(outcome.status, "fulfilled",
+      `sweep ${index} must not abort: ${JSON.stringify(outcome.reason?.message ?? outcome.reason)}`);
+  }
+  // Exactly one item for the stopped run, whoever won the race.
+  const items = (await admin.query("SELECT id,state,payload FROM control_action_inbox WHERE tenant_id=$1"
+    + " AND id=$2", [own.tenantId, `attention:pipeline-loop:${own.pipeline.runId}`])).rows;
+  assert.equal(items.length, 1, "one Needs Attention item for the stopped run, not one per sweep");
+  assert.equal(items[0].state, "open");
+  assert.equal(items[0].payload.reasonCode, "pipeline_stage_loop_limit_reached");
+  // A sweep that aborted on the 23505 would never have reached the healthy run,
+  // so this is the assertion that the race cost nothing beyond the stopped run.
+  const advanced = outcomes.filter(o => o.status === "fulfilled" && o.value.advanced.length > 0);
+  assert.ok(advanced.length >= 1, "at least one sweep reached the healthy run and advanced it");
+  // The stop is recorded once, whichever sweep got there first.
+  assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_stage_loop_counts"
+    + " WHERE tenant_id=$1 AND reason_code<>'stage_advanced'", [own.tenantId])).rows[0].count, 1,
+  "the stop is recorded once for the run, not once per sweep");
+});
 
 test("the agent-process ceiling counts queued work that has no harness run yet", needsPg, async t => {
   // Reviewer follow-up 2: the count was only live control_harness_runs, but an
