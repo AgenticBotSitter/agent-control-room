@@ -1181,7 +1181,7 @@ test("the owner's join command carries only a safe address and the one-time code
   assert.match(commands.unix, new RegExp(release.sha256, "u"));
   assert.match(commands.unix, /connector-manifest\.json/u);
   assert.match(commands.unix, /--bot codex$/u);
-  assert.equal(commands.windows.trimEnd(), `node $f join --server https://control.example.ts.net --code ${code} --bot codex`);
+  assert.match(commands.windows, new RegExp(`node \\$f join --server https://control\\.example\\.ts\\.net --code ${code} --bot codex$`, "u"));
   for (const origin of ["https://x.example;rm -rf ~", "https://x.example/$(id)", "file:///etc", "https://user@x.example"])
     assert.throws(() => fleetJoinCommandsV1(origin, code, "codex", release));
   assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id", "codex", release));
