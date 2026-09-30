@@ -460,3 +460,51 @@ test("the Mac-local transport stays loopback-only and admits only one configured
   void handler.handle(foreign.input, foreign.output); await foreignDone;
   assert.equal(foreign.output.statusCode, 403);
 });
+
+// ---------------------------------------------------------------------------
+// Readiness must fold in the database. This is the review's N1 follow-up: the
+// process reported ready for the whole life of a database client that had been
+// closed underneath it, so the host never restarted it and every page failed.
+// ---------------------------------------------------------------------------
+
+test("a closed database client makes the process NOT ready, and a host without one is unaffected", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-readiness" }); t.after(fixture.close);
+  const origin = "http://127.0.0.1:3210";
+  const ownerCode = "mac-local-owner-code-long-enough";
+  const build = (database: { client: typeof fixture.client; close: () => Promise<void>; isAvailable?: () => boolean }) =>
+    createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
+      localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
+        provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }),
+        sessionSeconds: 900 },
+      database, clock: () => conformanceNow, hostProcessId: 4_243,
+      healthProbeKey: new Uint8Array(32).fill(9), healthReleaseId: "dev",
+      healthStartedAt: "2026-09-30T00:00:00.000Z" });
+
+  // A live client: ready.
+  let available = true;
+  const live = build({ client: fixture.client, close: async () => {}, isAvailable: () => available });
+  assert.equal(live.isReady(), true, "a live database client is ready");
+
+  // The same client, closed underneath the process — which is exactly what
+  // `bindPrivatePgPool` does permanently on an uncertain outcome.
+  available = false;
+  assert.equal(live.isReady(), false,
+    "N1: a process whose database client has been closed is NOT ready, so something restarts it");
+
+  // Back to live, and back to not: the answer tracks the client rather than
+  // latching.
+  available = true;
+  assert.equal(live.isReady(), true, "and it recovers when the client is available again");
+
+  // A host that supplies no `isAvailable` — a simulation, a test double — keeps
+  // the old answer, so this is additive and not a new requirement on callers.
+  const silent = build({ client: fixture.client, close: async () => {} });
+  assert.equal(silent.isReady(), true, "a database with no isAvailable keeps the previous answer");
+
+  // And an explicit close still reports not-ready, which is the older half of
+  // the rule and must not have been lost.
+  await live.close();
+  assert.equal(live.isReady(), false, "an explicitly closed process is still not ready");
+  await silent.close();
+});
+
