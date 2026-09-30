@@ -1,5 +1,5 @@
 import { appendAuditWith } from "../../audit/audit-store";
-import { CanonicalStore } from "../../persistence/canonical-store";
+import { CanonicalStore, TaskModelSelectionUnresolvedError } from "../../persistence/canonical-store";
 import { databaseSqlStateIsAnyV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema, requestRecordSchema, workflowRecordSchema,
   type JobRecord } from "../../domain/v1";
@@ -447,6 +447,18 @@ export class FleetGatewayStoreV1 {
       const selection = (await tx.query<{ worker_kind: string | null }>(`SELECT worker_kind FROM control_task_model_selections
         WHERE tenant_id=$1 AND job_id=$2`, [this.#tenantId, job.id])).rows[0];
       if (selection?.worker_kind && selection.worker_kind !== principal.workerKind) return fleetFail("conflict");
+      // Project Settings (Settings tab) restricts which worker kinds may claim
+      // this project's work at all. The coordinator enforces it on the
+      // coordinator path; the fleet claim path must enforce it too, or a
+      // project that restricted itself to one kind would still be claimable by
+      // every other kind. Fails closed when a restriction is configured and
+      // this worker's kind is not in it, and when the kind is not one the
+      // setting can name.
+      const settings = (await tx.query<{ eligible_worker_kinds: string[] | null }>(
+        "SELECT eligible_worker_kinds FROM control_project_settings WHERE tenant_id=$1 AND project_id=$2",
+      [this.#tenantId, offer.project_id])).rows[0];
+      if (settings?.eligible_worker_kinds !== null && settings?.eligible_worker_kinds !== undefined
+        && !settings.eligible_worker_kinds.includes(principal.workerKind)) return fleetFail("conflict");
       const canonical = new CanonicalStore(joined(tx));
       const actor = { actorId: principal.identityId, actorType: "agent" as const };
       const suffix = sha256Digest({ offerId, workerId: principal.workerId, idempotencyKey }).slice(7, 39);
@@ -483,10 +495,21 @@ export class FleetGatewayStoreV1 {
         if (databaseSqlStateIsAnyV1(error, ["P0001", "23505", "23503"])) return fleetFail("conflict");
         throw error;
       }
-      const claimed = await canonical.claimReadyTaskJob({ tenantId: this.#tenantId, jobId: job.id,
-        expectedJobVersion: job.version, nodeId: principal.nodeId, workerId: principal.workerId, attemptId, leaseId,
-        transitionId: `transition:fleet-claim:${suffix}:lease`, idempotencyKey: `fleet-claim:${suffix}:lease`,
-        actor, acquiredAt: now, expiresAt });
+      // The canonical store's own transaction wraps anything it does not recognise,
+// so an unresolved selection must be turned into a fleet refusal AFTER the
+// store's transaction has unwound, never inside it.
+let claimed: Awaited<ReturnType<CanonicalStore["claimReadyTaskJob"]>>;
+      try {
+        claimed = await canonical.claimReadyTaskJob({ tenantId: this.#tenantId, jobId: job.id,
+          expectedJobVersion: job.version, nodeId: principal.nodeId, workerId: principal.workerId, attemptId, leaseId,
+          transitionId: `transition:fleet-claim:${suffix}:lease`, idempotencyKey: `fleet-claim:${suffix}:lease`,
+          actor, acquiredAt: now, expiresAt });
+      } catch (error) {
+        // An unresolved model selection is a refusal with a fixed code, not a
+        // server fault: the owner asked for a model this worker cannot honour.
+        if (error instanceof TaskModelSelectionUnresolvedError) fleetFail("conflict");
+        throw error;
+      }
       const declared = (await tx.query<{ scope_kind: "file" | "tree"; path_fold: string }>(`SELECT scope_kind,path_fold
         FROM control_task_declared_scopes WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3 ORDER BY scope_kind,path_fold`,
       [this.#tenantId, offer.project_id, job.id])).rows;

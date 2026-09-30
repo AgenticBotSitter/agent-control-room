@@ -1320,6 +1320,16 @@ export const MCP_TOOLS = Object.freeze([
       idempotencyKey: { type: "string" } }, required: ["projectId", "proposal"], additionalProperties: false } },
 ]);
 
+/** The gateway's fixed refusal codes, and nothing else. A client error whose
+ * code is not in this set is a transport or client bug, never a refusal the
+ * connector should dress up as one. */
+const FLEET_REFUSAL_CODES = new Set(["unauthenticated", "forbidden", "not_found", "conflict", "invalid",
+  "too_large", "rate_limited", "expired", "unavailable", "paused", "worker_kind_mismatch"]);
+function fleetRefusalCode(error) {
+  const code = error?.code;
+  return typeof code === "string" && FLEET_REFUSAL_CODES.has(code) ? code : "";
+}
+
 function validIdempotency(value) {
   return value === undefined || typeof value === "string" && IDEMPOTENCY_PATTERN.test(value);
 }
@@ -1412,7 +1422,14 @@ export function createMcpDispatcher({ client, workspaceRoot, configPath }) {
           const value = await tools[name](args);
           return reply({ content: [{ type: "text", text: JSON.stringify(value, null, 2) }], structuredContent: { result: value } });
         } catch (error) {
-          return reply({ isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Request failed." }] });
+          // A refusal carries the server's own fixed code when it has one. The
+          // connector never invents a code: it reports the one the gateway
+          // returned, so a bot (and the operator reading its transcript) can
+          // tell "this offer is gone" from "this project is paused" without
+          // parsing prose. Anything without a recognised code stays prose.
+          const refusal = { refusalCode: fleetRefusalCode(error) };
+          return reply({ isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Request failed." }],
+            ...(refusal.refusalCode ? { structuredContent: refusal } : {}) });
         }
       }
       default: return { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } };
