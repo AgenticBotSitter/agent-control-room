@@ -80,9 +80,9 @@ const RISK_REDUCING_WHILE_OFF_V1 = new Set(["pause", "stop", "backup_now", "chec
 
 export class UpdaterMainLoopV1 {
   #timer; #ticking = false;
-  constructor({ runner, store, stateFiles, mode, ownerActions, intervalMs = 5_000, onError = () => {} }) {
+  constructor({ runner, store, stateFiles, mode, ownerActions, alerts = null, alertFacts = async () => ({}), intervalMs = 5_000, onError = () => {} }) {
     this.runner = runner; this.store = store; this.stateFiles = stateFiles; this.mode = mode;
-    this.ownerActions = ownerActions; this.intervalMs = intervalMs; this.onError = onError;
+    this.ownerActions = ownerActions; this.alerts = alerts; this.alertFacts = alertFacts; this.intervalMs = intervalMs; this.onError = onError;
     this.lastOutcome = { status: "idle" };
   }
   async #requests(flag) {
@@ -116,6 +116,13 @@ export class UpdaterMainLoopV1 {
       await this.stateFiles.writeStatus({ ...publicFacts, state: this.lastOutcome.status === "uncertain" ? "uncertain"
         : mode === "running" ? "idle" : mode, needsYou: ["uncertain", "needs_attention", "error"].includes(this.lastOutcome.status),
       selfUpdate: flag });
+      if (this.alerts) {
+        const facts = await this.alertFacts();
+        if (!facts || typeof facts !== "object" || Array.isArray(facts)) throw updaterRefuseV1("updater_alert_facts_refused");
+        await this.alerts.reconcile({ ...facts, needsOwner: facts.needsOwner === true || this.lastOutcome.status === "needs_attention",
+          uncertain: facts.uncertain === true || this.lastOutcome.status === "uncertain", rescue: facts.rescue === true || rescued });
+        await this.alerts.tick();
+      }
       return this.lastOutcome;
     } finally { this.#ticking = false; }
   }

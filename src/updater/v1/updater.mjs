@@ -6,6 +6,7 @@ import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
 import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
   newUpdaterIdentityV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
+import { UpdaterAlertSenderV1 } from "./alerts.mjs";
 
 function updaterRootV1(env) {
   const production = "/Library/Application Support/Control Room";
@@ -55,7 +56,10 @@ export async function startUpdaterV1(options = {}) {
   const reportTimerError = options.onTimerError ?? (error => {
     process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
   });
-  const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, onError: reportTimerError });
+  const alerts = options.alerts === undefined ? null : options.alerts ?? new UpdaterAlertSenderV1({ root, store });
+  if (alerts) await alerts.preflight();
+  const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, alerts,
+    alertFacts: options.alertFacts, onError: reportTimerError });
   let heartbeatState = { state: "idle", step: null };
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportTimerError });
@@ -72,7 +76,7 @@ export async function startUpdaterV1(options = {}) {
     if (ownsClient) await client.end();
     throw error;
   }
-  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control,
+  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, alerts,
     setHeartbeatState(value) { heartbeatState = value; },
     async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); if (ownsClient) await client.end(); } });
 }

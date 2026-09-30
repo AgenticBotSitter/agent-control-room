@@ -207,6 +207,16 @@ test("the main loop does not poll the runner while Off and rejects a risk-increa
   assert.equal(runnerCalls, 1, "a rescued active run is measured, never advanced by the watcher/build path");
 });
 
+test("the main loop feeds updater and health facts to the alert sender without trusting free-form text", async () => {
+  const facts = [], alerts = { async reconcile(value) { facts.push(value); }, async tick() {} };
+  const loop = new UpdaterMainLoopV1({ runner: { async runOnce() { return { status: "uncertain" }; } },
+    store: new MemoryStore(undefined), stateFiles: { readSelfUpdate: async () => "On\n", hasRescueMarker: async () => false,
+      publicFacts: async () => ({}), async writeStatus() {} }, mode: new UpdaterModeV1(), ownerActions: { async handle() {} },
+    alerts, alertFacts: async () => ({ webDown: true, backupMissing: true }) });
+  await loop.tick();
+  assert.deepEqual(facts, [{ webDown: true, backupMissing: true, needsOwner: false, uncertain: true, rescue: false }]);
+});
+
 test("the PostgreSQL adapter refuses a wrong production role and never transitions without the run lease", async () => {
   const roleClient = { async query(sql) {
     if (sql.startsWith("SET ")) return { rows: [] };

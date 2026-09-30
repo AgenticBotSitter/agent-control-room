@@ -1,4 +1,5 @@
 import type { OwnerPushEventKindV1, OwnerPushPayloadV1, WebPushSubscriptionV1 } from "./types";
+import { ownerPushEndpointAllowedV1 as sharedOwnerPushEndpointAllowedV1 } from "../../updater/v1/push-policy.mjs";
 
 const eventTitles: Record<OwnerPushEventKindV1, string> = {
   needs_you: "Control Room needs you",
@@ -30,13 +31,6 @@ const base64url = /^[A-Za-z0-9_-]+$/;
  * Exact hosts, plus the one wildcard the brief names. Adding a browser vendor is
  * a one-line change here and a matching expression in 0227.
  */
-const pushServiceHostsV1: readonly RegExp[] = Object.freeze([
-  /^web\.push\.apple\.com$/,
-  /^fcm\.googleapis\.com$/,
-  /^updates\.push\.services\.mozilla\.com$/,
-  /^[a-z0-9-]+\.notify\.windows\.com$/,
-]);
-
 /**
  * True when this endpoint is an HTTPS URL on a known push service.
  *
@@ -46,34 +40,7 @@ const pushServiceHostsV1: readonly RegExp[] = Object.freeze([
  * returns false for exactly the non-string cases.
  */
 export function ownerPushEndpointAllowedV1(endpoint: unknown): endpoint is string {
-  if (typeof endpoint !== "string" || endpoint.length > 2048) return false;
-  let parsed: URL;
-  try { parsed = new URL(endpoint); } catch { return false; }
-  // Credentials in the URL are named before shape, the same order
-  // config/v1/artifact-storage.ts uses: an endpoint carrying a key is
-  // credential material, not a malformed URL.
-  if (parsed.username !== "" || parsed.password !== "") return false;
-  if (parsed.protocol !== "https:") return false;
-  // A fragment is refused: no real push service issues one, and a browser never
-  // sends it. A QUERY is NOT refused, and that is deliberate rather than an
-  // oversight: a real Windows Notification Services channel URL is
-  // `https://<label>.notify.windows.com/?token=...`, with the token in the
-  // query. Refusing queries would refuse every real Windows subscription.
-  //
-  // A query is not an SSRF vector here, which was the concern that first
-  // suggested refusing one. The host is taken from the authority, which ends at
-  // the first '/', '?' or '#', so `https://evil.invalid/?next=web.push.apple.com`
-  // is still the host `evil.invalid` and is refused -- by the list, not by the
-  // query. 0227's CHECK extracts the host the same way, and the migration test
-  // asserts the two agree on this exact string.
-  if (parsed.hash !== "") return false;
-  // A non-default port is refused. It is not a cross-host SSRF, but a real push
-  // service publishes its endpoint on 443, and 0227's CHECK refuses one too --
-  // two lists that disagree about the same string is how the database starts
-  // rejecting a subscribe the application considered valid.
-  if (parsed.port !== "" && parsed.port !== "443") return false;
-  const host = parsed.hostname.toLowerCase();
-  return pushServiceHostsV1.some(pattern => pattern.test(host));
+  return sharedOwnerPushEndpointAllowedV1(endpoint);
 }
 
 export function parseWebPushSubscriptionV1(value: unknown): WebPushSubscriptionV1 {
