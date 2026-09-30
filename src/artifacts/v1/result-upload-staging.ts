@@ -71,6 +71,13 @@ const projectPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
 const uploadPattern = /^result-upload:[a-f0-9]{32}$/u;
 const onDiskPattern = /^[a-f0-9]{64}\.chunk$/u;
 const suffix = ".chunk";
+// An in-flight scratch file, written under a name of its own and renamed into
+// place. It is tolerated by the accounting rather than refused, because a chunk
+// arriving in parallel would otherwise be refused by a reader that caught the
+// write in progress. It is never READ (a read only ever uses a derived chunk
+// name) and it carries its session's own hash, so a discard can reclaim the
+// leftovers of a process that died mid-write.
+const scratchPattern = /^\.staging-[a-f0-9]{64}-[a-z0-9]+-\d+\.part$/u;
 const noFollow = constants.O_NOFOLLOW ?? 0;
 const nonBlock = constants.O_NONBLOCK ?? 0;
 
@@ -173,8 +180,19 @@ export class ResultUploadStagingV1 {
   private async assertAccountedFor(operation: Operation) {
     this.usable(operation);
     for (const entry of await readdir(this.root))
-      if (!onDiskPattern.test(entry)) throw new ResultUploadStagingError("staging_ambiguous");
+      if (!onDiskPattern.test(entry) && !scratchPattern.test(entry))
+        throw new ResultUploadStagingError("staging_ambiguous");
     await this.assertRoot(operation);
+  }
+
+  /** The set of chunk names this area currently holds, for a sweeper that has
+   * to tell "still uploading" from "left behind". Deliberately derived, never
+   * parsed: a name is a digest, so it cannot be reversed into an upload id and
+   * the answer to "whose bytes are these" is always the database's. */
+  async stagedNames(): Promise<string[]> {
+    const operation: Operation = { deadline: Date.now() + this.configuration.operationTimeoutMs };
+    await this.assertAccountedFor(operation);
+    return (await readdir(this.root)).filter((entry) => onDiskPattern.test(entry)).sort();
   }
 
   /** Writes one chunk, create-once. An exact retry replays; different bytes for
@@ -205,7 +223,8 @@ export class ResultUploadStagingV1 {
     // atomic and overwrites, so a partial chunk is never visible under a name a
     // reader would accept. A reader that arrives between the two sees the
     // missing chunk, not a short one.
-    const scratch = join(this.root, `.staging-${name.slice(0, 16)}-${process.pid.toString(36)}-${bytes.byteLength}`);
+    const scratch = join(this.root,
+      `.staging-${name.slice(0, 64)}-${process.pid.toString(36)}-${bytes.byteLength}.part`);
     let handle: FileHandle | undefined;
     try {
       handle = await open(scratch, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600);
@@ -232,7 +251,12 @@ export class ResultUploadStagingV1 {
     const operation: Operation = { deadline: Date.now() + this.configuration.operationTimeoutMs };
     try {
       this.usable(operation);
-      await this.assertRoot(operation);
+      // The accounting runs on a READ as well as a write. A reader that arrived
+      // while something else in the root could not be accounted for would be
+      // reading from a directory whose state is not what the uploads believe,
+      // and the only honest answer there is to refuse rather than to serve one
+      // file out of a directory it does not understand.
+      await this.assertAccountedFor(operation);
       return await this.readFile(join(this.root, name), operation, true);
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") throw error;
