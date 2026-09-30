@@ -1,10 +1,14 @@
 /** Safe, fixed refusal codes. Messages never carry request content. */
 export type FleetErrorCodeV1 = "unauthenticated" | "forbidden" | "not_found" | "conflict" | "invalid"
-  | "too_large" | "rate_limited" | "expired" | "unavailable" | "paused";
+  | "too_large" | "rate_limited" | "expired" | "unavailable" | "paused" | "refused_secret_material";
 
 const statuses: Readonly<Record<FleetErrorCodeV1, number>> = Object.freeze({ unauthenticated: 401, forbidden: 403,
   not_found: 404, conflict: 409, invalid: 400, too_large: 413, rate_limited: 429, expired: 410, unavailable: 503,
-  paused: 423 });
+  paused: 423,
+  // 422 rather than 400: the request was well formed and the server understood
+  // it, and it is refusing on content. This is the one refusal a connector
+  // should NOT retry, and the code says so where the connector reads it.
+  refused_secret_material: 422 });
 
 export class FleetErrorV1 extends Error {
   constructor(readonly code: FleetErrorCodeV1) {

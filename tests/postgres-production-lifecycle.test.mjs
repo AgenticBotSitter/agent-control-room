@@ -300,7 +300,13 @@ const AFTER_0135 = ["0140_fleet_worker_connector.sql", "0141_fleet_owner_authori
   // that ends at or before 0135 has this real remainder behind it rather than a
   // shorter one, and a rung's expected suffix stays a comparison.
   "0206_result_file_catalog.sql", "0207_result_file_store_admission.sql",
-  "0208_result_file_download_grants.sql"];
+  "0208_result_file_download_grants.sql",
+  // 0209-0211: chunked upload sessions and chunks, the publication receipt
+  // that makes a stored set provable, and the combine-input bindings. They sort
+  // after 0208, so every staged prefix that ends at or before 0135 has this real
+  // remainder behind it rather than a shorter one.
+  "0209_result_upload_sessions.sql", "0210_result_upload_publication.sql",
+  "0211_job_artifact_inputs.sql"];
 
 /** Splits a SQL file into its top-level statements, keeping each one's text.
  *

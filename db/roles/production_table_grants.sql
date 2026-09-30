@@ -103,7 +103,9 @@ REVOKE ALL ON control_module_install_approvals
 -- login cannot read a project's result-file names, digests or storage keys,
 -- and cannot mint a download grant. The reader and backup revokes are what
 -- keep the grant ledger out of a backup role's blind SELECT-on-everything.
-REVOKE ALL ON control_result_file_sets, control_result_files, control_result_file_download_grants
+REVOKE ALL ON control_result_file_sets, control_result_files, control_result_file_download_grants,
+  control_result_publications, control_task_declared_outputs, control_task_declared_inputs,
+  control_job_artifact_inputs, control_result_upload_sessions, control_result_upload_chunks
   FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions,
   control_room_github_broker, control_room_work_intake;
 GRANT SELECT ON control_identities, control_role_grants, projects, work_batches,

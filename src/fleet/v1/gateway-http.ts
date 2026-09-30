@@ -13,7 +13,7 @@ import { FLEET_DIGEST_PATTERN_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_P
  * changes permissions; those are owner actions on the web path only.
  */
 export const FLEET_BODY_LIMITS_V1 = Object.freeze({ enroll: 4 * 1024, small: 32 * 1024,
-  proposal: 256 * 1024, result: 1_700_000 });
+  proposal: 256 * 1024, result: 1_700_000, chunk: 8 * 1024 * 1024 + 4096, upload: 16 * 1024 });
 const headers = Object.freeze({ "cache-control": "no-store", "content-type": "application/json; charset=utf-8",
   "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
   "referrer-policy": "no-referrer" });
@@ -291,6 +291,38 @@ function object(raw: string, keys: readonly string[], optional: readonly string[
     return fleetFail("invalid");
   return parsed as Record<string, unknown>;
 }
+/**
+ * A raw chunk body, with its own content type and no JSON framing.
+ *
+ * The chunk is the one body in this protocol that is not JSON, because
+ * base64-encoding 8 MiB would cost a third more bytes on the wire and a third
+ * more memory on both ends for no benefit: the chunk's digest is carried in a
+ * header, which is also what makes a retry's comparison exact. The length is
+ * bounded by the same limit the `content-length` check below uses, so a
+ * declared length is never trusted over the bytes actually read.
+ */
+async function readChunkBody(request: IncomingMessage, limit: number): Promise<Uint8Array> {
+  const declared = header(request, "content-length");
+  if (declared !== undefined && (!/^\d{1,9}$/u.test(declared) || Number(declared) > limit)) fleetFail("too_large");
+  if ((header(request, "content-type") ?? "") !== "application/octet-stream") fleetFail("invalid");
+  const digest = header(request, "x-control-room-chunk-digest");
+  if (digest === undefined || !FLEET_DIGEST_PATTERN_V1.test(digest)) fleetFail("invalid");
+  const chunks: Buffer[] = [];
+  let length = 0;
+  try {
+    for await (const chunk of request) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+      length += bytes.length;
+      if (length > limit) fleetFail("too_large");
+      chunks.push(bytes);
+    }
+  } catch (error) {
+    if (request.aborted) return fleetFail("invalid");
+    throw error;
+  }
+  if (!length) return fleetFail("invalid");
+  return new Uint8Array(Buffer.concat(chunks, length));
+}
 function decodeFiles(value: unknown) {
   if (value === undefined) return [];
   if (!Array.isArray(value)) return fleetFail("invalid");
@@ -306,16 +338,44 @@ function decodeFiles(value: unknown) {
 }
 
 export type FleetGatewayHttpOptionsV1 = Readonly<{ store: FleetGatewayStoreV1; proposals?: WorkBatchServiceV1;
+  /** The upload ingress. Absent means this gateway has no byte store, and the
+   * upload routes answer 503 rather than pretending the claim has no outputs. */
+  uploads?: FleetUploadServiceV1;
   connectorScript?: Readonly<{ body: string; digest: string }>; now?: () => string;
   admission?: FleetGatewayAdmissionV1;
   /** Operator log for failures that are not a fixed refusal. Never sent to the caller. */
   onUnexpectedError?: (error: unknown) => void }>;
+
+/** The slice of the upload store the HTTP layer uses. Declared here rather than
+ * as the concrete class so a test can supply a narrow fake, and so the route
+ * layer is forced to name the five verbs the connector may call — there is no
+ * sixth, and no way to reach the store's internals from a request. */
+export interface FleetUploadServiceV1 {
+  declaredOutputs(principal: FleetWorkerPrincipalV1, claimId: unknown): Promise<unknown>;
+  reserve(principal: FleetWorkerPrincipalV1, input: Readonly<{ claimId: unknown; ordinal: unknown;
+    sizeBytes: unknown; contentDigest: unknown; mediaType?: unknown }>): Promise<unknown>;
+  chunk(principal: FleetWorkerPrincipalV1, input: Readonly<{ claimId: unknown; uploadId: unknown;
+    ordinal: unknown; bytes: unknown }>): Promise<unknown>;
+  finalise(principal: FleetWorkerPrincipalV1, input: Readonly<{ claimId: unknown; uploadId: unknown;
+    publish?: unknown }>): Promise<unknown>;
+  voidUpload(principal: FleetWorkerPrincipalV1, input: Readonly<{ claimId: unknown; uploadId: unknown;
+    reason?: unknown }>): Promise<unknown>;
+  inputs(principal: FleetWorkerPrincipalV1, claimId: unknown): Promise<unknown>;
+  inputBytes(principal: FleetWorkerPrincipalV1, input: Readonly<{ claimId: unknown; ordinal: unknown }>):
+    Promise<{ ordinal: number; displayName: string; contentDigest: string; sizeBytes: number; bytes: Uint8Array }>;
+}
 
 export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) {
   const now = options.now ?? (() => new Date().toISOString());
   const admission = options.admission ?? createFleetGatewayAdmissionV1();
   const claimRoute = /^\/fleet\/v1\/claims\/(fleet-claim:[a-f0-9]{32})\/(progress|blocker|result)$/u;
   const proposalRoute = /^\/fleet\/v1\/projects\/([^/]+)\/proposals$/u;
+  // The upload routes hang off the claim, because an upload IS a claim's
+  // promise: the claim id is the authority, and everything else is a name
+  // inside it. `inputs` is the one GET, and it is the combine part's own.
+  const uploadRoute = /^\/fleet\/v1\/claims\/(fleet-claim:[a-f0-9]{32})\/(outputs|inputs|reserve|finalise|void)$/u;
+  const chunkRoute = /^\/fleet\/v1\/claims\/(fleet-claim:[a-f0-9]{32})\/uploads\/(result-upload:[a-f0-9]{32})\/chunks$/u;
+  const inputBytesRoute = /^\/fleet\/v1\/claims\/(fleet-claim:[a-f0-9]{32})\/inputs\/(\d{1,2})$/u;
 
   async function authenticated(request: IncomingMessage): Promise<FleetWorkerPrincipalV1> {
     const lease = admission.enter(request, "authenticate");
@@ -365,7 +425,8 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     // Every other route: authenticate first, then read the body.
     const known = path === "/fleet/v1/me" || path === "/fleet/v1/heartbeat" || path === "/fleet/v1/rotate"
       || path === "/fleet/v1/work" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
-      || claimRoute.test(path) || proposalRoute.test(path);
+      || claimRoute.test(path) || proposalRoute.test(path) || uploadRoute.test(path)
+      || chunkRoute.test(path) || inputBytesRoute.test(path);
     if (!known) return fleetFail("not_found");
     let principal: FleetWorkerPrincipalV1;
     try { principal = await authenticated(request); }
@@ -383,6 +444,73 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     if (method === "GET" && path === "/fleet/v1/me") return send(response, 200, { ok: true, result: options.store.me(principal) });
     if (method === "GET" && path === "/fleet/v1/work") return send(response, 200, { ok: true, result: await options.store.listWork(principal) });
     if (method === "GET" && path === "/fleet/v1/claims") return send(response, 200, { ok: true, result: await options.store.myClaims(principal) });
+
+    // --- the upload path ------------------------------------------------
+    // A gateway with no byte store answers 503 on every one of these, rather
+    // than 404: the route exists, the installation is just not wired for it,
+    // and a connector that sees 404 would go looking for another way in.
+    if (uploadRoute.test(path) || chunkRoute.test(path) || inputBytesRoute.test(path)) {
+      if (!options.uploads) return fleetFail("unavailable");
+    }
+    const upload = uploadRoute.exec(path);
+    if (upload) {
+      const [, claimId, action] = upload as unknown as [string, string, string];
+      if (method === "GET" && action === "outputs")
+        return send(response, 200, { ok: true, result: await options.uploads!.declaredOutputs(principal, claimId) });
+      if (method === "GET" && action === "inputs")
+        return send(response, 200, { ok: true, result: await options.uploads!.inputs(principal, claimId) });
+      if (method !== "POST") return fleetFail("not_found");
+      if (action === "reserve") {
+        const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.upload),
+          ["ordinal", "sizeBytes", "contentDigest"], ["mediaType"]);
+        const result = await options.uploads!.reserve(principal, { ...body, claimId } as never);
+        return send(response, 201, { ok: true, result });
+      }
+      if (action === "finalise") {
+        const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["uploadId"], ["publish"]);
+        if (typeof body.uploadId !== "string" || !/^result-upload:[a-f0-9]{32}$/u.test(body.uploadId))
+          return fleetFail("invalid");
+        const result = await options.uploads!.finalise(principal, { ...body, claimId } as never);
+        return send(response, 200, { ok: true, result });
+      }
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["uploadId"], ["reason"]);
+      if (typeof body.uploadId !== "string" || !/^result-upload:[a-f0-9]{32}$/u.test(body.uploadId))
+        return fleetFail("invalid");
+      return send(response, 200, { ok: true, result: await options.uploads!.voidUpload(principal,
+        { ...body, claimId } as never) });
+    }
+    const inputBytes = inputBytesRoute.exec(path);
+    if (inputBytes) {
+      if (method !== "GET") return fleetFail("not_found");
+      // The one response in this protocol that is not JSON: the bytes of one
+      // declared input, with its digest in a header so a connector can prove
+      // what it received rather than trusting the length. Attachment-only and
+      // `application/octet-stream`, because these bytes are the other machine's
+      // output and are never rendered on this origin.
+      const payload = await options.uploads!.inputBytes(principal, { claimId: inputBytes[1]!,
+        ordinal: Number(inputBytes[2]!) });
+      response.writeHead(200, { ...headers, "content-type": "application/octet-stream",
+        "content-length": String(payload.bytes.byteLength),
+        "x-control-room-content-digest": payload.contentDigest,
+        "content-disposition": "attachment", connection: "close" });
+      response.end(Buffer.from(payload.bytes));
+      return;
+    }
+    const chunk = chunkRoute.exec(path);
+    if (chunk) {
+      if (method !== "POST") return fleetFail("not_found");
+      const [, claimId, uploadId] = chunk as unknown as [string, string, string];
+      // The ordinal rides in a header, because this body is raw bytes and a
+      // JSON envelope around an 8 MiB chunk would mean buffering it twice. The
+      // header is validated here so a missing or non-numeric ordinal is refused
+      // before the body is read at all.
+      const ordinal = Number(header(request, "x-control-room-chunk-ordinal"));
+      if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 32) return fleetFail("invalid");
+      const bytes = await readChunkBody(request, FLEET_BODY_LIMITS_V1.chunk);
+      const result = await options.uploads!.chunk(principal, { claimId, uploadId, ordinal, bytes });
+      return send(response, 201, { ok: true, result });
+    }
+
     if (method !== "POST") return fleetFail("not_found");
     if (path === "/fleet/v1/mcp/calls") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["callId", "toolName"]);

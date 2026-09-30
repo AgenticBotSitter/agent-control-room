@@ -56,7 +56,14 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // 0206-0208: the result-file catalog and its download grants. Read only; the
   // preflight's column audit is what proves the web login cannot write a
   // catalog row, cannot quarantine a file and cannot rewrite a producer.
-  "control_result_file_sets", "control_result_files", "control_result_file_download_grants"] as const;
+  "control_result_file_sets", "control_result_files", "control_result_file_download_grants",
+  // 0209-0211: the owner's approval artefacts for the upload path. Read plus
+  // INSERT on the three the owner actually declares and binds; the upload
+  // sessions, their chunks and the publication receipt are read only, so the
+  // owner's Stop decision about an upload is the 0209 guard's to check and not
+  // a column this login can simply set.
+  "control_task_declared_outputs", "control_task_declared_inputs", "control_job_artifact_inputs",
+  "control_result_upload_sessions", "control_result_upload_chunks", "control_result_publications"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -81,6 +88,13 @@ privateWebInsertTables.add("control_module_install_approvals");
 // 0208: the owner-facing download grant for one exact file. Insert and spend
 // only; the catalog itself is never written by the web login.
 privateWebInsertTables.add("control_result_file_download_grants");
+// 0209-0211: the owner approves what a part may produce and what it needs, and
+// binds an accepted file to the consumer that declared it. Each insert is
+// guarded by a live-owner check in the database (0209/0211), so this is
+// permission to ask, not permission to declare.
+privateWebInsertTables.add("control_task_declared_outputs");
+privateWebInsertTables.add("control_task_declared_inputs");
+privateWebInsertTables.add("control_job_artifact_inputs");
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "33e1311e69e6560213863df5bbb17d131020ec01626973f4b76b502c20680a75",
+  "digest": "7381451812e3f2bc3103185793243434b054ca50050a1a37cb3e241895d70402",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -765,26 +765,44 @@
       "kind": "migrate"
     },
     {
-      "file": "db/roles/production_roles.sql",
+      "file": "db/migrations/0209_result_upload_sessions.sql",
       "order": 128,
+      "sha256": "36fc93e1fbf1fabbcf84e280febdbab5b33a4663348d6e4ed7d665839d71a010",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0210_result_upload_publication.sql",
+      "order": 129,
+      "sha256": "1e269be0d2ed78242b91cc296f608f441cdb0cc5ebf26460c5d0615e803caf1e",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0211_job_artifact_inputs.sql",
+      "order": 130,
+      "sha256": "89594a8341b379c2ea3e956871a16bb60b741e1309f465c281fdfa0ede0322a8",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/roles/production_roles.sql",
+      "order": 131,
       "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 129,
-      "sha256": "2497a1cdc3f57edc6f5be39272f3e01b25f0653d682a8e6fb86d021b24fb3a3c",
+      "order": 132,
+      "sha256": "8877b333fa7cb7f9cd9b4f9a910de3b4de93ec31148ef5bc423dfd2b192a36e7",
       "kind": "grants"
     },
     {
       "file": "db/roles/agent_reviewer_roles.sql",
-      "order": 130,
+      "order": 133,
       "sha256": "69a199a5dc16a7263e7037c47bb86b2908bdbbf3d741d2d948c4889781b5d5f9",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 131,
+      "order": 134,
       "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }

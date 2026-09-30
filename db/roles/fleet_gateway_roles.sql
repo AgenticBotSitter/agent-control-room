@@ -73,6 +73,53 @@ GRANT SELECT ON fleet_enrollment_codes, fleet_workers, fleet_worker_credentials,
   fleet_enrollment_redemptions, fleet_work_offers, fleet_claims, fleet_worker_events, fleet_results, fleet_result_files,
   fleet_result_reviews TO control_room_private_web;
 
+-- 0209-0211: the chunked upload path and the combine-input bindings.
+--
+-- The gateway may RESERVE an upload, send its chunks, finalise it and publish
+-- the set's receipt — the four verbs one claim needs to get its files onto the
+-- Mac. Every one of those writes is bounded by 0209/0210's own guards, which
+-- re-check 0140's `fleet_claim_is_live` on each call, so a claim that has died
+-- cannot keep filling an upload.
+--
+-- It is NOT granted the result-file catalog. That is the point of the whole
+-- design (plan §2.6 H2): the gateway learns which file to send from
+-- `control_result_upload_sessions`, whose promise was pinned to the catalog row
+-- by 0209's reservation guard, and it learns which input to download from
+-- `control_job_artifact_inputs`, whose columns were derived from the catalog
+-- row by 0211's binding guard. It can therefore never read another file's
+-- storage key, never learn whether a digest exists elsewhere, and never name a
+-- file to download that the owner did not approve for that exact claim.
+GRANT SELECT, INSERT ON control_result_upload_sessions, control_result_upload_chunks
+  TO control_room_fleet_gateway;
+-- It reads the declarations and bindings, and writes neither. A declared output
+-- or input is the OWNER's approval artefact, bound by 0209/0211's guards to a
+-- live owner grant, and the binding is written on the same path that accepts the
+-- producer's result. A machine that could write either could promise itself
+-- somewhere to send files, or hand itself a file to combine.
+GRANT SELECT ON control_task_declared_outputs, control_task_declared_inputs, control_job_artifact_inputs
+  TO control_room_fleet_gateway;
+-- The set's publication receipt, written by the same claim. A gateway may not
+-- publish a native-text set (it is not the native path) and 0210's guard
+-- refuses any set whose every file lacks a published upload session.
+GRANT SELECT, INSERT ON control_result_publications TO control_room_fleet_gateway;
+-- Finalise moves a session between its states, and Stop voids one. Both are
+-- UPDATE, both on three columns, and both re-checked by 0209's guard: no other
+-- column of a session is mutable by any role.
+GRANT UPDATE (state, received_at, published_at, voided_at, void_reason)
+  ON control_result_upload_sessions TO control_room_fleet_gateway;
+-- A file becomes 'stored' only through its own published upload (0210's guard),
+-- and a set becomes 'stored' only with its publication receipt. Two columns each,
+-- and no DELETE anywhere: the catalog is append-only and this role cannot write
+-- a name, a digest, a size, a storage key or a producer.
+GRANT UPDATE (state, stored_at) ON control_result_files TO control_room_fleet_gateway;
+GRANT UPDATE (state, stored_at, manifest_digest) ON control_result_file_sets TO control_room_fleet_gateway;
+-- The owner-facing declarations and bindings the gateway grants above are the
+-- same rows the web login reads for the owner's approval screen, and the
+-- publication receipt is what Project Files shows as "published".
+GRANT SELECT ON control_task_declared_outputs, control_task_declared_inputs,
+  control_job_artifact_inputs, control_result_publications,
+  control_result_upload_sessions, control_result_upload_chunks TO control_room_private_web;
+
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_fleet_owner_authority;
 GRANT SELECT ON work_intake_tenant_binding, tenants, workspaces, projects, control_manual_project_heads,
   control_identities, control_role_grants, control_web_sessions, control_requests, control_workflows,
