@@ -225,16 +225,17 @@ INSERT INTO updater.passkey_registrations_limits (max_rows_per_registration) VAL
 CREATE OR REPLACE FUNCTION updater.guard_passkey_registration_open() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$
 DECLARE
-  open_mode text;
   open_consumed_at timestamptz;
   open_expires_at timestamptz;
   existing_rows integer;
   cap integer;
 BEGIN
-  -- Only the three columns the guard actually needs, and no `SELECT *`: a
-  -- definer body that read a column it did not need would be reading as the
-  -- deployer, and the narrower the read the smaller that is.
-  SELECT o.mode, o.consumed_at, o.expires_at INTO open_mode, open_consumed_at, open_expires_at
+  -- Only the two columns the guard actually needs, and no `SELECT *`: a definer
+  -- body that read a column it did not need would be reading as the deployer, and
+  -- the narrower the read the smaller that is. (`mode` was selected here once and
+  -- never consulted — a dead read in a SECURITY DEFINER body is still a read, so
+  -- it is gone rather than left as a hint that `mode` matters here.)
+  SELECT o.consumed_at, o.expires_at INTO open_consumed_at, open_expires_at
     FROM updater.passkey_open_registrations o WHERE o.registration_digest = NEW.registration_digest;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'updater registration digest is not open' USING ERRCODE = '42501';
