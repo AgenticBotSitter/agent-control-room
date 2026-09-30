@@ -87,8 +87,10 @@ const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encodi
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const never = async () => { throw new Error("a run that needs no login must never read one"); };
 
-/** A dedicated port per cluster, all inside 58520-58529. */
-const PORTS = { old: 58520, fresh: 58521, migrationsKill: 58522, grantsKill: 58523 };
+/** A dedicated port per cluster, all inside the assigned test port range, so a
+ * run can be moved out of the way of whatever else is using 58520-58529. */
+const PORT_BASE = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58520);
+const PORTS = { old: PORT_BASE, fresh: PORT_BASE + 1, migrationsKill: PORT_BASE + 2, grantsKill: PORT_BASE + 3 };
 
 // ---------------------------------------------------------------------------
 // PostgreSQL clusters and the ledger-90 / fresh-HEAD database fixtures.
