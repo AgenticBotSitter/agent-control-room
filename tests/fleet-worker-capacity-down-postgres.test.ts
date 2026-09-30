@@ -33,6 +33,23 @@ const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59480) + 4;
 const required = requiresRealPostgres();
 const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 
+/**
+ * The schema digest of this schema WITHOUT 0234, as a constant.
+ *
+ * The equality below proves the down is idempotent and the up is re-applicable,
+ * which is not the same claim as "the down restores the database it was given":
+ * the before-state above is recovered by running the down over a database that
+ * already has 0234, so a change to an EARLIER migration would move both the
+ * before and the after together and the test would still pass. Pinning the
+ * constant closes that -- now a change to any other migration has to be a
+ * deliberate edit here, which names it in the diff.
+ *
+ * Measured on real PostgreSQL 17 by applying the whole ledger and then this
+ * migration's own down, and independently reproduced at this branch's merge base
+ * by a build that never had 0234 at all.
+ */
+const PRE_0234_DIGEST = "a4cadc0cc4feda19a13a5a8b51d0b7f8527b4b2b0e5c9a20da02b5d5ddd978f5";
+
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {
   const session: DatabaseSession = Object.freeze({
@@ -86,6 +103,8 @@ test("real PostgreSQL: 0234's down restores the schema exactly, byte for byte",
         "0234's down removed its own function and trigger, so this is the pre-0234 state");
       assert.ok(beforeDefinition.includes(">=worker.max_concurrent"),
         "and 0140's own capacity clause is back, which is the clause 0234 removed");
+      assert.equal(beforeDigest, PRE_0234_DIGEST,
+        "and this before-state really is the pre-0234 schema, not merely whatever 0234's down happens to leave");
 
       // ---- UP.
       await admin.query(await readFile(join(REPOSITORY_ROOT, "db/migrations", MIGRATION), "utf8"));
