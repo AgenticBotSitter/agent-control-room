@@ -171,8 +171,11 @@ test("owner journey automatically publishes the signed-off pipeline and records 
   assert.equal(ready.candidates.length, 1); assert.equal(candidate.state, "ready");
   assert.deepEqual(candidate.testResults.map(result => result.profile), ["fast", "targeted", "db", "full"]);
   assert.equal(candidate.testResults.every(result => result.candidateRevision === candidateRevision), true);
-  assert.deepEqual(candidate.databaseChanges.kind === "migrations" ? candidate.databaseChanges.migrationIds : [],
-    ["0161_update_candidate_evidence"]); assert.deepEqual(candidate.riskFlags.map(flag => flag.kind),
+  assert.deepEqual(candidate.databaseChanges, { kind: "migrations", migrationIds: ["0161_update_candidate_evidence"],
+    summary: "1 migration added.",
+    compatibilityNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure.",
+    rollbackNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure." });
+  assert.deepEqual(candidate.riskFlags.map(flag => flag.kind),
     ["authority", "database", "security"]);
   const home = renderToStaticMarkup(createElement(UpdateCandidatesPanel,
     { state: { state: "ready", candidates: ready.candidates }, onDecide: () => {}, onRetry: () => {} }));
@@ -192,6 +195,75 @@ test("owner journey automatically publishes the signed-off pipeline and records 
   assert.equal(accepted.decision, "accept"); assert.equal(accepted.startsDeploy, false);
   const after = await f.deskHandler(webRequest("/api/v1/update-candidates"));
   assert.equal(after.status, 200); assert.equal(((await after.json()) as { candidates: unknown[] }).candidates.length, 0);
+});
+
+test("V10/V11: role-only database changes reach the owner and eight concurrent sweeps publish once", async () => {
+  const runId = "pipeline-run:role-only", recorded: Array<Record<string, unknown>> = [];
+  let observations = 0, publications = 0, sweepQueries = 0; const profiles: string[] = [];
+  const snapshot: IntegrationRepositorySnapshotV1 = { baseRevision: "a".repeat(40), candidateRevision,
+    changedPaths: ["scripts/mac-local/database-role-manifest.mjs", "tools/checked-backup.sql"], addedPaths: [],
+    commitSubjects: ["Adjust the production database role manifest"] };
+  const client = { query: async (sql: string, values: readonly unknown[]) => {
+    if (typeof values[1] === "number") { sweepQueries += 1; return { rows: [{ pipeline_run_id: runId }] }; }
+    assert.match(sql, /SELECT request\.id AS request_id/u); assert.equal(values[1], runId);
+    return { rows: [{ request_id: "improvement-request:role", project_id: "project:role", pipeline_run_id: runId,
+      lead_worker_id: "worker:lead", run_state: "succeeded", signoff_state: "succeeded",
+      signoff_worker: "worker:lead", build_worker: "worker:builder" }] };
+  } };
+  const publisher = new UpdateCandidatePublisherV1(client as never,
+    { tenantId: "tenant:web", workspaceId: "workspace:web" }, { recordCandidate: async input => {
+      publications += 1; recorded.push(input); return { replayed: false,
+        candidate: { candidateId: "update-candidate:role-only" } } as never;
+    } }, { repository: { observe: async () => { observations += 1; return snapshot; } },
+      profiles: CONTROL_ROOM_UPDATE_TEST_PROFILES_V1, pathRules: CONTROL_ROOM_UPDATE_PATH_RULES_V1,
+      runner: { run: async input => { profiles.push(input.profile.id); return { status: "passed", summary: "Passed.",
+        evidenceDigest: `sha256:${"3".repeat(64)}`, testCount: 1, durationMs: 1, observedAt: new Date(now).toISOString() }; } },
+      reviews: { acceptedForRun: async () => [{ reviewId: "review:role-only", reviewDigest: `sha256:${"4".repeat(64)}`,
+        reviewerWorkerId: "worker:checker" }] } });
+  assert.throws(() => publisher.sweep(0), /config_invalid/u, "a bad sweep limit is refused before repository work");
+  const sweeps = await Promise.all(Array.from({ length: 8 }, () => publisher.sweep(8)));
+  assert.equal(sweepQueries, 1, "concurrent sweep callers share one serialized branch-HEAD scan");
+  assert.equal(publications, 1); assert.equal(observations, 2, "one publish observes the branch HEAD before and after tests");
+  assert.deepEqual(profiles, ["fast", "targeted", "db", "full"]);
+  assert.equal(sweeps.every(value => value[0]?.state === "published"), true);
+  const database = recorded[0]!.databaseChanges as { kind: string; changedPaths: string[]; migrationIds: string[] };
+  assert.deepEqual(database, { kind: "changes", changedPaths: ["scripts/mac-local/database-role-manifest.mjs", "tools/checked-backup.sql"], migrationIds: [],
+    summary: "2 database-sensitive paths changed.",
+    compatibilityNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure.",
+    rollbackNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure." });
+  const candidate = { ...recorded[0], candidateId: "update-candidate:role-only", state: "ready", version: 1,
+    recordDigest: `sha256:${"5".repeat(64)}`, createdAt: new Date(now).toISOString(), decidedAt: null,
+    startsDeploy: false, signedDeployApprovalCreated: false } as never;
+  const home = renderToStaticMarkup(createElement(UpdateCandidatesPanel,
+    { state: { state: "ready", candidates: [candidate] }, onDecide: () => {}, onRetry: () => {} }));
+  assert.match(home, /Database:.*database-sensitive paths changed.*database-role-manifest\.mjs.*tools\/checked-backup\.sql/u);
+});
+
+test("dependency manifests require an independent review and the full profile", async () => {
+  const runId = "pipeline-run:dependency-manifests", recorded: Array<Record<string, unknown>> = [];
+  const snapshot: IntegrationRepositorySnapshotV1 = { baseRevision: "a".repeat(40), candidateRevision,
+    changedPaths: [".npmrc", ".pnpmfile.cjs", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"], addedPaths: [],
+    commitSubjects: ["Update dependency configuration"] };
+  const client = { query: async (sql: string, values: readonly unknown[]) => {
+    assert.match(sql, /SELECT request\.id AS request_id/u); assert.equal(values[1], runId);
+    return { rows: [{ request_id: "improvement-request:dependency", project_id: "project:dependency", pipeline_run_id: runId,
+      lead_worker_id: "worker:lead", run_state: "succeeded", signoff_state: "succeeded",
+      signoff_worker: "worker:lead", build_worker: "worker:builder" }] };
+  } };
+  const createPublisher = (reviews: boolean, profiles: string[]) => new UpdateCandidatePublisherV1(client as never,
+    { tenantId: "tenant:web", workspaceId: "workspace:web" }, { recordCandidate: async input => {
+      recorded.push(input); return { replayed: false, candidate: { candidateId: "update-candidate:dependency" } } as never;
+    } }, { repository: { observe: async () => snapshot }, profiles: CONTROL_ROOM_UPDATE_TEST_PROFILES_V1,
+      pathRules: CONTROL_ROOM_UPDATE_PATH_RULES_V1, reviews: { acceptedForRun: async () => reviews
+        ? [{ reviewId: "review:dependency", reviewDigest: `sha256:${"6".repeat(64)}`, reviewerWorkerId: "worker:checker" }] : [] },
+      runner: { run: async input => { profiles.push(input.profile.id); return { status: "passed", summary: "Passed.",
+        evidenceDigest: `sha256:${"7".repeat(64)}`, testCount: 1, durationMs: 1, observedAt: new Date(now).toISOString() }; } } });
+  assert.deepEqual(await createPublisher(false, []).publishRun(runId), { state: "blocked", reason: "independent_review_required" });
+  const profiles: string[] = [];
+  assert.deepEqual(await createPublisher(true, profiles).publishRun(runId), { state: "published", candidateId: "update-candidate:dependency" });
+  assert.deepEqual(profiles, ["fast", "targeted", "full"]);
+  assert.deepEqual(recorded[0]!.riskFlags, [{ kind: "dependency", summary: "dependency configuration changed",
+    needsIndependentReview: true }]);
 });
 
 test("publisher refuses failed, interrupted, moving and unreviewed evidence, then safely retries", async t => {
@@ -219,7 +291,7 @@ test("publisher refuses failed, interrupted, moving and unreviewed evidence, the
           profiles: CONTROL_ROOM_UPDATE_TEST_PROFILES_V1, pathRules: CONTROL_ROOM_UPDATE_PATH_RULES_V1,
           reviews: { acceptedForRun: async () => scenario === "review"
             ? [{ reviewId: "review:lead", reviewDigest: `sha256:${"6".repeat(64)}`, reviewerWorkerId: "worker:lead" }]
-            : scenario === "moving" ? [{ reviewId: "review:independent", reviewDigest: `sha256:${"7".repeat(64)}`,
+            : scenario === "moving" || scenario === "migration" ? [{ reviewId: "review:independent", reviewDigest: `sha256:${"7".repeat(64)}`,
               reviewerWorkerId: "worker:checker" }] : [] }, runner: { run: async input => {
             seenProfiles.push(input.profile.id);
             attempts += 1;
@@ -229,10 +301,19 @@ test("publisher refuses failed, interrupted, moving and unreviewed evidence, the
           } },
         });
         const refused = await publisher.publishRun(request.pipelineRunId);
+        if (scenario === "migration") {
+          assert.equal(refused.state, "published", "a modified or deleted migration reaches the database-change card");
+          const candidate = (await f.desk.ready(f.identity)).candidates[0]!;
+          assert.deepEqual(candidate.databaseChanges, { kind: "changes", changedPaths: ["db/migrations/0001_existing.sql"],
+            migrationIds: ["0001_existing"], summary: "1 database-sensitive path changed.",
+            compatibilityNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure.",
+            rollbackNotes: "Installed only through the database update path: a checked backup first, then automatic restore on failure." });
+          return;
+        }
         assert.equal(refused.state, "blocked");
         if (refused.state === "blocked") assert.equal(refused.reason, { failed: "tests_not_passed",
           interrupted: "test_runner_unavailable", moving: "repository_changed",
-          review: "independent_review_required", migration: "repository_unavailable" }[scenario]);
+          review: "independent_review_required" }[scenario]);
         assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int count FROM control_update_candidates")).rows[0]!.count, 0);
         if (scenario === "moving") assert.deepEqual(seenProfiles, ["fast", "targeted", "full"],
           "an unknown path fails closed to the full profile");

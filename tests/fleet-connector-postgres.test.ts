@@ -97,7 +97,7 @@ test("fleet connector end to end and least privilege, as the production logins",
       const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "PG worker", workerKind: "mcp-agent",
         projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
       const configPath = join(dir, "worker.json");
-      const joined = await connector.join({ server: origin, code: code.code, configPath });
+      const joined = await connector.join({ server: origin, code: code.code, workerKind: "mcp-agent", configPath });
       const client = connector.createClient(await connector.loadConfig(configPath));
       const dispatch = connector.createMcpDispatcher({ client, workspaceRoot: dir });
       let mcpId = 0;
@@ -106,7 +106,8 @@ test("fleet connector end to end and least privilege, as the production logins",
         assert.ok(reply && "result" in reply && !reply.result.isError, JSON.stringify(reply));
         return reply.result.structuredContent.result;
       };
-      await assert.rejects(connector.join({ server: origin, code: code.code, configPath: join(dir, "x.json") }), /unauthenticated/u,
+      await assert.rejects(connector.join({ server: origin, code: code.code, workerKind: "mcp-agent",
+        configPath: join(dir, "x.json") }), /unauthenticated/u,
         "a code is single use for the production gateway login too");
 
       // A committed redemption is recoverable only while the owner-issued
@@ -120,7 +121,7 @@ test("fleet connector end to end and least privilege, as the production logins",
         await response.arrayBuffer();
         throw new Error("simulated lost enrollment response");
       };
-      await assert.rejects(connector.join({ server: origin, code: expiring.code, configPath: expiringPath,
+      await assert.rejects(connector.join({ server: origin, code: expiring.code, workerKind: "mcp-agent", configPath: expiringPath,
         fetcher: loseResponse }), /simulated lost enrollment response/u);
       await admin.client.query("ALTER TABLE fleet_enrollment_codes DISABLE TRIGGER fleet_enrollment_codes_guard");
       try {
@@ -129,7 +130,7 @@ test("fleet connector end to end and least privilege, as the production logins",
       } finally {
         await admin.client.query("ALTER TABLE fleet_enrollment_codes ENABLE TRIGGER fleet_enrollment_codes_guard");
       }
-      await assert.rejects(connector.join({ server: origin, code: expiring.code, configPath: expiringPath }),
+      await assert.rejects(connector.join({ server: origin, code: expiring.code, workerKind: "mcp-agent", configPath: expiringPath }),
         /unauthenticated/u, "the production fleet login refuses a matching replay after code expiry");
 
       // --- Offer, claim, progress, result, revision, resubmit, accept.
@@ -329,7 +330,7 @@ test("fleet connector end to end and least privilege, as the production logins",
       const racingCode = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "Racing worker",
         workerKind: "mcp-agent", projectIds: [PROJECT_B], capabilities: ["writing"], maxConcurrent: 1 });
       const racingPath = join(dir, "racing.json");
-      const racingJoined = await connector.join({ server: origin, code: racingCode.code, configPath: racingPath });
+      const racingJoined = await connector.join({ server: origin, code: racingCode.code, workerKind: "mcp-agent", configPath: racingPath });
       const racingClient = connector.createClient(await connector.loadConfig(racingPath));
       const racingTask = await seedProposedTask(admin.client, PROJECT_B, "pg-revoked-race");
       const racingOffer = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_B, jobId: racingTask.jobId,

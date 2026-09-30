@@ -79,7 +79,7 @@ test("a burst of stalled leases sweeps once under one supervisor and once under 
           workerKind: "mcp-agent", projectIds: projects.slice(index, BURST), capabilities: ["writing"],
           maxConcurrent: 8 });
         const configPath = join(dir, `worker-${index}.json`);
-        await connector.join({ server: origin, code: code.code, configPath });
+        await connector.join({ server: origin, code: code.code, workerKind: "mcp-agent", configPath });
         clients.push(connector.createClient(await connector.loadConfig(configPath)));
       }
       const claims: string[] = [];

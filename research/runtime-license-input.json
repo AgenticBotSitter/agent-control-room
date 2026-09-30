@@ -1,6 +1,6 @@
 {
-  "manifestSha256": "1dfabd87b09dde431146771f6b2a3d4b5b0108dba0fafa8b970d6e0007ed3513",
-  "lockSha256": "dc832741910730eea61d34bee78ea65acdfc83adb84c3455b88f8a7b2778491f",
+  "manifestSha256": "2e22afa04502d84cca884109115d366513fd50bc81fef87c9b643043e0fc3761",
+  "lockSha256": "925f85760746f0ebbc84281792ec8692acf811451150e100fc1725b3e595f67a",
   "source": "pnpm@11.19.0 licenses list --prod --json",
   "scope": "prepared local production dependency inventory; not bundle coverage",
   "records": [
