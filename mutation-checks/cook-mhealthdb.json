@@ -59,42 +59,42 @@
     "file": "src/updater/v1/health-authority-reads.ts",
     "find": "  if (text === undefined || !/^(?:0|[1-9][0-9]{0,6})$/u.test(text))",
     "replace": "  if (text === undefined)",
-    "test": "pnpm test:updater -- --test-name-pattern='the authority port|the web port'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
     "why": "a count arriving from the database must be digits only; accepting any string would let a malformed driver value through the comparison against the signed web response"
   },
   {
     "file": "src/updater/v1/health-authority-reads.ts",
     "find": "      if (keys.join(\"\\0\") !== [\"home_summary_count\", \"project_count\", \"updates_panel_count\"].join(\"\\0\"))",
     "replace": "      if (false)",
-    "test": "pnpm test:updater -- --test-name-pattern='the authority port|the web port'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
     "why": "the authority read must return exactly the three counts and nothing else; extra columns from a future migration must refuse here rather than flow into the health response"
   },
   {
     "file": "src/updater/v1/health-authority-reads.ts",
     "find": "      if (!Array.isArray(rows.rows) || rows.rows.length > 1)",
     "replace": "      if (false)",
-    "test": "pnpm test:updater -- --test-name-pattern='the authority port|the web port'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
     "why": "zero rows means an unbound or ambiguous scope and must fail closed; more than one means this is not the database the adapter was bound to"
   },
   {
     "file": "src/web/v1/updater-health-web-reads.ts",
     "find": "      if (await sources.privilege.hasPlanApprovalInsert() !== true) refused(\"plan_approval_insert\");",
     "replace": "      await sources.privilege.hasPlanApprovalInsert();",
-    "test": "pnpm test:updater -- --test-name-pattern='the authority port|the web port'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
     "why": "§8.4 requires the web login's INSERT on updater.plan_approvals; a false result is the whole signal that the approval path is broken, so it must refuse health rather than report it"
   },
   {
     "file": "src/web/v1/updater-health-web-reads.ts",
     "find": "      if (!response || response.status !== 200) refused(\"home_render_status\");",
     "replace": "      if (!response) refused(\"home_render_status\");",
-    "test": "pnpm test:updater -- --test-name-pattern='the authority port|the web port'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
     "why": "an error page renders perfectly happily; counting its bytes as a healthy Home would make a broken server look healthy"
   },
   {
     "file": "src/web/v1/updater-health-web-reads.ts",
     "find": "      if (!Number.isSafeInteger(size) || size < 1 || size > 4_194_304) refused(\"home_render_size\");",
     "replace": "      if (!Number.isSafeInteger(size)) refused(\"home_render_size\");",
-    "test": "pnpm test:updater -- --test-name-pattern='the authority port|the web port'",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
     "why": "§8.4 requires a NON-EMPTY render; an empty body must refuse, and an implausibly large one must not be reported as a healthy page"
   }
 ]
