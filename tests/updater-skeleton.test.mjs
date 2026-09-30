@@ -218,7 +218,10 @@ test("startup reports a live run before its first heartbeat and reuses its durab
 test("startup refuses when another database session still owns the updater lease", async t => {
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
   const store = new MemoryStore(); store.acquire = async () => ({ status: "busy", run: store.run });
-  await assert.rejects(startUpdaterV1({ root, store }), /updater_live_session_busy/u);
+  let started;
+  try { started = await startUpdaterV1({ root, store }); }
+  catch (error) { assert.match(error.message, /updater_live_session_busy/u); }
+  if (started) { await started.stop(); assert.fail("startup accepted a busy database lease"); }
   await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u);
 });
 
