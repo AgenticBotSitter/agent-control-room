@@ -203,10 +203,13 @@ export class ScriptedBotV1 {
     return (reply?.result?.tools ?? []).map(tool => tool.name);
   }
 
-  /** One MCP tool call. Never throws: a refusal is data, not an exception. */
+  /** One MCP tool call. Never throws: a refusal is data, not an exception.
+   * The shape is uniform on purpose, so a caller can read `value` after a
+   * refusal without narrowing. `value` is undefined exactly when refused. */
   async call(name, args = {}) {
     const reply = await this.raw("tools/call", { name, arguments: args });
-    if (reply && "error" in reply) return Object.freeze({ refused: true, text: String(reply.error?.message ?? "error") });
+    if (reply && "error" in reply)
+      return Object.freeze({ refused: true, text: String(reply.error?.message ?? "error"), value: undefined });
     const result = reply?.result;
     return Object.freeze({ refused: result?.isError === true, text: String(result?.content?.[0]?.text ?? ""),
       value: result?.structuredContent?.result });
@@ -246,6 +249,13 @@ export class ScriptedBotV1 {
  *   release             async (bot, claimId) => void
  * Returns the recorded steps. Throws if an observed outcome does not match
  * BOT_JOURNEY_EXPECTED_REFUSALS_V1.
+ *
+ * @returns {Promise<Readonly<{ projectId: string, otherProjectId: string,
+ *   steps: readonly Readonly<{ n: number, who: string, what: string, outcome: string,
+ *     refusal: string | null, detail: string }>[], toolNames: readonly string[],
+ *   primaryWorkerId: string, secondWorkerId: string, droppedWorkerId: string,
+ *   claimableAfterApproval: boolean }>>} the same shape on every path, including
+ *   the early return when an approved task turns out to be unclaimable
  */
 export async function runBotJourneyV1(env) {
   for (const key of ["origin", "ownerRoute", "ownerCookies", "ownerOrigin", "makeBot", "createProject", "setMode",
@@ -408,7 +418,8 @@ export async function runBotJourneyV1(env) {
     record({ who: "bot", what: "claim a task the owner approved", outcome: "refused",
       refusal: "approved_task_is_not_claimable", detail: claim.text });
     return Object.freeze({ projectId, otherProjectId: env.otherProjectId, steps: Object.freeze(steps),
-      toolNames: Object.freeze(await bot.listTools()), claimableAfterApproval: false });
+      toolNames: Object.freeze(toolNames), primaryWorkerId: joined.workerId, secondWorkerId: "",
+      droppedWorkerId: "", claimableAfterApproval: false });
   }
   record({ who: "bot", what: "claim the approved work", outcome: "allowed",
     detail: `taskState=${claim.value.taskState}` });
@@ -509,7 +520,7 @@ export async function runBotJourneyV1(env) {
 
   return Object.freeze({ projectId, otherProjectId: env.otherProjectId, steps: Object.freeze(steps),
     toolNames: Object.freeze(toolNames), primaryWorkerId: joined.workerId, secondWorkerId: second.name,
-    droppedWorkerId: dropped.workerId });
+    droppedWorkerId: dropped.workerId, claimableAfterApproval: true });
 }
 
 /** The plain-words table, generated from the recorded steps. This is the shape
