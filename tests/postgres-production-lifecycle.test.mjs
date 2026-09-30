@@ -300,7 +300,12 @@ const AFTER_0135 = ["0140_fleet_worker_connector.sql", "0141_fleet_owner_authori
   // that ends at or before 0135 has this real remainder behind it rather than a
   // shorter one, and a rung's expected suffix stays a comparison.
   "0206_result_file_catalog.sql", "0207_result_file_store_admission.sql",
-  "0208_result_file_download_grants.sql"];
+  "0208_result_file_download_grants.sql",
+  // 0212-0213: the text-copy derivation record (MIG-E) and its two read views.
+  // They sort after 0208, so a rung that ends at or before 0135 keeps this real
+  // remainder behind it and its expected suffix stays a comparison rather than a
+  // tautology.
+  "0212_text_copy_derivations.sql", "0213_text_copy_derivation_grants.sql"];
 
 /** Splits a SQL file into its top-level statements, keeping each one's text.
  *

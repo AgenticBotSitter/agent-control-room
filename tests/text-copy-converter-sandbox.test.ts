@@ -22,7 +22,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { join } from "node:path";
 import test from "node:test";
 import { SandboxedTextCopyService, TEXT_COPY_LIMITS } from "../src/converter/v1/text-copy-service.ts";
@@ -85,15 +85,28 @@ test("the profile's read scope is metadata-wide but content-narrow", async () =>
 
     // And the boundary really holds: a converter process cannot read a file that
     // is not on the list, even though it may stat it.
-    const probe = spawn("/usr/bin/sandbox-exec",
-      ["-p", profile, process.execPath, "-e",
-        `const fs=require("fs");try{process.stdout.write("READ:"+fs.readFileSync(${JSON.stringify(canary)},"utf8"))}`
-        + `catch(e){process.stdout.write("REFUSED:"+e.code)}`],
-      { cwd: root, detached: true, shell: false,
-        env: { HOME: root, TMPDIR: root, PATH: "/usr/bin:/bin" }, stdio: ["ignore", "pipe", "pipe"] });
+    //
+    // argv and options are declared explicitly: `spawn`'s overload set cannot
+    // infer from a `readonly string[]` built at runtime, and the implicit
+    // `never` it falls back to then makes `probe.stdout` and `probe.on` type
+    // errors that have nothing to do with the assertion.
+    const readProbeSource =
+      `const fs=require("fs");try{process.stdout.write("READ:"+fs.readFileSync(${JSON.stringify(canary)},"utf8"))}`
+      + `catch(e){process.stdout.write("REFUSED:"+e.code)}`;
+    const readProbeArgv: string[] = ["-p", profile, process.execPath, "-e", readProbeSource];
+    // `SpawnOptions` (not the tuple overloads): a `const` stdio tuple collides
+    // with the `ChildProcessByStdio` constituents and reduces the return type to
+    // `never`, which then makes every property access a type error.
+    const readProbeOptions: SpawnOptions = {
+      cwd: root, detached: true, shell: false,
+      env: { HOME: root, TMPDIR: root, PATH: "/usr/bin:/bin", NODE_ENV: "test" },
+      stdio: ["ignore", "pipe", "pipe"],
+    };
+    const probe = spawn("/usr/bin/sandbox-exec", readProbeArgv, readProbeOptions);
     let probeOut = "";
-    probe.stdout.on("data", chunk => { probeOut += chunk; });
-    await new Promise(resolve => probe.on("close", resolve));
+    const probeStdout = probe.stdout as NodeJS.ReadableStream | null;
+    if (probeStdout) probeStdout.on("data", (chunk: Buffer | string) => { probeOut += chunk.toString(); });
+    await new Promise<void>(resolve => { probe.on("close", () => { resolve(); }); });
     assert.match(probeOut, /^REFUSED:(EPERM|EACCES)/u,
       `a converter could read a file outside the allow list: ${JSON.stringify(probeOut)}`);
   } finally {

@@ -52,5 +52,13 @@ GRANT INSERT ON control_result_file_sets, control_result_files TO control_room_n
 -- cannot write a timestamp that disagrees with the state it accompanies.
 GRANT UPDATE (state, stored_at) ON control_result_files TO control_room_native_results;
 GRANT UPDATE (state, stored_at, manifest_digest) ON control_result_file_sets TO control_room_native_results;
+-- Text-copy derivations (0212-0213). This login records what it converted: one
+-- finished row per attempt, carrying the source digest the converter actually
+-- hashed and a reference to the catalog file it produced. 0212's insert guard
+-- refuses any row whose source is not a real catalog file with that digest, and
+-- refuses a 'succeeded' row that does not name a STORED derived file in the
+-- same set, so this INSERT is permission to record a conversion, not to claim
+-- one. No UPDATE — a derivation is never rewritten — and no DELETE.
+GRANT SELECT, INSERT ON control_text_copy_derivations TO control_room_native_results;
 
 COMMIT;

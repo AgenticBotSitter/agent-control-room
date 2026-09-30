@@ -158,5 +158,12 @@ GRANT UPDATE (spent_at) ON control_result_file_download_grants TO control_room_p
 -- grant, so this UPDATE is permission to try, not permission to accept.
 GRANT UPDATE (retention_state, accepted_at, accepted_by_identity_id, retained_until)
   ON control_result_file_sets TO control_room_private_web;
+-- Text-copy derivations (0212-0213). The owner reads them through the
+-- per-project view rather than the table, so a project-scoped read is the only
+-- shape they get here: the view carries the source file's display name and the
+-- source state, and its own SECURITY INVOKER means the owner's existing
+-- authority still decides which projects it resolves. No INSERT and no UPDATE —
+-- a derivation is written by the publisher and is never rewritten.
+GRANT SELECT ON control_project_text_copy_derivations TO control_room_private_web;
 
 COMMIT;
