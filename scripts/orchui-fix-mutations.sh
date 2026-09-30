@@ -437,7 +437,7 @@ mutate F4c-any-store-is-treated-as-having-a-grant "$COORD" \
 mutate F5b-needs-you-conflict-target-names-one-index "$STORE" \\
   '      ON CONFLICT DO NOTHING@TICK@,' \\
   '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING@TICK@,' \\
-  --lane coord --pattern "STRESS: 20 concurrent presses"
+  --lane coord --pattern "STRESS"
 
 # The CONFLICT TARGET, which is the whole de-duplication. Naming the REQUEST-KEY
 # index instead of the scope one is the original bug: it dedupes a repeat of the
