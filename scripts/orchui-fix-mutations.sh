@@ -304,11 +304,14 @@ mutate E3-needs-you-count-check-removed "$RETRY_MIGRATION" \
   "    OR false THEN" \
   --lane db --pattern "failure counter is durable|one description gives one"
 
+# The mid-run summary is kept because it is where the round-2 block ended, and
+# the EXIT it used to carry is gone on purpose: with the exit in place, every
+# round-3 mutation below it was dead code and the run reported 18/18 without ever
+# executing a single one of them. The script's own report is the only place that
+# would have said so, and it did not -- which is why the round-3 mutations are now
+# proven by the run finishing, not by a number that could come from anywhere.
 echo
-echo "CAUGHT: $pass   ESCAPED/ERROR: $fail"
-[ -n "$failures" ] && echo "not caught:$failures"
-git status --short
-exit $((fail > 0))
+echo "round-2 block done: $pass caught / $fail not caught so far"
 
 # ---------------------------------------------------------------------------
 # Round 3 (N-B1): the security_barrier on the tenant-bound view.
