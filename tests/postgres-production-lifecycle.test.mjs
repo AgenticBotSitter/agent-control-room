@@ -2633,6 +2633,26 @@ async function withheldObjects(root, withheld) {
     for (const [, object] of sql.matchAll(
       /CREATE (?:UNLOGGED )?(?:TABLE|VIEW|MATERIALIZED VIEW)\s+(?:IF NOT EXISTS\s+)?([a-z_][a-z0-9_]*)/giu))
       objects.add(object);
+    // FUNCTIONS TOO (R4-B3). The role files grant EXECUTE on functions as well as
+    // on tables, so a staged release that withheld the migration which CREATES one
+    // has to have that grant pruned for the same reason a table grant is: replayed
+    // verbatim it raises 42883 (`function work_intake_split_suggestion_visible(text,
+    // text, text) does not exist`) and fails the whole upgrade.
+    //
+    // TRIGGER functions are excluded: no login can call one and no role file grants
+    // EXECUTE on one, so including them would prune grants that are correct on a
+    // database that does have the trigger. Only NAMES are collected -- a function's
+    // parameters belong to the GRANT, and the pruner matches on the bare name.
+    // The header is read from the match's OWN groups rather than from the matched
+    // text: `[, name]` would bind the function NAME to `name`, so `name[2]` would be
+    // a character of it rather than the header, and the trigger test would read
+    // `undefined` and never exclude anything. That is why the first attempt at
+    // this collected zero functions while looking correct.
+    for (const match of sql.matchAll(
+      /CREATE (?:OR REPLACE )?FUNCTION\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([^)]*)\)([\s\S]*?)AS\s+\$/giu)) {
+      if (/RETURNS\s+trigger\b/iu.test(match[3])) continue;
+      objects.add(match[1].toLowerCase());
+    }
     for (const [, table, column] of sql.matchAll(
       /ALTER TABLE\s+([a-z_][a-z0-9_]*)\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?([a-z_][a-z0-9_]*)/giu))
       if (!objects.has(table)) columns.add(`${table}.${column}`);
@@ -2750,9 +2770,16 @@ async function installMacRoleFilesWithout(database, withheld) {
     // through the installer's own grant diff, so this stays correct as either
     // side changes. `missing` is emptied first, so a grant the role files make
     // on a relation this database does not have is not silently demanded.
+    // A FUNCTION item's object is its SIGNATURE (`public.f(text, jsonb)`), so the
+    // name has to be taken from before the parenthesis -- comparing the whole
+    // signature against a set of bare names never matches, and the `missing`
+    // assertion below then demanded EVERY function grant on a baseline that
+    // legitimately holds most of them. `withheldObjects` collected function NAMES
+    // (R4-B3), so this is where that decision is read.
     const without = (item) => {
-      const [, , object, column] = item.split("|");
-      const name = object.replace(/^public\./, "");
+      const [, kind, object, column] = item.split("|");
+      const name = object.replace(/^public\./, "").split("(")[0].trim();
+      if (kind === "function") return revocations.has(item) || schema.objects.has(name);
       return revocations.has(item) || schema.objects.has(name) || (column && schema.columns.has(`${name}.${column}`));
     };
     // `readDesiredMacGrantsV1` reads every Mac role file, so it also covers

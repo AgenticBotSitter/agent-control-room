@@ -206,7 +206,17 @@ UNION ALL
 -- after its grant had in fact been applied. quote_ident covers a type that has
 -- to be quoted; COALESCE keeps the zero-argument case rendering as empty.
 SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || COALESCE((SELECT string_agg(
-  pg_catalog.quote_ident(t.typname), ', ' ORDER BY u.ord)
+  CASE WHEN t.typelem <> 0 AND t.typkind = 'b' AND t.typlen = -1
+    -- AN ARRAY TYPE'S CATALOG NAME IS ITS ELEMENT'S WITH A LEADING UNDERSCORE:
+    -- 'text[]' is stored as '_text', so spelling the catalog name verbatim makes
+    -- every array-typed signature read as a DIFFERENT function from the one the
+    -- role file grants. 0205's 'control_room_planner_grant_owner_retry(text, text,
+    -- text[])' is the only grant this touches, and the symptom is the backup
+    -- verifier reporting the same grant as both extra and missing at once:
+    -- 'database_backup_mac_grants_refused' with a diff whose two sides differ only
+    -- by 'text[]' against '_text'. The element type is what a GRANT spells.
+    THEN pg_catalog.quote_ident(t.typelem::regtype::text)
+    ELSE pg_catalog.quote_ident(t.typname) END, ', ' ORDER BY u.ord)
   FROM unnest(p.proargtypes) WITH ORDINALITY AS u(oid, ord)
   JOIN pg_type t ON t.oid = u.oid), '') || ')', '', a.privilege_type, a.is_grantable
 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
