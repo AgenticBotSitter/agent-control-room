@@ -89,8 +89,20 @@ Signing and verification reject symbolic links, non-regular or multiply linked f
 
 `createReleaseKeyRotationV1` produces a domain-separated record for the new public key, next epoch, and non-decreasing version floor, signed by the current private key. `applyReleaseKeyRotationV1` verifies that old-key signature before accepting the replacement and adds the retired key to the revocation list.
 
+These records support release-trust administration, but connector machines do
+not apply key rotation in v1. A machine refuses a rotation record before changing
+its pinned trust, so its already-installed connector remains runnable. To change
+the release key, reinstall the connector on every machine through the trusted
+owner installation path. An ordinary installed-release record changes only the
+version floor; it never changes the pinned key identity, and both gateway and
+machine floors are merged upward.
+
 `createReleaseKeyRevocationsV1` produces an epoch-ordered revocation list signed by the active key. `applyReleaseKeyRevocationsV1` verifies it, unions it with prior revocations, and refuses revocation of the active signer. Release and connector verification reject any selected key ID present in the applied list.
 
 The wire contract used by connector self-update is exported from `scripts/release-signing.mjs` as `connectorReleaseSignatureMaterialV1`, `signConnectorReleaseAdvertisementV1`, and `verifyConnectorReleaseAdvertisementV1`. Its schema and line ordering match the connector updater package so the gateway, connector, and installer do not maintain separate signing formats.
 
-Rotation is for planned key replacement, not recovery from a stolen active private key: an attacker holding that key can sign a rotation too. Suspected private-key compromise requires a reinstall and fresh pin through the owner's trusted installation path. Do not present rotation or revocation as compromise recovery.
+Rotation records are for planned trust administration, not recovery from a
+stolen active private key: an attacker holding that key can sign a rotation too.
+For connector machines, planned replacement and suspected compromise both
+require reinstalling and freshly pinning through the owner's trusted installation
+path. Do not present rotation or revocation as compromise recovery.

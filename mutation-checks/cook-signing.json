@@ -138,5 +138,12 @@
     "replace": "return { core: match.slice(1, 4).map(Number), prerelease: match[4]?.split(\".\") ?? [] };",
     "test": "node --test --test-name-pattern \"arbitrary-size SemVer\" tests/release-signing.test.mjs",
     "why": "a large version number cannot round across the anti-replay floor"
+  },
+  {
+    "file": "scripts/release-signing.mjs",
+    "find": "publicKey: input.toPublicKey, versionFloor: compareReleaseVersionsV1(current.versionFloor, input.versionFloor) > 0\n      ? current.versionFloor : input.versionFloor,",
+    "replace": "publicKey: input.toPublicKey, versionFloor: input.versionFloor,",
+    "test": "node --test --test-name-pattern \"rotation is signed\" tests/release-signing.test.mjs",
+    "why": "applying an older signed rotation record cannot lower a locally raised version floor"
   }
 ]

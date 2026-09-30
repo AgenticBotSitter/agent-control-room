@@ -4,7 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { applyReleaseKeyRevocationsV1, applyReleaseKeyRotationV1, captureReleaseTrustV1, compareReleaseVersionsV1,
+import { applyReleaseKeyRevocationsV1, captureReleaseTrustV1, compareReleaseVersionsV1,
   connectorReleaseSignatureMaterialV1, MAX_CONNECTOR_RELEASE_BYTES_V1,
   RELEASE_TRUST_SCHEMA_V1, verifyConnectorReleaseAdvertisementV1 } from "../release-signing.mjs";
 
@@ -14,7 +14,6 @@ const UPDATE_LOCK_WAIT_MS = 30_000;
 const DOWNLOAD_DEADLINE_MS = 30_000;
 const FAILED_RELEASE_BACKOFF_MS = 6 * 60 * 60_000;
 let ownProcessIdentity;
-const SELF_PROCESS_IDENTITY = `process-start-ms:${Math.round(Date.now() - process.uptime() * 1_000)}`;
 
 export { connectorReleaseSignatureMaterialV1, verifyConnectorReleaseAdvertisementV1 };
 
@@ -60,8 +59,21 @@ function trustFromUpdates(value) {
     revokedKeyIds: value.revokedKeyIds ?? [] });
 }
 
-function sameTrust(left, right) {
-  return JSON.stringify(captureReleaseTrustV1(left)) === JSON.stringify(captureReleaseTrustV1(right));
+function sameTrustIdentity(leftValue, rightValue) {
+  const left = captureReleaseTrustV1(leftValue), right = captureReleaseTrustV1(rightValue);
+  return left.keyId === right.keyId && left.publicKey === right.publicKey;
+}
+
+function sameTrustExceptFloor(leftValue, rightValue) {
+  const left = captureReleaseTrustV1(leftValue), right = captureReleaseTrustV1(rightValue);
+  return sameTrustIdentity(left, right) && left.schema === right.schema && left.epoch === right.epoch
+    && JSON.stringify(left.revokedKeyIds) === JSON.stringify(right.revokedKeyIds);
+}
+
+function higherFloorTrust(leftValue, rightValue) {
+  const left = captureReleaseTrustV1(leftValue), right = captureReleaseTrustV1(rightValue);
+  return compareConnectorVersionsV1(left.versionFloor, right.versionFloor) >= 0 ? left
+    : captureReleaseTrustV1({ ...left, versionFloor: right.versionFloor });
 }
 
 async function readMachineTrust(paths) {
@@ -72,17 +84,26 @@ export async function pinConnectorReleaseTrustV1({ installRoot, trust: trustValu
   const paths = connectorUpdatePathsV1(installRoot), proposed = captureReleaseTrustV1(trustValue);
   await mkdir(paths.installRoot, { recursive: true, mode: 0o700 });
   return withUpdateLock(paths.lock, async () => {
+    if (rotation !== undefined) refused("key_rotation_requires_reinstall");
     const existingValue = await readJson(paths.trust, true);
     if (!existingValue) { await atomicJson(paths.trust, proposed); return proposed; }
     const existing = captureReleaseTrustV1(existingValue);
-    if (sameTrust(existing, proposed)) return existing;
     let transitioned = existing;
-    if (rotation) transitioned = applyReleaseKeyRotationV1(rotation, transitioned);
     if (revocations) transitioned = applyReleaseKeyRevocationsV1(revocations, transitioned);
-    if (!sameTrust(transitioned, proposed)) refused("machine_trust_mismatch");
-    await atomicJson(paths.trust, proposed);
-    return proposed;
+    if (!sameTrustExceptFloor(transitioned, proposed)) refused("machine_trust_mismatch");
+    const pinned = higherFloorTrust(transitioned, proposed);
+    if (JSON.stringify(pinned) !== JSON.stringify(existing)) await atomicJson(paths.trust, pinned);
+    return pinned;
   });
+}
+
+export async function assertConnectorReleaseTrustCompatibleV1({ installRoot, trust: trustValue }) {
+  const paths = connectorUpdatePathsV1(installRoot), proposed = captureReleaseTrustV1(trustValue);
+  const existingValue = await readJson(paths.trust, true);
+  if (!existingValue) return proposed;
+  const existing = captureReleaseTrustV1(existingValue);
+  if (!sameTrustIdentity(existing, proposed)) refused("machine_trust_mismatch");
+  return existing;
 }
 
 async function raiseMachineFloor(paths, version) {
@@ -138,7 +159,6 @@ function commandOutput(command, args) {
 
 async function processIdentity(pid, platform = process.platform) {
   try {
-    if (pid === process.pid) return SELF_PROCESS_IDENTITY;
     if (platform === "linux") {
       const raw = await readFile(`/proc/${pid}/stat`, "utf8");
       const fields = raw.slice(raw.lastIndexOf(") ") + 2).trim().split(/\s+/u);
@@ -155,7 +175,7 @@ async function processIdentity(pid, platform = process.platform) {
 }
 
 function currentProcessIdentity() {
-  ownProcessIdentity ??= Promise.resolve(SELF_PROCESS_IDENTITY);
+  ownProcessIdentity ??= processIdentity(process.pid);
   return ownProcessIdentity;
 }
 
@@ -440,7 +460,7 @@ export async function launchCurrentConnectorV1({ installRoot, configPath, args, 
     launched.add(identity);
     const code = await new Promise((resolveLaunch, reject) => {
       const child = spawnProcess(process.execPath, [target, ...args], { shell: false, stdio: "inherit",
-        env: { ...process.env, CONTROL_ROOM_CONNECTOR_LAUNCHED: "1" } });
+        env: { ...process.env, CONTROL_ROOM_CONNECTOR_LAUNCHED: "1", CONTROL_ROOM_CONNECTOR_INSTALL_ROOT: installRoot } });
       child.once("error", reject); child.once("close", (childCode, signal) => resolveLaunch(childCode ?? (signal ? 1 : 0)));
     });
     if (code !== 75 || args[0] !== "run") return code;
@@ -451,6 +471,9 @@ export function connectorInstallRootFromConfigPathV1(configPath, env = process.e
   if (env.CONTROL_ROOM_CONNECTOR_INSTALL_ROOT) return resolve(env.CONTROL_ROOM_CONNECTOR_INSTALL_ROOT);
   if (platform === "win32" && env.LOCALAPPDATA) return resolve(env.LOCALAPPDATA, "ControlRoom", "mcp");
   if (platform !== "win32" && env.XDG_DATA_HOME) return resolve(env.XDG_DATA_HOME, "control-room", "mcp");
+  if (platform === "win32" && env.USERPROFILE)
+    return resolve(env.USERPROFILE, "AppData", "Local", "ControlRoom", "mcp");
+  if (platform !== "win32" && env.HOME) return resolve(env.HOME, ".local", "share", "control-room", "mcp");
   const configRoot = dirname(dirname(resolve(configPath)));
   if (platform === "win32") return resolve(configRoot, "..", "..", "Local", "ControlRoom", "mcp");
   return resolve(configRoot, "..", "share", "control-room", "mcp");

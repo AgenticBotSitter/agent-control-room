@@ -83,9 +83,11 @@ Write a settings file next to the key file
 }
 ```
 
-Then run the downloaded connector with `run`. Its reviewed Codex, Claude Code
-and Hermes adapters are inside the same file; the machine needs no Control Room
-checkout and the settings cannot select a replacement adapter module.
+Then use the `launcher.mjs launch run` command printed by `install`. Its reviewed
+Codex, Claude Code and Hermes adapters are inside the same file; the machine
+needs no Control Room checkout and the settings cannot select a replacement
+adapter module. Starting a downloaded connector directly with `run` does not
+self-update.
 
 - `deadlineMs` is the longest one task may run (at most one hour).
 - Codex and Claude Code can also take `"model"` and `"effort"`
@@ -133,7 +135,11 @@ own key, which Codex can always read.
 Any agent that speaks MCP (Claude Code, Codex, Hermes and others) can use a
 joined machine's connector as its Control Room toolbox. See the one-page
 [`Connect an AI agent to Control Room`](CONNECT_AI_AGENT_MCP.md) guide for the
-complete setup and client examples. The minimal generic configuration is:
+complete setup and client examples. Use the MCP command installed by `install`;
+it starts the machine-wide launcher, which verifies and selects the current
+connector. A hand-written configuration that starts a downloaded
+`control-room-connector.mjs mcp` file directly does not self-update. That direct
+form is shown below only for deliberately unmanaged setups:
 
 ```json
 { "mcpServers": { "control-room": {
@@ -177,6 +183,12 @@ the assembled release with `pnpm release:sign`. The public trust is embedded in
 the verified connector bundle, so enrollment cannot substitute a key. The
 gateway refuses missing, altered or incorrectly signed `connector-release.json`
 files at startup.
+
+The release-key identity is pinned to each connector machine. Version floors may
+only rise and do not change that identity. Control Room v1 does not rotate the
+release key on an enrolled machine: changing the installation release key
+requires reinstalling the connector on every machine. A connector that sees a
+rotation record refuses it and keeps the last runnable version and key pin.
 The gateway config names its own database login (`control_room_fleet`), which
 can only do fleet work. Owner enrollment, offer, review and revocation records use a
 different protected login in `control_room_fleet_owner_authority`; the normal

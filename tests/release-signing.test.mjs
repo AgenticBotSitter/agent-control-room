@@ -298,6 +298,8 @@ test("rotation is signed by the old key and signed revocations block retired key
     toPublicKey: nextPublic, versionFloor: "3.1.0", oldPrivateKeyPath: f.installed.privateKeyPath }, { expectedUid: uid });
   const rotated = applyReleaseKeyRotationV1(rotation, f.installed.trust);
   assert.equal(rotated.keyId, releaseKeyIdV1(nextPublic)); assert.equal(rotated.versionFloor, "3.1.0");
+  const locallyRaised = applyReleaseKeyRotationV1(rotation, { ...f.installed.trust, versionFloor: "3.2.0" });
+  assert.equal(locallyRaised.versionFloor, "3.2.0", "a signed rotation cannot lower a machine's newer floor");
   assert.deepEqual(rotated.revokedKeyIds, [f.installed.trust.keyId], "planned rotation retires the old key");
   const nextPrivate = join(f.root, "updater-state", "next.pem");
   await writeFile(nextPrivate, next.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 }); await chmod(nextPrivate, 0o600);

@@ -22,7 +22,8 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join as joinPath, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkForConnectorUpdateV1, connectorInstallRootForLaunchV1, connectorInstallRootFromConfigPathV1,
+import { assertConnectorReleaseTrustCompatibleV1, checkForConnectorUpdateV1, connectorInstallRootForLaunchV1,
+  connectorInstallRootFromConfigPathV1,
   connectorUpdatesPausedV1, installConnectorLauncherV1, launchCurrentConnectorV1,
   setConnectorUpdatesPausedV1 } from "./connector-update.mjs";
 import { captureReleaseTrustV1, compareReleaseVersionsV1, verifyConnectorReleaseAdvertisementV1 } from "../release-signing.mjs";
@@ -291,12 +292,12 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
   try {
     const gatewayTrust = captureReleaseTrustV1(result.releaseTrust);
     const trusted = expectedReleaseTrust === null ? gatewayTrust : captureReleaseTrustV1(expectedReleaseTrust);
-    if (expectedReleaseTrust !== null && JSON.stringify(gatewayTrust) !== JSON.stringify(trusted))
+    if (expectedReleaseTrust !== null && (gatewayTrust.keyId !== trusted.keyId || gatewayTrust.publicKey !== trusted.publicKey))
       throw new Error("release trust mismatch");
-    const release = verifyConnectorReleaseAdvertisementV1(result.connector, trusted);
-    updates = connectorUpdateSettingsFromReleaseTrustV1({ ...trusted,
-      versionFloor: compareReleaseVersionsV1(release.minVersion, trusted.versionFloor) > 0
-        ? release.minVersion : trusted.versionFloor });
+    const release = verifyConnectorReleaseAdvertisementV1(result.connector, gatewayTrust);
+    const floor = [trusted.versionFloor, gatewayTrust.versionFloor, release.minVersion]
+      .reduce((highest, candidate) => compareReleaseVersionsV1(candidate, highest) > 0 ? candidate : highest);
+    updates = connectorUpdateSettingsFromReleaseTrustV1({ ...gatewayTrust, versionFloor: floor });
   }
   catch {
     await removeConfigArtifacts(configPath);
@@ -857,6 +858,14 @@ export async function installConnector({ server, code, bot, name, workspace, hom
         || config.server !== checkServer(server))
         throw new Error("This bot profile is already connected with different installation settings. Uninstall it first.");
     } else {
+      const embeddedTrust = embeddedConnectorReleaseTrustV1();
+      if (embeddedTrust !== null) try {
+        await assertConnectorReleaseTrustCompatibleV1({ installRoot: paths.installRoot, trust: embeddedTrust });
+      } catch (error) {
+        if (error?.message === "connector_update_refused:machine_trust_mismatch")
+          throw new Error("This connector belongs to a different Control Room. Reinstalling the connector is required before this join code can be used.");
+        throw error;
+      }
       const joined = await join({ server, code, workerKind: bot, configPath: paths.configPath, fetcher,
         writeConfig: async (path, value) => {
           await writePrivate(path, value);

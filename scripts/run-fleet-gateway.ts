@@ -59,6 +59,7 @@ export async function prepareFleetGatewayAdmissionV1(config:
 
 export async function loadFleetConnectorReleaseV1(root = join(dirname(fileURLToPath(import.meta.url)), "fleet", "release"),
   trustValue?: ReleaseTrustV1) {
+  const trust = captureReleaseTrustV1(trustValue);
   const manifestBody = await readFile(join(root, "manifest.json"), "utf8");
   let parsed: unknown;
   try { parsed = JSON.parse(manifestBody); } catch { throw new Error("fleet_connector_release_refused"); }
@@ -66,11 +67,14 @@ export async function loadFleetConnectorReleaseV1(root = join(dirname(fileURLToP
   const bundle = await readFile(join(root, manifest.file));
   const digest = createHash("sha256").update(bundle).digest("hex");
   if (bundle.length !== manifest.size || digest !== manifest.sha256) throw new Error("fleet_connector_release_refused");
+  const embeddedKeyId = /^\/\/ Control Room embedded release key ID: (sha256:[a-f0-9]{64})$/mu
+    .exec(bundle.subarray(0, Math.min(bundle.length, 16 * 1024)).toString("utf8"))?.[1];
+  if (embeddedKeyId !== trust.keyId) throw new Error("fleet_connector_release_refused");
   let advertised: unknown;
   try { advertised = JSON.parse(await readFile(join(root, "connector-release.json"), "utf8")); }
   catch { throw new Error("fleet_connector_release_refused"); }
   let advertisement;
-  try { advertisement = verifyConnectorReleaseAdvertisementV1(advertised, captureReleaseTrustV1(trustValue)); }
+  try { advertisement = verifyConnectorReleaseAdvertisementV1(advertised, trust); }
   catch { throw new Error("fleet_connector_release_refused"); }
   if (advertisement.version !== manifest.version || advertisement.file !== manifest.file
     || advertisement.sha256 !== manifest.sha256 || advertisement.size !== manifest.size

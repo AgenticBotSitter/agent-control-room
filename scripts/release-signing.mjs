@@ -382,12 +382,13 @@ export function applyReleaseKeyRotationV1(value, currentValue) {
   const input = exact(value, ["schema", "epoch", "fromKeyId", "toKeyId", "toPublicKey", "versionFloor", "signature"], "rotation");
   if (input.schema !== RELEASE_KEY_ROTATION_SCHEMA_V1 || input.epoch !== current.epoch + 1
     || input.fromKeyId !== current.keyId || releaseKeyIdV1(input.toPublicKey) !== input.toKeyId
-    || current.revokedKeyIds.includes(input.toKeyId) || compareReleaseVersionsV1(input.versionFloor, current.versionFloor) < 0
+    || current.revokedKeyIds.includes(input.toKeyId)
     || !SIGNATURE_PATTERN.test(input.signature ?? "")
     || !verify(null, rotationMaterial(input), cleanPublicKey(current.publicKey), Buffer.from(input.signature, "base64url")))
     refuse("rotation");
   return captureReleaseTrustV1({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: input.epoch, keyId: input.toKeyId,
-    publicKey: input.toPublicKey, versionFloor: input.versionFloor,
+    publicKey: input.toPublicKey, versionFloor: compareReleaseVersionsV1(current.versionFloor, input.versionFloor) > 0
+      ? current.versionFloor : input.versionFloor,
     revokedKeyIds: [...new Set([...current.revokedKeyIds, current.keyId])].sort() });
 }
 

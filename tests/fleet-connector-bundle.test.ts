@@ -173,6 +173,43 @@ test("an enrolled gateway cannot substitute the release key embedded in the bund
   assert.equal(result.code, 1); assert.match(result.stderr, /valid installation release key/u);
 });
 
+test("a connector from another Control Room is refused before its join code is redeemed", async t => {
+  const home = join(sandbox, "cross-control-room-home"); await mkdir(home);
+  const advertisement = JSON.parse(await readFile(join(firstRoot, "connector-release.json"), "utf8"));
+  let enrollments = 0;
+  const firstGateway = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* drain request */ }
+    const path = new URL(request.url ?? "/", "http://fixture.invalid").pathname;
+    if (path === "/fleet/v1/enroll") enrollments += 1;
+    const result = path === "/fleet/v1/enroll" ? { workerId: `fleet-worker:${"c".repeat(32)}`,
+      displayName: "First Control Room", projectIds: [], workerKind: "cursor", capabilities: [],
+      credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust, connector: advertisement }
+      : path === "/fleet/v1/heartbeat" ? { displayName: "First Control Room", operationsMode: "running" } : null;
+    response.writeHead(result ? 200 : 404, { "content-type": "application/json" });
+    response.end(JSON.stringify(result ? { ok: true, result } : { ok: false, error: "not_found" }));
+  });
+  await new Promise<void>(done => firstGateway.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => firstGateway.close(() => done())));
+  const firstOrigin = `http://127.0.0.1:${(firstGateway.address() as AddressInfo).port}`;
+  const first = await child(process.execPath, [join(firstRoot, release.manifest.file), "install", "--server", firstOrigin,
+    "--code", `crj_${"C".repeat(43)}`, "--bot", "cursor", "--name", "first", "--i-am-the-installer"], {
+    env: { PATH: process.env.PATH, HOME: home, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+  });
+  assert.equal(first.code, 0, first.stderr); assert.equal(enrollments, 1);
+
+  const otherKeys = generateKeyPairSync("ed25519");
+  const otherPublicKey = otherKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const otherTrust = { ...releaseTrust, keyId: releaseKeyIdV1(otherPublicKey), publicKey: otherPublicKey };
+  const otherRoot = join(sandbox, "other-control-room-bundle");
+  const otherRelease = await buildFleetConnectorReleaseForTestV1({ root: otherRoot, builtFrom, releaseTrust: otherTrust });
+  const second = await child(process.execPath, [join(otherRoot, otherRelease.manifest.file), "install", "--server", firstOrigin,
+    "--code", `crj_${"D".repeat(43)}`, "--bot", "cursor", "--name", "second", "--i-am-the-installer"], {
+    env: { PATH: process.env.PATH, HOME: home, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+  });
+  assert.equal(second.code, 1); assert.match(second.stderr, /different Control Room.*Reinstalling/u);
+  assert.equal(enrollments, 1, "the second Control Room's join code was not sent or spent");
+});
+
 test("bundled harness adapter needs no checkout module path", async () => {
   const connector = await import(`${pathToFileURL(join(firstRoot, release.manifest.file)).href}?adapter-test=1`);
   const settingsPath = join(sandbox, "bundled-harnesses.json");
@@ -201,6 +238,14 @@ test("installer check refuses a tampered bundle, then accepts an intact retry", 
 
 test("gateway serves only the captured bundle and manifest through a burst, a dropped caller and a retry", async t => {
   const captured = await loadFleetConnectorReleaseV1(firstRoot, releaseTrust);
+  const otherKeys = generateKeyPairSync("ed25519");
+  const otherPublicKey = otherKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const wrongEmbeddedRoot = join(sandbox, "wrong-embedded-key");
+  const wrongEmbedded = await buildFleetConnectorReleaseForTestV1({ root: wrongEmbeddedRoot, builtFrom,
+    releaseTrust: { ...releaseTrust, keyId: releaseKeyIdV1(otherPublicKey), publicKey: otherPublicKey } });
+  await writeAdvertisement(wrongEmbeddedRoot, wrongEmbedded);
+  await assert.rejects(loadFleetConnectorReleaseV1(wrongEmbeddedRoot, releaseTrust), /fleet_connector_release_refused/u,
+    "gateway startup must refuse a signed bundle embedding another installation key");
   const changedBundle = Buffer.from(captured.bundle); changedBundle[changedBundle.length - 2] ^= 1;
   const corruptRoot = join(sandbox, "corrupt-release"); await mkdir(corruptRoot);
   await copyFile(join(firstRoot, "manifest.json"), join(corruptRoot, "manifest.json"));

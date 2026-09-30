@@ -80,7 +80,7 @@ async function prepareFleetConnectorReleaseV1({ root, builtFrom, allowRealHome, 
   const license = (await readFile(zodLicense, "utf8")).trimEnd().split("\n").map(line => `// ${line}`).join("\n");
   const bundled = Buffer.from(output.outputFiles[0].contents).toString("utf8");
   const shebangEnd = bundled.indexOf("\n") + 1;
-  const bytes = Buffer.from(`${bundled.slice(0, shebangEnd)}// Bundled third-party licence notice: zod@4.1.12\n${license}\n\n${bundled.slice(shebangEnd)}`, "utf8");
+  const bytes = Buffer.from(`${bundled.slice(0, shebangEnd)}// Control Room embedded release key ID: ${releaseTrust.keyId}\n// Bundled third-party licence notice: zod@4.1.12\n${license}\n\n${bundled.slice(shebangEnd)}`, "utf8");
   const file = `connector-${version}.mjs`;
   const manifest = Object.freeze({ schema: RELEASE_SCHEMA, version, file,
     sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length, builtFrom });

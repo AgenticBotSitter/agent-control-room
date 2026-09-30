@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { checkForConnectorUpdateV1, compareConnectorVersionsV1, connectorReleaseSignatureMaterialV1,
   connectorInstallRootFromConfigPathV1, connectorUpdatePathsV1, connectorUpdatesPausedV1, installConnectorLauncherV1,
@@ -209,13 +210,64 @@ test("two concurrent updaters on one machine coalesce behind one download", asyn
   assert.deepEqual(calls.map(value => value.state).sort(), ["coalesced", "updated"]);
 });
 
-test("launch never waits for the update lock and verifies bytes before spawning", async t => {
-  const f = await fixture(t), started = Date.now(), calls = [];
+test("a second process never breaks a live update lock during a health check longer than 30 seconds", async t => {
+  const f = await fixture(t, "connector-cross-process-lock-"), bytes = Buffer.from("export default 'slow';\n");
+  const release = advertised(bytes), inputPath = join(f.root, "child-input.json"); let downloads = 0;
+  const server = (await import("node:http")).createServer(async (request, response) => {
+    for await (const _chunk of request) { /* drain request */ }
+    downloads += 1;
+    response.writeHead(200, { "content-length": String(bytes.length), "content-type": "text/javascript" });
+    response.end(bytes);
+  });
+  await new Promise((resolveListen, reject) => {
+    server.once("error", reject); server.listen(0, "127.0.0.1", resolveListen);
+  });
+  t.after(() => new Promise(resolveClose => server.close(resolveClose)));
+  const address = server.address(); assert.ok(address && typeof address === "object");
+  f.config.server = `http://127.0.0.1:${address.port}`;
+  await writeFile(f.configPath, `${JSON.stringify(f.config)}\n`, { mode: 0o600 });
+  const childInput = { installRoot: f.installRoot, configPath: f.configPath, advertised: release,
+    currentVersion: "1.0.0", healthDelayMs: 35_000 };
+  await writeFile(inputPath, `${JSON.stringify(childInput)}\n`, { mode: 0o600 });
+  const runChild = () => {
+    const child = spawn(process.execPath, ["tests/support/fleet-connector-update-child.mjs", inputPath], {
+      cwd: process.cwd(), env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" }, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; }); child.stderr.on("data", chunk => { stderr += chunk; });
+    const complete = new Promise((resolveChild, reject) => {
+      child.once("error", reject); child.once("close", code => resolveChild({ code, stdout, stderr }));
+    });
+    return { child, complete };
+  };
+  const owner = runChild();
+  const pendingDeadline = Date.now() + 5_000;
+  while (Date.now() < pendingDeadline) {
+    try { await readFile(f.paths.pending); break; } catch (error) { if (error?.code !== "ENOENT") throw error; }
+    await new Promise(done => setTimeout(done, 20));
+  }
+  assert.ok(await readFile(f.paths.pending), "the first process reached its slow health check");
+  const contenderStarted = Date.now(), contender = runChild();
+  const contenderResult = await contender.complete;
+  assert.equal(contenderResult.code, 0, contenderResult.stderr);
+  assert.deepEqual(JSON.parse(contenderResult.stdout), { ok: false, message: "connector_update_refused:busy" });
+  assert.ok(Date.now() - contenderStarted >= 29_000, "the contender waited for the live owner instead of breaking its lock");
+  assert.equal(owner.child.exitCode, null, "the owner is still alive after the contender's 30 second deadline");
+  const ownerResult = await owner.complete;
+  assert.equal(ownerResult.code, 0, ownerResult.stderr);
+  assert.deepEqual(JSON.parse(ownerResult.stdout), { ok: true, result: { state: "updated", version: "1.1.0" } });
+  assert.equal(downloads, 1); assert.equal(await currentVersion(f), "1.1.0");
+});
+
+test("launch never waits for the update lock, verifies bytes and passes its root to the child", async t => {
+  const f = await fixture(t), started = Date.now(), calls = []; let childEnv;
   await writeFile(f.paths.lock, JSON.stringify({ pid: process.pid, token: "held", createdAt: Date.now() }), { mode: 0o600 });
-  const code = await launchCurrentConnectorV1({ ...f, args: ["mcp"], spawnProcess(_command, args) {
+  const code = await launchCurrentConnectorV1({ ...f, args: ["mcp"], spawnProcess(_command, args, options) {
+    childEnv = options.env;
     calls.push(args); const child = new EventEmitter(); setImmediate(() => child.emit("close", 0, null)); return child;
   } });
   assert.equal(code, 0); assert.ok(Date.now() - started < 1_000); assert.equal(calls.length, 1);
+  assert.equal(childEnv.CONTROL_ROOM_CONNECTOR_INSTALL_ROOT, f.installRoot);
   await writeFile(join(f.paths.versions, "1.0.0", "connector.mjs"), "planted\n");
   let fallback;
   assert.equal(await launchCurrentConnectorV1({ ...f, args: ["mcp"], spawnProcess(_command, args) {
@@ -263,7 +315,7 @@ test("a dead updater lock is recovered without trusting a symlinked versions dir
   assert.deepEqual(await readdir(outside), []);
 });
 
-test("a reused live PID does not preserve a stale updater lock", async t => {
+test("a reused live PID does not preserve a stale updater lock", { skip: process.platform !== "linux" }, async t => {
   const f = await fixture(t), bytes = Buffer.from("export default 'pid-reuse';\n"), release = advertised(bytes);
   await writeFile(f.paths.lock, JSON.stringify({ pid: process.pid, token: "old-owner", createdAt: 0,
     identity: "not-this-process-generation" }), { mode: 0o600 });
@@ -289,8 +341,12 @@ test("version ordering and Windows launch layout reject downgrade tricks without
   assert.throws(() => compareConnectorVersionsV1("1.0.0-beta", "1.0.0"));
   assert.equal(connectorInstallRootFromConfigPathV1("/config/control-room/bots/test.json",
     { XDG_DATA_HOME: "/separate/data" }, "darwin"), "/separate/data/control-room/mcp");
+  assert.equal(connectorInstallRootFromConfigPathV1("/stock/.config/control-room/bots/test.json",
+    { HOME: "/stock" }, "darwin"), "/stock/.local/share/control-room/mcp");
   assert.equal(connectorInstallRootFromConfigPathV1("/windows/config/bots/test.json",
     { LOCALAPPDATA: "/windows/local" }, "win32"), "/windows/local/ControlRoom/mcp");
+  assert.equal(connectorInstallRootFromConfigPathV1("C:\\Users\\stock\\config\\bots\\test.json",
+    { USERPROFILE: "C:\\Users\\stock" }, "win32"), resolve("C:\\Users\\stock", "AppData", "Local", "ControlRoom", "mcp"));
   const root = await mkdtemp(join(tmpdir(), "connector-windows-layout-")); t.after(() => rm(root, { recursive: true, force: true }));
   const sourcePath = join(root, "source.mjs"), shimPath = join(root, "mcp", "bin", "control-room-mcp.cmd");
   await writeFile(sourcePath, "export {};\n");
@@ -316,21 +372,49 @@ test("one machine-wide trust refuses a second profile with another release key",
   assert.deepEqual(JSON.parse(await readFile(join(installRoot, "release-trust.json"), "utf8")), trust);
 });
 
-test("machine-wide trust changes only through signed rotation and revocation records", async t => {
+test("machine-wide trust keeps the highest floor for the same installation key", async t => {
+  const root = await mkdtemp(join(tmpdir(), "connector-machine-floor-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const installRoot = join(root, "mcp");
+  await pinConnectorReleaseTrustV1({ installRoot, trust: { ...trust, versionFloor: "1.2.0" } });
+  const stale = await pinConnectorReleaseTrustV1({ installRoot, trust });
+  assert.equal(stale.versionFloor, "1.2.0");
+  const raised = await pinConnectorReleaseTrustV1({ installRoot, trust: { ...trust, versionFloor: "1.3.0" } });
+  assert.equal(raised.versionFloor, "1.3.0");
+  assert.equal(JSON.parse(await readFile(join(installRoot, "release-trust.json"), "utf8")).versionFloor, "1.3.0");
+});
+
+test("machine-side key rotation is refused without changing the runnable connector", async t => {
   const root = await mkdtemp(join(tmpdir(), "connector-machine-rotation-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const installRoot = join(root, "mcp"), oldKeyPath = join(root, "old.pem"), newKeyPath = join(root, "new.pem");
+  const f = await fixture(t, "connector-machine-rotation-install-"), installRoot = f.installRoot;
+  const oldKeyPath = join(root, "old.pem");
   const nextKeys = generateKeyPairSync("ed25519");
   await writeFile(oldKeyPath, keys.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
-  await writeFile(newKeyPath, nextKeys.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
-  await pinConnectorReleaseTrustV1({ installRoot, trust });
   const nextPublicKey = nextKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
   const rotation = await createReleaseKeyRotationV1({ currentTrust: trust, toPublicKey: nextPublicKey,
     epoch: 2, versionFloor: "1.1.0", oldPrivateKeyPath: oldKeyPath });
   const rotated = applyReleaseKeyRotationV1(rotation, trust);
-  await pinConnectorReleaseTrustV1({ installRoot, trust: rotated, rotation });
-  const revocations = await createReleaseKeyRevocationsV1({ currentTrust: rotated, epoch: 3,
-    revokedKeyIds: [trust.keyId], privateKeyPath: newKeyPath });
-  const finalTrust = applyReleaseKeyRevocationsV1(revocations, rotated);
+  await assert.rejects(pinConnectorReleaseTrustV1({ installRoot, trust: rotated, rotation }), /key_rotation_requires_reinstall/u);
+  assert.deepEqual(JSON.parse(await readFile(join(installRoot, "release-trust.json"), "utf8")), trust);
+  const emptyInstallRoot = join(root, "empty-machine");
+  await assert.rejects(pinConnectorReleaseTrustV1({ installRoot: emptyInstallRoot, trust: rotated, rotation }),
+    /key_rotation_requires_reinstall/u);
+  await assert.rejects(readFile(join(emptyInstallRoot, "release-trust.json")), error => error?.code === "ENOENT");
+  let launched;
+  assert.equal(await launchCurrentConnectorV1({ ...f, args: ["mcp"], spawnProcess(_command, args) {
+    launched = args[0]; const child = new EventEmitter(); setImmediate(() => child.emit("close", 0, null)); return child;
+  } }), 0);
+  assert.equal(launched, join(installRoot, "versions", "1.0.0", "connector.mjs"));
+});
+
+test("a signed same-key revocation record remains applicable on the machine", async t => {
+  const root = await mkdtemp(join(tmpdir(), "connector-machine-revocation-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const installRoot = join(root, "mcp"), keyPath = join(root, "key.pem");
+  await writeFile(keyPath, keys.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
+  await pinConnectorReleaseTrustV1({ installRoot, trust });
+  const revokedKey = stranger.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const revocations = await createReleaseKeyRevocationsV1({ currentTrust: trust, epoch: 2,
+    revokedKeyIds: [releaseKeyIdV1(revokedKey)], privateKeyPath: keyPath });
+  const finalTrust = applyReleaseKeyRevocationsV1(revocations, trust);
   await pinConnectorReleaseTrustV1({ installRoot, trust: finalTrust, revocations });
   assert.deepEqual(JSON.parse(await readFile(join(installRoot, "release-trust.json"), "utf8")), finalTrust);
 });

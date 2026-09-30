@@ -8,7 +8,7 @@
   },
   {
     "file": "scripts/fleet/connector-update.mjs",
-    "find": "if (!sameTrust(transitioned, proposed)) refused(\"machine_trust_mismatch\");",
+    "find": "if (!sameTrustExceptFloor(transitioned, proposed)) refused(\"machine_trust_mismatch\");",
     "replace": "if (false) refused(\"machine_trust_mismatch\");",
     "test": "node --test --test-name-pattern \"one machine-wide trust refuses\" tests/fleet-connector-update.test.mjs",
     "why": "a second profile cannot replace the machine-wide release key"
@@ -61,5 +61,54 @@
     "replace": "if (false)",
     "test": "node --test --test-name-pattern \"crashing candidate auto-reverts\" tests/fleet-connector-update.test.mjs",
     "why": "a failed signed release is backed off instead of downloaded on every poll"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (rotation !== undefined) refused(\"key_rotation_requires_reinstall\");",
+    "replace": "if (false) refused(\"key_rotation_requires_reinstall\");",
+    "test": "node --test --test-name-pattern \"machine-side key rotation\" tests/fleet-connector-update.test.mjs",
+    "why": "v1 refuses machine-side key rotation before changing a runnable machine pin"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "return compareConnectorVersionsV1(left.versionFloor, right.versionFloor) >= 0 ? left\n    : captureReleaseTrustV1({ ...left, versionFloor: right.versionFloor });",
+    "replace": "return right;",
+    "test": "node --test --test-name-pattern \"keeps the highest floor\" tests/fleet-connector-update.test.mjs",
+    "why": "joining another profile can never lower the machine-wide version floor"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "if (!alive && oldEnough) { await rm(path, { force: true }); continue; }",
+    "replace": "if (oldEnough) { await rm(path, { force: true }); continue; }",
+    "test": "node --test --test-name-pattern \"second process never breaks\" tests/fleet-connector-update.test.mjs",
+    "why": "an old lock is never broken while its owning process is still alive"
+  },
+  {
+    "file": "scripts/fleet/connector-update.mjs",
+    "find": "env: { ...process.env, CONTROL_ROOM_CONNECTOR_LAUNCHED: \"1\", CONTROL_ROOM_CONNECTOR_INSTALL_ROOT: installRoot }",
+    "replace": "env: { ...process.env, CONTROL_ROOM_CONNECTOR_LAUNCHED: \"1\" }",
+    "test": "node --test --test-name-pattern \"passes its root\" tests/fleet-connector-update.test.mjs",
+    "why": "the launcher passes its exact install root to every selected connector child"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (expectedReleaseTrust !== null && (gatewayTrust.keyId !== trusted.keyId || gatewayTrust.publicKey !== trusted.publicKey))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern \"cannot substitute\" tests/fleet-connector-bundle.test.ts",
+    "why": "join pins the embedded key identity while allowing the gateway floor to rise"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "await assertConnectorReleaseTrustCompatibleV1({ installRoot: paths.installRoot, trust: embeddedTrust });",
+    "replace": "void embeddedTrust;",
+    "test": "node --import tsx --test --test-name-pattern \"before its join code\" tests/fleet-connector-bundle.test.ts",
+    "why": "a bundle for another Control Room is rejected against machine trust before enrollment spends its code"
+  },
+  {
+    "file": "scripts/run-fleet-gateway.ts",
+    "find": "if (embeddedKeyId !== trust.keyId) throw new Error(\"fleet_connector_release_refused\");",
+    "replace": "if (false) throw new Error(\"fleet_connector_release_refused\");",
+    "test": "node --import tsx --test --test-name-pattern \"gateway serves only\" tests/fleet-connector-bundle.test.ts",
+    "why": "gateway startup refuses a signed bundle that embeds another installation key"
   }
 ]
