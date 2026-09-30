@@ -123,17 +123,44 @@ AS $$
   FROM scope s;
 $$;
 
+-- PUBLIC first, unconditionally: PostgreSQL grants EXECUTE to PUBLIC on every new
+-- function, so this one statement is the whole of the default-privilege problem.
 REVOKE ALL ON FUNCTION updater_health_counts() FROM PUBLIC;
-REVOKE ALL ON FUNCTION updater_health_counts() FROM control_room_private_web;
-REVOKE ALL ON FUNCTION updater_health_counts() FROM control_room_task_coordinator;
--- The updater's login is the only caller, and it is created by the updater's own
--- fixed DDL, so the GRANT is a no-op until it exists (it is applied again by the
--- installer after the updater has run for the first time).
+
+-- Every OTHER role's revoke is conditional on the role existing.
+--
+-- The release ledger is applied BEFORE db/roles/*.sql on a fresh cluster (the
+-- attack kit does exactly that, and so does the live installer), so at this point
+-- `control_room_private_web` need not exist yet -- and an unconditional
+-- `REVOKE ... FROM <missing role>` is a hard error that stops the whole ledger.
+-- Measured: the un-guarded form failed every test with
+-- `migration_failed:...:role "control_room_private_web" does not exist`.
+--
+-- Conditionality is safe here rather than a hole: a role that does not exist
+-- holds no privilege, so there is nothing to revoke, and the ACL assertions
+-- below still refuse if any surviving role ends up with EXECUTE.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'control_room_deployer') THEN
-    GRANT EXECUTE ON FUNCTION updater_health_counts() TO control_room_deployer;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'control_room_private_web') THEN
+    REVOKE ALL ON FUNCTION updater_health_counts() FROM control_room_private_web;
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'control_room_task_coordinator') THEN
+    REVOKE ALL ON FUNCTION updater_health_counts() FROM control_room_task_coordinator;
+  END IF;
+  -- The GRANT to the updater's login is NOT here, and that is deliberate.
+  --
+  -- `control_room_deployer` is created by the updater's own fixed DDL
+  -- (src/updater/v1/ddl/0001_deployer_role.sql), which runs when the updater
+  -- STARTS -- after the installer, after this ledger, and after every role file.
+  -- So at the moment this migration runs the role does not exist, and a GRANT
+  -- here would be a silent no-op: the ledger would report success and the health
+  -- contract would be permanently uncallable. Measured -- this exact version of
+  -- the file produced an empty grantee list on a real cluster.
+  --
+  -- The grant therefore lives where the other release-side grants to that login
+  -- already live, `db/roles/updater_release_reader_roles.sql`, which is
+  -- documented as being re-applied by the installer after the updater has run
+  -- for the first time. One place grants to the updater's login, not two.
 END;
 $$;
 
@@ -148,6 +175,18 @@ $$;
 --   * exactly one non-owner grantee, and it is the deployer. A second grantee, or
 --     a grantable EXECUTE, would hand the counts (and this definer's reach) to
 --     somebody the design does not name.
+--
+-- WHAT IS DELIBERATELY NOT ASSERTED HERE: the OWNER. This migration is applied by
+-- `control_room_migrator`, which is a MEMBER of `control_room_schema_owner`, so a
+-- function created here is owned by `control_room_migrator` at this point.
+-- Ownership is normalized to `control_room_schema_owner` afterwards, by the same
+-- pass that re-owns every other application object
+-- (scripts/ops/verify-database-backup.mjs, normalizeMacApplicationOwnershipV1).
+-- Asserting the owner inside this file would therefore refuse on a correct
+-- database at exactly the wrong moment, so the owner is asserted where it is
+-- true instead: `src/web/v1/private-database-preflight.ts`, which every production
+-- web start already runs, and `scripts/ops/verify-database-backup.mjs`, which
+-- refuses a backup whose application objects are owned by anybody else.
 DO $$
 DECLARE
   fn regprocedure := 'public.updater_health_counts()'::regprocedure;
@@ -156,21 +195,51 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p WHERE p.oid = fn
       AND p.prosecdef AND p.provolatile = 's' AND p.prokind = 'f' AND p.pronargs = 0
       AND p.proparallel = 'u' AND NOT p.proleakproof
-      AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
-      AND pg_catalog.pg_get_userbyid(p.proowner) = 'control_room_schema_owner')
+      AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[])
     THEN
-    RAISE EXCEPTION 'updater health count function must be STABLE SECURITY DEFINER owned by the schema owner'
+    RAISE EXCEPTION 'updater health count function must be STABLE SECURITY DEFINER with a pinned search_path'
       USING ERRCODE = '42501';
   END IF;
   IF pg_catalog.has_function_privilege('public', fn, 'EXECUTE') THEN
     RAISE EXCEPTION 'updater health count function must not be executable by PUBLIC' USING ERRCODE = '42501';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE((SELECT p.proacl FROM pg_catalog.pg_proc p
-        WHERE p.oid = fn), pg_catalog.acldefault('f', (SELECT p.proowner FROM pg_catalog.pg_proc p
-        WHERE p.oid = fn)))) a
-      WHERE a.privilege_type = 'EXECUTE' AND a.grantee <> 0
+  -- Compare the ACL against the function's CURRENT OWNER, not against a fixed
+  -- list of names. `aclexplode` reports the owner's implicit EXECUTE as a row
+  -- whenever proacl is NULL, and re-owning the function (which production does
+  -- right after the ledger runs) leaves the previous owner as a NAMED grantee --
+  -- measured on PostgreSQL 17: after GRANT to one role and ALTER ... OWNER TO
+  -- another, the ACL holds both. Matching against a hardcoded owner here refused
+  -- a correct database; matching against proowner is what the claim actually
+  -- means, and it also catches a grantee nobody expected.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+      CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,
+        pg_catalog.acldefault('f', p.proowner))) a
+      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE'
+        AND a.grantee <> 0 AND a.grantee <> p.proowner
         AND pg_catalog.pg_get_userbyid(a.grantee) <> 'control_room_deployer') THEN
     RAISE EXCEPTION 'updater health count function has an unexpected EXECUTE grantee' USING ERRCODE = '42501';
+  END IF;
+  -- And no grantee at all is a REFUSAL here, not a neutral state. If the role
+  -- file has already run (the installer re-applies it after the updater starts),
+  -- the deployer MUST hold EXECUTE by now; its absence means the grant file and
+  -- this migration disagree, and the health contract would silently never work.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'control_room_deployer')
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+      CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,
+        pg_catalog.acldefault('f', p.proowner))) a
+      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE'
+        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN
+    RAISE EXCEPTION 'the updater login exists but cannot read the health counts' USING ERRCODE = '42501';
+  END IF;
+  -- And the deployer's EXECUTE is never GRANTABLE. A grantable privilege here
+  -- would let the updater's login hand this definer's reach to anybody, which is
+  -- the whole authority this function is careful not to widen.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+      CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,
+        pg_catalog.acldefault('f', p.proowner))) a
+      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE' AND a.is_grantable
+        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN
+    RAISE EXCEPTION 'updater health count function grants EXECUTE onward' USING ERRCODE = '42501';
   END IF;
 END;
 $$;
