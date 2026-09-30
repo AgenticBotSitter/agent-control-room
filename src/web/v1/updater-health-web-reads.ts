@@ -66,17 +66,26 @@ function count(value: unknown, field: string, minimum = 0): number {
   return value as number;
 }
 
-export function createUpdaterHealthWebReadPortV1(input: Readonly<{
+// The parameter is named `sources`, NOT `input`: the returned method's own
+// parameter is the per-call scope and is also called `input`, and a shadowed
+// `input.home` inside the method read the SCOPE rather than the composition --
+// which failed at the first call with "Cannot read properties of undefined
+// (reading 'identity')" instead of at construction. Measured.
+export function createUpdaterHealthWebReadPortV1(sources: Readonly<{
   reads: UpdaterHealthWebReadsV1;
   home: UpdaterHealthHomeRenderV1;
   privilege: UpdaterHealthPrivilegeReadV1;
 }>): UpdaterHealthWebReadPortV1 {
-  if (!input || typeof input.reads?.home !== "function" || typeof input.reads.projects !== "function"
-    || typeof input.reads.updatesPanel !== "function" || typeof input.home?.identity !== "function"
-    || typeof input.home.render !== "function" || typeof input.privilege?.hasPlanApprovalInsert !== "function")
+  if (!sources || typeof sources.reads?.home !== "function" || typeof sources.reads.projects !== "function"
+    || typeof sources.reads.updatesPanel !== "function" || typeof sources.home?.identity !== "function"
+    || typeof sources.home.render !== "function" || typeof sources.privilege?.hasPlanApprovalInsert !== "function")
     refused("composition");
   return Object.freeze({
-    async readHealthCounts({ tenantId, workspaceId }: Readonly<{ tenantId: string; workspaceId: string }>) {
+    async readHealthCounts(input: Readonly<{ tenantId: string; workspaceId: string }>) {
+      // Destructured defensively: a caller that passes nothing gets a NAMED
+      // refusal, not a TypeError from the parameter list. The failure mode of a
+      // health check is that it reports a reason an operator can act on.
+      const { tenantId, workspaceId } = (input ?? {}) as { tenantId?: unknown; workspaceId?: unknown };
       // The scope is asserted, not merely passed on. These three reads are
       // already bound to the installation's tenant and workspace by the services
       // that own them, so a mismatched argument here would mean the caller is
@@ -85,7 +94,7 @@ export function createUpdaterHealthWebReadPortV1(input: Readonly<{
       // one's.
       if (typeof tenantId !== "string" || !tenantId || typeof workspaceId !== "string" || !workspaceId)
         refused("scope");
-      const identity = await input.home.identity();
+      const identity = await sources.home.identity();
       if (!identity || typeof identity !== "object" || typeof identity.subject !== "string"
           || !identity.subject || typeof identity.tokenDigest !== "string" || !identity.tokenDigest)
         refused("identity");
@@ -94,13 +103,13 @@ export function createUpdaterHealthWebReadPortV1(input: Readonly<{
       // numbers describe one ordered pass: a burst of owner activity between two
       // concurrent reads would otherwise show up as a count mismatch and be
       // reported as an unhealthy release when nothing is wrong.
-      const summary = await input.reads.home(identity);
-      const projects = await input.reads.projects(identity);
-      const panel = await input.reads.updatesPanel(identity);
+      const summary = await sources.reads.home(identity);
+      const projects = await sources.reads.projects(identity);
+      const panel = await sources.reads.updatesPanel(identity);
 
       // (4) The real Home route. Status, then size: an error page renders
       // perfectly happily and is exactly what must not be counted as healthy.
-      const response = await input.home.render();
+      const response = await sources.home.render();
       if (!response || response.status !== 200) refused("home_render_status");
       const bytes = Number((response.headers.get("content-length") ?? "")
         .match(/^(\d{1,10})$/u)?.[1] ?? Number.NaN);
@@ -112,7 +121,7 @@ export function createUpdaterHealthWebReadPortV1(input: Readonly<{
       if (!Number.isSafeInteger(size) || size < 1 || size > 4_194_304) refused("home_render_size");
 
       // (5) The privilege boolean, measured on the web login's own connection.
-      if (await input.privilege.hasPlanApprovalInsert() !== true) refused("plan_approval_insert");
+      if (await sources.privilege.hasPlanApprovalInsert() !== true) refused("plan_approval_insert");
 
       return Object.freeze({
         homeSummaryCount: count((summary.active?.length ?? 0) + (summary.recentResults?.length ?? 0),
