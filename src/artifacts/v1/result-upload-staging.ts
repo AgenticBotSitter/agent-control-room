@@ -239,7 +239,18 @@ export class ResultUploadStagingV1 {
       await unlink(scratch).catch(() => {});
       throw safe(error);
     }
-    const proven = await this.readFile(target, operation, false);
+    // Re-read the chunk that was just renamed into place, and prove it. The
+    // `false` is deliberate and stays deliberate: a chunk that vanished between
+    // the rename and this proof has NOT been proven, and `staging_ambiguous` is
+    // the honest answer -- which is why this call cannot translate ENOENT into
+    // "absent". What it must not do is leak the errno either.
+    let proven: Uint8Array | undefined;
+    try { proven = await this.readFile(target, operation, false); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        throw new ResultUploadStagingError("staging_ambiguous");
+      throw error;
+    }
     if (!proven || bytesDigest(proven) !== bytesDigest(bytes))
       throw new ResultUploadStagingError("staging_ambiguous");
     return { digest: bytesDigest(bytes), replayed: false };
@@ -295,15 +306,33 @@ export class ResultUploadStagingV1 {
 
   /** Removes one session's staged chunks. Used after a finalise, and by the
    * sweeper for an expired or voided session. It removes exactly the names this
-   * area derives for that one upload, so it cannot be pointed at anything else,
-   * and it treats an already-absent chunk as done. */
+   * area derives for that one upload and PROVES each one is this area's own
+   * chunk before it unlinks it, so it cannot be pointed at anything else; an
+   * already-absent chunk is done, and two processes removing the same name at
+   * once is the ordinary race rather than a failure. */
   async discardSession(identity: Omit<StagedChunkIdentityV1, "ordinal">, maxChunks: number): Promise<number> {
     if (!Number.isSafeInteger(maxChunks) || maxChunks < 0 || maxChunks > 32)
       throw new ResultUploadStagingError("staging_invalid");
     let removed = 0;
     for (let ordinal = 1; ordinal <= Math.max(maxChunks, 1); ordinal += 1) {
       const name = stagedChunkNameV1(identity.tenantId, identity.projectId, identity.uploadId, ordinal);
-      try { await unlink(join(this.root, name)); removed += 1; } catch (error) {
+      const path = join(this.root, name);
+      // The name is proved to be this area's OWN chunk before it is removed: a
+      // regular file, not a symlink, with exactly one link. Without that proof a
+      // discard can remove something in this root that is not a staged chunk --
+      // and a hard-linked name would be unlinked while another link to the same
+      // bytes survived elsewhere, which is the store's `stillOwnsTheName`
+      // lesson applied to a second writer of the same directory.
+      let listed: BigIntStats | undefined;
+      try { listed = await lstat(path, { bigint: true }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw safe(error); }
+      if (!listed) continue;                       // already gone: nothing to do
+      if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1))
+        throw new ResultUploadStagingError("staging_ambiguous");
+      try { await unlink(path); removed += 1; } catch (error) {
+        // Another process removing the same name at the same moment is the
+        // ordinary race, not a failure: the chunk is gone either way, which is
+        // the whole point of the call.
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw safe(error);
       }
     }
@@ -321,7 +350,29 @@ export class ResultUploadStagingV1 {
     if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1)
       || listed.size > BigInt(this.configuration.maximumChunkBytes) || !validPrivateMode(listed.mode))
       throw new ResultUploadStagingError("staging_ambiguous");
-    const handle = await open(path, constants.O_RDONLY | noFollow | nonBlock);
+    // The name was there a moment ago. It may not be now: a concurrent
+    // `discardSession` -- the sweeper, or the owner voiding an upload, or the
+    // cleanup after a finalise -- removes exactly these derived names while
+    // another process is reading them. An `ENOENT` from the OPEN is therefore
+    // the same "there is no such chunk" the lstat above already answers with
+    // `undefined`, and the area's contract is its four fixed codes, so it is
+    // translated here rather than escaping as a raw errno.
+    //
+    // Measured by this branch's own race lane (tests/result-upload-race.test.ts)
+    // before the translation: two writer processes against one chunk for 40
+    // seconds produced `ENOENT` from `open` and from `lstat` hundreds of times
+    // per run, which a connector would see as an unhandled system error rather
+    // than as "that chunk is gone". `ELOOP`, `EMFILE` and `ENFILE` are refusals
+    // for the same reason a store that cannot ASK must not answer.
+    let handle: FileHandle;
+    try { handle = await open(path, constants.O_RDONLY | noFollow | nonBlock); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (missingAllowed && (code === "ENOENT" || code === "ENXIO")) return undefined;
+      if (code === "ELOOP" || code === "EMFILE" || code === "ENFILE")
+        throw new ResultUploadStagingError("staging_ambiguous");
+      throw error;
+    }
     try {
       const opened = await handle.stat({ bigint: true });
       if (!opened.isFile() || opened.dev !== listed.dev || opened.ino !== listed.ino
@@ -335,7 +386,22 @@ export class ResultUploadStagingV1 {
         length += next.bytesRead;
       }
       const after = await handle.stat({ bigint: true });
-      const current = await lstat(path, { bigint: true });
+      // The name may have gone between the open and this check -- the same
+      // concurrent `discardSession` window as above. The descriptor is still a
+      // valid handle on the bytes that were read, so when the read itself is
+      // complete and the descriptor still points at the very inode that was
+      // listed, the honest answer is that read rather than a raw errno. The
+      // identity check exists to catch a file CHANGED under a name; a name that
+      // no longer exists is not that.
+      let current: BigIntStats | undefined;
+      try { current = await lstat(path, { bigint: true }); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        if (length === Number(listed.size) && after.size === listed.size
+          && after.dev === listed.dev && after.ino === listed.ino && after.nlink === BigInt(1))
+          return allocation;
+        throw new ResultUploadStagingError("staging_ambiguous");
+      }
       if (length !== Number(listed.size) || after.size !== listed.size
         || after.mtimeNs !== listed.mtimeNs || after.ctimeNs !== listed.ctimeNs
         || after.dev !== listed.dev || after.ino !== listed.ino || after.nlink !== BigInt(1)
