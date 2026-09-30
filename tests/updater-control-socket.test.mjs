@@ -63,11 +63,12 @@ test("an absolute request deadline evicts a slowloris that keeps sending bytes",
     socket.once("connect", resolve); socket.once("error", reject);
   });
   const drip = setInterval(() => { if (!socket.destroyed) socket.write("{"); }, 10);
-  await new Promise((resolve, reject) => {
-    const deadline = setTimeout(() => reject(new Error("slowloris_not_evicted")), 500);
-    socket.once("close", () => { clearTimeout(deadline); resolve(); });
-  });
-  clearInterval(drip);
+  try {
+    await new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error("slowloris_not_evicted")), 500);
+      socket.once("close", () => { clearTimeout(deadline); resolve(); });
+    });
+  } finally { clearInterval(drip); }
   for (let tries = 0; server.activeConnections !== 0 && tries < 50; tries += 1)
     await new Promise(resolve => setTimeout(resolve, 2));
   assert.equal(server.activeConnections, 0); assert.equal(handled, 0);
