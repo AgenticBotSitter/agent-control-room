@@ -12,6 +12,8 @@ import { TaskResultsPanel } from "../../private-app/app/task-results";
 import type { TaskResultsPage, TaskResultContent } from "../../src/web/v1/task-result-wire";
 import { ContributorSimulation } from "../components/contributor-simulation";
 import { LocalControlRoomWorkboard } from "./control-room-workboard";
+import { DeliveredFilesPanel } from "../../private-app/app/delivered-files";
+import { createInMemoryResultFilesClient, type ResultFileSet } from "../../src/web/v1/result-files-client-port";
 
 export function localPreviewHref(projectId?: string, jobId?: string, after?: string) {
   const query = new URLSearchParams();
@@ -103,6 +105,15 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
   }
   const project = page?.project ?? detail?.project;
   const held = pending || uncertain || reading;
+  const demoFileSets: readonly ResultFileSet[] = projectId && jobId ? [{
+    id: `result-set:${jobId}`, projectId, task: { id: jobId, title: detail?.task.title ?? "Demo task" }, files: [
+      { id: "file:summary", displayName: "owner-summary.md", type: "text/markdown", size: 18432,
+        sha256: `sha256:${"a".repeat(64)}`, producerMachine: "Demo Mac", state: "available", textCopy: { status: "available" } },
+      { id: "file:source", displayName: "research-notes-🌎-long-filename-for-phone-width-checking.json", type: "application/json", size: 245812,
+        sha256: `sha256:${"b".repeat(64)}`, producerMachine: "Demo worker", state: "available", textCopy: { status: "available" } },
+    ],
+  }] : [];
+  const demoFiles = createInMemoryResultFilesClient(demoFileSets);
   return <div className="private-shell"><main id="private-main" tabIndex={-1}>
     <div className="private-heading"><h1>{project?.title ?? "Local project preview"}</h1>
       <p>Local Control Room workboard. Projects and proposals are saved locally; it cannot assign or start agents.</p></div>
@@ -147,5 +158,7 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
     {detail && results && <TaskResultsPanel page={results} content={content} pending={reading}
       onOpen={artifactId => { void openResult(artifactId); }}
       onClose={() => { generation.current++; setContent(undefined); }} />}
+    {contributorDemo && detail && projectId && jobId && <DeliveredFilesPanel scope={{ projectId, taskId: jobId }}
+      data={{ state: "ready", sets: demoFileSets }} client={demoFiles} />}
   </main></div>;
 }

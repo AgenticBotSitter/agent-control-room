@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
-import { readTaskProjectFiles } from "../../src/web/v1/task-project-files-browser-client";
 import type { TaskProjectFiles } from "../../src/web/v1/task-project-files-wire";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { taskResultHrefV1 } from "./task-results";
+import { DeliveredFilesRegion } from "./delivered-files";
 
 type State = { state: "loading" } | { state: "ready"; value: TaskProjectFiles }
   | { state: "unavailable"; code: BrowserRequestError["code"] };
@@ -38,23 +37,10 @@ export function ProjectFilesView({ projectId, data }: { projectId: string; data:
 }
 
 export function PrivateProjectFiles({ projectId }: { projectId: string }) {
-  const [state, setState] = useState<State>({ state: "loading" });
-  const [generation, setGeneration] = useState(0);
-  useEffect(() => {
-    const abort = new AbortController(); setState({ state: "loading" });
-    void readTaskProjectFiles(projectId, fetch, abort.signal).then(value => {
-      if (!abort.signal.aborted) setState({ state: "ready", value });
-    }, error => {
-      if (!abort.signal.aborted) setState({ state: "unavailable",
-        code: error instanceof BrowserRequestError ? error.code : "unavailable" });
-    });
-    return () => abort.abort();
-  }, [projectId, generation]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <a href={`/projects/${encodeURIComponent(projectId)}`} className="private-back">← Project overview</a>
-    <div className="private-heading"><h1>Project files</h1><p>Verified result records from this project. Opening one goes straight to that exact file in its task, where it can be read and reviewed.</p></div>
+    <div className="private-heading"><h1>Project files</h1><p>Original files delivered by approved work across this project.</p></div>
     <ProjectNavigation projectId={projectId} current="files" />
-    <ProjectFilesView projectId={projectId} data={state} />
-    <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved project files again</button>
+    <DeliveredFilesRegion scope={{ projectId }} showTask />
   </main></div>;
 }

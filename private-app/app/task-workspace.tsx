@@ -23,6 +23,7 @@ import { useLocalRuntime } from "./local-runtime";
 import { StateChip } from "./owner-ui";
 import type { PreparedTaskStatus } from "../../src/web/v1/task-planning-wire";
 import { usePolledRead } from "./use-polled-read";
+import { DeliveredFilesRegion } from "./delivered-files";
 
 /** Polling the same task must retain its object identity. The planning,
  * assignment and result children key their protected reads to this value; a
@@ -208,6 +209,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     {detail && runtime.mode !== "checking" && <TaskWorkflowGuide local={runtime.mode === "local"} prepared={!!detail.preparedFor} />}
     {jobId && detail && <TaskExecutionStage detail={detail} mode={runtime.mode} workspace={executionWorkspace} onRecorded={refreshSaved} />}
     <div id="task-results"><TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} /></div>
+    {detail && <DeliveredFilesRegion scope={{ projectId, taskId: detail.task.jobId }} />}
     {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Use the task’s submission controls to queue work when configured. Refreshing this page does not submit a task.</p>}
   </main></div>;
 }
