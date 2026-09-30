@@ -14,6 +14,9 @@ import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { workBatchProposalDigestV1 } from "../src/work-intake/v1/digest";
+import { IntakeCoordinatorV1, PostgresIntakeCompletionLookupV1, PostgresIntakeNeedsYouStoreV1,
+  PostgresIntakePlannerFailureStoreV1, PostgresIntakeSuggestionStoreV1, WorkBatchServiceV1, WorkBatchStoreV1 } from
+  "../src/work-intake/v1";
 import { createProjectOrchestrationServiceV1 } from "../src/web/v1/project-orchestration-composition";
 import { PostgresProjectOrchestrationAccessV1, PostgresProjectOrchestrationBatchRevisionsV1,
   PostgresProjectOrchestrationStoreV1 } from "../src/web/v1/project-orchestration-postgres-store";
@@ -54,11 +57,22 @@ function database(client: Client): DatabaseClient {
     const result = await client.query(sql, values as never[]); return { rows: result.rows as T[] };
   } };
   return { query: session.query,
+    // BOTH shapes. `transactionWithPreCommitCheck` is what the owner adapter's
+    // optimistic settings write uses; plain `transaction` is what WorkBatchStoreV1
+    // uses for authorize() and create(). The first version of this helper
+    // provided only the former, so the real WorkBatchServiceV1 failed with
+    // "this.db.transaction is not a function" the moment a describe reached the
+    // submission -- which is exactly the kind of thing an in-memory double hides.
+    transaction: async (work: (tx: DatabaseSession) => Promise<unknown>) => {
+      await client.query("BEGIN");
+      try { const value = await work(session); await client.query("COMMIT"); return value; }
+      catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }
+    },
     transactionWithPreCommitCheck: async (work: (tx: DatabaseSession) => Promise<unknown>) => {
-    await client.query("BEGIN");
-    try { const value = await work(session); await client.query("COMMIT"); return value; }
-    catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }
-  } } as unknown as DatabaseClient;
+      await client.query("BEGIN");
+      try { const value = await work(session); await client.query("COMMIT"); return value; }
+      catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }
+    } } as unknown as DatabaseClient;
 }
 
 const proposal = (projectId: string, taskCount = 2): WorkBatchProposalV1 => ({ schema: "control-room.work-batch-proposal/v1",
@@ -482,4 +496,303 @@ test("20 concurrent describes on one project are refused in bounded time without
         WHERE tenant_id=$1 AND project_id=$2 AND version<>1`, [scope.tenantId, scope.projectId])).rows[0].n, 0);
     } finally { await web.end(); await admin.end(); }
   }, { port: PORT + 6, allowedPorts: ALLOWED, boundMs: 240_000 });
+});
+/** The real coordinator, over the real stores, on the real logins.
+ *
+ * Everything above this line proves the ADAPTER. This proves the thing the
+ * review actually found broken: the retry of a describe that already succeeded.
+ * It is built from the production pieces -- IntakeCoordinatorV1, the real
+ * PostgresIntakeSuggestionStoreV1, PostgresIntakePlannerFailureStoreV1,
+ * PostgresIntakeNeedsYouStoreV1, PostgresIntakeCompletionLookupV1, and
+ * WorkBatchServiceV1 on the intake login -- with only the planner and the
+ * allowance doubled, because neither has a production adapter yet.
+ *
+ * TWO logins, and that is the production shape rather than a convenience. The
+ * proposal goes in through the INTAKE login (0200's suggestions, 0093's batches)
+ * and the failure counter and the Needs-you ledger are the COORDINATOR's (0202
+ * grants them to control_room_task_coordinator and to nobody else). So the
+ * harness takes both clients: one for the suggestion/submission stores and one
+ * for the failure/needs-you/completion stores. Running the failure store on the
+ * intake login fails with "permission denied for table
+ * control_planner_failure_counters" -- measured, and it is 0202's grant doing its
+ * job.
+ *
+ * The planner double VARIES its answer run to run, exactly as a real LLM's does.
+ * That is the load-bearing detail: with a fixed reply the old code would have
+ * re-run the planner and then re-submitted the identical bytes, which the store's
+ * idempotency check treats as an exact replay and answers happily. The bug only
+ * appears when the reply differs, which is the normal case. */
+function coordinatorFor(input: Readonly<{ intake: DatabaseClient; coordinatorDb: DatabaseClient;
+  agentId: string; onRun: () => void; onConsume: () => void; varying: boolean; completions?: boolean;
+  /** The project the planner double proposes for. It MUST be the project the
+   * request names: the coordinator refuses a reply whose proposal carries a
+   * different projectId (proposal_cross_project), so a hardcoded tenant A's
+   * project made the second tenant's describe return 'refused' -- the guard
+   * working, and the reason the two-tenant half of the stress run needs its own
+   * harness rather than the shared one. */
+  projectId?: string }>) {
+  const projectId = input.projectId ?? scope.projectId;
+  const runs: string[] = [];
+  const store = new PostgresIntakeSuggestionStoreV1(input.intake, KEY);
+  const completions = input.completions === false ? undefined
+    : new PostgresIntakeCompletionLookupV1(input.intake);
+  const coordinator = new IntakeCoordinatorV1(
+    { read: () => ({ workerId: "worker:chief", workerKind: "codex", modelKey: "model:plan", effort: "high" }) },
+    { async run() {
+      input.onRun();
+      // A varying reply: a different part count each run, so two runs of the
+      // same request key carry DIFFERENT content and the store must refuse the
+      // second one rather than answer with the first.
+      const taskCount = input.varying ? 2 + runs.length : 3;
+      runs.push(String(taskCount));
+      return { replyText: JSON.stringify(proposal(projectId, taskCount)) };
+    } },
+    { async consume() { input.onConsume(); return { allowed: true as const }; } },
+    new PostgresIntakePlannerFailureStoreV1(input.coordinatorDb,
+      () => ({ tenantId: scope.tenantId, projectId: scope.projectId }), () => LATER),
+    new PostgresIntakeNeedsYouStoreV1(input.coordinatorDb, () => ({ identityId: input.agentId }), () => LATER),
+    new WorkBatchServiceV1(new WorkBatchStoreV1(input.intake, KEY)),
+    store, catalog, ["code.change"], completions);
+  return { coordinator, store, runs };
+}
+
+test("B2: retrying a describe that already succeeded returns the stored receipt, with no second run", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    const intake = new Client(postgres.connection("control_room_work_intake_agent")); await intake.connect();
+    const tasks = new Client(postgres.connection("coordinator")); await tasks.connect();
+    try {
+      await seedTenant(admin, scope); await seedIdentities(admin, scope, "");
+      const agentId = "identity:chief-agent";
+      const principal = { tenantId: scope.tenantId, identityId: agentId, actorType: "agent" as const,
+        authenticatedAt: NOW, expiresAt: LATER };
+      let runs = 0, consumes = 0;
+      const { coordinator, runs: replies } = coordinatorFor({ intake: database(intake),
+        coordinatorDb: database(tasks), agentId,
+        onRun: () => { runs += 1; }, onConsume: () => { consumes += 1; }, varying: true });
+      const key = "orchestrator:describe-retry-0001";
+      const describe = () => coordinator.coordinateInitial({ principal, projectId: scope.projectId,
+        ownerRequest: "Prepare the launch note.", idempotencyKey: key, now: NOW });
+
+      const first = await describe();
+      assert.equal(first.status, "submitted", "the first describe submits");
+      if (first.status !== "submitted") return;
+      const batchId = first.submission.batchId;
+      assert.equal(runs, 1, "one planner run");
+      assert.equal(consumes, 1, "one allowance consumption");
+
+      // Now the SAME request, three times, exactly as the owner's "Check this
+      // exact request again" sends it. Without the completion lookup each of
+      // these re-ran the planner, got a DIFFERENT reply, and the submission
+      // refused with replay_conflict -- a 503 to the owner for a proposal that
+      // already exists.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const retry = await describe();
+        assert.equal(retry.status, "submitted",
+          `retry ${attempt + 1} must return the stored result, not re-run the planner`);
+        if (retry.status === "submitted") assert.equal(retry.submission.batchId, batchId,
+          "and it must be the SAME batch, not a new one");
+      }
+      assert.equal(runs, 1, "three exact retries spent no further planner run");
+      assert.equal(consumes, 1, "nor a further allowance unit");
+      assert.equal(replies.length, 1, "the planner was called exactly once in total");
+      assert.equal((await admin.query(`SELECT count(*)::int AS n FROM work_batches
+        WHERE tenant_id=$1 AND project_id=$2`, [scope.tenantId, scope.projectId])).rows[0].n, 1,
+        "one batch, and no duplicate from the retries");
+    } finally { await tasks.end(); await intake.end(); await admin.end(); }
+  }, { port: PORT + 7, allowedPorts: ALLOWED, boundMs: 240_000 });
+});
+
+test("B4: a differing replay under a used request key is refused, not answered with the stored row", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    const intake = new Client(postgres.connection("control_room_work_intake_agent")); await intake.connect();
+    const tasks = new Client(postgres.connection("coordinator")); await tasks.connect();
+    try {
+      await seedTenant(admin, scope); await seedIdentities(admin, scope, "");
+      const agentId = "identity:chief-agent";
+      const { coordinator } = coordinatorFor({ intake: database(intake), coordinatorDb: database(tasks),
+        agentId, onRun: () => {}, onConsume: () => {}, varying: false });
+      const principal = { tenantId: scope.tenantId, identityId: agentId, actorType: "agent" as const,
+        authenticatedAt: NOW, expiresAt: LATER };
+      const batchDigest = await seedBatch(admin, scope, "batch:chief-replay", agentId);
+      const requestKey = "resplit-replay-0001";
+      // The re-split's `currentProposal` must be the batch's ACTUAL current plan --
+      // the coordinator checks its digest against `baseRevisionDigest` and refuses
+      // a mismatch as intake_coordinator_input_invalid, which is the guard
+      // working.
+      //
+      // The B4 case is exercised at revision 1 rather than by advancing the batch,
+      // and that is deliberate: advancing the batch to revision 2 makes 0200's
+      // write guard refuse the whole INSERT ("batch.state/version must match"),
+      // so the differing replay would be refused by the DATABASE for the wrong
+      // reason and the adapter's comparison would never run. To reach the
+      // adapter's arm the batch must still be current, so the differing content
+      // is the PLANNER'S NEW PROPOSAL under the same key -- a different part
+      // count, a different proposal digest, same bound revision.
+      const current = proposal(scope.projectId);
+      const first = await coordinator.coordinateResplit({ principal, projectId: scope.projectId,
+        ownerRequest: "Split it again, more safely.", requestKey, batchId: "batch:chief-replay",
+        baseRevision: 1, baseRevisionDigest: batchDigest, currentProposal: current, now: NOW });
+      assert.equal(first.status, "suggested");
+      if (first.status !== "suggested") return;
+      const suggestionId = first.suggestion.suggestionId;
+      // A second coordinator whose planner returns DIFFERENT content for the same
+      // key and the same current revision. The store must refuse it rather than
+      // answer with the row already stored -- which is exactly what production did
+      // before the fix, and what the in-memory double refused.
+      const different = new IntakeCoordinatorV1(
+        { read: () => ({ workerId: "worker:chief", workerKind: "codex", modelKey: "model:plan", effort: "high" }) },
+        { async run() { return { replyText: JSON.stringify(proposal(scope.projectId, 6)) }; } },
+        { async consume() { return { allowed: true as const }; } },
+        new PostgresIntakePlannerFailureStoreV1(database(tasks),
+          () => ({ tenantId: scope.tenantId, projectId: scope.projectId }), () => LATER),
+        new PostgresIntakeNeedsYouStoreV1(database(tasks), () => ({ identityId: agentId }), () => LATER),
+        new WorkBatchServiceV1(new WorkBatchStoreV1(database(intake), KEY)),
+        new PostgresIntakeSuggestionStoreV1(database(intake), KEY), catalog, ["code.change"],
+        new PostgresIntakeCompletionLookupV1(database(intake)));
+      // `now: NOW`, not LATER: the principal's `expiresAt` IS LATER, and
+      // evaluatePolicy refuses a request at or after the session expiry
+      // ("session_expired"). Passing LATER here refused the whole re-split as
+      // planner_proposer_unauthorized before it ever reached the store, which
+      // reads like a broken authority check rather than a fixture clock.
+      await assert.rejects(different.coordinateResplit({ principal, projectId: scope.projectId,
+        ownerRequest: "Split it again, more safely.", requestKey, batchId: "batch:chief-replay",
+        baseRevision: 1, baseRevisionDigest: batchDigest, currentProposal: current, now: NOW }),
+      (error: unknown) => error instanceof Error
+        && /intake_suggestion_replay_conflict|replay_conflict/u.test(error.message),
+      "a differing replay under a used request key is refused");
+      // The stored suggestion is untouched, and there is still exactly one.
+      assert.equal((await admin.query(`SELECT count(*)::int AS n FROM work_batch_split_suggestions
+        WHERE tenant_id=$1 AND project_id=$2 AND request_key=$3`, [scope.tenantId, scope.projectId, requestKey]))
+        .rows[0].n, 1, "a refused differing replay left the one stored row alone");
+      assert.ok(suggestionId, "the original suggestion still has its id");
+    } finally { await tasks.end(); await intake.end(); await admin.end(); }
+  }, { port: PORT + 8, allowedPorts: ALLOWED, boundMs: 240_000 });
+});
+
+test("STRESS: 20 concurrent describes + retries on one project, two tenants, through the real coordinator", async t => {
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    // 20 callers, each with its OWN pooled connection, as separate requests would.
+    const CONCURRENCY = 20;
+    const clients = await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
+      const client = new Client(postgres.connection("control_room_work_intake_agent")); await client.connect(); return client;
+    }));
+    // A coordinator connection per caller too: 0202's counter and ledger are the
+    // coordinator's, and sharing one connection across 20 callers would hide any
+    // per-connection problem the burst would otherwise expose.
+    const coordinators = await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
+      const client = new Client(postgres.connection("coordinator")); await client.connect(); return client;
+    }));
+    try {
+      // Only tenant A is seeded here. `seedTenant` REBINDS the singleton
+      // work_intake_tenant_binding, so seeding the second tenant before A's own
+      // describes run refuses all 20 of A's submissions with "new row violates
+      // row-level security policy control_idempotency_work_intake_scope". That
+      // is 0093 working as designed -- the intake login can only ever write for
+      // the tenant it is bound to -- and it is the property the two-tenant half of
+      // this test then exercises deliberately, at the end.
+      await seedTenant(admin, scope); await seedIdentities(admin, scope, "");
+      const agentId = "identity:chief-agent";
+      const principal = { tenantId: scope.tenantId, identityId: agentId, actorType: "agent" as const,
+        authenticatedAt: NOW, expiresAt: LATER };
+
+      // A: 20 concurrent describes on 20 DIFFERENT keys (distinct requests).
+      // Each should produce its own batch -- they are genuinely 20 different
+      // requests, not 20 retries of one.
+      const started = Date.now();
+      const results = await Promise.all(clients.map(async (client, index) => {
+        const runs = { planner: 0, consume: 0 };
+        const { coordinator } = coordinatorFor({ intake: database(client),
+          coordinatorDb: database(coordinators[index]!), agentId,
+          onRun: () => { runs.planner += 1; }, onConsume: () => { runs.consume += 1; }, varying: false });
+        try {
+          const value = await coordinator.coordinateInitial({ principal, projectId: scope.projectId,
+            ownerRequest: `Prepare bounded job ${index}.`, idempotencyKey: `request:stress-${String(index).padStart(4, "0")}`,
+            now: NOW });
+          return { ok: true as const, value, runs };
+        } catch (error) { return { ok: false as const, message: String(error), runs }; }
+      }));
+      const elapsed = Date.now() - started;
+      const failedResults = results.flatMap(result => result.ok ? [] : [result.message]);
+      assert.deepEqual(failedResults, [],
+        `every concurrent describe should succeed: ${failedResults.join("; ")}`);
+      assert.ok(elapsed < 60_000, `bounded: 20 concurrent describes took ${elapsed}ms`);
+      // 20 distinct requests = 20 runs and 20 batches. This is the property the
+      // completion lookup must NOT break: it answers a REPEAT, never a new one.
+      assert.equal(results.reduce((sum, r) => sum + r.runs.planner, 0), CONCURRENCY,
+        "20 distinct requests are 20 planner runs");
+      const batches = await admin.query<{ n: string }>(`SELECT count(*)::text AS n FROM work_batches
+        WHERE tenant_id=$1 AND project_id=$2`, [scope.tenantId, scope.projectId]);
+      assert.equal(batches.rows[0]!.n, String(CONCURRENCY), "20 distinct requests produced 20 batches");
+      // Nothing started and nothing was approved by a describe.
+      assert.equal((await admin.query(`SELECT count(*)::int AS n FROM work_batches
+        WHERE tenant_id=$1 AND project_id=$2 AND state<>'proposed'`, [scope.tenantId, scope.projectId]))
+        .rows[0].n, 0, "every batch is still proposed: a describe approves nothing");
+      assert.equal((await admin.query(`SELECT count(*)::int AS n FROM control_jobs
+        WHERE tenant_id=$1`, [scope.tenantId])).rows[0].n, 0, "and no job was created");
+
+      // B: 20 concurrent RETRIES on ONE already-completed key. With the
+      // completion lookup, 0 of them run the planner; without it, each would.
+      const { coordinator: retryCoordinator } = coordinatorFor({ intake: database(clients[0]!),
+        coordinatorDb: database(coordinators[0]!), agentId, onRun: () => {}, onConsume: () => {}, varying: true });
+      const completedKey = "orchestrator:stress-retry-0001";
+      const firstCall = await retryCoordinator.coordinateInitial({ principal, projectId: scope.projectId,
+        ownerRequest: "Prepare one bounded job.", idempotencyKey: completedKey, now: NOW });
+      assert.equal(firstCall.status, "submitted", "the first call under the retry key succeeds");
+      if (firstCall.status !== "submitted") return;
+      const retryBatchId = firstCall.submission.batchId;
+      // Now fire 20 retries on that completed key, concurrently. Each shares the
+      // completion lookup, so each returns the stored receipt with no run.
+      let retryRuns = 0, retryConsumes = 0;
+      const retries = await Promise.all(clients.map((client, index) => {
+        const { coordinator: c } = coordinatorFor({ intake: database(client),
+          coordinatorDb: database(coordinators[index]!), agentId,
+          onRun: () => { retryRuns += 1; }, onConsume: () => { retryConsumes += 1; }, varying: true });
+        return c.coordinateInitial({ principal, projectId: scope.projectId,
+          ownerRequest: "Prepare one bounded job.", idempotencyKey: completedKey, now: NOW });
+      }));
+      const notSubmitted = retries.flatMap(r => r.status === "submitted" ? [] : [r.status]);
+      assert.deepEqual(notSubmitted, [],
+        `every retry returns the stored receipt: ${notSubmitted.join(",")}`);
+      const retryIds = new Set(retries.flatMap(r => r.status === "submitted" ? [r.submission.batchId] : []));
+      assert.deepEqual([...retryIds], [retryBatchId], "every retry returns the SAME batch id");
+      assert.equal(retryRuns, 0, "20 concurrent retries spent zero planner runs");
+      assert.equal(retryConsumes, 0, "and zero allowance units");
+      // Under concurrency the durable store's idempotency held: 21 submissions on
+      // 1 key = 1 batch, not 21. Asserted on the count rather than left implied.
+      assert.equal((await admin.query(`SELECT count(*)::int AS n FROM work_batches
+        WHERE tenant_id=$1 AND project_id=$2`, [scope.tenantId, scope.projectId])).rows[0].n,
+        CONCURRENCY + 1, "21 submissions on the retry key and 20 distinct keys produced 21 batches, not 41");
+
+      // C: the SECOND tenant is unaffected throughout -- its own coordinator,
+      // its own batches, and no cross-tenant visibility.
+      //
+      // `seedTenant` REBINDS the work_intake_tenant_binding singleton, so this is
+      // where the second tenant is seeded and where A's describes have finished.
+      // Doing it earlier refused all 20 of A's submissions with "new row violates
+      // row-level security policy control_idempotency_work_intake_scope" -- which
+      // is 0093 working exactly as designed, and a property worth stating: the
+      // intake login can only ever write for the tenant it is bound to.
+      await seedTenant(admin, other); await seedIdentities(admin, other, "-other");
+      const otherPrincipal = { tenantId: other.tenantId, identityId: "identity:chief-agent-other",
+        actorType: "agent" as const, authenticatedAt: NOW, expiresAt: LATER };
+      const { coordinator: otherCoordinator } = coordinatorFor({ intake: database(clients[2]!),
+        coordinatorDb: database(coordinators[2]!), agentId: otherPrincipal.identityId,
+        onRun: () => {}, onConsume: () => {}, varying: false, projectId: other.projectId });
+      const otherResult = await otherCoordinator.coordinateInitial({ principal: otherPrincipal, projectId: other.projectId,
+        ownerRequest: "Prepare a different job.", idempotencyKey: "request:other-0001", now: NOW });
+      assert.equal(otherResult.status, "submitted", "the second tenant's describe works independently");
+      assert.equal((await admin.query(`SELECT count(*)::text AS n FROM work_batches WHERE tenant_id=$1`,
+        [other.tenantId])).rows[0]!.n, "1", "the second tenant got exactly one batch of its own");
+      assert.equal((await admin.query(`SELECT count(*)::text AS n FROM work_batches WHERE tenant_id=$1 AND project_id=$2`,
+        [scope.tenantId, scope.projectId])).rows[0]!.n, String(CONCURRENCY + 1),
+        "the first tenant's batch count is unchanged by the second tenant's work");
+    } finally { await Promise.all([...clients, ...coordinators].map(async client => {
+      await client.end().catch(() => {}); })); await admin.end(); }
+  }, { port: PORT + 9, allowedPorts: ALLOWED, boundMs: 300_000 });
 });

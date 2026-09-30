@@ -376,6 +376,15 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
  * produced a proposal?" is a read of one row by the SAME key the submission uses,
  * and the answer is already durable.
  *
+ * WHICH LOGIN READS IT, and why that is measured rather than chosen. The intake
+ * login is the one that wrote the row, and it holds SELECT on
+ * control_idempotency (production_table_grants.sql). The coordinator login does
+ * NOT -- 0202 gave it the failure counter and the Needs-you ledger and nothing
+ * else, so pointing this at the coordinator login fails with "permission denied
+ * for table control_idempotency" (measured). The intake login is therefore the
+ * right reader on both counts: it is the identity whose receipt it is, and it is
+ * the one the durable row is scoped to.
+ *
  * Only a COMPLETED row counts. A 'processing' row is a submission that was in
  * flight when the process died, and answering from it would hand the owner a
  * receipt for a batch that may never have been committed -- so it reads as "not
