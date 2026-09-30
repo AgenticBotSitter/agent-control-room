@@ -197,6 +197,13 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
+    "find": "    const transient = typeof error?.code === \"string\" && (error.code === \"rate_limited\"\n      || [\"http_408\", \"http_429\"].includes(error.code) || /^http_5\\d\\d$/u.test(error.code));",
+    "replace": "    const transient = typeof error?.code === \"string\" && /^http_5\\d\\d$/u.test(error.code);",
+    "test": "node --test --test-name-pattern \"rate limits and timeout responses\" tests/fleet-connector-install.test.mjs",
+    "why": "408, 429 and rate-limited enrollment replies preserve the pending secret and nonce for an exact retry"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
     "find": "          if (!elected) continue;",
     "replace": "          if (false) continue;",
     "test": "node --test --test-name-pattern \"losing stale cleaner\" tests/fleet-connector-install.test.mjs",
