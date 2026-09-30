@@ -663,7 +663,7 @@ export class FleetGatewayStoreV1 {
    */
   async reconcile() {
     const now = this.#now();
-    const applied = { reviews: 0, revocations: 0 };
+    const applied = { reviews: 0, revocations: 0, leaseRevocations: 0 };
     const reviews = (await this.db.query<{ review_id: string; result_id: string; decision: string; claim_id: string;
       job_id: string; attempt_id: string; project_id: string }>(`SELECT rv.review_id,rv.result_id,rv.decision,r.claim_id,
         r.job_id,r.attempt_id,r.project_id FROM fleet_result_reviews rv
@@ -711,10 +711,62 @@ export class FleetGatewayStoreV1 {
         const node = await readFleetEntityV1(tx, this.#tenantId, "node", worker.node_id);
         if (node.state !== "revoked") await moveFleetEntityV1(tx, node, "revoked", { key: worker.worker_id, occurredAt: now,
           actor: gatewayActor, metadata: { reason: "owner_revoked_worker" } });
+        // Fleet's counterpart of the local Stop path. The owner's revocation is
+        // a deliberate withdrawal, not a stall, so the in-flight lease leaves
+        // the active set exactly as the supervisor's candidate query looks for
+        // one. Without this, the supervisor -- now the sole expiry owner --
+        // would find the abandoned lease just as it finds a genuine stall,
+        // count a lapse, and on a second lapse raise a Needs-you item for work
+        // the owner took back on purpose.
+        //
+        // The move runs through moveFleetEntityV1, not CanonicalStore
+        // .revokeLease, because 0140's gateway job guard admits `orphaned` but
+        // not `cancelled`, and that guard cannot be widened here: the fleet
+        // login is not allowed to cancel work on its own. `ready` is likewise
+        // refused once the claim has been withdrawn, so the job is left
+        // `orphaned`, where the owner's own flows (task-service's Needs-you
+        // query, the assignment coordinator's reassignment) already pick it
+        // up. Nothing is marked done.
+        applied.leaseRevocations += await this.#revokeWorkerLeases(tx, worker, now);
         applied.revocations += 1;
       });
     }
     return Object.freeze(applied);
+  }
+
+  /** Every live lease this worker's claims still hold, revoked through the
+   * shared fleet transition path. Bounded and idempotent: a lease already out
+   * of `active` is left alone, so a repeated reconcile, a concurrent sweep or
+   * a second revocation neither throws nor double-counts. */
+  async #revokeWorkerLeases(tx: DatabaseSession, worker: { worker_id: string }, now: string): Promise<number> {
+    const rows = (await tx.query<{ job_id: string; attempt_id: string; lease_id: string }>(
+      `SELECT l.job_id,l.attempt_id,l.id AS lease_id FROM fleet_claims fc
+      JOIN control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id
+      WHERE fc.tenant_id=$1 AND fc.worker_id=$2 AND l.state='active' ORDER BY fc.claimed_at LIMIT 50`,
+    [this.#tenantId, worker.worker_id])).rows;
+    let revoked = 0;
+    for (const row of rows) {
+      // Lock the lease and the claim's canonical rows in the same order every
+      // other fleet transition uses, so a concurrent sweep cannot interleave.
+      const lease = await readFleetEntityV1(tx, this.#tenantId, "lease", row.lease_id);
+      if (lease.state !== "active") continue;
+      const attempt = await readFleetEntityV1(tx, this.#tenantId, "attempt", row.attempt_id);
+      const job = await readFleetEntityV1(tx, this.#tenantId, "job", row.job_id);
+      const base = { key: `${worker.worker_id}:${lease.id}`, occurredAt: now, actor: gatewayActor,
+        metadata: { reason: "owner_revoked_worker", leaseId: lease.id } };
+      await moveFleetEntityV1(tx, lease, "revoked", base);
+      // An attempt waiting on an owner decision already has its result stored;
+      // cancelling that would throw away the worker's answer. It is left alone
+      // and the job is left waiting_approval, which is the owner's decision.
+      if (attempt.state !== "waiting") await moveFleetEntityV1(tx, attempt, "cancelled",
+        { ...base, patch: { finishedAt: now, safeFailureCode: "worker_revoked" } });
+      if (job.state === "leased" || job.state === "running")
+        await moveFleetEntityV1(tx, job, "orphaned", base);
+      await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+        [this.#tenantId, lease.id]);
+      revoked += 1;
+    }
+    return revoked;
   }
 }
 

@@ -838,7 +838,7 @@ test("a claim without a live lease is refused, and no claim can exist without it
   await assert.rejects(worker.client.progress(claim.claimId, "late", "progress-key-late"), /expired/u);
   await assert.rejects(worker.client.result(claim.claimId, "late result", [], "result-key-late01"), /expired/u);
   const applied = await f.gateway.reconcile();
-  assert.deepEqual(applied, { reviews: 0, revocations: 0 });
+  assert.deepEqual(applied, { reviews: 0, revocations: 0, leaseRevocations: 0 });
   const untouched = await f.query<{ state: string }>("SELECT state FROM control_jobs WHERE id=$1", [task.jobId]);
   assert.deepEqual(untouched, [{ state: "leased" }], "gateway reconcile does not expire or requeue the fleet lease");
   const expiredAt = await f.query<{ expires_at: string | Date }>(`SELECT l.expires_at FROM fleet_claims fc

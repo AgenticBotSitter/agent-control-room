@@ -150,16 +150,28 @@ test("fleet connector end to end and least privilege, as the production logins",
       const lapseTask = await seedProposedTask(admin.client, PROJECT_A, "pg-lapse");
       const lapseOffer = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: lapseTask.jobId,
         capability: "writing" });
+      // An elapsed lease, aged the way a real machine that stops reporting
+      // would age it: the acquisition moves back with the expiry, because
+      // control_leases checks expires_at > acquired_at and 0004's payload
+      // mirror compares both instants against the payload. Only the schema
+      // owner may do this; the production coordinator cannot reach around it,
+      // which is the point -- no application role can fake an expiry.
       const expireClaim = async (claimId: string) => admin.client.query(`UPDATE control_leases l
-        SET expires_at=statement_timestamp()-interval '1 second',payload=jsonb_set(l.payload,'{expiresAt}',
-          to_jsonb((statement_timestamp()-interval '1 second')::timestamptz))
+        SET acquired_at=statement_timestamp()-interval '30 seconds',
+          expires_at=statement_timestamp()-interval '10 seconds',
+          payload=l.payload
+            || jsonb_build_object('acquiredAt', to_jsonb((statement_timestamp()-interval '30 seconds')::timestamptz))
+            || jsonb_build_object('expiresAt', to_jsonb((statement_timestamp()-interval '10 seconds')::timestamptz))
         FROM fleet_claims fc WHERE fc.tenant_id=l.tenant_id AND fc.lease_id=l.id AND fc.claim_id=$1`, [claimId]);
       const firstLapseClaim = await client.claim(lapseOffer.offerId, "pg-lapse-claim-01");
       await expireClaim(firstLapseClaim.claimId);
-      assert.deepEqual(await gateway.reconcile(), { reviews: 0, revocations: 0 });
+      assert.deepEqual(await gateway.reconcile(), { reviews: 0, revocations: 0, leaseRevocations: 0 });
       assert.equal((await direct("web", "SELECT state FROM control_jobs WHERE id=$1", [lapseTask.jobId])).rows[0].state,
         "leased", "the production fleet login leaves the elapsed lease untouched");
-      const supervisor = new SupervisorReconcilerV1(coordinator.client, FLEET_TENANT, () => Date.now()+1_000);
+      // A plain clock: a clock skewed into the future would stamp entities
+      // ahead of the real HTTP claims that follow, and the canonical store's
+      // transition-monotonicity guard would then refuse them.
+      const supervisor = new SupervisorReconcilerV1(coordinator.client, FLEET_TENANT);
       const firstLapse = await supervisor.reconcileStalled();
       assert.equal(firstLapse.find(outcome => outcome.jobId === lapseTask.jobId)?.lapseNumber, 1);
       assert.equal((await direct("coordinator", `SELECT lapse_count FROM control_supervisor_task_heads
@@ -259,11 +271,37 @@ test("fleet connector end to end and least privilege, as the production logins",
       // --- Existing roles keep working: the guards are no-ops for them.
       await direct("coordinator", "UPDATE control_jobs SET updated_at=updated_at WHERE id=$1", [untouched.jobId]);
 
-      // --- Revocation takes effect on the production logins.
-      await owner.revokeWorker(ownerIdentity(), joined.workerId);
+      // --- Revocation takes effect on the production logins. The joined worker
+      // first claims real work, so this also proves the owner's revocation is
+      // not counted as a stall by the supervisor -- the fleet counterpart of
+      // what the local Stop path already does through revokeLease.
+      const revokedTask = await seedProposedTask(admin.client, PROJECT_A, "pg-revoked");
+      const revokedOffer = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: revokedTask.jobId,
+        capability: "writing" });
+      const revokedClaim = await client.claim(revokedOffer.offerId, "pg-revoked-claim-01");
+      const applied = await owner.revokeWorker(ownerIdentity(), joined.workerId);
+      assert.equal(applied.revoked, true);
       await assert.rejects(client.me(), /unauthenticated/u);
       const identity = await direct("web", "SELECT state FROM control_identities WHERE id LIKE 'identity:fleet:%'");
       assert.equal(identity.rows[0].state, "revoked");
+      const revokedLease = await direct("web", "SELECT state FROM control_leases WHERE id=" +
+        "(SELECT lease_id FROM fleet_claims WHERE tenant_id=$1 AND claim_id=$2)", [FLEET_TENANT, revokedClaim.claimId]);
+      assert.equal(revokedLease.rows[0].state, "revoked",
+        "the production fleet login released the in-flight lease at revocation");
+      // The supervisor is the sole expiry owner and must find nothing to sweep:
+      // a deliberate revocation is not a lapse, so no Needs-you item is raised.
+      assert.equal((await supervisor.reconcileStalled()).length, 0);
+      assert.equal((await direct("coordinator", `SELECT count(*)::int AS count FROM control_supervisor_task_heads
+        WHERE tenant_id=$1 AND job_id=$2`, [FLEET_TENANT, revokedTask.jobId])).rows[0].count, 0,
+      "a revoked worker's lease never counts as a lapse");
+      // Only one stall-shaped item exists on the whole run, and it belongs to the
+      // genuine second lapse. The run's other inbox row is the work-batch
+      // proposal approval, which is an owner decision, not a stall.
+      assert.equal((await direct("coordinator", `SELECT count(*)::int AS count FROM control_action_inbox
+        WHERE tenant_id=$1 AND payload->>'reasonCode' IN
+          ('first_stall_requeued','second_stall_needs_attention','stalled_outcome_uncertain')`,
+      [FLEET_TENANT])).rows[0].count, 1,
+      "the only stall item on the whole run is the genuine second lapse");
     } finally {
       await new Promise(done => server.close(done));
       await Promise.all([admin.close(), web.close(), fleet.close(), coordinator.close(), fleetOwner.close(), workIntake.close()]);
