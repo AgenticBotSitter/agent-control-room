@@ -18,7 +18,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { privateWebReadTables, privateWebInsertColumns, privateWebReadColumns,
-  privateWebInsertTables, privateWebUpdateColumns } from "../src/web/v1/private-database-preflight";
+  privateWebInsertTables, privateWebUpdateColumns, taskCoordinatorReadTables, taskCoordinatorInsertColumns,
+  taskCoordinatorInsertTables, taskCoordinatorUpdateColumns, taskCoordinatorDeleteTables,
+} from "../src/web/v1/private-database-preflight";
 
 const ROLE_DIRECTORY = join(process.cwd(), "db/roles");
 const PREFLIGHT_SOURCE = join(process.cwd(), "src/web/v1/private-database-preflight.ts");
@@ -85,12 +87,12 @@ function parseGrants(sql: string, role: string): Grants {
 }
 
 /** The web role's table privileges across every role file an operator applies. */
-async function appliedGrants(): Promise<Grants> {
+async function appliedGrants(role = ROLE): Promise<Grants> {
   const files = (await readdir(ROLE_DIRECTORY)).filter(file => file.endsWith(".sql")).sort();
   assert.ok(files.length > 0, "no db/roles/*.sql files were found");
   const combined: Grants = new Map();
   for (const file of files) {
-    const grants = parseGrants(await readFile(join(ROLE_DIRECTORY, file), "utf8"), ROLE);
+    const grants = parseGrants(await readFile(join(ROLE_DIRECTORY, file), "utf8"), role);
     for (const [privilege, tables] of grants) {
       const target = combined.get(privilege) ?? new Map<string, Columns>();
       for (const [table, columns] of tables) target.set(table, mergeGrant(target.get(table), columns));
@@ -195,6 +197,47 @@ test("every table the role files grant the web login is one the private-web pref
 
   assert.deepEqual(disagreements, [],
     "the private-web preflight and the db/roles files disagree; a correct database would fail startup");
+});
+
+test("every task-coordinator grant is exactly declared by its startup preflight", async () => {
+  const role = "control_room_task_coordinator";
+  const applied = await appliedGrants(role);
+  // pg-boss objects live in their own schema and are verified by the native
+  // queue preflight. This comparison covers the public application tables
+  // accepted by verifyTaskCoordinatorDatabase.
+  for (const tables of applied.values()) for (const table of [...tables.keys()])
+    if (table.includes(".")) tables.delete(table);
+  const wideInserts = new Set(taskCoordinatorInsertTables);
+  const insertable = new Map<string, Columns>();
+  for (const table of new Set([...wideInserts, ...Object.keys(taskCoordinatorInsertColumns)]))
+    insertable.set(table, wideInserts.has(table) ? null : [...taskCoordinatorInsertColumns[table]!]);
+  const accepted = new Map<Privilege, Map<string, Columns>>([
+    ["SELECT", new Map(taskCoordinatorReadTables.map(table => [table, null] as [string, Columns]))],
+    ["INSERT", insertable],
+    ["UPDATE", new Map(Object.entries(taskCoordinatorUpdateColumns)
+      .map(([table, columns]) => [table, [...columns]] as [string, Columns]))],
+    ["DELETE", new Map([...taskCoordinatorDeleteTables].map(table => [table, null] as [string, Columns]))],
+  ]);
+  const disagreements: string[] = [];
+  for (const privilege of PRIVILEGES) {
+    const granted = applied.get(privilege) ?? new Map<string, Columns>();
+    const expected = accepted.get(privilege)!;
+    for (const table of granted.keys()) if (!expected.has(table))
+      disagreements.push(`${role} holds ${privilege} on ${table}, undeclared`);
+    for (const table of expected.keys()) if (!granted.has(table))
+      disagreements.push(`${privilege} on ${table} is declared, not granted`);
+    for (const [table, columns] of granted) {
+      const wanted = expected.get(table);
+      if (wanted === undefined) continue;
+      if ((wanted === null) !== (columns === null)) disagreements.push(`${table}: ${privilege} grant shape differs`);
+      else if (columns && wanted) {
+        const difference = [...wanted].filter(column => !columns.includes(column))
+          .concat([...columns].filter(column => !wanted.includes(column))).sort();
+        if (difference.length) disagreements.push(`${table}: ${privilege} columns differ: ${difference.join(", ")}`);
+      }
+    }
+  }
+  assert.deepEqual(disagreements, [], "the task-coordinator grants and startup preflight disagree");
 });
 
 test("the web DELETE declaration is read from the preflight, not restated here", () => {

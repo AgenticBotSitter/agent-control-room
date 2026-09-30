@@ -36,6 +36,7 @@ import { taskRevisionContextSchema, taskRevisionRequestSchema, type TaskRevision
 import { inheritTaskModelRequestV1, resolveTaskModelV1, type TaskModelCatalogV1,
   type RequestedTaskModelV1, type TaskModelWorkerKindV1 } from "./task-model-selection";
 import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
+import { composeReusableSkillInstructionsV1, readBoundReusableSkillsInSessionV1 } from "../../skills/v1/service";
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 /** Server-owned template, never accepted from a browser or worker request. This first planning
@@ -759,6 +760,9 @@ export class TaskExecutionPlanner {
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const source = await this.source(tx, projectId, sourceJobId);
       if (source.job.inputDigest !== expectedInputDigest) throw new WebAccessError("conflict");
+      const boundSkills = await readBoundReusableSkillsInSessionV1(tx,
+        { tenantId: this.scope.tenantId, projectId, jobId: sourceJobId });
+      const prompt = composeReusableSkillInstructionsV1(source.request.objective, boundSkills);
       template = this.selectTemplate(projectId, templateId);
       const templateDigest = sha256Digest(template), sourceDigest = sha256Digest(source);
       const prior = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
@@ -777,7 +781,7 @@ export class TaskExecutionPlanner {
       requireTemplateTime(); materializing = true;
       const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
-      const input = { prompt: source.request.objective, instructions: template.instructions };
+      const input = { prompt, instructions: template.instructions };
       const codex = template.adapter === CODEX_APP_SERVER_ADAPTER;
       const codexLocal = template.adapter === CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1;
       const hermes021 = template.adapter === HERMES_021_MACOS_LOCAL_ADAPTER_V1;
@@ -795,7 +799,7 @@ export class TaskExecutionPlanner {
         projectId, sourceJobId, sourceDigest, sourceInputDigest: expectedInputDigest, templateDigest, plannedBy: actor.id, plannedAt: actor.now, input,
         acceptanceProfileId: template.acceptanceProfileId, acceptanceProfileDigest: template.acceptanceProfileDigest,
         request: { ...base, kind: "request", id: `request:execution:${suffix}`, projectId, title: source.request.title,
-          objective: source.request.objective, state: "draft", priority: source.request.priority,
+          objective: prompt, state: "draft", priority: source.request.priority,
           requestedBy: { actorId: actor.id, actorType: "human" }, idempotencyKey: `execution:${suffix}` },
         workflow: { ...base, kind: "workflow", id: `workflow:execution:${suffix}`, projectId, requestId: `request:execution:${suffix}`,
           definitionVersion: codex ? "codex-task-plan/v1" : codexLocal ? "codex-owner-trusted-local-task-plan/v1" : hermes021 ? "hermes-021-task-plan/v1" : hermesLocal ? "hermes-local-task-plan/v1" : claude ? "claude-code-local-task-plan/v1" : remote ? "controller-worker-remote-task-plan/v1" : "native-task-plan/v1", definitionDigest: sha256Digest({ sourceDigest, templateDigest }),

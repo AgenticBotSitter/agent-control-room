@@ -59,6 +59,10 @@ import { SessionWatchServiceV1 } from "./session-watch-service";
 import { sessionWatchIdSchema } from "./session-watch-wire";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
+import { RecurringRuleServiceV1 } from "../../recurring/v1";
+import { ReusableSkillServiceV1 } from "../../skills/v1";
+import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
+import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -318,6 +322,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey, newsIntegrityKey: options.news?.integrityKey,
       productConfiguration });
+  const recurringRules = new RecurringRuleServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
+  const reusableSkills = new ReusableSkillServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
@@ -816,6 +824,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
             return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications,
               planning, assignment, approvals, submission, revisions, gatewayAssertionProfile, clock })(request);
+          if (/^\/api\/v1\/projects\/[^/]+\/recurring-rules(?:\/|$)/.test(url.pathname))
+            return createRecurringRuleHttpHandlerV1({ origin: site.origin, trust, service: recurringRules,
+              gatewayAssertionProfile, clock })(request);
+          if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname))
+            return createReusableSkillHttpHandlerV1({ origin: site.origin, trust, service: reusableSkills,
+              gatewayAssertionProfile, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });

@@ -40,6 +40,9 @@ Required top-level fields:
 - `class`: `declarative` or `code`.
 - `permissions`, `ui`, and `events`: the complete declarations described
   below.
+- `skills`: optional named, integer-versioned instruction blocks. Each block is
+  inert text with a content digest; importing or referencing it cannot execute
+  code or grant authority.
 - `data`: optional only when the module owns no data. If present, it requires
   an isolated schema namespace, project and tenant scoping, and paired up/down
   migration files.
@@ -56,6 +59,19 @@ signer changes. Runtime authorization is always the intersection of:
 
 A manifest can narrow authority. It can never widen authority supplied by the
 host.
+
+## Shared skills
+
+`skills` is available only when `class` is `declarative`; code-class modules
+cannot carry shared skills. It is the portable path for reusable instructions. Each
+entry contains an id, display name, positive version, bounded instruction text,
+and a digest over those exact fields. A changed instruction is a new version;
+an existing version is immutable. Task and pipeline-stage records cite exact
+`id` plus `version` pairs and retain the resolved digest. A skill is text data,
+not a command, hook, executable, credential, permission, approval, assignment,
+or retry policy. Module parsing applies the same printable, credential,
+authority, executable-marker, size, and prototype-pollution refusals to it as
+to every other declarative manifest field.
 
 ## Declared permissions
 

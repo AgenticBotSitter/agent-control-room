@@ -21,6 +21,8 @@ import { createPipelineBuildPublicationAuthoritySnapshotV1,
   derivePipelineBuildPublicationEvidenceKeyV1,
   verifyPipelineBuildPublicationAuthoritySnapshotV1 } from "./build-publication-authority";
 import type { CodexBuildStagePublicationCompositionV1 } from "../../harness/codex-v1/delivery-bound-workspace-preparation";
+import { bindReusableSkillsToTaskInSessionV1, composeReusableSkillInstructionsV1,
+  resolveReusableSkillsInSessionV1 } from "../../skills/v1/service";
 
 type TemplateRow = { id: string; project_id: string; name: string; description: string; stages: unknown;
   max_stages: number; max_total_loops: number; may_advance_unattended: boolean; max_duration_seconds: number;
@@ -444,7 +446,12 @@ export class LinearPipelineServiceV1 {
       actor.require("tasks.propose", projectId, true); await this.#project(tx, projectId, true);
       // Selection policy is protected state.  Check authorization first so an
       // unprivileged caller cannot use template validation as a policy oracle.
-      for (const stage of parsed.data.stages) await this.#assertSelection(stage);
+      for (const stage of parsed.data.stages) {
+        await this.#assertSelection(stage);
+        const skills = await resolveReusableSkillsInSessionV1(tx,
+          { tenantId: this.scope.tenantId, projectId }, stage.skillRefs ?? []);
+        composeReusableSkillInstructionsV1(parsed.data.description, skills);
+      }
       const id = `pipeline-template:${randomUUID()}`, now = actor.now;
       const partial: Omit<TemplateRow, "auth_tag"> = { id, project_id: projectId, name: parsed.data.name,
         description: parsed.data.description, stages: parsed.data.stages, max_stages: 3,
@@ -539,6 +546,8 @@ export class LinearPipelineServiceV1 {
           dependsOnJobIds: stage.ordinal ? [jobIds[stage.ordinal - 1]!] : [], authority,
           retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } };
         await canonical.create(job);
+        await bindReusableSkillsToTaskInSessionV1(tx, { tenantId: this.scope.tenantId, projectId,
+          jobId: job.id, references: stage.skillRefs ?? [], boundAt: now });
         await tx.query(`UPDATE control_jobs SET stage_kind=$1,stage_ordinal=$2,pipeline_run_id=$3
           WHERE tenant_id=$4 AND id=$5`, [stage.stageKind, stage.ordinal, runId, this.scope.tenantId, job.id]);
         await tx.query(`INSERT INTO control_task_model_selections(tenant_id,project_id,job_id,worker_kind,selection_key,model,effort,
