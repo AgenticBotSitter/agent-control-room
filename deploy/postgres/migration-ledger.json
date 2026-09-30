@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "8cccd752939865323bd993425e782a6046f1a371f42e742b1d6de8582471f78b",
+  "digest": "c5b41ea016cfa02bf374bc8e031b633bdce8f8a27ed231a99c037417ca6a53f9",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -815,7 +815,7 @@
     {
       "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
       "order": 136,
-      "sha256": "e35867ae9660c9e04af2890debdf172338feef93a1156c463d3a396c7766db75",
+      "sha256": "3b15fc9287c14027249c71074965980503f1230a688159591091c0818411364c",
       "kind": "migrate"
     },
     {
