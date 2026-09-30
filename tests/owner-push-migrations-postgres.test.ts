@@ -48,9 +48,12 @@ test("real PostgreSQL: 0227 holds the subscriptions table to the push-service al
       await admin.query("INSERT INTO tenants(id,display_name) VALUES($1,'Allow list')", [TENANT]);
 
       // Every host on the list is ACCEPTED, on the production login. If this
-      // fails, real phones on those services could not subscribe at all.
+      // fails, real phones on those services could not subscribe at all. The
+      // Windows entries are REAL WNS channel-URL shapes, token in the query,
+      // because refusing those would break every real Windows subscription.
       const allowed = ["https://web.push.apple.com/abc", "https://fcm.googleapis.com/fcm/send/abc",
-        "https://updates.push.services.mozilla.com/wpush/v2/abc", "https://db5p.notify.windows.com/w/",
+        "https://updates.push.services.mozilla.com/wpush/v2/abc", "https://db5p.notify.windows.com/w/?token=abc",
+        "https://dm3p.notify.windows.com/?token=AwYAAAB%2fQAhYEiAESPobjHzQcwGCTjHu",
         "https://DB5P.NOTIFY.WINDOWS.COM/w/", "https://fcm.googleapis.com:443/fcm/send/abc"];
       for (const [index, endpoint] of allowed.entries()) {
         await asOwnerWeb(`INSERT INTO owner_web_push_subscriptions
@@ -70,8 +73,7 @@ test("real PostgreSQL: 0227 holds the subscriptions table to the push-service al
         "https://web.push.apple.com.evil.invalid/abc", "https://evil.invalid/?next=web.push.apple.com",
         "https://fcm.googleapis.com.evil.invalid/", "https://user:pass@fcm.googleapis.com/",
         "https://xnotify.windows.com/", "https://notify.windows.com/", "https://x.y.notify.windows.com/",
-        "https://fcm.googleapis.com:8443/fcm/send/abc", "https://fcm.googleapis.com/fcm/send/abc?x=1",
-        "https://fcm.googleapis.com/fcm/send/abc#x"];
+        "https://fcm.googleapis.com:8443/fcm/send/abc", "https://fcm.googleapis.com/fcm/send/abc#x"];
       for (const [index, endpoint] of refused.entries()) {
         await assert.rejects(() => asOwnerWeb(`INSERT INTO owner_web_push_subscriptions
           (id,tenant_id,endpoint,p256dh,auth,expires_at,created_at,updated_at)

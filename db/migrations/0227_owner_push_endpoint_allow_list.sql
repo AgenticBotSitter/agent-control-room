@@ -58,11 +58,15 @@ LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE SET search_path = pg_catalog, public
     WHEN value !~ '^https://' THEN NULL
     -- A credential in the URL: credential material, not a shape question.
     WHEN value ~ '^https://[^/?#]*@' THEN NULL
-    -- A query or a fragment. Neither is part of a real push endpoint, and
-    -- allowing them would put an attacker-chosen string inside the authority
-    -- boundary this function is establishing.
-    WHEN value ~ '[?#]' THEN NULL
-    -- The authority, taken as everything up to the first '/'.
+    -- A fragment. No real push service issues one. A QUERY is deliberately NOT
+    -- refused: a real Windows Notification Services channel URL is
+    -- `https://<label>.notify.windows.com/?token=...`, and refusing queries
+    -- would refuse every real Windows subscription. A query is not an SSRF
+    -- vector here either -- the host is read from the authority, which ends at
+    -- the first '/', '?' or '#', so `https://evil.invalid/?next=web.push.apple.com`
+    -- is the host `evil.invalid` and the list refuses it on the host alone.
+    WHEN value ~ '#' THEN NULL
+    -- The authority, taken as everything up to the first '/', '?' or '#'.
     ELSE CASE
       WHEN substring(value from '^https://([^/?#]*)') !~ '^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*)(:443)?$'
         THEN NULL

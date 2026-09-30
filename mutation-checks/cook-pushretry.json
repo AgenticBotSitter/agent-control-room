@@ -176,10 +176,10 @@
   },
   {
     "file": "db/migrations/0227_owner_push_endpoint_allow_list.sql",
-    "find": "    WHEN value ~ '[?#]' THEN NULL",
+    "find": "    WHEN value ~ '#' THEN NULL",
     "replace": "    WHEN false THEN NULL",
     "test": "pnpm run test:owner-push:postgres",
-    "why": "a query or a fragment in the endpoint would put an attacker-chosen string inside the authority boundary the function is establishing, so `https://evil.invalid/?next=web.push.apple.com` must yield no host at all rather than one"
+    "why": "a fragment is never part of a real push endpoint and a browser never sends one, so a fragment means the string is not a push URL. NOTE: this is deliberately only the FRAGMENT, not the query. An earlier version of this entry refused '?' as well, which would have refused every real Windows Notification Services subscription -- a real WNS channel URL carries its token in the query (`https://<label>.notify.windows.com/?token=...`, per Microsoft's own documentation). A query is not an SSRF vector here because the host is read from the authority, which ends at the first '/', '?' or '#', so `https://evil.invalid/?next=web.push.apple.com` is refused on the host and not on the query."
   },
   {
     "file": "db/migrations/0227_owner_push_endpoint_allow_list.sql",

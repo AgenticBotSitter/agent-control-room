@@ -54,10 +54,19 @@ export function ownerPushEndpointAllowedV1(endpoint: unknown): endpoint is strin
   // credential material, not a malformed URL.
   if (parsed.username !== "" || parsed.password !== "") return false;
   if (parsed.protocol !== "https:") return false;
-  // A query or a fragment is refused. A real push service does not put either
-  // in its endpoint, and allowing them would put an attacker-chosen string
-  // inside the authority boundary -- the same reason 0227's CHECK refuses it.
-  if (parsed.search !== "" || parsed.hash !== "") return false;
+  // A fragment is refused: no real push service issues one, and a browser never
+  // sends it. A QUERY is NOT refused, and that is deliberate rather than an
+  // oversight: a real Windows Notification Services channel URL is
+  // `https://<label>.notify.windows.com/?token=...`, with the token in the
+  // query. Refusing queries would refuse every real Windows subscription.
+  //
+  // A query is not an SSRF vector here, which was the concern that first
+  // suggested refusing one. The host is taken from the authority, which ends at
+  // the first '/', '?' or '#', so `https://evil.invalid/?next=web.push.apple.com`
+  // is still the host `evil.invalid` and is refused -- by the list, not by the
+  // query. 0227's CHECK extracts the host the same way, and the migration test
+  // asserts the two agree on this exact string.
+  if (parsed.hash !== "") return false;
   // A non-default port is refused. It is not a cross-host SSRF, but a real push
   // service publishes its endpoint on 443, and 0227's CHECK refuses one too --
   // two lists that disagree about the same string is how the database starts

@@ -47,10 +47,13 @@ test("owner subscriptions accept only HTTPS endpoint material", () => {
 });
 
 test("a subscription endpoint is refused unless it is a known push service over HTTPS", () => {
-  // The four the brief names, plus a per-notification Windows host.
+  // The four the brief names, plus a per-notification Windows host. The WNS
+  // entry is a REAL channel URL shape -- the token is in the query -- so this
+  // list doubles as the check that a genuine Windows subscription is accepted.
   for (const allowed of ["https://web.push.apple.com/abc", "https://fcm.googleapis.com/fcm/send/abc",
     "https://updates.push.services.mozilla.com/wpush/v2/abc", "https://db5p.notify.windows.com/w/?token=abc",
-    "https://DB5P.NOTIFY.WINDOWS.COM/w/"]) {
+    "https://dm3p.notify.windows.com/?token=AwYAAAB%2fQAhYEiAESPobjHzQcwGCTjHu",
+    "https://DB5P.NOTIFY.WINDOWS.COM/w/", "https://fcm.googleapis.com:443/fcm/send/abc"]) {
     assert.equal(ownerPushEndpointAllowedV1(allowed), true, `${allowed} is a real push service`);
   }
   // Every one of these is the same SSRF: get the web process, which holds the
@@ -61,7 +64,7 @@ test("a subscription endpoint is refused unless it is a known push service over 
     "https://169.254.169.254/latest/meta-data/",                  // link-local metadata
     "http://fcm.googleapis.com/fcm/send/abc",                     // not https
     "https://web.push.apple.com.evil.invalid/abc",                // suffix on an allowed name
-    "https://evil.invalid/?next=https://web.push.apple.com/",     // allowed name in a query
+    "https://evil.invalid/?next=https://web.push.apple.com/",     // allowed name in a query: still the host evil.invalid
     "https://fcm.googleapis.com.evil.invalid/",                   // prefix on an allowed name
     "https://user:pass@fcm.googleapis.com/",                       // credentials in the URL
     "https://xnotify.windows.com/",                               // the wildcard needs a label
@@ -69,7 +72,6 @@ test("a subscription endpoint is refused unless it is a known push service over 
     "https://x.y.notify.windows.com/",                            // label must be a single DNS label
     "https://.notify.windows.com/",
     "https://fcm.googleapis.com:8443/fcm/send/abc",              // a non-default port
-    "https://fcm.googleapis.com/fcm/send/abc?x=1",                // a query
     "https://fcm.googleapis.com/fcm/send/abc#x",                  // a fragment
     "not a url at all",
   ]) {

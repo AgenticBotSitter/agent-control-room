@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "00583737bf8813f3136ae1094dc7b9df3e82afb490a79f1d29a6402c5afad3c0",
+  "digest": "cba3a83d1242184b845561861ef4b35f44a49a3c61726800ddb1c714c3fdf438",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -809,7 +809,7 @@
     {
       "file": "db/migrations/0227_owner_push_endpoint_allow_list.sql",
       "order": 135,
-      "sha256": "f94fc82c262c059d2760bcb09b40b3579e8e7ef0f1bb7fe7d2b77e48cbdfcab3",
+      "sha256": "0ea0bb5bedec6481e6a1964828a3394b07135da10182bf7faa2e911ed25ceb0a",
       "kind": "migrate"
     },
     {
