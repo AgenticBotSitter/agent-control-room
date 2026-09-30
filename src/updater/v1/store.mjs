@@ -1,4 +1,4 @@
-import { assertSafeIdV1, SAFE_STEP_V1, updaterRefuseV1 } from "./contracts.mjs";
+import { assertPlainObjectV1, assertSafeIdV1, SAFE_STEP_V1, updaterRefuseV1 } from "./contracts.mjs";
 
 const RUN_STATES_V1 = new Set(["approved", "prechecked", "staged", "quick_backup", "draining", "quiesced",
   "backup_verified", "preimage_taken", "migrating", "migrated", "switched", "restarted", "healthy",
