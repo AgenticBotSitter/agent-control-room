@@ -1,0 +1,135 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    } else if (settings?.harnesses?.[harness]?.enabled !== true) {",
+    "replace": "    } else if (false) {",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"not enabled\" tests/fleet-harness-handoff.test.ts",
+    "why": "run claims work only for the harness the machine owner enabled locally"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (!HANDOFF_HARNESSES.includes(harness) || entry?.enabled !== true || !settings.adapterModule) return null;",
+    "replace": "if (!settings.adapterModule) return null;",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"refused unless the machine owner\" tests/fleet-harness-handoff.test.ts",
+    "why": "a disabled or unknown harness is never loaded"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (!HANDOFF_HARNESSES.includes(name)) throw invalid(`unknown harness \"${name}\"`);",
+    "replace": "",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"refused unless the machine owner\" tests/fleet-harness-handoff.test.ts",
+    "why": "local settings can name only the three known harnesses"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  await refuseSharedWrite(path, \"The harness settings file\");",
+    "replace": "",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"refused unless the machine owner\" tests/fleet-harness-handoff.test.ts",
+    "why": "harness settings another user can change are refused"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (anyEnabled) await refuseSharedWrite(value.adapterModule, \"The harness adapter module\");",
+    "replace": "",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"refused unless the machine owner\" tests/fleet-harness-handoff.test.ts",
+    "why": "an adapter module another user can change is refused"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    } else if (mode !== \"running\") {",
+    "replace": "    } else if (false) {",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^pause\" tests/fleet-harness-handoff.test.ts",
+    "why": "the connector takes no new work while Control Room is paused, draining, stopped or unreadable"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      if (await this.operationsMode() !== \"running\") return fleetFail(\"paused\");",
+    "replace": "",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^pause\" tests/fleet-harness-handoff.test.ts",
+    "why": "the gateway refuses new claims unless Control Room is running"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "    } catch { return \"unknown\"; }",
+    "replace": "    } catch { return \"running\"; }",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^pause\" tests/fleet-harness-handoff.test.ts",
+    "why": "an unreadable Pause switch refuses claims instead of admitting them"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (!plainObject(value) || (value.kind === \"completed\" ? typeof value.text !== \"string\"",
+    "replace": "  if (!plainObject(value) || (value.kind === \"completed\" ? false",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^malformed\" tests/fleet-harness-handoff.test.ts",
+    "why": "a malformed harness answer is never submitted as a result"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (value.kind === \"failed\") return blocked(",
+    "replace": "  if (false) return blocked(",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^failure\" tests/fleet-harness-handoff.test.ts",
+    "why": "a failed harness run becomes a blocker, never a result"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (Buffer.byteLength(summary, \"utf8\") > MAX_RESULT_BYTES)",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^oversize\" tests/fleet-harness-handoff.test.ts",
+    "why": "an answer over 64 KiB is refused locally with a clear blocker"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "halt(\"watchdog\"); done({ watchdog: true }); }, adapter.deadlineMs + watchdogGraceMs);",
+    "replace": "halt(\"watchdog\"); done({ watchdog: true }); }, adapter.deadlineMs + watchdogGraceMs + 3_600_000);",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"ignores its time limit\" tests/fleet-harness-handoff.test.ts",
+    "why": "a harness that ignores its deadline is abandoned by the connector's own watchdog"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "        if (finished.forcedTimeout) throw new Error(",
+    "replace": "        if (false) throw new Error(",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"ignores its time limit\" tests/fleet-harness-handoff.test.ts",
+    "why": "after a runaway harness, run stops taking more work"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    try { if (await readMode() === \"stopped\") halt(\"stopped\"); }",
+    "replace": "    try { await readMode(); }",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"stop during a run\" tests/fleet-harness-handoff.test.ts",
+    "why": "Stop from the server cancels the running harness"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (stop === \"lost\") {",
+    "replace": "  if (false) {",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"revoked mid-run\" tests/fleet-harness-handoff.test.ts",
+    "why": "a claim that ended mid-run is abandoned, not reported with a dead credential"
+  },
+  {
+    "file": "src/fleet/v1/harness-adapters.ts",
+    "find": "    return createOwnerTrustedLocalHermesExecutionAdapterV1(createOwnerTrustedLocalHermesExecV1(dependencies), configuration);\n  throw new Error(\"fleet_harness_adapter_unavailable\");",
+    "replace": "    return createOwnerTrustedLocalHermesExecutionAdapterV1(createOwnerTrustedLocalHermesExecV1(dependencies), configuration);\n  return createOwnerTrustedLocalCodexExecutionAdapterV1(createOwnerTrustedLocalCodexExecV1(dependencies), configuration);",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"maps only the three harnesses\" tests/fleet-harness-handoff.test.ts",
+    "why": "the repository adapter module maps only the three known harnesses"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (containsSecret(summary, needles)) return blocked(keyLeakMessage, { keyLeak: true });",
+    "replace": "  if (false) return blocked(keyLeakMessage, { keyLeak: true });",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^key leak: an answer containing\" tests/fleet-harness-handoff.test.ts",
+    "why": "a read-only harness (Codex) can read this machine's key file; an answer that echoes it back is refused, never submitted as a result"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    const safeMessage = containsSecret(message, needles) ? keyLeakMessage : message;",
+    "replace": "    const safeMessage = false ? keyLeakMessage : message;",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^key leak: a failure reason\" tests/fleet-harness-handoff.test.ts",
+    "why": "a blocker message built from the harness's own text (for example a failure reason) is masked before it can carry the key off this machine"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "          watchdogGraceMs, secrets });",
+    "replace": "          watchdogGraceMs });",
+    "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^key leak\" tests/fleet-harness-handoff.test.ts",
+    "why": "run must pass this machine's live credential(s) to runClaimedTask so a leaked key in the harness's answer can be caught"
+  }
+]
