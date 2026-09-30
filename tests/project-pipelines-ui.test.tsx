@@ -41,6 +41,7 @@ const view = (state: WorkBatchOwnerViewV1["state"] = "proposed"): WorkBatchOwner
     workerKind: "codex", nodeId: "mac-1.codex", position: 3, queueDepthLimit: 10,
     selectionKey: "model:one", model: "model:one", effort: "high", provider: null, profile: null,
     state: "waiting_turn" }], queueDepthLimit: 10,
+  flagsByLocalId: {},
   startsWork: false, grantsExecutionAuthority: false,
 });
 

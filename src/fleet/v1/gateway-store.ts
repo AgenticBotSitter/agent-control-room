@@ -10,6 +10,7 @@ import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILI
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1, randomHexV1 } from "./identifiers";
+import type { TaskProjectEventWriterV1 } from "../../project-events/v1/task-lifecycle";
 
 /** Authenticated machine principal. It is derived from the credential digest
  * and the stored worker row only; nothing in a request body can change it. */
@@ -64,19 +65,24 @@ export type FleetGatewayStoreOptionsV1 = Readonly<{ tenantId: string; clock?: ()
   /** Reads the owner's current Pause / Drain / Stop decision. Without a port
    * the installation has no such switch and is running. A port that fails or
    * answers anything unexpected refuses new claims rather than admitting them. */
-  operationsMode?: () => Promise<FleetOperationsModeV1> }>;
+  operationsMode?: () => Promise<FleetOperationsModeV1>;
+  /** Presentation-only task timeline. Without it, a hand-off is still recorded
+   * in the audit log and worker events, but not shown on the Activity page. */
+  projectEvents?: Pick<TaskProjectEventWriterV1, "appendInSession"> }>;
 
 export class FleetGatewayStoreV1 {
   readonly #tenantId: string;
   readonly #clock: () => number;
   readonly #leaseMs: number;
   readonly #operationsMode: (() => Promise<FleetOperationsModeV1>) | undefined;
+  readonly #projectEvents: Pick<TaskProjectEventWriterV1, "appendInSession"> | undefined;
   constructor(private readonly db: DatabaseClient, options: FleetGatewayStoreOptionsV1) {
     if (!FLEET_PROJECT_ID_PATTERN_V1.test(options.tenantId)) throw new Error("fleet_gateway_configuration_invalid");
     this.#tenantId = options.tenantId;
     this.#clock = options.clock ?? Date.now;
     this.#leaseMs = options.leaseMs ?? FLEET_LEASE_MS_V1;
     this.#operationsMode = options.operationsMode;
+    this.#projectEvents = options.projectEvents;
     if (!Number.isSafeInteger(this.#leaseMs) || this.#leaseMs < 30_000 || this.#leaseMs > 3_600_000)
       throw new Error("fleet_gateway_configuration_invalid");
   }
@@ -546,6 +552,17 @@ export class FleetGatewayStoreV1 {
       await appendAuditWith(tx, { id: `audit:fleet-release:${event.eventId.slice(12)}`, tenantId: this.#tenantId,
         projectId: claim.project_id, actorId: principal.identityId, actorType: "worker", action: "fleet.task.released",
         targetType: "job", targetId: claim.job_id, occurredAt: now, safeMetadata: { claimId: claim.claim_id, eventId: event.eventId } });
+      if (this.#projectEvents) {
+        const project = (await tx.query<{ workspace_id: string }>(`SELECT workspace_id FROM projects
+          WHERE tenant_id=$1 AND id=$2`, [this.#tenantId, claim.project_id])).rows[0];
+        // A project row must already exist for a fleet offer to have been made
+        // against it; a missing row here would mean stored data disagreed with
+        // itself, so the hand-off note is skipped rather than guessed.
+        if (project) await this.#projectEvents.appendInSession(tx, { tenantId: this.#tenantId,
+          workspaceId: project.workspace_id, projectId: claim.project_id, subjectId: claim.job_id,
+          action: "task_handed_off", sourceId: claim.job_id, sourceVersion: "1", occurredAt: now,
+          safeDetail: message.length > 800 ? `${message.slice(0, 799)}…` : message });
+      }
       return { ...event, released: true };
     });
   }
