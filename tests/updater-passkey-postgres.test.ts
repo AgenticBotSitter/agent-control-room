@@ -1262,6 +1262,16 @@ test("the open-registration row is the updater's, and P-2's options are its byte
         installationId: INSTALLATION, mode: "add", optionsJson: optionsFor(registrationDigest("no-challenge"), "add"),
         authorizationChallenge: null, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
       /updater_registration_challenge_refused/u);
+      // What the owner is shown is fixed once published: even the deployer, which
+      // owns the table, may move only `consumed_at`. A privilege check cannot
+      // say this (the owner holds UPDATE), so the guard is the only barrier.
+      assert.match(await refuses(client, "UPDATE updater.passkey_open_registrations"
+        + " SET options_json = options_json || '{\"swapped\":true}'::jsonb WHERE registration_digest=$1", [digest]),
+      /^23514 updater open registration content is immutable/u);
+      assert.match(await refuses(client, "UPDATE updater.passkey_open_registrations"
+        + " SET expires_at = expires_at + interval '1 day' WHERE registration_digest=$1", [digest]),
+      /^23514 updater open registration content is immutable/u);
+      assert.deepEqual((await web.store.options(digest)).options, options, "and the options are unchanged");
       // An unknown digest reads as null from the deployer's view too.
       assert.equal(await store.openRegistrationOptions(registrationDigest("never-opened")), null);
       await assert.rejects(web.store.options("not-a-digest"), /updater_registration_digest_refused/u);
@@ -1573,6 +1583,11 @@ test("DB-1: the web cannot hold an updater push key, and a held key makes the ad
       assert.match(await refuses(web, `INSERT INTO updater.push_queue(id,idempotency_key,template,title,body)
         VALUES($1,'anything-else','owner.digest','t','b')`, [PUSH_ID()]),
       /only the updater may set a push idempotency key/u);
+      // The template prefix is the updater's too, key or no key (R12): a web row
+      // that would render as the updater speaking is refused by the inserting
+      // role, not by the string.
+      assert.match(await refuses(web, WEB_PUSH, [PUSH_ID(), "control-room-updater.passkey_cooling_off",
+        "A new passkey was added", "Nothing to see"]), /^42501 only the updater may use its own push template/u);
       // The web's ordinary, key-less push still lands: this guard narrows the
       // web to what it was always meant to do, it does not take the queue away.
       await web.query(WEB_PUSH, [PUSH_ID(), "owner.digest", "Weekly summary", "Nothing new"]);
