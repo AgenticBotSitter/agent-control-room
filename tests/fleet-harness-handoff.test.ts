@@ -189,6 +189,18 @@ test("timeout: a harness that ignores its time limit is abandoned, reported, and
     /^The Codex run did not stop by its time limit, so it was abandoned\. Nothing was submitted\.$/u);
 });
 
+test("two machines racing for one offered task: exactly one runs it", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const first = await joinWorker(f, "RaceOne"), second = await joinWorker(f, "RaceTwo");
+  const task = await offer(f, "handoff-race");
+  const path = await settings(f, "race", fakeCodex("success"));
+  const passes = await Promise.all([runOnce(f, first, path), runOnce(f, second, path)]);
+  assert.deepEqual(passes.map(({ pass }) => pass.outcome ?? pass.state).sort(), ["idle", "submitted"]);
+  assert.equal((await results(f)).length, 1);
+  assert.equal((await f.query<{ count: number }>("SELECT count(*)::int AS count FROM fleet_claims WHERE job_id=$1",
+    [task.jobId]))[0]!.count, 1);
+});
+
 test("not enabled: a machine runs only the harness its owner enabled locally", async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Careful");
