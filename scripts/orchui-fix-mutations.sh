@@ -40,7 +40,11 @@ OWNER=src/web/v1/project-orchestration-owner.ts
 UI=private-app/app/project-orchestration.tsx
 MIGRATION=db/migrations/0203_work_batch_split_suggestions_tenant_bound_read.sql
 NEEDSYOU_MIGRATION=db/migrations/0204_planner_needs_you_digest_scopes.sql
-RESULTS_DIR="${RESULTS_DIR:-/Users/alastairfraser/work/acr-private/reports/orchui-fix-mutations}"
+# The results directory defaults to a path under the repository's own scratch
+# area, not a home directory. The sibling scripts/orchui-mutations.sh carries an
+# absolute home path here; this one does not, because a home path in committed
+# file content names the machine it was written on and nothing about the product.
+RESULTS_DIR="${RESULTS_DIR:-${TMPDIR:-/tmp}/orchui-fix-mutations}"
 mkdir -p "$RESULTS_DIR"
 
 pass=0; fail=0; failures=""
