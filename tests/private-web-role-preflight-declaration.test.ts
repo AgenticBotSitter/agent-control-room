@@ -303,11 +303,32 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
   // this proves the allowlist tracks the migrations and keeps the owner test
   // unconditional, both without a database.
   const source = readFileSync(PREFLIGHT_SOURCE, "utf8");
-  const exempted = new Set<string>();
-  for (const match of source.matchAll(/'([a-z_0-9]+\([^']*?\))'::regprocedure/g))
-    exempted.add(match[1]!);
-  assert.ok(exempted.size >= 4,
-    `only ${exempted.size} exempted signature(s) found in the preflight; the read is too narrow to prove anything`);
+  // Read every OCCURRENCE of a signature, in both spellings the preflight uses:
+  // `'f(args)'::regprocedure` in the catalog-scan branches, and `'f(args)'` on
+  // its own inside the `'f(args)'::regprocedure[] boundary(oid)` array at the
+  // end. Both matter, and reading only the suffixed form is how a rename in the
+  // boundary array went unnoticed: that array is the one place the preflight
+  // demands the agent-review pair be executable, so a name that no migration
+  // creates there is a hole in the very check the scan exempts itself from.
+  //
+  // A de-duplicated set is not used either. A signature appears more than once
+  // by design -- `read_agent_review_plan(text)` is named in the scan branch, in
+  // the volatility CASE and again in the boundary array -- and a set hides
+  // that: renaming ONE occurrence leaves the other spellings present, so a
+  // set-based check passes a preflight with a hole in one of those places.
+  // Every occurrence is collected and every occurrence is compared.
+  const occurrences: string[] = [
+    ...[...source.matchAll(/'([a-z_0-9]+\([^']*?\))'::regprocedure/gu)].map(match => match[1]!),
+    // The bare form is read by anchoring on the ARRAY'S closing bracket, so the
+    // match cannot run past the element before it: `commit_agent_review(...)',
+    // 'read_agent_review_plan(text)']::regprocedure[]` yields only the second,
+    // which is the one the suffixed regex above cannot see. Anchoring on the
+    // bracket rather than looking ahead across quotes is what makes that true;
+    // a lookahead would have to span the previous element's closing quote.
+    ...[...source.matchAll(/'([a-z_0-9]+\([^']*?\))'\s*,?\s*\]\s*::regprocedure\[\]/gu)].map(match => match[1]!),
+  ];
+  assert.ok(occurrences.length >= 8,
+    `only ${occurrences.length} exempted signature occurrence(s) found in the preflight; the read is too narrow to prove anything`);
 
   // Every SECURITY DEFINER function a migration creates that a login could
   // CALL must be an allowlist entry, and every allowlist entry must be one a
@@ -364,22 +385,27 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
     signature.replace(/\(.*\)/u, "")).sort(),
   ["commit_agent_review", "is_work_intake_session", "read_agent_review_plan", "redeem_fleet_enrollment"],
     "the shipped SECURITY DEFINER function set changed; a login-callable one needs a preflight allowlist entry");
-  // The shipped names carry SQL argument NAMES; the preflight carries TYPES.
-  // Compare on shape, so a rename of a parameter is not a finding and a new
-  // function is. The shape comparison is what lets the four above be matched
-  // against the preflight's typed spellings, so it is asserted to be real
-  // rather than a shape that matches everything: each of the four must map to
-  // exactly one shipped signature of the same arity, by name.
+  // The shipped names carry SQL argument NAMES; the preflight carries TYPES, so
+  // the two are matched by ARITY, not by text. `shape` therefore drops the
+  // argument text but KEEPS the name, which is what makes the phantom check
+  // above a real check: an allowlist entry for a function no migration creates
+  // has a name no created signature carries, so it cannot match. It is NOT a
+  // name-blind arity comparison, and a future reader must not make it one --
+  // that would make this assertion vacuously true for every signature.
   const shape = (signature: string) => signature.replace(/\(([^)]*)\)/u, (all, args: string) =>
-    `(${args.split(",").length})`);
+    `${signature.slice(0, signature.indexOf("("))}(${args.split(",").length})`);
   const shapes = new Set([...created.keys()].map(shape));
-  assert.deepEqual([...exempted].filter(signature => !shapes.has(shape(signature))).sort(), [],
+  assert.deepEqual(occurrences.filter(signature => !shapes.has(shape(signature))).sort(), [],
     "the preflight exempts a function no migration creates; a renamed or removed function is now a hole in the scan");
+  // Each of the four must be exempt under its OWN NAME, by arity. The
+  // name-blind fallback is deliberately absent: a fifth allowlist entry that
+  // merely matched some other function's arity would be exactly the drift this
+  // exists to catch.
   for (const name of ["commit_agent_review", "is_work_intake_session", "read_agent_review_plan",
     "redeem_fleet_enrollment"]) {
     const signatures = [...shipped.keys()].filter(signature => signature.startsWith(`${name}(`));
     assert.equal(signatures.length, 1, `${name} has ${signatures.length} shipped signatures, not one`);
-    assert.ok(exempted.has(signatures[0]!) || shapes.has(shape(signatures[0]!)),
+    assert.ok(occurrences.some(signature => shape(signature) === shape(signatures[0]!)),
       `${name} is a shipped SECURITY DEFINER function with no preflight allowlist entry`);
   }
 
