@@ -15,13 +15,14 @@
 // widen permissions: the gateway has no such routes.
 
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, realpath, rename, stat, writeFile, chmod, open } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
-import { basename, dirname, extname, join as joinPath, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join as joinPath, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const CONNECTOR_VERSION = "0.2.0";
+export const CONNECTOR_VERSION = "0.3.0";
 const CONFIG_SCHEMA = "control-room.fleet-connector/v1";
 const SECRET_PATTERN = /^crf_[A-Za-z0-9_-]{43}$/u;
 const CODE_PATTERN = /^crj_[A-Za-z0-9_-]{43}$/u;
@@ -38,6 +39,9 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u;
 const OFFER_PATTERN = /^fleet-offer:[a-f0-9]{32}$/u;
 const CLAIM_PATTERN = /^fleet-claim:[a-f0-9]{32}$/u;
 const PROJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
+const BOT_KINDS = Object.freeze(["claude-code", "codex", "hermes", "claude-desktop", "cursor"]);
+const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+const ROTATION_LOCK_STALE_MS = 5 * 60_000;
 
 export const sha256 = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 export const newSecret = () => `crf_${randomBytes(32).toString("base64url")}`;
@@ -51,6 +55,28 @@ export function defaultConfigPath(env = process.env) {
   if (env.CONTROL_ROOM_CONNECTOR_CONFIG) return resolve(env.CONTROL_ROOM_CONNECTOR_CONFIG);
   if (process.platform === "win32" && env.APPDATA) return joinPath(env.APPDATA, "control-room", "connector.json");
   return joinPath(env.XDG_CONFIG_HOME || joinPath(homedir(), ".config"), "control-room", "connector.json");
+}
+
+export function connectorInstallPaths({ homeDir, env = process.env, platform = process.platform, name, workspace }) {
+  if (!PROFILE_PATTERN.test(name ?? ""))
+    throw new Error("The bot name must be 1 to 64 letters, numbers, dots, dashes or underscores.");
+  const configRoot = platform === "win32"
+    ? joinPath(env.APPDATA || joinPath(homeDir, "AppData", "Roaming"), "control-room")
+    : joinPath(env.XDG_CONFIG_HOME || joinPath(homeDir, ".config"), "control-room");
+  const installRoot = platform === "win32"
+    ? joinPath(env.LOCALAPPDATA || joinPath(homeDir, "AppData", "Local"), "ControlRoom", "mcp")
+    : joinPath(env.XDG_DATA_HOME || joinPath(homeDir, ".local", "share"), "control-room", "mcp");
+  const workspaceRoot = resolve(workspace || joinPath(homeDir, "ControlRoomWork", name));
+  return Object.freeze({
+    configRoot,
+    configPath: joinPath(configRoot, "bots", `${name}.json`),
+    botsDir: joinPath(configRoot, "bots"),
+    installRoot,
+    versionDir: joinPath(installRoot, "versions", CONNECTOR_VERSION),
+    connectorPath: joinPath(installRoot, "current", "connector.mjs"),
+    shimPath: joinPath(installRoot, "bin", platform === "win32" ? "control-room-mcp.cmd" : "control-room-mcp"),
+    workspace: workspaceRoot,
+  });
 }
 
 /** HTTPS is required, except loopback and the Tailscale address range, whose
@@ -130,7 +156,7 @@ export function createClient(config, fetcher = globalThis.fetch) {
 }
 
 /** @param {{ server: string, code: string, configPath: string, fetcher?: typeof fetch }} options */
-export async function join({ server, code, configPath, fetcher }) {
+export async function join({ server, code, configPath, fetcher, writeConfig = writePrivate }) {
   const origin = checkServer(server);
   if (!CODE_PATTERN.test(code ?? "")) throw new Error("The join code is not valid. Copy it again from the Workers page.");
   const codeDigest = sha256(code);
@@ -149,31 +175,44 @@ export async function join({ server, code, configPath, fetcher }) {
   const clientNonce = pending?.clientNonce ?? newEnrollmentNonce();
   // The secret, code binding and nonce are saved before use. A lost response
   // retries this exact enrollment instead of consuming a second credential.
-  await writePrivate(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: null, secret,
+  await writeConfig(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: null, secret,
     credentialExpiresAt: null, codeDigest, clientNonce });
   const client = createClient({ server: origin, workerId: null, secret }, fetcher);
   const result = await client.enroll({ code, credentialDigest: sha256(secret), platform: platformName(),
     architecture: process.arch, connectorVersion: CONNECTOR_VERSION, clientNonce });
-  await writePrivate(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: result.workerId, secret,
+  await writeConfig(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: result.workerId, secret,
     credentialExpiresAt: result.credentialExpiresAt });
   return result;
 }
 
-/** Rotation keeps the next secret on disk first; if the reply is lost the
- * connector tries it on the next start. */
-/** @param {{ configPath: string, fetcher?: typeof fetch }} options */
-export async function rotate({ configPath, fetcher }) {
-  const config = await loadConfig(configPath);
-  const next = newSecret();
-  await writePrivate(configPath, { ...config, pendingSecret: next });
-  const result = await createClient(config, fetcher).rotate(sha256(next), config.secret);
-  const { pendingSecret: _pending, ...rest } = config;
-  await writePrivate(configPath, { ...rest, secret: next, credentialExpiresAt: result.credentialExpiresAt });
-  return result;
+async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_STALE_MS, waitMs = 25,
+  deadlineMs = 10_000, clock = Date.now, sleep = ms => new Promise(done => setTimeout(done, ms)) } = {}) {
+  const started = clock();
+  for (;;) {
+    try {
+      const handle = await open(lockPath, "wx", 0o600);
+      await handle.writeFile(`${JSON.stringify({ pid: process.pid, acquiredAt: new Date(clock()).toISOString() })}\n`);
+      return async () => {
+        try { await handle.close(); } finally {
+          try { await unlink(lockPath); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+        }
+      };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      let age = 0;
+      try { age = clock() - (await stat(lockPath)).mtimeMs; }
+      catch (readError) { if (readError?.code === "ENOENT") continue; throw readError; }
+      if (age >= staleMs) {
+        try { await unlink(lockPath); } catch (removeError) { if (removeError?.code !== "ENOENT") throw removeError; }
+        continue;
+      }
+      if (clock() - started >= deadlineMs) throw new Error("Another session is renewing this bot credential. Try again shortly.");
+      await sleep(waitMs);
+    }
+  }
 }
 
-/** @param {{ configPath: string, fetcher?: typeof fetch }} options */
-export async function recoverPending({ configPath, fetcher }) {
+async function recoverPendingUnlocked({ configPath, fetcher }) {
   const config = await loadConfig(configPath);
   if (!config.pendingSecret || !SECRET_PATTERN.test(config.pendingSecret)) return config;
   try { await createClient(config, fetcher).me(); const { pendingSecret: _p, ...rest } = config;
@@ -185,6 +224,210 @@ export async function recoverPending({ configPath, fetcher }) {
     await writePrivate(configPath, { ...rest, credentialExpiresAt: me.credentialExpiresAt });
     return { ...rest, credentialExpiresAt: me.credentialExpiresAt };
   }
+}
+
+/** Rotation keeps the next secret on disk first; if the reply is lost the
+ * connector tries it on the next start. Concurrent callers that observed the
+ * same secret coalesce behind one per-profile lock. */
+/** @param {{ configPath: string, fetcher?: typeof fetch, lock?: object }} options */
+export async function rotate({ configPath, fetcher, lock }) {
+  const observed = await loadConfig(configPath);
+  const release = await acquireRotationLock(`${configPath}.rotate.lock`, lock);
+  try {
+    const config = await recoverPendingUnlocked({ configPath, fetcher });
+    if (config.secret !== observed.secret) return Object.freeze({ credentialExpiresAt: config.credentialExpiresAt, coalesced: true });
+    const next = newSecret();
+    await writePrivate(configPath, { ...config, pendingSecret: next });
+    const result = await createClient(config, fetcher).rotate(sha256(next), config.secret);
+    const { pendingSecret: _pending, ...rest } = config;
+    await writePrivate(configPath, { ...rest, secret: next, credentialExpiresAt: result.credentialExpiresAt });
+    return result;
+  } finally { await release(); }
+}
+
+/** @param {{ configPath: string, fetcher?: typeof fetch, lock?: object }} options */
+export async function recoverPending({ configPath, fetcher, lock }) {
+  const config = await loadConfig(configPath);
+  if (!config.pendingSecret || !SECRET_PATTERN.test(config.pendingSecret)) return config;
+  const release = await acquireRotationLock(`${configPath}.rotate.lock`, lock);
+  try { return await recoverPendingUnlocked({ configPath, fetcher }); }
+  finally { await release(); }
+}
+
+// ---------------------------------------------------------------------------
+// Per-bot MCP installation
+// ---------------------------------------------------------------------------
+export function runCommand(command, args, { env = process.env } = {}) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, { env, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("close", code => {
+      if (code === 0) resolvePromise({ stdout, stderr });
+      else reject(new Error(`${command} stopped with exit ${code}: ${stderr.trim() || "no error text"}`));
+    });
+  });
+}
+
+function botServerName(name) { return `control-room-${name}`; }
+
+function appConfigPath(bot, { homeDir, env, platform }) {
+  if (bot === "cursor") return joinPath(homeDir, ".cursor", "mcp.json");
+  if (platform === "win32") return joinPath(env.APPDATA || joinPath(homeDir, "AppData", "Roaming"), "Claude", "claude_desktop_config.json");
+  if (platform === "darwin") return joinPath(homeDir, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  return joinPath(env.XDG_CONFIG_HOME || joinPath(homeDir, ".config"), "Claude", "claude_desktop_config.json");
+}
+
+function timestampedBackup(path, clock = Date.now) {
+  return `${path}.backup-${new Date(clock()).toISOString().replace(/[:.]/gu, "-")}-${randomBytes(3).toString("hex")}`;
+}
+
+async function readJsonObject(path) {
+  try {
+    const value = JSON.parse(await readFile(path, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("not an object");
+    return value;
+  } catch (error) {
+    if (error?.code === "ENOENT") return {};
+    throw new Error(`The MCP configuration ${path} is not valid JSON.`);
+  }
+}
+
+async function writeJsonWithBackup(path, value, { clock = Date.now } = {}) {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  try { await copyFile(path, timestampedBackup(path, clock)); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
+  const temporary = `${path}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, path);
+  if (process.platform !== "win32") await chmod(path, 0o600);
+}
+
+export async function secureWindowsCredential(paths, { runner = runCommand, env = process.env } = {}) {
+  const username = env.USERNAME;
+  if (!username || /[\r\n]/u.test(username)) throw new Error("Windows could not identify the current user for credential permissions.");
+  for (const path of paths) await runner("icacls", [path, "/inheritance:r", "/grant:r", `${username}:F`], { env });
+}
+
+function registrationArgs(bot, name, shimPath, workspace) {
+  const server = botServerName(name);
+  const launch = [shimPath, "--profile", name, "--workspace", workspace];
+  if (bot === "claude-code") return ["claude", ["mcp", "add", "--scope", "user", server, "--", ...launch]];
+  if (bot === "codex") return ["codex", ["mcp", "add", server, "--", ...launch]];
+  if (bot === "hermes") return ["hermes", ["mcp", "add", server, "--", ...launch]];
+  return null;
+}
+
+async function registerBot({ bot, name, shimPath, workspace, homeDir, env, platform, runner, clock }) {
+  const command = registrationArgs(bot, name, shimPath, workspace);
+  if (command) { await runner(command[0], command[1], { env }); return { kind: "cli" }; }
+  const path = appConfigPath(bot, { homeDir, env, platform });
+  const value = await readJsonObject(path);
+  const mcpServers = value.mcpServers && typeof value.mcpServers === "object" && !Array.isArray(value.mcpServers)
+    ? value.mcpServers : {};
+  await writeJsonWithBackup(path, { ...value, mcpServers: { ...mcpServers,
+    [botServerName(name)]: { command: shimPath, args: ["--profile", name, "--workspace", workspace] } } }, { clock });
+  return { kind: "json", configPath: path };
+}
+
+async function unregisterBot({ bot, name, homeDir, env, platform, runner, clock }) {
+  const server = botServerName(name);
+  if (bot === "claude-code") { await runner("claude", ["mcp", "remove", "--scope", "user", server], { env }); return; }
+  if (bot === "codex") { await runner("codex", ["mcp", "remove", server], { env }); return; }
+  if (bot === "hermes") { await runner("hermes", ["mcp", "remove", server], { env }); return; }
+  const path = appConfigPath(bot, { homeDir, env, platform });
+  const value = await readJsonObject(path);
+  const mcpServers = value.mcpServers && typeof value.mcpServers === "object" && !Array.isArray(value.mcpServers)
+    ? { ...value.mcpServers } : {};
+  delete mcpServers[server];
+  await writeJsonWithBackup(path, { ...value, mcpServers }, { clock });
+}
+
+function quoteSh(value) { return `'${String(value).replace(/'/gu, `'\\''`)}'`; }
+
+async function writeLauncher(paths, { platform, sourcePath, nodePath = process.execPath }) {
+  await mkdir(paths.versionDir, { recursive: true, mode: 0o700 });
+  await mkdir(dirname(paths.connectorPath), { recursive: true, mode: 0o700 });
+  await mkdir(dirname(paths.shimPath), { recursive: true, mode: 0o700 });
+  const versioned = joinPath(paths.versionDir, "connector.mjs");
+  await copyFile(sourcePath, versioned);
+  await copyFile(sourcePath, paths.connectorPath);
+  await chmod(versioned, 0o700);
+  await chmod(paths.connectorPath, 0o700);
+  const body = platform === "win32"
+    ? `@echo off\r\n"${nodePath}" "${paths.connectorPath}" mcp %*\r\n`
+    : `#!/bin/sh\nexec ${quoteSh(nodePath)} ${quoteSh(paths.connectorPath)} mcp "$@"\n`;
+  await writeFile(paths.shimPath, body, { mode: 0o700 });
+  if (platform !== "win32") await chmod(paths.shimPath, 0o700);
+}
+
+function validateInstallInput({ bot, workspace }) {
+  if (!BOT_KINDS.includes(bot)) throw new Error(`Choose one bot: ${BOT_KINDS.join(", ")}.`);
+  if (workspace !== undefined && (typeof workspace !== "string" || !workspace || !isAbsolute(workspace)))
+    throw new Error("The workspace must be an absolute directory path.");
+}
+
+/** Installs one independently revocable bot profile. All filesystem roots and
+ * command execution are injectable so tests never touch a person's real home. */
+export async function installConnector({ server, code, bot, name, workspace, homeDir, env = process.env,
+  platform = process.platform, fetcher, runner = runCommand, sourcePath = fileURLToPath(import.meta.url), clock = Date.now }) {
+  validateInstallInput({ bot, workspace });
+  const paths = connectorInstallPaths({ homeDir, env, platform, name, workspace });
+  await mkdir(paths.botsDir, { recursive: true, mode: 0o700 });
+  await mkdir(paths.workspace, { recursive: true, mode: 0o700 });
+  if (platform !== "win32") { await chmod(paths.botsDir, 0o700); await chmod(paths.workspace, 0o700); }
+  if (platform === "win32") await secureWindowsCredential([paths.configRoot, paths.botsDir], { runner, env });
+
+  let config;
+  try { config = await loadConfig(paths.configPath); }
+  catch (error) {
+    if (!String(error?.message ?? "").startsWith("This machine has not joined yet.")) throw error;
+  }
+  if (config?.workerId) {
+    const install = config.installation;
+    if (!install || install.bot !== bot || install.name !== name || install.workspace !== paths.workspace
+      || config.server !== checkServer(server))
+      throw new Error("This bot profile is already connected with different installation settings. Uninstall it first.");
+  } else {
+    await join({ server, code, configPath: paths.configPath, fetcher,
+      writeConfig: async (path, value) => {
+        await writePrivate(path, value);
+        if (platform === "win32") await secureWindowsCredential([path], { runner, env });
+      } });
+    config = await loadConfig(paths.configPath);
+    await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering" } });
+    if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
+  }
+
+  await writeLauncher(paths, { platform, sourcePath });
+  const registration = await registerBot({ bot, name, shimPath: paths.shimPath, workspace: paths.workspace,
+    homeDir, env, platform, runner, clock });
+  config = await loadConfig(paths.configPath);
+  await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "installed" } });
+  if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
+  const status = await createClient(await loadConfig(paths.configPath), fetcher).heartbeat();
+  return Object.freeze({ paths, registration, status });
+}
+
+export async function uninstallConnector({ bot, name, homeDir, env = process.env, platform = process.platform,
+  runner = runCommand, clock = Date.now }) {
+  validateInstallInput({ bot });
+  const paths = connectorInstallPaths({ homeDir, env, platform, name });
+  const config = await loadConfig(paths.configPath);
+  if (config.installation?.bot !== bot || config.installation?.name !== name)
+    throw new Error("That bot profile does not match the installed credential.");
+  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`);
+  try {
+    await unregisterBot({ bot, name, homeDir, env, platform, runner, clock });
+    await rm(paths.configPath, { force: true });
+  } finally { await release(); }
+  let profiles = [];
+  try { profiles = (await readdir(paths.botsDir)).filter(file => file.endsWith(".json")); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
+  if (profiles.length === 0) await rm(paths.shimPath, { force: true });
+  return Object.freeze({ removed: name, shimRemoved: profiles.length === 0, workspacePreserved: paths.workspace });
 }
 
 export function idempotencyKeyFor(tool, args) {
@@ -308,8 +551,9 @@ export function createMcpDispatcher({ client, workspaceRoot }) {
   };
 }
 
-/** @param {{ configPath: string, input?: NodeJS.ReadableStream, output?: NodeJS.WritableStream, fetcher?: typeof fetch, workspaceRoot?: string }} options */
-export async function serveMcp({ configPath, input = process.stdin, output = process.stdout, fetcher, workspaceRoot = process.cwd() }) {
+/** @param {{ configPath: string, input?: NodeJS.ReadableStream, output?: NodeJS.WritableStream, fetcher?: typeof fetch, workspaceRoot: string }} options */
+export async function serveMcp({ configPath, input = process.stdin, output = process.stdout, fetcher, workspaceRoot }) {
+  if (!workspaceRoot) throw new Error("MCP requires an explicit workspace directory.");
   const config = await recoverPending({ configPath, fetcher });
   const dispatch = createMcpDispatcher({ client: createClient(config, fetcher), workspaceRoot });
   const lines = createInterface({ input, crlfDelay: Infinity });
@@ -642,7 +886,7 @@ function options(args) {
     const arg = args[i];
     if (arg.startsWith("--")) {
       const name = arg.slice(2);
-      if (["once", "release"].includes(name)) values[name] = true;
+      if (["once", "release", "i-am-the-installer"].includes(name)) values[name] = true;
       else { values[name] = args[i + 1]; i += 1; }
     } else positional.push(arg);
   }
@@ -651,6 +895,9 @@ function options(args) {
 
 const usage = `Control Room worker connector ${CONNECTOR_VERSION}
 
+  install --server <address> --code <code> --bot <kind> --name <label>
+          [--workspace <dir>]            Connect one bot with its own credential
+  uninstall --bot <kind> --name <label> Remove one bot registration and credential
   join --server <address> --code <code>   Join this machine (code from the Workers page)
   status                                  Show this worker and its credential
   rotate                                  Replace this machine's credential now
@@ -663,30 +910,52 @@ const usage = `Control Room worker connector ${CONNECTOR_VERSION}
   progress <claimId> <message>
   blocker <claimId> <message> [--release]
   result <claimId> --summary <text> [--file <path>]...
-  mcp                                     Start the MCP server for an agent (stdin/stdout)
+  mcp --profile <name> --workspace <dir> Start the MCP server for an agent (stdin/stdout)
 
   --config <path>   Credential file (default ${defaultConfigPath()})
 `;
 
-export async function main(argv = process.argv.slice(2), io = { out: process.stdout, err: process.stderr }) {
+export async function main(argv = process.argv.slice(2), io = { out: process.stdout, err: process.stderr }, runtime = {}) {
   const [command, ...rest] = argv;
   const { values, positional } = options(rest);
-  const configPath = values.config ? resolve(values.config) : defaultConfigPath();
+  const env = runtime.env ?? process.env, platform = runtime.platform ?? process.platform;
+  const homeDir = runtime.homeDir ?? homedir(), realHomeDir = runtime.realHomeDir ?? homedir();
+  let configPath = values.config ? resolve(values.config) : defaultConfigPath(env);
   const print = value => io.out.write(`${typeof value === "string" ? value : JSON.stringify(value, null, 2)}\n`);
   try {
+    if (values.profile) configPath = connectorInstallPaths({ homeDir, env, platform, name: values.profile }).configPath;
     if (!command || command === "--help" || command === "help") { print(usage); return 0; }
+    if (command === "install" || command === "uninstall") {
+      if (resolve(homeDir) === resolve(realHomeDir) && values["i-am-the-installer"] !== true)
+        throw new Error("Refusing to change a real home. Re-run this owner-approved command with --i-am-the-installer.");
+      if (command === "install") {
+        const installed = await installConnector({ server: values.server, code: values.code, bot: values.bot,
+          name: values.name, workspace: values.workspace, homeDir, env, platform, fetcher: runtime.fetcher,
+          runner: runtime.runner, sourcePath: runtime.sourcePath, clock: runtime.clock });
+        print(`Connected as ${values.name}. Open ${values.bot} and ask it to list Control Room work.`);
+        if (["claude-desktop", "cursor"].includes(values.bot)) print(`Restart ${values.bot}.`);
+        print(installed.status);
+      } else {
+        print(await uninstallConnector({ bot: values.bot, name: values.name, homeDir, env, platform,
+          runner: runtime.runner, clock: runtime.clock }));
+      }
+      return 0;
+    }
     if (command === "join") {
-      const result = await join({ server: values.server, code: values.code, configPath });
+      const result = await join({ server: values.server, code: values.code, configPath, fetcher: runtime.fetcher });
       print(`Joined as "${result.displayName}" (${result.workerId}).`);
       print(`Projects: ${result.projectIds.join(", ")}. Capabilities: ${result.capabilities.join(", ")}.`);
       print(`Credential saved to ${configPath}. Next: node ${basename(process.argv[1] ?? "connector.mjs")} run`);
       return 0;
     }
-    if (command === "mcp") { await serveMcp({ configPath }); return 0; }
-    const config = await recoverPending({ configPath });
-    const client = createClient(config);
+    if (command === "mcp") {
+      if (!values.workspace) throw new Error("MCP requires an explicit --workspace directory.");
+      await serveMcp({ configPath, workspaceRoot: resolve(values.workspace), fetcher: runtime.fetcher }); return 0;
+    }
+    const config = await recoverPending({ configPath, fetcher: runtime.fetcher });
+    const client = createClient(config, runtime.fetcher);
     if (command === "status") { print(await client.heartbeat()); return 0; }
-    if (command === "rotate") { print(await rotate({ configPath })); return 0; }
+    if (command === "rotate") { print(await rotate({ configPath, fetcher: runtime.fetcher })); return 0; }
     if (command === "work") { print(await client.work()); return 0; }
     if (command === "claims") { print(await client.claims()); return 0; }
     if (command === "claim") { print(await client.claim(positional[0], idempotencyKeyFor("claim", { offerId: positional[0] }))); return 0; }

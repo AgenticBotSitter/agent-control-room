@@ -1,0 +1,58 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const release = await acquireRotationLock(`${configPath}.rotate.lock`, lock);\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
+    "replace": "  const release = async () => {};\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
+    "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
+    "why": "concurrent sessions for one bot coalesce behind one credential-rotation lock"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (age >= staleMs) {",
+    "replace": "      if (false && age >= staleMs) {",
+    "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
+    "why": "an abandoned rotation lock is recoverable after its bounded stale interval"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const launch = [shimPath, \"--profile\", name, \"--workspace\", workspace];",
+    "replace": "  const launch = [shimPath, \"--profile\", name];",
+    "test": "node --test --test-name-pattern \"registers Claude Code\" tests/fleet-connector-install.test.mjs",
+    "why": "every CLI-backed MCP registration launches with the selected explicit workspace"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (resolve(homeDir) === resolve(realHomeDir) && values[\"i-am-the-installer\"] !== true)",
+    "replace": "  if (false && resolve(homeDir) === resolve(realHomeDir) && values[\"i-am-the-installer\"] !== true)",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "the CLI refuses to modify a real home without the explicit installer acknowledgement"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (!values.workspace) throw new Error(\"MCP requires an explicit --workspace directory.\");",
+    "replace": "      if (false) throw new Error(\"MCP requires an explicit --workspace directory.\");",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "an MCP launch never falls back to the process working directory"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  for (const path of paths) await runner(\"icacls\", [path, \"/inheritance:r\", \"/grant:r\", `${username}:F`], { env });",
+    "replace": "  for (const path of paths) await runner(\"icacls\", [path, \"/grant:r\", `${username}:F`], { env });",
+    "test": "node --test --test-name-pattern \"Windows installation\" tests/fleet-connector-install.test.mjs",
+    "why": "Windows credential ACLs remove inherited readers before granting the current user"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  await writeJsonWithBackup(path, { ...value, mcpServers: { ...mcpServers,",
+    "replace": "  await writeJsonWithBackup(path, { ...value, mcpServers: {",
+    "test": "node --test --test-name-pattern \"JSON merges preserve\" tests/fleet-connector-install.test.mjs",
+    "why": "desktop JSON registration preserves MCP servers that Control Room does not own"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (profiles.length === 0) await rm(paths.shimPath, { force: true });",
+    "replace": "  if (profiles.length <= 2) await rm(paths.shimPath, { force: true });",
+    "test": "node --test --test-name-pattern \"CLI-backed uninstall\" tests/fleet-connector-install.test.mjs",
+    "why": "uninstalling one bot does not remove the stable shim still used by another profile"
+  }
+]
