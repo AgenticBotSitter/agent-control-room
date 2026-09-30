@@ -44,9 +44,9 @@
   {
     "file": "src/supervisor/v1/reconciler.ts",
     "find": "      WHERE a.tenant_id=$1 AND a.state IN ('leased','running','waiting') AND j.state IN ('leased','running')\n        AND l.state='active' AND l.expires_at<=$2",
-    "replace": "      WHERE a.tenant_id=$1 AND a.state IN ('leased','running','waiting','cancelled') AND j.state IN ('leased','running','orphaned')\n        AND l.expires_at<=$2",
+    "replace": "      WHERE a.tenant_id=$1 AND a.state IN ('leased','running','waiting') AND j.state IN ('leased','running')\n        AND l.expires_at<=$2",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
-    "why": "a revoked worker's lease is never a lapse, even once it has also elapsed"
+    "why": "the candidate scan never selects a non-active lease, so a revoked worker's lease is not a lapse even once it has also elapsed"
   },
   {
     "file": "src/supervisor/v1/reconciler.ts",
