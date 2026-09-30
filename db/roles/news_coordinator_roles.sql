@@ -26,4 +26,7 @@ GRANT UPDATE (revoked_at) ON control_web_sessions TO control_room_news_coordinat
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_news_coordinator;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_news_coordinator;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_news_coordinator;
+-- The 0156 claim guard reads the installation operations mode as the inserting
+-- login; without this every news attempt is refused, running included.
+GRANT SELECT ON installation_operations_mode_revisions TO control_room_news_coordinator;
 COMMIT;

@@ -13,6 +13,7 @@ export const databaseRoleManifestV1 = Object.freeze({
     "control_room_schedule_admissions", "control_room_github_broker", "control_room_work_intake",
     "control_room_private_web", "control_room_task_coordinator", "control_room_native_results",
     "control_room_local_result_publisher", "control_room_agent_reviewer", "control_room_native_queue_worker",
+    "control_room_fleet_gateway", "control_room_fleet_owner_authority",
   ]),
   logins: Object.freeze({
     control_room_migrator: login("control_room_schema_owner"),
@@ -27,6 +28,8 @@ export const databaseRoleManifestV1 = Object.freeze({
     control_room_agent_reviewer_login: login("control_room_agent_reviewer", { mac: true, newLogin: true }),
     control_room_queue_worker: login("control_room_native_queue_worker",
       { mac: true, legacyGroup: "control_room_application" }),
+    control_room_fleet: login("control_room_fleet_gateway", { mac: true, newLogin: true }),
+    control_room_fleet_owner: login("control_room_fleet_owner_authority", { mac: true, newLogin: true }),
   }),
 });
 

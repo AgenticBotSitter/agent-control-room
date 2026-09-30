@@ -15,7 +15,15 @@ import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import { captureWorkBatchQueueCatalogV1, createWorkBatchQueueSelectionAuthorityV1,
   type WorkBatchQueueAcceptedResultPortV1, type WorkBatchQueueCatalogV1,
   type WorkBatchQueueSelectionAuthorityV1 } from "../../work-intake/v1";
+import { WebOperationsModeServiceV1, operationsModeStopAuthorityV1 } from "./operations-mode-service";
+import { createOperationsModeSupervisorPortV1 } from "./operations-mode-supervisor-port";
 import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
+
+/** The installation's one supervisor identity. The Mac-local host runs a single
+ * supervisor loop, so this is fixed rather than configurable: a second id would
+ * be a second loop over the same health observations, and each would open its
+ * own incident. */
+export const MAC_LOCAL_SUPERVISOR_ID_V1 = "supervisor:mac-local";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
@@ -64,6 +72,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   /** Remote-worker owner section, present only when the host also runs the
    * fleet gateway on its own database login. */
   fleet?: MacLocalWebProcessOptionsV1["fleet"];
+  /** Installation-wide Pause / Drain / Stop. Supply the instance the host
+   * already built, so the endpoint and the supervisor's health port are two
+   * callers of one service rather than two services over one state. */
+  operationsMode?: WebOperationsModeServiceV1;
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
@@ -94,6 +106,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     ...(input.workBatchQueueAdmissionAuthority ? { workBatchQueueAdmissionAuthority: input.workBatchQueueAdmissionAuthority } : {}),
     ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
     ...(input.fleet ? { fleet: input.fleet } : {}),
+    // The installation-wide mode. This forwarding is the whole fix: without it
+    // the endpoint exists in the web process but is never mounted, and it 404s
+    // on a real installation while every service-level test passes.
+    ...(input.operationsMode ? { operationsMode: input.operationsMode } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -146,6 +162,9 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   listenerTiming?: { bindMs?: number; closeMs?: number };
   workBatchIntegrityKey?: Uint8Array;
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** The identity the health loop reports under. Defaults to the one fixed
+   * Mac-local supervisor; supplied only where a distinct id is needed. */
+  supervisorId?: string;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
@@ -169,12 +188,51 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           return Object.freeze({ integrityKey: Uint8Array.from(input.workBatchIntegrityKey), queueCatalog,
             selectionAuthority: createWorkBatchQueueSelectionAuthorityV1(queueCatalog, workerReadiness) });
         })() : undefined;
+        // The server-side operations mode for this installation. It exists
+        // before the web process so the supervisor's machine-health port and
+        // the owner-facing endpoint are two callers of ONE recorded decision
+        // rather than two facts that could disagree.
+        //
+        // It is built before the task application, so the coordinator's stop
+        // authority is not available yet and is attached below. That is the
+        // only ordering that works: `stopped` revokes on the coordinator's own
+        // login, and before that login exists there is nothing to revoke on.
+        let service: WebOperationsModeServiceV1 | undefined;
+        if (input.workBatchIntegrityKey) {
+          const key = input.workBatchIntegrityKey;
+          if (!(key instanceof Uint8Array) || key.length !== 32)
+            throw new Error("mac_local_host_configuration_invalid");
+          service = new WebOperationsModeServiceV1(database.client,
+            { tenantId: configuration.localOwnerSession.tenantId, workspaceId: configuration.workspaceId },
+            key, Date.now);
+        }
         taskApplication = input.createTaskApplication
           ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles!,
-            ...(workBatches ? { workBatches } : {}) }) : undefined;
+            ...(workBatches ? { workBatches } : {}),
+            // The supervisor's machine-health pause goes to the server-owned
+            // operations mode, never to a private copy of it. The port is only
+            // offered once the mode exists, because a supervisor that could not
+            // pause would silently protect nothing.
+            //
+            // The option name must stay `supervisor`: it is the one the task
+            // provider reads. A differently-named field with the same shape
+            // type-checks and then silently never arrives, which is exactly how
+            // this wiring stayed invisible for a whole stream.
+            ...(service ? { supervisor: { operations: createOperationsModeSupervisorPortV1(
+              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason) } }),
+              supervisorId: input.supervisorId ?? MAC_LOCAL_SUPERVISOR_ID_V1 } } : {}) }) : undefined;
         if (workBatches && input.createTaskApplication
           && (!taskApplication?.workBatchAuthority || !taskApplication.workBatchView))
           throw new Error("mac_local_host_configuration_invalid");
+        // The coordinator exists only after the task application, so the stop
+        // authority is attached after the fact: `stopped` revokes on the
+        // coordinator's own login, and before that login exists there is
+        // nothing to revoke on.
+        if (service && taskApplication) {
+          const stop = operationsModeStopAuthorityV1(taskApplication as unknown as
+            { listRunning?: unknown; revokeRunning?: unknown });
+          if (stop) service.attachStopAuthority(stop);
+        }
         // Some inert composition tests intentionally supply an opaque fake
         // client. A real opened DatabaseClient always exposes query and must
         // use the durable store.
@@ -192,6 +250,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
           ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+          ...(service ? { operationsMode: service } : {}),
         });
         if (!input.startQueueWorker) return web;
         if (!taskApplication?.queueDelivery || !databaseRoles) throw new Error("mac_local_host_configuration_invalid");

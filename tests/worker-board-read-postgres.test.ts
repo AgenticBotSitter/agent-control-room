@@ -7,9 +7,10 @@ import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { DatabaseWorkerBoardReadSourceV1 } from "../src/web/v1/worker-board-read";
 
-// Reserved disposable-cluster lane for this job: 58910-58911.
-const PORT = Number(process.env.WORKER_BOARD_PG_PORT ?? 58910);
-const PORTS = [58910, 58911];
+// Reserved disposable-cluster lane for this job: 58910-58911, or the test
+// runner's assigned port block, so concurrent runs never collide.
+const PORT = Number(process.env.WORKER_BOARD_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58910);
+const PORTS = [PORT, PORT + 1];
 const PG = requiresRealPostgres();
 
 test("worker-board attribution runs as the production web role and remains bounded on an empty fleet", async t => {

@@ -1,0 +1,25 @@
+{
+  "schema": "control-room.test-runner/v1",
+  "port": 47832,
+  "tokenFile": "/path/to/private/test-runner/token",
+  "auditLog": "/path/to/private/test-runner/audit.jsonl",
+  "allowedWorktreePrefixes": [
+    "/path/to/work/acr-cook-"
+  ],
+  "protectedReadPrefixes": [
+    "/path/to/work/acr-private"
+  ],
+  "allowedScripts": {
+    "test:database": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/private-pg-driver.test.ts tests/private-pg-options.test.ts tests/completion-gate-lock-order-postgres.test.ts tests/worker-board-read-postgres.test.ts tests/news-task-proposal-links-postgres.test.ts",
+    "test:attack-kit": "PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node --import tsx --test --test-concurrency=1 --test-timeout=240000 tests/attack-kit.test.ts tests/attack-kit-mutation.test.ts tests/attack-kit-real-postgres.test.ts tests/ownership-lease-postgres.test.ts tests/project-coordination-web-grants-postgres.test.ts tests/linear-pipeline-postgres.test.ts tests/bounded-usage-read-postgres.test.ts tests/owner-web-push-postgres.test.ts tests/supervisor-postgres.test.ts"
+  },
+  "pgBin": "/absolute/path/to/postgresql/bin",
+  "portPool": {
+    "start": 18000,
+    "end": 18199,
+    "blockSize": 20
+  },
+  "concurrency": 2,
+  "timeoutMs": 1200000,
+  "maxOutputBytes": 1048576
+}

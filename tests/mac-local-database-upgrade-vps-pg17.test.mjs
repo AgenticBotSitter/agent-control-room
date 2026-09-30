@@ -8,6 +8,7 @@ import { after, before, test } from "node:test";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmod, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +16,8 @@ import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../deploy/postgres/evidence.mjs";
 import { inspectMacDatabaseUpgradeV1 } from "../scripts/mac-local/database-upgrade-remote.mjs";
 import { postgresScramVerifierV1 } from "../scripts/mac-local/database-upgrade-scram.mjs";
+import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
+import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
 import { databaseRoleManifestV1 } from "../scripts/mac-local/database-role-manifest.mjs";
 import { macDatabaseUpgradePlanIsEmptyV1, plainMacDatabaseUpgradePlanWordsV1 } from
   "../scripts/mac-local/database-upgrade-vps-step.mjs";
@@ -426,7 +429,87 @@ test("a pnpm workspace or pnpmfile planted above the stage never runs, and the m
     assert.deepEqual(await catalog(), beforeCatalog);
     assert.deepEqual(await backups(), beforeBackups);
     assert.deepEqual(await stages(), ["cr-upgrade.keep"]);
+});
+
+test("rehearsal refuses without an intact bound backup before it starts PostgreSQL", { skip }, async () => {
+  assert.deepEqual(await backups(), [], "this comes before any upgrade test creates a backup");
+  const output = await refused(() => upgrade(["--rehearse", head().slice(0, 7)]),
+    "upgrade_rehearse_no_verified_backup", "rehearse");
+  assert.match(output, /Create and verify a backup first/u);
+});
+
+test("rehearsal refuses when its throwaway port is busy before it reads a backup", { skip }, async () => {
+  const port = await findFreePort();
+  const holder = createServer();
+  await new Promise((resolvePort, rejectPort) => {
+    holder.once("error", rejectPort);
+    holder.listen(port, "127.0.0.1", resolvePort);
   });
+  try {
+    const output = await refused(() => upgrade(["--rehearse", head().slice(0, 7)],
+      { env: { CR_UPGRADE_TEST_REHEARSE_PORT: String(port) } }), "upgrade_rehearse_port_busy", "rehearse");
+    assert.match(output, /throwaway database port is busy/u);
+  } finally { await new Promise(resolveClose => holder.close(resolveClose)); }
+});
+
+test("rehearsal picks the truly newest backup by its recorded time, not by directory-name order", { skip }, async () => {
+  // Backup directories are named pre-<commit>-<timestamp>: the commit prefix
+  // sorts first, so a name picked to sort last is given the EARLIER createdAt
+  // and a name picked to sort first is given the LATER one. Only reading each
+  // manifest's own recorded time, not the directory name, gets this right.
+  const laterButNamedFirst = join(state.vps, "backups", "pre-aaaaaaa-19990101T000000Z");
+  const earlierButNamedLast = join(state.vps, "backups", "pre-zzzzzzz-19980101T000000Z");
+  try {
+    await createMacLocalDatabaseBackupV1({ source: operator(), out: earlierButNamedLast, pgBin: PG_BIN,
+      now: () => "1998-01-01T00:00:00.000Z" });
+    await createMacLocalDatabaseBackupV1({ source: operator(), out: laterButNamedFirst, pgBin: PG_BIN,
+      now: () => "1999-01-01T00:00:00.000Z" });
+    const { code, output } = await upgrade(["--rehearse", head().slice(0, 7)], {
+      env: { CR_UPGRADE_TEST_PG_TARGET: "host=127.0.0.1 port=1 dbname=control_room user=postgres" },
+    });
+    assert.equal(code, 0, output);
+    assert.match(output, /latest verified backup \(pre-aaaaaaa-19990101T000000Z\)/u,
+      "the backup with the later recorded time wins even though its name sorts first");
+  } finally {
+    await rm(laterButNamedFirst, { recursive: true, force: true });
+    await rm(earlierButNamedLast, { recursive: true, force: true });
+  }
+});
+
+test("rehearsal restores and upgrades only a throwaway cluster, leaving the live data and port alone", { skip }, async () => {
+  const out = join(state.vps, "backups", "pre-rehearsal-fixture");
+  await createMacLocalDatabaseBackupV1({ source: operator(), out, pgBin: PG_BIN });
+  const beforeCatalog = await catalog(), beforeBackups = await backups();
+  const livePid = await readFile(join(state.root, "pg", "postmaster.pid"), "utf8");
+  const wrapperSource = await readFile(wrapper, "utf8");
+  const { code, output } = await upgrade(["--rehearse", head().slice(0, 7)], {
+    // A live target that cannot connect proves the rehearsal branch never uses
+    // the conventional live target, while the fixture's real cluster stays up.
+    env: { CR_UPGRADE_TEST_PG_TARGET: "host=127.0.0.1 port=1 dbname=control_room user=postgres" },
+  });
+  assert.equal(code, 0, output);
+  assert.match(output, new RegExp(`REHEARSAL DONE ${head().slice(0, 7)}·\\d{4}`, "u"));
+  assert.deepEqual(await catalog(), beforeCatalog, "the live catalog is unchanged");
+  assert.deepEqual(await backups(), beforeBackups, "the rehearsal keeps no new backup beside the live backup");
+  assert.equal(await readFile(join(state.root, "pg", "postmaster.pid"), "utf8"), livePid,
+    "the live cluster data directory was not restarted or replaced");
+  assert.match(wrapperSource, /database-upgrade-vps-rehearse\.mjs[\s\S]*"\$backup_root" "\$pg_bin" "\$rehearse_port"/u);
+  assert.doesNotMatch(wrapperSource, /database-upgrade-vps-rehearse\.mjs[\s\S]*\$pg_target/u,
+    "the rehearsal command has no route to the live connection target");
+  assert.deepEqual(await stages(), ["cr-upgrade.keep"]);
+});
+
+test("rehearsal refuses on low disk space and removes its cluster when the rehearsal apply fails", { skip }, async () => {
+  await refused(() => upgrade(["--rehearse", head().slice(0, 7)],
+    { env: { CR_UPGRADE_TEST_DISK_FACTOR: "1000000000" } }), "upgrade_disk_space_low", "check");
+  const port = await findFreePort();
+  let disposableRoot;
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: join(state.vps, "backups", "pre-rehearsal-fixture"), port,
+    pgBin: PG_BIN, portRange: { min: port, max: port },
+    afterRestore: async ({ root }) => { disposableRoot = root; throw new Error("rehearsal_apply_fixture_failed"); } }),
+  /rehearsal_apply_fixture_failed/u);
+  assert.equal(existsSync(disposableRoot), false, "a failed apply removes the throwaway cluster and its temporary backup");
+});
 
 test("upgrades an older ledger to HEAD with one code, a backup first and an empty after-plan", { skip }, async () => {
   const kept = ["control_room_migrator", "control_room_app", "control_room_scheduler", ...legacyMacLogins];

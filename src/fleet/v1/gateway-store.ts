@@ -224,6 +224,18 @@ export class FleetGatewayStoreV1 {
         platform=EXCLUDED.platform`, [this.#tenantId, workerId, now, connectorVersion, platform]);
   }
 
+  /** Supplies the digest-only startup cache through the gateway's existing
+   * least-privilege read grant. Expired and revoked credentials stay out. */
+  async activeAdmissionCredentials() {
+    const now = this.#now();
+    const rows = (await this.db.query<{ worker_id: string; secret_digest: string }>(`SELECT c.worker_id,c.secret_digest
+      FROM fleet_worker_credentials c JOIN fleet_workers w ON w.tenant_id=c.tenant_id AND w.worker_id=c.worker_id
+      WHERE c.tenant_id=$1 AND c.state='active' AND w.state='active'
+        AND c.expires_at>statement_timestamp() AND c.expires_at>$2::timestamptz
+      ORDER BY c.worker_id`, [this.#tenantId, now])).rows;
+    return Object.freeze(rows.map(row => Object.freeze({ workerId: row.worker_id, credentialDigest: row.secret_digest })));
+  }
+
   /** Resolves the bearer to exactly one worker. The declared worker id must
    * match the credential's own worker, so a stolen credential cannot pose as
    * another machine, and nothing about the refusal says which check failed. */

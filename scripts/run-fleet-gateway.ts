@@ -14,12 +14,30 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "../src/web/v1/private-postgres";
-import { createFleetGatewayHandlerV1, FleetGatewayStoreV1 } from "../src/fleet/v1";
+import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, FleetGatewayStoreV1,
+  type FleetGatewayTrustedClientHeaderV1 } from "../src/fleet/v1";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 
 export const FLEET_GATEWAY_CONFIGURATION_V1 = "control-room.fleet-gateway/v1";
+export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 15_000, headersTimeout: 5_000,
+  connectionsCheckingInterval: 1_000, maxHeaderSize: 8192, highWaterMark: 8 * 1024 });
 type Configuration = Readonly<{ schema: typeof FLEET_GATEWAY_CONFIGURATION_V1; tenantId: string; port: number;
-  database: PrivatePostgresConfiguration; workIntake?: Readonly<{ database: PrivatePostgresConfiguration; integrityKey: string }> }>;
+  database: PrivatePostgresConfiguration; workIntake?: Readonly<{ database: PrivatePostgresConfiguration; integrityKey: string }>;
+  trustedProxyAddresses: readonly string[]; trustedClientHeader: FleetGatewayTrustedClientHeaderV1 }>;
+
+export function fleetGatewayAdmissionFromConfigurationV1(config:
+  Pick<Configuration, "trustedProxyAddresses" | "trustedClientHeader">) {
+  return createFleetGatewayAdmissionV1({ trustedClientHeader: config.trustedClientHeader,
+    trustedProxyAddresses: config.trustedProxyAddresses });
+}
+
+export async function prepareFleetGatewayAdmissionV1(config:
+  Pick<Configuration, "trustedProxyAddresses" | "trustedClientHeader">, store: FleetGatewayStoreV1) {
+  const admission = fleetGatewayAdmissionFromConfigurationV1(config);
+  for (const credential of await store.activeAdmissionCredentials())
+    admission.registerCredential(credential.workerId, credential.credentialDigest);
+  return admission;
+}
 
 export function captureFleetGatewayConfigurationV1(value: unknown): Configuration {
   const input = value as Record<string, unknown>;
@@ -36,8 +54,20 @@ export function captureFleetGatewayConfigurationV1(value: unknown): Configuratio
       || !/^[A-Za-z0-9_-]{43}$/u.test(intake.integrityKey)) throw new Error("fleet_gateway_configuration_refused");
     workIntake = { database: intakeDatabase, integrityKey: intake.integrityKey };
   }
+  const trustedClientHeader = input.trustedClientHeader ?? "none";
+  const trustedProxyAddresses = input.trustedProxyAddresses ?? [];
+  if (!(["cf-connecting-ip", "x-forwarded-for-rightmost", "none"] as const).includes(trustedClientHeader as never)
+    || !Array.isArray(trustedProxyAddresses) || trustedProxyAddresses.some(address => typeof address !== "string"))
+    throw new Error("fleet_gateway_configuration_refused");
+  // Reuse the runtime policy validator so configuration and request handling
+  // cannot disagree about malformed or missing proxy addresses.
+  try {
+    fleetGatewayAdmissionFromConfigurationV1({ trustedClientHeader: trustedClientHeader as FleetGatewayTrustedClientHeaderV1,
+      trustedProxyAddresses: trustedProxyAddresses as string[] });
+  } catch { throw new Error("fleet_gateway_configuration_refused"); }
   return Object.freeze({ schema: FLEET_GATEWAY_CONFIGURATION_V1, tenantId: input.tenantId, port: input.port as number,
-    database, ...(workIntake ? { workIntake } : {}) });
+    database, ...(workIntake ? { workIntake } : {}), trustedClientHeader: trustedClientHeader as FleetGatewayTrustedClientHeaderV1,
+    trustedProxyAddresses: Object.freeze([...(trustedProxyAddresses as string[])]) });
 }
 
 async function main(path: string | undefined) {
@@ -52,10 +82,10 @@ async function main(path: string | undefined) {
     new Uint8Array(Buffer.from(config.workIntake.integrityKey, "base64url")))) : undefined;
   const script = await readFile(join(dirname(fileURLToPath(import.meta.url)), "fleet", "connector.mjs"), "utf8");
   const handler = createFleetGatewayHandlerV1({ store, ...(proposals ? { proposals } : {}),
+    admission: await prepareFleetGatewayAdmissionV1(config, store),
     connectorScript: { body: script, digest: `sha256:${createHash("sha256").update(script).digest("hex")}` },
     onUnexpectedError: error => { process.stderr.write(`fleet gateway: ${error instanceof Error ? error.name : "error"} ${(error as { code?: string }).code ?? ""}\n`); } });
-  const server = createServer({ requestTimeout: 15_000, headersTimeout: 5_000, maxHeaderSize: 8192,
-    highWaterMark: 8 * 1024 },
+  const server = createServer(FLEET_GATEWAY_SERVER_OPTIONS_V1,
     (request, response) => { void handler.handle(request, response); });
   server.listen(config.port, "127.0.0.1");
   // Owner decisions and elapsed leases are applied on a steady timer as well

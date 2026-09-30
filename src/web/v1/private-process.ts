@@ -51,6 +51,8 @@ import { createInstallationPlanViewV1 } from "../../installer/v1/installation-pl
 import { WorkBatchOwnerServiceV1, type WorkBatchQueueAcceptedResultPortV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
+import { createOperationsModeHttpHandlerV1 } from "./operations-mode-http";
+import { WebOperationsModeServiceV1, type OperationsModeStopAuthorityV1 } from "./operations-mode-service";
 import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
 import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
@@ -111,6 +113,8 @@ export interface PrivateWebProcessOptions {
   }) => Promise<OperatorSurfaceSnapshotV1> };
   /** Bounded per-node task and terminal-result attribution from canonical records. */
   workerBoard?: { read: (input: { tenantId: string; now: string }) => Promise<unknown> };
+  /** Read-only per worker-kind/model pipeline build-stage outcomes over trailing windows. */
+  workerScorecard?: { read: (input: { tenantId: string; now: string }) => Promise<unknown> };
   /** Owner-only canonical attention reader supplied by trusted composition.
    * It is intentionally separate from the full operator snapshot so the
    * coordinator role needs access only to the inbox table for this route. */
@@ -136,6 +140,9 @@ export interface PrivateWebProcessOptions {
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
   queueAttention?: QueueAttentionSource;
+  /** Installation-wide Pause / Drain / Stop. Omission keeps the endpoint and
+   * the Home control absent rather than showing a switch that does nothing. */
+  operationsMode?: { integrityKey: Uint8Array; stop?: OperationsModeStopAuthorityV1 };
   /**
    * Project coordination surface: the canonical store adapter for the
    * coordination engine. Production supplies the real PostgreSQL-backed
@@ -259,6 +266,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   }) : undefined;
   if (options.workerBoard && typeof options.workerBoard.read !== "function") throw new Error("invalid_private_app_config");
   const workerBoard = options.workerBoard ? Object.freeze({ read: options.workerBoard.read.bind(options.workerBoard) }) : undefined;
+  if (options.workerScorecard && typeof options.workerScorecard.read !== "function") throw new Error("invalid_private_app_config");
+  const workerScorecard = options.workerScorecard ? Object.freeze({ read: options.workerScorecard.read.bind(options.workerScorecard) }) : undefined;
   if (options.actionInboxSource && typeof options.actionInboxSource.read !== "function") throw new Error("invalid_private_app_config");
   const actionInboxSource = options.actionInboxSource ? Object.freeze({
     read: options.actionInboxSource.read.bind(options.actionInboxSource),
@@ -328,6 +337,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
   const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, pipelines, clock) : undefined;
+  const operationsMode = options.operationsMode ? new WebOperationsModeServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.operationsMode.integrityKey, clock,
+    options.operationsMode.stop) : undefined;
   const sessionWatch = new SessionWatchServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
@@ -461,6 +473,16 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               return Response.json({ plan: installationPlanView }, { headers: privateResponseHeaders });
             });
           }
+          if (url.pathname === "/api/v1/operations-mode") {
+            if (!operationsMode) throw new WebAccessError("not_found");
+            if (request.method === "GET" && !url.search)
+              return Response.json(await operationsMode.read(identity), { headers: privateResponseHeaders });
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
+              throw new WebAccessError("invalid_request");
+            const receipt = await operationsMode.set(identity, await readBoundedJson(request.body, 2048));
+            return Response.json(receipt, { headers: privateResponseHeaders });
+          }
           if (url.pathname === "/api/v1/needs-me/action-items") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             if (!actionInboxSource) throw new WebAccessError("not_found");
@@ -497,6 +519,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               return { tenantId: options.tenantId, now: actor.now };
             });
             return Response.json(await workerBoard.read(scope), { headers: privateResponseHeaders });
+          }
+          if (url.pathname === "/api/v1/workers-scorecard") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!workerScorecard) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return { tenantId: options.tenantId, now: actor.now };
+            });
+            return Response.json(await workerScorecard.read(scope), { headers: privateResponseHeaders });
           }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
           if (observations) {

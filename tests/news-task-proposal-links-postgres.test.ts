@@ -14,8 +14,9 @@ import { WebTaskService } from "../src/web/v1/task-service";
 import { sha256Digest } from "../src/security";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 
-// Reserved disposable-cluster lane for the news module: 58420-58429.
-const PORT = Number(process.env.NEWS_TASK_LINK_PG_PORT ?? 58420);
+// Reserved disposable-cluster lane for the news module: 58420-58429, or the
+// test runner's assigned port block, so concurrent runs never collide.
+const PORT = Number(process.env.NEWS_TASK_LINK_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58420);
 const PG = requiresRealPostgres();
 const NOW = "2026-09-29T15:00:00.000Z";
 const LATER = "2026-09-29T16:00:00.000Z";

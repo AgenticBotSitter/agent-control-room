@@ -27,6 +27,9 @@ import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { parseMacDatabaseLoginCodesV1, planMacDatabaseUpgradeSnapshotV1, sanitizedMacDatabaseUpgradeFailureV1 } from
   "../scripts/mac-local/database-upgrade-remote.mjs";
 
+const newUpgradeLogins = ["control_room_agent_reviewer_login", "control_room_fleet",
+  "control_room_fleet_owner", "control_room_publisher", "control_room_work_intake_agent"];
+
 test("upgrade failure reports only the bounded stage, SQLSTATE and error class", () => {
   const secret = "SCRAM-SHA-256$secret-material";
   const error = Object.assign(new Error(`permission denied ${secret}`), {
@@ -63,9 +66,12 @@ test("grant plan covers the source role files and detects additions and extras e
   assert.ok([...desired].some(value => value.includes("control_room_local_result_publisher|table|public.control_harness_runs||INSERT|plain")));
   assert.ok([...desired].some(value => value.includes("control_room_task_coordinator|table|public.control_node_fleet_signals||INSERT|plain")));
   for (const role of ["control_room_private_web", "control_room_task_coordinator",
-    "control_room_native_results", "control_room_local_result_publisher"])
+    "control_room_native_results", "control_room_local_result_publisher", "control_room_fleet_gateway",
+    "control_room_fleet_owner_authority"])
     assert.ok(desired.has(`${role}|function|public.is_work_intake_session()||EXECUTE|plain`));
   assert.ok(desired.has("control_room_agent_reviewer|function|public.commit_agent_review(text, jsonb, jsonb, bytea)||EXECUTE|plain"));
+  assert.ok(desired.has("control_room_fleet_gateway|function|public.redeem_fleet_enrollment(text, text, text, text, timestamptz)||EXECUTE|plain"));
+  assert.ok(desired.has("control_room_fleet_owner_authority|table|public.fleet_result_reviews||INSERT|plain"));
   for (const item of [
     "control_room_private_web|table|public.control_leases||SELECT|plain",
     "control_room_private_web|table|public.control_task_execution_plans||SELECT|plain",
@@ -94,7 +100,7 @@ test("grant plan covers the source role files and detects additions and extras e
   const sources = Object.fromEntries(await Promise.all([
     "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
     "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
-    "agent_reviewer_roles.sql",
+    "agent_reviewer_roles.sql", "fleet_gateway_roles.sql",
   ].map(async file => [file, await readFile(new URL(`../db/roles/${file}`, import.meta.url), "utf8")])));
   sources["private_web_roles.sql"] += "\nGRANT SELECT ON control_leases TO control_room_private_web;\n";
   assert.throws(() => desiredMacGrantsV1(sources), /upgrade_grant_source_duplicate/u);
@@ -116,14 +122,31 @@ test("grant convergence applies only the pinned function boundaries", async () =
     missing: ["control_room_private_web|function|public.is_work_intake_session()||EXECUTE|plain"] });
   assert.equal(calls.at(-1),
     "GRANT EXECUTE ON FUNCTION public.is_work_intake_session() TO control_room_private_web");
+  await applyMacGrantDiffV1(client, { extra: [],
+    missing: ["control_room_fleet_gateway|function|public.redeem_fleet_enrollment(text, text, text, text, timestamptz)||EXECUTE|plain"] });
+  assert.equal(calls.at(-1), "GRANT EXECUTE ON FUNCTION public.redeem_fleet_enrollment(text, text, text, text, timestamptz) TO control_room_fleet_gateway");
   await assert.rejects(applyMacGrantDiffV1(client, { extra: [],
     missing: ["control_room_queue_worker|function|public.is_work_intake_session()||EXECUTE|plain"] }),
   /upgrade_unexpected_function_grant/u);
   await assert.rejects(applyMacGrantDiffV1(client, {
     extra: ["control_room_private_web|function|public.other_function(text)||EXECUTE|plain"], missing: [],
   }), /upgrade_unexpected_function_grant/u);
-  assert.match(macGrantCatalogSqlV1, /oidvectortypes\(p\.proargtypes\)/u,
-    "catalog signatures use identity types without declared argument names");
+  // The catalog must spell argument types the way db/roles/*.sql spells them
+  // (pg_type.typname, e.g. timestamptz). oidvectortypes() expands to the
+  // SQL-standard form (timestamp with time zone), which can never equal the
+  // spelling in the role files, so such a grant would never converge. The
+  // zero-argument form must still render as `()` rather than a NULL.
+  // The comment above names the function this replaced, so assert against the
+  // query with its own `--` comments stripped out.
+  const catalogQuery = macGrantCatalogSqlV1.replace(/--[^\n]*/gu, " ");
+  assert.match(catalogQuery, /pg_type t ON t\.oid = u\.oid/u,
+    "catalog signatures use the compact type name the role files spell");
+  assert.match(catalogQuery, /string_agg\(\s*pg_catalog\.quote_ident\(t\.typname\), ', ' ORDER BY u\.ord\)/u,
+    "argument types keep their declared order and quoting");
+  assert.match(catalogQuery, /COALESCE\(\(SELECT string_agg/u,
+    "a zero-argument function still renders an empty argument list");
+  assert.doesNotMatch(catalogQuery, /oidvectortypes/u,
+    "oidvectortypes expands type aliases and would never match the role files");
   assert.doesNotMatch(macGrantCatalogSqlV1, /pg_get_function_identity_arguments/u);
 });
 
@@ -203,7 +226,7 @@ async function baseUpgradeFixture(root) {
     macBefore: await readFile(macFile), rolesBefore: await readFile(roleFile) };
 }
 
-test("prepare bundles one code for both missing logins, and finish adds only the verified ones", async t => {
+test("prepare bundles one code for every missing login, and finish adds only the verified ones", async t => {
   const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const { passwords, roleNames, oldRoles, macFile, roleFile, macBefore, rolesBefore } = await baseUpgradeFixture(root);
@@ -211,16 +234,17 @@ test("prepare bundles one code for both missing logins, and finish adds only the
   const mainCommit = "a".repeat(40), options = { protectedRoot: root, mainCommit };
   await assert.rejects(readFile(join(passwords, "control_room_publisher.txt")), { code: "ENOENT" });
   await assert.rejects(readFile(join(passwords, "control_room_work_intake_agent.txt")), { code: "ENOENT" });
+  await assert.rejects(readFile(join(passwords, "control_room_fleet.txt")), { code: "ENOENT" });
+  await assert.rejects(readFile(join(passwords, "control_room_fleet_owner.txt")), { code: "ENOENT" });
   const prepared = await prepareMacLocalDatabaseUpgradeV1(options);
   assert.equal(prepared.mainCommit, mainCommit);
   const codes = JSON.parse(prepared.code);
-  assert.deepEqual(Object.keys(codes).sort(), ["control_room_agent_reviewer_login", "control_room_publisher",
-    "control_room_work_intake_agent"]);
+  assert.deepEqual(Object.keys(codes).sort(), newUpgradeLogins);
   for (const verifier of Object.values(codes)) checkedPostgresScramVerifierV1(verifier);
   assert.deepEqual(parseMacDatabaseLoginCodesV1(prepared.code), codes, "the VPS upgrade reads the code as-is");
   assert.deepEqual(await readFile(roleFile), rolesBefore, "prepare writes no role file");
   await assert.rejects(readFile(intakeFile), { code: "ENOENT" }, "prepare writes no work-intake record");
-  for (const name of ["control_room_publisher", "control_room_agent_reviewer_login", "control_room_work_intake_agent"])
+  for (const name of newUpgradeLogins)
     assert.equal((await stat(join(passwords, `${name}.txt`))).mode & 0o777, 0o600);
   assert.equal((await stat(join(root, "config", "database-upgrade-prepare.json"))).mode & 0o777, 0o600);
 
@@ -236,8 +260,7 @@ test("prepare bundles one code for both missing logins, and finish adds only the
     assert.equal(configuration.username, role);
     assert.equal(configuration.password, (await readFile(join(passwords, `${role}.txt`), "utf8")).trim());
   } });
-  assert.deepEqual(verifiedFor.sort(), ["control_room_agent_reviewer_login", "control_room_publisher",
-    "control_room_work_intake_agent"]);
+  assert.deepEqual(verifiedFor.sort(), newUpgradeLogins);
 
   const changedRoles = JSON.parse(await readFile(roleFile, "utf8"));
   const validated = captureMacLocalDatabaseRolesV1(changedRoles);
@@ -246,6 +269,17 @@ test("prepare bundles one code for both missing logins, and finish adds only the
   assert.equal(validated.agentReviewer.username, "control_room_agent_reviewer_login");
   assert.equal(validated.agentReviewer.password,
     (await readFile(join(passwords, "control_room_agent_reviewer_login.txt"), "utf8")).trim());
+  assert.equal(validated.fleetGateway?.username, "control_room_fleet");
+  assert.equal(validated.fleetGateway?.password,
+    (await readFile(join(passwords, "control_room_fleet.txt"), "utf8")).trim());
+  assert.equal(validated.fleetOwner?.username, "control_room_fleet_owner");
+  assert.equal(validated.fleetOwner?.password,
+    (await readFile(join(passwords, "control_room_fleet_owner.txt"), "utf8")).trim());
+  const { fleetOwner: _fleetOwner, ...unpairedFleet } = changedRoles;
+  assert.throws(() => captureMacLocalDatabaseRolesV1(unpairedFleet), /mac_local_database_roles_invalid/u);
+  assert.throws(() => captureMacLocalDatabaseRolesV1({ ...changedRoles,
+    fleetGateway: { ...changedRoles.fleetGateway, port: changedRoles.fleetGateway.port + 1 } }),
+  /mac_local_database_roles_invalid/u);
   for (const [key, name] of Object.entries(roleNames)) assert.deepEqual(changedRoles[key], oldRoles[key], name);
   assert.deepEqual(await readFile(macFile), macBefore);
 
@@ -275,6 +309,21 @@ test("prepare bundles one code for both missing logins, and finish adds only the
     verifyLogin: async () => { verifiedAgain += 1; } }), { finished: true, mainCommit, nothingToFinish: true });
   assert.equal(verifiedAgain, 0);
   assert.deepEqual(await readFile(macFile), macBefore);
+});
+
+test("concurrent prepare callers converge on one reusable fleet handoff", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-concurrent-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await baseUpgradeFixture(root);
+  const options = { protectedRoot: root, mainCommit: "f".repeat(40) };
+  const [first, second] = await Promise.all([
+    prepareMacLocalDatabaseUpgradeV1(options), prepareMacLocalDatabaseUpgradeV1(options),
+  ]);
+  assert.equal(first.code, second.code, "both callers receive the handoff retained for finish");
+  assert.deepEqual(Object.keys(JSON.parse(first.code)).sort(), newUpgradeLogins);
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} });
+  assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1(options),
+    { mainCommit: options.mainCommit, nothingToPrepare: true });
 });
 
 test("finish refuses a code from a different prepare and a tampered code, and writes nothing", async t => {
@@ -320,8 +369,7 @@ test("finish refuses a code from a different prepare and a tampered code, and wr
   const verifiedRoles = [];
   await finishMacLocalDatabaseUpgradeV1({ protectedRoot: root, mainCommit,
     verifyLogin: async (_configuration, role) => { verifiedRoles.push(role); } });
-  assert.deepEqual(verifiedRoles.sort(), ["control_room_agent_reviewer_login", "control_room_publisher",
-    "control_room_work_intake_agent"]);
+  assert.deepEqual(verifiedRoles.sort(), newUpgradeLogins);
 });
 
 test("SCRAM verifier is deterministic for a fixed salt and rejects malformed material", () => {
@@ -378,7 +426,7 @@ test("the role manifest names every role the migrations, down files and schema f
   for (const file of ["production_provision.sql", "production_roles.sql", "production_table_grants.sql",
     "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
     "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
-    "agent_reviewer_roles.sql"]) {
+    "agent_reviewer_roles.sql", "fleet_gateway_roles.sql"]) {
     const text = (await readFile(new URL(`../db/roles/${file}`, import.meta.url), "utf8")).replace(/--[^\n]*/gu, "");
     for (const match of text.matchAll(/\b(?:CREATE ROLE|TO|FROM|IN ROLE)\s+(control_room_[a-z_]+)\b(?!\.)/gu))
       named.add(match[1]);
@@ -498,11 +546,15 @@ test("the role manifest names every role the migrations, down files and schema f
   }
   assert.throws(() => databaseRoleAttributesV1("control_room_unlisted"), /upgrade_role_catalog_refused/u);
   assert.deepEqual(logins.filter(login => manifest.logins[login].newLogin).sort(),
-    ["control_room_agent_reviewer_login", "control_room_publisher", "control_room_work_intake_agent"]);
+    newUpgradeLogins);
   assert.deepEqual(manifest.logins.control_room_agent_reviewer_login,
     { group: "control_room_agent_reviewer", newLogin: true, legacyGroup: null, mac: true });
   assert.equal(databaseRoleAttributesV1("control_room_agent_reviewer"),
     "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS");
+  assert.deepEqual(manifest.logins.control_room_fleet,
+    { group: "control_room_fleet_gateway", newLogin: true, legacyGroup: null, mac: true });
+  assert.deepEqual(manifest.logins.control_room_fleet_owner,
+    { group: "control_room_fleet_owner_authority", newLogin: true, legacyGroup: null, mac: true });
 });
 
 test("a missing login code is refused in plain words that name only manifest logins", async () => {
@@ -538,7 +590,8 @@ test("prepare and finish can run again once every login already exists, without 
   await mkdir(passwords, { recursive: true, mode: 0o700 });
   const names = { web: "control_room_web", coordinator: "control_room_coordinator", results: "control_room_results",
     queueWorker: "control_room_queue_worker", publisher: "control_room_publisher",
-    agentReviewer: "control_room_agent_reviewer_login" };
+    agentReviewer: "control_room_agent_reviewer_login", fleetGateway: "control_room_fleet",
+    fleetOwner: "control_room_fleet_owner" };
   const base = { host: "127.0.0.1", port: 15432, database: "control_room", majorVersion: 17 };
   const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1 };
   for (const [key, username] of Object.entries(names)) {
@@ -615,7 +668,8 @@ test("repoint updates the intake record's endpoint too, so a later upgrade conve
 
   const options = { protectedRoot: root, mainCommit: "b".repeat(40) };
   const prepared = await prepareMacLocalDatabaseUpgradeV1(options);
-  assert.deepEqual(Object.keys(JSON.parse(prepared.code)), ["control_room_work_intake_agent"]);
+  assert.deepEqual(Object.keys(JSON.parse(prepared.code)), ["control_room_work_intake_agent",
+    "control_room_fleet", "control_room_fleet_owner"]);
   await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} });
   assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1(options), { mainCommit: options.mainCommit, nothingToPrepare: true });
 
@@ -633,6 +687,9 @@ test("repoint updates the intake record's endpoint too, so a later upgrade conve
   assert.equal(intakeAfterRepoint.database.host, "100.100.9.9");
   assert.equal(intakeAfterRepoint.database.password, intakeBeforeRepoint.database.password);
   assert.deepEqual(intakeAfterRepoint.credentials, intakeBeforeRepoint.credentials);
+  const rolesAfterRepoint = captureMacLocalDatabaseRolesV1(JSON.parse(await readFile(roleFile, "utf8")));
+  assert.equal(rolesAfterRepoint.fleetGateway?.host, "100.100.9.9");
+  assert.equal(rolesAfterRepoint.fleetOwner?.host, "100.100.9.9");
 
   // Before the fix, repoint left work-intake-server.json pointed at the old
   // endpoint and every later upgrade refused with upgrade_role_config_refused.
@@ -649,7 +706,8 @@ test("an existing intake record with the wrong password or a stale endpoint refu
   await mkdir(passwords, { recursive: true, mode: 0o700 });
   const names = { web: "control_room_web", coordinator: "control_room_coordinator", results: "control_room_results",
     publisher: "control_room_publisher", agentReviewer: "control_room_agent_reviewer_login",
-    queueWorker: "control_room_queue_worker" };
+    queueWorker: "control_room_queue_worker", fleetGateway: "control_room_fleet",
+    fleetOwner: "control_room_fleet_owner" };
   const base = { host: "127.0.0.1", port: 15432, database: "control_room", majorVersion: 17 };
   const values = Object.fromEntries(Object.values(names).map((name, index) => [name, `${"g".repeat(40)}${index}`]));
   for (const [name, value] of Object.entries(values))
@@ -690,7 +748,8 @@ test("an installation that already has the publisher and intake login gets a cod
   const config = join(root, "config"), passwords = join(config, "database-passwords");
   await mkdir(passwords, { recursive: true, mode: 0o700 });
   const names = { web: "control_room_web", coordinator: "control_room_coordinator", results: "control_room_results",
-    queueWorker: "control_room_queue_worker", publisher: "control_room_publisher" };
+    queueWorker: "control_room_queue_worker", publisher: "control_room_publisher",
+    fleetGateway: "control_room_fleet", fleetOwner: "control_room_fleet_owner" };
   const base = { host: "127.0.0.1", port: 15432, database: "control_room", majorVersion: 17 };
   const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1 };
   for (const [key, username] of Object.entries(names)) {

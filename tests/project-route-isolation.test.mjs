@@ -5,13 +5,23 @@ import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 import { PrivateProjectWorkspace } from '../private-app/app/workspace.tsx';
 
+function projectSettingsResponse(url) {
+  const match = /\/api\/v1\/projects\/([^/]+)\/settings$/u.exec(String(url));
+  return match ? Response.json({ projectId: decodeURIComponent(match[1]), version: 0, eligibleWorkerKinds: null,
+    maxConcurrentTasks: null, defaultWorkerKind: null, defaultModel: null, defaultEffort: null,
+    updatedAt: '2026-09-09T12:00:00.000Z' }) : undefined;
+}
+
 for (const projectOrigin of ['ordinary', 'idea_lab']) test(`${projectOrigin} navigation and uncertain saves retain exact project identity`, async () => {
   const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
   const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
   const pending = [];
-  globalThis.fetch = (url, options) => new Promise(resolve => pending.push({ url, options, resolve }));
+  globalThis.fetch = (url, options) => {
+    const settings = projectSettingsResponse(url);
+    return settings ? Promise.resolve(settings) : new Promise(resolve => pending.push({ url, options, resolve }));
+  };
   const root = createRoot(document.getElementById('root'));
   const project = (id, lifecycle = projectOrigin === 'idea_lab' ? 'completed' : 'active', version = 1) => ({ projectId: id, title: id === 'project:first' ? 'PRIVATE FIRST PROJECT' : 'Second project',
     summary: 'Saved purpose', lifecycle, version, origin: projectOrigin, lifecycleEditable: true,
@@ -97,7 +107,10 @@ test('project Settings renders saved and empty values, and keeps failed reads un
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
   const requests = [];
-  globalThis.fetch = (url, options) => new Promise(resolve => requests.push({ url, options, resolve }));
+  globalThis.fetch = (url, options) => {
+    const settings = projectSettingsResponse(url);
+    return settings ? Promise.resolve(settings) : new Promise(resolve => requests.push({ url, options, resolve }));
+  };
   const root = createRoot(document.getElementById('root'));
   const project = (id, summary) => ({ projectId: id, title: 'Saved project settings', summary, lifecycle: 'active',
     version: 4, origin: 'ordinary', lifecycleEditable: false,

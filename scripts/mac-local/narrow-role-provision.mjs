@@ -1,4 +1,4 @@
-/** Offline-only setup for the six Mac-local PostgreSQL logins. Never imported
+/** Offline-only setup for the Mac-local PostgreSQL logins. Never imported
  * by application startup. Existing grants are inspected, not repaired here;
  * live membership correction is the separately reviewed step 11.C. */
 import { readFile } from "node:fs/promises";
@@ -9,7 +9,7 @@ const plan = Object.freeze(Object.entries(macRolePlan));
 const roleFiles = Object.freeze([
   "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
-  "agent_reviewer_roles.sql",
+  "agent_reviewer_roles.sql", "fleet_gateway_roles.sql",
 ]);
 const roleSource = file => new URL(`../../db/roles/${file}`, import.meta.url);
 

@@ -106,8 +106,22 @@ web and gateway logins have no direct write grant on those records. Workers
 never see either login.
 
 The unauthenticated join endpoint accepts at most 4 KiB, defaults to 8 attempts
-per client address and 80 attempts total per minute, and shares a 16-request
-pre-authentication concurrency ceiling with credential checks. Rejections happen
-before a request body or database lookup. Because the gateway binds to loopback,
-it accepts `CF-Connecting-IP` or the first `X-Forwarded-For` address only from
-that loopback proxy; a non-loopback peer cannot supply its own rate-limit identity.
+per IPv4 `/24` or IPv6 `/64` and 80 attempts total per minute, and shares a
+16-request pre-authentication concurrency ceiling with credential checks.
+Enrollment rejections happen before a request body or database lookup. Failed
+credential checks have their own per-network and global budget. Successfully
+authenticated workers use a separate per-worker reserve which failed credentials
+can never consume or fill. The gateway remembers only the verified credential
+digest after enrollment or authentication, never the bearer secret. Unknown
+credentials provisionally spend the failure budget before a database lookup;
+a successful or interrupted lookup refunds that charge. On startup, active
+unexpired credential digests are loaded through the same least-privilege fleet
+database login, so already-enrolled machines retain this reserve after restart.
+
+Forwarded client-address headers are not trusted by default, including from a
+loopback peer. If the gateway is behind a known proxy, set both
+`trustedProxyAddresses` (an array of the proxy's exact socket IP addresses) and
+exactly one `trustedClientHeader`: `"cf-connecting-ip"` for Cloudflare, or
+`"x-forwarded-for-rightmost"` for a proxy which appends the immediate client to
+X-Forwarded-For. Do not enable both header formats. A forwarded header is ignored
+unless the request's immediate socket peer is in the configured proxy list.
