@@ -72,6 +72,11 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // against this list -- a grant the preflight does not know about is a
   // preflight failure, not a lenient pass.
   "control_owner_push_attempt_heads",
+  // 0155-0157: the operations-mode revisions and the mode they resolve to. The
+  // web login reads them and inserts its own revision, which is why the table is
+  // in the read list AND `privateWebInsertTables`; an audit that listed only one
+  // side would refuse a correct database.
+  "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals",
   // 0206-0208: the result-file catalog and its download grants. Read only; the
   // preflight's column audit is what proves the web login cannot write a
   // catalog row, cannot quarantine a file and cannot rewrite a producer.
