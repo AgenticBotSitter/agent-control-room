@@ -231,6 +231,14 @@ test("startup refuses when another database session still owns the updater lease
   await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u);
 });
 
+test("startup settles the actuator's durable link transaction before opening its socket", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  const store = new MemoryStore(null); let recovered = 0;
+  const updater = await startUpdaterV1({ root, store, effects: { async recover() { recovered += 1; } } });
+  try { assert.equal(recovered, 1); assert.ok(await lstat(join(root, "updater-state/control.sock"))); }
+  finally { await updater.stop(); }
+});
+
 test("the main loop does not poll the runner while Off and rejects a risk-increasing request", async t => {
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
   await mkdir(join(root, "releases/r7"), { recursive: true }); await symlink("releases/r7", join(root, "current"));

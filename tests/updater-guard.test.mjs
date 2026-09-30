@@ -4,6 +4,8 @@ import { chmod, mkdir, mkdtemp, readFile, readlink, symlink, writeFile } from "n
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { recoverPairLinksV1 } from "../src/updater/v1/release-layout.mjs";
+import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
 
 const exec = promisify(execFile), guard = join(process.cwd(), "src/updater/v1/guard/guard.sh");
 const digest = suffix => `sha256:${String(suffix).padStart(64, "0")}`;
@@ -79,6 +81,47 @@ test("rescue overrides every journal step rather than resuming it forward", asyn
     assert.equal(JSON.parse(await readFile(join(fixture.root, "updater-state/rescued.json"), "utf8")).to.releaseId, "r1",
       `rescue at ${step}`);
   }
+});
+
+test("rescue tombstones a stale link switch and boot cannot undo the rescued pair", async t => {
+  const fixture = await guardRootV1(t, "stale-switch");
+  await mkdir(join(fixture.root, "releases/r3"));
+  const stale = { schema: "control-room.pair-link-switch/v1", operationId: "stale-before-rescue",
+    phase: "previous_done", from: { releaseId: "r2", pgDataId: "p2", schemaDigest: digest(2) },
+    to: { releaseId: "r3", pgDataId: "p2", schemaDigest: digest(2) }, previousReleaseId: "r2" };
+  await writeFile(join(fixture.root, "updater-state/link-switch.json"), `${JSON.stringify(stale)}\n`);
+  await runGuardV1(fixture);
+  await assert.rejects(readFile(join(fixture.root, "updater-state/link-switch.json")), /ENOENT/u);
+  assert.deepEqual(JSON.parse(await readFile(join(fixture.root, "updater-state/link-switch.rescued.json"), "utf8")), stale,
+    "the stale switch is retained as rescue evidence, outside the recovery path");
+  await writeFile(join(fixture.root, "pg/data-p1/postmaster.pid"), "live");
+  await mkdir(join(fixture.root, "status"));
+  await writeFile(join(fixture.root, "updater-state/self-update"), "Off\n");
+  let proofs = 0, recovered;
+  const store = { async unhandledOwnerRequests() { return []; }, async liveRun() { return null; },
+    async heartbeat() {} };
+  const updater = await startUpdaterV1({ root: fixture.root, store, effects: { async recover() {
+    recovered = await recoverPairLinksV1(fixture.root, { databaseStopped: async () => {
+      proofs += 1; return true;
+    } });
+    return recovered;
+  } } });
+  await updater.stop();
+  assert.deepEqual(recovered, { status: "uncertain", reason: "rescue_marker" });
+  assert.equal(JSON.parse(await readFile(join(fixture.root, "status/status.json"), "utf8")).state, "uncertain");
+  assert.equal(proofs, 0);
+  assert.equal(await readlink(join(fixture.root, "current")), "releases/r1");
+  assert.equal(await readlink(join(fixture.root, "pg/current")), "data-p1");
+
+  // Recreate the crash window in which rescued.json was durable but the stale
+  // record had not yet been tombstoned. Recovery must still defer to the owner.
+  await writeFile(join(fixture.root, "updater-state/link-switch.json"), `${JSON.stringify(stale)}\n`);
+  assert.deepEqual(await recoverPairLinksV1(fixture.root, { databaseStopped: async () => {
+    proofs += 1; return true;
+  } }), { status: "uncertain", reason: "rescue_marker" });
+  assert.equal(proofs, 0);
+  assert.equal(await readlink(join(fixture.root, "current")), "releases/r1");
+  assert.equal(await readlink(join(fixture.root, "pg/current")), "data-p1");
 });
 
 test("a hung updater is kickstarted at most three times an hour and a retry remains safe", async t => {
