@@ -28,7 +28,7 @@ export const MAC_LOCAL_SUPERVISOR_ID_V1 = "supervisor:mac-local";
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
 type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">
-  & Partial<Pick<MacLocalTaskApplicationV1, "taskService">>;
+  & Partial<Pick<MacLocalTaskApplicationV1, "taskService" | "resultFileStore">>;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
 
 /** The protected enablement is the only Mac-local source of exact worker and
@@ -98,6 +98,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
     ...(taskApplication?.taskService ? { taskService: taskApplication.taskService } : {}),
     ...(taskApplication?.taskReadKeys ? { taskReadKeys: taskApplication.taskReadKeys } : {}),
+    // "Save to my Mac" (plan v4.3 2.6). Without this the download route does
+    // not exist on a real installation, which is the exact failure mode the
+    // operations-mode forwarding below was written to prevent.
+    ...(taskApplication?.resultFileStore ? { resultFileStore: taskApplication.resultFileStore } : {}),
     ...(taskApplication?.actionInboxSource ? { actionInboxSource: taskApplication.actionInboxSource } : {}),
     ...(taskApplication?.projectEvents ? { projectEvents: taskApplication.projectEvents } : {}),
     ...(input.workerReadiness ? { workerReadiness: input.workerReadiness } : {}),
