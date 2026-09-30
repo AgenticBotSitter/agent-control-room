@@ -22,6 +22,9 @@ import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
+import { ProjectEventStoreV1 } from "../src/project-events/v1/store";
+import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycle";
+import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import * as connector from "../scripts/fleet/connector.mjs";
 import * as fake from "./support/fleet-fake-harness-adapter.mjs";
@@ -50,7 +53,9 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
     const admin = adminPool(postgres), fleet = pool(postgres, "fleet"), fleetOwner = pool(postgres, "fleetOwner");
     const dir = await mkdtemp(join(tmpdir(), "fleet-handoff-pg-"));
     let mode: FleetOperationsModeV1 = "running";
-    const gateway = new FleetGatewayStoreV1(fleet.client, { tenantId: FLEET_TENANT, operationsMode: async () => mode });
+    const projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(fleet.client,
+      deriveProjectEventIntegrityKeyV1(new Uint8Array(32).fill(11)), () => new Date().toISOString()));
+    const gateway = new FleetGatewayStoreV1(fleet.client, { tenantId: FLEET_TENANT, operationsMode: async () => mode, projectEvents });
     const owner = new FleetOwnerServiceV1(fleetOwner.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
       afterDecision: () => gateway.reconcile() });
     const unexpected: unknown[] = [];
@@ -129,6 +134,16 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
       const note = (await owner.listWorkers(ownerIdentity())).workers[0]!.latestNote;
       assert.equal(note?.kind, "blocker", "the owner-authority login sees the blocker on the Workers page");
       assert.equal(note?.taskTitle, "Task handoff-pg-fail");
+      // The required hand-off note also reaches the task timeline, not only
+      // the audit log and fleet_worker_events, as the real least-privilege
+      // fleet gateway login (0111's grant) and the private web login that
+      // presents it.
+      const timeline = await asWeb(`SELECT event_kind,payload->>'safeSummary' AS summary,payload->>'safeDetail' AS detail
+        FROM control_project_events WHERE project_id=$1 AND source_id=$2 ORDER BY sequence DESC LIMIT 1`,
+      [PROJECT_A, failing.jobId]);
+      assert.equal(timeline[0].event_kind, "attention");
+      assert.equal(timeline[0].summary, "Worker handed this task back");
+      assert.match(timeline[0].detail, /^The Codex run did not finish/u);
 
       assert.ok(requests.every(url => url.startsWith(`${origin}/fleet/v1/`)), "the connector spoke only to the gateway");
       assert.deepEqual(unexpected, []);

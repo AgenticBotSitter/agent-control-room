@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0196 (filename order, including assigned gaps, 0155-0157 and 0160-0162),
+// Generated from public migrations through 0196 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "6972a386dee74093415735f30cb110a27e5ae33c315fed5b22e0e3b3296291ce";
+export const privateWebSchemaDigest = "8f5c39d0f69cc5ad729dce58dae52698ceaf772422d4cf8c737d3efbd83a67a2";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -45,6 +45,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
+  "work_batch_intake_flag_dismissals",
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
@@ -61,6 +62,7 @@ export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_event_stream_heads", "control_project_events", "control_project_coordinator_heads",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
 privateWebInsertTables.add("work_batch_revisions"); privateWebInsertTables.add("work_batch_items");
+privateWebInsertTables.add("work_batch_intake_flag_dismissals");
 privateWebInsertTables.add("work_batch_queue_admissions"); privateWebInsertTables.add("work_batch_agent_queue_heads");
 privateWebInsertTables.add("pipeline_templates"); privateWebInsertTables.add("pipeline_runs"); privateWebInsertTables.add("pipeline_stage_runs");
 privateWebInsertTables.add("control_job_dependencies");

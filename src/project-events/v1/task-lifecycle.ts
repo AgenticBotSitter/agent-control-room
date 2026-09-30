@@ -6,7 +6,7 @@ import type { ProjectEventStoreV1 } from "./store";
 export const taskProjectEventActionsV1 = [
   "task_created", "task_started", "task_finished", "task_failed", "task_review_ready",
   "task_accepted", "task_changes_requested", "task_revised", "task_completed",
-  "project_completed", "project_archived",
+  "task_handed_off", "project_completed", "project_archived",
 ] as const;
 export type TaskProjectEventActionV1 = typeof taskProjectEventActionsV1[number];
 
@@ -14,6 +14,10 @@ export type TaskProjectEventWriteV1 = Readonly<{
   tenantId: string; workspaceId: string; projectId: string; subjectId: string;
   action: TaskProjectEventActionV1; sourceId: string; sourceVersion: string;
   occurredAt: string;
+  /** Bounded, already-sanitized presentation text only (e.g. a worker's
+   * required hand-off note, truncated to the safeDetail bound). Never a raw
+   * prompt, credential or unbounded payload. */
+  safeDetail?: string;
 }>;
 
 const presentation: Record<TaskProjectEventActionV1, Pick<ProjectEventInputV1,"eventKind"|"safeSummary"|"tone">> = {
@@ -26,6 +30,7 @@ const presentation: Record<TaskProjectEventActionV1, Pick<ProjectEventInputV1,"e
   task_changes_requested: { eventKind: "review", safeSummary: "Task changes requested", tone: "warn" },
   task_revised: { eventKind: "work", safeSummary: "Task revision created", tone: "neutral" },
   task_completed: { eventKind: "work", safeSummary: "Task completed", tone: "good" },
+  task_handed_off: { eventKind: "attention", safeSummary: "Worker handed this task back", tone: "warn" },
   project_completed: { eventKind: "project", safeSummary: "Project completed", tone: "good" },
   project_archived: { eventKind: "project", safeSummary: "Project archived", tone: "warn" },
 };
@@ -44,6 +49,7 @@ export class TaskProjectEventWriterV1 {
       source: { kind: value.action.startsWith("project_") ? "control_room" : "job",
         sourceId: value.sourceId, sourceVersion: value.sourceVersion, sourceEventKeyDigest },
       subject: { kind: value.action.startsWith("project_") ? "project" : "work_item", subjectId: value.subjectId },
+      ...(value.safeDetail !== undefined ? { safeDetail: value.safeDetail } : {}),
       deepLinkPath: value.action.startsWith("project_") ? `/projects/${value.projectId}/activity`
         : `/projects/${value.projectId}/tasks/${value.subjectId}`,
       occurredAt: new Date(value.occurredAt).toISOString(), presentationOnly: true,

@@ -17,12 +17,19 @@ import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
 import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, FleetGatewayStoreV1,
   type FleetGatewayTrustedClientHeaderV1 } from "../src/fleet/v1";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
+import { ProjectEventStoreV1 } from "../src/project-events/v1/store";
+import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycle";
+import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 
 export const FLEET_GATEWAY_CONFIGURATION_V1 = "control-room.fleet-gateway/v1";
 export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 15_000, headersTimeout: 5_000,
   connectionsCheckingInterval: 1_000, maxHeaderSize: 8192, highWaterMark: 8 * 1024 });
 type Configuration = Readonly<{ schema: typeof FLEET_GATEWAY_CONFIGURATION_V1; tenantId: string; port: number;
   database: PrivatePostgresConfiguration; workIntake?: Readonly<{ database: PrivatePostgresConfiguration; integrityKey: string }>;
+  /** The same installation-wide harness integrity key the private web process
+   * holds. Without it, hand-off notes still record in the audit log and worker
+   * events, but never reach the owner's task timeline. */
+  harnessIntegrityKey?: string;
   trustedProxyAddresses: readonly string[]; trustedClientHeader: FleetGatewayTrustedClientHeaderV1 }>;
 
 export function fleetGatewayAdmissionFromConfigurationV1(config:
@@ -54,6 +61,12 @@ export function captureFleetGatewayConfigurationV1(value: unknown): Configuratio
       || !/^[A-Za-z0-9_-]{43}$/u.test(intake.integrityKey)) throw new Error("fleet_gateway_configuration_refused");
     workIntake = { database: intakeDatabase, integrityKey: intake.integrityKey };
   }
+  let harnessIntegrityKey: string | undefined;
+  if (input.harnessIntegrityKey !== undefined) {
+    if (typeof input.harnessIntegrityKey !== "string" || !/^[A-Za-z0-9_-]{43}$/u.test(input.harnessIntegrityKey))
+      throw new Error("fleet_gateway_configuration_refused");
+    harnessIntegrityKey = input.harnessIntegrityKey;
+  }
   const trustedClientHeader = input.trustedClientHeader ?? "none";
   const trustedProxyAddresses = input.trustedProxyAddresses ?? [];
   if (!(["cf-connecting-ip", "x-forwarded-for-rightmost", "none"] as const).includes(trustedClientHeader as never)
@@ -66,7 +79,8 @@ export function captureFleetGatewayConfigurationV1(value: unknown): Configuratio
       trustedProxyAddresses: trustedProxyAddresses as string[] });
   } catch { throw new Error("fleet_gateway_configuration_refused"); }
   return Object.freeze({ schema: FLEET_GATEWAY_CONFIGURATION_V1, tenantId: input.tenantId, port: input.port as number,
-    database, ...(workIntake ? { workIntake } : {}), trustedClientHeader: trustedClientHeader as FleetGatewayTrustedClientHeaderV1,
+    database, ...(workIntake ? { workIntake } : {}), ...(harnessIntegrityKey ? { harnessIntegrityKey } : {}),
+    trustedClientHeader: trustedClientHeader as FleetGatewayTrustedClientHeaderV1,
     trustedProxyAddresses: Object.freeze([...(trustedProxyAddresses as string[])]) });
 }
 
@@ -77,7 +91,11 @@ async function main(path: string | undefined) {
   const config = captureFleetGatewayConfigurationV1(JSON.parse(await readFile(path, "utf8")));
   const fleetDatabase = createPrivatePostgresDatabase(config.database);
   const intakeDatabase = config.workIntake ? createPrivatePostgresDatabase(config.workIntake.database) : undefined;
-  const store = new FleetGatewayStoreV1(fleetDatabase.client, { tenantId: config.tenantId });
+  const projectEvents = config.harnessIntegrityKey ? new TaskProjectEventWriterV1(new ProjectEventStoreV1(
+    fleetDatabase.client, deriveProjectEventIntegrityKeyV1(Buffer.from(config.harnessIntegrityKey, "base64url")),
+    () => new Date().toISOString())) : undefined;
+  const store = new FleetGatewayStoreV1(fleetDatabase.client, { tenantId: config.tenantId,
+    ...(projectEvents ? { projectEvents } : {}) });
   const proposals = intakeDatabase && config.workIntake ? new WorkBatchServiceV1(new WorkBatchStoreV1(intakeDatabase.client,
     new Uint8Array(Buffer.from(config.workIntake.integrityKey, "base64url")))) : undefined;
   const script = await readFile(join(dirname(fileURLToPath(import.meta.url)), "fleet", "connector.mjs"), "utf8");

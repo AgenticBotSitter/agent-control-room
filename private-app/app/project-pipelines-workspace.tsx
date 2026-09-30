@@ -7,6 +7,7 @@ import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "../../src/work-intake/v1/schemas";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1,
   workBatchOwnerViewSchemaV1, type WorkBatchOwnerViewV1 } from "../../src/work-intake/v1/owner-schemas";
+import { applySuggestedSplitV1, computeSuggestedSplitV1, INTAKE_FLAG_REASON_TEXT_V1 } from "../../src/work-intake/v1/intake-gate";
 import { pipelineHistorySchemaV1,pipelineRunPageSchemaV1,pipelineRunViewSchemaV1,
   pipelineUnattendedTransitionReceiptSchemaV1,pipelineUnattendedTransitionSchemaV1,
   type PipelineHistoryV1,type PipelineRunViewV1 } from "../../src/pipelines/v1/schemas";
@@ -16,7 +17,7 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 
 type OwnerPage = z.infer<typeof workBatchOwnerPageSchemaV1>;
 type OwnerReceipt = z.infer<typeof workBatchOwnerReceiptSchemaV1>;
-type PipelineFailureCode = BrowserFailureCode | "queue_depth_exceeded";
+type PipelineFailureCode = BrowserFailureCode | "queue_depth_exceeded" | "flagged_items_unresolved";
 class PipelineRequestError extends Error {
   constructor(readonly code: PipelineFailureCode) { super(code); }
 }
@@ -102,8 +103,9 @@ const errorCode = (status: number): BrowserFailureCode => ({ 400: "invalid_reque
   403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
 const commandErrorCode = async (response: Response): Promise<PipelineFailureCode> => {
   if (response.status === 409) try {
-    const parsed = z.object({ error: z.literal("queue_depth_exceeded") }).strict().safeParse(await readBrowserJson(response));
-    if (parsed.success) return "queue_depth_exceeded";
+    const parsed = z.object({ error: z.enum(["queue_depth_exceeded", "flagged_items_unresolved"]) }).strict()
+      .safeParse(await readBrowserJson(response));
+    if (parsed.success) return parsed.data.error;
   } catch { /* fall back to the status-bound code */ }
   return errorCode(response.status);
 };
@@ -114,6 +116,7 @@ export const pipelineErrorMessage: Record<PipelineFailureCode, string> = {
   invalid_request: "The proposed decision or revision is invalid. Check every item and reason code.",
   conflict: "This batch changed in another tab. Check its saved revision before deciding again.",
   queue_depth_exceeded: "The selected agent already has the recorded maximum unfinished work. Wait for an accepted result or revise the proposal to use another agent.",
+  flagged_items_unresolved: "One or more approved items still have an open intake flag. Resolve every flag below (dismiss it or revise the proposal) before saving this decision.",
   not_found: "This pipeline batch is no longer available in this project.",
   unavailable: "The saved database or protected pipeline service could not be checked. No empty state or decision is inferred.",
   uncertain: "The decision could not be confirmed. Keep this page open and check this exact save again; do not submit a different decision.",
@@ -260,12 +263,15 @@ function ProposalContents({ proposal }: { proposal: WorkBatchProposalV1 }) {
 
 export function PipelineBatchDetail({ projectId, data, decisions = {}, pending = false, saveError,
   onDecision = () => {}, onAll = () => {}, onSave = () => {}, onRetry = () => {},
-  revisionText = "", revisionReason = "owner_revision", onRevisionText = () => {}, onRevisionReason = () => {}, onRevise = () => {} }:
+  revisionText = "", revisionReason = "owner_revision", onRevisionText = () => {}, onRevisionReason = () => {}, onRevise = () => {},
+  onDismissFlag = () => {}, onUseSuggestedSplit = () => {} }:
   { projectId: string; data: ReadState<WorkBatchOwnerViewV1>; decisions?: PipelineDecisionDraft; pending?: boolean;
     saveError?: PipelineFailureCode; onDecision?: (localId: string, decision: Choice, reasonCode: string) => void;
     onAll?: (choice: Exclude<Choice, "undecided">) => void; onSave?: () => void; onRetry?: () => void;
     revisionText?: string; revisionReason?: string; onRevisionText?: (value: string) => void;
-    onRevisionReason?: (value: string) => void; onRevise?: () => void }) {
+    onRevisionReason?: (value: string) => void; onRevise?: () => void;
+    onDismissFlag?: (localId: string, flagKind: "needs_breakdown" | "needs_more_info") => void;
+    onUseSuggestedSplit?: (localId: string) => void }) {
   if (data.state === "loading") return <section className="private-panel"><h2>Batch review</h2>
     <p role="status">Loading the saved batch and every revision…</p></section>;
   if (data.state === "unavailable") return <section className="private-panel"><h2>Batch review</h2>
@@ -307,8 +313,28 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
         <div className="private-actions"><button type="button" disabled={pending} onClick={() => onAll("approve")}>Approve all items</button>
           <button type="button" disabled={pending} onClick={() => onAll("reject")}>Reject all items</button></div>
         <div className="private-pipeline-decisions">{value.proposal.tasks.map(task => { const draft = decisions[task.localId]
-          ?? { decision: "undecided" as const, reasonCode: "" }; return <fieldset key={task.localId} disabled={pending}>
-            <legend>{task.title}</legend><label>Decision<select value={draft.decision}
+          ?? { decision: "undecided" as const, reasonCode: "" };
+          const flags = value.flagsByLocalId[task.localId] ?? [];
+          const openFlags = flags.filter(flag => !flag.dismissed);
+          const suggestedSplit = flags.some(flag => flag.kind === "needs_breakdown" && !flag.dismissed)
+            ? computeSuggestedSplitV1(task) : null;
+          return <fieldset key={task.localId} disabled={pending}>
+            <legend>{task.title}</legend>
+            {flags.length > 0 && <section aria-label={`Intake flags for ${task.title}`} className="private-intake-flags">
+              {flags.map(flag => <div key={flag.kind} className="private-notice" role={flag.dismissed ? undefined : "alert"}>
+                <p>{INTAKE_FLAG_REASON_TEXT_V1[flag.reasonCode] ?? flag.reasonCode.replaceAll("_", " ")}</p>
+                {flag.dismissed ? <span className="private-state">Dismissed by the owner</span>
+                  : <div className="private-actions">
+                    <button type="button" disabled={pending} onClick={() => onDismissFlag(task.localId, flag.kind)}>
+                      Dismiss this flag</button>
+                    {flag.kind === "needs_breakdown" && suggestedSplit && <button type="button" disabled={pending}
+                      onClick={() => onUseSuggestedSplit(task.localId)}>
+                      Use suggested split ({suggestedSplit.length} parts)</button>}
+                  </div>}
+              </div>)}
+              {openFlags.length > 0 && <p className="private-note">This item cannot be approved until every flag above is dismissed or the proposal is revised.</p>}
+            </section>}
+            <label>Decision<select value={draft.decision}
               onChange={event => onDecision(task.localId, event.target.value as Choice, draft.reasonCode)}>
               <option value="undecided">Choose a decision</option><option value="approve">Approve as proposed task</option>
               <option value="reject">Reject item</option></select></label>
@@ -372,6 +398,23 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
     } catch (error) { setSaveError(error instanceof PipelineRequestError ? error.code : "uncertain"); }
     finally { setPending(false); }
   };
+  const dismissFlag = async (localId: string, flagKind: "needs_breakdown" | "needs_more_info") => {
+    if (!batchId || !detail || pending) return;
+    setPending(true); setSaveError(undefined);
+    try {
+      await client.command(projectId, batchId, { operation: "dismiss_flag", batchId, expectedRevision: detail.revision,
+        localId, flagKind, reasonCode: "owner_dismissed" });
+      setGeneration(value => value + 1);
+    } catch (error) { setSaveError(error instanceof PipelineRequestError ? error.code : "uncertain"); }
+    finally { setPending(false); }
+  };
+  const useSuggestedSplit = (localId: string) => {
+    if (!detail) return;
+    const revised = applySuggestedSplitV1(detail.proposal, localId);
+    if (!revised) return;
+    setRevisionReason("intake_suggested_split");
+    setRevisionText(JSON.stringify(revised, null, 2));
+  };
   const content = batchId
     ? <PipelineBatchDetail projectId={projectId} data={data as ReadState<WorkBatchOwnerViewV1>} decisions={decisions}
       pending={pending} saveError={saveError} revisionText={revisionText} revisionReason={revisionReason}
@@ -379,7 +422,9 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
       onAll={choice => setDecisions(Object.fromEntries((detail?.proposal.tasks ?? []).map(task =>
         [task.localId, { decision: choice, reasonCode: choice === "reject" ? "owner_rejected" : "" }] )))}
       onSave={() => { void submit(); }} onRetry={() => { void submit(true); }}
-      onRevisionText={setRevisionText} onRevisionReason={setRevisionReason} onRevise={() => { void submit(false, true); }} />
+      onRevisionText={setRevisionText} onRevisionReason={setRevisionReason} onRevise={() => { void submit(false, true); }}
+      onDismissFlag={(localId, flagKind) => { void dismissFlag(localId, flagKind); }}
+      onUseSuggestedSplit={useSuggestedSplit} />
     : <PipelineBatchList projectId={projectId} data={data as ReadState<OwnerPage>} />;
   const heading = batchId ? "Pipeline batch" : "Project pipelines";
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
