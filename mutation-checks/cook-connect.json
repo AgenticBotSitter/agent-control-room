@@ -8,10 +8,17 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "      if (age >= staleMs) {",
-    "replace": "      if (false && age >= staleMs) {",
+    "find": "      if (ownerPid !== null && !isPidAlive(ownerPid)) {",
+    "replace": "      if (false && ownerPid !== null && !isPidAlive(ownerPid)) {",
     "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
-    "why": "an abandoned rotation lock is recoverable after its bounded stale interval"
+    "why": "a lock whose recorded owner process is dead is recovered without waiting for an arbitrary age"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (ownerPid !== null && !isPidAlive(ownerPid)) {",
+    "replace": "      if (ownerPid !== null) {",
+    "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
+    "why": "a live lock owner is never displaced even when the lock file is old"
   },
   {
     "file": "scripts/fleet/connector.mjs",
@@ -50,9 +57,72 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (profiles.length === 0) await rm(paths.shimPath, { force: true });",
-    "replace": "  if (profiles.length <= 2) await rm(paths.shimPath, { force: true });",
+    "find": "  // Keep the small, credential-free shim. A bot process that still holds it",
+    "replace": "  await rm(paths.shimPath, { force: true });\n  // Keep the small, credential-free shim. A bot process that still holds it",
     "test": "node --test --test-name-pattern \"CLI-backed uninstall\" tests/fleet-connector-install.test.mjs",
-    "why": "uninstalling one bot does not remove the stable shim still used by another profile"
+    "why": "uninstall keeps the credential-free shim so a stale launch receives a graceful profile refusal"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI === \"1\" && [\"claude\", \"codex\", \"hermes\"].includes(command))",
+    "replace": "  if (false && env.CONTROL_ROOM_TEST_BLOCK_AGENT_CLI === \"1\" && [\"claude\", \"codex\", \"hermes\"].includes(command))",
+    "test": "node --test --test-name-pattern \"test guard refuses\" tests/fleet-connector-install.test.mjs",
+    "why": "tests have an executable guard that refuses any real agent CLI before spawn"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  await Promise.all(backups.slice(5).map(backup => rm(backup.path, { force: true })));",
+    "replace": "  await Promise.all(backups.slice(50).map(backup => rm(backup.path, { force: true })));",
+    "test": "node --test --test-name-pattern \"backups retain\" tests/fleet-connector-install.test.mjs",
+    "why": "desktop and cursor config backups are bounded to the newest five"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (bot === \"hermes\") return [\"hermes\", [\"mcp\", \"add\", server, \"--command\", shimPath,",
+    "replace": "  if (bot === \"hermes\") return [\"hermes\", [\"mcp\", \"add\", server, \"--\", shimPath,",
+    "test": "node --test --test-name-pattern \"registers Claude Code\" tests/fleet-connector-install.test.mjs",
+    "why": "Hermes registration uses its current command and greedy args syntax"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    HERMES_HOME: joinPath(homeDir, \".hermes\"),",
+    "replace": "    HERMES_HOME: env.HERMES_HOME,",
+    "test": "node --test --test-name-pattern \"only paths derived\" tests/fleet-connector-install.test.mjs",
+    "why": "Hermes receives a home derived from the injected installation home rather than an inherited live profile"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const isolated = Object.fromEntries(Object.entries(env).filter(([key]) =>\n    key !== \"HERMES_HOME\" && key !== \"CODEX_HOME\" && key !== \"CLAUDE_CONFIG_DIR\" && !key.startsWith(\"XDG_\")));",
+    "replace": "  const isolated = { ...env };",
+    "test": "node --test --test-name-pattern \"only paths derived\" tests/fleet-connector-install.test.mjs",
+    "why": "inherited XDG variables are stripped before isolated values are installed"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (bot === \"hermes\") await verifyHermesRegistration(cliEnv, botServerName(name), true);",
+    "replace": "    if (false) await verifyHermesRegistration(cliEnv, botServerName(name), true);",
+    "test": "node --test --test-name-pattern \"without a saved entry\" tests/fleet-connector-install.test.mjs",
+    "why": "a zero Hermes exit is not success unless its config entry exists"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    await verifyHermesRegistration(cliEnv, server, false);",
+    "replace": "    if (false) await verifyHermesRegistration(cliEnv, server, false);",
+    "test": "node --test --test-name-pattern \"without removing its entry\" tests/fleet-connector-install.test.mjs",
+    "why": "Hermes uninstall keeps the credential unless its config entry is gone"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  try {\n    let config;",
+    "replace": "  const release = async () => {};\n  try {\n    let config;",
+    "test": "node --test --test-name-pattern \"ten concurrent installs\" tests/fleet-connector-install.test.mjs",
+    "why": "same-profile installs serialize through the shared profile mutation lock"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (config.installation?.bot !== bot || config.installation?.name !== name)\n      throw new Error(\"That bot profile does not match the installed credential.\");",
+    "replace": "    if (false)\n      throw new Error(\"That bot profile does not match the installed credential.\");",
+    "test": "node --test --test-name-pattern \"validates the current profile\" tests/fleet-connector-install.test.mjs",
+    "why": "uninstall rereads and validates the profile after obtaining the mutation lock"
   }
 ]

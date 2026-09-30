@@ -58,14 +58,24 @@ async function temporary(t, prefix = "connector-install-") {
   return root;
 }
 
-function recorder({ failOnce = false } = {}) {
+function recorder({ failOnce = false, writeHermes = true } = {}) {
   const calls = [];
   let fail = failOnce;
   return {
     calls,
-    runner: async (command, args) => {
-      calls.push([command, args]);
+    runner: async (command, args, options = {}) => {
+      calls.push([command, args, options]);
       if (fail) { fail = false; throw new Error("registration failed"); }
+      if (command === "hermes" && writeHermes) {
+        const configPath = join(options.env.HERMES_HOME, "config.yaml");
+        await mkdir(dirname(configPath), { recursive: true });
+        let raw = "mcp_servers:\n";
+        try { raw = await readFile(configPath, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+        const server = args[2];
+        if (args[1] === "add" && !raw.includes(`  ${server}:`)) raw += `  ${server}:\n    command: fixture\n`;
+        if (args[1] === "remove") raw = raw.replace(new RegExp(`  ${server}:\\n    command: fixture\\n`, "u"), "");
+        await writeFile(configPath, raw, { mode: 0o600 });
+      }
       return { stdout: "", stderr: "" };
     },
   };
@@ -88,9 +98,62 @@ test("install registers Claude Code, Codex and Hermes with per-bot credentials a
       const args = commands.calls[0][1];
       assert.ok(args.includes(installed.paths.shimPath));
       assert.deepEqual(args.slice(-4), ["--profile", name, "--workspace", installed.paths.workspace]);
+      if (bot === "hermes") assert.deepEqual(args.slice(0, 6),
+        ["mcp", "add", `control-room-${name}`, "--command", installed.paths.shimPath, "--args"]);
       assert.match(await readFile(installed.paths.shimPath, "utf8"), /connector\.mjs.*mcp/u);
     });
   }
+});
+
+test("spawned bot CLIs receive only paths derived from the injected home", async t => {
+  const homeDir = await temporary(t, "connector-cli-env-"), gateway = fakeGateway(), commands = recorder();
+  const inherited = { PATH: "/fixture/bin", HERMES_HOME: "/live/hermes", CODEX_HOME: "/live/codex",
+    CLAUDE_CONFIG_DIR: "/live/claude", XDG_CONFIG_HOME: join(homeDir, "caller-config"),
+    XDG_DATA_HOME: join(homeDir, "caller-data"), XDG_CUSTOM_HOME: "/live/custom" };
+  await connector.installConnector({ server: "https://control.example", code: code("I"), bot: "hermes",
+    name: "isolated", homeDir, platform: "linux", env: inherited, fetcher: gateway.fetcher,
+    runner: commands.runner, sourcePath: SOURCE });
+  const childEnv = commands.calls[0][2].env;
+  assert.equal(childEnv.PATH, inherited.PATH);
+  assert.equal(childEnv.HOME, homeDir);
+  assert.equal(childEnv.HERMES_HOME, join(homeDir, ".hermes"));
+  assert.equal(childEnv.CODEX_HOME, join(homeDir, ".codex"));
+  assert.equal(childEnv.CLAUDE_CONFIG_DIR, join(homeDir, ".claude"));
+  assert.equal(childEnv.XDG_CONFIG_HOME, join(homeDir, ".config"));
+  assert.equal(childEnv.XDG_CUSTOM_HOME, undefined);
+});
+
+test("Hermes zero exit without a saved entry is not reported as installed", async t => {
+  const homeDir = await temporary(t, "connector-hermes-postcondition-"), gateway = fakeGateway();
+  const input = { server: "https://control.example", code: code("J"), bot: "hermes", name: "missing-entry",
+    homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher, runner: recorder({ writeHermes: false }).runner,
+    sourcePath: SOURCE };
+  await assert.rejects(connector.installConnector(input), /did not save the MCP registration/u);
+  assert.equal((await connector.loadConfig(connector.connectorInstallPaths(input).configPath)).installation.state, "registering");
+});
+
+test("Hermes zero exit without removing its entry keeps the credential for retry", async t => {
+  const homeDir = await temporary(t, "connector-hermes-remove-postcondition-"), gateway = fakeGateway();
+  const commands = recorder();
+  const input = { server: "https://control.example", code: code("Q"), bot: "hermes", name: "still-registered",
+    homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher, runner: commands.runner, sourcePath: SOURCE };
+  const installed = await connector.installConnector(input);
+  const noRemove = async (command, args, options) => {
+    if (command === "hermes" && args[1] === "remove") return { stdout: "", stderr: "" };
+    return commands.runner(command, args, options);
+  };
+  await assert.rejects(connector.uninstallConnector({ bot: "hermes", name: input.name, homeDir,
+    platform: "linux", env: {}, runner: noRemove }), /did not remove the MCP registration/u);
+  assert.equal((await connector.loadConfig(installed.paths.configPath)).installation.state, "installed");
+});
+
+test("the test guard refuses agent CLIs before even an injected spawner is called", async () => {
+  let spawned = false;
+  await assert.rejects(connector.runCommand("hermes", ["mcp", "list"], {
+    env: { CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+    spawnProcess: () => { spawned = true; throw new Error("must not spawn"); },
+  }), /Test guard refused/u);
+  assert.equal(spawned, false);
 });
 
 test("Claude Desktop and Cursor JSON merges preserve other servers, back up first, and uninstall only their entry", async t => {
@@ -116,9 +179,9 @@ test("Claude Desktop and Cursor JSON merges preserve other servers, back up firs
       const restored = JSON.parse(await readFile(configPath, "utf8"));
       assert.deepEqual(restored, { theme: "dark", mcpServers: { existing: { command: "existing" } } });
       assert.equal((await readdir(dirname(configPath))).filter(file => file.includes(".backup-")).length, 2);
-      assert.equal(removed.shimRemoved, true);
+      assert.equal(removed.shimRemoved, false);
       await assert.rejects(stat(installed.paths.configPath), error => error.code === "ENOENT");
-      await assert.rejects(stat(installed.paths.shimPath), error => error.code === "ENOENT");
+      assert.equal((await stat(installed.paths.shimPath)).isFile(), true);
       assert.equal((await stat(installed.paths.workspace)).isDirectory(), true, "uninstall preserves user work");
     });
   }
@@ -173,7 +236,7 @@ test("installation retries a dropped enrollment response with the saved nonce an
   assert.equal((await connector.loadConfig(connector.connectorInstallPaths(input).configPath)).installation.state, "installed");
 });
 
-test("CLI-backed uninstall removes each registration and keeps the shared shim while another profile remains", async t => {
+test("CLI-backed uninstall removes each registration and keeps the graceful shared shim", async t => {
   const homeDir = await temporary(t, "connector-cli-uninstall-");
   const gateway = fakeGateway(), commands = recorder();
   for (const [index, bot] of ["claude-code", "codex", "hermes"].entries()) {
@@ -190,7 +253,8 @@ test("CLI-backed uninstall removes each registration and keeps the shared shim w
     platform: "linux", env: {}, runner: commands.runner });
   const last = await connector.uninstallConnector({ bot: "hermes", name: "hermes-remove", homeDir,
     platform: "linux", env: {}, runner: commands.runner });
-  assert.equal(last.shimRemoved, true);
+  assert.equal(last.shimRemoved, false);
+  assert.equal((await stat(firstPaths.shimPath)).isFile(), true);
   assert.deepEqual(commands.calls.filter(call => call[1][1] === "remove").map(call => call[0]), ["claude", "codex", "hermes"]);
 });
 
@@ -229,12 +293,74 @@ test("ten concurrent rotations make exactly one server rotation and stale locks 
   assert.equal(results.filter(value => value.coalesced === true).length, 9);
 
   const stale = `${path}.rotate.lock`;
-  await writeFile(stale, "stale\n", { mode: 0o600 });
-  const old = new Date(Date.now() - 60_000);
-  await utimes(stale, old, old);
-  await connector.rotate({ configPath: path, fetcher: gateway.fetcher, lock: { staleMs: 1_000, deadlineMs: 100 } });
+  await writeFile(stale, `${JSON.stringify({ pid: 777777, acquiredAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+  await connector.rotate({ configPath: path, fetcher: gateway.fetcher,
+    lock: { staleMs: 1_000, deadlineMs: 100, isPidAlive: pid => pid !== 777777 } });
   assert.equal(gateway.state.rotations, 2);
   await assert.rejects(stat(stale), error => error.code === "ENOENT");
+
+  await writeFile(stale, `${JSON.stringify({ pid: process.pid, acquiredAt: new Date(0).toISOString() })}\n`, { mode: 0o600 });
+  const old = new Date(Date.now() - 60_000);
+  await utimes(stale, old, old);
+  await assert.rejects(connector.rotate({ configPath: path, fetcher: gateway.fetcher,
+    lock: { staleMs: 1, deadlineMs: 20, waitMs: 5, isPidAlive: () => true } }), /Another session/u);
+  await rm(stale);
+});
+
+test("ten concurrent installs of one profile serialize and all succeed", async t => {
+  const homeDir = await temporary(t, "connector-install-race-"), gateway = fakeGateway(), commands = recorder();
+  let activeRegistrations = 0, maximumRegistrations = 0;
+  const serialRunner = async (...args) => {
+    activeRegistrations += 1;
+    maximumRegistrations = Math.max(maximumRegistrations, activeRegistrations);
+    try {
+      await new Promise(done => setTimeout(done, 10));
+      return await commands.runner(...args);
+    } finally { activeRegistrations -= 1; }
+  };
+  const input = { server: "https://control.example", code: code("K"), bot: "codex", name: "racer", homeDir,
+    platform: "linux", env: {}, fetcher: gateway.fetcher, runner: serialRunner, sourcePath: SOURCE };
+  const results = await Promise.all(Array.from({ length: 10 }, () => connector.installConnector(input)));
+  assert.equal(results.length, 10);
+  assert.equal(gateway.state.enrollments, 1);
+  assert.equal(maximumRegistrations, 1);
+  assert.equal((await connector.loadConfig(results[0].paths.configPath)).installation.state, "installed");
+  assert.equal((await readdir(results[0].paths.botsDir)).filter(file => file.includes(".tmp")).length, 0);
+});
+
+test("uninstall validates the current profile only after obtaining its mutation lock", async t => {
+  const homeDir = await temporary(t, "connector-uninstall-lock-"), gateway = fakeGateway(), commands = recorder();
+  const input = { server: "https://control.example", code: code("L"), bot: "codex", name: "locked", homeDir,
+    platform: "linux", env: {}, fetcher: gateway.fetcher, runner: commands.runner, sourcePath: SOURCE };
+  const installed = await connector.installConnector(input);
+  const lockPath = `${installed.paths.configPath}.rotate.lock`;
+  await writeFile(lockPath, `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+  const removing = connector.uninstallConnector({ bot: "codex", name: "locked", homeDir,
+    platform: "linux", env: {}, runner: commands.runner });
+  await new Promise(done => setTimeout(done, 40));
+  const current = await connector.loadConfig(installed.paths.configPath);
+  await writeFile(installed.paths.configPath, `${JSON.stringify({ ...current,
+    installation: { ...current.installation, name: "changed" } }, null, 2)}\n`, { mode: 0o600 });
+  await rm(lockPath);
+  await assert.rejects(removing, /does not match/u);
+  assert.equal((await stat(installed.paths.configPath)).isFile(), true);
+  assert.equal(commands.calls.filter(call => call[1][1] === "remove").length, 0);
+});
+
+test("desktop configuration backups retain only the newest five", async t => {
+  const homeDir = await temporary(t, "connector-backup-prune-");
+  const configPath = join(homeDir, ".cursor", "mcp.json");
+  await mkdir(dirname(configPath), { recursive: true });
+  await writeFile(configPath, "{}\n");
+  for (let index = 0; index < 4; index += 1) {
+    const gateway = fakeGateway(), name = `backup-${index}`;
+    await connector.installConnector({ server: "https://control.example", code: code(String.fromCharCode(77 + index)),
+      bot: "cursor", name, homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher,
+      runner: recorder().runner, sourcePath: SOURCE, clock: () => Date.now() + index });
+    await connector.uninstallConnector({ bot: "cursor", name, homeDir, platform: "linux", env: {},
+      runner: recorder().runner, clock: () => Date.now() + index });
+  }
+  assert.equal((await readdir(dirname(configPath))).filter(file => file.includes(".backup-")).length, 5);
 });
 
 test("a dropped rotation response is promoted on retry rather than rotating a second time", async t => {
