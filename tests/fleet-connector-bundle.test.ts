@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { spawn } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
@@ -18,12 +18,16 @@ import { FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1 } from "../src/web/v1/fleet-o
 const builtFrom = "1".repeat(40);
 let sandbox: string, firstRoot: string, secondRoot: string;
 let release: Awaited<ReturnType<typeof buildFleetConnectorReleaseForTestV1>>;
+const releaseKeys = generateKeyPairSync("ed25519");
+const releasePublicKey = releaseKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
 
 before(async () => {
   sandbox = await mkdtemp(join(tmpdir(), "fleet-bundle-test-"));
   firstRoot = join(sandbox, "first"); secondRoot = join(sandbox, "second");
-  release = await buildFleetConnectorReleaseForTestV1({ root: firstRoot, builtFrom });
-  await buildFleetConnectorReleaseForTestV1({ root: secondRoot, builtFrom });
+  release = await buildFleetConnectorReleaseForTestV1({ root: firstRoot, builtFrom,
+    signingKey: releaseKeys.privateKey, minVersion: "0.4.0" });
+  await buildFleetConnectorReleaseForTestV1({ root: secondRoot, builtFrom,
+    signingKey: releaseKeys.privateKey, minVersion: "0.4.0" });
 });
 after(async () => { if (sandbox) await rm(sandbox, { recursive: true, force: true }); });
 
@@ -123,12 +127,20 @@ test("installer check refuses a tampered bundle, then accepts an intact retry", 
 });
 
 test("gateway serves only the captured bundle and manifest through a burst, a dropped caller and a retry", async t => {
-  const captured = await loadFleetConnectorReleaseV1(firstRoot);
+  const captured = await loadFleetConnectorReleaseV1(firstRoot, releasePublicKey);
   const changedBundle = Buffer.from(captured.bundle); changedBundle[changedBundle.length - 2] ^= 1;
   const corruptRoot = join(sandbox, "corrupt-release"); await mkdir(corruptRoot);
   await copyFile(join(firstRoot, "manifest.json"), join(corruptRoot, "manifest.json"));
   await writeFile(join(corruptRoot, captured.manifest.file), changedBundle);
-  await assert.rejects(loadFleetConnectorReleaseV1(corruptRoot), /fleet_connector_release_refused/u);
+  await copyFile(join(firstRoot, "signature.json"), join(corruptRoot, "signature.json"));
+  await assert.rejects(loadFleetConnectorReleaseV1(corruptRoot, releasePublicKey), /fleet_connector_release_refused/u);
+  const wrongSignatureRoot = join(sandbox, "wrong-signature-release"); await mkdir(wrongSignatureRoot);
+  await copyFile(join(firstRoot, "manifest.json"), join(wrongSignatureRoot, "manifest.json"));
+  await copyFile(join(firstRoot, captured.manifest.file), join(wrongSignatureRoot, captured.manifest.file));
+  const signatureRecord = JSON.parse(await readFile(join(firstRoot, "signature.json"), "utf8"));
+  signatureRecord.signature = `${signatureRecord.signature[0] === "A" ? "B" : "A"}${signatureRecord.signature.slice(1)}`;
+  await writeFile(join(wrongSignatureRoot, "signature.json"), `${JSON.stringify(signatureRecord)}\n`);
+  await assert.rejects(loadFleetConnectorReleaseV1(wrongSignatureRoot, releasePublicKey), /fleet_connector_release_refused/u);
   assert.throws(() => createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1,
     connectorRelease: { ...captured, bundle: changedBundle } }),
   /fleet_connector_release_refused/u);

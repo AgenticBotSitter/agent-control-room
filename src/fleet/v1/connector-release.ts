@@ -9,6 +9,11 @@ export type FleetConnectorReleaseManifestV1 = Readonly<{
   builtFrom: string;
 }>;
 
+export type FleetConnectorReleaseAdvertisementV1 = Readonly<{
+  version: string; file: string; sha256: string; size: number; builtFrom: string;
+  minVersion: string; signature: string;
+}>;
+
 const versionPattern = /^\d+\.\d+\.\d+$/u;
 const digestPattern = /^[a-f0-9]{64}$/u;
 const commitPattern = /^[a-f0-9]{40}$/u;

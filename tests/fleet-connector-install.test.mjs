@@ -106,7 +106,7 @@ test("install registers Claude Code, Codex and Hermes with per-bot credentials a
         "--workspace", installed.paths.workspace]);
       if (bot === "hermes") assert.deepEqual(args.slice(0, 6),
         ["mcp", "add", `control-room-${name}`, "--command", installed.paths.shimPath, "--args"]);
-      assert.match(await readFile(installed.paths.shimPath, "utf8"), /connector\.mjs.*mcp/u);
+      assert.match(await readFile(installed.paths.shimPath, "utf8"), /launcher\.mjs.*launch mcp/u);
     });
   }
 });
@@ -327,7 +327,7 @@ test("Windows installation constructs current-user-only icacls commands and a cm
   assert.ok(acl.some(call => call[1][0] === installed.paths.configPath));
   assert.ok(acl.every(call => call[1].slice(1).join(" ") === "/inheritance:r /grant:r FixtureUser:F"));
   assert.match(installed.paths.shimPath, /\.cmd$/u);
-  assert.match(await readFile(installed.paths.shimPath, "utf8"), /mcp %\*/u);
+  assert.match(await readFile(installed.paths.shimPath, "utf8"), /launch mcp %\*/u);
 });
 
 test("a spent code is refused for a second bot profile", async t => {

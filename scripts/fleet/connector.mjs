@@ -22,6 +22,9 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join as joinPath, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { checkForConnectorUpdateV1, connectorInstallRootFromConfigPathV1, connectorUpdatesPausedV1, installConnectorLauncherV1,
+  launchCurrentConnectorV1, setConnectorUpdatesPausedV1, validateConnectorReleasePublicKeyV1,
+  verifyConnectorReleaseAdvertisementV1 } from "./connector-update.mjs";
 
 export const CONNECTOR_VERSION = "0.4.0";
 const CONFIG_SCHEMA = "control-room.fleet-connector/v1";
@@ -143,7 +146,8 @@ export function connectorInstallPaths({ homeDir, env = process.env, platform = p
     botsDir: joinPath(configRoot, "bots"),
     installRoot,
     versionDir: joinPath(installRoot, "versions", CONNECTOR_VERSION),
-    connectorPath: joinPath(installRoot, "current", "connector.mjs"),
+    connectorPath: joinPath(installRoot, "launcher.mjs"),
+    currentPointerPath: joinPath(installRoot, "current.json"),
     shimPath: joinPath(installRoot, "bin", platform === "win32" ? "control-room-mcp.cmd" : "control-room-mcp"),
     workspace: workspaceRoot,
   });
@@ -268,7 +272,11 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
     throw new Error(`This code was made for ${result.workerKind ?? "another bot"}, not ${workerKind}. Nothing was installed. Remove the worker in Control Room and create a code for ${workerKind}.`);
   }
   await writeConfig(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: result.workerId, secret,
-    credentialExpiresAt: result.credentialExpiresAt, workerKind });
+    credentialExpiresAt: result.credentialExpiresAt, workerKind,
+    ...(result.releasePublicKey && result.connector ? { releaseTrust: {
+      releasePublicKey: validateConnectorReleasePublicKeyV1(result.releasePublicKey),
+      floorVersion: verifyConnectorReleaseAdvertisementV1(result.connector, result.releasePublicKey).minVersion,
+    } } : {}) });
   return result;
 }
 
@@ -757,22 +765,9 @@ async function unregisterBot({ bot, name, homeDir, env, platform, runner, clock,
   finally { await releaseRotationLock(release, failure); }
 }
 
-function quoteSh(value) { return `'${String(value).replace(/'/gu, `'\\''`)}'`; }
-
 async function writeLauncher(paths, { platform, sourcePath, nodePath = process.execPath }) {
-  await mkdir(paths.versionDir, { recursive: true, mode: 0o700 });
-  await mkdir(dirname(paths.connectorPath), { recursive: true, mode: 0o700 });
-  await mkdir(dirname(paths.shimPath), { recursive: true, mode: 0o700 });
-  const versioned = joinPath(paths.versionDir, "connector.mjs");
-  await copyFile(sourcePath, versioned);
-  await copyFile(sourcePath, paths.connectorPath);
-  await chmod(versioned, 0o700);
-  await chmod(paths.connectorPath, 0o700);
-  const body = platform === "win32"
-    ? `@echo off\r\n"${nodePath}" "${paths.connectorPath}" mcp %*\r\n`
-    : `#!/bin/sh\nexec ${quoteSh(nodePath)} ${quoteSh(paths.connectorPath)} mcp "$@"\n`;
-  await writeFile(paths.shimPath, body, { mode: 0o700 });
-  if (platform !== "win32") await chmod(paths.shimPath, 0o700);
+  await installConnectorLauncherV1({ installRoot: paths.installRoot, sourcePath, version: CONNECTOR_VERSION,
+    platform, nodePath, shimPath: paths.shimPath });
 }
 
 function validateInstallInput({ bot, workspace }) {
@@ -838,7 +833,8 @@ export async function installConnector({ server, code, bot, name, workspace, hom
           if (platform === "win32") await secureWindowsCredential([path], { runner, env });
         } });
       config = await loadConfig(paths.configPath);
-      await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering" } });
+      await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "registering",
+        ...(config.releaseTrust ? { updates: { ...config.releaseTrust } } : {}) } });
       if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     }
 
@@ -846,7 +842,9 @@ export async function installConnector({ server, code, bot, name, workspace, hom
     const registration = await registerBot({ bot, name, shimPath: paths.shimPath, workspace: paths.workspace,
       configPath: paths.configPath, homeDir, env, platform, runner, clock, respectExplicitProfiles });
     config = await loadConfig(paths.configPath);
-    await writePrivate(paths.configPath, { ...config, installation: { bot, name, workspace: paths.workspace, state: "installed" } });
+    const { releaseTrust: _releaseTrust, ...configWithoutTemporaryTrust } = config;
+    await writePrivate(paths.configPath, { ...configWithoutTemporaryTrust, installation: {
+      ...config.installation, bot, name, workspace: paths.workspace, state: "installed" } });
     if (platform === "win32") await secureWindowsCredential([paths.configPath], { runner, env });
     const status = await createClient(await loadConfig(paths.configPath), fetcher).heartbeat();
     return Object.freeze({ paths, registration, status });
@@ -1264,7 +1262,8 @@ export async function runClaimedTask({ client, claim, adapter, progressIntervalM
  */
 export async function runWorker({ configPath, harnessesPath = defaultHarnessSettingsPath(configPath), fetcher, once = false,
   importer, progressIntervalMs = 60_000, pollMs = 60_000, log = message => process.stderr.write(`${message}\n`),
-  sleep = ms => new Promise(done => setTimeout(done, ms)), watchdogGraceMs = WATCHDOG_GRACE_MS }) {
+  sleep = ms => new Promise(done => setTimeout(done, ms)), watchdogGraceMs = WATCHDOG_GRACE_MS,
+  updateCheck }) {
   const settings = await loadHarnessSettings(harnessesPath);
   const handedBack = new Set(); // tasks this machine could not finish; left for another worker
   let adapter = null, said = "";
@@ -1283,6 +1282,16 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       say(`Could not reach Control Room (${error?.code ?? "network"}); trying again.`);
       if (once) return Object.freeze({ state: "unreachable" });
       await sleep(pollMs); continue;
+    }
+    if (me.connector && updateCheck) {
+      try {
+        const update = await updateCheck(current, me.connector);
+        if (update?.state === "updated") {
+          log(`Connector ${update.version} is healthy; restarting run on the new version.`);
+          return Object.freeze({ state: "updated", version: update.version });
+        }
+      }
+      catch (error) { log(`Connector update was refused (${error?.code ?? "invalid"}); continuing the installed version.`); }
     }
     const mode = operationsMode(me.operationsMode);
     const harness = HANDOFF_HARNESSES.includes(me.workerKind) ? me.workerKind : null;
@@ -1367,6 +1376,7 @@ const usage = `Control Room worker connector ${CONNECTOR_VERSION}
                                           Join this machine (code from the Workers page)
   status                                  Show this worker and its credential
   rotate                                  Replace this machine's credential now
+  update check|pause|resume|status        Manage signed connector updates on this machine
   run [--once] [--harnesses <path>]       Stay connected: check in, renew the credential, and
                                           hand offered tasks to the harness enabled in
                                           harnesses.json (next to the credential file)
@@ -1391,6 +1401,9 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   try {
     if (values.profile && !values.config) configPath = connectorInstallPaths({ homeDir, env, platform, name: values.profile }).configPath;
     if (!command || command === "--help" || command === "help") { print(usage); return 0; }
+    const installRoot = runtime.installRoot ?? connectorInstallRootFromConfigPathV1(configPath, env, platform);
+    if (command === "launch") return launchCurrentConnectorV1({ installRoot, configPath, args: rest,
+      healthCheck: runtime.healthCheck, spawnProcess: runtime.spawnProcess });
     if (command === "install" || command === "uninstall" || command === "unlock") {
       if (resolve(homeDir) === resolve(realHomeDir) && values["i-am-the-installer"] !== true)
         throw new Error("Refusing to change a real home. Re-run this owner-approved command with --i-am-the-installer.");
@@ -1421,12 +1434,45 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       return 0;
     }
     if (command === "mcp") {
+      let updateConfig;
+      try { updateConfig = await loadConfig(configPath); } catch { /* serveMcp reports the original validation error */ }
+      if (updateConfig?.installation?.updates) {
+        try {
+          const advertised = (await createClient(updateConfig, runtime.fetcher).me()).connector;
+          if (advertised) await checkForConnectorUpdateV1({ installRoot, configPath, config: updateConfig, advertised,
+            currentVersion: CONNECTOR_VERSION, fetcher: runtime.fetcher, healthCheck: runtime.healthCheck,
+            minimumCheckIntervalMs: 86_400_000 });
+        } catch (error) { io.err.write(`Connector update check was skipped (${error?.code ?? "unreachable"}).\n`); }
+      }
       await serveMcp({ configPath, workspaceRoot: values.workspace, fetcher: runtime.fetcher }); return 0;
     }
     const config = await recoverPending({ configPath, fetcher: runtime.fetcher });
     const client = createClient(config, runtime.fetcher);
     if (command === "status") { print(await client.heartbeat()); return 0; }
     if (command === "rotate") { print(await rotate({ configPath, fetcher: runtime.fetcher })); return 0; }
+    if (command === "health-check") {
+      let lastError;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try { await client.heartbeat(); return 0; }
+        catch (error) { lastError = error; }
+      }
+      throw lastError;
+    }
+    if (command === "update") {
+      const action = positional[0] ?? "status";
+      if (action === "pause" || action === "resume") {
+        print(await setConnectorUpdatesPausedV1({ installRoot, configPath, paused: action === "pause" })); return 0;
+      }
+      if (action === "status") { print({ version: CONNECTOR_VERSION,
+        paused: await connectorUpdatesPausedV1(installRoot), floorVersion: config.installation?.updates?.floorVersion ?? null }); return 0; }
+      if (action === "check") {
+        const advertised = (await client.me()).connector;
+        if (!advertised) throw new Error("Control Room did not advertise a connector release.");
+        print(await checkForConnectorUpdateV1({ installRoot, configPath, config, advertised,
+          currentVersion: CONNECTOR_VERSION, fetcher: runtime.fetcher, healthCheck: runtime.healthCheck })); return 0;
+      }
+      throw new Error("Choose update check, pause, resume or status.");
+    }
     if (command === "work") { print(await client.work()); return 0; }
     if (command === "claims") { print(await client.claims()); return 0; }
     if (command === "claim") { print(await client.claim(positional[0], idempotencyKeyFor("claim", { offerId: positional[0] }))); return 0; }
@@ -1445,7 +1491,9 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
     if (command === "run") {
       const pass = await runWorker({ configPath, once: values.once === true,
         ...(values.harnesses ? { harnessesPath: resolve(values.harnesses) } : {}),
-        log: message => io.err.write(`${message}\n`) });
+        log: message => io.err.write(`${message}\n`), updateCheck: (current, advertised) => checkForConnectorUpdateV1({
+          installRoot, configPath, config: current, advertised, currentVersion: CONNECTOR_VERSION,
+          fetcher: runtime.fetcher, healthCheck: runtime.healthCheck }) });
       return pass.state === "unreachable" ? 1 : 0;
     }
     io.err.write(usage); return 2;

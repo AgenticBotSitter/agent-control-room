@@ -7,7 +7,7 @@
 // Tunnel hostname without Cloudflare Access on the /fleet/ path, because the
 // connector authenticates with its own machine credential). The config file
 // holds the fleet gateway database login and must be readable only by you.
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
@@ -23,6 +23,8 @@ import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycl
 import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 import { readInstallationOperationsModeV1 } from "../src/web/v1/operations-mode-service";
 import { captureFleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
+import { CONNECTOR_UPDATE_SIGNATURE_SCHEMA_V1, connectorReleaseSignatureMaterialV1,
+  validateConnectorReleasePublicKeyV1 } from "./fleet/connector-update.mjs";
 
 export const FLEET_GATEWAY_CONFIGURATION_V1 = "control-room.fleet-gateway/v1";
 export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 15_000, headersTimeout: 5_000,
@@ -36,6 +38,7 @@ export type FleetGatewayConfigurationV1 = Readonly<{ schema: typeof FLEET_GATEWA
    * holds. Without it, hand-off notes still record in the audit log and worker
    * events, but never reach the owner's task timeline. */
   harnessIntegrityKey?: string;
+  connectorReleasePublicKey: string;
   trustedProxyAddresses: readonly string[]; trustedClientHeader: FleetGatewayTrustedClientHeaderV1 }>;
 
 export function fleetGatewayAdmissionFromConfigurationV1(config:
@@ -52,7 +55,8 @@ export async function prepareFleetGatewayAdmissionV1(config:
   return admission;
 }
 
-export async function loadFleetConnectorReleaseV1(root = join(dirname(fileURLToPath(import.meta.url)), "fleet", "release")) {
+export async function loadFleetConnectorReleaseV1(root = join(dirname(fileURLToPath(import.meta.url)), "fleet", "release"),
+  releasePublicKey?: string) {
   const manifestBody = await readFile(join(root, "manifest.json"), "utf8");
   let parsed: unknown;
   try { parsed = JSON.parse(manifestBody); } catch { throw new Error("fleet_connector_release_refused"); }
@@ -60,7 +64,25 @@ export async function loadFleetConnectorReleaseV1(root = join(dirname(fileURLToP
   const bundle = await readFile(join(root, manifest.file));
   const digest = createHash("sha256").update(bundle).digest("hex");
   if (bundle.length !== manifest.size || digest !== manifest.sha256) throw new Error("fleet_connector_release_refused");
-  return Object.freeze({ bundle, manifest, manifestBody });
+  let signatureRecord: unknown;
+  try { signatureRecord = JSON.parse(await readFile(join(root, "signature.json"), "utf8")); }
+  catch { throw new Error("fleet_connector_release_refused"); }
+  const signature = signatureRecord as Record<string, unknown>;
+  if (Object.keys(signature).sort().join(",") !== "minVersion,schema,signature"
+    || signature.schema !== CONNECTOR_UPDATE_SIGNATURE_SCHEMA_V1 || typeof signature.minVersion !== "string"
+    || !/^\d+\.\d+\.\d+$/u.test(signature.minVersion) || typeof signature.signature !== "string"
+    || !/^[A-Za-z0-9_-]{86}$/u.test(signature.signature) || !releasePublicKey)
+    throw new Error("fleet_connector_release_refused");
+  let publicKey: string;
+  try { publicKey = validateConnectorReleasePublicKeyV1(releasePublicKey); }
+  catch { throw new Error("fleet_connector_release_refused"); }
+  const advertisement = Object.freeze({ version: manifest.version, file: manifest.file, sha256: manifest.sha256,
+    size: manifest.size, builtFrom: manifest.builtFrom, minVersion: signature.minVersion,
+    signature: signature.signature });
+  if (!verify(null, connectorReleaseSignatureMaterialV1(advertisement), createPublicKey({
+    key: Buffer.from(publicKey, "base64url"), format: "der", type: "spki" }), Buffer.from(signature.signature, "base64url")))
+    throw new Error("fleet_connector_release_refused");
+  return Object.freeze({ bundle, manifest, manifestBody, advertisement, releasePublicKey: publicKey });
 }
 
 export function captureFleetGatewayConfigurationV1(value: unknown): FleetGatewayConfigurationV1 {
@@ -84,6 +106,9 @@ export function captureFleetGatewayConfigurationV1(value: unknown): FleetGateway
       throw new Error("fleet_gateway_configuration_refused");
     harnessIntegrityKey = input.harnessIntegrityKey;
   }
+  let connectorReleasePublicKey: string;
+  try { connectorReleasePublicKey = validateConnectorReleasePublicKeyV1(input.connectorReleasePublicKey); }
+  catch { throw new Error("fleet_gateway_configuration_refused"); }
   const trustedClientHeader = input.trustedClientHeader ?? "none";
   const trustedProxyAddresses = input.trustedProxyAddresses ?? [];
   if (!(["cf-connecting-ip", "x-forwarded-for-rightmost", "none"] as const).includes(trustedClientHeader as never)
@@ -97,6 +122,7 @@ export function captureFleetGatewayConfigurationV1(value: unknown): FleetGateway
   } catch { throw new Error("fleet_gateway_configuration_refused"); }
   return Object.freeze({ schema: FLEET_GATEWAY_CONFIGURATION_V1, tenantId: input.tenantId, port: input.port as number,
     database, ...(workIntake ? { workIntake } : {}), ...(harnessIntegrityKey ? { harnessIntegrityKey } : {}),
+    connectorReleasePublicKey,
     trustedClientHeader: trustedClientHeader as FleetGatewayTrustedClientHeaderV1,
     trustedProxyAddresses: Object.freeze([...(trustedProxyAddresses as string[])]) });
 }
@@ -133,7 +159,7 @@ async function main(path: string | undefined) {
     process.stderr.write("fleet gateway: operations mode unreadable, so no new claims: check workIntake.integrityKey\n");
   const proposals = intakeDatabase && config.workIntake ? new WorkBatchServiceV1(new WorkBatchStoreV1(intakeDatabase.client,
     new Uint8Array(Buffer.from(config.workIntake.integrityKey, "base64url")))) : undefined;
-  const connectorRelease = await loadFleetConnectorReleaseV1();
+  const connectorRelease = await loadFleetConnectorReleaseV1(undefined, config.connectorReleasePublicKey);
   const handler = createFleetGatewayHandlerV1({ store, ...(proposals ? { proposals } : {}),
     admission: await prepareFleetGatewayAdmissionV1(config, store),
     connectorRelease,
