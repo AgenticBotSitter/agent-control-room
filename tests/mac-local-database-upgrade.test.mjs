@@ -443,9 +443,17 @@ test("the role manifest names every role the migrations, down files and schema f
   }
   assert.ok(onDisk.length > 100, "the scan sees the whole migration and down set");
   assert.deepEqual([...touched.keys()].filter(role => !known.has(role)).sort(), [], "no role is named outside the manifest");
+  // 0206-0208 added the five shared roles to this list, and deliberately: 0206's
+  // edit to db/roles/production_table_grants.sql is a REVOKE that takes the
+  // blanket grants back off the result-file tables, so the down file has to
+  // reverse exactly that by naming the same roles. A down file that dropped them
+  // would leave a database whose shared roles still held the blanket grants the
+  // up migration removed, which is exactly what a down migration must never do.
   assert.deepEqual([...touched.keys()].sort(),
-    ["control_room_agent_reviewer", "control_room_fleet_gateway", "control_room_local_result_publisher",
-      "control_room_native_results", "control_room_private_web", "control_room_task_coordinator", "control_room_work_intake"],
+    ["control_room_agent_reviewer", "control_room_application", "control_room_backup",
+      "control_room_fleet_gateway", "control_room_github_broker", "control_room_local_result_publisher",
+      "control_room_native_results", "control_room_private_web", "control_room_reader",
+      "control_room_schedule_admissions", "control_room_task_coordinator", "control_room_work_intake"],
   "the migrations name these manifest roles and no others");
 
   // The scanner reads what SQL actually means, so prove it on a temp copy of

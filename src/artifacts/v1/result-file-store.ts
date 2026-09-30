@@ -311,9 +311,10 @@ export class ResultFileStoreV1 {
    *   2. A lock file whose recorded pid is DEAD is removed: the writer cannot
    *      return, and the file has no other purpose than the exclusion it no
    *      longer provides.
-   *   3. A `pending-*` file is removed only when NO lock file exists at all —
-   *      i.e. only once rule 2 has established there is no live writer. A
-   *      pending file seen while a live lock exists belongs to that writer.
+   *   3. Once no live writer holds the lock, the lock is removed FIRST and the
+   *      `pending-*` files after it, so the directory a staging file is judged in
+   *      genuinely has no lock in it. A staging file seen while a live lock
+   *      exists belongs to that writer and is left alone.
    *   4. A lock file this store cannot classify — no pid recorded, a pid that is
    *      not a number, a lock that is a directory or a symlink or multi-linked —
    *      is a refusal, and nothing is removed. So is a name that is neither a
@@ -321,65 +322,88 @@ export class ResultFileStoreV1 {
    *
    * Recovery is itself serialised by an O_EXCL recovery lock, so two openers
    * cannot both decide about the same leftovers, and it deletes only names this
-   * store itself created. It never repairs, never overwrites and never touches
-   * a `<hex>.crbf` result file.
+   * store itself created. That lock is subject to the SAME liveness test as the
+   * write lock: a leftover from a recovery that was itself interrupted is
+   * removed and the recovery proceeds, because a permanent lock-out is the one
+   * outcome this function must never produce. A recovery lock with a LIVE holder
+   * is a concurrent recovery and is left alone. It never repairs, never
+   * overwrites and never touches a `<hex>.crbf` result file.
    */
   private async recoverAbandonedWriterEntries(operation: Operation): Promise<void> {
     const listed = await bounded(operation, () => readdir(this.root), () => {});
-    const bookkeeping = listed.filter(isStoreBookkeeping);
-    if (!bookkeeping.length) return;
+    if (!listed.some(isStoreBookkeeping)) return;
     let recovery: FileHandle | undefined;
     try {
       recovery = await bounded(operation, () => open(recoveryPathOf(this.root),
         constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), () => {});
     } catch (error) {
-      // Another opener is recovering right now, or a previous recovery was
-      // itself interrupted. Fail closed rather than racing it; the leftovers
-      // are still there and the next open will try again.
-      if ((error as NodeJS.ErrnoException).code === "EEXIST")
+      // A recovery lock already exists. If its holder is DEAD this is a recovery
+      // that was itself interrupted, and refusing here would reproduce exactly
+      // the permanent lock-out this function exists to end: the owner could
+      // never start a task again, because the only thing standing in the way
+      // would be this function. So the same liveness test that governs the write
+      // lock governs this one: a dead holder's name is removed and the recovery
+      // proceeds; a LIVE holder is a concurrent recovery, which is left alone.
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (await this.namedHolderIsAlive(operation, recoveryName))
         throw new ResultFileStoreError("store_ambiguous");
-      throw error;
+      await this.removeProvenAbandoned(operation, recoveryName);
+      recovery = await bounded(operation, () => open(recoveryPathOf(this.root),
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), () => {});
     }
     try {
       await bounded(operation, async () => {
-        await recovery!.writeFile(`control-room-result-file-store-write\n${process.pid}\n`, "utf8");
+        await recovery!.writeFile(`control-room-result-file-store-recovery\n${process.pid}\n`, "utf8");
       }, () => {});
       // Re-read the directory INSIDE the recovery lock: the list above is only
       // a hint, and a name that appeared since must be judged on its own.
       const current = await bounded(operation, () => readdir(this.root), () => {});
-      const lockPresent = current.some(entry => entry === lockName);
-      const writerAlive = lockPresent ? await this.lockHolderIsAlive(operation) : false;
-      if (writerAlive) {
+      if (current.includes(lockName) && await this.namedHolderIsAlive(operation, lockName)) {
         // A live writer is publishing through this same directory. Its lock and
         // its pending file are its own, and this store opens anyway: the write
         // path is already mutually excluded by O_EXCL, and refusing to open here
         // would reintroduce the lock-out this recovery exists to remove.
         return;
       }
+      // No live writer. Everything this store wrote for its own bookkeeping and
+      // nothing else is now provably abandoned, and the lock is removed FIRST so
+      // that a pending file is judged against a directory that genuinely has no
+      // lock in it. The ordering matters: a reader of this function's rule 3
+      // ("a pending file is removed only when no lock exists") would be reading
+      // a stale flag if the lock were removed after.
       for (const entry of current) {
-        if (entry === lockName) {
-          // No live holder (proved above, or there was no lock at all), so the
-          // name is a dead writer's and nothing else.
-          await this.removeProvenAbandoned(operation, entry);
-          continue;
-        }
-        // A pending file is removed only once no writer holds the lock. While a
-        // live lock exists the file belongs to that writer.
-        if (entry.startsWith(pendingPrefix) && !lockPresent) await this.removeProvenAbandoned(operation, entry);
+        if (isStoreBookkeeping(entry)) await this.removeProvenAbandoned(operation, entry);
       }
       await this.syncRoot(operation);
     } finally {
       await recovery.close().catch(() => {});
       await bounded(operation, () => unlink(recoveryPathOf(this.root)).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;
-      }), () => {}).catch(() => {});
+      }), () => {});
     }
   }
 
-  /** True when the lock file records a process that is still running. A lock
-   * with no parsable pid is NOT alive-and-not-dead: it refuses. */
-  private async lockHolderIsAlive(operation: Operation): Promise<boolean> {
-    const path = join(this.root, lockName);
+  /**
+   * True when one of the store's own bookkeeping files records a process that is
+   * still running.
+   *
+   * The answer is deliberately three-valued and the caller treats the third case
+   * as "alive":
+   *
+   *   * the file is gone (ENOENT) -> false, nothing holds it;
+   *   * it records a pid and that pid is running -> true;
+   *   * anything else -> true.
+   *
+   * That last case is the one that matters. An EMPTY lock is a writer that has
+   * created the file and not yet written its pid — a window of microseconds that
+   * is real — and a lock that is a directory or a symlink is not this store's
+   * file at all. Both are treated as live, so the recovery leaves everything
+   * alone. The failure mode of that choice is a store that reports
+   * `store_ambiguous` and deletes nothing; the failure mode of the opposite
+   * choice is deleting a live writer's staging file, which is unrecoverable.
+   */
+  private async namedHolderIsAlive(operation: Operation, name: string): Promise<boolean> {
+    const path = join(this.root, name);
     let listed: BigIntStats;
     try { listed = await bounded(operation, () => lstat(path, { bigint: true }), () => {}); }
     catch (error) {
@@ -387,13 +411,13 @@ export class ResultFileStoreV1 {
       throw error;
     }
     if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1)) return true;
-    if (listed.size === BigInt(0)) return true;   // a lock with no recorded pid: refuse
+    if (listed.size === BigInt(0)) return true;   // no recorded pid yet: assume live
     const handle = await bounded(operation, () => open(path, constants.O_RDONLY | noFollow), () => {});
     let recorded: string;
     try { recorded = (await bounded(operation, () => handle.readFile("utf8"), () => {})).trim(); }
     finally { await handle.close().catch(() => {}); }
     const pid = Number(recorded.split(/\s+/u).at(-1));
-    if (!Number.isSafeInteger(pid) || pid <= 0) return true;  // unparsable: refuse
+    if (!Number.isSafeInteger(pid) || pid <= 0) return true;  // unparsable: assume live
     try { process.kill(pid, 0); return true; }
     catch (error) {
       // ESRCH is the only proof of death. EPERM means the pid exists and belongs

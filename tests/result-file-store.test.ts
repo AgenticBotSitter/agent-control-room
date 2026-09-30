@@ -619,3 +619,40 @@ test("STRESS: 50 concurrent writers of distinct files all land, and retries stil
       "and no retry created a second file");
   } });
 });
+
+
+test("B7: a recovery that was ITSELF interrupted does not lock the store out forever", async () => {
+  // Found by re-reading my own diff as the reviewer. A leftover recovery lock
+  // from a crash DURING the crash recovery is the one input that reproduces the
+  // original bug in the fix: `create()` refuses, and nothing in the application
+  // ever clears it, so the owner can never start a task again. The recovery lock
+  // is therefore subject to the same liveness test as the write lock.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-recovery-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const open = () => ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    // A dead recovery's lock, and the write leftovers it was about to clear.
+    await writeFile(join(root, ".control-room-result-file-store-recovery.lock"),
+      "control-room-result-file-store-recovery\n2147483645\n", { mode: 0o600 });
+    await writeFile(join(root, ".control-room-result-file-store.lock"),
+      "control-room-result-file-store-write\n2147483646\n", { mode: 0o600 });
+    await writeFile(join(root, `.control-room-result-file-store-pending-${"c".repeat(32)}`),
+      bytes("interrupted mid-recovery"), { mode: 0o600 });
+    // The store opens, and every leftover is cleared.
+    const store = await open();
+    assert.ok(store, "an interrupted recovery does not stop the store opening");
+    assert.deepEqual((await readdir(root)).filter(entry => !entry.endsWith(".crbf")), [],
+      "and its leftovers are cleared, so the next open is clean");
+    // And a LIVE recovery lock is left alone: a concurrent recovery is not
+    // something a second opener may delete out from under itself.
+    await writeFile(join(root, ".control-room-result-file-store-recovery.lock"),
+      `control-room-result-file-store-recovery\n${process.pid}\n`, { mode: 0o600 });
+    await assert.rejects(open(),
+      (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_ambiguous");
+    assert.ok((await readdir(root)).includes(".control-room-result-file-store-recovery.lock"),
+      "a live recovery lock is not deleted");
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
