@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "6a8d19068ab0ecec7722ba64c4b4ee22bbfbc84ea3a1482b6e55265f6d245040",
+  "digest": "f1a16b01b95ee02459f844bc6f943321ed7e24aaa02bfcd061d4bde7d46bdd0b",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -695,7 +695,7 @@
     {
       "file": "db/migrations/0195_module_install_approvals.sql",
       "order": 116,
-      "sha256": "e40798536c9a615cb89251bba552b67a8da9af2e8625ee2b6566ea7880ad9a68",
+      "sha256": "24f348af037ed35308feb243edbb2553661c4dbcddd38a9ca4680193a005826e",
       "kind": "migrate"
     },
     {

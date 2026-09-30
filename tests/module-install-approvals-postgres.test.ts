@@ -5,6 +5,8 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID, type KeyObject } from "node:crypto";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Client, Pool } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
@@ -216,6 +218,9 @@ test("the production web login keeps an owner-only, append-only, replay-proof mo
       assert.match(String((raced.find(value => value.status === "rejected") as PromiseRejectedResult).reason), /conflict/u);
       const winner = (won[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof service.approve>>>).value;
       assert.equal((await service.current(owner, "weeklyDigest"))?.approvalId, winner.approvalId);
+      const loser = winner.bundleDigest === previewLeft.bundleDigest ? right : left;
+      await assert.rejects(service.assertApproved(loser), /module_install_approval_required/u,
+        "same version and permissions, different bytes: the losing tab's bundle is not approved");
       assert.equal(await count("weeklyDigest"), 4);
 
       // --- A CODE module: trusted signature, plain warning, critical owner grant. ---
@@ -233,7 +238,7 @@ test("the production web login keeps an owner-only, append-only, replay-proof mo
       await assert.rejects(postgres.query("web", ...rawApproval({ moduleId: "sourceTools", ownerId: people.operator.id,
         key: "raw-code-operator-0001", moduleClass: "code", source: "signed", signer: publisher.keyId, ack: true })), /needs the owner/u);
       await assert.rejects(postgres.query("web", ...rawApproval({ moduleId: "sourceTools", ownerId: people.owner.id,
-        key: "raw-code-unsigned-0001", moduleClass: "code" })), /check constraint/u, "CODE from an unsigned source");
+        key: "raw-code-unsigned-0001", moduleClass: "code", ack: true })), /check constraint/u, "CODE from an unsigned source");
       await assert.rejects(postgres.query("web", ...rawApproval({ moduleId: "sourceTools", ownerId: people.owner.id,
         key: "raw-code-noack-0001", moduleClass: "code", source: "signed", signer: publisher.keyId, ack: false })), /check constraint/u,
       "CODE without the warning acknowledged");
@@ -250,6 +255,10 @@ test("the production web login keeps an owner-only, append-only, replay-proof mo
         /module_signature_digest_mismatch/u, "the approved signature does not cover the edited manifest");
       await assert.rejects(service.assertApproved(signed(tampered)), /module_install_approval_required/u,
         "even re-signed by the trusted publisher, the edited manifest needs the owner again");
+      // Same version, same permissions, re-signed by the trusted publisher, but different code bytes.
+      const swappedCode = { ...codeBundle, files: codeBundle.files.map(file => file.path === "dist/index.js"
+        ? { ...file, contentBase64: b64("export const answer = 41;\n") } : file) };
+      await assert.rejects(service.assertApproved(signed(swappedCode)), /module_install_approval_required/u);
       // The same bytes through a different trust source, or after the owner stops trusting the signer, are not approved.
       const reviewedOnly = new ModuleInstallApprovalServiceV1(connection.client, scope, KEY,
         { trustedKeys: [], reviewedBundleDigests: [digestOf(codeBundle)] }, "0.1.0", clock);
@@ -290,6 +299,18 @@ test("the production web login keeps an owner-only, append-only, replay-proof mo
       await assert.rejects(service.current(owner, "raceProbe"), /module_install_approval_integrity_failed/u);
     } finally { await reader.close(); }
 
+    // The chain, not the clock, decides what is current: a successor stamped earlier than the
+    // approval it supersedes still retires it (and, lacking a valid tag, fails closed).
+    const codeHead = (await asAdmin("SELECT id FROM control_module_install_approvals WHERE module_id='sourceTools'")).rows[0]!.id as string;
+    const [earlier, earlierParams] = rawApproval({ moduleId: "sourceTools", ownerId: people.owner.id, key: "raw-earlier-successor-0001",
+      supersedes: codeHead, moduleClass: "code", source: "signed", signer: publisher.keyId, ack: true });
+    await postgres.query("web", earlier.replace(/now\(\)\)$/u, "now()-interval '4 minutes')"), earlierParams);
+    const afterSuccessor = pool(postgres);
+    try {
+      const service = new ModuleInstallApprovalServiceV1(afterSuccessor.client, scope, KEY, trusting, "0.1.0");
+      await assert.rejects(service.assertApproved(signed(code())), /module_install_approval_integrity_failed/u);
+    } finally { await afterSuccessor.close(); }
+
     // Append only, even to the login that writes approvals and to the superuser.
     await assert.rejects(postgres.query("web", "UPDATE control_module_install_approvals SET module_version='9.9.9'"), /permission denied/u);
     await assert.rejects(postgres.query("web", "DELETE FROM control_module_install_approvals"), /permission denied/u);
@@ -306,6 +327,22 @@ test("the production web login keeps an owner-only, append-only, replay-proof mo
       await assert.rejects(postgres.query(role, ...rawApproval({ moduleId: "otherRole", ownerId: people.owner.id,
         key: `raw-other-role-${role}-0001` })), /permission denied/u, role);
     }
+
+    // The down file removes only what 0195 created and revokes only what it granted; the up file
+    // then re-applies cleanly, its guarded grant included. Both run as the schema-owning migrator.
+    const privileges = async () => (await asAdmin(`SELECT has_table_privilege('control_room_private_web',
+      'control_module_install_approvals','SELECT') AS s, has_table_privilege('control_room_private_web',
+      'control_module_install_approvals','INSERT') AS i, has_table_privilege('control_room_private_web',
+      'control_module_install_approvals','UPDATE') AS u`)).rows[0];
+    const webGrantsBefore = Number((await asAdmin(`SELECT count(*)::int AS n FROM information_schema.role_table_grants
+      WHERE grantee='control_room_private_web'`)).rows[0]!.n);
+    await postgres.query("migrator", await readFile(join(process.cwd(), "db/down/0195_module_install_approvals.sql"), "utf8"));
+    assert.equal((await asAdmin("SELECT to_regclass('public.control_module_install_approvals') AS t")).rows[0]!.t, null);
+    assert.equal(Number((await asAdmin("SELECT count(*)::int AS n FROM pg_proc WHERE proname='guard_module_install_approval_insert'")).rows[0]!.n), 0);
+    assert.equal(Number((await asAdmin(`SELECT count(*)::int AS n FROM information_schema.role_table_grants
+      WHERE grantee='control_room_private_web'`)).rows[0]!.n), webGrantsBefore - 2, "only SELECT and INSERT on this table went away");
+    await postgres.query("migrator", `BEGIN;\n${await readFile(join(process.cwd(), "db/migrations/0195_module_install_approvals.sql"), "utf8")}\nCOMMIT;`);
+    assert.deepEqual(await privileges(), { s: true, i: true, u: false });
   }, { port: PORT, allowedPorts: [PORT], boundMs: 180_000 }).catch(error => {
     throw new Error(`${String(error)} refused: ${refused.at(-1) ?? "none"}`, { cause: error });
   });

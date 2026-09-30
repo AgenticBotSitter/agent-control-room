@@ -47,7 +47,6 @@ CREATE TABLE control_module_install_approvals (
   -- from a reviewed digest or an owner-trusted signature, with the warning seen.
   CHECK ((source_kind = 'signed') = (signer_key_id IS NOT NULL)),
   CHECK (module_class <> 'code' OR source_kind IN ('reviewed','signed')),
-  CHECK (source_kind <> 'declarative-unsigned' OR module_class = 'declarative'),
   CHECK (module_class <> 'code' OR code_warning_acknowledged),
   CHECK (manifest->>'id' = module_id AND manifest->>'version' = module_version
     AND manifest->>'class' = module_class),
