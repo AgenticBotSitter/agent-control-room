@@ -130,12 +130,12 @@ GRANT UPDATE (state, received_at, published_at, voided_at, void_reason)
 -- a name, a digest, a size, a storage key or a producer.
 GRANT UPDATE (state, stored_at) ON control_result_files TO control_room_fleet_gateway;
 GRANT UPDATE (state, stored_at, manifest_digest) ON control_result_file_sets TO control_room_fleet_gateway;
--- The owner-facing declarations and bindings the gateway grants above are the
--- same rows the web login reads for the owner's approval screen, and the
--- publication receipt is what Project Files shows as "published".
-GRANT SELECT ON control_task_declared_outputs, control_task_declared_inputs,
-  control_job_artifact_inputs, control_result_publications,
-  control_result_upload_sessions, control_result_upload_chunks TO control_room_private_web;
+-- The owner-facing declarations, bindings, upload sessions and publication
+-- receipts the gateway reaches above are the same rows the web login reads for
+-- the owner's approval screen and Project Files. That grant is in
+-- private_web_roles.sql and is deliberately NOT repeated here: the upgrade
+-- grant reader treats one (role, object, column, privilege) tuple granted by
+-- two role files as a duplicate and refuses the whole batch.
 
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_fleet_owner_authority;
 GRANT SELECT ON work_intake_tenant_binding, tenants, workspaces, projects, control_manual_project_heads,
