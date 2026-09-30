@@ -1,55 +1,88 @@
-export type ResultFileState = "available" | "pending" | "failed" | "refused";
-export type TextCopyStatus = "available" | "pending" | "failed" | "unavailable";
+import type { BrowserFailureCode } from "./browser-client";
 
-export type ResultFile = Readonly<{
-  id: string;
+/** Structural mirror of cook/files' result-file-wire.ts. */
+export type ResultFileMediaType = "text/plain" | "text/markdown" | "text/csv" | "text/html"
+  | "application/json" | "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+  | "application/pdf" | "application/zip" | "application/octet-stream";
+
+export type ResultFileItem = Readonly<{
+  fileId: string;
+  ordinal: number;
   displayName: string;
-  type: string;
-  size: number;
-  sha256: string;
-  producerMachine: string;
-  state: ResultFileState;
-  textCopy?: Readonly<{ status: TextCopyStatus }>;
+  declaredMediaType: ResultFileMediaType;
+  detectedMediaType: ResultFileMediaType;
+  sizeBytes: number;
+  contentDigest: string;
+  state: "declared" | "stored" | "quarantined" | "missing";
+  receivedAt: string;
+  downloadHref?: string;
 }>;
 
 export type ResultFileSet = Readonly<{
-  id: string;
+  setId: string;
   projectId: string;
-  task: Readonly<{ id: string; title: string }>;
-  files: readonly ResultFile[];
+  jobId: string;
+  state: "declared" | "stored" | "incomplete" | "quarantined";
+  sourceKind: "native-text" | "file-store";
+  producerKind: "native" | "fleet";
+  producerId: string;
+  manifestDigest: string;
+  retentionState: "provisional" | "retained" | "trash" | "purged";
+  files: readonly ResultFileItem[];
+  additionalFilesOmitted: boolean;
+}>;
+
+export type ResultFileCatalog = Readonly<{
+  projectId: string;
+  jobId?: string;
+  sets: readonly ResultFileSet[];
+  additionalSetsOmitted: boolean;
+  catalogSource: "configured" | "not_configured";
+  observedAt: string;
+  startsWork: false;
+  grantsExecutionAuthority: false;
 }>;
 
 export type ResultFilesScope = Readonly<{ projectId: string; taskId?: string }>;
-export type ResultFileVariant = "original" | "text-copy";
+export type ResultFileDownloadLink = Readonly<{ href: string; expiresAt: string }>;
 
-/** The only UI-to-storage seam for the universal result-file catalog. The
- * storage branch can replace the exported production binding below without
- * changing either owner surface. Download URLs must resolve to attachment
- * responses; the UI never fetches or renders result bytes inline. */
+/** The only UI-to-storage seam for the result-file catalog. Production mints
+ * a fresh, short-lived link on demand; it never supplies one during render.
+ * `kind` exists solely to keep the disposable demo's fixed data URL out of
+ * every production adapter. */
 export interface ResultFilesClientPort {
-  list(scope: ResultFilesScope, signal?: AbortSignal): Promise<readonly ResultFileSet[]>;
-  downloadUrl(scope: ResultFilesScope, resultSetId: string, fileId: string, variant: ResultFileVariant): string | undefined;
+  readonly kind: "production" | "demo";
+  list(scope: ResultFilesScope, signal?: AbortSignal): Promise<ResultFileCatalog>;
+  requestDownload(projectId: string, resultSetId: string, fileId: string,
+    signal?: AbortSignal): Promise<ResultFileDownloadLink>;
 }
 
 export class ResultFilesUnavailableError extends Error {
-  constructor() { super("result_files_unavailable"); this.name = "ResultFilesUnavailableError"; }
+  constructor(readonly code: BrowserFailureCode = "unavailable") {
+    super(code); this.name = "ResultFilesUnavailableError";
+  }
 }
 
-const unavailableResultFilesClient: ResultFilesClientPort = Object.freeze({
+const unavailableResultFilesClient = Object.freeze({
+  kind: "production" as const,
   async list(_scope: ResultFilesScope, signal?: AbortSignal) {
     signal?.throwIfAborted();
     throw new ResultFilesUnavailableError();
   },
-  downloadUrl() { return undefined; },
-});
+  async requestDownload(_projectId: string, _resultSetId: string, _fileId: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    throw new ResultFilesUnavailableError();
+  },
+}) satisfies ResultFilesClientPort;
 
 /** Production wiring point. It deliberately reports unavailable until the
- * result-file catalog and owner-download adapter provide this port. */
+ * catalog branch is merged and its browser client is bound here. */
 export const resultFilesClientV1: ResultFilesClientPort = unavailableResultFilesClient;
 
 type InMemoryOptions = Readonly<{
   delayMs?: number;
   failFirstReads?: number;
+  failFirstDownloads?: number;
 }>;
 
 function abortableDelay(delayMs: number, signal?: AbortSignal) {
@@ -63,30 +96,37 @@ function abortableDelay(delayMs: number, signal?: AbortSignal) {
   });
 }
 
-/** Read-only double used by component tests and the disposable contributor
- * demo. It keeps the same scope and download rules as the production port. */
+/** Read-only double used only by component tests and the disposable demo. */
 export function createInMemoryResultFilesClient(
   source: readonly ResultFileSet[],
   options: InMemoryOptions = {},
 ): ResultFilesClientPort {
-  let failuresRemaining = options.failFirstReads ?? 0;
+  let readFailuresRemaining = options.failFirstReads ?? 0;
+  let downloadFailuresRemaining = options.failFirstDownloads ?? 0;
   const sets = structuredClone(source) as ResultFileSet[];
   const selected = (scope: ResultFilesScope) => sets.filter(set => set.projectId === scope.projectId
-    && (scope.taskId === undefined || set.task.id === scope.taskId));
-  const client: ResultFilesClientPort = {
+    && (scope.taskId === undefined || set.jobId === scope.taskId));
+  const client = {
+    kind: "demo" as const,
     async list(scope: ResultFilesScope, signal?: AbortSignal) {
       await abortableDelay(options.delayMs ?? 0, signal);
       signal?.throwIfAborted();
-      if (failuresRemaining > 0) { failuresRemaining -= 1; throw new ResultFilesUnavailableError(); }
-      return structuredClone(selected(scope));
+      if (readFailuresRemaining > 0) { readFailuresRemaining -= 1; throw new ResultFilesUnavailableError(); }
+      return Object.freeze({ projectId: scope.projectId, ...(scope.taskId ? { jobId: scope.taskId } : {}),
+        sets: structuredClone(selected(scope)), additionalSetsOmitted: false, catalogSource: "configured" as const,
+        observedAt: "2026-01-01T00:00:00.000Z", startsWork: false as const,
+        grantsExecutionAuthority: false as const });
     },
-    downloadUrl(scope: ResultFilesScope, resultSetId: string, fileId: string, variant: ResultFileVariant) {
-      const set = selected(scope).find(candidate => candidate.id === resultSetId);
-      if (!set) return undefined;
-      const file = set.files.find(candidate => candidate.id === fileId);
-      if (!file || file.state !== "available" || variant === "text-copy" && file.textCopy?.status !== "available") return undefined;
-      return variant === "text-copy" ? "data:text/plain;charset=utf-8," : "data:application/octet-stream,";
+    async requestDownload(projectId: string, resultSetId: string, fileId: string, signal?: AbortSignal) {
+      await abortableDelay(options.delayMs ?? 0, signal);
+      signal?.throwIfAborted();
+      if (downloadFailuresRemaining > 0) { downloadFailuresRemaining -= 1; throw new ResultFilesUnavailableError(); }
+      const set = sets.find(candidate => candidate.projectId === projectId && candidate.setId === resultSetId);
+      const file = set?.files.find(candidate => candidate.fileId === fileId);
+      if (!set || set.state === "quarantined" || !file || file.state !== "stored")
+        throw new ResultFilesUnavailableError("not_found");
+      return { href: "data:application/octet-stream,", expiresAt: "2026-01-01T00:05:00.000Z" };
     },
-  };
+  } satisfies ResultFilesClientPort;
   return Object.freeze(client);
 }

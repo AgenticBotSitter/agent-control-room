@@ -1,12 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
+import { readTaskProjectFiles } from "../../src/web/v1/task-project-files-browser-client";
 import type { TaskProjectFiles } from "../../src/web/v1/task-project-files-wire";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { taskResultHrefV1 } from "./task-results";
-import { DeliveredFilesRegion } from "./delivered-files";
+import { PrivateResultFiles } from "./delivered-files";
 
 type State = { state: "loading" } | { state: "ready"; value: TaskProjectFiles }
   | { state: "unavailable"; code: BrowserRequestError["code"] };
@@ -36,11 +38,43 @@ export function ProjectFilesView({ projectId, data }: { projectId: string; data:
   </section>;
 }
 
+/**
+ * Project Files: the result-file catalog, then the older native text receipts
+ * beneath it.
+ *
+ * The catalog comes first because it is the complete list — every file any job
+ * in this project produced, with a Download on each. The native receipts are
+ * kept below under their own heading rather than merged in, because a native
+ * text result is a different thing: it is what a bot SAID, not a file it
+ * produced, and merging the two would make one look like the other. When the
+ * catalog is not configured the receipts still stand on their own, so a
+ * read that could not complete never looks like an empty project.
+ */
+export function ProjectFilesWithCatalog({ projectId, data }: { projectId: string; data: State }) {
+  return <>
+    <PrivateResultFiles projectId={projectId} />
+    <ProjectFilesView projectId={projectId} data={data} />
+  </>;
+}
+
 export function PrivateProjectFiles({ projectId }: { projectId: string }) {
+  const [state, setState] = useState<State>({ state: "loading" });
+  const [generation, setGeneration] = useState(0);
+  useEffect(() => {
+    const abort = new AbortController(); setState({ state: "loading" });
+    void readTaskProjectFiles(projectId, fetch, abort.signal).then(value => {
+      if (!abort.signal.aborted) setState({ state: "ready", value });
+    }, error => {
+      if (!abort.signal.aborted) setState({ state: "unavailable",
+        code: error instanceof BrowserRequestError ? error.code : "unavailable" });
+    });
+    return () => abort.abort();
+  }, [projectId, generation]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <a href={`/projects/${encodeURIComponent(projectId)}`} className="private-back">← Project overview</a>
-    <div className="private-heading"><h1>Project files</h1><p>Original files delivered by approved work across this project.</p></div>
+    <div className="private-heading"><h1>Project files</h1><p>Everything this project’s jobs produced, saved on the Mac. Download any file from here, or open a task to read what a bot said about it.</p></div>
     <ProjectNavigation projectId={projectId} current="files" />
-    <DeliveredFilesRegion scope={{ projectId }} showTask />
+    <ProjectFilesWithCatalog projectId={projectId} data={state} />
+    <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved project files again</button>
   </main></div>;
 }

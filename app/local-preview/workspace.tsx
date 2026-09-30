@@ -106,11 +106,16 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
   const project = page?.project ?? detail?.project;
   const held = pending || uncertain || reading;
   const demoFileSets: readonly ResultFileSet[] = projectId && jobId ? [{
-    id: `result-set:${jobId}`, projectId, task: { id: jobId, title: detail?.task.title ?? "Demo task" }, files: [
-      { id: "file:summary", displayName: "owner-summary.md", type: "text/markdown", size: 18432,
-        sha256: `sha256:${"a".repeat(64)}`, producerMachine: "Demo Mac", state: "available", textCopy: { status: "available" } },
-      { id: "file:source", displayName: "research-notes-🌎-long-filename-for-phone-width-checking.json", type: "application/json", size: 245812,
-        sha256: `sha256:${"b".repeat(64)}`, producerMachine: "Demo worker", state: "available", textCopy: { status: "available" } },
+    setId: `result-set:${"1".repeat(32)}`, projectId, jobId, state: "stored", sourceKind: "file-store",
+    producerKind: "native", producerId: "demo-local", manifestDigest: `sha256:${"c".repeat(64)}`,
+    retentionState: "provisional", additionalFilesOmitted: false, files: [
+      { fileId: `result-file:${"1".repeat(32)}`, ordinal: 1, displayName: "owner-summary.md",
+        declaredMediaType: "text/markdown", detectedMediaType: "text/markdown", sizeBytes: 18432,
+        contentDigest: `sha256:${"a".repeat(64)}`, state: "stored", receivedAt: "2026-01-01T00:00:00.000Z" },
+      { fileId: `result-file:${"2".repeat(32)}`, ordinal: 2,
+        displayName: "research-notes-🌎-long-filename-for-phone-width-checking.json",
+        declaredMediaType: "application/json", detectedMediaType: "application/json", sizeBytes: 245812,
+        contentDigest: `sha256:${"b".repeat(64)}`, state: "stored", receivedAt: "2026-01-01T00:00:00.000Z" },
     ],
   }] : [];
   const demoFiles = createInMemoryResultFilesClient(demoFileSets);
@@ -159,6 +164,8 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
       onOpen={artifactId => { void openResult(artifactId); }}
       onClose={() => { generation.current++; setContent(undefined); }} />}
     {contributorDemo && detail && projectId && jobId && <DeliveredFilesPanel scope={{ projectId, taskId: jobId }}
-      data={{ state: "ready", sets: demoFileSets }} client={demoFiles} />}
+      data={{ state: "ready", value: { projectId, jobId, sets: demoFileSets, additionalSetsOmitted: false,
+        catalogSource: "configured", observedAt: "2026-01-01T00:00:00.000Z", startsWork: false,
+        grantsExecutionAuthority: false } }} client={demoFiles} />}
   </main></div>;
 }
