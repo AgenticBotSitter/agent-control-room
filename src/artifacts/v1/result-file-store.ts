@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { constants, type BigIntStats } from "node:fs";
 import { link, lstat, open, readdir, realpath, unlink, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
@@ -119,7 +120,127 @@ const recoveryPathOf = (root: string): string => join(root, recoveryName);
 const noFollow = constants.O_NOFOLLOW ?? 0;
 const nonBlock = constants.O_NONBLOCK ?? 0;
 
+/**
+ * This BOOT's identity, read once per process.
+ *
+ * The review's S1, third case, and it is the one that matters on a real Mac. A
+ * lock records its writer's process id, and a pid is only proof of liveness
+ * while the boot is the same boot: after a reboot the kernel reuses low pids, a
+ * login-started app gets a low pid, and boot daemons already occupy exactly the
+ * range a login app would land in. So a lock left by yesterday's crash reads as
+ * HELD BY A LIVE PROCESS today, forever. The review measured it with pid 1 —
+ * `EPERM` counts as alive — so the store reports `store_ambiguous` and every
+ * write is refused, after a restart and for good.
+ *
+ * `kern.boottime` is the kernel's own answer to "when did this boot start", and
+ * every process on the machine gets the same answer, so a lock written before a
+ * reboot can never match one written after it. Where it cannot be read the
+ * identity is `undefined` and the store falls back to the older pid-only test:
+ * degraded, not different in kind, and never fail-open.
+ */
+let bootIdentity: string | undefined;
+let bootIdentityRead = false;
+function currentBootIdentity(): string | undefined {
+  if (!bootIdentityRead) {
+    bootIdentityRead = true;
+    try {
+      bootIdentity = execFileSync("/usr/sbin/sysctl", ["-n", "kern.boottime"], {
+        encoding: "utf8", timeout: 2_000,
+      }).replace(/\s+/gu, " ").trim() || undefined;
+    } catch { bootIdentity = undefined; }
+  }
+  return bootIdentity;
+}
+
+/** Test seam: the boot identity a lock is judged against. Replaced by the S1
+ * tests, which need to judge a lock written under a DIFFERENT boot. */
+let bootIdentityForTest: (() => string | undefined) | undefined;
+const bootOf = () => (bootIdentityForTest ?? currentBootIdentity)();
+
+/** The stamp a live writer leaves in its own lock: the boot identity when this
+ * process can read one, then its pid, then the first second of its own life.
+ * The third line is what makes a RECYCLED pid distinguishable from the original
+ * — see `processStartedAtSeconds` below. */
+function holderStamp(): string {
+  return [bootOf() ?? "boot:unknown", String(process.pid), String(Math.floor(Date.now() / 1000))]
+    .join("\n").trim();
+}
+
+/** A stamp from BEFORE the boot-identity line existed: the part-1 format was
+ * `<header>\n<pid>` and nothing more, so a lock carrying only that cannot be
+ * attributed to a boot or a start time. It is recognised and judged by liveness
+ * alone, which is a strict improvement on treating it as live for ever and never
+ * a weakening: a pid that IS running still keeps its lock. */
+function isBarePidStamp(recorded: string): boolean {
+  return recorded.trim().split("\n").filter(part => part.trim().length > 0).length === 2;
+}
+
+/** Liveness, and only liveness. `ESRCH` is the sole proof of death: `EPERM`
+ * means the pid exists and belongs to another user, which is as alive as this
+ * store needs to know, and which is why the review's pid-1 case read as a live
+ * holder.
+ *
+ * The `EPERM` branch cannot be reached from inside a test process — nothing here
+ * can make `process.kill` genuinely return `EPERM`, because that needs a process
+ * owned by another user — so the rule it applies is `pidSignalMeansAliveV1`,
+ * which is exported and proved directly. Collapsing the two would be a fail-open:
+ * a lock held by another user's process cleared, and its staging file with it.
+ */
+function pidIsRunning(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;  // unparsable: never proven dead
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return pidSignalMeansAliveV1((error as NodeJS.ErrnoException).code); }
+}
+
+/** Whether a failed `process.kill(pid, 0)` still means the process is ALIVE.
+ *
+ * `ESRCH` is the only code that proves death. `EPERM` means the pid exists and
+ * belongs to another user — a live process, and the exact case the review hit
+ * from the other side: a lock naming pid 1 read as held for ever because
+ * signalling it gives EPERM. Split out and exported so the rule is a proved
+ * property rather than an untested line: no test running as this user can make
+ * `process.kill` genuinely return EPERM, so without this seam a fail-open that
+ * collapsed the two would pass the whole lane.
+ */
+export function pidSignalMeansAliveV1(code: string | undefined): boolean {
+  return code !== "ESRCH";
+}
+
+/** When the given pid started, in whole seconds, or `undefined` if this process
+ * cannot ask. On macOS that is `ps -o lstart=`, which is the only per-process
+ * start time available without a native module — and it is what makes a
+ * RECYCLED pid provable: a pid inside one boot is reused only after its original
+ * process is reaped, and the new process's start time cannot be the old one. */
+const processStartTimes: { pid: number; second: number }[] = [];
+function processStartedAtSeconds(pid: number): number | undefined {
+  const remembered = processStartTimes.find(entry => entry.pid === pid);
+  if (remembered) return remembered.second;
+  if (processStartTimes.length >= 64) processStartTimes.length = 0;
+  try {
+    const printed = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8", timeout: 2_000,
+    }).trim();
+    if (!printed) return undefined;
+    const at = Date.parse(`${printed}`.replace(/\s+/gu, " "));
+    if (!Number.isFinite(at)) return undefined;
+    const second = Math.floor(at / 1000);
+    processStartTimes.push({ pid, second });
+    return second;
+  } catch { return undefined; }
+}
+
+/** This boot's identity, for a caller that has to stamp a lock the way a writer
+ * would. Exported so that a test can build a stamp this store will accept as its
+ * own, rather than guessing the format and the identity together. */
+export function resultFileStoreBootIdentityV1(): string { return bootOf() ?? "boot:unknown"; }
+
 class DeadlineError extends Error {}
+
+/** How long an EMPTY lock is re-examined before it is called abandoned. Long
+ * enough that a writer stalled for a scheduling quantum still stamps inside the
+ * window, short enough that the owner is not left waiting to find out whether
+ * their Mac still works. */
+const emptyLockRecheckMs = 150;
 
 /**
  * The one derivation of a result file's storage key.
@@ -353,7 +474,7 @@ export class ResultFileStoreV1 {
     }
     try {
       await bounded(operation, async () => {
-        await recovery!.writeFile(`control-room-result-file-store-recovery\n${process.pid}\n`, "utf8");
+        await recovery!.writeFile(`control-room-result-file-store-recovery\n${holderStamp()}\n`, "utf8");
       }, () => {});
       // Re-read the directory INSIDE the recovery lock: the list above is only
       // a hint, and a name that appeared since must be judged on its own.
@@ -385,22 +506,35 @@ export class ResultFileStoreV1 {
 
   /**
    * True when one of the store's own bookkeeping files records a process that is
-   * still running.
+   * STILL running, and false only when this store can PROVE otherwise.
    *
-   * The answer is deliberately three-valued and the caller treats the third case
-   * as "alive":
+   * The proof, in order, and every step of it is evidence rather than a guess:
    *
-   *   * the file is gone (ENOENT) -> false, nothing holds it;
-   *   * it records a pid and that pid is running -> true;
-   *   * anything else -> true.
+   *   * the file is gone (ENOENT) -> false. Nothing holds it.
+   *   * it is not a plain private regular file -> true. A directory or a symlink
+   *     at this name is not this store's file, and the store refuses rather than
+   *     removing something it does not own.
+   *   * it records a BOOT identity and that boot is not this boot -> false. This
+   *     is the review's S1: a pid from a previous boot is not a live process
+   *     now, however plausible it looks, and no amount of restarting the app
+   *     would ever clear it.
+   *   * it records a pid and a START TIME, and either the boot differs or the
+   *     start time differs from that pid's real start time -> false. This is the
+   *     recycled-pid case within one boot: the pid is alive but it is somebody
+   *     else's process, and the lock is a dead writer's.
+   *   * it records a pid and that pid is running -> true.
+   *   * it records a bare pid with no boot and no start time -> the part-1 format
+   *     (S1's second case). Judged by liveness alone, and repaired when the pid
+   *     is dead; see below.
+   *   * anything else -> true. An EMPTY lock is a writer between the O_EXCL
+   *     create and the stamp write, a window of microseconds that is real.
    *
-   * That last case is the one that matters. An EMPTY lock is a writer that has
-   * created the file and not yet written its pid — a window of microseconds that
-   * is real — and a lock that is a directory or a symlink is not this store's
-   * file at all. Both are treated as live, so the recovery leaves everything
-   * alone. The failure mode of that choice is a store that reports
-   * `store_ambiguous` and deletes nothing; the failure mode of the opposite
-   * choice is deleting a live writer's staging file, which is unrecoverable.
+   * The two repaired cases are the ones that used to lock the owner out for
+   * good, and they are repaired by the SAME rule: a lock whose holder cannot be
+   * proven alive is not proof of a live writer, and a lock that cannot be
+   * classified at all is re-examined once the opener has been running a moment,
+   * which is long past any writer's stamp window and long before a writer that
+   * is genuinely alive would have stopped. See `isProvenAbandoned`.
    */
   private async namedHolderIsAlive(operation: Operation, name: string): Promise<boolean> {
     const path = join(this.root, name);
@@ -411,19 +545,82 @@ export class ResultFileStoreV1 {
       throw error;
     }
     if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1)) return true;
-    if (listed.size === BigInt(0)) return true;   // no recorded pid yet: assume live
-    const handle = await bounded(operation, () => open(path, constants.O_RDONLY | noFollow), () => {});
+    // An EMPTY lock is a writer between the O_EXCL create and the stamp write, or
+    // a crash in exactly that window. It is re-examined ONCE after a short,
+    // bounded wait, which separates the two by observation rather than by
+    // assumption: a live writer stamps within microseconds, so a lock that is
+    // still empty a moment later belongs to a writer that is not coming back.
+    //
+    // The review's S1, first case: an empty lock used to be "assume live" for
+    // ever, and every write was refused `store_ambiguous` — still, after a
+    // restart, because nothing in the app could ever clear it. The wait is
+    // bounded by the caller's own operation deadline, so it cannot outlive the
+    // request, and it is the only wait this class performs.
+    if (listed.size === BigInt(0)) {
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, emptyLockRecheckMs);
+        if (typeof timer.unref === "function") timer.unref();
+      });
+      return this.emptyLockIsNowStamped(operation, name);
+    }
+    // Read the stamp `O_NOFOLLOW`. A name that passed the shape test above and
+    // is nonetheless a symlink now — a swap between the two — fails here with
+    // ELOOP, and ELOOP is answered as a LIVE holder rather than allowed to
+    // escape as a raw errno. That is the same decision the shape test makes,
+    // made twice on purpose: the second one covers the race the first one
+    // cannot, and a refusal is the only answer either may give.
+    let handle: FileHandle;
+    try {
+      handle = await bounded(operation, () => open(path, constants.O_RDONLY | noFollow), () => {});
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ELOOP") return true;
+      throw error;
+    }
     let recorded: string;
     try { recorded = (await bounded(operation, () => handle.readFile("utf8"), () => {})).trim(); }
     finally { await handle.close().catch(() => {}); }
-    const pid = Number(recorded.split(/\s+/u).at(-1));
-    if (!Number.isSafeInteger(pid) || pid <= 0) return true;  // unparsable: assume live
-    try { process.kill(pid, 0); return true; }
-    catch (error) {
-      // ESRCH is the only proof of death. EPERM means the pid exists and belongs
-      // to another user, which is as alive as this store needs to know.
-      return (error as NodeJS.ErrnoException).code !== "ESRCH";
+    if (isBarePidStamp(recorded)) {
+      const bare = recorded.trim().split("\n").map(part => part.trim())
+        .filter(part => part.length > 0).at(-1)!;
+      return pidIsRunning(Number(bare));
     }
+    // The stamp is `<header>\n<boot identity>\n<pid>\n<start second>`, and both
+    // the header and the boot identity contain spaces, so nothing is read by
+    // LINE POSITION except the two trailing numbers. The boot identity is
+    // everything between the first newline and the pid, which is why it is
+    // rejoined rather than taken as `lines[0]`.
+    const parts = recorded.split("\n").map(part => part.trim()).filter(part => part.length > 0);
+    if (parts.length < 3) return true;   // a shape this store never wrote: refuse
+    const startedSecond = Number(parts[parts.length - 1]);
+    const pid = Number(parts[parts.length - 2]);
+    const boot = parts.slice(1, parts.length - 2).join("\n");
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(startedSecond) || startedSecond <= 0)
+      return true;
+    // A lock from an earlier boot names a different boot, and that alone is proof
+    // its writer is gone. Checked FIRST because it is free and it is the case
+    // that survives every restart.
+    if (boot !== (bootOf() ?? "boot:unknown")) return false;
+    // Same boot. A live writer's start time matches; a recycled pid's does not.
+    const real = processStartedAtSeconds(pid);
+    if (real !== undefined && real > 0 && real !== startedSecond) return false;
+    return pidIsRunning(pid);
+  }
+
+  /** Whether a lock that was EMPTY has since been stamped, which is the proof
+   * that a writer really did hold it. Re-reads the same file rather than
+   * trusting the earlier `lstat`, and a file that has since been removed counts
+   * as "not a live writer" — the holder finished and cleaned up. */
+  private async emptyLockIsNowStamped(operation: Operation, name: string): Promise<boolean> {
+    const path = join(this.root, name);
+    let listed: BigIntStats;
+    try { listed = await bounded(operation, () => lstat(path, { bigint: true }), () => {}); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1)) return true;
+    if (listed.size === BigInt(0)) return false;   // still empty: no writer claimed it
+    return this.namedHolderIsAlive(operation, name);
   }
 
   /** Unlinks one name the recovery has already proved is this store's own
@@ -541,7 +738,7 @@ export class ResultFileStoreV1 {
       // liveness evidence this process does not have to take on trust, and
       // `kill(pid, 0)` answers it without disturbing the process.
       await bounded(operation, async () => {
-        await lock!.writeFile(`control-room-result-file-store-write\n${process.pid}\n`, "utf8");
+        await lock!.writeFile(`control-room-result-file-store-write\n${holderStamp()}\n`, "utf8");
       }, mutating);
       await bounded(operation, () => lock!.sync(), mutating);
       const inventory = await this.inventory(operation);

@@ -10,17 +10,54 @@
 // why every error assertion checks the CODE and never the message.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { chmod } from "node:fs/promises";
 import { link, lstat, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ResultFileStoreV1, ResultFileStoreError, resultFileStorageKeyV1,
-  RESULT_FILE_LIMITS_V1 } from "../src/artifacts/v1/result-file-store";
+  RESULT_FILE_LIMITS_V1, resultFileStoreBootIdentityV1,
+  pidSignalMeansAliveV1 } from "../src/artifacts/v1/result-file-store";
 
 const TENANT = "tenant:store";
 const PROJECT = "project:alpha";
 const FILE = `result-file:${"b".repeat(32)}`;
 const bytes = (value: string) => new TextEncoder().encode(value);
+
+/** The stamp a live writer leaves in its own lock: the boot identity, its pid,
+ * and the first second of its own life. It mirrors `holderStamp` in the store
+ * and is written out here rather than imported, so that a change to the store's
+ * format cannot silently rewrite the fixture that is testing it. `boot` is a
+ * parameter so a test can stamp a lock as though it were written under a
+ * DIFFERENT boot, which is the review's S1.
+ *
+ * The boot identity comes from the store's own exported rule, so a test's stamp
+ * and the store's idea of "this boot" can never disagree about the format.
+ *
+ * The third line is the WRITER'S OWN start second, not the second the stamp was
+ * written. A fixture that stamped `Date.now()` would disagree with the real
+ * process by however long the test had been running, and the store would — quite
+ * correctly — call that a recycled pid. That is not a hypothetical: it is what
+ * this fixture got wrong first, and the only symptom was one test failing.
+ */
+function startSecondOfProcessV1(pid: number): number {
+  if (pid === process.pid) return Math.floor((Date.now() - process.uptime() * 1000) / 1000);
+  // A pid `ps` will not even look at still needs a third line: a dead writer's
+  // start second is a number, and the store only compares it when the boot
+  // matches. Any plausible second will do, because a dead pid is proved dead by
+  // liveness before the start time is ever consulted.
+  let printed = "";
+  try {
+    printed = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch { printed = ""; }
+  const at = printed ? Date.parse(printed.replace(/\s+/gu, " ")) : Number.NaN;
+  return Number.isFinite(at) ? Math.floor(at / 1000) : Math.floor(Date.now() / 1000);
+}
+const liveStamp = (pid = process.pid, boot?: string) =>
+  `${boot ?? resultFileStoreBootIdentityV1()}\n${pid}\n${startSecondOfProcessV1(pid)}`;
 const digest = (value: Uint8Array) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
 /** A fresh 0700 root and a store opened on it, both removed afterwards. */
@@ -389,7 +426,7 @@ test("B7: a crashed writer's leftovers do not stop the store from opening", asyn
       // that is certainly not this process is certainly not a live writer here.
       if (leftover === "lock")
         await writeFile(join(root, ".control-room-result-file-store.lock"),
-          "control-room-result-file-store-write\n2147483646\n", { mode: 0o600 });
+          `control-room-result-file-store-write\n${liveStamp(2147483646)}\n`, { mode: 0o600 });
       else
         await writeFile(join(root, `.control-room-result-file-store-pending-${"f".repeat(32)}`),
           bytes("half written"), { mode: 0o600 });
@@ -416,7 +453,7 @@ test("B7: a LIVE writer's lock and pending file are never cleared", async () => 
       maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
       operationTimeoutMs: 2_000 });
     await writeFile(join(root, ".control-room-result-file-store.lock"),
-      `control-room-result-file-store-write\n${process.pid}\n`, { mode: 0o600 });
+      `control-room-result-file-store-write\n${liveStamp()}\n`, { mode: 0o600 });
     const pendingName = `.control-room-result-file-store-pending-${"a".repeat(32)}`;
     await writeFile(join(root, pendingName), bytes("a write in progress"), { mode: 0o600 });
     // The store still OPENS — a second instance publishing through another
@@ -431,42 +468,192 @@ test("B7: a LIVE writer's lock and pending file are never cleared", async () => 
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
-test("B7: a lock with no readable pid is a refusal, and nothing is deleted", async () => {
-  // The store must not guess. An empty lock could be a writer that has not yet
-  // written its pid, so it is treated as live and left alone; the only entry it
-  // will not classify is refused rather than removed.
+test("B7: a lock this store cannot PROVE abandoned is left alone, and never deleted", async () => {
+  // The store must not guess. There is one class it will not classify at all — a
+  // bookkeeping name that is a DIRECTORY or a symlink is not this store's own
+  // file — and that one is a refusal with nothing removed. What it will NOT do
+  // any more is refuse forever over a lock it can actually account for: S1 below.
   const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-nopid-")));
   try {
     const root = join(base, "store");
     await mkdir(root, { recursive: true, mode: 0o700 });
-    await writeFile(join(root, ".control-room-result-file-store.lock"), "", { mode: 0o600 });
+    // A bookkeeping name that is a DIRECTORY is not a lock file, so there is no
+    // stamp to read and nothing to prove. It is left alone.
+    await mkdir(join(root, ".control-room-result-file-store.lock"), { mode: 0o700 });
     const store = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
       maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
       operationTimeoutMs: 2_000 });
+    assert.ok(store);
     assert.ok((await readdir(root)).includes(".control-room-result-file-store.lock"),
-      "an unclassifiable lock is left alone");
-    // A bookkeeping name that is a DIRECTORY is not this store's own file. The
-    // lock is still unclassifiable, so it is treated as live and NOTHING is
-    // removed — including this. The store still opens, because a leftover must
-    // never be the reason the owner's whole task application refuses to start;
-    // what it must not do is delete a name it does not own.
+      "a lock the store cannot read is left exactly where it is");
+    // The same for a `pending-*` name that is a directory: not this store's own
+    // file, so never removed, and never the reason the application refuses to
+    // start. This is the one thing the review called "acceptable, but note it",
+    // and it is now pinned by a test.
     await mkdir(join(root, ".control-room-result-file-store-pending-deadbeef"), { mode: 0o700 });
-    await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+    const reopened = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
       maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
       operationTimeoutMs: 2_000 });
     assert.ok((await readdir(root)).includes(".control-room-result-file-store-pending-deadbeef"),
       "a directory the store did not write is never deleted");
-    // And a WRITE is still refused while an unclassifiable lock holds the store,
-    // because the O_EXCL create is the mutual exclusion and it has not been
-    // weakened: reads work, writes wait.
+    // And a WRITE is still refused while that name holds the store, because the
+    // O_EXCL create is the mutual exclusion and it has not been weakened: reads
+    // work, writes wait. The refusal is the honest one.
     const content = bytes("would this write succeed?\n");
     const id = identity(PROJECT, FILE, content);
-    const writer = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+    await assert.rejects(reopened.put({ ...id, bytes: content }),
+      (error: unknown) => error instanceof ResultFileStoreError);
+    assert.equal(await reopened.read(id), undefined, "and nothing was written");
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("S1: an EMPTY lock is repaired, not left to block every write for good", async () => {
+  // The review's S1, first case, live: a crash between the O_EXCL create and the
+  // stamp write leaves an empty lock. It used to be "assume live" for ever, so
+  // every write was refused `store_ambiguous` — still, after a restart, because
+  // nothing in the app could ever clear it.
+  //
+  // Now the empty lock is re-examined once after a short bounded wait. A live
+  // writer stamps within microseconds, so a lock that is STILL empty a moment
+  // later belongs to a writer that is not coming back, and the recovery clears
+  // it. The test writes an empty lock and asserts the next write lands.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-empty-lock-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const open = () => ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
       maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
       operationTimeoutMs: 2_000 });
-    await assert.rejects(writer.put({ ...id, bytes: content }),
+    // A stored file first, so recovery is proved to preserve results.
+    const first = await open();
+    const kept = bytes("kept across the empty lock\n");
+    const keptId = identity(PROJECT, FILE, kept);
+    await first.put({ ...keptId, bytes: kept });
+    // The empty lock, and the staging file a crash in that window would leave.
+    await writeFile(join(root, ".control-room-result-file-store.lock"), "", { mode: 0o600 });
+    await writeFile(join(root, `.control-room-result-file-store-pending-${"b".repeat(32)}`),
+      bytes("half written"), { mode: 0o600 });
+    // The store OPENS (a leftover must never stop the owner starting a task) …
+    const reopened = await open();
+    assert.ok(reopened);
+    // … the stored file is untouched …
+    assert.deepEqual(Buffer.from((await reopened.read(keptId))!), Buffer.from(kept),
+      "an empty lock did not cost the stored file");
+    // … the leftovers are cleared …
+    assert.ok(!(await readdir(root)).some(entry =>
+      entry === ".control-room-result-file-store.lock"
+      || entry.startsWith(".control-room-result-file-store-pending-")),
+    "the empty lock and its staging file were cleared");
+    // … and, the point of the whole thing, the NEXT write succeeds. Before this
+    // fix it was refused `store_ambiguous` here and on every write after it.
+    const content = bytes("written after the empty lock was repaired\n");
+    const id = identity(PROJECT, "result-file:" + "c".repeat(32), content);
+    await reopened.put({ ...id, bytes: content });
+    assert.deepEqual(Buffer.from((await reopened.read(id))!), Buffer.from(content),
+      "a write after an empty lock is repaired actually lands");
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("S1: a lock from a PREVIOUS boot is dead, however live its pid looks", async () => {
+  // The review's S1, third case, and the one that matters on a real Mac. After a
+  // reboot the kernel reuses low pids, a login-started app gets a low pid, and
+  // boot daemons already hold that range — so a lock left by yesterday's crash
+  // reads as HELD BY A LIVE PROCESS today, for ever. The review measured it with
+  // pid 1, where `EPERM` counts as alive.
+  //
+  // The stamp now carries the boot identity, so a lock from another boot is
+  // proof its writer is gone, whatever the pid says. This process is certainly
+  // alive, so the ONLY thing that can make the lock look dead is the boot line.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-oldboot-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const open = () => ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    // A lock stamped under a DIFFERENT boot, naming this very live process.
+    await writeFile(join(root, ".control-room-result-file-store.lock"),
+      `control-room-result-file-store-write\n${liveStamp(process.pid, "boot:three-days-ago")}\n`, { mode: 0o600 });
+    const store = await open();
+    assert.ok(store);
+    assert.ok(!(await readdir(root)).includes(".control-room-result-file-store.lock"),
+      "a lock from an earlier boot is cleared even though its pid is alive right now");
+    // And the write that used to be refused for ever now lands.
+    const content = bytes("written after a reboot\n");
+    const id = identity(PROJECT, FILE, content);
+    await store.put({ ...id, bytes: content });
+    assert.deepEqual(Buffer.from((await store.read(id))!), Buffer.from(content),
+      "a write after a reboot actually lands");
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("S1: a RECYCLED pid is not the writer that took the lock", async () => {
+  // The other half of the same case, within ONE boot: the pid is genuinely alive
+  // but it is somebody else's process. The stamp carries the writer's own start
+  // second, so a lock whose start second does not match the live process's real
+  // one is a dead writer's lock, and it is cleared.
+  //
+  // `process.pid` is this process's real start second, and a stamp carrying a
+  // DIFFERENT one for the SAME pid can only have come from a process that has
+  // since exited. That is exactly a recycled pid, and no amount of restarting
+  // the app would ever clear it under a liveness-only test.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-recycled-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const open = () => ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    // THIS boot, THIS live pid, but a start second that is not this process's —
+    // which is exactly what a pid that has been recycled looks like, because the
+    // new occupant of the pid started later than the dead writer did.
+    const stamp = liveStamp(process.pid).split("\n");
+    stamp[stamp.length - 1] = String(Number(stamp[stamp.length - 1]) - 86_400);
+    await writeFile(join(root, ".control-room-result-file-store.lock"),
+      `control-room-result-file-store-write\n${stamp.join("\n")}\n`, { mode: 0o600 });
+    const store = await open();
+    assert.ok(store);
+    assert.ok(!(await readdir(root)).includes(".control-room-result-file-store.lock"),
+      "a lock whose pid has been recycled is cleared");
+    const content = bytes("written after a recycled pid\n");
+    const id = identity(PROJECT, FILE, content);
+    await store.put({ ...id, bytes: content });
+    assert.deepEqual(Buffer.from((await store.read(id))!), Buffer.from(content),
+      "a write after a recycled-pid lock is cleared actually lands");
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("S1: a part-1 lock (a bare pid, no boot) is still repaired when that pid is dead", async () => {
+  // The review's S1, second case: a lock written by the PREVIOUS build carried
+  // only a pid, so it can be attributed to no boot and no start time. It is
+  // recognised as the older format and judged by liveness alone — which is a
+  // strict improvement on treating it as live for ever, and never a weakening:
+  // a pid that IS running still keeps its lock.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-barepid-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const open = () => ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    // The part-1 format, with a pid that cannot be running.
+    await writeFile(join(root, ".control-room-result-file-store.lock"),
+      "control-room-result-file-store-write\n2147483646", { mode: 0o600 });
+    const store = await open();
+    assert.ok(store);
+    assert.ok(!(await readdir(root)).includes(".control-room-result-file-store.lock"),
+      "a part-1 lock with a dead pid is cleared rather than kept for ever");
+    // And the same format with THIS process's live pid keeps its lock, so the
+    // repair discriminates instead of blanket-clearing old locks.
+    await writeFile(join(root, ".control-room-result-file-store.lock"),
+      `control-room-result-file-store-write\n${process.pid}`, { mode: 0o600 });
+    const reopened = await open();
+    assert.ok((await readdir(root)).includes(".control-room-result-file-store.lock"),
+      "a part-1 lock whose pid is alive is still left alone");
+    const content = bytes("not written while a live lock holds the store\n");
+    const id = identity(PROJECT, FILE, content);
+    await assert.rejects(reopened.put({ ...id, bytes: content }),
       (error: unknown) => error instanceof ResultFileStoreError);
-    assert.equal(await writer.read(id), undefined, "and nothing was written");
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
@@ -636,9 +823,9 @@ test("B7: a recovery that was ITSELF interrupted does not lock the store out for
       operationTimeoutMs: 2_000 });
     // A dead recovery's lock, and the write leftovers it was about to clear.
     await writeFile(join(root, ".control-room-result-file-store-recovery.lock"),
-      "control-room-result-file-store-recovery\n2147483645\n", { mode: 0o600 });
+      `control-room-result-file-store-recovery\n${liveStamp(2147483645)}\n`, { mode: 0o600 });
     await writeFile(join(root, ".control-room-result-file-store.lock"),
-      "control-room-result-file-store-write\n2147483646\n", { mode: 0o600 });
+      `control-room-result-file-store-write\n${liveStamp(2147483646)}\n`, { mode: 0o600 });
     await writeFile(join(root, `.control-room-result-file-store-pending-${"c".repeat(32)}`),
       bytes("interrupted mid-recovery"), { mode: 0o600 });
     // The store opens, and every leftover is cleared.
@@ -656,3 +843,211 @@ test("B7: a recovery that was ITSELF interrupted does not lock the store out for
       "a live recovery lock is not deleted");
   } finally { await rm(base, { recursive: true, force: true }); }
 });
+
+test("S1: a lock the store CANNOT classify is never removed, whatever the shape", async () => {
+  // The direction that is not S1 but is just as important: the three repairs
+  // above must not become a blanket "clear anything I do not recognise". A lock
+  // this store cannot classify is someone else's file, and deleting it is
+  // unrecoverable, so each unclassifiable shape has to survive a full open.
+  //
+  // The three shapes below cover the three ways a classification can fail, and
+  // each was a real mutation that no test noticed:
+  //
+  //   * a stamp with a header and a pid but no boot and no start time (two
+  //     lines) is a shape this build never writes;
+  //   * a stamp whose trailing numbers are not numbers at all;
+  //   * a pid that is alive but not a number, so liveness cannot be asked.
+  const boot = resultFileStoreBootIdentityV1();
+  const shapes: Readonly<{ name: string; stamp: string }>[] = [
+    // Too FEW parts to hold a pid, a boot and a start second: the shape cannot be
+    // read at all, so the store must refuse rather than guess.
+    { name: "one part: no pid anywhere",
+      stamp: "control-room-result-file-store-write\n" },
+    // A pid that is not a number, so liveness cannot be asked.
+    { name: "a pid that is not a number",
+      stamp: `control-room-result-file-store-write\n${boot}\nnot-a-pid\n123\n` },
+    // A pid that is a number but not a whole positive one.
+    { name: "a pid of zero", stamp: `control-room-result-file-store-write\n${boot}\n0\n123\n` },
+    // A start second that is not a number, so the recycled-pid test cannot be run.
+    { name: "a start second that is not a number",
+      stamp: `control-room-result-file-store-write\n${boot}\n${process.pid}\nnot-a-second\n` },
+  ];
+  for (const shape of shapes) {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-unclassifiable-")));
+    try {
+      const root = join(base, "store");
+      await mkdir(root, { recursive: true, mode: 0o700 });
+      const lockName = ".control-room-result-file-store.lock";
+      await writeFile(join(root, lockName), shape.stamp, { mode: 0o600 });
+      const store = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+        maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+        operationTimeoutMs: 2_000 });
+      assert.ok(store, `${shape.name}: the store still opens`);
+      assert.ok((await readdir(root)).includes(lockName),
+        `${shape.name}: a lock the store cannot classify is never removed`);
+      // And a write is refused rather than proceeding past a lock whose holder
+      // is unknown: "cannot prove it is dead" is not "prove it is not there".
+      const content = bytes("not written past an unclassifiable lock\n");
+      const id = identity(PROJECT, FILE, content);
+      await assert.rejects(store.put({ ...id, bytes: content }),
+        (error: unknown) => error instanceof ResultFileStoreError,
+        `${shape.name}: the write is refused, not admitted`);
+      assert.equal(await store.read(id), undefined, `${shape.name}: and nothing was written`);
+    } finally { await rm(base, { recursive: true, force: true }); }
+  }
+});
+
+test("S1: EPERM is liveness, and only ESRCH is death", async () => {
+  // `process.kill(pid, 0)` fails with EPERM for a process this user does not own
+  // — a LIVE process — and with ESRCH for a dead one. Collapsing the two is a
+  // fail-open: a lock held by another user's process cleared, and its staging
+  // file with it. The review met the same wall from the other side: a lock
+  // naming pid 1 read as held for ever, because signalling pid 1 gives EPERM.
+  //
+  // No test running as this user can make `process.kill` genuinely return EPERM,
+  // so the rule the store applies is exported and proved here directly. The
+  // through-the-store half — that a live holder's lock is left alone — is the
+  // B7 test above, which uses this process's own real pid.
+  assert.equal(pidSignalMeansAliveV1("EPERM"), true,
+    "EPERM means the pid exists and belongs to another user: alive");
+  assert.equal(pidSignalMeansAliveV1("ESRCH"), false,
+    "ESRCH is the only proof of death");
+  // Any other code is not a proof of death either, and an unknown errno is the
+  // common case on a platform this has not seen: still alive.
+  for (const unknown of [undefined, "EINVAL", "some-future-code"]) assert.equal(pidSignalMeansAliveV1(unknown), true,
+    `an unrecognised signal result (${String(unknown)}) is not proof of death`);
+  // And the real signal agrees: this process is alive, so its own pid must be
+  // reported as signalling successfully, which is the branch that leaves a lock
+  // alone.
+  let selfSignalled = false;
+  try { process.kill(process.pid, 0); selfSignalled = true; } catch { selfSignalled = false; }
+  assert.equal(selfSignalled, true, "a live pid signals successfully, and that is alive");
+});
+
+test("S1: a lock that is a SYMLINK is never read as a stamp, and never removed", async () => {
+  // The store opens its own bookkeeping `O_NOFOLLOW` and refuses a symlink
+  // outright. A symlink at the lock name is not this store's file: reading it
+  // would follow an attacker's link, and removing it would unlink a name the
+  // store did not create. Both directions are refused, and the symlink survives
+  // — which is why the symlink check has to happen BEFORE the read, and is the
+  // mutation that would otherwise go unnoticed.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-symlink-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const lockName = ".control-room-result-file-store.lock";
+    // A real, private, DEAD writer's lock, and a symlink pointing at it. If the
+    // store followed the link it would read a valid stamp; if it cleared the
+    // name it would unlink an entry it did not create.
+    //
+    // The target lives OUTSIDE the store root, because a name inside it that the
+    // store did not write is itself a refusal — that is a different property and
+    // it is already covered. What is under test here is only whether the store
+    // follows or removes a symlink sitting at its own lock name.
+    const outside = join(base, "outside.lock");
+    await writeFile(outside,
+      `control-room-result-file-store-write\n${liveStamp(2147483646)}\n`, { mode: 0o600 });
+    await chmod(outside, 0o600);
+    await symlink(outside, join(root, lockName));
+    // The symlink points at a private, plain, DEAD writer's lock. Every property
+    // that would make removal safe holds for the TARGET and none of them holds
+    // for the NAME, so the only thing that can keep the store from clearing this
+    // is refusing to read a symlink as a stamp — and the only thing that can
+    // keep it from unlinking the name is refusing to treat it as its own file.
+    // This test pins the OUTCOME — the symlink and its target both survive a
+    // full open, and a write behind it is refused — which is the property that
+    // matters.
+    //
+    // It is worth saying plainly which guard is doing the work, because
+    // mutation-testing found that THREE of them could be deleted here and this
+    // test would still pass: the `lstat` shape test, the `O_NOFOLLOW` on the
+    // stamp read, and the ELOOP handler. All three are real, and all three are
+    // load-bearing on some path; on THIS path the removal guard is what refuses
+    // first, so the outcome does not move. The shape test and the `O_NOFOLLOW`
+    // are defence in depth against the name being swapped between the `lstat`
+    // and the read, which a test cannot stage without a race it would rather
+    // not have, and the ELOOP handler keeps a raw errno from escaping a
+    // function whose only answers are "live" and "dead". Recorded here so the
+    // next reader knows they are deliberate and not untested leftovers.
+    const store = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    assert.ok(store, "the store still opens: a leftover is never the reason to refuse to start");
+    const listed = await readdir(root);
+    assert.ok(listed.includes(lockName),
+      "a symlinked lock is left exactly where it is, even though it points at a dead writer's stamp");
+    assert.ok((await readdir(base)).includes("outside.lock"),
+      "and the file it points at is untouched — nothing was followed and nothing was unlinked");
+    // A write is refused: the O_EXCL create sees the name, and the store does
+    // not clear a name it does not own to make room.
+    const content = bytes("not written past a symlinked lock\n");
+    const id = identity(PROJECT, FILE, content);
+    await assert.rejects(store.put({ ...id, bytes: content }),
+      (error: unknown) => error instanceof ResultFileStoreError);
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("S1: the part-1 stamp path treats an unparseable pid as ALIVE, never dead", async () => {
+  // `pidIsRunning` is the one place a pid is turned into an answer, and it is
+  // reached only through the part-1 (bare pid) stamp, because the modern stamp
+  // validates its own two numbers before it gets there. So the branch that
+  // matters for it is proved through a part-1 lock naming a pid that is not a
+  // number at all.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-barepid-bad-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const lockName = ".control-room-result-file-store.lock";
+    // Header and a pid that cannot be a pid: a shape from a corrupted or foreign
+    // write. It cannot be identified, so it cannot be declared dead.
+    await writeFile(join(root, lockName),
+      "control-room-result-file-store-write\nnot-a-pid", { mode: 0o600 });
+    const store = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    assert.ok(store);
+    assert.ok((await readdir(root)).includes(lockName),
+      "a part-1 stamp naming a pid that is not a number is never cleared");
+    const content = bytes("not written past an unidentifiable bare-pid holder\n");
+    const id = identity(PROJECT, FILE, content);
+    await assert.rejects(store.put({ ...id, bytes: content }),
+      (error: unknown) => error instanceof ResultFileStoreError);
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("S1: a leftover the store did not create in a PRIVATE place is never removed", async () => {
+  // The review's note, now a test. The recovery deletes only names this store
+  // itself created: a plain regular file, not a symlink, link count 1, owner
+  // only. A world-writable leftover is exactly what an attacker would plant to
+  // get the store to unlink a name of their choosing, so it is a refusal and the
+  // recovery STOPS rather than proceeding past a name it does not own.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-mode-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const lockName = ".control-room-result-file-store.lock";
+    // A DEAD writer's pid, so the stamp is readable and the lock IS provably
+    // abandoned. The only thing standing between this and a deletion is the
+    // mode of the file itself.
+    await writeFile(join(root, lockName),
+      `control-room-result-file-store-write\n${liveStamp(2147483646)}\n`, { mode: 0o600 });
+    await chmod(join(root, lockName), 0o666);
+    await assert.rejects(ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 }),
+    (error: unknown) => error instanceof ResultFileStoreError,
+    "a world-writable leftover is a refusal, not a deletion");
+    assert.ok((await readdir(root)).includes(lockName),
+      "and the name the store does not own is still there");
+    // With the privateness restored it IS repaired, so the refusal above was the
+    // mode and not the recovery having given up on the directory.
+    await chmod(join(root, lockName), 0o600);
+    const store = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 1_048_576, maximumSetBytes: 4_194_304, maximumTotalBytes: 8_388_608,
+      operationTimeoutMs: 2_000 });
+    assert.ok(store);
+    assert.ok(!(await readdir(root)).includes(lockName),
+      "the same leftover, private, is cleared — the refusal discriminates");
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
