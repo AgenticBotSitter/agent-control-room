@@ -53,8 +53,17 @@ import { deliverOwnerPushV1 } from "./delivery";
 /** Attempts per item, ever. Mirrors the CHECK on attempt_count. */
 export const OWNER_PUSH_ATTEMPT_LIMIT_V1 = 8;
 
-/** Backoff before attempt N (1-based), in seconds. Capped at ATTEMPT_LIMIT. */
-const BACKOFF_SECONDS_V1 = Object.freeze([0, 30, 60, 300, 600, 1800, 3600, 7200]);
+/**
+ * Backoff before the retry that follows attempt N (1-based), in seconds.
+ *
+ * The first entry is NOT zero. An earlier version used a zero first step, on the
+ * reasoning that the first failure deserves an immediate second try -- but the
+ * loop already retries every 30 s, so a zero backoff means the backoff schedule
+ * does not exist for the failure that matters most: an endpoint that has just
+ * started refusing. Every entry is at least one loop interval, so "bounded
+ * retry" means retrying on a schedule rather than as fast as the loop ticks.
+ */
+const BACKOFF_SECONDS_V1 = Object.freeze([30, 60, 300, 600, 1800, 3600, 7200, 14400]);
 
 /**
  * A reservation older than this was left behind by a crash, not by a live
@@ -66,13 +75,15 @@ export const OWNER_PUSH_RESERVATION_STALE_MS_V1 = 300_000;
 /** Upper bound on one claim batch, so a burst cannot hold one transaction open. */
 const CLAIM_LIMIT_V1 = 64;
 
-const iso = (value: string | Date) => new Date(value).toISOString();
+/** How many claimed items may be in flight at once. Fixed and small on purpose:
+ * it is the only thing standing between a 50-item burst and a saturated pool. */
+const SEND_CONCURRENCY_V1 = 8;
 
-function safeNow(clock: () => number): string {
+const safeNow = (clock: () => number): string => {
   const now = clock();
   if (!Number.isSafeInteger(now) || now < 0) throw new Error("owner_push_clock_invalid");
   return new Date(now).toISOString();
-}
+};
 
 /** Milliseconds to wait after attempt `count` has been made. */
 export function ownerPushBackoffMsV1(count: number): number {
@@ -188,53 +199,82 @@ export class OwnerPushDispatcherV1 {
     await this.adoptOpenAttention(limit);
     await this.recoverStaleReservations();
     const at = safeNow(this.#clock());
-    // The claim is a bounded read of the due, undelivered, still-open items.
-    // SKIP LOCKED is the whole multi-dispatcher story: it takes the rows nobody
-    // else holds and walks past the ones somebody else does, instead of blocking
-    // behind them or, worse, letting both send the same item.
+    // The claim SELECTs and RESERVES in ONE transaction. That is not a style
+    // choice, it is the whole concurrency guarantee: SKIP LOCKED only protects a
+    // row for as long as the LOCK is held, and the lock is released at COMMIT.
+    // An earlier version selected under SKIP LOCKED, committed, and reserved in a
+    // second transaction -- so two dispatchers both selected the same rows, both
+    // committed, and both went on to send. The reserve had to come first, in the
+    // same transaction as the lock.
+    //
+    // The reservation is committed BEFORE the send so the push never happens
+    // inside a transaction: a slow or dropped endpoint cannot hold a connection
+    // or a row lock, which is the property that keeps a phone which never
+    // answers from making the coordinator unavailable.
+    //
+    // Only 'pending' is claimable. A 'reserved' row belongs to a dispatcher that
+    // is mid-send RIGHT NOW, and re-claiming it would be a second push for one
+    // stall. A reservation abandoned by a dead dispatcher is returned to
+    // 'pending' by recoverStaleReservations, which is the only path back.
     const claimed = await this.input.db.transaction(async (tx: DatabaseSession) => {
-      const due = await tx.query<HeadRow>(`SELECT h.action_inbox_id,h.link,
-          h.attempt_count,h.state,h.next_attempt_at,h.reserved_at
+      const due = await tx.query<HeadRow>(`SELECT h.action_inbox_id,h.link,h.attempt_count,
+          h.state,h.next_attempt_at,h.reserved_at
         FROM control_owner_push_attempt_heads h
         JOIN control_action_inbox i ON i.tenant_id=h.tenant_id AND i.id=h.action_inbox_id
-        WHERE h.tenant_id=$1 AND h.state IN ('pending','reserved') AND h.next_attempt_at<=$2
+        WHERE h.tenant_id=$1 AND h.state='pending' AND h.next_attempt_at<=$2
           AND h.attempt_count<${OWNER_PUSH_ATTEMPT_LIMIT_V1} AND i.state='open'
         ORDER BY h.next_attempt_at,h.action_inbox_id LIMIT $3
         FOR UPDATE OF h SKIP LOCKED`, [this.input.tenantId, at, limit]);
-      return due.rows;
+      // Reserve exactly the rows this transaction holds locked. The WHERE clause
+      // repeats the state check, so a row a concurrent dispatcher claimed between
+      // the SELECT and this statement is simply not taken.
+      const reserved = await tx.query<HeadRow>(`UPDATE control_owner_push_attempt_heads
+        SET state='reserved',attempt_count=attempt_count+1,reserved_at=$2,last_attempt_at=$2,updated_at=$2
+        WHERE tenant_id=$1 AND action_inbox_id=ANY($3::text[]) AND state='pending'
+        RETURNING action_inbox_id,link,attempt_count,state,next_attempt_at,reserved_at`,
+      [this.input.tenantId, at, due.rows.map(row => row.action_inbox_id)]);
+      return reserved.rows;
     });
     const outcomes: OwnerPushDispatchOutcomeV1[] = [];
-    for (const head of claimed) {
-      // One shape of alert, one shape of payload. A service incident and a second
-      // stall both open /needs-me, so they push the same generic title and tag;
-      // which one it was stays in the database, never in the payload.
-      outcomes.push(await this.#attempt(head));
-    }
+    // Bounded concurrency, not serial. A wedged push endpoint costs one full
+    // round trip per item, so sending a claimed batch one after another makes
+    // the delay to the owner's phone grow with the size of the stall burst --
+    // exactly when the alert matters most. The bound is small and fixed: a burst
+    // of 50 against a 2s endpoint still finishes in well under a loop interval
+    // per item, and a smaller bound cannot exhaust the web pool or the push
+    // service's own rate limit.
+    //
+    // No database connection is held while any of these run. Each attempt is a
+    // short reservation transaction, then a network call, then a short settle.
+    const settled = new Array<OwnerPushDispatchOutcomeV1>(claimed.length);
+    let next = 0;
+    const worker = async () => {
+      for (let index = next++; index < claimed.length; index = next++) {
+        // One shape of alert, one shape of payload. A service incident and a
+        // second stall both open /needs-me, so they push the same generic title
+        // and tag; which one it was stays in the database, never in the payload.
+        settled[index] = await this.#attempt(claimed[index]!);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(SEND_CONCURRENCY_V1, claimed.length) }, worker));
+    for (const outcome of settled) if (outcome) outcomes.push(outcome);
     return Object.freeze(outcomes);
   }
 
-  /** One item: take the reservation, send outside any transaction, then settle. */
+  /**
+   * One item: the row is ALREADY reserved by dispatch(), so this sends outside
+   * any transaction and then settles the outcome.
+   */
   async #attempt(head: HeadRow): Promise<OwnerPushDispatchOutcomeV1> {
     const id = head.action_inbox_id;
     const now = safeNow(this.#clock());
-    const attempt = Number(head.attempt_count) + 1;
-    // The reservation is committed before the send so the push never happens
-    // inside a transaction, and so a crash leaves a recoverable 'reserved' row
-    // rather than an invisible half-send. A concurrent second dispatcher that
-    // already reserved this item finds no row to update and is told so.
-    const reserved = await this.input.db.transaction(async (tx: DatabaseSession) => {
-      const result = await tx.query<{ attempt_count: number | string; state: string }>(`UPDATE control_owner_push_attempt_heads
-        SET state='reserved',attempt_count=$4,reserved_at=$3,last_attempt_at=$3,updated_at=$3
-        WHERE tenant_id=$1 AND action_inbox_id=$2 AND state IN ('pending','reserved')
-          AND attempt_count<${OWNER_PUSH_ATTEMPT_LIMIT_V1}
-        RETURNING attempt_count,state`, [this.input.tenantId, id, now, attempt]);
-      return result.rows[0];
-    });
-    if (!reserved) return Object.freeze({ actionInboxId: id, result: "claimed_by_another", attempt: Number(head.attempt_count),
-      nextAttemptAt: iso(head.next_attempt_at) });
-    const spent = Number(reserved.attempt_count);
-    const backoffUntil = new Date(Date.parse(now) + ownerPushBackoffMsV1(spent)).toISOString();
-    let failure: { statusCode?: number } | undefined;
+    const attempt = Number(head.attempt_count);
+    // A send that failed, as distinct from one that never happened. `deliverOwnerPushV1`
+    // absorbs the per-subscription failure internally, so this is how the
+    // difference is observed: without it, a dead push service is indistinguishable
+    // from an owner who has not subscribed this browser, and the bounded retry
+    // would quietly give up on a phone that is merely offline.
+    let sendFailure: { statusCode: number | undefined; removed: boolean } | undefined;
     let deliveredCount = 0;
     let deduplicated = 0;
     try {
@@ -243,35 +283,37 @@ export class OwnerPushDispatcherV1 {
       // other way must not become an open redirect on a phone.
       const link = ownerPushLinkV1(head.link);
       const result = await deliverOwnerPushV1({ tenantId: this.input.tenantId, kind: "needs_you", link,
-        dedupeKey: ownerPushDedupeKeyV1(id), now, store: this.input.store, channel: this.input.channel });
+        dedupeKey: ownerPushDedupeKeyV1(id), now, store: this.input.store, channel: this.input.channel,
+        onFailure: failure => { sendFailure ??= { statusCode: failure.statusCode, removed: failure.removed }; } });
       deliveredCount = result.delivered;
       deduplicated = result.deduplicated;
     } catch (error) {
-      failure = typeof error === "object" && error !== null && "statusCode" in error
+      sendFailure = { statusCode: typeof error === "object" && error !== null && "statusCode" in error
         && typeof (error as { statusCode?: unknown }).statusCode === "number"
-        ? { statusCode: (error as { statusCode: number }).statusCode } : {};
+        ? (error as { statusCode: number }).statusCode : undefined, removed: false };
     }
-    if (!failure && deliveredCount > 0) return this.#settle(id, "delivered", spent, now, null);
-    if (!failure && deduplicated > 0)
+    const spent = attempt;
+    const backoffUntil = new Date(Date.parse(now) + ownerPushBackoffMsV1(spent)).toISOString();
+    if (!sendFailure && deliveredCount > 0) return this.#settle(id, "delivered", spent, now, null);
+    if (!sendFailure && deduplicated > 0)
       // The browser already holds this exact event: a send DID land for this
       // item, the acknowledgement was simply lost (the restart window above). The
       // dedupe ledger is the evidence, so this is delivered, not a retry.
       return this.#settle(id, "delivered", spent, now, null);
-    if (!failure) {
+    if (!sendFailure) {
       // No subscription, or a channel that reported success while delivering
       // nothing. Either way there is nothing to retry and no reason to spend the
       // bounded attempts on a phone that was never going to be handed this item:
       // the owner still has it on /needs-me. The attempt is REFUNDED here, which
       // is the one place it is, and it is safe precisely because the 0174 ledger
       // -- not this counter -- is what stops a duplicate visible notification.
-      return this.#release(id, "no_subscription", Number(head.attempt_count), now, "owner_push_no_subscription");
+      return this.#release(id, "no_subscription", attempt - 1, now, "owner_push_no_subscription");
     }
     // 404/410: the push service reports the browser subscription is gone, and
     // `deliverOwnerPushV1` has already removed it. Retrying would reach nothing,
     // so the item stops here as permanently undeliverable rather than as a stall
     // that keeps spending attempts.
-    if (failure.statusCode === 404 || failure.statusCode === 410)
-      return this.#settle(id, "failed", spent, now, "owner_push_subscription_gone");
+    if (sendFailure.removed) return this.#settle(id, "failed", spent, now, "owner_push_subscription_gone");
     return this.#settle(id, "retry", spent, backoffUntil, "owner_push_endpoint_unavailable");
   }
 
@@ -285,24 +327,37 @@ export class OwnerPushDispatcherV1 {
     when: string, safeReasonCode: string | null): Promise<OwnerPushDispatchOutcomeV1> {
     const terminal = disposition === "delivered" || disposition === "failed" || spent >= OWNER_PUSH_ATTEMPT_LIMIT_V1;
     const state = terminal ? (disposition === "delivered" ? "delivered" : "failed") : "pending";
-    const reason = state === "failed" && safeReasonCode === null ? "owner_push_attempts_exhausted" : safeReasonCode;
-    // `when` is the settle instant, except for a retry where the caller has
-    // already advanced it by the backoff. The two are passed separately rather
-    // than recomputed, so the value written is exactly the one the caller chose.
-    const nextAt = disposition === "retry" && !terminal ? when : null;
-    const updatedAt = disposition === "retry" && !terminal ? null : when;
+    // A head that ran out of attempts records WHY it stopped trying, which is
+    // the bound -- not the last individual failure. "the endpoint was
+    // unavailable" is true of every retry and says nothing about the head being
+    // finished, so an operator reading the ledger would be told to wait for a
+    // retry that will never come. A head that stopped for a specific reason
+    // (a removed subscription) keeps that reason, because it is the actionable
+    // one.
+    const exhausted = state === "failed" && disposition !== "failed";
+    const reason = state === "failed" ? (exhausted ? "owner_push_attempts_exhausted" : safeReasonCode) : safeReasonCode;
+    // Every parameter carries an explicit cast. A bare NULL placeholder carries
+    // no type for PostgreSQL to resolve, and the statement fails to plan with
+    // "could not determine data type of parameter" -- so the casts are load
+    // bearing, not decoration.
+    //
+    // The caller passes the instant to write in each case: the backoff deadline
+    // for a retry, the settle instant for a terminal outcome. It is passed
+    // rather than recomputed here so the value written is exactly the one the
+    // caller chose.
+    const completedAt = terminal ? when : null;
     await this.input.db.query(`UPDATE control_owner_push_attempt_heads
-      SET state=$4,
-        next_attempt_at=COALESCE($5,next_attempt_at),
+      SET state=$3::text,
+        next_attempt_at=$4::timestamptz,
         reserved_at=NULL,
-        completed_at=CASE WHEN $4 IN ('delivered','failed') THEN $6 ELSE NULL END,
-        safe_reason_code=$7,
-        updated_at=COALESCE($8,updated_at)
+        completed_at=$5::timestamptz,
+        safe_reason_code=$6::text,
+        updated_at=$7::timestamptz
       WHERE tenant_id=$1 AND action_inbox_id=$2 AND state='reserved'`,
-    [this.input.tenantId, id, null, state, nextAt, when, reason, updatedAt]);
+    [this.input.tenantId, id, state, when, completedAt, reason, when]);
     return Object.freeze({ actionInboxId: id,
       result: state === "delivered" ? "delivered" : state === "failed" ? "exhausted" : "retry_scheduled",
-      attempt: spent, nextAttemptAt: nextAt ?? when });
+      attempt: spent, nextAttemptAt: when });
   }
 
   /**

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "db786988ff6d93ab6bb03e722ba239e0cd126d797e440dd99617993826aca111",
+  "digest": "15b866f3f9036c2e74aa582b5f1d97e03e99fdde72bd7b6f48970433c75ee650",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -761,13 +761,13 @@
     {
       "file": "db/migrations/0224_owner_push_attempt_heads.sql",
       "order": 127,
-      "sha256": "377b160891fddd1823f968ff3679a4cd56dc832fe1edddd1e2dd738ccd266fdf",
+      "sha256": "b754fb5d2740cfffa3c1907014b91aa7380b763dc6c504a54808ffb1a1c1172d",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0225_owner_push_attempt_guards.sql",
       "order": 128,
-      "sha256": "ef35c04efdacf8e88d4f2ea8379088af31e17bf54e079b79a050a021deb4a520",
+      "sha256": "12aaa27dd2970893c3768c0f1c158a45fbb2199287f7a83340ea3610a7331bc8",
       "kind": "migrate"
     },
     {

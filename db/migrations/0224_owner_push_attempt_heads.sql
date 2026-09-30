@@ -49,7 +49,13 @@ CREATE TABLE control_owner_push_attempt_heads (
   updated_at timestamptz NOT NULL,
   PRIMARY KEY (tenant_id, action_inbox_id),
   FOREIGN KEY (tenant_id, action_inbox_id) REFERENCES control_action_inbox(tenant_id, id) ON DELETE CASCADE,
-  CHECK ((state='delivered') = (completed_at IS NOT NULL)),
+  -- Terminal in BOTH senses: 'delivered' and 'failed' both mean this head is
+  -- finished, so both must carry a completion instant. An earlier version
+  -- asserted only that 'delivered' implied one, which made a permanently
+  -- undeliverable item impossible to record -- a 'failed' head with a
+  -- completion time was refused by this very constraint, which is how a
+  -- dead push service was left retrying past its own bound.
+  CHECK (state NOT IN ('delivered','failed') OR completed_at IS NOT NULL),
   CHECK (state<>'reserved' OR reserved_at IS NOT NULL)
 );
 

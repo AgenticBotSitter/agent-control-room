@@ -25,10 +25,13 @@ BEGIN
     OR NEW.attempt_count<OLD.attempt_count
     OR NEW.attempt_count>OLD.attempt_count+1
     -- A delivery is permanent. There is no path back to 'pending' or
-    -- 'reserved', which is the whole "exactly once" property.
+    -- 'reserved', which is the whole "exactly once" property. The same is true
+    -- of a permanent failure: an item that has stopped trying stays stopped, so
+    -- a caller cannot reopen an exhausted head and re-alert the phone.
     OR (OLD.state='delivered' AND NEW.state<>'delivered')
     OR (OLD.state='delivered' AND NEW.completed_at IS DISTINCT FROM OLD.completed_at)
     OR (OLD.state='failed' AND NEW.state<>'failed')
+    OR (OLD.state='failed' AND NEW.completed_at IS DISTINCT FROM OLD.completed_at)
     OR NEW.created_at IS DISTINCT FROM OLD.created_at
     OR (OLD.state='reserved' AND NEW.state='reserved' AND NEW.reserved_at IS DISTINCT FROM OLD.reserved_at
       AND NEW.attempt_count=OLD.attempt_count)
