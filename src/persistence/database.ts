@@ -47,17 +47,6 @@ export interface DatabaseClient extends DatabaseSession {
     preCommitCheck: () => void | Promise<void>): Promise<T>;
 }
 
-/** PGlite exposes PostgreSQL SQLSTATE as `code`; the bounded production
- * database deliberately wraps it as `sqlState`. Callers that map definite
- * database refusals must support both without mistaking the wrapper's public
- * availability code for a SQLSTATE. */
-export function databaseSqlStateV1(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const value = error as { sqlState?: unknown; code?: unknown };
-  return typeof value.sqlState === "string" ? value.sqlState
-    : typeof value.code === "string" ? value.code : undefined;
-}
-
 const repositorySimulationDatabaseClients = new WeakSet<object>();
 const bindFunction = Function.call.bind(Function.bind) as
   <T extends (...args: never[]) => unknown>(fn: T, receiver: unknown) => T;

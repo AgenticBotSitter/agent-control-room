@@ -1,11 +1,11 @@
-const secretKey = /(?:password|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|private[_-]?key|session[_-]?cookie)/i;
+const secretKey = /(?:password|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|private[_-]?key|session[_-]?cookie|(?:^|[_-])(?:token|auth|credential)(?:$|[_-]))/i;
 const referenceKey = /(?:ref|refs|id|ids|digest|hash)$/i;
 const secretPatterns = [
-  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
+  /-----BEGIN (?:PGP )?(?:[A-Z][A-Z0-9 ]* )?PRIVATE KEY(?: BLOCK)?-----/i,
   /\bBearer\s+[a-z0-9._~+/=-]{12,}/i,
   /(?:api[_-]?key|password|passphrase|secret|access[_-]?token|refresh[_-]?token)\s*[:=]\s*[^\s,;]{6,}/i,
   /(?:X-Amz-Signature|X-Amz-Credential)=/i,
-  /\b(?:ghp|github_pat|sk_live|sk_test)_[a-z0-9_-]{12,}/i,
+  /\b(?:gh[opsu]_|github_pat_|sk_(?:live|test)_|sk-(?:ant-)?|xox[abprs]-|npm_)[a-z0-9_-]{12,}/i,
   /\bAKIA[0-9A-Z]{16}\b/,
   /\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b/,
   /https?:\/\/[^\s/:@]+:[^\s/@]+@/i,
