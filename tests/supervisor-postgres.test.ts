@@ -81,7 +81,8 @@ test("an unhealthy first cycle records its incident on real PostgreSQL as the co
       const machine={async sample(){return{hostAlive:true,sharedMemorySegments:5,loadOneMinute:23.4};}};
       let pauses=0;
       const operations:SupervisorOperationsModePortV1={async pauseNewStarts(){pauses++;
-        return{state:"paused" as const,receiptId:`pause:${pauses}`};}};
+        return{state:"paused" as const,receiptId:`pause:${pauses}`};},
+        async resumeAfterMachineHealth(){return{state:"not_automatic" as const,receiptId:"resume:fixture"};}};
       const watchdog=new SupervisorWatchdogV1(db,"tenant:supervisor-load","service:supervisor",machine,operations,
         ()=>Date.parse("2026-09-29T19:35:00.000Z"));
       // This is the assertion that would have failed before the fix: the

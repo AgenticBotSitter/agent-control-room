@@ -39,7 +39,13 @@ test("loads then verifies workers before it opens the authority database", async
       async close() { trace.push("database-close"); } }; },
     assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
-    hostProcessId: 4_243,
+    // A pid, a probe key, a release and a start time travel together: the web
+    // process refuses a pid with no key behind it rather than serving a readiness
+    // route that `mac:up` could not verify. Before the host forwarded the pid
+    // this test passed with the pid alone, which meant the combination was never
+    // exercised at all.
+    hostProcessId: 4_243, healthProbeKey: new Uint8Array(32).fill(11),
+    healthReleaseId: "test-release", healthStartedAt: "2026-09-30T00:00:00.000Z",
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
   });
   // Construction itself has no filesystem, database, listener, or worker effect.

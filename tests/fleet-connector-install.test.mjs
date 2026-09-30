@@ -9,6 +9,8 @@ import * as connector from "../scripts/fleet/connector.mjs";
 
 const SOURCE = resolve("scripts/fleet/connector.mjs");
 const WORKER_ID = `fleet-worker:${"a".repeat(32)}`;
+const WORKING_AGREEMENT = Object.freeze({ version: connector.WORKING_AGREEMENT.version,
+  digest: connector.WORKING_AGREEMENT.digest, startsWork: false, grantsAuthority: false });
 
 function code(character) { return `crj_${character.repeat(43)}`; }
 
@@ -39,7 +41,7 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
       }
       return json(true, { workerId: WORKER_ID, displayName: "Fixture bot", projectIds: ["project:test"],
         workerKind: resultWorkerKind ?? body.workerKind, capabilities: ["writing"],
-        credentialExpiresAt: "2099-01-01T00:00:00.000Z" }, 201);
+        credentialExpiresAt: "2099-01-01T00:00:00.000Z", workingAgreement: WORKING_AGREEMENT }, 201);
     }
     if (!authenticated) return json(false, "unauthenticated", 401);
     if (path === "/fleet/v1/rotate") {
@@ -49,9 +51,10 @@ function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
       if (state.dropAfterRotate) { state.dropAfterRotate = false; throw new Error("connection dropped"); }
       return json(true, { credentialExpiresAt: "2099-02-01T00:00:00.000Z" });
     }
-    if (path === "/fleet/v1/heartbeat") return json(true, { displayName: "Fixture bot", operationsMode: "running" });
+    if (path === "/fleet/v1/heartbeat") return json(true, { displayName: "Fixture bot", operationsMode: "running",
+      workingAgreement: WORKING_AGREEMENT });
     if (path === "/fleet/v1/me") return json(true, { displayName: "Fixture bot",
-      credentialExpiresAt: "2099-02-01T00:00:00.000Z" });
+      credentialExpiresAt: "2099-02-01T00:00:00.000Z", workingAgreement: WORKING_AGREEMENT });
     throw new Error(`unexpected request ${path}`);
   };
   return { fetcher, state };
@@ -426,7 +429,8 @@ test("bad install input and real-home CLI use fail before enrollment", async t =
     { out: { write: () => {} }, err: { write: value => { err += value; } } }, { homeDir, realHomeDir: homeDir });
   assert.equal(mcpStatus, 1);
   assert.match(err, /explicit --workspace/u);
-  for (const [workspace, message] of [["relative", /absolute directory/u], [join(homeDir, "missing"), /must exist/u]]) {
+  for (const [workspace, message] of [["relative", /absolute directory/u],
+    [join(homeDir, "missing"), /could not be checked safely/u]]) {
     err = "";
     const invalidWorkspaceStatus = await connector.main(["mcp", "--profile", "real", "--workspace", workspace],
       { out: { write: () => {} }, err: { write: value => { err += value; } } }, { homeDir, realHomeDir: homeDir });
@@ -452,7 +456,7 @@ test("an explicit credential path overrides profile-derived lookup", async t => 
     { out: { write: value => { out += value; } }, err: { write: () => {} } },
     { homeDir, realHomeDir: homeDir, fetcher: async url => {
       assert.equal(new URL(url).pathname, "/fleet/v1/heartbeat");
-      return json(true, { displayName: "Chosen" });
+      return json(true, { displayName: "Chosen", workingAgreement: WORKING_AGREEMENT });
     } });
   assert.equal(status, 0);
   assert.match(out, /Chosen/u);
@@ -464,7 +468,7 @@ test("install refuses unsafe workspace roots and preserves an existing workspace
     homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher, runner: recorder().runner, sourcePath: SOURCE };
   const paths = connector.connectorInstallPaths(base);
   for (const workspace of [homeDir, paths.configRoot, dirname(paths.configRoot)]) {
-    await assert.rejects(connector.installConnector({ ...base, workspace }), /workspace cannot be/u);
+    await assert.rejects(connector.installConnector({ ...base, workspace }), /workspace (?:cannot be|must be separate)/u);
   }
   assert.equal(gateway.state.enrollments, 0);
 
@@ -659,14 +663,16 @@ test("fifty cross-process rotations stay exclusive and recover an actually kille
       await new Promise(done => setTimeout(done, 100));
       state.digest = body.newCredentialDigest;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z" } }));
+      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z",
+        workingAgreement: WORKING_AGREEMENT } }));
       state.activeRotations -= 1;
       blockedRequestFinished?.();
       return;
     }
     if (request.url === "/fleet/v1/me") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z" } }));
+      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z",
+        workingAgreement: WORKING_AGREEMENT } }));
       return;
     }
     response.writeHead(404, { "content-type": "application/json" });

@@ -8,6 +8,7 @@ import { FleetErrorV1, fleetFail, type FleetErrorCodeV1 } from "./errors";
 import type { FleetGatewayStoreV1, FleetWorkerPrincipalV1 } from "./gateway-store";
 import { FLEET_DIGEST_PATTERN_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1 } from "./identifiers";
+import { FleetWaitAbortedErrorV1, FleetWaitCapacityErrorV1, FleetWaitRegistryV1 } from "./wait-registry";
 
 /**
  * The S1 proposal service reports its designed refusals with its own safe
@@ -280,8 +281,8 @@ export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOpti
   });
 }
 
-function send(response: ServerResponse, status: number, body: unknown) {
-  response.writeHead(status, { ...headers, connection: "close" });
+function send(response: ServerResponse, status: number, body: unknown, extraHeaders: Readonly<Record<string, string>> = {}) {
+  response.writeHead(status, { ...headers, ...extraHeaders, connection: "close" });
   response.end(JSON.stringify(body));
 }
 function header(request: IncomingMessage, name: string): string | undefined {
@@ -334,12 +335,14 @@ export type FleetGatewayHttpOptionsV1 = Readonly<{ store: FleetGatewayStoreV1; p
   connectorRelease?: Readonly<{ bundle: Uint8Array; manifest: FleetConnectorReleaseManifestV1; manifestBody: string }>;
   now?: () => string;
   admission?: FleetGatewayAdmissionV1;
+  waitRegistry?: FleetWaitRegistryV1;
   /** Operator log for failures that are not a fixed refusal. Never sent to the caller. */
   onUnexpectedError?: (error: unknown) => void }>;
 
 export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) {
   const now = options.now ?? (() => new Date().toISOString());
   const admission = options.admission ?? createFleetGatewayAdmissionV1();
+  const waitRegistry = options.waitRegistry ?? new FleetWaitRegistryV1();
   let connectorRelease = options.connectorRelease;
   if (connectorRelease) {
     let manifest: FleetConnectorReleaseManifestV1, declared: FleetConnectorReleaseManifestV1;
@@ -356,6 +359,8 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
   }
   const claimRoute = /^\/fleet\/v1\/claims\/(fleet-claim:[a-f0-9]{32})\/(progress|blocker|result)$/u;
   const proposalRoute = /^\/fleet\/v1\/projects\/([^/]+)\/proposals$/u;
+  const databaseUnavailable = (error: unknown) => !(error instanceof FleetErrorV1) && error instanceof Error
+    && (error.message === "database_unavailable" || (error as Error & { code?: unknown }).code === "database_unavailable");
 
   async function authenticated(request: IncomingMessage): Promise<FleetWorkerPrincipalV1> {
     const lease = admission.enter(request, "authenticate");
@@ -404,7 +409,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     if (method === "POST" && path === "/fleet/v1/enroll") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),
-        ["code", "workerKind", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"]);
+        ["code", "workerKind", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"], ["adapterCapabilities"]);
       const lease = admission.enter(request, "enroll");
       try {
         const result = await options.store.enroll(body as never);
@@ -414,7 +419,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     // Every other route: authenticate first, then read the body.
     const known = path === "/fleet/v1/me" || path === "/fleet/v1/heartbeat" || path === "/fleet/v1/rotate"
-      || path === "/fleet/v1/work" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
+      || path === "/fleet/v1/work" || path === "/fleet/v1/work/wait" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
       || claimRoute.test(path) || proposalRoute.test(path);
     if (!known) return fleetFail("not_found");
     let principal: FleetWorkerPrincipalV1;
@@ -432,6 +437,30 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     if (method === "GET" && path === "/fleet/v1/me") return send(response, 200, { ok: true, result: options.store.me(principal) });
     if (method === "GET" && path === "/fleet/v1/work") return send(response, 200, { ok: true, result: await options.store.listWork(principal) });
+    if (method === "GET" && path === "/fleet/v1/work/wait") {
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      request.once("aborted", abort); response.once("close", abort);
+      if (request.destroyed || response.destroyed || request.socket.destroyed) abort();
+      try {
+        const result = await waitRegistry.wait(principal.workerId, () => options.store.waitWork(principal), controller.signal,
+          () => options.store.recordWaitPresence(principal));
+        if (!controller.signal.aborted && !response.destroyed)
+          return send(response, 200, { ok: true, result });
+        return;
+      } catch (error) {
+        if (error instanceof FleetWaitAbortedErrorV1) return;
+        if (error instanceof FleetWaitCapacityErrorV1)
+          return send(response, 429, { ok: false, error: "rate_limited" },
+            { "retry-after": String(error.retryAfterSeconds) });
+        if (error instanceof FleetErrorV1) throw error;
+        options.onUnexpectedError?.(error);
+        return send(response, 503, { ok: false, error: "unavailable" },
+          { "retry-after": "1" });
+      } finally {
+        request.off("aborted", abort); response.off("close", abort);
+      }
+    }
     if (method === "GET" && path === "/fleet/v1/claims") return send(response, 200, { ok: true, result: await options.store.myClaims(principal) });
     if (method !== "POST") return fleetFail("not_found");
     if (path === "/fleet/v1/mcp/calls") {
@@ -439,7 +468,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       return send(response, 201, { ok: true, result: await options.store.recordMcpCall(principal, body as never) });
     }
     if (path === "/fleet/v1/heartbeat") {
-      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"]);
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"], ["adapterCapabilities"]);
       return send(response, 200, { ok: true, result: await options.store.heartbeat(principal, body as never) });
     }
     if (path === "/fleet/v1/rotate") {
@@ -503,6 +532,11 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       try { await route(request, response); }
       catch (error) {
         if (response.headersSent) { response.destroy(); return; }
+        if (databaseUnavailable(error)) {
+          options.onUnexpectedError?.(error);
+          send(response, 503, { ok: false, error: "unavailable" }, { "retry-after": "1" });
+          return;
+        }
         if (!(error instanceof FleetErrorV1)) options.onUnexpectedError?.(error);
         const code = error instanceof FleetErrorV1 ? error.code : "refused";
         const status = error instanceof FleetErrorV1 ? error.status : 400;

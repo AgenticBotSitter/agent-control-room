@@ -25,6 +25,8 @@ import { readInstallationOperationsModeV1 } from "../src/web/v1/operations-mode-
 import { captureFleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
 
 export const FLEET_GATEWAY_CONFIGURATION_V1 = "control-room.fleet-gateway/v1";
+// requestTimeout limits receipt of a request body; it does not limit how long
+// a body-less long-poll response may remain open.
 export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 15_000, headersTimeout: 5_000,
   connectionsCheckingInterval: 1_000, maxHeaderSize: 8192, highWaterMark: 8 * 1024 });
 export type FleetGatewayConfigurationV1 = Readonly<{ schema: typeof FLEET_GATEWAY_CONFIGURATION_V1; tenantId: string; port: number;
