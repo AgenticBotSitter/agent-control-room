@@ -392,7 +392,7 @@ export class FleetGatewayStoreV1 {
         AND idempotency_key=$3`, [this.#tenantId, principal.workerId, idempotencyKey])).rows[0];
       if (prior) {
         if (prior.offer_id !== offerId) return fleetFail("conflict");
-        return this.#claimView(tx, prior, true);
+        return this.#claimView(tx, principal, prior, true);
       }
       // Pause, Drain and Stop all stop new claims; a replay above is not new.
       if (mode !== "running") return fleetFail("paused");
@@ -472,11 +472,11 @@ export class FleetGatewayStoreV1 {
         safeMetadata: { claimId, offerId, workerId: principal.workerId, attemptId, leaseId, leaseExpiresAt: expiresAt } });
       const row = (await tx.query<ClaimRow>("SELECT * FROM fleet_claims WHERE tenant_id=$1 AND claim_id=$2",
         [this.#tenantId, claimId])).rows[0]!;
-      return this.#claimView(tx, row, false);
+      return this.#claimView(tx, principal, row, false);
     });
   }
 
-  async #claimView(tx: DatabaseSession, row: ClaimRow, replayed: boolean) {
+  async #claimView(tx: DatabaseSession, principal: FleetWorkerPrincipalV1, row: ClaimRow, replayed: boolean) {
     const detail = (await tx.query<{ title: string; objective: string; lease_state: string; lease_expires_at: string | Date;
       job_state: string }>(`SELECT r.payload->>'title' AS title,r.payload->>'objective' AS objective,l.state AS lease_state,
         l.expires_at AS lease_expires_at,j.state AS job_state
