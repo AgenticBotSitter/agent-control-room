@@ -460,9 +460,14 @@ test("owner HTTP routes keep description, settings and suggestion gestures separ
   // The retry is its own path, POST, and 200 for its outcome -- the same rule
   // describe follows: it creates no resource the owner then owns.
   assert.equal((await request(`/api/v1/projects/${encodeURIComponent(projectId)}/orchestration-retry`, "POST",
-    { description: "Prepare it" }, "request:http-0002")).status, 200);
-  assert.equal(calls.at(-1), `retry:${projectId}:request:http-0002:Prepare it`);
-  assert.equal((await request(`/api/v1/projects/${encodeURIComponent(projectId)}/orchestration-retry`, "GET")).status, 404);
+    { description: "Prepare it" }, "request:http-retry-0001")).status, 200);
+  assert.equal(calls.at(-1), `retry:${projectId}:request:http-retry-0001:Prepare it`);
+  // A GET is refused as a bad request, which is what every other POST-only route
+  // here answers, rather than a 404 that would claim the path does not exist.
+  assert.equal((await request(`/api/v1/projects/${encodeURIComponent(projectId)}/orchestration-retry`, "GET")).status, 400);
+  // And an unknown sub-path under the same prefix is still a 404, so the retry
+  // route is not a catch-all for the project.
+  assert.equal((await request(`/api/v1/projects/${encodeURIComponent(projectId)}/orchestration-nothing`)).status, 404);
   const base = `/api/v1/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}/suggestions`;
   assert.equal((await request(base)).status, 200);
   assert.equal((await request(`${base}/${encodeURIComponent("suggestion:test")}/use`, "POST", { expectedRevision: 2 })).status, 200);
@@ -476,7 +481,9 @@ test("owner HTTP routes keep description, settings and suggestion gestures separ
   assert.equal((await request(`/api/v1/projects/${encodeURIComponent(projectId)}/orchestration?x=1`, "POST",
     { description: "Prepare it" }, "request:http-0003")).status, 400);
   assert.deepEqual(calls, [`settings:read:${projectId}`, `settings:save:${projectId}`,
-    `describe:${projectId}:request:http-0001:Prepare it`, `suggestions:list:${projectId}:${batchId}`,
+    `describe:${projectId}:request:http-0001:Prepare it`,
+    `retry:${projectId}:request:http-retry-0001:Prepare it`,
+    `suggestions:list:${projectId}:${batchId}`,
     `suggestions:use:${projectId}:${batchId}:suggestion:test:2`,
     `suggestions:dismiss:${projectId}:${batchId}:suggestion:test:2`],
     "every refused request reached no service method");

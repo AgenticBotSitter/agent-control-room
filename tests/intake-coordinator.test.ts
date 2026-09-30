@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { workBatchProposalDigestV1, InMemoryIntakePlannerFailureStoreV1,
   InMemoryIntakeSuggestionStoreV1, IntakeCoordinatorV1, intakeProjectScopeV1, intakeRequestScopeV1,
-  type IntakeCompletionLookupPortV1, type IntakePlannerPortV1, type WorkBatchProposalV1,
+  type IntakeCompletionLookupPortV1, type IntakePlannerFailureStoreV1, type IntakePlannerPortV1,
+  type WorkBatchProposalV1,
   type WorkBatchQueueCatalogV1 } from
   "../src/work-intake/v1";
 import type { AuthenticatedPrincipal } from "../src/security";
@@ -54,7 +55,13 @@ function harness(options: HarnessOptions = {}) {
     return options.allowanceAllowed === false ? { allowed: false as const, reasonCode: "run_cap_reached" }
       : { allowed: true as const };
   } }, failures, { raise(input) {
-    if (!calls.needsYou.some(candidate => (candidate as { requestKey: string }).requestKey === input.requestKey))
+    // Deduplicated on the DESCRIPTION, not the request key. The browser mints a
+    // fresh key per press, so keying on the request key is what produced one
+    // Needs-you item per press (measured: five items for one broken description).
+    // 0205 keys the ledger on the scope that escalated, and the double has to
+    // agree with it or the unit lane passes on a contract production does not keep
+    // -- which is the exact failure this whole round exists to stop repeating.
+    if (!calls.needsYou.some(candidate => (candidate as { ownerRequest: string }).ownerRequest === input.ownerRequest))
       calls.needsYou.push(input);
   } }, {
     async authorizeBeforeBody() { return options.authorized === false
@@ -403,4 +410,111 @@ test("a re-split rechecks proposer authority before spending an allowance or cal
   if (result.status === "refused") assert.equal(result.reasonCode, "planner_proposer_unauthorized");
   assert.equal(f.calls.allowance.length, 0);
   assert.equal(f.calls.planner, 0);
+});
+
+
+// ---------------------------------------------------------------------------
+// N-B3: a description that escalated is not locked out, and the retry is bounded.
+// ---------------------------------------------------------------------------
+
+test("an escalated description is refused without a run until the owner asks for one retry, and the retry is one-shot", async () => {
+  // THE PROBLEM THIS FIXES. `count(scope) >= 2` is checked BEFORE the planner, and
+  // the only thing that ever cleared the counter was a success on the SAME
+  // description -- which could never happen, because the description is refused
+  // before the planner runs. Nothing else touched the counter, so one transient
+  // planner fault killed that description in that project for good, and the copy
+  // the owner was shown named two things that did not work.
+  let broken = true;
+  const f = harness({ reply: () => { if (broken) throw new Error("planner down"); return JSON.stringify(proposal()); } });
+  const description = "Make the release notes match the shipped behaviour.";
+  const projectScope = intakeProjectScopeV1("initial", principal.tenantId, "project:test", description);
+  // Two failures, then the escalation. A FRESH key each press, because that is
+  // what the browser does and it is the case that used to never escalate.
+  assert.equal((await f.initial({ ownerRequest: description, idempotencyKey: "press-fail-0001" })).status, "planner_failed");
+  const second = await f.initial({ ownerRequest: description, idempotencyKey: "press-fail-0002" });
+  assert.equal(second.status, "needs_you");
+  assert.equal(f.calls.planner, 2);
+  // And the escalation is now a wall: no run, no allowance.
+  const runsBefore = f.calls.planner, allowanceBefore = f.calls.allowance.length;
+  assert.equal((await f.initial({ ownerRequest: description, idempotencyKey: "press-fail-0003" })).status, "needs_you");
+  assert.equal(f.calls.planner, runsBefore, "an escalated press costs no run");
+  assert.equal(f.calls.allowance.length, allowanceBefore, "and no allowance unit");
+  assert.equal(f.calls.needsYou.length, 1, "and no second Needs-you item for the same description");
+
+  // THE OWNER ASKS. One deliberate retry, and the next press runs the planner.
+  assert.equal(f.failures.count(projectScope), 2, "the grant does not lower the count: the evidence survives");
+  assert.equal(f.failures.grantOwnerRetry(projectScope), true);
+  assert.equal(f.failures.ownerRetryGranted(projectScope), true);
+  broken = false;
+  const retried = await f.initial({ ownerRequest: description, idempotencyKey: "press-retry-0001" });
+  assert.equal(retried.status, "submitted", "the retry runs the planner, and a working planner succeeds");
+  assert.equal(f.calls.planner, runsBefore + 1);
+  // The grant is SPENT by the run it authorised, so a later failure does not
+  // inherit it and the description is not permanently unlocked.
+  assert.equal(f.failures.ownerRetryGranted(projectScope), false,
+    "the grant is consumed by the run, so it cannot authorise a second one");
+  assert.equal(f.failures.count(projectScope), 0, "a success clears the count");
+});
+
+test("a retry that fails again is a new escalation, not a free run, and a store with no grant support is unchanged", async () => {
+  // The bound. One extra run per escalation: a granted retry that fails lands at
+  // count 1 of a NEW escalation, so the next press needs a new grant. Without
+  // this, "allow a retry" would be "allow runs".
+  let calls = 0;
+  const f = harness({ reply: () => { calls += 1; if (calls <= 3) throw new Error("planner down");
+    return JSON.stringify(proposal()); } });
+  const description = "Add a migration guide for the orchestrator tables.";
+  const projectScope = intakeProjectScopeV1("initial", principal.tenantId, "project:test", description);
+  await f.initial({ ownerRequest: description, idempotencyKey: "bounded-fail-0001" });
+  assert.equal((await f.initial({ ownerRequest: description, idempotencyKey: "bounded-fail-0002" })).status, "needs_you");
+  f.failures.grantOwnerRetry(projectScope);
+  // The granted run fails: this is failure THREE of the description, and it must
+  // read as the first of a new escalation rather than straight back to two.
+  assert.equal((await f.initial({ ownerRequest: description, idempotencyKey: "bounded-retry-0001" })).status, "planner_failed",
+    "a granted retry that fails is a first failure, not a second one");
+  assert.equal(f.failures.count(projectScope), 1, "so the count restarts at 1");
+  // The next press is NOT an automatic run loop: the count is 1, so it is a
+  // first failure, and with the planner now working it succeeds -- which is the
+  // whole point of the grant. The bound is that the retry bought ONE run, not that
+  // it unlocked the description.
+  assert.equal(f.failures.count(projectScope), 1, "the granted retry left the count at 1");
+  const recovered = await f.initial({ ownerRequest: description, idempotencyKey: "bounded-press-0003" });
+  assert.equal(recovered.status, "submitted", "and the next press is an ordinary first-failure run that can succeed");
+  assert.equal(calls, 4, "four runs: two failures, the one granted retry, and this one");
+  assert.equal(f.failures.count(projectScope), 0, "a success clears the count");
+
+  // AN UNCONFIGURED STORE IS UNCHANGED. The port's method is OPTIONAL, so a store
+  // that does not implement it answers the way it always did, and the escalation
+  // stays a wall. This is the direction that matters for a composition that has
+  // not been updated.
+  const withoutGrant: IntakePlannerFailureStoreV1 = {
+    count: key => f.failures.count(key), record: key => f.failures.record(key),
+    clear: key => f.failures.clear(key) };
+  const plain = harness({ failures: withoutGrant as never,
+    reply: () => { throw new Error("planner down"); } });
+  const text = "A description on a store with no retry support.";
+  await plain.initial({ ownerRequest: text, idempotencyKey: "plain-fail-0001" });
+  assert.equal((await plain.initial({ ownerRequest: text, idempotencyKey: "plain-fail-0002" })).status, "needs_you");
+  assert.equal((await plain.initial({ ownerRequest: text, idempotencyKey: "plain-fail-0003" })).status, "needs_you",
+    "a store with no grant support refuses the press, exactly as before the fix");
+  assert.equal(plain.calls.planner, 2, "and spends no further run");
+});
+
+test("the owner retry is a DELIBERATE act: it is refused below the escalation point, and refused twice", async () => {
+  const f = harness();
+  const projectScope = intakeProjectScopeV1("initial", principal.tenantId, "project:test", "Never pressed.");
+  assert.equal(f.failures.grantOwnerRetry(projectScope), false,
+    "a counter that has never failed has nothing to retry");
+  assert.equal(f.failures.record(projectScope), 1);
+  assert.equal(f.failures.grantOwnerRetry(projectScope), false,
+    "a counter at 1 never escalated, so a grant would claim about nothing");
+  assert.equal(f.failures.record(projectScope), 2);
+  assert.equal(f.failures.grantOwnerRetry(projectScope), true);
+  assert.equal(f.failures.grantOwnerRetry(projectScope), false,
+    "a second ask before the run is refused, so the gesture is not a run loop");
+  assert.equal(f.failures.count(projectScope), 2, "and neither ask lowered the count");
+  // The clear spends it.
+  f.failures.clear(projectScope);
+  assert.equal(f.failures.grantOwnerRetry(projectScope), false,
+    "a cleared counter carries no failure to retry, so the spent grant does not come back");
 });

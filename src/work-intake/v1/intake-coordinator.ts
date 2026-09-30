@@ -154,11 +154,25 @@ export class InMemoryIntakePlannerFailureStoreV1 implements IntakePlannerFailure
   readonly #counts = new Map<string, number>();
   readonly #retries = new Set<string>();
   count(scopeKey: string): number { return this.#counts.get(scopeKey) ?? 0; }
+
+  /** Record one failure, and return the count AFTER it.
+   *
+   * The count is the evidence the Needs-you item and the guard both rest on, so
+   * it is only ever incremented or cleared -- never lowered, and never reset by a
+   * grant. The "a failed retry is failure 1 of a NEW escalation" rule lives in the
+   * COORDINATOR, which clears the scope before spending a granted run; the first
+   * draft put it here instead, incremented 2 -> 3, and the press after a granted
+   * retry escalated again -- caught by the bounded-retry test. */
   record(scopeKey: string): number {
     const count = this.count(scopeKey) + 1;
     this.#counts.set(scopeKey, count);
     return count;
   }
+  /** Zero the count and spend any latch, which is the one transition 0205's
+   * guard admits and the one the store's SQL performs in a single statement.
+   * The coordinator calls it after a success and, deliberately, BEFORE a run the
+   * owner was granted -- so a failed retry counts as failure 1 of a new
+   * escalation rather than as a third. */
   clear(scopeKey: string): void { this.#counts.delete(scopeKey); this.#retries.delete(scopeKey); }
   ownerRetryGranted(scopeKey: string): boolean { return this.#retries.has(scopeKey); }
   /** The owner's deliberate retry, for tests and for an in-process composition.
@@ -413,6 +427,19 @@ export class IntakeCoordinatorV1 {
     for (const scope of [input.projectScope, input.failureScope]) {
       if (await this.failures.count(scope) < 2) continue;
       if (!(await this.failures.ownerRetryGranted?.(scope))) return true;
+      // THE GRANT IS SPENT HERE, and this is the only place. The counter cannot be
+      // lowered -- that is the evidence the escalation and the inbox item rest on
+      // -- so the latch is what says "this one press is not held against you",
+      // and spending it before the run is the only way a FAILED retry cannot
+      // count as a third failure and escalate again immediately.
+      //
+      // The clear that spends it is the one transition 0205's guard admits: NOT
+      // NULL -> NULL alongside a clear to zero. The coordinator holds UPDATE on
+      // exactly that column list, so the store's `clear()` spends the latch and
+      // zeroes the count in one statement. Zeroing HERE, before the run, is what
+      // makes the bound hold: a failed retry is recorded as failure 1 of a new
+      // escalation, and the next press needs a fresh grant.
+      await this.failures.clear(scope);
     }
     return false;
   }

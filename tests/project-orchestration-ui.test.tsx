@@ -5,8 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ChiefOfStaffSuggestionCard, ProjectOrchestrationPanel, ProjectOrchestrationSettings } from
   "../private-app/app/project-orchestration";
 import { PipelineBatchDetail, PrivateProjectPipelines } from "../private-app/app/project-pipelines-workspace";
-import type { ProjectOrchestrationSettingsV1, ProjectOrchestrationSuggestionV1 } from
-  "../src/web/v1/project-orchestration-wire";
+import type { ProjectOrchestrationDescribeResultV1, ProjectOrchestrationSettingsV1,
+  ProjectOrchestrationSuggestionV1 } from "../src/web/v1/project-orchestration-wire";
 import type { createProjectOrchestrationBrowserClient } from "../src/web/v1/project-orchestration-browser-client";
 import type { WorkBatchOwnerViewV1 } from "../src/work-intake/v1/owner-schemas";
 import { BrowserRequestError } from "../src/web/v1/browser-client";
@@ -38,8 +38,10 @@ function enter(window: Window & typeof globalThis, textarea: HTMLTextAreaElement
 }
 
 type Client = ReturnType<typeof createProjectOrchestrationBrowserClient>;
-type Calls = { describe: number; retry: number; retryEscalated: number; save: number;
-  use: number; dismiss: number; list: number };
+type Calls = { describe: number; retry: number; retryEscalated: number; /** What the retry grant
+ * answers. False is the "there was nothing to retry" case, which is a different
+ * sentence from "granted" and must not be shown as a success. */ retryGranted: boolean;
+  save: number; use: number; dismiss: number; list: number };
 function recordingClient(readValue: ProjectOrchestrationSettingsV1, calls: Calls,
   describe: Client["describe"] = async () => ({ status: "proposal", batchId,
     href: `/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}`,
@@ -50,7 +52,7 @@ function recordingClient(readValue: ProjectOrchestrationSettingsV1, calls: Calls
     saveSettings: async () => { calls.save += 1; return readValue; },
     async describe(...args) { calls.describe += 1; return describe(...args); },
     async retryDescription() { calls.retry += 1; return describe(projectId, "retry"); },
-    async retryEscalated() { calls.retryEscalated += 1; return { projectId, granted: true,
+    async retryEscalated() { calls.retryEscalated += 1; return { projectId, granted: calls.retryGranted,
       startsWork: false as const, grantsExecutionAuthority: false as const }; },
     listSuggestions: async () => { calls.list += 1; return { projectId, batchId, suggestions: [],
       dismissAvailable: readValue.dismissAvailable, startsWork: false as const,
@@ -59,7 +61,8 @@ function recordingClient(readValue: ProjectOrchestrationSettingsV1, calls: Calls
       grantsExecutionAuthority: false as const, savesRevision: false as const }; },
     async dismissSuggestion() { calls.dismiss += 1; } });
 }
-const noCalls = (): Calls => ({ describe: 0, retry: 0, retryEscalated: 0, save: 0, use: 0, dismiss: 0, list: 0 });
+const noCalls = (): Calls => ({ describe: 0, retry: 0, retryEscalated: 0, retryGranted: true,
+  save: 0, use: 0, dismiss: 0, list: 0 });
 
 async function mount(element: ReactElement, environment: { fetch?: typeof fetch } = {}) {
   const { JSDOM } = await import("jsdom"), React = await import("react");
@@ -398,4 +401,81 @@ test("hostile planner text is rendered as text, never as markup", () => {
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;img src=x/, "hostile planner text is escaped, not rendered");
   assert.match(html, /&lt;script&gt;/);
+});
+
+
+test("an escalated description offers ONE obvious action, and the retry is not a run loop", async () => {
+  // N-B3's user-facing half. The panel used to announce "Needs-you: ... try again,
+  // or choose another chief of staff" and offer nothing, and BOTH suggestions were
+  // no-ops: the press was refused at the same count and a new selection does not
+  // touch a counter keyed on (project, description). So the escalation was a dead
+  // end with two false instructions in it.
+  const calls = noCalls();
+  const failed: ProjectOrchestrationDescribeResultV1 = { status: "failed", needsYou: false,
+    message: "The chief of staff could not prepare a proposal this time.", startsWork: false,
+    grantsExecutionAuthority: false };
+  const escalated: ProjectOrchestrationDescribeResultV1 = { status: "failed", needsYou: true,
+    retryAvailable: true, startsWork: false, grantsExecutionAuthority: false,
+    message: "Needs-you: the chief of staff failed twice on this description, so it has stopped and raised an item for you. Your description is still here. You can ask it to try this description once more." };
+  const settings = { projectId, version: 1, choice: { mode: "selected" as const, workerId: "worker:chief",
+    workerKind: "codex" as const, modelKey: "model:plan", effort: "high" as const },
+    options: [{ key: "planner:1", label: "worker:chief", workerId: "worker:chief", workerKind: "codex" as const,
+      modelKey: "model:plan", effort: "high" as const }], choiceStale: false, describeAvailable: true,
+    dismissAvailable: false, startsWork: false as const, grantsExecutionAuthority: false as const };
+  const client = recordingClient(settings, calls, async () => escalated);
+  const { createElement } = await import("react");
+  const first = await mount(createElement(ProjectOrchestrationPanel, { projectId, client }));
+  try {
+    await first.act(async () => { enter(first.window, first.document.querySelector("textarea") as HTMLTextAreaElement,
+      "Make the release notes match the shipped behaviour."); });
+    await first.act(async () => { buttonNamed(first.document, "Prepare proposal")?.click(); await Promise.resolve(); });
+    // The alert names the escalation and the way out, in plain words.
+    const alert = first.document.querySelector("[role='alert']");
+    assert.ok(alert, "an escalation IS an alert: something needs the owner");
+    assert.match(alert.textContent ?? "", /Needs-you/u);
+    assert.match(alert.textContent ?? "", /try this description once more/u,
+      "and it says the one thing that actually works");
+    // ONE obvious action, in plain words, not jargon.
+    const retry = buttonNamed(first.document, "Ask it to try this once more");
+    assert.ok(retry, "the way out is a button, not a sentence the owner has to interpret");
+    assert.equal(retry!.disabled, false, "and it is available");
+    // Pressing it asks ONCE and says what happened.
+    await first.act(async () => { retry!.click(); await Promise.resolve(); });
+    assert.equal(calls.retryEscalated, 1, "one press, one grant request");
+    const status = [...first.document.querySelectorAll("[role='status']")].map(node => node.textContent ?? "").join(" ");
+    assert.match(status, /try this description once more\. Prepare proposal will run it\./u,
+      "and it says plainly that pressing Prepare proposal is the next move");
+    // It is NOT a loop: the button does not silently re-describe anything.
+    assert.equal(calls.describe, 1, "the retry grants a run; it does not spend one itself");
+  } finally { await first.close(); }
+
+  // NOTHING GRANTED is a different sentence, and is not dressed as a success.
+  const refused = noCalls(); refused.retryGranted = false;
+  const second = await mount(createElement(ProjectOrchestrationPanel, { projectId,
+    client: recordingClient(settings, refused, async () => escalated) }));
+  try {
+    await second.act(async () => { enter(second.window, second.document.querySelector("textarea") as HTMLTextAreaElement, "Some description."); });
+    await second.act(async () => { buttonNamed(second.document, "Prepare proposal")?.click(); await Promise.resolve(); });
+    await second.act(async () => { buttonNamed(second.document, "Ask it to try this once more")?.click();
+      await Promise.resolve(); });
+    const text = [...second.document.querySelectorAll("[role='status']")].map(n => n.textContent ?? "").join(" ");
+    assert.match(text, /There is nothing to retry now\./u, "and it says so rather than implying a run is coming");
+  } finally { await second.close(); }
+
+  // A FIRST failure offers no retry button at all, and a composition with no
+  // durable retry record does not offer one either -- a button whose call 404s is
+  // the dead end this feature exists to close.
+  for (const [label, result] of [["a first failure", failed],
+    ["an escalation with no retry record", { ...escalated, retryAvailable: false }]] as const) {
+    const quiet = noCalls();
+    const page = await mount(createElement(ProjectOrchestrationPanel, { projectId,
+      client: recordingClient(settings, quiet, async () => result) }));
+    try {
+      await page.act(async () => { enter(page.window, page.document.querySelector("textarea") as HTMLTextAreaElement, "Some description."); });
+      await page.act(async () => { buttonNamed(page.document, "Prepare proposal")?.click(); await Promise.resolve(); });
+      assert.ok(!buttonNamed(page.document, "Ask it to try this once more"),
+        `${label} offers no retry button`);
+      assert.equal(quiet.retryEscalated, 0);
+    } finally { await page.close(); }
+  }
 });
