@@ -5,16 +5,16 @@
 // agent, so it starts at login and restarts after a crash. Without it, the host is a detached child.
 // Usage: pnpm mac:up -- --protected-root ABS_PATH [--install-service]   (or CONTROL_ROOM_PROTECTED_ROOT)
 import { spawn } from "node:child_process";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
-import { connect } from "node:net";
+import { lstat, mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runtimePaths,
   stopRecorded, stopRecordedHost, taskHostCommand } from "./stack.mjs";
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
 import { captureMacLocalBuildSourceV1, macLocalBuildSourceV1 } from "./build-source.mjs";
-import { readRecoverableHostState } from "./task-host-supervisor.mjs";
+import { readHostState, readRecoverableHostState } from "./task-host-supervisor.mjs";
 
 const PROVIDER_MODULE = "dist-vps/server/macLocalDefaultTaskProvider.js";
 const BUILD_SOURCE = "dist-vps/server/mac-local-build-source.json";
@@ -67,16 +67,95 @@ function run(args) {
   });
 }
 
-const portOpen = port => new Promise(resolve => {
-  const socket = connect({ host: "127.0.0.1", port });
-  socket.setTimeout(1_000);
-  socket.once("connect", () => { socket.destroy(); resolve(true); });
-  socket.once("timeout", () => { socket.destroy(); resolve(false); });
-  socket.once("error", () => resolve(false));
-});
+async function boundedHealthResponse(response) {
+  if (response.status !== 200 || !response.body
+    || response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") return undefined;
+  const reader = response.body.getReader(), chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 512) { await reader.cancel(); return undefined; }
+      chunks.push(value);
+    }
+    const body = Buffer.concat(chunks.map(value => Buffer.from(value)), size).toString("utf8");
+    return JSON.parse(body);
+  } catch { try { await reader.cancel(); } catch {} return undefined; }
+}
+
+export async function readHealthProbeKey(root) {
+  try {
+    const path = join(root, "service", "health-probe.key");
+    const entry = await lstat(path);
+    if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o777) !== 0o600) return undefined;
+    const encoded = (await readFile(path, "utf8")).trim();
+    if (!/^[A-Za-z0-9_-]{43}$/u.test(encoded)) return undefined;
+    const key = Buffer.from(encoded, "base64url");
+    return key.length === 32 ? key : undefined;
+  } catch { return undefined; }
+}
+
+async function requestAuthenticatedHostHealth(port, healthProbeKey, timeoutMs = 1_000, transport = fetch) {
+  const origin = `http://127.0.0.1:${port}`;
+  try {
+    const nonce = randomBytes(32).toString("base64url");
+    const response = await transport(`${origin}/api/v1/local-host-health`, { method: "POST",
+      headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }),
+      signal: AbortSignal.timeout(timeoutMs) });
+    const value = await boundedHealthResponse(response);
+    if (!value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).sort().join(",") !== "nonce,pid,ready,releaseId,schema,startedAt,tag"
+      || value.schema !== "control-room.local-host-health/v1" || value.ready !== true
+      || value.nonce !== nonce || !Number.isSafeInteger(value.pid) || value.pid <= 1
+      || typeof value.releaseId !== "string" || typeof value.startedAt !== "string"
+      || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.tag !== "string") return undefined;
+    const material = JSON.stringify({ nonce, pid: value.pid, purpose: "local-host-health/v1",
+      releaseId: value.releaseId, startedAt: value.startedAt });
+    const expected = `hmac-sha256:${createHmac("sha256", healthProbeKey).update(material, "utf8").digest("hex")}`;
+    const actualBytes = Buffer.from(value.tag, "utf8"), expectedBytes = Buffer.from(expected, "utf8");
+    if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) return undefined;
+    return value.pid;
+  } catch { return undefined; }
+}
+
+/** A ready host proves one coherent generation: its supervisor wrote the private pid/state files,
+ * both recorded processes still have the exact commands for this root, and the child itself answers
+ * the owner-code-authenticated health route on the configured port. The records are re-read after
+ * the request so a restart halfway through the probe is a retry, never a mixed-generation success. */
+export async function authenticatedHostReady(root, port, runtime = {}) {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return undefined;
+  const healthProbeKey = runtime.healthProbeKey ?? await (runtime.readHealthProbeKey ?? readHealthProbeKey)(root);
+  if (!(healthProbeKey instanceof Uint8Array) || healthProbeKey.length !== 32) return undefined;
+  const paths = runtimePaths(root), exactAlive = runtime.alive ?? alive;
+  const pidReader = runtime.readPid ?? readPid, stateReader = runtime.readHostState ?? readHostState;
+  const snapshot = async () => {
+    try {
+      const pid = await pidReader(paths.hostPid), state = await stateReader(paths.hostState);
+      if (!pid || state?.schema !== "control-room.mac-local-host-state/v1" || state.state !== "running"
+        || state.pid !== pid || !Number.isSafeInteger(state.childPid)
+        || !exactAlive(pid, hostCommand(root)) || !exactAlive(state.childPid, taskHostCommand(root))) return undefined;
+      return Object.freeze({ pid, childPid: state.childPid });
+    } catch { return undefined; }
+  };
+  const before = await snapshot();
+  if (!before) return undefined;
+  const childPid = await requestAuthenticatedHostHealth(port, healthProbeKey, runtime.timeoutMs ?? 1_000,
+    runtime.transport ?? fetch);
+  if (childPid !== before.childPid) return undefined;
+  const after = await snapshot();
+  return after && after.pid === before.pid && after.childPid === before.childPid ? after.pid : undefined;
+}
 async function waitFor(check, seconds) {
-  for (let i = 0; i < seconds * 2; i++) { if (await check()) return true; await new Promise(r => setTimeout(r, 500)); }
-  return false;
+  const deadline = Date.now() + seconds * 1_000;
+  for (;;) {
+    const result = await check();
+    if (result) return result;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return undefined;
+    await new Promise(r => setTimeout(r, Math.min(500, remaining)));
+  }
 }
 
 async function writePrivate(path, content) {
@@ -115,11 +194,12 @@ async function startDetached([command, ...args], logPath, pidPath) {
  * pid file removed, so a failed start never leaves an orphan behind. The failure is thrown rather
  * than reported here, so the one reporter (`main`'s catch, which calls `fail`) owns the message and
  * the exit code, and so this path can be exercised without ending the test runner. */
-export async function startAndWait(command, logPath, pidPath, ready, seconds, what) {
+export async function startAndWait(command, logPath, pidPath, ready, seconds, what, runtime = {}) {
   const pid = await startDetached(command, logPath, pidPath);
-  const ok = await waitFor(async () => !alive(pid, command) || await ready(), seconds) && alive(pid, command);
+  const exactAlive = runtime.alive ?? alive;
+  const ok = await waitFor(async () => !exactAlive(pid, command) || await ready(), seconds) && exactAlive(pid, command);
   if (!ok) {
-    await stopRecorded(pidPath, command, 10);
+    await (runtime.stopRecorded ?? stopRecorded)(pidPath, command, 10);
     throw new Error(`${what} did not start within ${seconds}s (see ${logPath.split("/").slice(-2).join("/")})`);
   }
   return pid;
@@ -158,6 +238,7 @@ async function main() {
   if (binding === 2)
     fail("first-owner setup has not been run; see OWNER_GUIDE_MAC.md");
   if (binding !== 0) fail("first-owner binding verification failed");
+  const hostReady = () => authenticatedHostReady(root, mac.port);
 
   const hostPid = await readPid(paths.hostPid);
   if (hostPid && alive(hostPid, taskHostCommand(root))) {
@@ -167,12 +248,12 @@ async function main() {
   }
   if (!service && hostPid && alive(hostPid, hostCommand(root))) {
     // A host that is alive but not serving is a failure, never "already running".
-    if (await portOpen(mac.port)) { log(`already running (pid ${hostPid})`); return; }
+    if (await hostReady()) { log(`already running (pid ${hostPid})`); return; }
     fail("task host is running but not serving: run pnpm mac:down first");
   }
   if (service) {
-    const { pid } = await servicePid();
-    if (pid && alive(pid, hostCommand(root)) && await portOpen(mac.port)
+    const pid = await hostReady();
+    if (pid
       && await serviceUpToDate({ protectedRoot: root, logPath: paths.hostLog, env: process.env })) {
       log(`already running as a launchd user agent (pid ${pid})`); return;
     }
@@ -191,30 +272,24 @@ async function main() {
     if (current !== body) { await writePrivate(paths.provider, body); log("task provider written"); }
   } else log("task provider absent; only a zero-project website can start");
 
-  if (service) return startService(root, paths, mac.port);
+  if (service) return startService(root, paths, mac.port, hostReady);
   log("5/5 task host");
   await stopRecordedHost(paths.hostPid, root, 45);
-  const pid = await startAndWait(hostCommand(root), paths.hostLog, paths.hostPid, () => portOpen(mac.port), 90, "task host");
+  const pid = await startAndWait(hostCommand(root), paths.hostLog, paths.hostPid, hostReady, 90, "task host");
   log(`running: http://127.0.0.1:${mac.port} (pid ${pid})`);
 }
 
 /** Service mode: launchd owns the host process. A host that mac:up once started directly is
  * stopped first; the launchd-started host is never signalled here, only reloaded through launchctl. */
-async function startService(root, paths, port) {
+async function startService(root, paths, port, hostReady) {
   log("5/5 task host (launchd user agent)");
   const { loaded } = await servicePid();
   if (!loaded && await stopRecordedHost(paths.hostPid, root, 45) === "still_running")
     fail("a directly started task host would not stop: run pnpm mac:down first");
   const state = await installOrRefreshService({ protectedRoot: root, logPath: paths.hostLog, env: process.env });
   log(`service ${state}: ${plistPath().split("/").slice(-3).join("/")}`);
-  let pid;
-  const ready = await waitFor(async () => {
-    pid = (await servicePid()).pid;
-    return pid !== undefined && alive(pid, hostCommand(root)) && await portOpen(port);
-  }, 90);
-  if (!ready) fail(`task host did not start within 90s (see ${paths.hostLog.split("/").slice(-2).join("/")})`);
-  // mac:down and the acceptance checks read the same pid file as before.
-  await writePrivate(paths.hostPid, `${pid}\n`);
+  const pid = await waitFor(hostReady, 90);
+  if (!pid) fail(`task host did not start within 90s (see ${paths.hostLog.split("/").slice(-2).join("/")})`);
   log(`running: http://127.0.0.1:${port} (pid ${pid})`);
 }
 

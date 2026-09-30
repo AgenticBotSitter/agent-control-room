@@ -66,7 +66,7 @@ export async function ownerReviewControlsWhenReady(page: Page): Promise<Readonly
 export async function requestChangesControlWhenReady(page: Page, feedback: string): Promise<Locator> {
   const { panel } = await ownerReviewControlsWhenReady(page);
   const changes = panel.getByLabel("Changes you want");
-  const requestChanges = panel.getByRole("button", { name: "Request changes", exact: true });
+  const requestChanges = panel.getByRole("button", { name: "Send back", exact: true });
   await expect(changes).toBeEnabled();
   await changes.fill(feedback);
   await expect(requestChanges).toBeEnabled();

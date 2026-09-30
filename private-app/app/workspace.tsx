@@ -13,6 +13,8 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 import { usePolledRead } from "./use-polled-read";
 import { useProductConfiguration, useProductModule } from "./product-configuration";
 import { ProjectScheduleStatusPanel } from "./schedule-status";
+import { RecurringRulesPanel } from "./recurring-rules";
+import { ReusableSkillsPanel } from "./reusable-skills";
 import { ProjectModuleAvailability } from "./project-module-availability";
 import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
@@ -300,7 +302,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           {section === "agents" && <><ProjectAgentWorkspace projectId={projectId} local={runtime.mode === "local"} />
             <ProjectAgentInstallationStatus topology={installationTopology} />
           {sessionObservations && <SessionObservations projectId={projectId} />}</>}
-          {section === "automations" && <ProjectScheduleStatusPanel projectId={projectId} />}
+          {section === "automations" && <><RecurringRulesPanel projectId={projectId} /><ReusableSkillsPanel projectId={projectId} />
+            <ProjectScheduleStatusPanel projectId={projectId} /></>}
           {section === "settings" && <section className="private-panel"><h2>Project status</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
             {project.lifecycleEditable && project.origin === "ordinary" ? <OrdinaryProjectStatusActions project={project}

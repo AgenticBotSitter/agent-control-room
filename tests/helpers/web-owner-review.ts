@@ -14,7 +14,7 @@ export async function ownerReviewFixture(overrides?: Parameters<Awaited<ReturnTy
     const { receipt: artifact } = await f.resultService.ingest(input.raw, input.bytes, f.options(at(2000)));
     const { target, profile } = await f.reviewTarget(artifact.contentHash, overrides);
     const config: ConstructorParameters<typeof WebTaskReviewService>[2] = {
-      integrityKey: f.reviewKey, checkpoints: f.checkpoints, harnessIntegrityKey: f.harnessKey, results: f.config };
+      integrityKey: f.reviewKey, checkpoints: f.checkpoints, harnessIntegrityKey: f.harnessKey, results: f.config, followUps: f.tasks };
     const createReviews = (db: DatabaseClient = f.db, clock = () => instant + 6000, extra: Partial<typeof config> = {}) =>
       new WebTaskReviewService(db, f.scope, { ...config, ...extra }, clock);
     const reviews = createReviews();

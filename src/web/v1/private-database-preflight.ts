@@ -46,10 +46,12 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
   "work_batch_intake_flag_dismissals",
+  "control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules",
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
   "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals",
@@ -75,12 +77,17 @@ privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTabl
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
+// S7b: the owner sets the installation's caps and reports the machine's cluster count.
+privateWebInsertTables.add("pipeline_installation_allowances"); privateWebInsertTables.add("pipeline_machine_capacity_observations");
 privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
 // 0208: the owner-facing download grant for one exact file. Insert and spend
 // only; the catalog itself is never written by the web login.
 privateWebInsertTables.add("control_result_file_download_grants");
+// cook/v1 (recurring + skills): the owner's rules and reusable skills.
+for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
+  privateWebInsertTables.add(table);
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -115,6 +122,9 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
   pipeline_templates: ["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"],
+  pipeline_installation_allowances: ["runs_per_hour", "runs_per_agent_per_day", "machine_max_agent_processes",
+    "machine_max_db_clusters", "dollar_cap_microusd", "owner_identity_id", "version", "record_digest", "auth_tag",
+    "updated_at"],
   pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
     "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
@@ -128,6 +138,9 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   // statement about the live ACL rather than about application code.
   control_result_file_sets: ["retention_state", "accepted_at", "accepted_by_identity_id", "retained_until"],
   control_result_file_download_grants: ["spent_at"],
+  control_skills: ["current_version", "state", "updated_at"],
+  control_recurring_rules: ["state", "plain_schedule", "cron_expression", "timezone", "task_template", "version",
+    "updated_by_identity_id", "updated_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
@@ -186,14 +199,19 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_project_event_stream_heads", "control_project_events"]);
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions", "pipeline_advance_receipts",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations", "pipeline_stage_loop_counts",
   "control_agent_review_plans", "control_pipeline_build_publications");
 coordinatorReads.push("control_improvement_requests", "control_update_candidates");
 // Scheduling reads each project's worker and concurrency settings (0135).
 coordinatorReads.push("control_project_settings");
 coordinatorReads.push("installation_operations_mode_revisions");
+coordinatorReads.push("control_skills", "control_skill_versions", "control_task_skill_bindings",
+  "control_recurring_rules", "control_recurring_proposals");
+coordinatorInserts.add("control_recurring_proposals");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
+coordinatorInserts.add("pipeline_stage_loop_counts");
 coordinatorInserts.add("control_update_candidates");
 // Supervisor (0177-0179 and the 0017 incident tables): reconciliation heads,
 // health, loop heads and provider waits; incidents are column-scoped writes.
@@ -238,6 +256,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_attempt_resource_scopes: ["coordinator_lock"],
   pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag",
     "unattended_last_swept_at"],
+  ...Object.fromEntries(["pipeline_installation_allowances", "pipeline_stage_loop_counts"]
+    .map(table => [table, ["coordinator_lock"]])),
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
   // The supervisor's own mutable fields: a lapsed task head, an agent's health
@@ -247,11 +267,20 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_supervisor_agent_health: ["node_id", "state", "safe_reason_code", "last_heartbeat_at", "observed_at"],
   control_supervisor_loop_heads: ["version", "last_started_at", "last_completed_at", "state"],
   control_provider_waits: ["state", "released_at"],
+  control_recurring_proposals: ["state", "attempt_count", "batch_id", "safe_reason_code", "updated_at"],
+  control_recurring_rules: ["last_evaluated_at"],
   // An incident is opened with a bounded column set and then corrected in
   // place; the head's generation counter is the only service-registry write.
   control_service_incident_heads: ["next_generation"],
   control_service_incidents: ["severity", "safe_reason_code", "safe_remedy_code", "state", "last_observed_at", "resolved_at"],
 };
+export const taskCoordinatorReadTables = Object.freeze([...coordinatorReads]);
+export const taskCoordinatorInsertTables = Object.freeze([...coordinatorInserts]);
+export const taskCoordinatorDeleteTables = Object.freeze([...coordinatorDeletes]);
+export const taskCoordinatorInsertColumns = Object.freeze(Object.fromEntries(Object.entries(coordinatorInsertColumns)
+  .map(([table, columns]) => [table, Object.freeze([...columns])])) as Record<string, readonly string[]>);
+export const taskCoordinatorUpdateColumns = Object.freeze(Object.fromEntries(Object.entries(coordinatorUpdates)
+  .map(([table, columns]) => [table, Object.freeze([...columns])])) as Record<string, readonly string[]>);
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
   "control_attempts", "control_task_model_selections",
@@ -547,9 +576,23 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
                   OR pg_get_userbyid(a.grantee)<>'control_room_fleet_gateway')))
+            /* The owner is checked for EVERY kind, not only the reviewer. The
+               rest of this branch (SECURITY DEFINER, the pinned search_path, the
+               volatility of each signature) describes what these two functions
+               must be on a correct database; none of it says who may own them.
+               Leaving the owner test inside the $2 disjunct made the whole shape
+               conditional, so on a database where the functions exist with the
+               right properties but are owned by anyone other than
+               control_room_schema_owner, every non-reviewer kind exempted them on
+               the strength of the web login merely lacking EXECUTE - which is
+               exactly the state a SECURITY DEFINER function an operator can
+               re-create, or a fixture that replays migrations without SET ROLE,
+               is in. redeem_fleet_enrollment above checks its owner
+               unconditionally for the same reason. */
             OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-              AND (($2 AND p.prosecdef AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND (($2 AND p.prosecdef
                 AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
                 AND NOT p.proleakproof AND p.proparallel='u'
                 AND p.provolatile=CASE WHEN p.oid='read_agent_review_plan(text)'::regprocedure THEN 's' ELSE 'v' END)

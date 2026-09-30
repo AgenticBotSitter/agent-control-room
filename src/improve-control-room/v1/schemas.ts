@@ -57,10 +57,15 @@ export const updateCandidateDatabaseChangesSchemaV1 = z.discriminatedUnion("kind
   z.object({ kind: z.literal("migrations"), migrationIds: z.array(z.string().regex(/^\d{4}_[a-z0-9_]+$/)).min(1).max(32),
     summary: z.string().trim().min(1).max(1000), compatibilityNotes: z.string().trim().min(1).max(1000),
     rollbackNotes: z.string().trim().min(1).max(1000) }).strict(),
+  z.object({ kind: z.literal("changes"), changedPaths: z.array(z.string().regex(
+    /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\\)[\x21-\x7e]{1,512}$/)).min(1).max(1000),
+    migrationIds: z.array(z.string().regex(/^\d{4}_[a-z0-9_]+$/)).max(32),
+    summary: z.string().trim().min(1).max(1000), compatibilityNotes: z.string().trim().min(1).max(1000),
+    rollbackNotes: z.string().trim().min(1).max(1000) }).strict(),
 ]);
 
 export const updateCandidateRiskFlagSchemaV1 = z.object({
-  kind: z.enum(["security", "database", "authority"]),
+  kind: z.enum(["security", "database", "authority", "dependency"]),
   summary: z.string().trim().min(1).max(240),
   needsIndependentReview: z.literal(true),
 }).strict();
@@ -75,7 +80,7 @@ export const recordUpdateCandidateSchemaV1 = z.object({
   changedAreas: z.array(z.string().trim().min(1).max(240)).min(1).max(100),
   testResults: z.array(updateCandidateTestResultSchemaV1).min(1).max(32),
   databaseChanges: updateCandidateDatabaseChangesSchemaV1,
-  riskFlags: z.array(updateCandidateRiskFlagSchemaV1).max(3),
+  riskFlags: z.array(updateCandidateRiskFlagSchemaV1).max(4),
   independentReviews: z.array(updateCandidateIndependentReviewSchemaV1).max(32),
   leadWorkerId: id,
 }).strict().refine(value => value.baseRevision !== value.candidateRevision, { path: ["candidateRevision"] })

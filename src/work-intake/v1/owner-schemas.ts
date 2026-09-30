@@ -55,6 +55,9 @@ export const workBatchQueueItemSchemaV1 = z.object({ localId: id, jobId: id, wor
   provider: workBatchQueueModelIdSchemaV1.nullable(), profile: workBatchQueueModelIdSchemaV1.nullable(),
   state: z.enum(["awaiting_preparation", "waiting_dependency", "waiting_turn", "ready_for_assignment",
     "assigned", "queued", "running", "completed", "failed", "uncertain"]) }).strict();
+export const workBatchRoutingOptionSchemaV1 = z.object({ workerId: id, workerKind: id, nodeId: id,
+  modelKeys: z.array(workBatchQueueModelIdSchemaV1).max(32) }).strict();
+export type WorkBatchRoutingOptionV1 = z.infer<typeof workBatchRoutingOptionSchemaV1>;
 export const workBatchOwnerViewSchemaV1 = z.object({ batchId: id, projectId: id,
   state: z.enum(["proposed", "approved", "partially_approved", "rejected"]), revision: z.number().int().min(1),
   proposedByIdentityId: id, proposedAt: z.string().datetime(), approvalIdentityId: id.nullable(),
@@ -64,6 +67,7 @@ export const workBatchOwnerViewSchemaV1 = z.object({ batchId: id, projectId: id,
   items: z.array(workBatchOwnerItemSchemaV1).max(32), queue: z.array(workBatchQueueItemSchemaV1).max(32),
   queueDepthLimit: z.number().int().min(1).max(20),
   flagsByLocalId: z.record(z.string(), z.array(workBatchIntakeFlagSchemaV1).max(2)),
+  routingOptions: z.array(workBatchRoutingOptionSchemaV1).max(64).optional(),
   startsWork: z.literal(false),
   grantsExecutionAuthority: z.literal(false),
 }).strict();

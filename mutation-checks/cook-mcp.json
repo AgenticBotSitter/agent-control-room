@@ -29,8 +29,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": " || path === \"/fleet/v1/mcp/calls\"\n      || claimRoute.test(path)",
-    "replace": "\n      || claimRoute.test(path)",
+    "find": " || path === \"/fleet/v1/mcp/calls\"\n      || claimRoute.test(path) || proposalRoute.test(path)",
+    "replace": "\n      || claimRoute.test(path) || proposalRoute.test(path)",
     "test": "node --import tsx --test --test-name-pattern \"MCP server: exposes\" tests/fleet-connector.test.ts",
     "why": "the authenticated gateway audit route remains reachable"
   },
@@ -64,8 +64,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": "if (active >= maxConcurrent || !tick(state, now, perIp[kind]) || !tick(global[kind], now, globalLimit[kind]))",
-    "replace": "if (!tick(global[kind], now, globalLimit[kind]) || !tick(state, now, perIp[kind]) || active >= maxConcurrent)",
+    "find": "if (!charge(sourceBudgets(kind, address, network, now), now)) return fleetFail(\"rate_limited\");",
+    "replace": "if (!charge([{ state: global[kind], limit: globalLimit[kind] }], now)) return fleetFail(\"rate_limited\");",
     "test": "node --import tsx --test --test-name-pattern \"one noisy\" tests/fleet-connector.test.ts",
     "why": "source-local refusals cannot consume the shared enrollment or authentication budget"
   },

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
+import { hmacSha256Tag, InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
@@ -24,6 +24,8 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
       trustedOrigin },
     database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    hostProcessId: 4_243,
+    healthProbeKey: new Uint8Array(32).fill(9), healthReleaseId: "dev", healthStartedAt: "2026-09-30T00:00:00.000Z",
     workBatchIntegrityKey: new Uint8Array(32).fill(7),
     taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(1),
       results: { integrityKey: new Uint8Array(32).fill(2), storageClass: "local", storage: { read: async () => undefined } } },
@@ -48,6 +50,25 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   }
   const signedOutWrite = await app.handle(request("/projects", { method: "POST" }), () => new Response("unused"));
   assert.equal(signedOutWrite.status, 401);
+  const nonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const wrongHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce: "short" }) }),
+  () => new Response("unused"));
+  assert.equal(wrongHealth.status, 400); assert.equal(wrongHealth.headers.get("set-cookie"), null);
+  const unsignedHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(unsignedHealth.status, 403, "even the correct code needs the exact loopback Origin");
+  const remoteHealth = await app.handle(new Request(`${trustedOrigin}/api/v1/local-host-health`, { method: "POST", headers: {
+    origin: trustedOrigin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(remoteHealth.status, 403, "the readiness oracle exists only on the loopback origin");
+  const health = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(health.status, 200); assert.equal(health.headers.get("set-cookie"), null);
+  assert.deepEqual(await health.json(), { schema: "control-room.local-host-health/v1", ready: true, pid: 4_243, nonce,
+    releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z", tag: hmacSha256Tag(new Uint8Array(32).fill(9),
+      { purpose: "local-host-health/v1", nonce, pid: 4_243, releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });
+  const healthRead = await app.handle(request("/api/v1/local-host-health"), () => new Response("unused"));
+  assert.equal(healthRead.status, 404, "health is an authenticated POST, not a public read");
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);
@@ -57,7 +78,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.deepEqual(await actionInboxResponse.json(), { observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false });
   const workers = await app.handle(request("/api/v1/local-workers", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(workers.status, 200); assert.deepEqual(await workers.json(), { taskWorkersStarted: true,
-    projectSections: ["overview", "inbox", "work", "pipelines", "agents", "reviews", "activity", "files", "settings"],
+    projectSections: ["overview", "inbox", "work", "pipelines", "agents", "reviews", "activity", "automations", "files", "settings"],
     workers: [{ kind: "hermes-021", state: "ready", proof: "not_proven" }] });
   const projects = await app.handle(request("/api/v1/projects", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(projects.status, 200);
@@ -96,6 +117,27 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     () => new Response("unused"));
   assert.equal(detailApi.status, 200);
   assert.equal((await detailApi.json() as { project: { projectId: string } }).project.projectId, projectId);
+  const mutationHeaders = { cookie: cookie!, origin, "content-type": "application/json" };
+  const skillResponse = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/skills`, {
+    method: "POST", headers: mutationHeaders, body: JSON.stringify({ name: "Evidence review",
+      instructions: "Cite the retained evidence and state uncertainty." }) }), () => new Response("unused"));
+  assert.equal(skillResponse.status, 201); const skill = await skillResponse.json() as { skillId: string; version: number };
+  const recurringInput = { schedule: "every Monday at 9", timezone: "UTC", title: "Weekly dependency check",
+    instructions: "Review dependency updates and propose a report.", requiredCapability: "dependency.review",
+    acceptanceCriteria: "The report cites its evidence.", acceptanceTests: "The owner reviews the cited evidence.",
+    skillRefs: [{ skillId: skill.skillId, version: skill.version }] };
+  const ruleResponse = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/recurring-rules`, {
+    method: "POST", headers: mutationHeaders, body: JSON.stringify(recurringInput) }), () => new Response("unused"));
+  assert.equal(ruleResponse.status, 201); const rule = await ruleResponse.json() as { ruleId: string; version: number };
+  const edited = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/recurring-rules/${encodeURIComponent(rule.ruleId)}`, {
+    method: "PUT", headers: mutationHeaders, body: JSON.stringify({ ...recurringInput,
+      instructions: "Review dependency updates and propose an evidence-backed report.", expectedVersion: rule.version })
+  }), () => new Response("unused"));
+  assert.equal(edited.status, 200); const editedRule = await edited.json() as { version: number };
+  const paused = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/recurring-rules/${encodeURIComponent(rule.ruleId)}/pause`, {
+    method: "POST", headers: mutationHeaders, body: JSON.stringify({ paused: true, expectedVersion: editedRule.version })
+  }), () => new Response("unused"));
+  assert.equal(paused.status, 200); assert.equal((await paused.json() as { state: string }).state, "paused");
   for (const lifecycle of ["active", "paused", "completed", "archived"]) {
     const filtered = await app.handle(request(`/projects?lifecycle=${lifecycle}`, { headers: { cookie: cookie! } }),
       () => new Response("filtered project shell"));

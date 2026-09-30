@@ -14,6 +14,7 @@ import { TaskExecutionPlanner } from "../src/web/v1/task-execution-planner";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import { binding, instant } from "./hermes-native-fixture";
 import { nativeQualityCompletionFixture, qualityText } from "./helpers/native-quality-completion";
+import { ReusableSkillServiceV1 } from "../src/skills/v1";
 
 const key = new Uint8Array(32).fill(12);
 const template = { name: "Build, check, validate", description: "Complete one bounded change and review it.",
@@ -120,6 +121,25 @@ test("pipeline instantiation replays exactly and changed content under one key i
   await assert.rejects(f.service.instantiate(f.identity, f.project.projectId,
     { templateId: saved.templateId, title: "Changed replay" }, "linear-pipeline-replay-0001"), /conflict/u);
   assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int count FROM pipeline_runs")).rows[0]!.count, 1);
+});
+
+test("pipeline stages bind the exact reusable skill version they reference", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const skills = new ReusableSkillServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, () => now);
+  const skill = await skills.create(f.identity, f.project.projectId,
+    { name: "Build evidence", instructions: "Retain the focused test evidence with the change." });
+  const stages = template.stages.map((stage, index) => index === 0
+    ? { ...stage, skillRefs: [{ skillId: skill.skillId, version: 1 }] } : stage);
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, { ...template, stages });
+  const run = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Exact skill pipeline" }, "linear-skill-version-0001");
+  const bindings = await f.db.query<{ job_id: string; skill_version: number; content_digest: string }>(`SELECT
+    job_id,skill_version,content_digest FROM control_task_skill_bindings WHERE tenant_id='tenant:web' ORDER BY job_id`);
+  assert.deepEqual(bindings.rows.map(row => [row.job_id, Number(row.skill_version), row.content_digest]),
+    [[run.jobIds[0], 1, skill.contentDigest]]);
+  const missing = template.stages.map((stage, index) => index === 1
+    ? { ...stage, skillRefs: [{ skillId: skill.skillId, version: 99 }] } : stage);
+  await assert.rejects(f.service.createTemplate(f.identity, f.project.projectId, { ...template, stages: missing }), /conflict/u);
 });
 
 test("pre-0098 authenticated pipelines remain readable but cannot publish or instantiate without owner revision", async t => {
@@ -410,6 +430,17 @@ test("0109, 0108 and 0105 down migrations refuse retained policy/history and rem
   const down = await readFile("db/down/0105_linear_pipeline_runs.sql", "utf8");
   const agentReviewDown = await readFile("db/down/0106_agent_review_plans.sql", "utf8");
   const publicationDown = await readFile("db/down/0108_pipeline_build_publications.sql", "utf8");
+  // S7b's 0151 and 0153 build append-only triggers on the history guard 0109 owns,
+  // so 0109's down refuses while they exist. Reverse the later slice first, which is the
+  // real order a down path has to be taken in.
+  const s7bDowns = ["0154_pipeline_advance_round_receipts.sql", "0153_pipeline_machine_capacity_observations.sql",
+    "0152_pipeline_advance_unknown_cost.sql", "0151_pipeline_stage_loop_counts.sql",
+    "0150_pipeline_installation_allowances.sql"];
+  // 0160 (cook/v1) also points tables at pipeline_runs, so 0105 refuses while it
+  // is installed. Same rule as S7b above: reverse the later slice first.
+  const deskDown = await readFile("db/down/0160_improve_control_room_desk.sql", "utf8");
+  for (const file of s7bDowns) await populated.db.exec(await readFile(`db/down/${file}`, "utf8"));
+  await populated.db.exec(deskDown);
   await populated.db.exec(unattendedDown);
   await assert.rejects(populated.db.exec(publicationDown), /0108 down migration refused/u);
   await populated.db.exec("ROLLBACK");
@@ -419,6 +450,16 @@ test("0109, 0108 and 0105 down migrations refuse retained policy/history and rem
   await populated.db.exec(publicationDown);
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
+  await assert.rejects(empty.db.exec(unattendedDown), /a later migration depends on its history guard/u);
+  await empty.db.exec("ROLLBACK");
+  // 0105 refuses while 0160 still points at pipeline_runs, for the same reason.
+  await assert.rejects(empty.db.exec(down), /a later migration depends on its tables/u);
+  await empty.db.exec("ROLLBACK");
+  for (const file of s7bDowns) await empty.db.exec(await readFile(`db/down/${file}`, "utf8"));
+  // 0160's improvement desk and 0161's candidate evidence reference pipeline_runs,
+  // so the reviewed recovery order takes 0162-0160 off first, newest first.
+  for (const file of ["0162_validate_update_candidate_evidence.sql", "0161_update_candidate_evidence.sql",
+    "0160_improve_control_room_desk.sql"]) await empty.db.exec(await readFile(`db/down/${file}`, "utf8"));
   await empty.db.exec(unattendedDown);
   await empty.db.exec(publicationDown);
   await empty.db.exec(agentReviewDown);
@@ -428,6 +469,15 @@ test("0109, 0108 and 0105 down migrations refuse retained policy/history and rem
     to_regclass('pipeline_stage_runs')::text stages`)).rows[0], { templates: null, runs: null, stages: null });
   assert.deepEqual((await empty.db.query<{ guard: string | null }>(
     "SELECT to_regproc('guard_control_job_pipeline_lineage')::text guard")).rows[0], { guard: null });
+  // S7b's own tables went with their own down files, and the guard 0109 owned
+  // is gone because nothing was left pointing at it.
+  assert.deepEqual((await empty.db.query<{ allowance: string | null; loops: string | null; observed: string | null }>(
+    `SELECT to_regclass('pipeline_installation_allowances')::text allowance,
+      to_regclass('pipeline_stage_loop_counts')::text loops,
+      to_regclass('pipeline_machine_capacity_observations')::text observed`)).rows[0],
+  { allowance: null, loops: null, observed: null });
+  assert.deepEqual((await empty.db.query<{ history: string | null }>(
+    "SELECT to_regproc('reject_pipeline_unattended_history_mutation')::text history")).rows[0], { history: null });
 });
 
 /** Stage zero planned through the real planner with a coordinator that holds the

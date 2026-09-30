@@ -1,6 +1,6 @@
 import type { DatabaseClient } from "../../persistence/database";
 import { WebAccessError } from "./access-verifier";
-import { privateResponseHeaders, webFailure } from "./http-common";
+import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, readLocalOwnerCodeV1,
   renderLocalOwnerSignInPageV1, renderLocalOwnerSignOutPageV1, type LocalOwnerSessionProfileV1 } from "./local-owner-session";
 import { WebProjectService } from "./project-service";
@@ -39,6 +39,12 @@ import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
 import { createResultFileHttpHandlerV1 } from "./result-file-http";
 import type { ResultFileStoreV1 } from "../../artifacts/v1/result-file-store";
 import { composeResultFileService } from "./result-file-composition";
+import type { FleetConnectorReleaseManifestV1 } from "../../fleet/v1/connector-release";
+import { RecurringRuleServiceV1 } from "../../recurring/v1";
+import { ReusableSkillServiceV1 } from "../../skills/v1";
+import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
+import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
+import { hmacSha256Tag } from "../../security";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -51,6 +57,9 @@ export interface MacLocalWebProcessOptionsV1 {
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
   database: { client: DatabaseClient; close: () => Promise<void> };
+  /** The existing task service from the Mac task application. This keeps
+   * owner-review follow-up creation and browser task routes on one service. */
+  taskService?: WebTaskService;
   /** Existing canonical task operations, supplied by the host composition.
    * The local wrapper owns no planner, queue, review store, or worker. */
   ownerReviews?: WebTaskReviewService;
@@ -104,8 +113,19 @@ export interface MacLocalWebProcessOptionsV1 {
   /** Remote workers (T2-F). Owner decisions use a distinct restricted
    * database login; neither the ordinary web login nor the gateway can write
    * those tables. The hook only asks the gateway to reconcile afterward. */
-  fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string; afterDecision?: () => Promise<unknown> }>;
+  fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string;
+    connectorRelease?: FleetConnectorReleaseManifestV1; afterDecision?: () => Promise<unknown> }>;
   clock?: () => number;
+  /** Present only in the real task-host process. The authenticated readiness
+   * route returns this pid so mac:up can bind the listener to the supervisor's
+   * private child record instead of trusting an arbitrary open port. */
+  hostProcessId?: number;
+  /** Independent, installation-private readiness key. It never shares owner
+   * sign-in material, so deleting or rotating the owner code cannot forge a
+   * host-health response. */
+  healthProbeKey?: Uint8Array;
+  healthReleaseId?: string;
+  healthStartedAt?: string;
 }
 
 /** Existing controller operations supplied by the host.  This is deliberately
@@ -125,6 +145,17 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.origin !== options.origin
     || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
     throw new Error("mac_local_web_process_config_invalid");
+  // An owner review that can accept exceptions must use the task application's
+  // same in-session proposal service. Refuse a partial composition instead of
+  // mounting a review that succeeds for ordinary accepts but cannot follow up.
+  if (options.ownerReviews && !options.taskService) throw new Error("mac_local_web_process_config_invalid");
+  if (options.hostProcessId !== undefined
+    && (!Number.isSafeInteger(options.hostProcessId) || options.hostProcessId <= 1))
+    throw new Error("mac_local_web_process_config_invalid");
+  if (options.hostProcessId !== undefined && (!(options.healthProbeKey instanceof Uint8Array)
+    || options.healthProbeKey.length !== 32 || typeof options.healthReleaseId !== "string"
+    || !options.healthReleaseId || typeof options.healthStartedAt !== "string"
+    || !Number.isFinite(Date.parse(options.healthStartedAt)))) throw new Error("mac_local_web_process_config_invalid");
   const clock = options.clock ?? Date.now;
   const allowedOrigins = new Set([options.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : []),
     ...(profile.remoteOrigins ?? [])]);
@@ -139,7 +170,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const projects = new WebProjectService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined, productConfiguration,
     options.taskReadKeys?.harnessIntegrityKey);
-  const tasks = new WebTaskService(options.database.client,
+  const tasks = options.taskService ?? new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
   const projectActivity = new ProjectActivityServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.projectEvents, clock);
@@ -155,6 +186,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     ...(options.submission ? { submission: options.submission } : {}),
     ...(options.revisions ? { revisions: options.revisions } : {}),
   });
+  const recurringRules = new RecurringRuleServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
+  const recurringRuleHttp = createRecurringRuleHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: recurringRules, clock });
+  const reusableSkills = new ReusableSkillServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
+  const reusableSkillHttp = createReusableSkillHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: reusableSkills, clock });
   const workBatches = options.workBatchIntegrityKey ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, clock,
     options.workBatchQueueCatalog, options.workBatchQueueAdmissionAuthority) : undefined;
@@ -182,7 +221,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
     service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
       clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
-    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}) }) : undefined;
+    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}),
+    ...(options.fleet.connectorRelease ? { connectorRelease: options.fleet.connectorRelease } : {}) }) : undefined;
   // One service, never two: a supplied instance and a key together are refused
   // rather than silently preferring one, because two instances would each hold
   // their own view of the same installation-wide state.
@@ -266,7 +306,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       await sessionWatch.authorize(identity);
       return render();
     }
-    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings|improvements)$/.exec(url.pathname);
+    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings|automations|improvements)$/.exec(url.pathname);
     if (projectSection) {
       if ([...url.searchParams.keys()].some(name => name !== "after")
         || url.searchParams.getAll("after").length > 1 || !["inbox", "reviews"].includes(projectSection[2]) && url.search)
@@ -332,12 +372,31 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         }
         throw new WebAccessError("invalid_request");
       }
+      if (url.pathname === "/api/v1/local-host-health") {
+        if (request.method !== "POST" || url.search || options.hostProcessId === undefined)
+          throw new WebAccessError("not_found");
+        if (url.origin !== options.origin) throw new WebAccessError("access_denied");
+        sessions.assertLocalRequest(request, true);
+        if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
+          || !request.body) throw new WebAccessError("invalid_request");
+        const body = await readBoundedJson(request.body, 256);
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.getPrototypeOf(body) !== Object.prototype
+          || Object.keys(body).length !== 1 || typeof (body as { nonce?: unknown }).nonce !== "string"
+          || !/^[A-Za-z0-9_-]{43}$/u.test((body as { nonce: string }).nonce))
+          throw new WebAccessError("invalid_request");
+        const nonce = (body as { nonce: string }).nonce, pid = options.hostProcessId,
+          releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!;
+        const tag = hmacSha256Tag(options.healthProbeKey!,
+          { purpose: "local-host-health/v1", nonce, pid, releaseId, startedAt });
+        return Response.json({ schema: "control-room.local-host-health/v1", ready: true, pid, nonce, releaseId, startedAt, tag },
+          { headers: privateResponseHeaders });
+      }
       if (url.pathname === "/api/v1/local-workers") {
         if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");
         sessions.verify(request, clock());
         return Response.json({ taskWorkersStarted: options.taskWorkersStarted === true,
           ...(options.taskWorkersStarted === true ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
-          projectSections: ["overview", "inbox", "work", ...(workBatches ? ["pipelines"] : []), "agents", "reviews", "activity",
+          projectSections: ["overview", "inbox", "work", ...(workBatches ? ["pipelines"] : []), "agents", "reviews", "activity", "automations",
             ...(options.taskReadKeys?.results ? ["files"] : []), "settings"],
           workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
@@ -467,6 +526,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/projects"
         || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
+      if (/^\/api\/v1\/projects\/[^/]+\/recurring-rules(?:\/|$)/.test(url.pathname)) return recurringRuleHttp(request);
+      if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname)) return reusableSkillHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
       if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
       if (resultFileHttp && /^\/api\/v1\/projects\/[^/]+\/result-files(?:\/|$)/.test(url.pathname))

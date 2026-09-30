@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { captureProvisionedMacLocalConfigurationV1, prepareProvisionedWorkIntakeConfigurationV1,
-  renewRetainedWorkIntakeCredentialsV1, selectProvisionedWorkIntakeClientV1 } from
+  ensureHealthProbeKeyV1, renewRetainedWorkIntakeCredentialsV1, selectProvisionedWorkIntakeClientV1 } from
   "../scripts/mac-local/provision-database.mjs";
 import { captureMacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration.ts";
 
@@ -24,6 +27,16 @@ test("the provisioner dry-run's prospective protected config survives the file J
   assert.deepEqual(loaded.workIntakeProjectIds, ["project:one"]);
   assert.match(loaded.enablement.enablementDigest, /^sha256:[a-f0-9]{64}$/u);
   assert.equal("enablementDigest" in JSON.parse(writtenFileContents), false);
+});
+
+test("provisioning creates one private independent health-probe key and preserves it on retry", async t => {
+  const root = await mkdtemp(join(tmpdir(), "acr-health-probe-")); t.after(() => rm(root, { recursive: true, force: true }));
+  await ensureHealthProbeKeyV1(root);
+  const path = join(root, "service", "health-probe.key"), first = await readFile(path, "utf8"), entry = await stat(path);
+  assert.match(first, /^[A-Za-z0-9_-]{43}\n$/u);
+  assert.equal(entry.mode & 0o777, 0o600);
+  await ensureHealthProbeKeyV1(root);
+  assert.equal(await readFile(path, "utf8"), first, "retry must retain the installed probe identity");
 });
 
 test("the protected intake scope defaults closed and rejects ambiguous wildcard combinations", () => {

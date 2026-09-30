@@ -6,6 +6,16 @@ import {
   assertPortableGuardedTextV1,
   assertPortableInputSizeV1,
 } from "../../security/inert-portable-input";
+// The barrel (`../../security`) re-exports digest.ts and rollback-checkpoint.ts,
+// which import host-value.ts, which reads node:util intrinsics at import time and
+// throws `host intrinsics unavailable` in a browser — blanking the page. The
+// module registry is reachable from the client graph through
+// src/config/v1/product-configuration, so importing the barrel here pulled that
+// code into every browser chunk. sha256Digest itself lives in
+// canonical-digest.ts, which only needs node:crypto's createHash and is
+// browser-safe, so import it directly. See also the same split in
+// src/modules/v1/install-approvals.ts, which is not in the client graph.
+import { sha256Digest } from "../../security/canonical-digest";
 
 /** Portable, inert module declaration. It contains data only and grants nothing by itself. */
 export const MODULE_MANIFEST_SCHEMA_V1 = "control-room.module-manifest/v1" as const;
@@ -132,6 +142,20 @@ const migrationSchema = z.object({
   downFile: z.string().regex(/^[a-z0-9][a-z0-9._/-]*\.sql$/, "module_manifest_migration_path_invalid"),
 }).strict();
 
+const sharedSkillSchema = z.object({
+  id: identifierSchema,
+  version: z.number().int().positive().max(1_000_000),
+  name: boundedText,
+  instructions: z.string().min(1).max(12_000)
+    .refine((value) => PORTABLE_PRINTABLE_TEXT_V1.test(value), "module_manifest_text_not_printable"),
+  contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+}).strict().superRefine((skill, context) => {
+  const expected = sha256Digest({ schema: "control-room.module-shared-skill/v1", id: skill.id,
+    version: skill.version, name: skill.name, instructions: skill.instructions });
+  if (skill.contentDigest !== expected)
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["contentDigest"], message: "module_manifest_skill_digest_invalid" });
+});
+
 const moduleManifestSchemaV1 = z.object({
   schema: z.literal(MODULE_MANIFEST_SCHEMA_V1),
   id: moduleIdSchema,
@@ -141,6 +165,7 @@ const moduleManifestSchemaV1 = z.object({
   license: z.string().min(1).max(40).regex(LICENSE_PATTERN, "module_manifest_license_invalid"),
   controlRoomCompatibility: z.string().max(120).regex(COMPATIBILITY_RANGE_PATTERN, "module_manifest_compatibility_invalid"),
   class: z.enum(["declarative", "code"]),
+  skills: z.array(sharedSkillSchema).max(50).optional(),
   permissions: permissionSchema,
   data: z.object({
     schemaNamespace: z.string().regex(/^module_[a-z][a-z0-9_]{2,55}$/, "module_manifest_namespace_invalid"),
@@ -159,6 +184,10 @@ const moduleManifestSchemaV1 = z.object({
     emitNotifications: z.boolean(),
   }).strict(),
 }).strict().superRefine((manifest, context) => {
+  if (manifest.skills?.length && manifest.class !== "declarative")
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["skills"], message: "module_manifest_skills_require_declarative_class" });
+  if (manifest.skills && new Set(manifest.skills.map(skill => `${skill.id}:${skill.version}`)).size !== manifest.skills.length)
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["skills"], message: "module_manifest_duplicate_skill" });
   if (manifest.data !== undefined) {
     const expectedNamespace = `module_${manifest.id
       .replace(/([a-z0-9])([A-Z])/g, "$1_$2")

@@ -15,13 +15,14 @@
 // widen permissions: the gateway has no such routes.
 
 import { createHash, randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, stat, writeFile, chmod, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join as joinPath, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const CONNECTOR_VERSION = "0.2.0";
+export const CONNECTOR_VERSION = "0.3.0";
 const CONFIG_SCHEMA = "control-room.fleet-connector/v1";
 const SECRET_PATTERN = /^crf_[A-Za-z0-9_-]{43}$/u;
 const CODE_PATTERN = /^crj_[A-Za-z0-9_-]{43}$/u;
@@ -38,6 +39,15 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u;
 const OFFER_PATTERN = /^fleet-offer:[a-f0-9]{32}$/u;
 const CLAIM_PATTERN = /^fleet-claim:[a-f0-9]{32}$/u;
 const PROJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
+let bundledHarnessAdapterFactory = null;
+
+/** The build entry registers the reviewed harness factory before invoking the
+ * CLI. Source-mode tests retain the explicit adapter-module seam. */
+export function registerBundledHarnessAdapterFactory(factory) {
+  if (bundledHarnessAdapterFactory || typeof factory !== "function")
+    throw new Error("The bundled harness adapter factory is not valid.");
+  bundledHarnessAdapterFactory = factory;
+}
 
 export const sha256 = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 export const newSecret = () => `crf_${randomBytes(32).toString("base64url")}`;
@@ -346,6 +356,7 @@ export const HANDOFF_HARNESSES = Object.freeze(["codex", "claude-code", "hermes"
 const HARNESS_LABELS = Object.freeze({ codex: "Codex", "claude-code": "Claude Code", hermes: "Hermes" });
 const MAX_MESSAGE_CHARS = 2000;
 const WATCHDOG_GRACE_MS = 15_000;
+const operationsMode = value => ["running", "paused", "draining", "stopped"].includes(value) ? value : "unknown";
 // Refusals that mean this claim can no longer be reported on.
 const LOST_CLAIM_CODES = new Set(["expired", "not_found", "conflict", "unauthenticated"]);
 // Answers that are worth repeating with the same idempotency key.
@@ -397,9 +408,11 @@ export async function loadHarnessSettings(path) {
     harnesses[name] = Object.freeze({ enabled, configuration: Object.freeze(configuration) });
   }
   const anyEnabled = Object.values(harnesses).some(entry => entry.enabled);
-  if (anyEnabled && !absolutePath(value.adapterModule)) throw invalid("adapterModule must be an absolute path");
-  if (anyEnabled) await refuseSharedWrite(value.adapterModule, "The harness adapter module");
-  return Object.freeze({ adapterModule: anyEnabled ? value.adapterModule : null, harnesses: Object.freeze(harnesses) });
+  if (anyEnabled && !bundledHarnessAdapterFactory && !absolutePath(value.adapterModule))
+    throw invalid("adapterModule must be an absolute path");
+  if (anyEnabled && !bundledHarnessAdapterFactory) await refuseSharedWrite(value.adapterModule, "The harness adapter module");
+  return Object.freeze({ adapterModule: anyEnabled && !bundledHarnessAdapterFactory ? value.adapterModule : null,
+    harnesses: Object.freeze(harnesses) });
 }
 
 /** Loads the adapter for one harness only if the machine owner enabled it.
@@ -408,7 +421,13 @@ export async function loadHarnessSettings(path) {
  * @param {(specifier: string) => Promise<any>} [importer] */
 export async function loadHarnessAdapter(settings, harness, importer = specifier => import(specifier)) {
   const entry = settings?.harnesses?.[harness];
-  if (!HANDOFF_HARNESSES.includes(harness) || entry?.enabled !== true || !settings.adapterModule) return null;
+  if (!HANDOFF_HARNESSES.includes(harness) || entry?.enabled !== true) return null;
+  if (bundledHarnessAdapterFactory) {
+    const adapter = await bundledHarnessAdapterFactory(Object.freeze({ harness, configuration: entry.configuration }));
+    if (!adapter || typeof adapter.execute !== "function") throw new Error("The bundled harness adapter returned no adapter.");
+    return Object.freeze({ harness, deadlineMs: entry.configuration.deadlineMs, execute: adapter.execute.bind(adapter) });
+  }
+  if (!settings.adapterModule) return null;
   const module = await importer(pathToFileURL(settings.adapterModule).href);
   if (typeof module?.createFleetHarnessAdapter !== "function")
     throw new Error("The harness adapter module does not export createFleetHarnessAdapter.");
@@ -461,7 +480,7 @@ async function report(send, attempts = 3) {
  *   secrets?: string[] }} options
  * @returns {Promise<RunPass>}
  */
-export async function runClaimedTask({ client, claim, adapter, progressIntervalMs = 60_000, readMode = async () => "running",
+export async function runClaimedTask({ client, claim, adapter, progressIntervalMs = 60_000, readMode = async () => "unknown",
   log = () => {}, watchdogGraceMs = WATCHDOG_GRACE_MS, secrets = [] }) {
   const label = HARNESS_LABELS[adapter.harness] ?? adapter.harness;
   const keyBase = `handoff-${claim.claimId.slice("fleet-claim:".length)}`;
@@ -575,7 +594,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       if (once) return Object.freeze({ state: "unreachable" });
       await sleep(pollMs); continue;
     }
-    const mode = me.operationsMode ?? "running";
+    const mode = operationsMode(me.operationsMode);
     const harness = HANDOFF_HARNESSES.includes(me.workerKind) ? me.workerKind : null;
     let pass = { state: "idle" };
     if (!harness) {
@@ -611,7 +630,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       else if (!claim && pass.state !== "unreachable") say(`Connected as ${me.displayName}. Waiting for work (${offers.length} offered).`);
       else if (claim) {
         say(`Claimed "${claim.title}" for ${HARNESS_LABELS[harness]}.`);
-        const readMode = async () => (await client.heartbeat()).operationsMode ?? "running";
+        const readMode = async () => operationsMode((await client.heartbeat()).operationsMode);
         // The adapter never receives these; they are only checked against the
         // adapter's own answer afterward, so a leaked key cannot be sent on.
         const secrets = [current.secret, current.pendingSecret].filter(value => typeof value === "string" && value);
@@ -715,6 +734,6 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
 }
 
 const invokedDirectly = (() => {
-  try { return process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href; } catch { return false; }
+  try { return process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1])); } catch { return false; }
 })();
 if (invokedDirectly) main().then(code => { process.exitCode = code; });

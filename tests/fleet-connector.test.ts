@@ -4,6 +4,7 @@
 // database with every migration applied. The same guards are exercised as the
 // production logins in tests/fleet-connector-postgres.test.ts.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
@@ -15,15 +16,17 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, fleetGatewayClientAddressV1,
-  fleetGatewayClientNetworkV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetGatewayAdmissionV1 } from "../src/fleet/v1";
+  fleetGatewayClientNetworkV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetGatewayAdmissionV1,
+  type FleetOperationsModeV1 } from "../src/fleet/v1";
 import { captureFleetGatewayConfigurationV1, FLEET_GATEWAY_CONFIGURATION_V1,
-  FLEET_GATEWAY_SERVER_OPTIONS_V1, fleetGatewayAdmissionFromConfigurationV1,
+  FLEET_GATEWAY_SERVER_OPTIONS_V1, createFleetGatewayStoreFromConfigurationV1, fleetGatewayAdmissionFromConfigurationV1,
   prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
 // The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
+import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1 } from "../src/fleet/v1/connector-release";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 const CF_PROXY = Object.freeze({ trustedProxyAddresses: ["127.0.0.1"], trustedClientHeader: "cf-connecting-ip" as const });
@@ -148,6 +151,41 @@ test("gateway protected configuration defaults to no proxy trust and validates e
   lease.completeAuthentication(null);
 });
 
+test("gateway operations mode reports every decision and fails closed when its provider is absent or fails", async () => {
+  const database = {} as DatabaseClient;
+  for (const mode of ["running", "paused", "draining", "stopped"] as const) {
+    const store = new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT, operationsMode: async () => mode });
+    assert.equal(await store.operationsMode(), mode);
+  }
+  assert.equal(await new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT }).operationsMode(), "unknown");
+  const failed = new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT,
+    operationsMode: async () => { throw new Error("reader failed"); } });
+  assert.equal(await failed.operationsMode(), "unknown");
+  const invalid = new FleetGatewayStoreV1(database, { tenantId: FLEET_TENANT,
+    operationsMode: async () => "unexpected" as FleetOperationsModeV1 });
+  assert.equal(await invalid.operationsMode(), "unknown");
+});
+
+test("run-fleet-gateway composes the authenticated operations-mode reader instead of a silent default", async () => {
+  const queries: Array<{ statement: string; params: unknown[] | undefined }> = [];
+  const database = { query: async (statement: string, params?: unknown[]) => {
+    queries.push({ statement, params }); return { rows: [] };
+  } } as unknown as DatabaseClient;
+  const store = createFleetGatewayStoreFromConfigurationV1(database, { tenantId: FLEET_TENANT,
+    workIntake: { database: {} as never, integrityKey: Buffer.alloc(32, 7).toString("base64url") } });
+  assert.equal(await store.operationsMode(), "running");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0]!.statement, /FROM installation_operations_mode_revisions/u);
+  assert.deepEqual(queries[0]!.params, [FLEET_TENANT]);
+
+  const missingKey = createFleetGatewayStoreFromConfigurationV1(database, { tenantId: FLEET_TENANT });
+  assert.equal(await missingKey.operationsMode(), "unknown");
+  const malformedKey = createFleetGatewayStoreFromConfigurationV1(database, { tenantId: FLEET_TENANT,
+    workIntake: { database: {} as never, integrityKey: Buffer.alloc(31, 7).toString("base64url") } });
+  assert.equal(await malformedKey.operationsMode(), "unknown");
+  assert.equal(queries.length, 1, "a missing key must not fall back to an unauthenticated database read");
+});
+
 test("gateway restart preload includes only active unexpired worker credentials", async t => {
   const f = await fixture(); t.after(() => f.close());
   const active = await joinWorker(f, "Preload active");
@@ -176,12 +214,18 @@ async function fixture(options: { gatewayClock?: () => number; admission?: Fleet
     await raw.exec(await readFile(`db/migrations/${file}`, "utf8"));
   const db: DatabaseClient = adaptPglite(raw);
   await seedFleetTenant((sql, params) => raw.query(sql, params));
-  const gateway = new FleetGatewayStoreV1(db, { tenantId: FLEET_TENANT, ...(options.gatewayClock ? { clock: options.gatewayClock } : {}) });
+  const gateway = new FleetGatewayStoreV1(db, { tenantId: FLEET_TENANT, operationsMode: async () => "running",
+    ...(options.gatewayClock ? { clock: options.gatewayClock } : {}) });
   const owner = new FleetOwnerServiceV1(db, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
     afterDecision: () => gateway.reconcile() });
   const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(db, new Uint8Array(32).fill(3)));
+  const fixtureBundle = Buffer.from("export {};\n");
+  const fixtureManifest = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: "0.3.0", file: "connector-0.3.0.mjs",
+    sha256: createHash("sha256").update(fixtureBundle).digest("hex"), size: fixtureBundle.length,
+    builtFrom: "0".repeat(40) } as const;
   const handler = createFleetGatewayHandlerV1({ store: gateway, proposals,
-    connectorScript: { body: "export {};\n", digest: `sha256:${"0".repeat(64)}` },
+    connectorRelease: { bundle: fixtureBundle, manifest: fixtureManifest,
+      manifestBody: `${JSON.stringify(fixtureManifest, null, 2)}\n` },
     ...(options.admission ? { admission: options.admission } : {}) });
   let reads = 0;
   const server: Server = createServer((request, response) => {
@@ -1070,9 +1114,13 @@ test("the connector refuses insecure servers and loosely protected credential fi
 test("the owner's join command carries only a safe address and the one-time code", async () => {
   const { fleetJoinCommandsV1 } = await import("../src/web/v1/fleet-owner-http");
   const code = `crj_${"a".repeat(43)}`;
-  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code);
-  assert.equal(commands.unix, `curl -fsSL https://control.example.ts.net/fleet/v1/connector.mjs -o control-room-connector.mjs && node control-room-connector.mjs join --server https://control.example.ts.net --code ${code}`);
+  const release = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: "0.3.0", file: "connector-0.3.0.mjs",
+    sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) } as const;
+  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code, release);
+  assert.match(commands.unix, /connector-0\.3\.0\.mjs/u);
+  assert.match(commands.unix, new RegExp(release.sha256, "u"));
+  assert.match(commands.unix, /connector-manifest\.json/u);
   for (const origin of ["https://x.example;rm -rf ~", "https://x.example/$(id)", "file:///etc", "https://user@x.example"])
-    assert.throws(() => fleetJoinCommandsV1(origin, code));
-  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id"));
+    assert.throws(() => fleetJoinCommandsV1(origin, code, release));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id", release));
 });
