@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMacLocalTaskApplicationV1 } from "../src/web/v1/mac-local-task-application";
+import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
+import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
+import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { sha256Digest } from "../src/security";
 import type { ActionInboxItemV1 } from "../src/operator-surfaces/v1";
+import { binding, instant } from "./hermes-native-fixture";
 
 test("Mac-local task composition reuses the canonical operations without starting a queue or worker", async t => {
   const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
@@ -41,6 +45,10 @@ test("Mac-local task composition reuses the canonical operations without startin
   assert.equal(typeof app.operations.assignment?.assign, "function");
   assert.equal(typeof app.operations.approvals?.prepare, "function");
   assert.equal(typeof app.operations.ownerReviews?.record, "function");
+  assert.equal(typeof app.taskService.proposeWithDependenciesInSession, "function",
+    "owner reviews share the ordinary task service needed to create exception follow-ups");
+  assert.strictEqual((app.operations.ownerReviews as unknown as { followUps?: unknown }).followUps, app.taskService,
+    "accepted-with-exceptions must use the app's one ordinary task service, not an unconfigured review port");
   assert.equal(typeof app.operations.ownerVerifications?.record, "function",
     "Mac-local mounts the separately configured human verification operation");
   assert.equal(app.taskReadKeys?.results, tasks.results, "the host must pass the same result reader to the local website");
@@ -109,4 +117,58 @@ test("Mac-local task composition refuses to collapse the web and controller role
     },
   }), /mac_local_task_application_config_invalid/);
   assert.equal(web.closes(), 0, "a rejected configuration does not take ownership of a caller connection");
+});
+
+test("the Mac-local owner route records accepted-with-exceptions, creates follow-ups atomically, and replays", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const origin = "http://127.0.0.1:3210", ownerCode = "mac-local-exception-review-owner-code";
+  const process = createMacLocalWebProcessV1({ origin, workspaceId: f.scope.workspaceId,
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: f.scope.tenantId,
+      provider: f.identity.provider, subject: "test-owner", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
+    database: { client: f.db, close: async () => {} }, taskService: f.tasks, taskReadKeys: f.taskKeys,
+    ownerReviews: f.reviews, clock: () => instant + 6000 });
+  t.after(process.close);
+  const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
+  const signedIn = await process.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
+    origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }),
+  () => new Response("unused"));
+  assert.equal(signedIn.status, 201);
+  const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const draft = { ...f.draft, decision: "accepted_with_exceptions" as const, feedback: "",
+    exceptions: ["Add a timeout retry test", "Document the recovery procedure"] };
+  const path = `/api/v1/projects/${encodeURIComponent(binding.projectId)}/tasks/${encodeURIComponent(binding.jobId)}`
+    + `/results/${encodeURIComponent(f.artifact.artifactId)}/reviews/${encodeURIComponent(f.target.id)}`;
+  const post = () => process.handle(request(path, { method: "POST", headers: { cookie: cookie!, origin,
+    "content-type": "application/json", "idempotency-key": "mac-local-exceptions-review-001" }, body: JSON.stringify(draft) }),
+  () => new Response("unused"));
+
+  const recorded = await post();
+  assert.equal(recorded.status, 201, await recorded.clone().text());
+  const first = await recorded.json() as { replayed: boolean; receipt: { exceptions?: { followUpJobId: string }[] } };
+  assert.equal(first.replayed, false);
+  const followUps = first.receipt.exceptions?.map(exception => exception.followUpJobId) ?? [];
+  assert.equal(followUps.length, 2);
+  assert.equal(new Set(followUps).size, 2);
+  const rows = await f.db.query<{ state: string }>(`SELECT state FROM control_jobs
+    WHERE tenant_id=$1 AND id=ANY($2::text[]) ORDER BY id`, [binding.tenantId, followUps]);
+  assert.deepEqual(rows.rows.map(row => row.state), ["proposed", "proposed"],
+    "the review transaction only materializes non-runnable follow-ups");
+
+  const replay = await post();
+  assert.equal(replay.status, 200, await replay.clone().text());
+  const replayed = await replay.json() as { replayed: boolean; receipt: { exceptions?: { followUpJobId: string }[] } };
+  assert.equal(replayed.replayed, true);
+  assert.deepEqual(replayed.receipt.exceptions?.map(exception => exception.followUpJobId), followUps);
+  const total = await f.db.query<{ count: string }>("SELECT count(*)::text AS count FROM control_jobs WHERE tenant_id=$1", [binding.tenantId]);
+  assert.equal(total.rows[0]?.count, "3", "retrying the review does not create another batch of follow-ups");
+});
+
+test("the Mac-local web process refuses an owner-review composition without its shared task service", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const origin = "http://127.0.0.1:3210";
+  assert.throws(() => createMacLocalWebProcessV1({ origin, workspaceId: f.scope.workspaceId,
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: f.scope.tenantId,
+      provider: f.identity.provider, subject: "test-owner", ownerCodeDigest: sha256Digest({ ownerCode: "a sufficiently long owner code" }), sessionSeconds: 900 },
+    database: { client: f.db, close: async () => {} }, taskReadKeys: f.taskKeys, ownerReviews: f.reviews,
+    clock: () => instant + 6000 }), /mac_local_web_process_config_invalid/);
 });

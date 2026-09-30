@@ -389,7 +389,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!,
-      ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
+      ideaIntegrityKey: options.ideaProjects?.integrityKey, followUps: tasks }, clock) : undefined;
   const ownerVerifications = options.tasks?.manualVerificationScenarios ? new WebTaskVerificationService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.reviews!,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey,

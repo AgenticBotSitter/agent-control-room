@@ -52,6 +52,9 @@ export interface MacLocalWebProcessOptionsV1 {
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
   database: { client: DatabaseClient; close: () => Promise<void> };
+  /** The existing task service from the Mac task application. This keeps
+   * owner-review follow-up creation and browser task routes on one service. */
+  taskService?: WebTaskService;
   /** Existing canonical task operations, supplied by the host composition.
    * The local wrapper owns no planner, queue, review store, or worker. */
   ownerReviews?: WebTaskReviewService;
@@ -123,6 +126,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port || origin.origin !== options.origin
     || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
     throw new Error("mac_local_web_process_config_invalid");
+  // An owner review that can accept exceptions must use the task application's
+  // same in-session proposal service. Refuse a partial composition instead of
+  // mounting a review that succeeds for ordinary accepts but cannot follow up.
+  if (options.ownerReviews && !options.taskService) throw new Error("mac_local_web_process_config_invalid");
   const clock = options.clock ?? Date.now;
   const allowedOrigins = new Set([options.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : []),
     ...(profile.remoteOrigins ?? [])]);
@@ -137,7 +144,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const projects = new WebProjectService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined, productConfiguration,
     options.taskReadKeys?.harnessIntegrityKey);
-  const tasks = new WebTaskService(options.database.client,
+  const tasks = options.taskService ?? new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
   const projectActivity = new ProjectActivityServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.projectEvents, clock);
