@@ -24,8 +24,21 @@ DO $$ BEGIN
   -- them for the owner's project view, so both grants are installed by the role
   -- files and revoked by db/down/0210_result_upload_publication.sql and
   -- db/down/0211_job_artifact_inputs.sql, which is where 0209's tables first
-  -- appear in those role files. Nothing is granted here to revoke, and saying
-  -- so is the honest state of the downgrade.
+  -- appear in those role files.
+  --
+  -- The CATALOG SELECT is the exception, and it belongs to this file rather than
+  -- to 0211's, because it exists for 0209 and only for 0209. 0209's reservation
+  -- guard is SECURITY INVOKER and reads control_result_file_sets and
+  -- control_result_files to pin an upload to the owner's approved row, so 0209
+  -- is the migration that makes those two privileges load-bearing. 0210's guards
+  -- are the same shape but its tables are its own, and 0211 has no catalog
+  -- guard at all - its bindings are derived from the rows a caller supplies.
+  -- Revoking it here is what returns the database to the state 0208 left, and the
+  -- downgrade test checks exactly that.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') THEN
+    EXECUTE 'REVOKE SELECT ON control_result_file_sets FROM control_room_fleet_gateway';
+    EXECUTE 'REVOKE SELECT ON control_result_files FROM control_room_fleet_gateway';
+  END IF;
 END $$;
 DROP TRIGGER control_result_upload_chunks_no_truncate ON control_result_upload_chunks;
 DROP TRIGGER control_result_upload_chunks_no_delete ON control_result_upload_chunks;

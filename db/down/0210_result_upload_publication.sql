@@ -49,4 +49,10 @@ DROP FUNCTION guard_result_file_upload_stored();
 DROP FUNCTION guard_result_file_producer_state();
 DROP FUNCTION enforce_result_set_published();
 DROP FUNCTION guard_result_publication_insert();
+-- The publication's UPDATE guard, which is what makes a receipt immutable once
+-- written. The downgrade test caught this one missing: the function survived
+-- every downgrade, so a later re-upgrade of 0210 would have failed on
+-- `guard_result_publication_update` already existing, and a Mac that rolled
+-- back and came forward again would have hit it on the first retry.
+DROP FUNCTION guard_result_publication_update();
 COMMIT;

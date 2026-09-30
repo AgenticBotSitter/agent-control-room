@@ -26,13 +26,21 @@ DO $$ BEGIN
     -- chunks, finalise, and read the declared outputs and bindings a claim needs.
     -- It holds NO INSERT on the declarations or the bindings, so a machine can
     -- neither write a plan nor bind a file to itself.
+    -- Exactly the tuple db/roles/fleet_gateway_roles.sql grants: SELECT and
+    -- INSERT on both upload tables. Revoking less would leave the gateway
+    -- writing sessions for a migration that no longer exists; the downgrade
+    -- test compares the whole privilege set before and after, so a partial
+    -- revoke shows up there rather than in a later migration's failure.
     EXECUTE 'REVOKE SELECT, INSERT ON control_result_upload_sessions FROM control_room_fleet_gateway';
     EXECUTE 'REVOKE SELECT, INSERT ON control_result_upload_chunks FROM control_room_fleet_gateway';
-    -- The catalog SELECT 0209's reservation guard needs. It is granted by the
-    -- same role file for the same three migrations, so it is revoked here with
-    -- them and not by 0209's down file, which owns the schema only.
-    EXECUTE 'REVOKE SELECT ON control_result_file_sets FROM control_room_fleet_gateway';
-    EXECUTE 'REVOKE SELECT ON control_result_files FROM control_room_fleet_gateway';
+    -- The catalog SELECT that 0209's SECURITY INVOKER reservation guard needs
+    -- is NOT revoked here. It belongs to db/down/0209_result_upload_sessions.sql,
+    -- which is the migration that makes it load-bearing; a down file revokes
+    -- what its own up file granted, and 0211 confers no catalog privilege. The
+    -- downgrade test is what proved this: with the revoke here, the gateway lost
+    -- a privilege part 1's 0206-0208 role grants still relied on while 0209 was
+    -- applied, which is the one case where revoking "the obvious" grant breaks a
+    -- working installation.
     EXECUTE 'REVOKE SELECT ON control_task_declared_outputs FROM control_room_fleet_gateway';
     EXECUTE 'REVOKE SELECT ON control_task_declared_inputs FROM control_room_fleet_gateway';
     EXECUTE 'REVOKE SELECT ON control_job_artifact_inputs FROM control_room_fleet_gateway';
