@@ -288,6 +288,24 @@ test("fleet connector end to end and least privilege, as the production logins",
         "(SELECT lease_id FROM fleet_claims WHERE tenant_id=$1 AND claim_id=$2)", [FLEET_TENANT, revokedClaim.claimId]);
       assert.equal(revokedLease.rows[0].state, "revoked",
         "the production fleet login released the in-flight lease at revocation");
+      // Time then passes, so the revoked lease is BOTH revoked and elapsed --
+      // the case a naive expiry sweep would mistake for a stall. Only the
+      // lease's active-state guard stands between the two, so this is the
+      // assertion that proves the exclusion rather than the revocation alone.
+      await expireClaim(revokedClaim.claimId);
+      // Revocation is a withdrawal, not a failure: the attempt is cancelled and
+      // the job is orphaned, so the owner's own flows pick the work back up
+      // rather than the supervisor requeueing it as a fresh attempt.
+      const revokedAttempt = await direct("web", "SELECT state, payload->>'safeFailureCode' AS reason FROM control_attempts WHERE id=" +
+        "(SELECT attempt_id FROM fleet_claims WHERE tenant_id=$1 AND claim_id=$2)", [FLEET_TENANT, revokedClaim.claimId]);
+      assert.deepEqual(revokedAttempt.rows[0], { state: "cancelled", reason: "worker_revoked" });
+      const revokedJob = await direct("web", "SELECT state FROM control_jobs WHERE id=$1", [revokedTask.jobId]);
+      assert.equal(revokedJob.rows[0].state, "orphaned", "the job is not marked done and not requeued");
+      // The derived ownership scope is released, so a later claim in that
+      // project is not blocked by a lease that no longer exists.
+      const scopeRows = await direct("web", "SELECT count(*)::int AS count FROM control_assignment_lease_scopes WHERE lease_id=" +
+        "(SELECT lease_id FROM fleet_claims WHERE tenant_id=$1 AND claim_id=$2)", [FLEET_TENANT, revokedClaim.claimId]);
+      assert.equal(scopeRows.rows[0].count, 0, "the revoked lease releases its derived ownership scope");
       // The supervisor is the sole expiry owner and must find nothing to sweep:
       // a deliberate revocation is not a lapse, so no Needs-you item is raised.
       assert.equal((await supervisor.reconcileStalled()).length, 0);

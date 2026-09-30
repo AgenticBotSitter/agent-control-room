@@ -1,6 +1,6 @@
 import { appendAuditWith } from "../../audit/audit-store";
 import { CanonicalStore } from "../../persistence/canonical-store";
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateIsAnyV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema, requestRecordSchema, workflowRecordSchema,
   type JobRecord } from "../../domain/v1";
 import { sha256Digest } from "../../security";
@@ -228,7 +228,7 @@ export class FleetGatewayStoreV1 {
           expires_at,source_code_id) VALUES($1,$2,$3,$4,'active',$5,$6,$7)`,
         [this.#tenantId, credentialId, row.worker_id, credentialDigest, now, expiresAt, row.id]);
       } catch (error) {
-        if ((error as { code?: string }).code === "23505") return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["23505"])) return fleetFail("conflict");
         throw error;
       }
       await this.#presence(tx, row.worker_id, connectorVersion, platform, now);
@@ -320,7 +320,7 @@ export class FleetGatewayStoreV1 {
           expires_at,rotated_from_credential_id) VALUES($1,$2,$3,$4,'active',$5,$6,$7)`,
         [this.#tenantId, credentialId, principal.workerId, digest, now, expiresAt, current.credential_id]);
       } catch (error) {
-        if ((error as { code?: string }).code === "23505") return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["23505"])) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-rotate:${credentialId.slice(17)}`, tenantId: this.#tenantId,
@@ -418,7 +418,7 @@ export class FleetGatewayStoreV1 {
           idempotencyKey, now]);
       } catch (error) {
         // The database guard refuses revoked, out-of-scope, over-capacity and doubly-leased claims.
-        if (["P0001", "23505", "23503"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["P0001", "23505", "23503"])) return fleetFail("conflict");
         throw error;
       }
       const claimed = await canonical.claimReadyTaskJob({ tenantId: this.#tenantId, jobId: job.id,
@@ -436,7 +436,7 @@ export class FleetGatewayStoreV1 {
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.#tenantId, claimed.lease.id, offer.project_id, job.id,
           claimed.attempt.id, principal.nodeId, scope.scope_kind, scope.path_fold]);
       } catch (error) {
-        if (["23P01", "23514"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        if (databaseSqlStateIsAnyV1(error, ["23P01", "23514"])) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-claim:${suffix}`, tenantId: this.#tenantId, projectId: offer.project_id,
@@ -499,7 +499,7 @@ export class FleetGatewayStoreV1 {
         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [this.#tenantId, eventId, claim.claim_id, principal.workerId, kind, message,
         idempotencyKey, now]);
     } catch (error) {
-      if ((error as { code?: string }).code === "P0001") return fleetFail("expired");
+      if (databaseSqlStateIsAnyV1(error, ["P0001"])) return fleetFail("expired");
       throw error;
     }
     return { eventId, replayed: false };
@@ -620,7 +620,7 @@ export class FleetGatewayStoreV1 {
         [this.#tenantId, resultId, index + 1, file.name, file.mediaType, file.content.byteLength, bytesSha256V1(file.content),
           Buffer.from(file.content)]);
       } catch (error) {
-        if ((error as { code?: string }).code === "P0001") return fleetFail("expired");
+        if (databaseSqlStateIsAnyV1(error, ["P0001"])) return fleetFail("expired");
         throw error;
       }
       const base = { key: claim.claim_id, occurredAt: now, actor: workerActor(principal), metadata: { resultId } };
