@@ -190,7 +190,9 @@ test("timeout guard kills the complete process group", async t => {
       import { writeFileSync } from "node:fs";
       import test from "node:test";
       test("hang", async () => {
-        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        // No environment, so the run-id reaper cannot see it: only the
+        // process-group kill stops this one.
+        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: {} });
         writeFileSync("grandchild.pid", String(child.pid));
         await new Promise(() => {});
       });

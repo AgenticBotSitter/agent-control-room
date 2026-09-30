@@ -164,7 +164,7 @@
     "file": "scripts/test-runner/service.mjs",
     "find": "    response.once(\"close\", onResponseClose);\n",
     "replace": "",
-    "test": "node --test --test-name-pattern='S8\\)' tests/test-runner-service.test.mjs",
-    "why": "a client disconnect must be noticed from the start of the request"
+    "test": "node --test --test-name-pattern='client disconnects before it finishes' tests/test-runner-service.test.mjs",
+    "why": "a client that disconnects mid-run must abort the run and free its slot"
   }
 ]
