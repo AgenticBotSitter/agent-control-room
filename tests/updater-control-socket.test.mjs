@@ -20,6 +20,8 @@ test("control.sock is owner-only, bounded, validates input, and survives a dropp
   const path = await server.start(); t.after(() => server.stop());
   const entry = await lstat(path); assert.ok(entry.isSocket()); assert.equal(entry.mode & 0o777, 0o600);
   assert.equal(await sendControlRequestV1(path, requestV1("ok")), "request-ok");
+  assert.equal(await sendControlRequestV1(path, { ...requestV1("passkey"), verb: "passkey-list" }),
+    "request-passkey", "the narrow passkey verbs use the same root-only socket");
   await assert.rejects(sendControlRequestV1(path, { ...requestV1("bad"), verb: "install" }),
     /updater_request_refused/u, "an R14 sudo-only verb cannot cross the socket");
 

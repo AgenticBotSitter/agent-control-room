@@ -126,6 +126,13 @@ export interface MacLocalWebProcessOptionsV1 {
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
+  /** Item 10a web seam. The release process may insert the bounded raw row but
+   * never verifies or activates a credential; root's updater owns that step. */
+  passkeyRegistration?: Readonly<{
+    options(input: { ownerSessionDigest: string; registrationSecret: string }): Promise<unknown>;
+    insert(input: { ownerSessionDigest: string; registrationSecret: string; comparisonCode: string;
+      response: unknown; authorizationAssertion: unknown | null }): Promise<unknown>;
+  }>;
 }
 
 /** Existing controller operations supplied by the host.  This is deliberately
@@ -394,6 +401,30 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       const identity = sessions.verify(request, clock());
+      if (url.pathname === "/api/v1/passkeys/registration/options"
+          || url.pathname === "/api/v1/passkeys/registration") {
+        if (!options.passkeyRegistration || request.method !== "POST" || url.search || !request.body
+          || request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json")
+          throw new WebAccessError(options.passkeyRegistration ? "invalid_request" : "not_found");
+        const body = await readBoundedJson(request.body, 20_000);
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.getPrototypeOf(body) !== Object.prototype)
+          throw new WebAccessError("invalid_request");
+        const value = body as Record<string, unknown>, registrationSecret = value.registrationSecret;
+        if (typeof registrationSecret !== "string" || !/^[A-Za-z0-9_-]{43}$/u.test(registrationSecret))
+          throw new WebAccessError("invalid_request");
+        if (url.pathname.endsWith("/options")) {
+          if (Object.keys(value).sort().join(",") !== "registrationSecret") throw new WebAccessError("invalid_request");
+          return Response.json(await options.passkeyRegistration.options({ ownerSessionDigest: identity.tokenDigest,
+            registrationSecret }), { headers: privateResponseHeaders });
+        }
+        if (Object.keys(value).sort().join(",") !== "authorizationAssertion,comparisonCode,registrationSecret,response"
+            || typeof value.comparisonCode !== "string" || !/^[0-9A-Z]{6}$/u.test(value.comparisonCode))
+          throw new WebAccessError("invalid_request");
+        const inserted = await options.passkeyRegistration.insert({ ownerSessionDigest: identity.tokenDigest,
+          registrationSecret, comparisonCode: value.comparisonCode, response: value.response,
+          authorizationAssertion: value.authorizationAssertion ?? null });
+        return Response.json(inserted, { status: 201, headers: privateResponseHeaders });
+      }
       if (url.pathname === "/api/v1/product-configuration") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         await projects.authorizeCatalog(identity);

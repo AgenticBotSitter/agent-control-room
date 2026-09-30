@@ -60,6 +60,35 @@ test("the CLI keeps status unprivileged, sudo verbs root-only, and confirm bound
   assert.equal(sent.verb, "backup-now");
   await assert.rejects(runUpdaterCliV1(["owner-code"], { root, getuid: () => 0 }),
     /updater_cli_port_not_implemented/u, "later sudo verbs are explicit typed ports, never socket aliases");
+  const passkeyOutput = [], passkeyAuthority = {
+    async beginRegistration() { return { registrationSecret: "A".repeat(43),
+      config: { expectedOrigin: "https://control-room.example.test" } }; },
+    async listPasskeys() { return [{ number: 1, coolingOffUntil: null, revokedAt: null }]; },
+    async revokePasskey(number) { return { number, credentialId: "unused" }; },
+    async completeRegistration(input) { assert.deepEqual(input, { registrationSecret: "A".repeat(43),
+      typedCode: "ABC234" }); return { coolingOffUntil: null }; },
+  };
+  assert.equal(await runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0, passkeyAuthority,
+    readComparisonCode: async () => "ABC234", stdout: text => passkeyOutput.push(text) }), 0);
+  assert.match(passkeyOutput.join(""), /\/setup#reg=/u);
+  assert.match(passkeyOutput.join(""), /Passkey added and active/u);
+  assert.equal(await runUpdaterCliV1(["passkey", "list"], { root, getuid: () => 0, passkeyAuthority,
+    stdout: () => {} }), 0);
+  assert.equal(await runUpdaterCliV1(["passkey", "revoke", "1"], { root, getuid: () => 0, passkeyAuthority,
+    stdout: () => {} }), 0);
+  const controlVerbs = [], send = async (_path, request) => {
+    controlVerbs.push(request.verb);
+    if (request.verb === "passkey-add-begin") return { registrationSecret: "B".repeat(43),
+      expectedOrigin: "https://control-room.example.test" };
+    if (request.verb === "passkey-add-complete") return { credentialId: "unused", coolingOffUntil: null };
+    if (request.verb === "passkey-list") return [];
+    return { number: 1, credentialId: "unused" };
+  };
+  assert.equal(await runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0, send,
+    readComparisonCode: async () => "ABC234", stdout: () => {} }), 0);
+  assert.equal(await runUpdaterCliV1(["passkey", "list"], { root, getuid: () => 0, send, stdout: () => {} }), 0);
+  assert.equal(await runUpdaterCliV1(["passkey", "revoke", "1"], { root, getuid: () => 0, send, stdout: () => {} }), 0);
+  assert.deepEqual(controlVerbs, ["passkey-add-begin", "passkey-add-complete", "passkey-list", "passkey-revoke"]);
 });
 
 async function bundleV1(root) {

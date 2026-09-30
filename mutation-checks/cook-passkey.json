@@ -1,0 +1,107 @@
+[
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "(object.crossOrigin !== undefined && object.crossOrigin !== false) || object.topOrigin !== undefined",
+    "replace": "false || object.topOrigin !== undefined",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "cross-origin client data must be refused even when the pinned library tolerates a Safari-shaped response without topOrigin"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "exactBase64urlV1(response.attestationObject,\n      { min: 32, max: 8192, code: \"updater_passkey_attestation_refused\" });",
+    "replace": "exactBase64urlV1(response.attestationObject,\n      { min: 32, max: 81920, code: \"updater_passkey_attestation_refused\" });",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "attestation parsing must stop at the item-7 database bound before the CBOR verifier runs"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "supportedAlgorithmIDs: [ES256_V1, EDDSA_V1]",
+    "replace": "supportedAlgorithmIDs: [EDDSA_V1]",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "the wrapper must admit the specified ES256 algorithm instead of drifting to a different verifier policy"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "expectedOrigin: fixed.expectedOrigin, expectedRPID: fixed.rpId, expectedType: \"webauthn.get\"",
+    "replace": "expectedOrigin: parseClientDataV1(exact.response.clientDataJSON, \"webauthn.get\").origin, expectedRPID: fixed.rpId, expectedType: \"webauthn.get\"",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "assertion origin is fixed root configuration and is never learned from attacker-supplied client data"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "|| credential.counter > 0\n        && result.authenticationInfo.newCounter <= credential.counter",
+    "replace": "|| false",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "the wrapper independently refuses a nonzero signature counter that does not advance"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "registration.status = \"consuming\"; registration.consumedAt = now.toISOString(); await this.#writeLedger(ledger);",
+    "replace": "registration.consumedAt = now.toISOString();",
+    "test": "node --test --test-name-pattern='dropped registration-row read' tests/updater-passkey.test.mjs",
+    "why": "a stopped or failed attempt consumes the registration secret before any parser or database wait"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (!this.store?.registrationRows) throw updaterRefuseV1(\"updater_passkey_store_port_unbound\");\n      if (!['initial', 'add'].includes(mode))",
+    "replace": "if (!['initial', 'add'].includes(mode))",
+    "test": "node --test --test-name-pattern='exactly-one-row' tests/updater-passkey.test.mjs",
+    "why": "the updater refuses before issuing a registration link when the one-row database port is not bound"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (!Array.isArray(rows) || rows.length !== 1) throw updaterRefuseV1(\"updater_registration_row_count_refused\");",
+    "replace": "if (!Array.isArray(rows) || rows.length === 0) throw updaterRefuseV1(\"updater_registration_row_count_refused\");",
+    "test": "node --test --test-name-pattern='exactly-one-row' tests/updater-passkey.test.mjs",
+    "why": "a raced registration with two rows must invalidate the secret rather than select either credential"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "row.comparisonCode !== typedCode\n            || comparisonCodeV1(row.credentialId) !== typedCode",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='exactly-one-row' tests/updater-passkey.test.mjs",
+    "why": "the installer must require the owner to type the exact six-character credential comparison code"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "(!passkey.coolingOffUntil || Date.parse(passkey.coolingOffUntil) <= nowMs)",
+    "replace": "true",
+    "test": "node --test --test-name-pattern='keep an unauthorised second passkey inactive' tests/updater-passkey.test.mjs",
+    "why": "an added passkey without old-passkey authorization cannot approve anything during its 24-hour cooling-off"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "plan?.expectedOrigin !== config.expectedOrigin) throw updaterRefuseV1(\"updater_plan_binding_refused\");",
+    "replace": "false) throw updaterRefuseV1(\"updater_plan_binding_refused\");",
+    "test": "node --test --test-name-pattern='keep an unauthorised second passkey inactive' tests/updater-passkey.test.mjs",
+    "why": "a plan is accepted only when its installation, rpId and expected origin equal root configuration"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "await this.#burnNonce(plan.nonce, planDigest);",
+    "replace": "// mutation skips the single-use nonce burn",
+    "test": "node --test --test-name-pattern='keep an unauthorised second passkey inactive' tests/updater-passkey.test.mjs",
+    "why": "the plan nonce is durably burned before an approval can be replayed"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (result.firstInHour === true) {",
+    "replace": "if (true) {",
+    "test": "node --test --test-name-pattern='10,000 refusal rows' tests/updater-passkey.test.mjs",
+    "why": "junk approvals produce only one journal entry and one push for a plan in an hour"
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (window.location.hash.length > 1024) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='setup source keeps fragments' tests/setup-passkey-page.test.tsx",
+    "why": "an attacker-controlled setup fragment is bounded before URLSearchParams parses it"
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "const fragment = window.location.hash.slice(1);\n    history.replaceState(null, \"\", `${window.location.pathname}${window.location.search}`);",
+    "replace": "const fragment = window.location.hash.slice(1);\n    // mutation leaves the registration secret in synchronized browser history",
+    "test": "node --import tsx --test --test-name-pattern='strips fragment authority' tests/setup-passkey-page.test.tsx",
+    "why": "the setup page removes owner-code and registration authority from browser history before its first request"
+  }
+]
