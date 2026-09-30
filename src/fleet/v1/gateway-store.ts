@@ -62,9 +62,8 @@ export type FleetOperationsModeV1 = (typeof FLEET_OPERATIONS_MODES_V1)[number];
 
 export type FleetGatewayStoreOptionsV1 = Readonly<{ tenantId: string; clock?: () => number;
   leaseMs?: number; connectorVersionLimit?: number;
-  /** Reads the owner's current Pause / Drain / Stop decision. Without a port
-   * the installation has no such switch and is running. A port that fails or
-   * answers anything unexpected refuses new claims rather than admitting them. */
+  /** Reads the owner's current Pause / Drain / Stop decision. A missing port,
+   * a failed read or an unexpected answer is unknown and refuses new claims. */
   operationsMode?: () => Promise<FleetOperationsModeV1>;
   /** Presentation-only task timeline. Without it, a hand-off is still recorded
    * in the audit log and worker events, but not shown on the Activity page. */
@@ -95,7 +94,7 @@ export class FleetGatewayStoreV1 {
 
   /** The mode connectors see. "unknown" (an unreadable switch) never admits work. */
   async operationsMode(): Promise<FleetOperationsModeV1 | "unknown"> {
-    if (!this.#operationsMode) return "running";
+    if (!this.#operationsMode) return "unknown";
     try {
       const mode = await this.#operationsMode();
       return (FLEET_OPERATIONS_MODES_V1 as readonly unknown[]).includes(mode) ? mode : "unknown";

@@ -12,20 +12,25 @@ import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { DatabaseClient } from "../src/persistence/database";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "../src/web/v1/private-postgres";
 import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, FleetGatewayStoreV1,
-  type FleetGatewayTrustedClientHeaderV1 } from "../src/fleet/v1";
+  type FleetGatewayStoreOptionsV1, type FleetGatewayTrustedClientHeaderV1 } from "../src/fleet/v1";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { ProjectEventStoreV1 } from "../src/project-events/v1/store";
 import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycle";
 import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
+import { readInstallationOperationsModeV1 } from "../src/web/v1/operations-mode-service";
 
 export const FLEET_GATEWAY_CONFIGURATION_V1 = "control-room.fleet-gateway/v1";
 export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 15_000, headersTimeout: 5_000,
   connectionsCheckingInterval: 1_000, maxHeaderSize: 8192, highWaterMark: 8 * 1024 });
-type Configuration = Readonly<{ schema: typeof FLEET_GATEWAY_CONFIGURATION_V1; tenantId: string; port: number;
-  database: PrivatePostgresConfiguration; workIntake?: Readonly<{ database: PrivatePostgresConfiguration; integrityKey: string }>;
+export type FleetGatewayConfigurationV1 = Readonly<{ schema: typeof FLEET_GATEWAY_CONFIGURATION_V1; tenantId: string; port: number;
+  database: PrivatePostgresConfiguration;
+  /** This installation key authenticates both work-intake records and the
+   * operations-mode journal. Without it the gateway reports mode "unknown". */
+  workIntake?: Readonly<{ database: PrivatePostgresConfiguration; integrityKey: string }>;
   /** The same installation-wide harness integrity key the private web process
    * holds. Without it, hand-off notes still record in the audit log and worker
    * events, but never reach the owner's task timeline. */
@@ -33,27 +38,27 @@ type Configuration = Readonly<{ schema: typeof FLEET_GATEWAY_CONFIGURATION_V1; t
   trustedProxyAddresses: readonly string[]; trustedClientHeader: FleetGatewayTrustedClientHeaderV1 }>;
 
 export function fleetGatewayAdmissionFromConfigurationV1(config:
-  Pick<Configuration, "trustedProxyAddresses" | "trustedClientHeader">) {
+  Pick<FleetGatewayConfigurationV1, "trustedProxyAddresses" | "trustedClientHeader">) {
   return createFleetGatewayAdmissionV1({ trustedClientHeader: config.trustedClientHeader,
     trustedProxyAddresses: config.trustedProxyAddresses });
 }
 
 export async function prepareFleetGatewayAdmissionV1(config:
-  Pick<Configuration, "trustedProxyAddresses" | "trustedClientHeader">, store: FleetGatewayStoreV1) {
+  Pick<FleetGatewayConfigurationV1, "trustedProxyAddresses" | "trustedClientHeader">, store: FleetGatewayStoreV1) {
   const admission = fleetGatewayAdmissionFromConfigurationV1(config);
   for (const credential of await store.activeAdmissionCredentials())
     admission.registerCredential(credential.workerId, credential.credentialDigest);
   return admission;
 }
 
-export function captureFleetGatewayConfigurationV1(value: unknown): Configuration {
+export function captureFleetGatewayConfigurationV1(value: unknown): FleetGatewayConfigurationV1 {
   const input = value as Record<string, unknown>;
   if (!input || typeof input !== "object" || input.schema !== FLEET_GATEWAY_CONFIGURATION_V1
     || typeof input.tenantId !== "string" || !Number.isSafeInteger(input.port) || (input.port as number) < 1024
     || (input.port as number) > 65535) throw new Error("fleet_gateway_configuration_refused");
   const database = validatePrivatePostgresConfiguration(input.database as PrivatePostgresConfiguration);
   if (database.username !== "control_room_fleet") throw new Error("fleet_gateway_configuration_refused");
-  let workIntake: Configuration["workIntake"];
+  let workIntake: FleetGatewayConfigurationV1["workIntake"];
   if (input.workIntake !== undefined) {
     const intake = input.workIntake as Record<string, unknown>;
     const intakeDatabase = validatePrivatePostgresConfiguration(intake.database as PrivatePostgresConfiguration);
@@ -84,6 +89,22 @@ export function captureFleetGatewayConfigurationV1(value: unknown): Configuratio
     trustedProxyAddresses: Object.freeze([...(trustedProxyAddresses as string[])]) });
 }
 
+/** Composes the standalone gateway with the same authenticated operations-mode
+ * journal reader as the Mac host. A configuration without the installation
+ * key still gets a provider, but that provider fails closed as "unknown". */
+export function createFleetGatewayStoreFromConfigurationV1(database: DatabaseClient,
+  config: Pick<FleetGatewayConfigurationV1, "tenantId" | "workIntake">,
+  projectEvents?: FleetGatewayStoreOptionsV1["projectEvents"]) {
+  const integrityKey = config.workIntake
+    ? new Uint8Array(Buffer.from(config.workIntake.integrityKey, "base64url")) : undefined;
+  const operationsMode = async () => {
+    if (!integrityKey) throw new Error("operations_mode_unavailable");
+    return (await readInstallationOperationsModeV1(database, config.tenantId, integrityKey)).mode;
+  };
+  return new FleetGatewayStoreV1(database, { tenantId: config.tenantId, operationsMode,
+    ...(projectEvents ? { projectEvents } : {}) });
+}
+
 async function main(path: string | undefined) {
   if (!path) throw new Error("Usage: pnpm fleet:gateway <protected-config.json>");
   const info = await stat(path);
@@ -94,8 +115,7 @@ async function main(path: string | undefined) {
   const projectEvents = config.harnessIntegrityKey ? new TaskProjectEventWriterV1(new ProjectEventStoreV1(
     fleetDatabase.client, deriveProjectEventIntegrityKeyV1(Buffer.from(config.harnessIntegrityKey, "base64url")),
     () => new Date().toISOString())) : undefined;
-  const store = new FleetGatewayStoreV1(fleetDatabase.client, { tenantId: config.tenantId,
-    ...(projectEvents ? { projectEvents } : {}) });
+  const store = createFleetGatewayStoreFromConfigurationV1(fleetDatabase.client, config, projectEvents);
   const proposals = intakeDatabase && config.workIntake ? new WorkBatchServiceV1(new WorkBatchStoreV1(intakeDatabase.client,
     new Uint8Array(Buffer.from(config.workIntake.integrityKey, "base64url")))) : undefined;
   const script = await readFile(join(dirname(fileURLToPath(import.meta.url)), "fleet", "connector.mjs"), "utf8");
