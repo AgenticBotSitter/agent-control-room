@@ -71,8 +71,8 @@
   },
   {
     "file": "src/updater/v1/runner.mjs",
-    "find": "if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };",
-    "replace": "if (false) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "find": "async runOnce() {\n    if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "replace": "async runOnce() {\n    if (false) return { status: \"busy\", message: \"Another updater call is active.\" };",
     "test": "node --test --test-name-pattern='named H2 scenarios' tests/updater-rehearsal.test.mjs",
     "why": "P6 must send twenty calls through one runner and detect removal of its in-process exclusion guard"
   },
