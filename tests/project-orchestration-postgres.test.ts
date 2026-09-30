@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { IntakeCoordinatorV1, PostgresIntakeCompletionLookupV1, PostgresIntakeNeedsYouStoreV1,
   PostgresIntakeOwnerRetryStoreV1, PostgresIntakePlannerFailureStoreV1, PostgresIntakeSuggestionStoreV1,
   intakeProjectScopeV1, WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
+import { workBatchReceiptSchemaV1 as workBatchReceiptShape } from "../src/work-intake/v1/schemas";
 import { createProjectOrchestrationServiceV1 } from "../src/web/v1/project-orchestration-composition";
 import { PostgresProjectOrchestrationAccessV1, PostgresProjectOrchestrationBatchRevisionsV1,
   PostgresProjectOrchestrationStoreV1 } from "../src/web/v1/project-orchestration-postgres-store";
@@ -1008,13 +1009,30 @@ test("the completion lookup answers only a COMPLETED request, and never a differ
       const requestKey = "completion-lookup-0001";
       const lookup = new PostgresIntakeCompletionLookupV1(db);
 
-      // A 'processing' row: in flight, never finished.
-      await intake.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,
-        request_digest,status) VALUES($1,$2,$3,$4,'processing')`,
-      [scope.tenantId, scopeName, requestKey, sha256Digest({ inFlight: true })]);
+      // A 'processing' row: in flight, never finished. It carries a result on
+      // purpose, because a 'processing' row with a NULL result is refused by the
+      // adapter's own `!receipt.success` check and so proves nothing about the
+      // status predicate. This is the shape the predicate exists for: a receipt
+      // written, the transaction not yet committed, the process gone.
+      // Seeded as the SCHEMA OWNER, deliberately. 0093's own guard refuses a
+      // 'processing' row that already carries a result, so the only way to produce
+      // the exact shape the status predicate exists for -- a receipt written, the
+      // transaction not committed, the process gone -- is to write it as the owner,
+      // which is what that failure state actually looks like on disk.
+      const inFlight = { schema: "control-room.work-batch-receipt/v1", batchId: "batch:completion-0001",
+        projectId: scope.projectId, state: "proposed", proposalDigest: `sha256:${"a".repeat(64)}`,
+        revision: 1, replayed: false, startsWork: false, grantsExecutionAuthority: false };
+      await admin.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,
+        request_digest,status,result) VALUES($1,$2,$3,$4,'processing',$5::jsonb)`,
+      [scope.tenantId, scopeName, requestKey, sha256Digest({ inFlight: true }), JSON.stringify(inFlight)]);
+      // The receipt is a VALID one -- it parses and names this project -- so
+      // nothing but the status predicate can refuse it. That is what makes the
+      // next assertion the test rather than a restatement of the parse check.
+      assert.ok(workBatchReceiptShape.safeParse(inFlight).success,
+        "precondition: the in-flight row carries a receipt this adapter would otherwise accept");
       assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
         identityId, requestKey }), null,
-      "a 'processing' row is not a completed request, so nothing is answered from it");
+      "a 'processing' row is not a completed request, so nothing is answered from it -- even with a parseable receipt");
       assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
         identityId, requestKey, ownerRequest: "Any description at all." }), null,
       "and a description does not make it completable");
@@ -1046,27 +1064,33 @@ test("the completion lookup answers only a COMPLETED request, and never a differ
         ON CONFLICT DO NOTHING`,
       ["batch:completion-0001", scope.tenantId, scope.projectId, agentId, NOW, JSON.stringify(stored),
         `sha256:${"a".repeat(64)}`, `hmac-sha256:${"0".repeat(64)}`]);
-      await intake.query(`UPDATE control_idempotency SET status='completed', result=$4::jsonb, completed_at=$5
-        WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3`,
-      [scope.tenantId, scopeName, requestKey, JSON.stringify(value), LATER]);
+      // A SECOND key, seeded directly as 'completed'. 0093's guard only permits the
+      // processing -> completed transition, and only from a row with a NULL result,
+      // so completing the in-flight row above is impossible by design; this is the
+      // same end state written directly, which is what a committed submission looks
+      // like on disk.
+      const doneKey = "completion-lookup-0002";
+      await admin.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,
+        request_digest,status,result,completed_at) VALUES($1,$2,$3,$4,'completed',$5::jsonb,$6)`,
+      [scope.tenantId, scopeName, doneKey, sha256Digest({ done: true }), JSON.stringify(value), LATER]);
       const replayed = await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
-        identityId, requestKey });
+        identityId, requestKey: doneKey });
       assert.equal(replayed?.status, "submitted", "a completed request is answered from storage");
       assert.equal(replayed?.status === "submitted" ? replayed.submission.batchId : null, "batch:completion-0001");
       // N8: the SAME key, a DIFFERENT description. This used to return the old
       // receipt -- `submitted`, `replayed: true`, no run and no refusal -- so a
       // caller that reused a key for a new job was told that job had been prepared.
       assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
-        identityId, requestKey, ownerRequest: "A completely different description." }), null,
+        identityId, requestKey: doneKey, ownerRequest: "A completely different description." }), null,
       "a completed key does not answer a different description");
       // A receipt for a DIFFERENT project is also not an answer, unchanged by
       // round 3 and asserted so it stays that way.
       assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: "project:elsewhere",
-        identityId, requestKey }), null, "a receipt for another project is not this project's proposal");
+        identityId, requestKey: doneKey }), null, "a receipt for another project is not this project's proposal");
       // And a key under a different identity is a different request entirely,
       // because 0093 scopes the ledger per identity.
       assert.equal(await lookup.completed({ tenantId: scope.tenantId, projectId: scope.projectId,
-        identityId: "identity:somebody-else", requestKey }), null);
+        identityId: "identity:somebody-else", requestKey: doneKey }), null);
     } finally { await intake.end(); await admin.end(); }
   }, { port: PORT + 3, allowedPorts: ALLOWED, boundMs: 180_000 });
 });

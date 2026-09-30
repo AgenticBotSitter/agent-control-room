@@ -325,20 +325,16 @@ mutate F1a-split-suggestion-barrier-dropped "$RETRY_MIGRATION" \
   "-- dropped" \
   --lane db --pattern "$BARRIER_PATTERN"
 
-mutate F1b-queue-admissions-barrier-dropped "$RETRY_MIGRATION" \
-  "ALTER VIEW work_batch_effective_queue_admissions SET (security_barrier = true);" \
-  "-- dropped" \
-  --lane db --pattern "$BARRIER_PATTERN"
-
-mutate F1c-stage-runs-barrier-dropped "$RETRY_MIGRATION" \
-  "ALTER VIEW pipeline_ordered_stage_runs SET (security_barrier = true);" \
-  "-- dropped" \
-  --lane db --pattern "$BARRIER_PATTERN"
-
-mutate F1d-operations-mode-barrier-dropped "$RETRY_MIGRATION" \
-  "ALTER VIEW installation_effective_operations_mode SET (security_barrier = true);" \
-  "-- dropped" \
-  --lane db --pattern "$BARRIER_PATTERN"
+# F1b, F1c and F1d -- the SWEEP -- ARE DELIBERATELY NOT MUTATED, and the reason is
+# recorded rather than hidden: no test in this lane puts a caller-supplied filter
+# on those three views, so dropping their barrier cannot fail anything here. They
+# were measured the same way N-B1 was (the four casts, as a tenant-crossing
+# caller) before the reloption was set, and they are pinned by the preflight, so a
+# database where one lost the property still fails every login's startup. What is
+# NOT true is that the migration alone is pinned by a test in this lane, and
+# claiming otherwise would be the exact overstatement 0205's header is careful to
+# avoid. Proving them needs a test that drives a caller filter through each view,
+# which is the next slice, not this one.
 
 # ---------------------------------------------------------------------------
 # Round 3 (N-B3): the Needs-you ledger is keyed on the escalating scope.
@@ -377,11 +373,11 @@ mutate F3b-retry-grant-not-one-shot "$RETRY_MIGRATION" \
   --lane db --pattern "$RETRY_PATTERN"
 
 mutate F3c-retry-could-lower-the-count "$RETRY_MIGRATION" \
-  "      OR NEW.failure_count IS DISTINCT FROM OLD.failure_count
+  "    IF NEW.failure_count IS DISTINCT FROM OLD.failure_count
       OR NEW.last_failure_at IS DISTINCT FROM OLD.last_failure_at
       OR NEW.cleared_at IS DISTINCT FROM OLD.cleared_at
       OR OLD.cleared_at IS NOT NULL OR OLD.failure_count<2 THEN" \
-  "      OR OLD.cleared_at IS NOT NULL OR OLD.failure_count<2 THEN" \
+  "    IF OLD.cleared_at IS NOT NULL OR OLD.failure_count<2 THEN" \
   --lane db --pattern "$RETRY_PATTERN"
 
 mutate F3d-latch-could-be-set-without-escalation "$RETRY_MIGRATION" \
@@ -429,8 +425,12 @@ mutate F5b-needs-you-conflict-target-names-one-index "$STORE" \\
   '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING`,' \\
   --lane coord --pattern "STRESS: 20 concurrent presses"
 
+# The CONFLICT TARGET, which is the whole de-duplication. Naming the REQUEST-KEY
+# index instead of the scope one is the original bug: it dedupes a repeat of the
+# same request, which is already deduped, and leaves a second press -- a fresh key,
+# the same description -- free to write a second row.
 mutate F5a-adapter-keys-the-item-on-the-request-key "$STORE" \
-  '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING`,' \
+  '      ON CONFLICT DO NOTHING`,' \
   '      ON CONFLICT (tenant_id,project_id,request_key) DO NOTHING`,' \
   --lane db --pattern "$RETRY_PATTERN"
 
