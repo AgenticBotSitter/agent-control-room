@@ -9,7 +9,7 @@
   {
     "file": "db/migrations/0224_supervisor_effect_intent_read.sql",
     "find": "    EXECUTE 'GRANT SELECT ON control_effect_intents TO control_room_task_coordinator';",
-    "replace": "    EXECUTE 'REVOKE SELECT ON control_effect_intents FROM control_room_task_coordinator';",
+    "replace": "    -- MUTATED: the migration's grant is removed",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
     "why": "an installation provisioned before the role file existed converges on the same grant through the migration"
   },
