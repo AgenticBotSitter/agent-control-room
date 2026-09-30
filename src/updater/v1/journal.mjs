@@ -105,13 +105,22 @@ export class FileStepJournalV1 {
     try { text = await readFileNoFollowV1(this.root, relativePath, { maxBytes: CAP_BYTES_V1 + MAX_LINE_BYTES_V1 }); }
     catch (error) { if (missingOk && error?.code === "ENOENT") return { entries: [], tail: GENESIS_MAC_V1, bytes: 0 }; throw error; }
     if (!text.endsWith("\n")) throw journalErrorV1("updater_journal_short");
-    const key = await this.#key(); let previous = GENESIS_MAC_V1; const entries = [];
+    const key = await this.#key(); let previous = GENESIS_MAC_V1; const entries = [], seenOrdinals = new Map();
     for (const line of text.slice(0, -1).split("\n")) {
       if (Buffer.byteLength(line) > MAX_LINE_BYTES_V1) throw journalErrorV1("updater_journal_line_refused");
       let parsed; try { parsed = JSON.parse(line); } catch { throw journalErrorV1("updater_journal_short"); }
       const { entry, prevMac, mac } = entryWithoutMacV1(parsed);
       if (!equalMacV1(prevMac, previous) || !equalMacV1(mac, macV1(key, previous, entry)))
         throw journalErrorV1("updater_journal_mac_refused");
+      if (entry.kind === "intent" || entry.kind === "done") {
+        if (typeof entry.runId !== "string" || !Number.isSafeInteger(entry.ordinal) || entry.ordinal < 1)
+          throw journalErrorV1("updater_journal_ordinal_refused");
+        const ordinalKey = `${entry.runId}\0${entry.ordinal}\0${entry.kind}`;
+        const { at: _at, ...ordinalEntry } = entry, fingerprint = canonicalV1(ordinalEntry);
+        if (seenOrdinals.has(ordinalKey) && seenOrdinals.get(ordinalKey) !== fingerprint)
+          throw journalErrorV1("updater_journal_ordinal_refused");
+        seenOrdinals.set(ordinalKey, fingerprint);
+      }
       entries.push(Object.freeze({ ...entry, prevMac, mac })); previous = mac;
     }
     return { entries: Object.freeze(entries), tail: previous, bytes: Buffer.byteLength(text) };
