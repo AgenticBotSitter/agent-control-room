@@ -9,7 +9,7 @@
   {
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
     "find": "    AND (l.id IS NULL OR (l.state='active' AND l.expires_at>pg_catalog.statement_timestamp()));",
-    "replace": "    AND (l.state='active' AND l.expires_at>pg_catalog.statement_timestamp());",
+    "replace": "    AND (l.id IS NULL OR l.state='active');",
     "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "a lease past its expiry does not occupy a slot, so a crashed machine does not hold its own ceiling open"
   },
