@@ -12,6 +12,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_task_coordinator;
+-- This GRANT is kept as one contiguous block with no comment inside it: the
+-- down-migration lane rewrites role files by exact text match
+-- (tests/postgres-production-lifecycle.test.mjs), and a comment in the middle of
+-- the table list makes the whole statement stop matching.
 GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, control_web_sessions,
   projects, control_manual_project_heads, control_requests, control_workflows, control_jobs,
   control_attempts, control_leases, control_task_execution_plans, control_nodes, control_node_keys,
