@@ -67,19 +67,21 @@ test("connector build is byte-identical and its manifest binds version, size, di
 });
 
 test("standalone bundle runs help and an MCP handshake from a repo-free directory with a fake gateway", async t => {
-  const runRoot = join(sandbox, "empty-machine");
-  await mkdir(runRoot);
+  const runRoot = join(sandbox, "empty-machine"), injectedHome = join(sandbox, "injected-home");
+  await mkdir(runRoot); await mkdir(injectedHome);
   const bundle = join(runRoot, release.manifest.file);
   await copyFile(join(firstRoot, release.manifest.file), bundle);
   const help = await child(process.execPath, [bundle, "--help"], { cwd: runRoot,
-    env: { PATH: process.env.PATH, HOME: join(sandbox, "injected-home"), NODE_ENV: "test" } });
+    env: { PATH: process.env.PATH, HOME: injectedHome, NODE_ENV: "test" } });
   assert.equal(help.code, 0, help.stderr); assert.match(help.stdout, /Control Room worker connector/u);
 
   let requests = 0;
   const gateway: Server = createServer((_request, response) => { requests += 1; response.writeHead(500); response.end(); });
   await new Promise<void>(done => gateway.listen(0, "127.0.0.1", done));
   t.after(() => new Promise<void>(done => gateway.close(() => done())));
-  const config = join(sandbox, "connector.json");
+  const credentialDirectory = join(sandbox, "credentials");
+  await mkdir(credentialDirectory);
+  const config = join(credentialDirectory, "connector.json");
   await writeFile(config, JSON.stringify({ schema: "control-room.fleet-connector/v1",
     server: `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`,
     workerId: `fleet-worker:${"a".repeat(32)}`, secret: `crf_${"A".repeat(43)}` }), { mode: 0o600 });
@@ -89,7 +91,7 @@ test("standalone bundle runs help and an MCP handshake from a repo-free director
   // round 2 section 4 requires this explicit, absolute, existing check.
   const handshake = await child(process.execPath,
     [bundle, "mcp", "--config", config, "--workspace", runRoot], { cwd: runRoot,
-    env: { PATH: process.env.PATH, HOME: join(sandbox, "injected-home"), NODE_ENV: "test" },
+    env: { PATH: process.env.PATH, HOME: injectedHome, NODE_ENV: "test" },
     input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })}\n` });
   assert.equal(handshake.code, 0, handshake.stderr);
   const reply = JSON.parse(handshake.stdout.trim());
