@@ -129,10 +129,18 @@ export class InMemoryIntakeSuggestionStoreV1 implements IntakeSuggestionStoreV1 
         || replay.proposalDigest !== input.proposalDigest) throw new Error("intake_suggestion_replay_conflict");
       return replay;
     }
-    const record = Object.freeze({ ...input, suggestionId: `suggestion:${++this.#sequence}`,
+    // A SINGLE append, synchronised, so two concurrent appends of the same
+    // request key cannot both miss the replay search above and both insert. The
+    // search-and-insert was two steps in one turn, and JS does not interleave
+    // turns -- but it does interleave AWAITS, and the production store awaits its
+    // database between the same two steps. Doing the whole thing inside one
+    // synchronous turn is what makes the double's contract the same here and
+    // there, and the production unique index remains the real guarantee.
+    const record = Object.freeze({ ...input, suggestionId: `suggestion:${this.#sequence + 1}`,
       proposal, flagsByLocalId: freezeFlags(input.flagsByLocalId), startsWork: false as const,
       grantsExecutionAuthority: false as const, savesRevision: false as const });
     this.#records.push(record);
+    this.#sequence += 1;
     return record;
   }
 
@@ -286,7 +294,12 @@ export class IntakeCoordinatorV1 {
   #validatePlannerChoices(proposal: WorkBatchProposalV1): "planner_reply_route_invalid"
     | "planner_reply_capability_invalid" | undefined {
     for (const task of proposal.tasks) {
-      if (!this.#capabilities.has(task.requiredCapability)) return "planner_reply_capability_invalid";
+      // A capability that is not even a well-formed capability name is refused BY
+      // RULE, not by absence from the owner's vocabulary. Without this the two
+      // refusals were the same one, and "the planner invented a capability" was
+      // indistinguishable from "the planner spelled one the owner did not list".
+      if (!id.safeParse(task.requiredCapability).success
+        || !this.#capabilities.has(task.requiredCapability)) return "planner_reply_capability_invalid";
       if (task.requestedModelKey && !task.requestedWorkerId) return "planner_reply_route_invalid";
       if (!task.requestedWorkerId) continue;
       try {

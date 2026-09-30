@@ -80,6 +80,17 @@ REVOKE ALL ON control_pipeline_build_publications
 REVOKE ALL ON control_improvement_requests, control_update_candidates, control_update_candidate_decisions
   FROM control_room_application, control_room_reader, control_room_schedule_admissions,
   control_room_github_broker, control_room_work_intake;
+-- MIG-A (0200-0202): the orchestrator's split suggestions and its durable run
+-- bookkeeping. The shared intake login may APPEND a suggestion and nothing else --
+-- no UPDATE, DELETE or TRUNCATE, and the table's own triggers refuse a mutation
+-- even for a role that had one. It reads the revision-scoped suggestion list
+-- through one SECURITY DEFINER function and never holds the planner's failure
+-- counter or the Needs-you ledger: those are the coordinator's, and the intake
+-- login has no planner of its own. Every other shared login holds nothing here.
+REVOKE ALL ON work_batch_split_suggestions, control_planner_failure_counters,
+  control_planner_needs_you_items
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker;
 -- Installation-wide operations mode (Pause / Drain / Stop). Read-only for the
 -- shared ledgers, the reader and the backup role; only the private owner web
 -- login may append a revision, and the guard trigger refuses anything but a
@@ -117,6 +128,12 @@ GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_wor
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_application,
   control_room_reader, control_room_backup, control_room_work_intake;
 GRANT INSERT ON control_action_inbox TO control_room_work_intake;
+-- MIG-A: the shared intake login is the proposer the orchestrator runs as, so it
+-- appends one split suggestion and reads back only the ones still bound to the
+-- batch's current revision. It is granted NO counter and NO Needs-you row.
+GRANT SELECT, INSERT ON work_batch_split_suggestions TO control_room_work_intake;
+GRANT SELECT ON work_batch_current_split_suggestions TO control_room_work_intake;
+REVOKE ALL ON control_planner_failure_counters, control_planner_needs_you_items FROM control_room_work_intake;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
