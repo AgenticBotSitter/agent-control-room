@@ -6,7 +6,7 @@ import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema, requestRecordSchema, workflo
 import { sha256Digest } from "../../security";
 import { moveFleetEntityV1, readFleetEntityV1, type FleetActorV1 } from "./canonical-transitions";
 import { fleetFail, FleetErrorV1 } from "./errors";
-import { isFleetClaimRefusalV1 } from "./database-failure";
+import { isFleetClaimRefusalV1, isFleetLeaseScopeRefusalV1 } from "./database-failure";
 import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_PATTERN_V1,
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
@@ -421,7 +421,11 @@ export class FleetGatewayStoreV1 {
         // The database guards refuse revoked, out-of-scope, over-capacity and
         // doubly-leased claims, each with a SQLSTATE the store reads wherever
         // the transport put it. At the ceiling this is a conflict the connector
-        // moves past to the next offer, not a fault that ends the pass.
+        // moves past to the next offer, not a fault that ends the pass. A
+        // REPEATABLE READ caller is deliberately NOT in this set: 0234 raises
+        // 0A000 there, which leaves as a fault, because the conflict answer
+        // would send the connector back to the next offer in a transaction that
+        // cannot enforce the ceiling for any claim.
         if (isFleetClaimRefusalV1(error)) return fleetFail("conflict");
         throw error;
       }
@@ -440,9 +444,12 @@ export class FleetGatewayStoreV1 {
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.#tenantId, claimed.lease.id, offer.project_id, job.id,
           claimed.attempt.id, principal.nodeId, scope.scope_kind, scope.path_fold]);
       } catch (error) {
-        // The same rewrite as the claim above: 0100 raises 23P01 and 23514, and
-        // the bounded database carries them on `sqlState` rather than `code`.
-        if (isFleetClaimRefusalV1(error)) return fleetFail("conflict");
+        // 0100 raises exactly two codes on this insert -- 23P01 for a scope
+        // collision and 23514 for a scope the job never declared -- so it gets
+        // its OWN set rather than the claim insert's. A 23514 on the CLAIM row
+        // means the gateway built a row the schema forbids, which is a bug to
+        // report, not a busy worker to move past.
+        if (isFleetLeaseScopeRefusalV1(error)) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-claim:${suffix}`, tenantId: this.#tenantId, projectId: offer.project_id,

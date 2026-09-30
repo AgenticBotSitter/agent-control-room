@@ -7,16 +7,22 @@
 -- correct; it is 0140's behaviour, put back exactly as it was, so a down
 -- returns the database to the state before this migration rather than to some
 -- third state that never existed.
+--
+-- "Exactly as it was" is a claim about bytes, and it is load-bearing: the
+-- private-web schema digest hashes pg_get_functiondef, so a down that merely
+-- restored the clause's MEANING would still move the digest, and a database
+-- that went up and then down would no longer be the database it started as.
+-- The function below is therefore 0140's body character for character -- its
+-- header, its END $$, and its bare RAISE, none of them restated -- with one
+-- change: OR REPLACE and the public. qualifier, which is what this file has to
+-- say in order to replace a function it does not drop.
 BEGIN;
 
-DROP TRIGGER fleet_claims_capacity_guard ON public.fleet_claims;
+DROP TRIGGER fleet_claims_zz_capacity_guard ON public.fleet_claims;
 DROP FUNCTION public.enforce_fleet_worker_claim_capacity();
 
-CREATE OR REPLACE FUNCTION public.guard_fleet_claim_insert()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, public, pg_temp
-AS $$
+CREATE OR REPLACE FUNCTION public.guard_fleet_claim_insert() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE worker public.fleet_workers%ROWTYPE; offer public.fleet_work_offers%ROWTYPE;
 BEGIN
   SELECT * INTO worker FROM public.fleet_workers w WHERE w.tenant_id=NEW.tenant_id AND w.worker_id=NEW.worker_id;
@@ -33,10 +39,9 @@ BEGIN
     OR (SELECT pg_catalog.count(*) FROM public.fleet_claims fc JOIN public.control_leases l
         ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id
       WHERE fc.tenant_id=NEW.tenant_id AND fc.worker_id=NEW.worker_id AND l.state='active')>=worker.max_concurrent THEN
-    RAISE EXCEPTION 'fleet claim rejected' USING ERRCODE='P0001';
+    RAISE EXCEPTION 'fleet claim rejected';
   END IF;
   RETURN NEW;
-END;
-$$;
+END $$;
 REVOKE ALL ON FUNCTION public.guard_fleet_claim_insert() FROM PUBLIC;
 COMMIT;

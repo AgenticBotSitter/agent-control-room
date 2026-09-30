@@ -21,19 +21,46 @@
  * then broke the in-process path. Both carry the same fact, so both are read
  * here, and the five-character shape is required so neither a message nor a
  * class name is ever mistaken for a SQLSTATE.
+ *
+ * This is the ONE reader for the claim path. Both refusal predicates below go
+ * through it, so there is a single place where "which field carries the
+ * SQLSTATE" is answered.
  */
 export function fleetDatabaseSqlStateV1(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
   for (const field of ["sqlState", "code"]) {
     let value: unknown;
     try { value = Reflect.get(error, field); } catch { continue; }
-    if (typeof value === "string" && /^[0-9A-Z]{5}$/u.test(value)) return value;
+    if (isSqlStateV1(value)) return value;
   }
   return undefined;
 }
 
-/** PostgreSQL SQLSTATEs the fleet claim path knows how to answer for, rather
- * than to pass on as an unexpected database fault.
+/**
+ * Five uppercase alphanumerics, and not a POSIX errno spelling.
+ *
+ * Node's own system errors share this field and are also five UPPERCASE
+ * LETTERS -- `EPIPE`, `EBADF`, `ESRCH`, `ETIME` -- so the shape alone admits
+ * fourteen of them. No SQLSTATE starts with `E`: read off PostgreSQL 17's own
+ * `utils/errcodes.h`, which defines 260 codes across 42 classes, and the only
+ * classes beginning with a letter are `F0`, `HV`, `P0` and `XX`. So excluding a
+ * leading `E` costs nothing and cannot reject a real code.
+ *
+ * The alternative was to leave the shape alone, since nothing here is decided
+ * by set membership: a stray `EPIPE` cannot be mistaken for a refusal, because
+ * no refusal set contains it. Excluding it anyway keeps the returned value
+ * honest as a SQLSTATE for anything that logs, reports or displays it, rather
+ * than merely harmless.
+ */
+function isSqlStateV1(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9A-Z]{5}$/u.test(value) && !/^E/u.test(value);
+}
+
+/**
+ * PostgreSQL SQLSTATEs the fleet CLAIM insert knows how to answer for, rather
+ * than to pass on as an unexpected database fault. Every one is a decision
+ * about whether this claim may exist, so `conflict` is the right answer and the
+ * connector moves to the next offer.
  *
  *  - `54000` program_limit_exceeded: 0234's capacity guard. The worker is at
  *    its own configured `maxConcurrent`, which is an ordinary outcome and the
@@ -42,22 +69,55 @@ export function fleetDatabaseSqlStateV1(error: unknown): string | undefined {
  *    and quarantines the pool on it, so a 53 would have turned a worker's own
  *    configured limit into a poisoned database for the whole gateway.
  *  - `P0001` raise_exception: 0140's guard. Revoked worker, closed offer, out
- *    of scope, lapsed credential, or a job already leased.
- *  - `23505` unique_violation and `23503` foreign_key_violation: two callers
- *    racing for one offer, or a claim that lost a race to another.
+ *    of scope, lapsed credential, or a job already leased. 0234 raises it too,
+ *    for a claim naming a worker that has no row, which is the same fact.
+ *  - `23505` unique_violation: two callers racing for one claim, attempt,
+ *    lease, or worker idempotency key.
+ *  - `23503` foreign_key_violation: a claim that lost a race, so the tenant,
+ *    offer or worker it named is gone by commit.
+ *
+ * `0A000` is deliberately NOT here. 0234 raises it on a REPEATABLE READ
+ * caller, where nothing is wrong with this claim at all: that transaction
+ * cannot enforce the ceiling because its snapshot predates its wait for the
+ * lock. Reporting it as a conflict would be a lie -- the connector would move
+ * to the next offer and make the next claim in the same unusable transaction
+ * -- so it travels on as an unexpected error and ends the pass, which is what
+ * tells the caller its transaction mode is wrong.
+ */
+const CLAIM_INSERT_REFUSALS: ReadonlySet<string> = new Set(["54000", "P0001", "23505", "23503"]);
+
+/**
+ * PostgreSQL SQLSTATEs the LEASE-SCOPE insert knows how to answer for.
+ *
  *  - `23P01` exclusion_violation: 0100's lease-scope collision. Another lease
  *    already holds this project area.
- *  - `23514` check_violation: 0100's own claim-path refusals, where the lease
- *    scope a claim wants is not the scope the job declared.
+ *  - `23514` check_violation: 0100's own refusals, where the scope a claim
+ *    wants is not a scope the job declared, or the lease is not active.
  *
- * Anything else is a fault, not a decision, and must keep travelling.
+ * This set is SEPARATE from the claim set, and the split is the point. One
+ * widened set for both inserts reported a `23514` on the CLAIM row as a quiet
+ * `conflict`: a check violation there means the gateway built a row the schema
+ * forbids -- an idempotency key shorter than the pattern, a claim_id that is
+ * not 32 hex characters -- which is a bug in the caller, not a busy worker, and
+ * answering it as a conflict hides it. The gateway validates those fields
+ * before it writes, so it is not reachable today; it is kept out of the set so
+ * that if it ever is, the failure is reported rather than absorbed.
+ *
+ * `54000` and `P0001` are absent here for the mirror reason: 0234 and 0140
+ * fire on the claim insert, and this insert runs after that claim exists, so
+ * neither code is a refusal of a SCOPE. Mapping them would swallow a genuine
+ * fault from whatever ran first.
  */
-const CLAIM_REFUSAL_SQL_STATES: ReadonlySet<string> = new Set([
-  "54000", "P0001", "23505", "23503", "23P01", "23514",
-]);
+const LEASE_SCOPE_REFUSALS: ReadonlySet<string> = new Set(["23P01", "23514"]);
 
-/** True when this error is a claim-path refusal the store can answer for. */
+/** True when the `fleet_claims` insert was refused by a decision, not a fault. */
 export function isFleetClaimRefusalV1(error: unknown): boolean {
   const sqlState = fleetDatabaseSqlStateV1(error);
-  return sqlState !== undefined && CLAIM_REFUSAL_SQL_STATES.has(sqlState);
+  return sqlState !== undefined && CLAIM_INSERT_REFUSALS.has(sqlState);
+}
+
+/** True when the lease-scope insert was refused by a decision, not a fault. */
+export function isFleetLeaseScopeRefusalV1(error: unknown): boolean {
+  const sqlState = fleetDatabaseSqlStateV1(error);
+  return sqlState !== undefined && LEASE_SCOPE_REFUSALS.has(sqlState);
 }

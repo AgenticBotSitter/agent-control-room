@@ -108,6 +108,13 @@ describe("attack kit: search_path gate (real PostgreSQL)", () => {
       // changed nothing", so it needs the number to move with the migrations
       // rather than a literal somebody has to remember to retype.
       const baseline = JSON.parse(bare.stdout.slice(bare.stdout.indexOf("{"))) as { unpinned: number };
+      // The empty allowlist unmasked exactly the routines the shipped allowlist
+      // was waiving, so the two numbers must be EQUAL. This is the derived
+      // anchor: it ties the measured baseline to the shipped run above, so a
+      // gate that silently reported 0 for BOTH runs could not pass -- which is
+      // the one way a measured count is weaker than a written literal.
+      assert.equal(baseline.unpinned, cleanSummary.allowlisted,
+        "the empty allowlist unmasked exactly the routines the shipped allowlist waives");
 
       /**
        * The routines a scenario is expected to be caught ON, per planted routine.
@@ -115,12 +122,17 @@ describe("attack kit: search_path gate (real PostgreSQL)", () => {
        * The empty allowlist means the gate also fails on the violations the
        * shipped migrations already contain, so a non-zero exit alone proves
        * nothing: a scenario whose own routine stopped being flagged would still
-       * fail the gate for the other 23. Every scenario therefore names the
-       * identities it planted, and the assertion is that the gate NAMED THOSE. That
-       * is what makes a disabled `prosecdef` branch, a disabled trigger branch, or
-       * a disabled last-element-is-pg_temp check fail a test here instead of
-       * hiding behind the shipped baseline.
+       * fail the gate for the violations it did not plant. Every scenario
+       * therefore names the identities it planted, and the assertion is that
+       * the gate NAMED THOSE. That is what makes a disabled `prosecdef` branch, a
+       * disabled trigger branch, or a disabled last-element-is-pg_temp check
+       * fail a test here instead of hiding behind the shipped ones. The count of
+       * those is `baseline.unpinned`, measured on this same database above; it is
+       * never written down here, because a literal goes stale the moment a
+       * routine is pinned or removed and then a planted routine can stop being
+       * caught without anything failing.
        */
+      assert.ok(baseline.unpinned > 0, "the shipped migrations themselves have violations to measure against");
       const scenarios: readonly [name: string, statements: readonly string[], caught: readonly string[]][] = [
         // A named-argument CREATE pinned, then a LATER migration RESETs it.
         // A regex-per-file model read the CREATE's own pin and passed; the
