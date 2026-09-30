@@ -6,12 +6,12 @@ import type { IntakeCoordinatorResultV1, IntakePlannerSelectionPortV1, IntakeSug
   IntakeSuggestionStoreV1 } from "../../work-intake/v1/intake-coordinator";
 import type { VerifiedWebIdentity } from "./access-verifier";
 import { WebAccessError } from "./access-verifier";
-import { projectOrchestrationDescribeSchemaV1, projectOrchestrationSettingsDraftSchemaV1,
-  projectOrchestrationSettingsSchemaV1, projectOrchestrationSuggestionPageSchemaV1,
-  projectOrchestrationSuggestionPrefillSchemaV1, type ProjectOrchestrationDescribeResultV1,
-  type ProjectOrchestrationSettingsV1, type ProjectOrchestratorChoiceV1,
-  type ProjectOrchestratorOptionV1, type ProjectOrchestrationSuggestionPageV1,
-  type ProjectOrchestrationSuggestionPrefillV1 } from "./project-orchestration-wire";
+import { PROJECT_ORCHESTRATION_DESCRIPTION_LIMIT_V1, projectOrchestrationDescribeSchemaV1,
+  projectOrchestrationSettingsDraftSchemaV1, projectOrchestrationSettingsSchemaV1,
+  projectOrchestrationSuggestionPageSchemaV1, projectOrchestrationSuggestionPrefillSchemaV1,
+  type ProjectOrchestrationDescribeResultV1, type ProjectOrchestrationSettingsV1,
+  type ProjectOrchestratorChoiceV1, type ProjectOrchestratorOptionV1,
+  type ProjectOrchestrationSuggestionPageV1, type ProjectOrchestrationSuggestionPrefillV1 } from "./project-orchestration-wire";
 
 const common = Object.freeze({ startsWork: false, grantsExecutionAuthority: false } as const);
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
@@ -26,14 +26,33 @@ export interface ProjectOrchestrationBatchRevisionPortV1 {
     Promise<Readonly<{ revision: number; revisionDigest: string; state: "proposed" | "not_proposed" }>>;
 }
 
-export interface ProjectOrchestrationStoreV1 extends IntakePlannerSelectionPortV1, IntakeSuggestionStoreV1 {
+/** The durable store contract. It is EXACTLY what MIG-A's 0200/0201 shipped:
+ *
+ *  - `read`/`saveSettings` map to 0201's `control_project_settings` planner columns
+ *    (mode, worker id, worker kind, model, effort, version). `effort` is
+ *    nullable because 0201's CHECK refuses a stored 'default': the owner leaves it
+ *    SQL NULL to mean the catalog's default.
+ *  - `listSuggestions` maps to 0200's `work_batch_current_split_suggestions` VIEW,
+ *    which is current-revision-only. The port therefore does NOT accept a stale
+ *    suggestion and does not re-derive staleness; it reports what the view returns.
+ *  - `dismissSuggestion` is NOT part of this contract, because no MIG-A table can
+ *    hold a dismissal: 0200 is append-only, and work_batch_intake_flag_dismissals
+ *    (0110) dismisses an intake FLAG on a revision, not a split suggestion. A
+ *    dismissed suggestion is derived the way staleness already is -- it is not in
+ *    the view -- and a composition that wants dismissal to persist supplies its
+ *    own record through `dismissedSuggestionIds`, below. */
+export interface ProjectOrchestrationStoreV1 extends IntakePlannerSelectionPortV1 {
   readSettings(tenantId: string, projectId: string): Promise<Readonly<{ version: number; choice: ProjectOrchestratorChoiceV1 }>>;
   saveSettings(input: Readonly<{ tenantId: string; projectId: string; expectedVersion: number;
-    choice: ProjectOrchestratorChoiceV1 }>): Promise<Readonly<{ version: number; choice: ProjectOrchestratorChoiceV1 }>>;
+    choice: ProjectOrchestratorChoiceV1; writtenByIdentityId: string; now: string }>):
+    Promise<Readonly<{ version: number; choice: ProjectOrchestratorChoiceV1 }>>;
   listSuggestions(input: Readonly<{ tenantId: string; projectId: string; batchId: string }>):
-    Promise<readonly (IntakeSuggestionRecordV1 & { dismissed: boolean })[]>;
-  dismissSuggestion(input: Readonly<{ tenantId: string; projectId: string; batchId: string; suggestionId: string;
-    expectedRevision: number }>): Promise<void>;
+    Promise<readonly IntakeSuggestionRecordV1[]>;
+  /** Durable dismissal records for this project/batch. The adapter reads this on
+   * every list, so a dismissal made in another tab hides the card here too, and a
+   * gesture that was never recorded cannot be shown as if it had been. */
+  dismissedSuggestionIds(input: Readonly<{ tenantId: string; projectId: string; batchId: string }>):
+    Promise<readonly string[]> | readonly string[];
 }
 
 export interface ProjectOrchestrationOwnerPortV1 {
@@ -59,17 +78,21 @@ function cloneProposal(value: WorkBatchProposalV1): WorkBatchProposalV1 {
   return deepFreeze(workBatchProposalSchemaV1.parse(structuredClone(value)));
 }
 
-/** Disposable store for component/server tests. Production must supply a durable adapter. */
+/** Disposable store for component/server tests. Production must supply a durable
+ * adapter -- see PostgresProjectOrchestrationStoreV1 in
+ * project-orchestration-postgres-store.ts, which is the composition's default. */
 export class InMemoryProjectOrchestrationStoreV1 implements ProjectOrchestrationStoreV1 {
   readonly #settings = new Map<string, { version: number; choice: ProjectOrchestratorChoiceV1 }>();
-  readonly #suggestions: Array<IntakeSuggestionRecordV1 & { dismissed: boolean }> = [];
+  readonly #suggestions: IntakeSuggestionRecordV1[] = [];
+  readonly #dismissed = new Set<string>();
   #sequence = 0;
   constructor(private readonly tenantId: string) { id.parse(tenantId); }
   #key(projectId: string) { return `${this.tenantId}\u0000${projectId}`; }
   read(projectId: string) {
     const choice = this.#settings.get(this.#key(projectId))?.choice;
     return choice?.mode === "selected" ? Object.freeze({ workerId: choice.workerId,
-      workerKind: choice.workerKind, modelKey: choice.modelKey, effort: choice.effort }) : null;
+      workerKind: choice.workerKind, modelKey: choice.modelKey,
+      ...(choice.effort !== null ? { effort: choice.effort } : {}) }) : null;
   }
   async readSettings(tenantId: string, projectId: string) {
     if (tenantId !== this.tenantId) throw new WebAccessError("access_denied");
@@ -94,13 +117,13 @@ export class InMemoryProjectOrchestrationStoreV1 implements ProjectOrchestration
     }
     const value = Object.freeze({ ...input, suggestionId: `suggestion:${++this.#sequence}`,
       proposal: cloneProposal(input.proposal), startsWork: false as const, grantsExecutionAuthority: false as const,
-      savesRevision: false as const, dismissed: false });
+      savesRevision: false as const });
     this.#suggestions.push(value); return value;
   }
   prefillForOwner(input: { tenantId: string; projectId: string; batchId: string; suggestionId: string;
     ownerIdentityId: string; actorType: "human"; currentRevision: number; currentRevisionDigest: string }) {
     const value = this.#find(input);
-    if (input.actorType !== "human" || !id.safeParse(input.ownerIdentityId).success || value.dismissed)
+    if (input.actorType !== "human" || !id.safeParse(input.ownerIdentityId).success || this.#dismissed.has(value.suggestionId))
       throw new Error("intake_suggestion_owner_required");
     if (value.baseRevision !== input.currentRevision || value.baseRevisionDigest !== input.currentRevisionDigest)
       throw new WebAccessError("conflict");
@@ -111,12 +134,18 @@ export class InMemoryProjectOrchestrationStoreV1 implements ProjectOrchestration
     if (input.tenantId !== this.tenantId) throw new WebAccessError("access_denied");
     return this.#suggestions.filter(value => value.projectId === input.projectId && value.batchId === input.batchId);
   }
-  async dismissSuggestion(input: { tenantId: string; projectId: string; batchId: string; suggestionId: string;
-    expectedRevision: number }) {
+  dismissedSuggestionIds(input: { tenantId: string; projectId: string; batchId: string }) {
+    if (input.tenantId !== this.tenantId) throw new WebAccessError("access_denied");
+    return [...this.#dismissed].filter(suggestionId =>
+      this.#suggestions.some(value => value.suggestionId === suggestionId && value.projectId === input.projectId
+        && value.batchId === input.batchId));
+  }
+  /** The in-memory double's dismissal record. Production supplies its own: see the
+   * port's doc comment on why 0200 cannot hold one. */
+  dismiss(input: { tenantId: string; projectId: string; batchId: string; suggestionId: string; expectedRevision: number }) {
     const value = this.#find(input);
     if (value.baseRevision !== input.expectedRevision) throw new WebAccessError("conflict");
-    const index = this.#suggestions.indexOf(value);
-    this.#suggestions[index] = Object.freeze({ ...value, dismissed: true });
+    this.#dismissed.add(value.suggestionId);
   }
   #find(input: { tenantId: string; projectId: string; batchId: string; suggestionId: string }) {
     if (input.tenantId !== this.tenantId) throw new WebAccessError("access_denied");
@@ -133,6 +162,14 @@ type CoordinatorPort = Readonly<{
     ReturnType<IntakeSuggestionStoreV1["prefillForOwner"]>;
 }>;
 
+/** One option per (worker, model) the catalog actually offers.
+ *
+ * The effort carried by an option is the one 0201 will store. For a codex or
+ * claude-code worker that is the model's own default effort -- a concrete value,
+ * so the stored row is exact and readable. For a hermes worker the catalog's only
+ * effort is "default", which 0201's CHECK refuses, so the option carries `null`
+ * and the stored column is SQL NULL: "the catalog decides". Emitting "default"
+ * here would offer the owner a selection the database cannot accept. */
 function optionsFor(catalog: WorkBatchQueueCatalogV1): readonly ProjectOrchestratorOptionV1[] {
   let sequence = 0;
   const values: ProjectOrchestratorOptionV1[] = [];
@@ -141,45 +178,79 @@ function optionsFor(catalog: WorkBatchQueueCatalogV1): readonly ProjectOrchestra
     if (!policy) continue;
     if ("profiles" in policy) for (const profile of policy.profiles) values.push(Object.freeze({ key: `planner:${++sequence}`,
       label: `${worker.workerId} · ${profile.name}`, workerId: worker.workerId, workerKind: worker.workerKind,
-      modelKey: profile.name, effort: "default" }));
-    else for (const model of policy.models) for (const workerEffort of policy.efforts) values.push(Object.freeze({
-      key: `planner:${++sequence}`, label: `${worker.workerId} · ${model} · ${workerEffort}`,
-      workerId: worker.workerId, workerKind: worker.workerKind, modelKey: model, effort: workerEffort }));
+      modelKey: profile.name, effort: null }));
+    else for (const model of policy.models) values.push(Object.freeze({ key: `planner:${++sequence}`,
+      label: `${worker.workerId} · ${model} · ${policy.defaultEffort}`, workerId: worker.workerId,
+      workerKind: worker.workerKind, modelKey: model, effort: policy.defaultEffort }));
   }
   return Object.freeze(values);
+}
+
+/** Plain owner copy for each refusal the coordinator can return. The reason codes
+ * are the coordinator's internal vocabulary and never reach the owner.
+ *
+ * The allowance refusal has its own two messages because it is the status an
+ * owner will hit on EVERY describe until S7b lands: "not configured" and "spent"
+ * need different words, and neither is fixed by retyping the description. */
+export const describeRefusalMessageV1: Readonly<Record<string, string>> = Object.freeze({
+  planner_allowance_not_configured: "No planning allowance is configured for this installation yet, so the chief of staff cannot run. This is not about your description.",
+  allowance_exhausted: "This project has used its planning allowance for now. The chief of staff cannot run again until the allowance is refilled.",
+});
+const describeRefusedMessage = (reasonCode: string) => describeRefusalMessageV1[reasonCode]
+  ?? "The chief of staff could not turn that description into a safe proposal. Check the wording or settings and try again.";
+
+/** Optional durable dismissal records.
+ *
+ * 0200 is append-only and its write guard admits only the batch's own agent
+ * proposer, so it cannot hold an owner's dismissal. 0110's
+ * work_batch_intake_flag_dismissals is a different record: the owner dismissing
+ * an intake FLAG on a revision. A composition that wants Dismiss to survive a
+ * reload supplies a real record here; without one the adapter refuses the gesture
+ * with 404 rather than losing it. */
+export interface ProjectOrchestrationDismissalPortV1 {
+  record(input: Readonly<{ tenantId: string; projectId: string; batchId: string; suggestionId: string;
+    baseRevision: number; baseRevisionDigest: string; ownerIdentityId: string; now: string }>): Promise<void>;
 }
 
 export function createProjectOrchestrationOwnerAdapterV1(options: Readonly<{ tenantId: string;
   coordinatorPrincipal: AuthenticatedPrincipal; coordinator: CoordinatorPort; store: ProjectOrchestrationStoreV1;
   access: ProjectOrchestrationAccessPortV1; batches: ProjectOrchestrationBatchRevisionPortV1;
-  queueCatalog: WorkBatchQueueCatalogV1; clock?: () => number }>): ProjectOrchestrationOwnerPortV1 {
+  queueCatalog: WorkBatchQueueCatalogV1; /** Whether a planner host is composed. False makes
+   * describing a job unavailable rather than failing it; see F6. */
+  describeAvailable: boolean; dismissals?: ProjectOrchestrationDismissalPortV1; clock?: () => number }>):
+  ProjectOrchestrationOwnerPortV1 {
   if (options.coordinatorPrincipal.actorType !== "agent" || options.coordinatorPrincipal.tenantId !== options.tenantId)
     throw new Error("project_orchestration_configuration_invalid");
   const catalog = captureWorkBatchQueueCatalogV1(options.queueCatalog), plannerOptions = optionsFor(catalog);
   const clock = options.clock ?? Date.now;
+  const offered = (choice: ProjectOrchestratorChoiceV1) => choice.mode === "none" || plannerOptions.some(candidate =>
+    candidate.workerId === choice.workerId && candidate.workerKind === choice.workerKind
+    && candidate.modelKey === choice.modelKey && candidate.effort === choice.effort);
   async function owner(identity: VerifiedWebIdentity, projectId: string, operation: Parameters<ProjectOrchestrationAccessPortV1["owner"]>[2]) {
     id.parse(projectId); const result = await options.access.owner(identity, projectId, operation);
     if (result.tenantId !== options.tenantId) throw new WebAccessError("access_denied"); return result;
   }
   async function settings(identity: VerifiedWebIdentity, projectId: string, operation: "read" | "settings") {
     const actor = await owner(identity, projectId, operation), saved = await options.store.readSettings(actor.tenantId, projectId);
-    return projectOrchestrationSettingsSchemaV1.parse({ projectId, ...saved, options: plannerOptions, ...common });
+    return projectOrchestrationSettingsSchemaV1.parse({ projectId, ...saved, options: plannerOptions,
+      choiceStale: !offered(saved.choice), describeAvailable: options.describeAvailable,
+      dismissAvailable: typeof options.dismissals?.record === "function", ...common });
   }
   const service: ProjectOrchestrationOwnerPortV1 = {
     readSettings: (identity, projectId) => settings(identity, projectId, "read"),
     async saveSettings(identity, projectId, value) {
       const actor = await owner(identity, projectId, "settings");
       const draft = projectOrchestrationSettingsDraftSchemaV1.safeParse(value);
-      const choice = draft.success ? draft.data.choice : undefined;
-      if (!draft.success || choice?.mode === "selected" && !plannerOptions.some(candidate =>
-        candidate.workerId === choice.workerId && candidate.workerKind === choice.workerKind
-        && candidate.modelKey === choice.modelKey && candidate.effort === choice.effort))
-        throw new WebAccessError("invalid_request");
-      await options.store.saveSettings({ tenantId: actor.tenantId, projectId, ...draft.data });
+      // The exact-catalog check runs against the same effort value the store will
+      // persist, so a selection the database would refuse is refused here first.
+      if (!draft.success || !offered(draft.data.choice)) throw new WebAccessError("invalid_request");
+      await options.store.saveSettings({ tenantId: actor.tenantId, projectId, ...draft.data,
+        writtenByIdentityId: actor.ownerIdentityId, now: new Date(clock()).toISOString() });
       return settings(identity, projectId, "read");
     },
     async describe(identity, projectId, value, idempotencyKey, signal) {
       await owner(identity, projectId, "describe");
+      if (!options.describeAvailable) throw new WebAccessError("not_found");
       if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u.test(idempotencyKey)) throw new WebAccessError("invalid_request");
       const input = projectOrchestrationDescribeSchemaV1.safeParse(value);
       if (!input.success) throw new WebAccessError("invalid_request");
@@ -195,19 +266,36 @@ export function createProjectOrchestrationOwnerAdapterV1(options: Readonly<{ ten
         message: "No chief of staff is selected. Choose one in Project settings." });
       if (result.status === "stopped") return Object.freeze({ ...common, status: "stopped" as const,
         message: "Proposal preparation stopped. No proposal was saved and no work started." });
-      return Object.freeze({ ...common, status: "refused" as const,
-        message: "The chief of staff could not turn that description into a safe proposal. Check the wording or settings and try again." });
+      // An allowance refusal is its own outcome, not the catch-all: it names the
+      // cause and the panel announces it, because the owner cannot fix it by
+      // rewording and the run never started.
+      if (result.status === "allowance_refused") return Object.freeze({ ...common, status: "refused" as const,
+        allowanceRefused: true as const, message: describeRefusedMessage(result.reasonCode) });
+      // `suggested` belongs to the re-split path, which describe never reaches. It
+      // is refused rather than rendered as a proposal it did not produce.
+      if (result.status === "suggested") throw new WebAccessError("invalid_request");
+      return Object.freeze({ ...common, status: "refused" as const, allowanceRefused: false as const,
+        message: describeRefusedMessage(result.reasonCode) });
     },
     async listSuggestions(identity, projectId, batchId) {
       const actor = await owner(identity, projectId, "suggestion"); id.parse(batchId);
-      const current = await options.batches.read({ tenantId: actor.tenantId, projectId, batchId });
-      const values = await options.store.listSuggestions({ tenantId: actor.tenantId, projectId, batchId });
+      // The batch's current revision and the suggestions the store will return are
+      // one read each. The store is 0200's current-revision view, so staleness and
+      // the decided state are the VIEW's filter; this re-check is what makes a
+      // store that does not filter (an in-memory double, a future adapter) behave
+      // the same as the one production runs on.
+      const [current, values, dismissed] = await Promise.all([
+        options.batches.read({ tenantId: actor.tenantId, projectId, batchId }),
+        options.store.listSuggestions({ tenantId: actor.tenantId, projectId, batchId }),
+        options.store.dismissedSuggestionIds({ tenantId: actor.tenantId, projectId, batchId })]);
+      const hidden = new Set(dismissed);
       return projectOrchestrationSuggestionPageSchemaV1.parse({ projectId, batchId,
-        suggestions: values.filter(value => !value.dismissed && current.state === "proposed"
+        suggestions: values.filter(value => !hidden.has(value.suggestionId) && current.state === "proposed"
           && value.baseRevision === current.revision && value.baseRevisionDigest === current.revisionDigest)
           .map(value => ({ suggestionId: value.suggestionId,
-          projectId, batchId, baseRevision: value.baseRevision, proposal: value.proposal, createdAt: value.createdAt,
-          dismissed: false, startsWork: false, grantsExecutionAuthority: false, savesRevision: false })), ...common });
+          projectId, batchId, baseRevision: value.baseRevision, proposal: deepFreeze(cloneProposal(value.proposal)),
+          createdAt: value.createdAt, dismissed: false, startsWork: false, grantsExecutionAuthority: false, savesRevision: false })),
+        dismissAvailable: typeof options.dismissals?.record === "function", ...common });
     },
     async useSuggestion(identity, projectId, batchId, suggestionId, expectedRevision) {
       const actor = await owner(identity, projectId, "suggestion");
@@ -221,8 +309,28 @@ export function createProjectOrchestrationOwnerAdapterV1(options: Readonly<{ ten
       const actor = await owner(identity, projectId, "suggestion");
       const current = await options.batches.read({ tenantId: actor.tenantId, projectId, batchId });
       if (current.state !== "proposed" || current.revision !== expectedRevision) throw new WebAccessError("conflict");
-      await options.store.dismissSuggestion({ tenantId: actor.tenantId, projectId, batchId, suggestionId, expectedRevision });
+      const dismissed = await options.store.dismissedSuggestionIds({ tenantId: actor.tenantId, projectId, batchId });
+      // A suggestion the owner already dismissed is a no-op, never a second write,
+      // and one the current revision does not hold is refused rather than recorded.
+      if (dismissed.includes(suggestionId)) return;
+      const values = await options.store.listSuggestions({ tenantId: actor.tenantId, projectId, batchId });
+      const value = values.find(candidate => candidate.suggestionId === suggestionId);
+      if (!value || value.baseRevision !== current.revision || value.baseRevisionDigest !== current.revisionDigest)
+        throw new WebAccessError("not_found");
+      await recordDismissal({ tenantId: actor.tenantId, projectId, batchId, suggestionId,
+        baseRevision: current.revision, baseRevisionDigest: current.revisionDigest,
+        ownerIdentityId: actor.ownerIdentityId, now: new Date(clock()).toISOString() });
     },
   };
   return Object.freeze(service);
+
+  /** Supplied by the composition: the one durable place a dismissal is written.
+   * It is NOT 0200 (append-only, agent-insert-only) and NOT 0110's intake-flag
+   * dismissals, which are a different record. Without it the Dismiss button is not
+   * composed at all, and the HTTP route answers 404 rather than pretending. */
+  async function recordDismissal(input: Readonly<{ tenantId: string; projectId: string; batchId: string;
+    suggestionId: string; baseRevision: number; baseRevisionDigest: string; ownerIdentityId: string; now: string }>): Promise<void> {
+    if (typeof options.dismissals?.record !== "function") throw new WebAccessError("not_found");
+    await options.dismissals.record(input);
+  }
 }

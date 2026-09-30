@@ -2,7 +2,21 @@ import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTru
   type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
+import { PROJECT_ORCHESTRATION_DESCRIPTION_LIMIT_V1 } from "./project-orchestration-wire";
 import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-owner";
+
+/** The transport bound, DERIVED from the one owner-facing character limit.
+ *
+ * `readBoundedJson` counts BYTES, so a fixed body cap cannot express a character
+ * cap for a multi-byte description: a legal 16,000-character Japanese or emoji
+ * description is ~48,000 bytes and was refused at the transport with a 400 the
+ * browser could only render as "check the description". The cap is instead the
+ * worst case the character limit can produce -- every code point encoded as UTF-8
+ * -- plus room for the JSON envelope, so a description the wire accepts can never
+ * be refused for being longer than the box. One number, derived, no second limit
+ * to keep in step. */
+const ORCHESTRATION_BODY_LIMIT =
+  PROJECT_ORCHESTRATION_DESCRIPTION_LIMIT_V1 * 4 + 64 * 1024;
 
 export function createProjectOrchestrationHttpHandlerV1(options: Readonly<{ origin: string;
   service: ProjectOrchestrationOwnerPortV1; trust?: AccessTrust;
@@ -18,7 +32,7 @@ export function createProjectOrchestrationHttpHandlerV1(options: Readonly<{ orig
   const body = async (request: Request) => {
     if (!request.body || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
       throw new WebAccessError("invalid_request");
-    return readBoundedJson(request.body, 32_768);
+    return readBoundedJson(request.body, ORCHESTRATION_BODY_LIMIT);
   };
   return async (request: Request): Promise<Response> => {
     try {
@@ -38,8 +52,11 @@ export function createProjectOrchestrationHttpHandlerV1(options: Readonly<{ orig
       const describe = /^\/api\/v1\/projects\/([^/]+)\/orchestration$/.exec(url.pathname);
       if (describe) {
         if (request.method !== "POST") throw new WebAccessError("invalid_request");
+        // 200 for every outcome. The route has no resource of its own to create:
+        // 201 on a `failed` or `refused` body claimed a proposal exists when none
+        // did, and told a future non-browser client to look for one.
         return Response.json(await options.service.describe(identity, decode(describe[1]!), await body(request),
-          request.headers.get("idempotency-key") ?? "", request.signal), { status: 201, headers: privateResponseHeaders });
+          request.headers.get("idempotency-key") ?? "", request.signal), { status: 200, headers: privateResponseHeaders });
       }
       const suggestions = /^\/api\/v1\/projects\/([^/]+)\/pipelines\/([^/]+)\/suggestions(?:\/([^/]+)\/(use|dismiss))?$/.exec(url.pathname);
       if (!suggestions) throw new WebAccessError("not_found");

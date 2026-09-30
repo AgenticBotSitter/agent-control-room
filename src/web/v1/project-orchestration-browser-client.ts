@@ -12,7 +12,7 @@ const failure = (status: number): BrowserFailureCode => ({ 400: "invalid_request
 export const orchestrationErrorMessage: Record<BrowserFailureCode, string> = {
   authentication_required: "Sign in again to use the chief of staff.",
   access_denied: "Only this project’s owner can use or change the chief of staff.",
-  invalid_request: "Check the description or chief-of-staff choice and try again.",
+  invalid_request: "That description is too long or the chief-of-staff choice is not one of the offered options. Shorten it to under 16,000 characters, or choose a bot and model from the list.",
   conflict: "This project or batch changed elsewhere. Refresh before trying again.",
   not_found: "The chief-of-staff service is not connected for this project.",
   unavailable: "The chief-of-staff service could not be reached. No proposal or setting change is assumed.",
@@ -47,6 +47,12 @@ export function createProjectOrchestrationBrowserClient(transport: typeof fetch 
   }
   return Object.freeze({
     hasPendingDescription: () => !!pendingDescription,
+    /** Release the retained request WITHOUT sending anything. The browser keeps no
+     * authority either way: this only lets the owner start a NEW description after
+     * a dropped response they do not want to retry. The original body and key are
+     * discarded, so the next submit is a new request, not a second attempt at the
+     * old one. */
+    forgetPendingDescription: () => { pendingDescription = undefined; },
     async readSettings(projectId: string) {
       if (!catalogProjectIdSchema.safeParse(projectId).success) throw new BrowserRequestError("invalid_request");
       return projectOrchestrationSettingsSchemaV1.parse(await read(await call(

@@ -342,6 +342,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
+  const orchestrationHandlers = new Map<string, (request: Request) => Promise<Response>>();
   const pipelines = options.workBatches ? new LinearPipelineServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,
     options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories) : undefined;
@@ -902,10 +903,21 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               inflight: coordinationInflight,
             })(request);
           }
-          if (options.orchestration && (/^\/api\/v1\/projects\/[^/]+\/orchestration(?:-settings)?$/.test(url.pathname)
-            || /^\/api\/v1\/projects\/[^/]+\/pipelines\/[^/]+\/suggestions(?:\/|$)/.test(url.pathname)))
-            return createProjectOrchestrationHttpHandlerV1({ origin: site.origin, trust,
-              gatewayAssertionProfile, service: options.orchestration, clock })(request);
+          // Built ONCE PER SITE the first time that site routes a chief-of-staff request,
+                    // not once per request: the access trust carries this site's audience, so
+                    // the handler cannot simply be hoisted, and rebuilding the verifier on
+                    // every describe also made the authentication configuration invisible at
+                    // the place it is chosen.
+                    if ((/^\/api\/v1\/projects\/[^/]+\/orchestration(?:-settings)?$/.test(url.pathname)
+                      || /^\/api\/v1\/projects\/[^/]+\/pipelines\/[^/]+\/suggestions(?:\/|$)/.test(url.pathname)) && options.orchestration) {
+                      let orchestrationHttp = orchestrationHandlers.get(site.origin);
+                      if (!orchestrationHttp) {
+                        orchestrationHttp = createProjectOrchestrationHttpHandlerV1({ origin: site.origin, trust,
+                          gatewayAssertionProfile, service: options.orchestration, clock });
+                        orchestrationHandlers.set(site.origin, orchestrationHttp);
+                      }
+                      return orchestrationHttp(request);
+                    }
           if (workBatches && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname))
             return createWorkBatchOwnerHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: workBatches, clock })(request);
