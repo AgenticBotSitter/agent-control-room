@@ -112,7 +112,7 @@ test("protected Mac startup creates the shared task lifecycle only after worker 
   const running = await host.start();
   assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application"]);
   await running.close();
-  assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application", "web-close", "task-close"]);
+  assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application", "task-close", "web-close"]);
 });
 
 test("protected host captures one batch key, catalog and exact-selection authority for the task application", async () => {
@@ -224,7 +224,7 @@ test("starts the existing queue worker only after the loopback site is listening
   const running = await host.start();
   assert.deepEqual(trace.slice(0, 2), ["site-start", "queue-start"]);
   await running.close();
-  assert.deepEqual(trace.slice(-4), ["queue-close", "site-close", "database-close", "task-close"]);
+  assert.deepEqual(trace.slice(-4), ["queue-close", "task-close", "site-close", "database-close"]);
 });
 
 test("refuses a queue-worker factory without the task lifecycle it delivers", () => {
