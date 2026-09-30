@@ -19,5 +19,40 @@
     "replace": "    connectorOnly: false,",
     "test": "node --test --test-name-pattern \"task host is connector-only\" tests/mac-local-web-host-launcher.test.mjs",
     "why": "the production task-host entry point selects connector-only composition"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const serviceKey = createHash(\"sha256\").update(name).digest(\"hex\").slice(0, 16);",
+    "replace": "  const serviceKey = name.toLowerCase().replace(/[^a-z0-9]/gu, \"-\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^service identities stay stable and distinct' tests/fleet-connector-install.test.mjs",
+    "why": "service-manager normalization cannot collapse two distinct profile identities"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (unattended && !bundledHarnessAdapterFactory)\n    throw new Error(\"Unattended worker installation requires the bundled Control Room connector release.\");",
+    "replace": "  if (false)\n    throw new Error(\"Unattended worker installation requires the bundled Control Room connector release.\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^bad worker-install input is refused before enrollment$' tests/fleet-connector-install.test.mjs",
+    "why": "source-mode installs refuse unattended enrollment before consuming a join code"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    \"--harnesses\", paths.harnessesPath, \"--service-log\", paths.serviceLogPath];",
+    "replace": "    \"--harnesses\", defaultHarnessSettingsPath(paths.configPath), \"--service-log\", paths.serviceLogPath];",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^macOS unattended install writes' tests/fleet-connector-install.test.mjs",
+    "why": "the service reads the same per-profile harness document validated during installation"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "    || body.botKind === \"hermes\" && body.unattended && ![body.workerProfile, body.workerModel, body.workerProvider]\n      .every(value => workerSelectionPattern.test(value as string))",
+    "replace": "    || false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^the connect-code route binds' tests/connect-bot-page.test.tsx",
+    "why": "Hermes harness inputs are complete and shell-safe before an enrollment code is issued"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (invokedDirectly) Promise.resolve().then(() => main()).then(code => { process.exitCode = code; });",
+    "replace": "if (invokedDirectly) main().then(code => { process.exitCode = code; });",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-name-pattern='^exact macOS lines install' tests/connect-bot-install-line.test.mjs",
+    "why": "a downloaded bundle registers its built-in harness factory before direct CLI installation starts"
   }
 ]

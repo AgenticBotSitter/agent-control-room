@@ -19,7 +19,7 @@ after(closePrivateOwnerBootstrapConformanceDatabase);
 const connectorRelease: FleetConnectorReleaseManifestV1 = Object.freeze({ schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1,
   version: "0.3.0", file: "connector-0.3.0.mjs", sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) });
 
-test("owner fleet routes: add a worker returns a one-time join command; foreign origins and signed-out calls are refused", async t => {
+test("owner fleet routes: add a worker returns a one-time install command; foreign origins and signed-out calls are refused", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "fleet-owner-web" }); t.after(fixture.close);
   await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
     configuration: fixture.configuration, database: fixture.database, trust: fixture.trust, assertion: fixture.assertion,
@@ -57,7 +57,8 @@ test("owner fleet routes: add a worker returns a one-time join command; foreign 
   assert.match(value.code, /^crj_[A-Za-z0-9_-]{43}$/u);
   assert.match(value.commands.unix, /connector-0\.3\.0\.mjs/u);
   assert.match(value.commands.unix, /connector-manifest\.json/u);
-  assert.match(value.commands.unix, /--bot codex$/u);
+  assert.match(value.commands.unix, / install .*--bot codex .*--i-am-the-installer$/u);
+  assert.doesNotMatch(value.commands.unix, /\sjoin\s/u);
   const board = await app.handle(request("/api/v1/fleet", { headers: { cookie } }), unused);
   assert.equal(board.status, 200);
   const listed = await board.json() as { pendingCodes: { displayName: string }[]; workers: unknown[] };
@@ -68,6 +69,48 @@ test("owner fleet routes: add a worker returns a one-time join command; foreign 
   assert.deepEqual(await localWorkers.json(), { taskWorkersStarted: true,
     projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "automations", "settings"],
     workers: [] });
+
+  const connectBody = JSON.stringify({ botKind: "cursor", name: "desktop-cursor", operatingSystem: "windows",
+    projectIds: [projectId], capabilities: ["writing"], unattended: false,
+    workerModel: "", workerProfile: "", workerProvider: "" });
+  const connected = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
+    "content-type": "application/json" }, body: connectBody }), unused);
+  assert.equal(connected.status, 201, await connected.clone().text());
+  const install = await connected.json() as { installLine: string; expiresAt: string; release: typeof connectorRelease };
+  assert.deepEqual(install.release, connectorRelease);
+  assert.match(install.installLine, /connector-0\.3\.0\.mjs/u);
+  assert.match(install.installLine, /connector-manifest\.json/u);
+  assert.match(install.installLine, / install .*--bot cursor .*--name desktop-cursor-[a-f0-9]{12} .*--i-am-the-installer$/u);
+  assert.doesNotMatch(install.installLine, /\sjoin\s/u);
+  assert.match(install.installLine, / a{64} 1234 b{40}/u);
+  const installUrl = install.installLine.match(/https:\/\/[^ ']+/u)?.[0] ?? "";
+  assert.equal(installUrl.includes("crj_"), false, "the code is never placed in the connector URL");
+  const unattended = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
+    "content-type": "application/json" }, body: JSON.stringify({ ...JSON.parse(connectBody), botKind: "codex",
+      name: "overnight-codex", operatingSystem: "linux", unattended: true }) }), unused);
+  assert.equal(unattended.status, 201, await unattended.clone().text());
+  const unattendedInstall = await unattended.json() as { unattended: boolean; installLine: string; ownerNextStep: string };
+  assert.equal(unattendedInstall.unattended, true);
+  assert.match(unattendedInstall.installLine, /--unattended --i-am-the-installer$/u);
+  assert.match(unattendedInstall.ownerNextStep, /per-user background worker[\s\S]*approved work[\s\S]*turn it off/iu);
+  const unicodeName = JSON.stringify({ botKind: "mcp-agent", name: "<owner bot> Ω", operatingSystem: "linux",
+    projectIds: [projectId], capabilities: ["writing"], unattended: false,
+    workerModel: "", workerProfile: "", workerProvider: "" });
+  const unicode = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
+    "content-type": "application/json" }, body: unicodeName }), unused);
+  assert.equal(unicode.status, 201, "HTML and Unicode names are stored as text; the UI escapes them when rendering");
+  const bad = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
+    "content-type": "application/json" }, body: JSON.stringify({ ...JSON.parse(connectBody), name: "line\nbreak", extra: true }) }), unused);
+  assert.equal(bad.status, 400);
+  const stoppedHalfway = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
+    "content-type": "application/json" }, body: "{" }), unused);
+  assert.equal(stoppedHalfway.status, 400, "a request stopped halfway creates no partial success");
+  const burst = await Promise.all(Array.from({ length: 50 }, (_, index) => app.handle(request("/api/v1/fleet/connect-codes", {
+    method: "POST", headers: { cookie, origin, "content-type": "application/json" },
+    body: JSON.stringify({ ...JSON.parse(connectBody), name: `burst-${index}` }) }), unused)));
+  assert.ok(burst.every(response => response.status === 201), "50 parallel owner callers each receive one isolated code");
+  assert.equal(new Set((await Promise.all(burst.map(response => response.json() as Promise<{ workerId: string }>)))
+    .map(item => item.workerId)).size, 50, "parallel calls never share a worker binding");
 
   const without = make();
   assert.equal((await without.handle(request("/api/v1/fleet", { headers: { cookie } }), unused)).status, 401,

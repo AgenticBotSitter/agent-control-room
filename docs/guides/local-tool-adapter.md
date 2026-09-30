@@ -50,7 +50,9 @@ Run `node control-room-connector.mjs help` to see the connector credential locat
 
 ## 3. Add and run the worker
 
-In **Workers**, choose **Add a worker**, select **Local tool adapter**, and grant only the projects and **Whisper transcription** capability it needs. Run the one-time join command on this Mac, then start the connector normally:
+Local tool adapters are deliberately not offered by the **Connect a bot** installer. That page installs third-party bot profiles; a tool adapter is a separate, owner-authored local program and must not be turned into a bot installation by selecting it from that page.
+
+Use the reviewed local-tool enrollment flow to create a worker of kind **Local tool adapter**, and grant only the projects and **Whisper transcription** capability it needs. Run its one-time join command on this Mac, then start the connector normally:
 
 ```sh
 node control-room-connector.mjs run

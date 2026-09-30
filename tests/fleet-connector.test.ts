@@ -1668,21 +1668,23 @@ test("the connector refuses insecure servers and loosely protected credential fi
   await assert.rejects(connector.loadConfig(path), /readable by other users/u);
 });
 
-test("the owner's join command carries only a safe address and the one-time code", async () => {
+test("the owner's install command carries only a safe address and the one-time code", async () => {
   const { fleetJoinCommandsV1 } = await import("../src/web/v1/fleet-owner-http");
   const code = `crj_${"a".repeat(43)}`;
   const release = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: "0.3.0", file: "connector-0.3.0.mjs",
     sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) } as const;
-  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code, "codex", release);
+  const identity = { displayName: "Owner Codex", workerId: `fleet-worker:${"c".repeat(32)}` };
+  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code, "codex", release, identity);
   assert.match(commands.unix, /connector-0\.3\.0\.mjs/u);
   assert.match(commands.unix, new RegExp(release.sha256, "u"));
   assert.match(commands.unix, /connector-manifest\.json/u);
-  assert.match(commands.unix, /--bot codex$/u);
-  assert.match(commands.windows, new RegExp(`node \\$f join --server https://control\\.example\\.ts\\.net --code ${code} --bot codex$`, "u"));
+  assert.match(commands.unix, / install .*--bot codex .*--name owner-codex-c{12} .*--i-am-the-installer$/u);
+  assert.doesNotMatch(commands.unix, /\sjoin\s/u);
+  assert.match(commands.windows, new RegExp(`node \\$f install --server https://control\\.example\\.ts\\.net --code ${code} --bot codex --name owner-codex-c{12} --workspace \\$w --i-am-the-installer$`, "u"));
   for (const origin of ["https://x.example;rm -rf ~", "https://x.example/$(id)", "file:///etc", "https://user@x.example"])
-    assert.throws(() => fleetJoinCommandsV1(origin, code, "codex", release));
-  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id", "codex", release));
-  assert.throws(() => fleetJoinCommandsV1("https://x.example", code, "codex;id", release));
+    assert.throws(() => fleetJoinCommandsV1(origin, code, "codex", release, identity));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id", "codex", release, identity));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", code, "codex;id", release, identity));
   // A kind the server does not offer is refused, so no command is ever printed for it.
-  assert.throws(() => fleetJoinCommandsV1("https://x.example", code, "not-a-kind", release));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", code, "not-a-kind", release, identity));
 });

@@ -247,7 +247,6 @@ const authorityFor = (calls: { jobId: string }[], db: ReturnType<typeof database
   },
   authorizeProject: async () => {}, canRead: () => true,
 });
-
 /** Build a service over a fresh fake, with an authority bound to THAT fake's
  * transaction connection. The authority is derived here rather than shared, so
  * two services in one test can never be talking to the same fixture. */
@@ -744,4 +743,3 @@ test("a set that stops being stored after the mint cannot be downloaded on the o
   assert.deepEqual(Buffer.from(file.bytes), Buffer.from(BYTES));
   assert.equal(db.state.spentOnce, 1);
 });
-

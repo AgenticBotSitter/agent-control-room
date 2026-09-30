@@ -66,7 +66,6 @@ test("an uncertain write makes health unready and a supervised replacement serve
     "a restarted host owns a fresh binding and can serve a later request");
   await restarted.close();
 });
-
 test("the real Mac-local wrapper signs in locally and reaches the existing project service", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-web" }); t.after(fixture.close);
   await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
@@ -574,4 +573,3 @@ test("a closed database client makes the process NOT ready", async t => {
   await live.close();
   assert.equal(live.isReady(), false, "an explicitly closed process is still not ready");
 });
-
