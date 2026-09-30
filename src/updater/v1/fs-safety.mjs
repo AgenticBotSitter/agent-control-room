@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
-import { chmod, lchown, lstat, mkdir, open, rename } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { chmod, lchown, lstat, mkdir, open, readlink, rename, symlink, unlink } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { updaterRefuseV1 } from "./contracts.mjs";
 
@@ -82,4 +82,27 @@ export async function lchownNoFollowV1(root, candidate, uid, gid) {
   const entry = await lstat(path);
   if (entry.isSymbolicLink()) throw updaterRefuseV1("updater_symlink_refused");
   await lchown(path, uid, gid);
+}
+
+/** Atomically replaces one root-owned relative symlink. The caller validates
+ * the semantic target; this helper supplies the R-FS path and durability
+ * guarantees shared by release, database, updater and runtime link sets. */
+export async function atomicSymlinkNoFollowV1(root, candidate, target) {
+  if (typeof target !== "string" || target.length < 1 || target.length > 240 || isAbsolute(target)
+      || target.includes("\0") || target.split(/[\\/]/u).includes(".."))
+    throw updaterRefuseV1("updater_link_target_refused");
+  const { absolute } = boundedRelativeV1(root, candidate);
+  const parent = dirname(absolute);
+  await assertNoSymlinkBelowV1(root, parent);
+  try {
+    const existing = await lstat(absolute);
+    if (!existing.isSymbolicLink()) throw updaterRefuseV1("updater_link_refused");
+    await readlink(absolute);
+  } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  const temporary = join(parent, `.${basename(absolute)}.${process.pid}.${randomBytes(8).toString("hex")}.link`);
+  await symlink(target, temporary);
+  try { await rename(temporary, absolute); }
+  finally { await unlink(temporary).catch(() => {}); }
+  const directory = await open(parent, constants.O_RDONLY);
+  try { await directory.sync(); } finally { await directory.close(); }
 }

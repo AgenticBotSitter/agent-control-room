@@ -1,27 +1,15 @@
-import { createHash, randomBytes } from "node:crypto";
-import { lstat, readFile, readdir, readlink, rename, symlink } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { createHash } from "node:crypto";
+import { lstat, readFile, readdir, readlink } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { assertSafeIdV1, updaterRefuseV1 } from "./contracts.mjs";
-import { assertNoSymlinkBelowV1, atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
+import { assertNoSymlinkBelowV1, atomicSymlinkNoFollowV1, atomicWriteNoFollowV1,
+  readFileNoFollowV1 } from "./fs-safety.mjs";
 
 export const ATTENDED_LINKS_V1 = Object.freeze([
   "updater/current", "runtime/node-current", "runtime/pnpm-current", "runtime/pg-current", "runtime/esbuild-current",
 ]);
 
 const sha256 = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-
-async function atomicSymlinkV1(root, link, target) {
-  const absolute = join(root, link);
-  const parent = dirname(absolute);
-  await assertNoSymlinkBelowV1(root, parent);
-  try {
-    const current = await lstat(absolute);
-    if (!current.isSymbolicLink()) throw updaterRefuseV1("updater_flip_link_refused");
-  } catch (error) { if (error?.code !== "ENOENT") throw error; }
-  const temporary = join(parent, `.${basename(link)}.${process.pid}.${randomBytes(8).toString("hex")}.link`);
-  await symlink(target, temporary);
-  await rename(temporary, absolute);
-}
 
 export async function verifyBundleManifestV1(directory, manifest) {
   if (manifest?.schema !== "control-room.updater-bundle-manifest/v1" || !Array.isArray(manifest.files)
@@ -98,9 +86,9 @@ export class AttendedUpdaterFlipV1 {
     // from which guard.sh reverts the whole set.
     for (const item of resolved) {
       const previous = item.link.replace(/-current$/u, "-previous").replace(/\/current$/u, "/previous");
-      await atomicSymlinkV1(this.root, previous, item.from);
+      await atomicSymlinkNoFollowV1(this.root, previous, item.from);
     }
-    for (const item of resolved) await atomicSymlinkV1(this.root, item.link, item.to);
+    for (const item of resolved) await atomicSymlinkNoFollowV1(this.root, item.link, item.to);
     await this.operations.restart({ pgMoved: resolved.some(item => item.link === "runtime/pg-current") });
 
     // Phase D: three complete health samples. Health is the full PG/web/gateway

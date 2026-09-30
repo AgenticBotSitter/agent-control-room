@@ -7,6 +7,11 @@ import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV
   newUpdaterIdentityV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
 
+// The fixed updater bundle exposes the item-13 actuator for composition with
+// the item-5 lifecycle and item-14 health ports. `startUpdaterV1` accepts that
+// composed instance through `options.effects` and settles it before listening.
+export { DiskReserveV1, PairHistoryV1, UpdaterActuatorV1, collectOldReleasesV1 } from "./actuator.mjs";
+
 function updaterRootV1(env) {
   const production = "/Library/Application Support/Control Room";
   if (!env.CONTROL_ROOM_UPDATER_ROOT) return production;
@@ -66,6 +71,9 @@ export async function startUpdaterV1(options = {}) {
       requires_passkey: request.verb === "rollback" });
   } });
   try {
+    // Item 13: settle a durable release/database link transaction before any
+    // run is observed. The actuator either completes it or restores its source.
+    await effects.recover?.();
     await control.start(); await heartbeat.beat(); await loop.tick(); heartbeat.start(); loop.start();
   } catch (error) {
     loop.stop(); await heartbeat.stop(); await control.stop();

@@ -173,5 +173,68 @@
     "replace": "if (!row || false",
     "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
     "why": "the updater store refuses any connection that is not the production deployer login"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (!Number.isSafeInteger(free) || free < required) throw updaterRefuseV1(\"updater_disk_reserve_low\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_disk_reserve_low\");",
+    "test": "node --test --test-name-pattern='disk admission' tests/updater-actuator.test.mjs",
+    "why": "space below two releases plus headroom must refuse before any archive is unpacked"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "|| Number(entry.blocks) * 512 < this.reserveBytes)",
+    "replace": ")",
+    "test": "node --test --test-name-pattern='disk admission' tests/updater-actuator.test.mjs",
+    "why": "the rescue reserve must be physically allocated rather than a sparse promise of space"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (this.#switching) throw updaterRefuseV1(\"updater_actuator_busy\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_actuator_busy\");",
+    "test": "node --test --test-name-pattern='50 parallel actuator' tests/updater-actuator.test.mjs",
+    "why": "a fifty-caller burst must admit exactly one filesystem switch actor"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "&& await this.services.databaseStopped?.(run, plan) !== true)",
+    "replace": "&& false)",
+    "test": "node --test --test-name-pattern='clean-stop proof' tests/updater-actuator.test.mjs",
+    "why": "a database link cannot move until the clean-stop port proves PostgreSQL is held down"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (!await this.artifacts.verifyPair(candidate)) { lastCode = \"updater_rollback_pair_corrupt\"; continue; }",
+    "replace": "if (false) { lastCode = \"updater_rollback_pair_corrupt\"; continue; }",
+    "test": "node --test --test-name-pattern='corrupt release' tests/updater-actuator.test.mjs",
+    "why": "rollback must walk past a corrupt newer pair instead of serving it"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "const pairs = [...existing.filter(item => !samePairV1(item, pair)), pair].slice(-3);",
+    "replace": "const pairs = [...existing.filter(item => !samePairV1(item, pair)), pair];",
+    "test": "node --test --test-name-pattern='pair history keeps three' tests/updater-actuator.test.mjs",
+    "why": "the automatic rollback history is bounded to the newest three healthy pairs"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "const removable = entries.filter(item => !item.protected).sort((a, b) => a.mtimeMs - b.mtimeMs);",
+    "replace": "const removable = entries.sort((a, b) => a.mtimeMs - b.mtimeMs);",
+    "test": "node --test --test-name-pattern='retention never deletes' tests/updater-actuator.test.mjs",
+    "why": "retention must never collect current, previous, automatic, restore-point or open-staging releases"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "await assertPairTargetsV1(root, record.to);",
+    "replace": "await assertPairTargetsV1(root, record.from);",
+    "test": "node --test --test-name-pattern='interrupted pair switch rolls back' tests/updater-actuator.test.mjs",
+    "why": "startup may resume only when both members of the recorded target pair still exist"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "await effects.recover?.();",
+    "replace": "if (false) await effects.recover?.();",
+    "test": "node --test --test-name-pattern='startup settles' tests/updater-skeleton.test.mjs",
+    "why": "startup settles a torn link transaction before opening the updater control socket"
   }
 ]
