@@ -6,6 +6,18 @@ import { TaskResultsPanel } from "../private-app/app/task-results";
 import type { TaskResultsPage, TaskResultContent } from "../src/web/v1/task-result-wire";
 import { createTaskReviewWorkspace } from "../src/web/v1/task-review-workspace";
 import { createTaskVerificationWorkspace } from "../src/web/v1/task-verification-workspace";
+import { TaskWhatChanged } from "../private-app/app/task-what-changed";
+import { projectTaskChangeViewV1, TASK_CHANGE_DIFF_LINE_LIMIT_V1 } from "../src/web/v1/task-change-diff";
+
+const changeEvidence = (patch: Partial<NonNullable<TaskResultContent["worktreeChangeEvidence"]>> = {}): NonNullable<TaskResultContent["worktreeChangeEvidence"]> => ({
+  schema: "control-room.worktree-change-audit-detail/v1", baseRevision: "1".repeat(40), headRevision: "2".repeat(40),
+  changes: [{ path: "src/worker.ts", kind: "modified", bytes: 42, contentDigest: `sha256:${"3".repeat(64)}` }],
+  commits: [], commitsTruncated: false,
+  unifiedDiff: { text: "diff --git a/src/worker.ts b/src/worker.ts\n--- a/src/worker.ts\n+++ b/src/worker.ts\n@@ -1 +1,2 @@\n-old\n+new\n+next", originalBytes: 121,
+    retainedBytes: 121, truncated: false, contentDigest: `sha256:${"4".repeat(64)}`, retainedDigest: `sha256:${"5".repeat(64)}` },
+  confinement: { kind: "workspace_write", outsideWorktree: "refused", evidenceDigest: `sha256:${"6".repeat(64)}` },
+  evidenceDigest: `sha256:${"7".repeat(64)}`, ...patch,
+});
 
 test("formatted results show Markdown but never fetch images or interpret raw HTML", () => {
   const html = renderToStaticMarkup(<ResultText text={'# Heading\n\n**Bold**\n\n![remote](https://example.invalid/a.png)\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1))\n\n[good](https://example.invalid)'} />);
@@ -76,9 +88,78 @@ test("the exact open result renders its protected bounded diff evidence", () => 
     } };
   const html = renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false}
     onOpen={() => {}} onClose={() => {}} />);
-  assert.match(html, /Verified code changes/); assert.match(html, /src\/worker.ts/);
-  assert.match(html, /Build isolated worker/); assert.match(html, /unified diff truncated/);
+  assert.match(html, /Verified code changes/); assert.match(html, /What changed/); assert.match(html, /src\/worker.ts/);
+  assert.match(html, /Build isolated worker/); assert.match(html, /saved diff is truncated/);
   assert.match(html, /refused writes outside/); assert.match(html, /does not run, approve, merge, retry or resume/);
+});
+
+test("what changed renders evidence-derived per-file summaries and both readable diff layouts", () => {
+  const evidence = changeEvidence();
+  const unified = renderToStaticMarkup(<TaskWhatChanged evidence={evidence} />);
+  assert.match(unified, /What changed/); assert.match(unified, /Modified with 2 lines added and 1 removed/);
+  assert.match(unified, /Unified diff for src\/worker.ts/); assert.match(unified, /is-added/);
+  assert.match(unified, /aria-pressed="true">Unified/); assert.match(unified, /Side by side/);
+  const split = renderToStaticMarkup(<TaskWhatChanged evidence={evidence} initialMode="split" />);
+  assert.match(split, /Side-by-side diff for src\/worker.ts/); assert.match(split, /Before/); assert.match(split, /After/);
+  assert.match(split, /aria-pressed="true">Side by side/);
+});
+
+test("what changed escapes hostile file names and hostile diff content instead of rendering HTML", () => {
+  const path = '<img src=x onerror="alert(1)">.tsx';
+  const evidence = changeEvidence({ changes: [{ path, kind: "added", bytes: 60, contentDigest: `sha256:${"8".repeat(64)}` }],
+    unifiedDiff: { ...changeEvidence().unifiedDiff,
+      text: `diff --git a/${path} b/${path}\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+<script>globalThis.pwned=true</script>` } });
+  const html = renderToStaticMarkup(<TaskWhatChanged evidence={evidence} />);
+  assert.doesNotMatch(html, /<img|<script>/u);
+  assert.match(html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;\.tsx/u);
+  assert.match(html, /&lt;script&gt;globalThis\.pwned=true&lt;\/script&gt;/u);
+});
+
+test("what changed collapses big files but leaves small files open", () => {
+  const small = renderToStaticMarkup(<TaskWhatChanged evidence={changeEvidence()} />);
+  assert.match(small, /<details open="">/u);
+  const big = renderToStaticMarkup(<TaskWhatChanged evidence={changeEvidence({
+    changes: [{ path: "src/worker.ts", kind: "modified", bytes: 16_385, contentDigest: `sha256:${"3".repeat(64)}` }],
+  })} />);
+  assert.match(big, /<details>/u); assert.doesNotMatch(big, /<details open/u);
+});
+
+test("what changed has a truthful empty state and marks every sensitive path family", () => {
+  const empty = renderToStaticMarkup(<TaskWhatChanged evidence={changeEvidence({ changes: [],
+    unifiedDiff: { ...changeEvidence().unifiedDiff, text: "", originalBytes: 0, retainedBytes: 0 } })} />);
+  assert.match(empty, /0 files/); assert.match(empty, /No changed files were recorded for this result/);
+  const paths = ["db/schema.sql", "db/migrations/0141_change.sql", "src/security/guard.ts", ".github/workflows/ci.yml"];
+  const marked = renderToStaticMarkup(<TaskWhatChanged evidence={changeEvidence({
+    changes: paths.map((path, index) => ({ path, kind: "modified" as const, bytes: 1,
+      contentDigest: `sha256:${String(index + 1).repeat(64)}` })),
+    unifiedDiff: { ...changeEvidence().unifiedDiff, text: "" },
+  })} />);
+  for (const marker of ["Database", "Migration", "Security", "GitHub automation"]) assert.match(marked, new RegExp(marker));
+});
+
+test("what changed admits files only from the verified inventory and bounds rendered diff lines", () => {
+  const unrecorded = "security/forged.ts", recorded = "src/worker.ts";
+  const manyLines = Array.from({ length: TASK_CHANGE_DIFF_LINE_LIMIT_V1 + 25 }, (_, index) => `+line ${index}`).join("\n");
+  const evidence = changeEvidence({ unifiedDiff: { ...changeEvidence().unifiedDiff,
+    text: `diff --git a/${unrecorded} b/${unrecorded}\n--- a/${unrecorded}\n+++ b/${unrecorded}\n@@ -0,0 +1 @@\n+forged\n`+
+      `diff --git a/${recorded} b/${recorded}\n--- a/${recorded}\n+++ b/${recorded}\n@@ -0,0 +1,2025 @@\n${manyLines}` } });
+  const view = projectTaskChangeViewV1(evidence);
+  assert.deepEqual(view.files.map(file => file.path), [recorded]);
+  assert.doesNotMatch(view.files[0]!.unifiedLines.map(line => line.text).join("\n"), /forged/u);
+  assert.equal(view.files[0]?.unifiedLines.length, TASK_CHANGE_DIFF_LINE_LIMIT_V1);
+  assert.equal(view.files[0]?.displayTruncated, true); assert.equal(view.displayTruncated, true);
+});
+
+test("what changed stays truthful for missing and half-written retained diff blocks", () => {
+  const evidence = changeEvidence({ unifiedDiff: { ...changeEvidence().unifiedDiff,
+    text: "diff --git a/src/worker.ts b/src/worker.ts\n--- a/src/worker.ts\n+++ b/src/worker.ts\n@@ -1 +1 @@\n-old\n+" } });
+  const before = JSON.stringify(evidence), first = projectTaskChangeViewV1(evidence), retry = projectTaskChangeViewV1(evidence);
+  assert.deepEqual(retry, first); assert.equal(JSON.stringify(evidence), before);
+  assert.equal(first.files[0]?.diffRetained, true); assert.equal(first.files[0]?.addedLines, 1);
+  const missing = projectTaskChangeViewV1(changeEvidence({ unifiedDiff: { ...changeEvidence().unifiedDiff,
+    text: "diff --git a/other.ts b/other.ts\n--- a/other.ts\n+++ b/other.ts" } }));
+  assert.equal(missing.files[0]?.diffRetained, false);
+  assert.match(missing.files[0]?.summary ?? "", /detailed lines are not present/u);
 });
 
 test("result open mounts command readers only for the newest current matching target", () => {

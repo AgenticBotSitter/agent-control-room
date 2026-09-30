@@ -185,7 +185,44 @@
 .private-result-content { margin-top: 1.5rem; border-top: 1px solid var(--border); }
 .private-result-content .private-actions { align-items: center; justify-content: space-between; }
 .private-result-content textarea { display: block; width: 100%; min-height: 20rem; resize: vertical; font: inherit; color: var(--text); padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
-.private-code-diff { max-height: 32rem; overflow: auto; white-space: pre; padding: 1rem; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
+.private-what-changed { margin-block: 1.5rem; }
+.private-what-changed > h3 { margin-bottom: .35rem; }
+.private-what-changed > .private-note { margin-top: .5rem; }
+.private-file-change-list { display: grid; gap: .75rem; list-style: none; margin: 1rem 0; padding: 0; }
+.private-file-change { min-width: 0; border: 1px solid var(--border); border-radius: .65rem; background: var(--surface-2); }
+.private-file-change > details > summary { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 1rem; }
+.private-file-change > details > summary > span:first-child { display: grid; min-width: 0; gap: .2rem; }
+.private-file-change > details > summary code { overflow-wrap: anywhere; }
+.private-file-change > details > summary small { color: var(--muted); font-size: .78rem; text-transform: capitalize; }
+.private-file-change > details[open] > summary { border-bottom: 1px solid var(--border); }
+.private-file-change > details > :not(summary) { margin-inline: 1rem; }
+.private-file-summary { font-weight: 650; }
+.private-sensitive-markers { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
+.private-sensitive-markers strong { border: 1px solid var(--amber); border-radius: 999px; background: var(--amber-soft); color: var(--text); padding: .18rem .45rem; font-size: .7rem; }
+.private-diff-modes { display: flex; gap: .4rem; margin-block: .75rem; }
+.private-diff-modes button { min-height: 38px; padding: .35rem .65rem; }
+.private-diff-modes button[aria-pressed="true"] { border-color: var(--green); box-shadow: inset 0 -2px 0 var(--green); }
+.private-unified-diff, .private-split-diff { max-height: 32rem; overflow: auto; border: 1px solid var(--border); border-radius: .5rem; background: var(--surface); font: .82rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.private-diff-line { display: grid; grid-template-columns: 3.5rem 3.5rem minmax(max-content, 1fr); min-width: max-content; }
+.private-diff-line > * { padding: .1rem .45rem; }
+.private-diff-line code, .private-split-cell code { white-space: pre; overflow-wrap: normal; }
+.private-diff-number { border-right: 1px solid var(--border); color: var(--muted); text-align: end; user-select: none; }
+.private-diff-line.is-added, .private-split-cell.is-added { background: color-mix(in srgb, var(--green) 13%, var(--surface)); }
+.private-diff-line.is-removed, .private-split-cell.is-removed { background: color-mix(in srgb, var(--red) 12%, var(--surface)); }
+.private-diff-line.is-hunk { background: color-mix(in srgb, var(--blue) 11%, var(--surface)); color: var(--blue); }
+.private-diff-line.is-metadata { color: var(--muted); }
+.private-split-heading, .private-split-row { display: grid; grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 1fr); min-width: 36rem; }
+.private-split-heading { position: sticky; z-index: 1; top: 0; background: var(--surface-2); font-weight: 750; }
+.private-split-heading span { padding: .4rem .6rem; }
+.private-split-heading span + span, .private-split-cell + .private-split-cell { border-left: 1px solid var(--border); }
+.private-split-cell { display: grid; grid-template-columns: 3.5rem minmax(max-content, 1fr); min-width: 0; }
+.private-split-cell > * { padding: .1rem .45rem; }
+.private-split-cell.is-empty { background: var(--surface-2); }
+@media (max-width: 560px) {
+  .private-file-change > details > summary { align-items: flex-start; flex-direction: column; gap: .5rem; }
+  .private-sensitive-markers { justify-content: flex-start; }
+  .private-unified-diff, .private-split-diff { max-width: calc(100vw - 5.5rem); }
+}
 
 /* ---------------------------------------------------------------- *
  * Shared design system
