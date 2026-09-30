@@ -73,3 +73,13 @@ test("the setup source keeps fragments out of history and fixes RP data to serve
   assert.match(authority, /userVerification: "required"/);
   assert.doesNotMatch(source, /window\.location\.origin|document\.location\.origin/);
 });
+
+test("the passkey POST adapter requires Origin before reading or forwarding the body", async () => {
+  const source = (await readFile("src/web/v1/mac-local-web-process.ts", "utf8"))
+    .replace(/\/\*[\s\S]*?\*\//gu, " ").replace(/\s+/gu, " ");
+  const route = source.indexOf('url.pathname === "/api/v1/passkeys/registration/options"');
+  const originGuard = source.indexOf("sessions.assertLocalRequest(request, true);", route);
+  const bodyRead = source.indexOf("readBoundedJson(request.body, 20_000)", route);
+  const typedPort = source.indexOf("options.passkeyRegistration.options", route);
+  assert.ok(route >= 0 && originGuard > route && bodyRead > originGuard && typedPort > bodyRead);
+});

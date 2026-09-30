@@ -63,21 +63,24 @@ test("the CLI keeps status unprivileged, sudo verbs root-only, and confirm bound
   const passkeyOutput = [], passkeyAuthority = {
     async beginRegistration() { return { registrationSecret: "A".repeat(43),
       config: { expectedOrigin: "https://control-room.example.test" } }; },
-    async listPasskeys() { return [{ number: 1, coolingOffUntil: null, revokedAt: null }]; },
+    async listPasskeys() { return [{ number: 1, credentialId: "credential-one", createdAt: "2026-09-30T12:00:00.000Z",
+      coolingOffUntil: null, revokedAt: null }]; },
     async revokePasskey(number) { return { number, credentialId: "unused" }; },
     async completeRegistration(input) { assert.deepEqual(input, { registrationSecret: "A".repeat(43),
       typedCode: "ABC234" }); return { coolingOffUntil: null }; },
   };
   assert.equal(await runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0, passkeyAuthority,
-    readComparisonCode: async () => "ABC234", stdout: text => passkeyOutput.push(text) }), 0);
+    readComparisonCode: async () => " abc234 \n", stdout: text => passkeyOutput.push(text) }), 0);
   assert.match(passkeyOutput.join(""), /\/setup#reg=/u);
   assert.match(passkeyOutput.join(""), /Passkey added and active/u);
   assert.equal(await runUpdaterCliV1(["passkey", "list"], { root, getuid: () => 0, passkeyAuthority,
-    stdout: () => {} }), 0);
+    stdout: text => passkeyOutput.push(text) }), 0);
+  assert.match(passkeyOutput.join(""), /created 2026-09-30T12:00:00.000Z; id credential-one/u);
   assert.equal(await runUpdaterCliV1(["passkey", "revoke", "1"], { root, getuid: () => 0, passkeyAuthority,
     stdout: () => {} }), 0);
-  const controlVerbs = [], send = async (_path, request) => {
+  const controlVerbs = [], sendOptions = [], send = async (_path, request, options) => {
     controlVerbs.push(request.verb);
+    sendOptions.push(options);
     if (request.verb === "passkey-add-begin") return { registrationSecret: "B".repeat(43),
       expectedOrigin: "https://control-room.example.test" };
     if (request.verb === "passkey-add-complete") return { credentialId: "unused", coolingOffUntil: null };
@@ -89,6 +92,18 @@ test("the CLI keeps status unprivileged, sudo verbs root-only, and confirm bound
   assert.equal(await runUpdaterCliV1(["passkey", "list"], { root, getuid: () => 0, send, stdout: () => {} }), 0);
   assert.equal(await runUpdaterCliV1(["passkey", "revoke", "1"], { root, getuid: () => 0, send, stdout: () => {} }), 0);
   assert.deepEqual(controlVerbs, ["passkey-add-begin", "passkey-add-complete", "passkey-list", "passkey-revoke"]);
+  assert.deepEqual(sendOptions, [undefined, { timeoutMs: 15_000 }, undefined, undefined]);
+
+  const coolingOutput = [], coolingAuthority = { ...passkeyAuthority,
+    async completeRegistration() { return { coolingOffUntil: "2026-10-01T12:00:00.000Z",
+      coolingOffNoticesEnqueued: true }; } };
+  assert.equal(await runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0, passkeyAuthority: coolingAuthority,
+    readComparisonCode: async () => "ABC234", stdout: text => coolingOutput.push(text) }), 0);
+  assert.match(coolingOutput.join(""), /Cooling-off warnings were queued/u);
+  await assert.rejects(runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0,
+    passkeyAuthority: { ...coolingAuthority, async completeRegistration() {
+      return { coolingOffUntil: "2026-10-01T12:00:00.000Z", coolingOffNoticesEnqueued: false }; } },
+    readComparisonCode: async () => "ABC234", stdout: () => {} }), /updater_passkey_control_reply_refused/u);
 });
 
 async function bundleV1(root) {

@@ -1,8 +1,8 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPublicKey, randomBytes } from "node:crypto";
 import { verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
-import { decodeCredentialPublicKey } from "@simplewebauthn/server/helpers";
+import { decodeAttestationObject, decodeCredentialPublicKey } from "@simplewebauthn/server/helpers";
 import { canonicalJsonV1 } from "./canonical-json.mjs";
 import { assertPlainObjectV1, assertSafeIdV1, updaterRefuseV1 } from "./contracts.mjs";
 import { atomicWriteNoFollowV1, openNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
@@ -14,6 +14,7 @@ const ADD_LABEL_V1 = Buffer.from("control-room/passkey-add/v1\0", "utf8");
 const BASE32_V1 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const ES256_V1 = -7, EDDSA_V1 = -8, VERIFY_TIMEOUT_MS_V1 = 2_000, REGISTRATION_TTL_MS_V1 = 30 * 60_000;
 const COOLING_OFF_MS_V1 = 24 * 60 * 60_000;
+const MAX_PASSKEYS_V1 = 32, MAX_REGISTRATIONS_V1 = 64;
 
 const b64urlV1 = bytes => Buffer.from(bytes).toString("base64url");
 const digestV1 = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -53,8 +54,15 @@ function parseCredentialEnvelopeV1(value, ceremony) {
   exactBase64urlV1(id, { min: 16, max: 255, code: "updater_passkey_credential_refused" });
   if (object.rawId !== id || object.type !== "public-key") throw updaterRefuseV1("updater_passkey_response_refused");
   if (ceremony === "registration") {
-    exactBase64urlV1(response.attestationObject,
+    const attestationObject = exactBase64urlV1(response.attestationObject,
       { min: 32, max: 8192, code: "updater_passkey_attestation_refused" });
+    try {
+      if (decodeAttestationObject(attestationObject).get("fmt") !== "none")
+        throw updaterRefuseV1("updater_passkey_attestation_refused");
+    } catch (error) {
+      if (error?.code === "updater_passkey_attestation_refused") throw error;
+      throw updaterRefuseV1("updater_passkey_attestation_refused");
+    }
     parseClientDataV1(response.clientDataJSON, "webauthn.create");
     if (response.transports !== undefined && (!Array.isArray(response.transports) || response.transports.length > 8
         || response.transports.some(item => typeof item !== "string" || Buffer.byteLength(item) > 32)))
@@ -84,14 +92,43 @@ export function parsePasskeyConfigV1(value) {
   const object = assertPlainObjectV1(value, "updater_passkey_config_refused");
   const installationId = assertSafeIdV1(object.installationId, "updater_passkey_config_refused");
   if (typeof object.rpId !== "string" || object.rpId.length > 253 || !object.rpId.split(".").every(label =>
-    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label)))
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label)) || /^\d+$/u.test(object.rpId.split(".").at(-1)))
     throw updaterRefuseV1("updater_passkey_config_refused");
   let origin;
   try { origin = new URL(object.expectedOrigin); } catch { throw updaterRefuseV1("updater_passkey_config_refused"); }
   if (origin.origin !== object.expectedOrigin || origin.hostname !== object.rpId || !["https:"].includes(origin.protocol)
-      || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash)
+      || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash
+      || origin.port && object.rehearsal !== true)
     throw updaterRefuseV1("updater_passkey_config_refused");
-  return Object.freeze({ installationId, rpId: object.rpId, expectedOrigin: object.expectedOrigin });
+  return Object.freeze({ installationId, rpId: object.rpId, expectedOrigin: object.expectedOrigin,
+    ...(object.rehearsal === true ? { rehearsal: true } : {}) });
+}
+
+function validateCredentialPublicKeyV1(publicKey) {
+  let cose;
+  try { cose = decodeCredentialPublicKey(publicKey); }
+  catch { throw updaterRefuseV1("updater_passkey_registration_refused"); }
+  const algorithm = cose.get(3), bytes = value => value instanceof Uint8Array && value.byteLength === 32;
+  try {
+    if (algorithm === ES256_V1) {
+      const keys = new Set([1, 3, -1, -2, -3]);
+      if (cose.size !== keys.size || [...cose.keys()].some(key => !keys.has(key)) || cose.get(1) !== 2
+          || cose.get(-1) !== 1 || !bytes(cose.get(-2)) || !bytes(cose.get(-3)))
+        throw updaterRefuseV1("updater_passkey_public_key_refused");
+      createPublicKey({ key: { kty: "EC", crv: "P-256", x: b64urlV1(cose.get(-2)), y: b64urlV1(cose.get(-3)) },
+        format: "jwk" });
+    } else if (algorithm === EDDSA_V1) {
+      const keys = new Set([1, 3, -1, -2]);
+      if (cose.size !== keys.size || [...cose.keys()].some(key => !keys.has(key)) || cose.get(1) !== 1
+          || cose.get(-1) !== 6 || !bytes(cose.get(-2)))
+        throw updaterRefuseV1("updater_passkey_public_key_refused");
+      createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: b64urlV1(cose.get(-2)) }, format: "jwk" });
+    } else throw updaterRefuseV1("updater_passkey_algorithm_refused");
+  } catch (error) {
+    if (typeof error?.code === "string" && error.code.startsWith("updater_")) throw error;
+    throw updaterRefuseV1("updater_passkey_public_key_refused");
+  }
+  return algorithm;
 }
 
 export function registrationChallengeV1(config, registrationSecret) {
@@ -145,10 +182,7 @@ export class SimpleWebAuthnVerifierV1 {
         || credential.publicKey.byteLength < 32 || credential.publicKey.byteLength > 1024
         || !Number.isSafeInteger(credential.counter) || credential.counter < 0)
       throw updaterRefuseV1("updater_passkey_registration_refused");
-    let algorithm;
-    try { algorithm = decodeCredentialPublicKey(credential.publicKey).get(3); }
-    catch { throw updaterRefuseV1("updater_passkey_registration_refused"); }
-    if (![ES256_V1, EDDSA_V1].includes(algorithm)) throw updaterRefuseV1("updater_passkey_algorithm_refused");
+    const algorithm = validateCredentialPublicKeyV1(credential.publicKey);
     return Object.freeze({ credentialId: credential.id, publicKey: b64urlV1(credential.publicKey), algorithm,
       counter: credential.counter, transports: Object.freeze([...(credential.transports ?? [])]) });
   }
@@ -184,8 +218,8 @@ function emptyLedgerV1() {
 function parseLedgerV1(value) {
   const object = assertPlainObjectV1(value, "updater_passkey_ledger_refused");
   if (object.schema !== "control-room.passkeys/v1" || !Number.isSafeInteger(object.revision) || object.revision < 0
-      || !Array.isArray(object.passkeys) || object.passkeys.length > 32 || !Array.isArray(object.registrations)
-      || object.registrations.length > 64) throw updaterRefuseV1("updater_passkey_ledger_refused");
+      || !Array.isArray(object.passkeys) || object.passkeys.length > MAX_PASSKEYS_V1 || !Array.isArray(object.registrations)
+      || object.registrations.length > MAX_REGISTRATIONS_V1) throw updaterRefuseV1("updater_passkey_ledger_refused");
   const date = input => typeof input === "string" && Number.isFinite(Date.parse(input))
     && new Date(input).toISOString() === input;
   const credentialIds = new Set();
@@ -220,8 +254,9 @@ function parseLedgerV1(value) {
 export class PasskeyAuthorityV1 {
   #serial = Promise.resolve();
   constructor({ root, store, verifier = new SimpleWebAuthnVerifierV1(), clock = () => new Date(),
-    random = size => randomBytes(size), config } = {}) {
+    random = size => randomBytes(size), config, notificationTimeoutMs = VERIFY_TIMEOUT_MS_V1 } = {}) {
     this.root = root; this.store = store; this.verifier = verifier; this.clock = clock; this.random = random;
+    this.notificationTimeoutMs = Math.min(VERIFY_TIMEOUT_MS_V1, Math.max(1, notificationTimeoutMs));
     this.fixedConfig = config ? parsePasskeyConfigV1(config) : undefined;
   }
   #locked(operation) {
@@ -250,10 +285,13 @@ export class PasskeyAuthorityV1 {
       if (!this.store?.registrationRows) throw updaterRefuseV1("updater_passkey_store_port_unbound");
       if (!['initial', 'add'].includes(mode)) throw updaterRefuseV1("updater_registration_mode_refused");
       const config = await this.#config(), ledger = await this.#readLedger(), now = exactNowV1(this.clock), nowMs = now.getTime();
-      const live = ledger.passkeys.filter(item => !item.revokedAt);
-      if ((mode === "initial" && live.length !== 0) || (mode === "add" && live.length === 0))
+      if (mode === "add" && !this.store?.notifyCoolingOff)
+        throw updaterRefuseV1("updater_passkey_notification_port_unbound");
+      if (mode === "initial" && ledger.passkeys.length !== 0)
         throw updaterRefuseV1("updater_registration_mode_refused");
       ledger.registrations = ledger.registrations.filter(item => Date.parse(item.expiresAt) > nowMs && item.status === "pending");
+      if (ledger.registrations.length >= MAX_REGISTRATIONS_V1)
+        throw updaterRefuseV1("updater_registration_cap_refused");
       const secret = Buffer.from(this.random(32));
       if (secret.length !== 32) throw updaterRefuseV1("updater_registration_random_refused");
       const encoded = b64urlV1(secret), registrationDigest = digestV1(secret);
@@ -313,6 +351,7 @@ export class PasskeyAuthorityV1 {
         if (row.registrationDigest !== digest || row.comparisonCode !== typedCode
             || comparisonCodeV1(row.credentialId) !== typedCode || row.response?.id !== row.credentialId)
           throw updaterRefuseV1("updater_passkey_code_refused");
+        if (ledger.passkeys.length >= MAX_PASSKEYS_V1) throw updaterRefuseV1("updater_passkey_cap_refused");
         const verified = await this.verifier.verifyRegistration({ response: row.response,
           expectedChallenge: registrationChallengeV1(config, secret), config });
         if (ledger.passkeys.some(item => item.credentialId === verified.credentialId))
@@ -334,13 +373,18 @@ export class PasskeyAuthorityV1 {
         }
         const userHandle = b64urlV1(hashV1(Buffer.from("control-room/passkey-user/v1\0"),
           Buffer.from(config.installationId)));
+        const number = ledger.passkeys.length + 1;
+        let coolingOffNoticesEnqueued = false;
+        if (coolingOffUntil) {
+          await boundedV1(() => this.store.notifyCoolingOff({ credentialId: verified.credentialId, number,
+            coolingOffUntil, repeatAt: new Date(nowMs + 12 * 60 * 60_000).toISOString() }), this.notificationTimeoutMs);
+          coolingOffNoticesEnqueued = true;
+        }
         ledger.passkeys.push({ credentialId: verified.credentialId, publicKey: verified.publicKey,
           alg: verified.algorithm, userHandle, counter: verified.counter, transports: verified.transports,
           createdAt: now.toISOString(), coolingOffUntil, revokedAt: null });
         registration.status = "used"; registration.usedAt = now.toISOString(); await this.#writeLedger(ledger);
-        if (coolingOffUntil && this.store?.notifyCoolingOff) await this.store.notifyCoolingOff({
-          credentialId: verified.credentialId, coolingOffUntil, repeatAt: new Date(nowMs + 12 * 60 * 60_000).toISOString() });
-        return Object.freeze({ credentialId: verified.credentialId, coolingOffUntil });
+        return Object.freeze({ credentialId: verified.credentialId, coolingOffUntil, coolingOffNoticesEnqueued });
       } catch (error) {
         const fresh = await this.#readLedger(), item = fresh.registrations.find(value => value.registrationDigest === digest);
         if (item?.status === "consuming") { item.status = "refused"; item.refusedAt = exactNowV1(this.clock).toISOString();

@@ -406,6 +406,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         if (!options.passkeyRegistration || request.method !== "POST" || url.search || !request.body
           || request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json")
           throw new WebAccessError(options.passkeyRegistration ? "invalid_request" : "not_found");
+        sessions.assertLocalRequest(request, true);
         const body = await readBoundedJson(request.body, 20_000);
         if (!body || typeof body !== "object" || Array.isArray(body) || Object.getPrototypeOf(body) !== Object.prototype)
           throw new WebAccessError("invalid_request");

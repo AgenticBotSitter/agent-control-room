@@ -94,15 +94,17 @@ export async function runUpdaterCliV1(argv, options = {}) {
       const expectedOrigin = registration.expectedOrigin ?? registration.config.expectedOrigin;
       context.stdout(`${expectedOrigin}/setup#reg=${registration.registrationSecret}&mode=add\n`);
       context.stdout("The registration expires in 30 minutes. The new passkey needs approval from an active passkey, or it remains inactive for 24 hours.\n");
-      const typedCode = await context.readComparisonCode();
+      const typedCode = (await context.readComparisonCode()).trim().toUpperCase();
       const result = authority ? await authority.completeRegistration({ registrationSecret: registration.registrationSecret,
         typedCode }) : await context.send(join(root, "updater-state/control.sock"), {
           schema: "control-room.updater-control/v1", requestId: `cli-${process.pid}-${Date.now()}`,
-          verb: "passkey-add-complete", arguments: [registration.registrationSecret, typedCode] });
+          verb: "passkey-add-complete", arguments: [registration.registrationSecret, typedCode] }, { timeoutMs: 15_000 });
       if (!result || result.coolingOffUntil !== null && typeof result.coolingOffUntil !== "string")
         throw updaterRefuseV1("updater_passkey_control_reply_refused");
+      if (result.coolingOffUntil && result.coolingOffNoticesEnqueued !== true)
+        throw updaterRefuseV1("updater_passkey_control_reply_refused");
       context.stdout(result.coolingOffUntil
-        ? `Passkey added. It is inactive until ${result.coolingOffUntil}. Existing subscriptions were warned.\n`
+        ? `Passkey added. It is inactive until ${result.coolingOffUntil}. Cooling-off warnings were queued.\n`
         : "Passkey added and active.\n");
       return 0;
     }
@@ -113,7 +115,8 @@ export async function runUpdaterCliV1(argv, options = {}) {
           requestId: `cli-${process.pid}-${Date.now()}`, verb: "passkey-list", arguments: [] });
       if (!Array.isArray(rows) || rows.length > 32) throw updaterRefuseV1("updater_passkey_control_reply_refused");
       for (const row of rows) context.stdout(`${row.number}. ${row.revokedAt ? "revoked" : row.coolingOffUntil
-        && Date.parse(row.coolingOffUntil) > context.now().getTime() ? `inactive until ${row.coolingOffUntil}` : "active"}\n`);
+        && Date.parse(row.coolingOffUntil) > context.now().getTime() ? `inactive until ${row.coolingOffUntil}` : "active"}`
+        + `; created ${row.createdAt}; id ${row.credentialId}\n`);
       return 0;
     }
     if (!/^[1-9][0-9]{0,2}$/u.test(value ?? "")) throw updaterRefuseV1("updater_passkey_number_refused");

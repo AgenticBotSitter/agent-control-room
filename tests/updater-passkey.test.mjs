@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { canonicalJsonV1 } from "../src/updater/v1/canonical-json.mjs";
 import { comparisonCodeV1, PasskeyAuthorityV1, PasskeyRefusalAggregatorV1,
-  planApprovalChallengeV1, SimpleWebAuthnVerifierV1 } from "../src/updater/v1/passkey.mjs";
+  parsePasskeyConfigV1, planApprovalChallengeV1, SimpleWebAuthnVerifierV1 } from "../src/updater/v1/passkey.mjs";
 
 const config = Object.freeze({ installationId: "installation-one", rpId: "control-room.example.test",
   expectedOrigin: "https://control-room.example.test" });
@@ -30,30 +30,36 @@ function cbor(value) {
   throw new Error("test_cbor_type_refused");
 }
 
-function authenticator() {
-  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+function authenticator({ algorithm = -7 } = {}) {
+  const { publicKey, privateKey } = algorithm === -8 ? generateKeyPairSync("ed25519")
+    : generateKeyPairSync("ec", { namedCurve: "P-256" });
   const jwk = publicKey.export({ format: "jwk" });
-  const publicKeyCose = cbor(new Map([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(jwk.x, "base64url")],
-    [-3, Buffer.from(jwk.y, "base64url")]]));
-  return { privateKey, publicKeyCose, credentialId: randomBytes(32) };
+  const publicKeyCose = algorithm === -8
+    ? cbor(new Map([[1, 1], [3, -8], [-1, 6], [-2, Buffer.from(jwk.x, "base64url")]]))
+    : cbor(new Map([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(jwk.x, "base64url")],
+      [-3, Buffer.from(jwk.y, "base64url")]]));
+  return { privateKey, publicKeyCose, publicJwk: jwk, credentialId: randomBytes(32) };
 }
 
-function registrationResponse(device, { challenge, origin = config.expectedOrigin, rpId = config.rpId } = {}) {
+function registrationResponse(device, { challenge, origin = config.expectedOrigin, rpId = config.rpId,
+  flags = 0x45, fmt = "none", paddingBytes = 0 } = {}) {
   const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin, crossOrigin: false }));
   const counter = Buffer.alloc(4), length = Buffer.alloc(2); length.writeUInt16BE(device.credentialId.length);
-  const authData = Buffer.concat([sha(rpId), Buffer.from([0x45]), counter, Buffer.alloc(16), length,
+  const authData = Buffer.concat([sha(rpId), Buffer.from([flags]), counter, Buffer.alloc(16), length,
     device.credentialId, device.publicKeyCose]);
-  const attestationObject = cbor(new Map([["fmt", "none"], ["authData", authData], ["attStmt", new Map()]]));
+  const attestation = new Map([["fmt", fmt], ["authData", authData], ["attStmt", new Map()]]);
+  if (paddingBytes > 0) attestation.set("padding", Buffer.alloc(paddingBytes));
+  const attestationObject = cbor(attestation);
   const id = b64(device.credentialId);
   return { id, rawId: id, type: "public-key", response: { clientDataJSON: b64(clientDataJSON),
     attestationObject: b64(attestationObject), transports: ["internal"] }, clientExtensionResults: {} };
 }
 
 function assertionResponse(device, { challenge, origin = config.expectedOrigin, rpId = config.rpId, counter = 1,
-  userHandle = null, crossOrigin = false } = {}) {
+  userHandle = null, crossOrigin = false, flags = 0x05 } = {}) {
   const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.get", challenge, origin, crossOrigin }));
   const count = Buffer.alloc(4); count.writeUInt32BE(counter);
-  const authenticatorData = Buffer.concat([sha(rpId), Buffer.from([0x05]), count]);
+  const authenticatorData = Buffer.concat([sha(rpId), Buffer.from([flags]), count]);
   const signature = sign("sha256", Buffer.concat([authenticatorData, sha(clientDataJSON)]), device.privateKey);
   const id = b64(device.credentialId);
   return { id, rawId: id, type: "public-key", response: { clientDataJSON: b64(clientDataJSON),
@@ -94,6 +100,9 @@ test("the pinned wrapper verifies a real none-attestation and refuses wrong orig
     { challenge, origin: "https://other.example.test", counter: 2 }), expectedChallenge: challenge, config, credential }),
   /updater_passkey_assertion_refused/u);
   await assert.rejects(verifier.verifyAuthentication({ response: assertionResponse(device,
+    { challenge, origin: "https://control-room.example.test:8443", counter: 2 }), expectedChallenge: challenge, config, credential }),
+  /updater_passkey_assertion_refused/u);
+  await assert.rejects(verifier.verifyAuthentication({ response: assertionResponse(device,
     { challenge, rpId: "other.example.test", counter: 2 }), expectedChallenge: challenge, config, credential }),
   /updater_passkey_assertion_refused/u);
   await assert.rejects(verifier.verifyAuthentication({ response: assertionResponse(device,
@@ -101,6 +110,17 @@ test("the pinned wrapper verifies a real none-attestation and refuses wrong orig
   /updater_passkey_client_data_refused/u);
   await assert.rejects(verifier.verifyAuthentication({ response: assertionResponse(device, { challenge, counter: 1 }),
     expectedChallenge: challenge, config, credential: { ...credential, counter: 1 } }), /updater_passkey_assertion_refused/u);
+  for (const flags of [0x01, 0x04]) await assert.rejects(verifier.verifyAuthentication({
+    response: assertionResponse(device, { challenge, counter: 2, flags }), expectedChallenge: challenge, config, credential }),
+  /updater_passkey_assertion_refused/u);
+  for (const flags of [0x41, 0x44]) await assert.rejects(verifier.verifyRegistration({
+    response: registrationResponse(device, { challenge, flags }), expectedChallenge: challenge, config }),
+  /updater_passkey_registration_refused/u);
+  await assert.rejects(verifier.verifyRegistration({ response: registrationResponse(device,
+    { challenge, origin: "https://control-room.example.test:8443" }), expectedChallenge: challenge, config }),
+  /updater_passkey_registration_refused/u);
+  await assert.rejects(verifier.verifyRegistration({ response: registrationResponse(device,
+    { challenge, fmt: "packed" }), expectedChallenge: challenge, config }), /updater_passkey_attestation_refused/u);
   const rollbackStub = new SimpleWebAuthnVerifierV1({ authenticationVerifier: async () => ({ verified: true,
     authenticationInfo: { newCounter: 5 } }) });
   await assert.rejects(rollbackStub.verifyAuthentication({ response: assertionResponse(device,
@@ -109,10 +129,49 @@ test("the pinned wrapper verifies a real none-attestation and refuses wrong orig
   const slow = new SimpleWebAuthnVerifierV1({ timeoutMs: 10, registrationVerifier: () => new Promise(() => {}) });
   await assert.rejects(slow.verifyRegistration({ response: registrationResponse(device, { challenge }),
     expectedChallenge: challenge, config }), /updater_passkey_verification_timeout/u);
-  const oversized = registrationResponse(device, { challenge });
-  oversized.response.attestationObject = b64(Buffer.alloc(8193));
-  await assert.rejects(verifier.verifyRegistration({ response: oversized, expectedChallenge: challenge, config }),
+  const oversized = registrationResponse(device, { challenge, paddingBytes: 8_200 });
+  const acceptingStub = new SimpleWebAuthnVerifierV1({ registrationVerifier: async input => ({ verified: true,
+    registrationInfo: { credential: { id: input.response.id, publicKey: device.publicKeyCose,
+      counter: 0, transports: [] } } }) });
+  await assert.rejects(acceptingStub.verifyRegistration({ response: oversized, expectedChallenge: challenge, config }),
     /updater_passkey_attestation_refused/u);
+});
+
+test("registration accepts only exact importable ES256 and EdDSA COSE public keys", async () => {
+  const challenge = b64(randomBytes(32)), verifier = new SimpleWebAuthnVerifierV1();
+  const ed = authenticator({ algorithm: -8 });
+  assert.equal((await verifier.verifyRegistration({ response: registrationResponse(ed, { challenge }),
+    expectedChallenge: challenge, config })).algorithm, -8);
+  const ec = authenticator(), malformed = cbor(new Map([[1, 2], [3, -7], [-1, 1],
+    [-2, Buffer.alloc(32)], [-3, Buffer.alloc(32)]]));
+  const acceptingStub = new SimpleWebAuthnVerifierV1({ registrationVerifier: async input => ({ verified: true,
+    registrationInfo: { credential: { id: input.response.id, publicKey: ec.publicKeyCose,
+      counter: 0, transports: [] } } }) });
+  await assert.rejects(acceptingStub.verifyRegistration({ response: registrationResponse(ec, { challenge, fmt: "packed" }),
+    expectedChallenge: challenge, config }), /updater_passkey_attestation_refused/u);
+  const invalidPoint = { ...ec, publicKeyCose: malformed };
+  await assert.rejects(verifier.verifyRegistration({ response: registrationResponse(invalidPoint, { challenge }),
+    expectedChallenge: challenge, config }), /updater_passkey_public_key_refused/u);
+  const extraKey = cbor(new Map([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(ec.publicJwk.x, "base64url")],
+    [-3, Buffer.from(ec.publicJwk.y, "base64url")], [4, 1]]));
+  const stub = new SimpleWebAuthnVerifierV1({ registrationVerifier: async response => ({ verified: true,
+    registrationInfo: { credential: { id: response.response.id, publicKey: extraKey, counter: 0, transports: [] } } }) });
+  await assert.rejects(stub.verifyRegistration({ response: registrationResponse(ec, { challenge }),
+    expectedChallenge: challenge, config }), /updater_passkey_public_key_refused/u);
+  const extraEdKey = cbor(new Map([[1, 1], [3, -8], [-1, 6], [-2, Buffer.from(ed.publicJwk.x, "base64url")], [4, 1]]));
+  const edStub = new SimpleWebAuthnVerifierV1({ registrationVerifier: async input => ({ verified: true,
+    registrationInfo: { credential: { id: input.response.id, publicKey: extraEdKey, counter: 0, transports: [] } } }) });
+  await assert.rejects(edStub.verifyRegistration({ response: registrationResponse(ed, { challenge }),
+    expectedChallenge: challenge, config }), /updater_passkey_public_key_refused/u);
+});
+
+test("passkey config refuses numeric relying-party labels", () => {
+  assert.throws(() => parsePasskeyConfigV1({ installationId: "installation-one", rpId: "127.0.0.1",
+    expectedOrigin: "https://127.0.0.1" }), /updater_passkey_config_refused/u);
+  assert.throws(() => parsePasskeyConfigV1({ ...config, expectedOrigin: `${config.expectedOrigin}:8443` }),
+    /updater_passkey_config_refused/u);
+  assert.deepEqual(parsePasskeyConfigV1({ ...config, expectedOrigin: `${config.expectedOrigin}:8443`, rehearsal: true }),
+    { ...config, expectedOrigin: `${config.expectedOrigin}:8443`, rehearsal: true });
 });
 
 test("registration is single-use, exactly-one-row, comparison-code bound and one of 50 callers wins", async t => {
@@ -221,19 +280,136 @@ test("plan assertions bind the digest, burn the nonce once and keep an unauthori
   }
 });
 
-test("10,000 malformed CBOR and JSON inputs do not crash and stay within the bounded parser", async () => {
-  const verifier = new SimpleWebAuthnVerifierV1(), started = performance.now(), jobs = [];
+test("cooling-off notice is mandatory, precedes the passkey write, and revoke-all recovery still cools off", async t => {
+  const fixture = await registrationFixture(t);
+  delete fixture.store.notifyCoolingOff;
+  await assert.rejects(fixture.authority.beginRegistration({ mode: "add" }),
+    /updater_passkey_notification_port_unbound/u);
+  fixture.store.notifyCoolingOff = async notice => {
+    const before = JSON.parse(await readFile(join(fixture.root, "updater-state/passkeys.json"), "utf8"));
+    assert.equal(before.passkeys.length, 1, "notification enqueue happens before the new passkey ledger write");
+    fixture.notices.push(notice);
+  };
+  await fixture.authority.revokePasskey(1);
+  await assert.rejects(fixture.authority.beginRegistration({ mode: "initial" }), /updater_registration_mode_refused/u);
+  const add = await fixture.authority.beginRegistration({ mode: "add" }), options = await fixture.authority.registrationOptions(add.registrationSecret),
+    device = authenticator(), response = registrationResponse(device, { challenge: options.publicKey.challenge }),
+    code = comparisonCodeV1(response.id);
+  assert.deepEqual(options.authorization.allowCredentials, []);
+  fixture.rows.set(add.registrationDigest, [{ registrationDigest: add.registrationDigest, credentialId: response.id,
+    comparisonCode: code, response, userHandle: options.publicKey.user.id }]);
+  const completed = await fixture.authority.completeRegistration({ registrationSecret: add.registrationSecret, typedCode: code });
+  assert.equal(completed.coolingOffNoticesEnqueued, true);
+  assert.deepEqual(fixture.notices[0], { credentialId: response.id, number: 2,
+    coolingOffUntil: "2026-10-01T12:00:00.000Z", repeatAt: "2026-10-01T00:00:00.000Z" });
+  assert.equal((await fixture.authority.listPasskeys()).length, 2);
+});
+
+test("a failed cooling-off enqueue burns the registration but records no passkey", async t => {
+  const fixture = await registrationFixture(t), add = await fixture.authority.beginRegistration({ mode: "add" }),
+    options = await fixture.authority.registrationOptions(add.registrationSecret), device = authenticator(),
+    response = registrationResponse(device, { challenge: options.publicKey.challenge }), code = comparisonCodeV1(response.id);
+  fixture.rows.set(add.registrationDigest, [{ registrationDigest: add.registrationDigest, credentialId: response.id,
+    comparisonCode: code, response, userHandle: options.publicKey.user.id }]);
+  fixture.store.notifyCoolingOff = async () => { throw Object.assign(new Error("push_down"), { code: "push_down" }); };
+  await assert.rejects(fixture.authority.completeRegistration({ registrationSecret: add.registrationSecret, typedCode: code }),
+    /push_down/u);
+  assert.equal((await fixture.authority.listPasskeys()).length, 1);
+  await assert.rejects(fixture.authority.completeRegistration({ registrationSecret: add.registrationSecret, typedCode: code }),
+    /updater_registration_expired/u);
+
+  const bounded = new PasskeyAuthorityV1({ root: fixture.root, store: fixture.store, config,
+    clock: () => fixture.clock.value, notificationTimeoutMs: 10 });
+  const retry = await bounded.beginRegistration({ mode: "add" }), retryOptions = await bounded.registrationOptions(retry.registrationSecret),
+    retryDevice = authenticator(), retryResponse = registrationResponse(retryDevice,
+      { challenge: retryOptions.publicKey.challenge }), retryCode = comparisonCodeV1(retryResponse.id);
+  fixture.rows.set(retry.registrationDigest, [{ registrationDigest: retry.registrationDigest,
+    credentialId: retryResponse.id, comparisonCode: retryCode, response: retryResponse,
+    userHandle: retryOptions.publicKey.user.id }]);
+  fixture.store.notifyCoolingOff = async () => new Promise(resolve => setTimeout(resolve, 50));
+  await assert.rejects(bounded.completeRegistration({ registrationSecret: retry.registrationSecret, typedCode: retryCode }),
+    /updater_passkey_verification_timeout/u);
+  assert.equal((await bounded.listPasskeys()).length, 1);
+});
+
+test("ledger caps refuse before writes without bricking later reads", async t => {
+  const fixture = await registrationFixture(t), ledgerPath = join(fixture.root, "updater-state/passkeys.json"),
+    ledger = JSON.parse(await readFile(ledgerPath, "utf8")), original = ledger.passkeys[0];
+  for (let index = 1; index < 32; index += 1) ledger.passkeys.push({ ...original,
+    credentialId: b64(Buffer.alloc(32, index)), createdAt: new Date(Date.parse(original.createdAt) + index).toISOString() });
+  await writeFile(ledgerPath, `${JSON.stringify(ledger)}\n`);
+  const add = await fixture.authority.beginRegistration({ mode: "add" }), options = await fixture.authority.registrationOptions(add.registrationSecret),
+    device = authenticator(), response = registrationResponse(device, { challenge: options.publicKey.challenge }),
+    code = comparisonCodeV1(response.id);
+  fixture.rows.set(add.registrationDigest, [{ registrationDigest: add.registrationDigest, credentialId: response.id,
+    comparisonCode: code, response, userHandle: options.publicKey.user.id }]);
+  await assert.rejects(fixture.authority.completeRegistration({ registrationSecret: add.registrationSecret, typedCode: code }),
+    /updater_passkey_cap_refused/u);
+  assert.equal((await fixture.authority.listPasskeys()).length, 32);
+
+  const root = await tempRoot(t), registrations = Array.from({ length: 64 }, (_, index) => ({
+    registrationDigest: `sha256:${index.toString(16).padStart(64, "0")}`, mode: "initial", status: "pending",
+    createdAt: "2026-09-30T12:00:00.000Z", expiresAt: "2026-10-01T12:00:00.000Z", authorizationChallenge: null }));
+  await writeFile(join(root, "updater-state/passkeys.json"), `${JSON.stringify({ schema: "control-room.passkeys/v1",
+    revision: 1, passkeys: [], registrations })}\n`);
+  const capped = new PasskeyAuthorityV1({ root, config, clock: () => new Date("2026-09-30T12:00:00.000Z"),
+    store: { registrationRows: async () => [] } });
+  await assert.rejects(capped.beginRegistration({ mode: "initial" }), /updater_registration_cap_refused/u);
+  assert.equal((await capped.listPasskeys()).length, 0);
+});
+
+test("10,000 structured registration and 10,000 assertion mutations are refused within per-input bounds", async () => {
+  const verifier = new SimpleWebAuthnVerifierV1(), device = authenticator(), challenge = b64(Buffer.alloc(32, 7));
+  const registered = await verifier.verifyRegistration({ response: registrationResponse(device, { challenge }),
+    expectedChallenge: challenge, config });
+  const credential = { credentialId: registered.credentialId, publicKey: registered.publicKey,
+    counter: 0, transports: ["internal"] };
+  let state = 0x6d2b79f5, maxMs = 0;
+  const nextByte = () => { state ^= state << 13; state ^= state >>> 17; state ^= state << 5; return state & 255; };
+  const expectBoundedRefusal = async (operation, label) => {
+    const started = performance.now(); let caught;
+    try { await operation(); } catch (error) { caught = error; }
+    const elapsed = performance.now() - started; maxMs = Math.max(maxMs, elapsed);
+    assert.ok(caught && /^updater_/u.test(caught.code ?? caught.message), `structured mutation ${label} must be refused`);
+    assert.ok(elapsed < 2_000, `one structured mutation took ${elapsed} ms`);
+  };
   for (let index = 0; index < 10_000; index += 1) {
-    const id = b64(Buffer.alloc(32, index & 255));
-    const clientDataJSON = index % 2 === 0 ? b64(Buffer.from("{")) : b64(Buffer.from(JSON.stringify({
-      type: "webauthn.create", challenge: b64(Buffer.alloc(32)), origin: config.expectedOrigin, crossOrigin: false })));
-    jobs.push(verifier.verifyRegistration({ response: { id, rawId: id, type: "public-key", response: {
-      clientDataJSON, attestationObject: b64(Buffer.alloc(32, index & 255)), transports: [] } },
-    expectedChallenge: b64(Buffer.alloc(32)), config }));
+    const kind = index % 10; let response;
+    if (kind === 0) response = registrationResponse(device, { challenge, origin: `${config.expectedOrigin}:8443` });
+    else if (kind === 1) response = registrationResponse(device, { challenge: b64(Buffer.alloc(32, 9)) });
+    else if (kind === 2) response = registrationResponse(device, { challenge, flags: 0x41 });
+    else if (kind === 3) response = registrationResponse(device, { challenge, flags: 0x44 });
+    else if (kind === 4) response = registrationResponse(device, { challenge, fmt: "packed" });
+    else if (kind === 5) response = registrationResponse({ ...device, publicKeyCose: cbor(new Map([[1, 2], [3, -7], [-1, 1],
+      [-2, Buffer.alloc(32, nextByte())], [-3, Buffer.alloc(32, nextByte())]])) }, { challenge });
+    else if (kind === 6) response = registrationResponse(device, { challenge, rpId: "other.example.test" });
+    else if (kind === 7) { response = registrationResponse(device, { challenge });
+      response.response.attestationObject = b64(Buffer.from(response.response.attestationObject, "base64url").subarray(0, -1)); }
+    else if (kind === 8) { response = registrationResponse(device, { challenge });
+      const bytes = Buffer.from(response.response.attestationObject, "base64url"); bytes[0] ^= 0xff;
+      response.response.attestationObject = b64(bytes); }
+    else { response = registrationResponse(device, { challenge }); response.response.clientDataJSON = b64(Buffer.from("{")); }
+    await expectBoundedRefusal(() => verifier.verifyRegistration({ response, expectedChallenge: challenge, config }),
+      `registration-${index}-kind-${kind}`);
   }
-  const results = await Promise.allSettled(jobs);
-  assert.equal(results.filter(result => result.status === "rejected").length, 10_000);
-  assert.ok(performance.now() - started < 15_000, "10k bounded malformed inputs completed within the test budget");
+  for (let index = 0; index < 10_000; index += 1) {
+    const kind = index % 10; let response = assertionResponse(device, { challenge, counter: 1 });
+    if (kind === 0) response = assertionResponse(device, { challenge, origin: `${config.expectedOrigin}:8443`, counter: 1 });
+    else if (kind === 1) response = assertionResponse(device, { challenge: b64(Buffer.alloc(32, 9)), counter: 1 });
+    else if (kind === 2) response = assertionResponse(device, { challenge, counter: 1, flags: 0x01 });
+    else if (kind === 3) response = assertionResponse(device, { challenge, counter: 1, flags: 0x04 });
+    else if (kind === 4) response = assertionResponse(device, { challenge, rpId: "other.example.test", counter: 1 });
+    else if (kind === 5) { const bytes = Buffer.from(response.response.signature, "base64url");
+      bytes[bytes.length - 1] ^= nextByte() || 1; response.response.signature = b64(bytes); }
+    else if (kind === 6) response.response.signature = b64(Buffer.from(response.response.signature, "base64url").subarray(0, 32));
+    else if (kind === 7) { const bytes = Buffer.from(response.response.authenticatorData, "base64url");
+      bytes[nextByte() % 32] ^= 1; response.response.authenticatorData = b64(bytes); }
+    else if (kind === 8) response.response.clientDataJSON = b64(Buffer.from("{"));
+    else response.response.userHandle = b64(Buffer.alloc(129, nextByte()));
+    await expectBoundedRefusal(() => verifier.verifyAuthentication({ response, expectedChallenge: challenge, config, credential }),
+      `assertion-${index}-kind-${kind}`);
+  }
+  assert.ok(maxMs < 2_000);
 });
 
 test("10,000 refusal rows produce one journal line and one push in the hour", async () => {
