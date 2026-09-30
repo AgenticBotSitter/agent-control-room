@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -60,6 +60,76 @@ test("gateway unauthenticated identities use IPv4 /24 and IPv6 /64 networks", ()
 test("fleet gateway checks slow request timeouts every second", () => {
   assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.requestTimeout, 15_000);
   assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.connectionsCheckingInterval, 1_000);
+});
+
+function slowEnrollment(port: number, address: string) {
+  return new Promise<Socket>((resolve, reject) => {
+    const socket = netConnect(port, "127.0.0.1", () => {
+      socket.write(["POST /fleet/v1/enroll HTTP/1.1", `Host: 127.0.0.1:${port}`,
+        "Content-Type: application/json", "Content-Length: 4000", `CF-Connecting-IP: ${address}`,
+        "Connection: close", "", "{"].join("\r\n"));
+      resolve(socket);
+    });
+    socket.once("error", reject);
+  });
+}
+
+function enrollmentRequestBody() {
+  return JSON.stringify({ code: `crj_${"J".repeat(43)}`, credentialDigest: `sha256:${"0".repeat(64)}`,
+    platform: "linux", architecture: "x64", connectorVersion: "1.0.0", clientNonce: `crn_${"A".repeat(43)}` });
+}
+
+test("slow enrollment uploads from two networks cannot occupy the enrollment lane", async t => {
+  const unexpected: unknown[] = [];
+  const store = { async enroll() { return { workerId: `fleet-worker:${"a".repeat(32)}`, replayed: false }; } };
+  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
+    admission: createFleetGatewayAdmissionV1(CF_PROXY), onUnexpectedError: error => unexpected.push(error) });
+  const server = createServer(FLEET_GATEWAY_SERVER_OPTIONS_V1,
+    (request, response) => { void handler.handle(request, response); });
+  await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+  const port = (server.address() as AddressInfo).port;
+  const attackers = await Promise.all(Array.from({ length: 6 }, (_, index) => slowEnrollment(port,
+    index % 2 === 0 ? `192.0.2.${index + 1}` : `198.51.100.${index + 1}`)));
+  t.after(async () => {
+    for (const socket of attackers) socket.destroy();
+    server.closeAllConnections();
+    await new Promise<void>(done => server.close(() => done()));
+  });
+
+  const body = enrollmentRequestBody();
+  const response = await fetch(`http://127.0.0.1:${port}/fleet/v1/enroll`, { method: "POST", headers: {
+    "content-type": "application/json", "cf-connecting-ip": "203.0.113.9",
+  }, body, signal: AbortSignal.timeout(2_000) });
+  assert.equal(response.status, 201, "an honest third network joins while six production-timeout uploads are incomplete");
+  assert.equal(unexpected.length, 0);
+});
+
+test("an enrollment upload stopped halfway is a fixed invalid refusal, not an unexpected error", async t => {
+  const unexpected: unknown[] = [];
+  let handled = 0;
+  const store = { async enroll() { throw new Error("enroll must not run for an incomplete body"); } };
+  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
+    admission: createFleetGatewayAdmissionV1(CF_PROXY), onUnexpectedError: error => unexpected.push(error) });
+  const server = createServer(FLEET_GATEWAY_SERVER_OPTIONS_V1, (request, response) => {
+    void handler.handle(request, response).then(() => { handled += 1; });
+  });
+  await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>(done => server.close(() => done()));
+  });
+  const socket = await slowEnrollment((server.address() as AddressInfo).port, "192.0.2.1");
+  socket.destroy();
+  await new Promise<void>((resolve, reject) => {
+    const deadline = Date.now() + 2_000;
+    const inspect = () => {
+      if (handled === 1) return resolve();
+      if (Date.now() >= deadline) return reject(new Error("aborted enrollment handler did not settle"));
+      setTimeout(inspect, 10);
+    };
+    inspect();
+  });
+  assert.deepEqual(unexpected, []);
 });
 
 test("gateway protected configuration defaults to no proxy trust and validates explicit trust", () => {
@@ -232,7 +302,7 @@ test("a lost enrollment response cannot be replayed after the code expires", asy
   assert.equal((await f.query("SELECT 1 FROM fleet_worker_credentials")).length, 1);
 });
 
-test("enrollment rejects oversized and rate-limited traffic before another body or database read", async t => {
+test("enrollment rejects oversized and rate-limited traffic before database work", async t => {
   let now = 10_000;
   const admission = createFleetGatewayAdmissionV1({ clock: () => now, windowMs: 1_000,
     enrollPerIp: 3, enrollGlobal: 10, authenticatePerIp: 10, authenticateGlobal: 10, maxConcurrent: 2 });
@@ -242,20 +312,20 @@ test("enrollment rejects oversized and rate-limited traffic before another body 
     "content-type": "application/json" }, body: "x".repeat(4_097) });
   assert.equal(oversized.status, 413);
   assert.equal(f.bodyReads(), before, "declared oversize is rejected before streaming the body");
-  for (let index = 0; index < 2; index += 1) {
+  for (let index = 0; index < 3; index += 1) {
     const response = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
-      "content-type": "application/json" }, body: "{}" });
-    assert.equal(response.status, 400);
+      "content-type": "application/json" }, body: enrollmentRequestBody() });
+    assert.equal(response.status, 401);
   }
   const readsAfterAllowed = f.bodyReads();
   const limited = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
-    "content-type": "application/json" }, body: "{}" });
+    "content-type": "application/json" }, body: enrollmentRequestBody() });
   assert.equal(limited.status, 429);
-  assert.equal(f.bodyReads(), readsAfterAllowed, "rate refusal happens before the body iterator and store");
+  assert.equal(f.bodyReads(), readsAfterAllowed + 1, "the bounded body is read before admission refuses database work");
   now += 1_001;
   const recovered = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
-    "content-type": "application/json" }, body: "{}" });
-  assert.equal(recovered.status, 400, "the fixed window recovers without a restart");
+    "content-type": "application/json" }, body: enrollmentRequestBody() });
+  assert.equal(recovered.status, 401, "the fixed window recovers without a restart");
 });
 
 test("enrollment has a global limit across trustworthy loopback proxy client addresses", async t => {
@@ -264,11 +334,11 @@ test("enrollment has a global limit across trustworthy loopback proxy client add
   const f = await fixture({ admission }); t.after(() => f.close());
   for (const address of ["192.0.2.10", "192.0.2.11"]) {
     const response = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
-      "content-type": "application/json", "cf-connecting-ip": address }, body: "{}" });
-    assert.equal(response.status, 400);
+      "content-type": "application/json", "cf-connecting-ip": address }, body: enrollmentRequestBody() });
+    assert.equal(response.status, 401);
   }
   const limited = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
-    "content-type": "application/json", "cf-connecting-ip": "192.0.2.12" }, body: "{}" });
+    "content-type": "application/json", "cf-connecting-ip": "192.0.2.12" }, body: enrollmentRequestBody() });
   assert.equal(limited.status, 429);
 });
 
@@ -280,15 +350,15 @@ test("one noisy enrollment source cannot lock out another source or an enrolled 
   const noisyStatuses: number[] = [];
   for (let index = 0; index < 24; index += 1) {
     const response = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
-      "content-type": "application/json", "cf-connecting-ip": "192.0.2.30" }, body: "{}" });
+      "content-type": "application/json", "cf-connecting-ip": "192.0.2.30" }, body: enrollmentRequestBody() });
     noisyStatuses.push(response.status);
   }
-  assert.deepEqual(noisyStatuses.slice(0, 2), [400, 400]);
+  assert.deepEqual(noisyStatuses.slice(0, 2), [401, 401]);
   assert.ok(noisyStatuses.slice(2).every(status => status === 429),
     "one source is capped at a small share of the shared enrollment budget");
   const other = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
-    "content-type": "application/json", "cf-connecting-ip": "192.0.3.31" }, body: "{}" });
-  assert.equal(other.status, 400, "source-local refusals do not spend the remaining enrollment global budget");
+    "content-type": "application/json", "cf-connecting-ip": "192.0.3.31" }, body: enrollmentRequestBody() });
+  assert.equal(other.status, 401, "source-local refusals do not spend the remaining enrollment global budget");
   assert.equal((await worker.client.me()).workerId, worker.joined.workerId,
     "enrollment traffic cannot spend the authenticated-route budget");
 });

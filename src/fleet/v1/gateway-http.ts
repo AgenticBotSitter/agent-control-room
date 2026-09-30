@@ -269,11 +269,16 @@ async function readBody(request: IncomingMessage, limit: number): Promise<string
   if (!(header(request, "content-type") ?? "").startsWith("application/json")) fleetFail("invalid");
   const chunks: Buffer[] = [];
   let length = 0;
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
-    length += bytes.length;
-    if (length > limit) fleetFail("too_large");
-    chunks.push(bytes);
+  try {
+    for await (const chunk of request) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+      length += bytes.length;
+      if (length > limit) fleetFail("too_large");
+      chunks.push(bytes);
+    }
+  } catch (error) {
+    if (request.aborted) return fleetFail("invalid");
+    throw error;
   }
   return Buffer.concat(chunks, length).toString("utf8");
 }
@@ -348,10 +353,10 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       return;
     }
     if (method === "POST" && path === "/fleet/v1/enroll") {
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),
+        ["code", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"]);
       const lease = admission.enter(request, "enroll");
       try {
-        const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),
-          ["code", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"]);
         const result = await options.store.enroll(body as never);
         admission.registerCredential(result.workerId, body.credentialDigest as string);
         return send(response, result.replayed ? 200 : 201, { ok: true, result });
