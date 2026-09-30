@@ -1034,6 +1034,19 @@ export class ResultFileStoreV1 {
         uncertain = false;
         refusal = error;
       } else if (uncertain) this.poisoned = true;
+      // A raw errno BEFORE any mutation is still a raw errno on the way out,
+      // and the store's contract says its only answers are its own fixed codes.
+      // `stillOwnsTheName` is the case that matters: it re-throws an errno it
+      // cannot interpret, deliberately, because a store that cannot ASK must
+      // not answer — and the answer must still not be the system error. Nothing
+      // was written, so this is a clean refusal rather than a poisoned store:
+      // the caller gets `store_ambiguous` and the store stays usable.
+      //
+      // The lock is already released by the `finally` below, so the directory is
+      // in the state this operation found it in apart from the lock's own
+      // lifecycle, which is exactly the state `uncertain` describes as safe.
+      else if (!uncertain && error instanceof Error && "code" in error)
+        refusal = new ResultFileStoreError("store_ambiguous");
       else throw error;
     } finally {
       try {

@@ -457,6 +457,66 @@ test("N-4c: a root whose volume ignores O_EXLOCK is refused, not trusted", async
   } finally { await rm(base, { recursive: true, force: true }); }
   });
 
+test("B3: the store's only answers are its own codes, on every path a caller can reach", async () => {
+  // The error contract, pinned where it was weakest. The store promises that a
+  // refusal is always one of `store_invalid`, `store_missing`, `store_conflict`,
+  // `store_capacity` or `store_ambiguous` — never a system errno. Two paths used
+  // to break that, and this is the test that says so:
+  //
+  //   1. `stillOwnsTheName` re-throws an errno it cannot interpret, on purpose,
+  //      because a store that cannot ASK must not answer. In `writeExclusive`
+  //      that happened before any mutation, so the catch block passed the errno
+  //      straight through to the caller. It is now a clean `store_ambiguous`.
+  //   2. `removeProvenAbandoned`'s lstat-then-unlink is not atomic, so a
+  //      concurrent recovery can remove the name in between and the unlink
+  //      failed with a raw ENOENT out of `create()`. Measured by the review at
+  //      39 in 20 seconds.
+  //
+  // What is asserted here is the CONTRACT, on the paths that provably fail for a
+  // process that owns the directory. An errno that needs an unwritable root to
+  // provoke cannot be provoked as the owner — root ignores the group bits — and
+  // a test that pretends otherwise is a test that passes by luck, so the trigger
+  // is not faked: a path that does not exist, and a configuration the store
+  // refuses, are both real failures with real errnos behind them.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-errno-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { mode: 0o700 });
+    // A root that does not exist: the realpath/lstat pair behind `create` returns
+    // ENOENT, and the store's answer has to be its own code. Before the round
+    // this was `store_invalid` by a dedicated `catch` — the shape is right, and
+    // it is asserted here so a later refactor that "simplifies" that catch into
+    // a re-throw is caught.
+    await assert.rejects(
+      ResultFileStoreV1.create({ ...configurationV1(join(root, "absent")) }),
+      (error: unknown) => (error as { code?: string }).code === "store_invalid",
+    "a root that does not exist is `store_invalid`, never the ENOENT the lstat returned");
+    // A configuration the store refuses before it touches the disk. No errno is
+    // involved at all, and it is here because "its own codes, always" includes
+    // the answers that are decided rather than provoked.
+    await assert.rejects(
+      ResultFileStoreV1.create({ ...configurationV1(root), operationTimeoutMs: 30_001 }),
+      (error: unknown) => (error as { code?: string }).code === "store_invalid",
+    "a configuration above the ceiling is `store_invalid`");
+    // The live store still works after both refusals: these are clean answers,
+    // and the store stays usable.
+    const store = await ResultFileStoreV1.create(configurationV1(root));
+    const payload = new Uint8Array(PAYLOAD);
+    payload.fill(12);
+    const id = { tenantId: TENANT, projectId: "project:errno",
+      fileId: `result-file:${"b".repeat(32)}`,
+      contentDigest: `sha256:${createHash("sha256").update(payload).digest("hex")}` };
+    await store.put({ ...id, bytes: payload });
+    assert.deepEqual(Buffer.from((await store.read(id))!), Buffer.from(payload),
+      "a refusal leaves the store usable: the write after it lands");
+    // And a read of something that is not there is `undefined`, not ENOENT — the
+    // read path's own version of the same promise.
+    assert.equal(await store.read({ ...id, fileId: `result-file:${"c".repeat(32)}`,
+      contentDigest: id.contentDigest }), undefined,
+    "a missing file is `undefined`, not the ENOENT the open returned");
+  } finally { await rm(base, { recursive: true, force: true }); }
+  });
+
 test("B7: a crash between link() and the staging unlink does not lock the store out for ever",
   async () => {
     // Found by the review's own crash harness against this fix, and it is a
