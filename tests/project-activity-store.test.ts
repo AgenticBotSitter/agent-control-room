@@ -7,6 +7,7 @@ import { buildProjectEventV1, encodeProjectEventCursorV1, formatProjectEventSseV
   ProjectEventStoreV1, TaskProjectEventWriterV1, taskProjectEventActionsV1, type ProjectEventInputV1 } from "../src/project-events/v1";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { splitSqlStatements } from "./support/attack-kit";
+import { applicableStatements } from "./support/applicable-statements";
 import { mergeProjectActivityEventsV1 } from "../src/web/v1/project-activity-browser-client";
 
 const scope = { tenantId: "tenant:timeline", workspaceId: "workspace:timeline", projectId: "project:timeline" };
@@ -279,8 +280,7 @@ test("task and project lifecycle actions append exactly once, roll back atomical
 // is quietly missing privileges, so it is asserted here without a database: a
 // filter that under-grants would make the down-migration equality pass for the
 // wrong reason, and one that over-grants would raise 42P01 on the server.
-test("B-093 keeps only the grants a staged migration prefix can actually run", async () => {
-  const { applicableStatements } = await import("./project-activity-lifecycle-postgres.test.ts");
+test("B-093 keeps only the grants a staged migration prefix can actually run", () => {
   const absent = new Set(["later_table", "later_column"]);
   const statements = [
     // Kept verbatim: nothing absent is named.
