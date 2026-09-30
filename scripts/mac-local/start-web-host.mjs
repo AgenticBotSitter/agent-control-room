@@ -1,10 +1,37 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { isAbsolute, resolve } from "node:path";
 import { pinnedVersionLine } from "./executable-version.mjs";
 
 const execFile = promisify(execFileCallback);
+const hostStartedAt = new Date().toISOString();
+
+export async function loadHealthProbeKeyV1(protectedRoot) {
+  try {
+    const path = join(protectedRoot, "service", "health-probe.key"), entry = await lstat(path);
+    if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o777) !== 0o600) throw new Error();
+    const encoded = (await readFile(path, "utf8")).trim();
+    if (!/^[A-Za-z0-9_-]{43}$/u.test(encoded)) throw new Error();
+    const key = Buffer.from(encoded, "base64url");
+    if (key.length !== 32) throw new Error();
+    return key;
+  } catch { throw new Error("mac_local_health_probe_key_invalid"); }
+}
+
+/** The running host reports the release that contains its own built server,
+ * never a caller-selected release. A checkout has no sealed release record. */
+export async function hostReleaseIdentityV1(codeDirectory) {
+  try {
+    const directory = await realpath(codeDirectory);
+    const value = JSON.parse(await readFile(join(directory, ".control-room-release.json"), "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.version !== "string" || !value.version)
+      throw new Error();
+    return value.version;
+  } catch { return "dev"; }
+}
 
 /** Parse only the owner-attended, fixed-root website launch form.  The task
  * lifecycle and queue are deliberately not accepted here: this is the first
@@ -52,6 +79,10 @@ export async function verifyPinnedMacModelPolicy(worker, runtime = { execFile })
 export async function startMacLocalWebHost(input, runtime = {}) {
   if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
   const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
+  const [healthProbeKey, healthReleaseId] = await Promise.all([
+    runtime.loadHealthProbeKey ?? loadHealthProbeKeyV1(input.protectedRoot),
+    runtime.hostReleaseIdentity ?? hostReleaseIdentityV1(fileURLToPath(releaseRoot)),
+  ]);
   const load = runtime.load ?? (path => import(path));
   const [hostModule, loaderModule, postgresModule, servingModule, rendererModule, intakeModule] = await Promise.all([
     load(new URL("macLocalHost.js", releaseRoot).href), load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
@@ -78,6 +109,7 @@ export async function startMacLocalWebHost(input, runtime = {}) {
     openDatabase: postgresModule.createPrivatePostgresDatabase,
     ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
     ...(ownerWebPush ? { ownerWebPush } : {}),
+    healthProbeKey, healthReleaseId, healthStartedAt: hostStartedAt,
     assets, render: rendererModule.default,
   });
   return startHostWithOptionalIntake(host, installed, intakeModule);
@@ -117,6 +149,10 @@ function verifyIntakeRoster(configuration,installed){
 export async function startMacLocalTaskHost(input, runtime = {}) {
   if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
   const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
+  const [healthProbeKey, healthReleaseId] = await Promise.all([
+    runtime.loadHealthProbeKey ?? loadHealthProbeKeyV1(input.protectedRoot),
+    runtime.hostReleaseIdentity ?? hostReleaseIdentityV1(fileURLToPath(releaseRoot)),
+  ]);
   const load = runtime.load ?? (path => import(path));
   const [hostModule, loaderModule, providerModule, postgresModule, queueModule, servingModule, rendererModule,
     intakeModule] = await Promise.all([
@@ -151,6 +187,7 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     openDatabase: postgresModule.createPrivatePostgresDatabase,
     ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
     ...(ownerWebPush ? { ownerWebPush } : {}),
+    healthProbeKey, healthReleaseId, healthStartedAt: hostStartedAt,
     createTaskApplication: async hostInput => {
       providerModule.requireMacLocalThreeAgentReadinessV1(provider, hostInput.workerReadiness);
       return provider.createTaskApplication({ ...hostInput, protectedRoot: input.protectedRoot });

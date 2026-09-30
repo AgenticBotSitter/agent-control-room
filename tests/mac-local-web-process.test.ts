@@ -25,6 +25,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
       trustedOrigin },
     database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
     hostProcessId: 4_243,
+    healthProbeKey: new Uint8Array(32).fill(9), healthReleaseId: "dev", healthStartedAt: "2026-09-30T00:00:00.000Z",
     workBatchIntegrityKey: new Uint8Array(32).fill(7),
     taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(1),
       results: { integrityKey: new Uint8Array(32).fill(2), storageClass: "local", storage: { read: async () => undefined } } },
@@ -64,8 +65,8 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
   assert.equal(health.status, 200); assert.equal(health.headers.get("set-cookie"), null);
   assert.deepEqual(await health.json(), { schema: "control-room.local-host-health/v1", ready: true, pid: 4_243, nonce,
-    tag: hmacSha256Tag(Buffer.from(sha256Digest({ ownerCode }), "utf8"),
-      { purpose: "local-host-health/v1", nonce, pid: 4_243 }) });
+    releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z", tag: hmacSha256Tag(new Uint8Array(32).fill(9),
+      { purpose: "local-host-health/v1", nonce, pid: 4_243, releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });
   const healthRead = await app.handle(request("/api/v1/local-host-health"), () => new Response("unused"));
   assert.equal(healthRead.status, 404, "health is an authenticated POST, not a public read");
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {

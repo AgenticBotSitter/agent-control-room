@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { createHash, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
@@ -31,11 +31,11 @@ const statusModule = join(repoRoot, "scripts/mac-local/status.mjs");
  * handler is written once here and every fixture uses it. */
 const ACK_SERVER_SOURCE = `const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); });\n`;
 
-function fakeHealthResponse(ownerCode, nonce, pid) {
-  const key = `sha256:${createHash("sha256").update(JSON.stringify({ ownerCode }), "utf8").digest("hex")}`;
-  const material = JSON.stringify({ nonce, pid, purpose: "local-host-health/v1" });
-  const tag = `hmac-sha256:${createHmac("sha256", Buffer.from(key, "utf8")).update(material, "utf8").digest("hex")}`;
-  return { schema: "control-room.local-host-health/v1", ready: true, pid, nonce, tag };
+function fakeHealthResponse(healthProbeKey, nonce, pid) {
+  const releaseId = "dev", startedAt = "2026-09-30T00:00:00.000Z";
+  const material = JSON.stringify({ nonce, pid, purpose: "local-host-health/v1", releaseId, startedAt });
+  const tag = `hmac-sha256:${createHmac("sha256", healthProbeKey).update(material, "utf8").digest("hex")}`;
+  return { schema: "control-room.local-host-health/v1", ready: true, pid, nonce, releaseId, startedAt, tag };
 }
 
 const ownedPids = new Map();
@@ -663,7 +663,11 @@ test("mac:up readiness follows the private host record after a supervisor replac
   assert.equal(typeof authenticatedHostReady, "function",
     "readiness needs the host-written pid/state record instead of launchd's sampled pid");
   const root = await rootFixture(t), paths = runtimePaths(root);
-  const ownerCode = "fake-owner-code-long-enough-for-health";
+  const healthProbeKey = Buffer.alloc(32, 5);
+  await mkdir(join(root, "service"), { mode: 0o700 });
+  await writeFile(join(root, "service", "health-probe.key"), `${healthProbeKey.toString("base64url")}\n`, { mode: 0o600 });
+  await assert.rejects(readFile(join(root, "config", "owner-sign-in.txt"), "utf8"), { code: "ENOENT" },
+    "readiness must not require an owner-code file");
   const supervisorPid = 4_242, childPid = 4_243;
   await writeFile(paths.hostPid, `${supervisorPid}\n`, { mode: 0o600 });
   await writeFile(paths.hostState, `${JSON.stringify({ schema: "control-room.mac-local-host-state/v1",
@@ -681,9 +685,8 @@ test("mac:up readiness follows the private host record after a supervisor replac
       const parsed = JSON.parse(body);
       assert.deepEqual(Object.keys(parsed), ["nonce"]);
       assert.match(parsed.nonce, /^[A-Za-z0-9_-]{43}$/u);
-      assert.equal(body.includes(ownerCode), false, "the readiness request must not send the owner code to the port");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(fakeHealthResponse(ownerCode, parsed.nonce, childPid)));
+      response.end(JSON.stringify(fakeHealthResponse(healthProbeKey, parsed.nonce, childPid)));
     });
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -691,8 +694,11 @@ test("mac:up readiness follows the private host record after a supervisor replac
   const port = server.address().port;
   const exactAlive = (pid, command) => pid === supervisorPid && command.join(" ") === hostCommand(root).join(" ")
     || pid === childPid && command.join(" ") === taskHostCommand(root).join(" ");
-  assert.equal(await authenticatedHostReady(root, port, ownerCode, { alive: exactAlive }), supervisorPid);
-  assert.equal(requests, 1);
+  assert.equal(await authenticatedHostReady(root, port, { alive: exactAlive }), supervisorPid,
+    "the independent protected key permits readiness without an owner-code file");
+  assert.equal(await authenticatedHostReady(root, port, { alive: exactAlive, healthProbeKey: Buffer.alloc(32, 6) }), undefined,
+    "a different probe key cannot authenticate readiness");
+  assert.equal(requests, 2);
 });
 
 test("mac:up readiness refuses a dead host before contacting its port", async t => {
@@ -702,8 +708,9 @@ test("mac:up readiness refuses a dead host before contacting its port", async t 
   await writeFile(paths.hostState, `${JSON.stringify({ schema: "control-room.mac-local-host-state/v1",
     state: "running", pid: supervisorPid, childPid, at: "2026-09-29T00:00:00.000Z" })}\n`, { mode: 0o600 });
   let contacted = false;
-  assert.equal(await authenticatedHostReady(root, 32_110, "fake-owner-code-long-enough", {
+  assert.equal(await authenticatedHostReady(root, 32_110, {
     alive: () => false, transport: async () => { contacted = true; throw new Error("must not contact"); },
+    healthProbeKey: Buffer.alloc(32, 5),
   }), undefined);
   assert.equal(contacted, false);
 });
@@ -728,15 +735,16 @@ test("mac:up readiness refuses a different process occupying the configured port
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  assert.equal(await authenticatedHostReady(root, server.address().port, "fake-owner-code-long-enough", {
+  assert.equal(await authenticatedHostReady(root, server.address().port, {
     alive: () => true,
+    healthProbeKey: Buffer.alloc(32, 5),
   }), undefined);
 });
 
 test("mac:up authenticated readiness is bounded under a burst, drop, slow response, and mid-probe restart", async t => {
   const { authenticatedHostReady } = await import(upModule);
   const root = await rootFixture(t), paths = runtimePaths(root), supervisorPid = 4_272, childPid = 4_273;
-  const ownerCode = "fake-owner-code-long-enough";
+  const healthProbeKey = Buffer.alloc(32, 5);
   const record = (pid = supervisorPid, child = childPid) => Promise.all([
     writeFile(paths.hostPid, `${pid}\n`, { mode: 0o600 }),
     writeFile(paths.hostState, `${JSON.stringify({ schema: "control-room.mac-local-host-state/v1",
@@ -757,7 +765,7 @@ test("mac:up authenticated readiness is bounded under a burst, drop, slow respon
     if (mode === "slow") return;
     if (mode === "restart") await record(supervisorPid + 10, childPid + 10);
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify(fakeHealthResponse(ownerCode, nonce, childPid)));
+    response.end(JSON.stringify(fakeHealthResponse(healthProbeKey, nonce, childPid)));
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
@@ -765,7 +773,7 @@ test("mac:up authenticated readiness is bounded under a burst, drop, slow respon
   const exactAlive = (pid, command) => [supervisorPid, supervisorPid + 10].includes(pid)
     ? command.join(" ") === hostCommand(root).join(" ")
     : [childPid, childPid + 10].includes(pid) && command.join(" ") === taskHostCommand(root).join(" ");
-  const probe = () => authenticatedHostReady(root, port, ownerCode, { alive: exactAlive, timeoutMs: 50 });
+  const probe = () => authenticatedHostReady(root, port, { alive: exactAlive, timeoutMs: 50, healthProbeKey });
 
   const burst = await Promise.all(Array.from({ length: 50 }, probe));
   assert.deepEqual(new Set(burst), new Set([supervisorPid]), "all 50 parallel authenticated probes agree");

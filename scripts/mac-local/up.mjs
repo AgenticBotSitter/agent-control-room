@@ -5,9 +5,9 @@
 // agent, so it starts at login and restarts after a crash. Without it, the host is a detached child.
 // Usage: pnpm mac:up -- --protected-root ABS_PATH [--install-service]   (or CONTROL_ROOM_PROTECTED_ROOT)
 import { spawn } from "node:child_process";
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runtimePaths,
@@ -85,7 +85,19 @@ async function boundedHealthResponse(response) {
   } catch { try { await reader.cancel(); } catch {} return undefined; }
 }
 
-async function requestAuthenticatedHostHealth(port, ownerCode, timeoutMs = 1_000, transport = fetch) {
+export async function readHealthProbeKey(root) {
+  try {
+    const path = join(root, "service", "health-probe.key");
+    const entry = await lstat(path);
+    if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o777) !== 0o600) return undefined;
+    const encoded = (await readFile(path, "utf8")).trim();
+    if (!/^[A-Za-z0-9_-]{43}$/u.test(encoded)) return undefined;
+    const key = Buffer.from(encoded, "base64url");
+    return key.length === 32 ? key : undefined;
+  } catch { return undefined; }
+}
+
+async function requestAuthenticatedHostHealth(port, healthProbeKey, timeoutMs = 1_000, transport = fetch) {
   const origin = `http://127.0.0.1:${port}`;
   try {
     const nonce = randomBytes(32).toString("base64url");
@@ -94,13 +106,14 @@ async function requestAuthenticatedHostHealth(port, ownerCode, timeoutMs = 1_000
       signal: AbortSignal.timeout(timeoutMs) });
     const value = await boundedHealthResponse(response);
     if (!value || typeof value !== "object" || Array.isArray(value)
-      || Object.keys(value).sort().join(",") !== "nonce,pid,ready,schema,tag"
+      || Object.keys(value).sort().join(",") !== "nonce,pid,ready,releaseId,schema,startedAt,tag"
       || value.schema !== "control-room.local-host-health/v1" || value.ready !== true
       || value.nonce !== nonce || !Number.isSafeInteger(value.pid) || value.pid <= 1
-      || typeof value.tag !== "string") return undefined;
-    const key = `sha256:${createHash("sha256").update(JSON.stringify({ ownerCode }), "utf8").digest("hex")}`;
-    const material = JSON.stringify({ nonce, pid: value.pid, purpose: "local-host-health/v1" });
-    const expected = `hmac-sha256:${createHmac("sha256", Buffer.from(key, "utf8")).update(material, "utf8").digest("hex")}`;
+      || typeof value.releaseId !== "string" || typeof value.startedAt !== "string"
+      || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.tag !== "string") return undefined;
+    const material = JSON.stringify({ nonce, pid: value.pid, purpose: "local-host-health/v1",
+      releaseId: value.releaseId, startedAt: value.startedAt });
+    const expected = `hmac-sha256:${createHmac("sha256", healthProbeKey).update(material, "utf8").digest("hex")}`;
     const actualBytes = Buffer.from(value.tag, "utf8"), expectedBytes = Buffer.from(expected, "utf8");
     if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) return undefined;
     return value.pid;
@@ -111,8 +124,10 @@ async function requestAuthenticatedHostHealth(port, ownerCode, timeoutMs = 1_000
  * both recorded processes still have the exact commands for this root, and the child itself answers
  * the owner-code-authenticated health route on the configured port. The records are re-read after
  * the request so a restart halfway through the probe is a retry, never a mixed-generation success. */
-export async function authenticatedHostReady(root, port, ownerCode, runtime = {}) {
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535 || typeof ownerCode !== "string") return undefined;
+export async function authenticatedHostReady(root, port, runtime = {}) {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return undefined;
+  const healthProbeKey = runtime.healthProbeKey ?? await (runtime.readHealthProbeKey ?? readHealthProbeKey)(root);
+  if (!(healthProbeKey instanceof Uint8Array) || healthProbeKey.length !== 32) return undefined;
   const paths = runtimePaths(root), exactAlive = runtime.alive ?? alive;
   const pidReader = runtime.readPid ?? readPid, stateReader = runtime.readHostState ?? readHostState;
   const snapshot = async () => {
@@ -126,7 +141,7 @@ export async function authenticatedHostReady(root, port, ownerCode, runtime = {}
   };
   const before = await snapshot();
   if (!before) return undefined;
-  const childPid = await requestAuthenticatedHostHealth(port, ownerCode, runtime.timeoutMs ?? 1_000,
+  const childPid = await requestAuthenticatedHostHealth(port, healthProbeKey, runtime.timeoutMs ?? 1_000,
     runtime.transport ?? fetch);
   if (childPid !== before.childPid) return undefined;
   const after = await snapshot();
@@ -223,8 +238,7 @@ async function main() {
   if (binding === 2)
     fail("first-owner setup has not been run; see OWNER_GUIDE_MAC.md");
   if (binding !== 0) fail("first-owner binding verification failed");
-  const ownerCode = (await readFile(join(root, "config/owner-sign-in.txt"), "utf8")).trim();
-  const hostReady = () => authenticatedHostReady(root, mac.port, ownerCode);
+  const hostReady = () => authenticatedHostReady(root, mac.port);
 
   const hostPid = await readPid(paths.hostPid);
   if (hostPid && alive(hostPid, taskHostCommand(root))) {
