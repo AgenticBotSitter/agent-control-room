@@ -8,8 +8,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": "  credential_inactive: \"forbidden\",\n  no_matching_grant: \"forbidden\",",
-    "replace": "  credential_inactive: \"unauthenticated\",\n  no_matching_grant: \"unauthenticated\",",
+    "find": "    credential_inactive: \"forbidden\",\n    no_matching_grant: \"forbidden\",",
+    "replace": "    credential_inactive: \"unauthenticated\",\n    no_matching_grant: \"unauthenticated\",",
     "test": "node --import tsx --test --test-name-pattern \"named fleet refusal\" tests/fleet-intake-refusal-translation.test.ts",
     "why": "a credential the intake login will not act for is forbidden, not unauthenticated: the machine authenticated, its authority does not reach the action"
   },
