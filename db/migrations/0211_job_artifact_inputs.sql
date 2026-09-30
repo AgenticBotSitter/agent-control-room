@@ -23,16 +23,25 @@
 -- input.
 --
 -- The one hole this closes against plan §2.6 H2 — "Input downloads for a
--- combine part could name any digest" — is closed by construction rather than
--- by a check. The binding row carries project_id, source_set_id, file_id,
--- display_name, size_bytes and content_digest ALL DERIVED by the insert guard
--- from the catalog row it binds, and never from the caller. That means the
--- fleet gateway, which will serve `GET /fleet/v1/claims/:id/inputs`, needs NO
--- privilege on the result-file catalog at all: it reads one table, and the byte
--- store's storage key is derived from exactly the four columns that table
--- holds. There is no query a gateway bug could turn into "download any file of
--- this project", because the gateway cannot read the catalog that names any
--- other file.
+-- combine part could name any digest" — is closed by the binding being DERIVED
+-- rather than by the gateway lacking a grant. The binding row carries
+-- project_id, source_set_id, file_id, display_name, size_bytes and
+-- content_digest, and the insert guard OVERWRITES all six from the accepted
+-- catalog row rather than comparing what a caller sent. So a caller cannot bind
+-- a digest that is not the file's, a size that is not its size, a name that is
+-- not its name, or a project that is not its project: the value it supplied is
+-- simply gone, and what the row holds is a fact about the catalog.
+--
+-- That matters for the gateway, which will serve
+-- `GET /fleet/v1/claims/:id/inputs`. It reads this one table, and the byte
+-- store's storage key is derived from exactly the columns this table holds, so
+-- it never has to be told a storage key at all. The gateway DOES hold SELECT on
+-- the catalog — 0209's reservation guard is SECURITY INVOKER and reads it, and a
+-- guard that could not read what it checks would fail closed on every honest
+-- reservation — so the H2 property is carried by the derivation and by the
+-- per-claim project scope, not by an absent privilege. See the note in
+-- db/roles/fleet_gateway_roles.sql, which says the same thing at the place a
+-- reader of the grants will actually find it.
 --
 -- Readiness is enforced here too, on the canonical job row, so a combine part
 -- cannot go ready or running with a hole in its inputs even if a caller forgets

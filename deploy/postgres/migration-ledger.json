@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "7381451812e3f2bc3103185793243434b054ca50050a1a37cb3e241895d70402",
+  "digest": "51bf242a8a8879900138f791249ce7f6303cde9c7b48732d59f1316d2b641a31",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -767,19 +767,19 @@
     {
       "file": "db/migrations/0209_result_upload_sessions.sql",
       "order": 128,
-      "sha256": "36fc93e1fbf1fabbcf84e280febdbab5b33a4663348d6e4ed7d665839d71a010",
+      "sha256": "330bcd1bb7d36480330a36da3d513c6b6d6fbb8061f60dff4e40a2063b26a362",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0210_result_upload_publication.sql",
       "order": 129,
-      "sha256": "1e269be0d2ed78242b91cc296f608f441cdb0cc5ebf26460c5d0615e803caf1e",
+      "sha256": "7666cd8e475623b18906c6f4a06edb19e3920a59eff242aae3b87d9afda4e5d0",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0211_job_artifact_inputs.sql",
       "order": 130,
-      "sha256": "89594a8341b379c2ea3e956871a16bb60b741e1309f465c281fdfa0ede0322a8",
+      "sha256": "253795f39aa40b99760540704b4be0755418a691e67ec30752ac1a48dee0dbd6",
       "kind": "migrate"
     },
     {

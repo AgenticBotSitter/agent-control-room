@@ -81,14 +81,31 @@ GRANT SELECT ON fleet_enrollment_codes, fleet_workers, fleet_worker_credentials,
 -- re-check 0140's `fleet_claim_is_live` on each call, so a claim that has died
 -- cannot keep filling an upload.
 --
--- It is NOT granted the result-file catalog. That is the point of the whole
--- design (plan §2.6 H2): the gateway learns which file to send from
--- `control_result_upload_sessions`, whose promise was pinned to the catalog row
--- by 0209's reservation guard, and it learns which input to download from
--- `control_job_artifact_inputs`, whose columns were derived from the catalog
--- row by 0211's binding guard. It can therefore never read another file's
--- storage key, never learn whether a digest exists elsewhere, and never name a
--- file to download that the owner did not approve for that exact claim.
+-- ON THE CATALOG: the gateway does hold SELECT on `control_result_file_sets`
+-- and `control_result_files`, and the reason is that 0209's reservation guard
+-- is SECURITY INVOKER and reads both to pin the promise to the owner-approved
+-- row. A guard that could not read them would fail closed on every reservation,
+-- which is not a safer installation, it is a broken one.
+--
+-- That does not weaken §2.6 H2, and it is worth saying exactly why, because
+-- "the gateway can read the catalog" sounds like the hole H2 describes and is
+-- not. H2 is about a worker being able to NAME another project's file, or to
+-- learn from an answer whether a digest already exists. Three things prevent
+-- both here, and none of them is the absence of a grant:
+--
+--   * Every query the gateway makes carries its own claim's project, job and
+--     attempt, and 0209's guard re-checks all three against `fleet_claims`
+--     before it writes anything. A row about a file that is not this claim's
+--     promised output is not addressable.
+--   * The storage key is still DERIVED, by 0206, from the tenant, the project,
+--     the file's own id and its digest. The gateway can read the key but cannot
+--     choose one, so reading it reveals nothing it could not already compute.
+--   * There is still no "do you already have that" answer anywhere: no column,
+--     no index and no query. A gateway that reads the whole catalog learns the
+--     same fact a second copy of this project would — a digest and a name — and
+--     cannot turn either into a cross-project read, because every read the byte
+--     store answers is keyed on the caller's own project.
+GRANT SELECT ON control_result_file_sets, control_result_files TO control_room_fleet_gateway;
 GRANT SELECT, INSERT ON control_result_upload_sessions, control_result_upload_chunks
   TO control_room_fleet_gateway;
 -- It reads the declarations and bindings, and writes neither. A declared output

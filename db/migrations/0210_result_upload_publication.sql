@@ -80,19 +80,54 @@ CREATE INDEX control_result_publications_project
 --      catalog row's — the same values 0209 pinned at reservation, so a
 --      published session cannot vouch for different bytes than the catalog
 --      promises, and cannot be for a file the reservation guard did not verify.
---   3. The receipt repeats the set's own state: same manifest digest, same
+--   3. The receipt repeats the set's own promise: same manifest digest, same
 --      count, same byte total. A publication row that disagreed with the set it
 --      names would be a second, unchecked answer to "what was published".
+--
+-- ORDER, and why it is this way round. The set reaches 'stored' only when a
+-- receipt exists (the deferred trigger below), and a receipt is only accepted
+-- when every promised file is already stored. Those two rules are checked in
+-- ONE transaction, in either statement order, because both are DEFERRED or
+-- read the rows as they will be at COMMIT. What this guard therefore requires
+-- is a set that is on the point of being stored: 'stored' already, or 'declared'
+-- with every one of its files stored. It does NOT require the set to be
+-- 'stored', because that would make a stored set the PRECONDITION of the
+-- receipt that a stored set requires — a circle no statement order can
+-- satisfy, and one that would otherwise be resolved by giving up one of the
+-- two rules.
 CREATE FUNCTION guard_result_publication_insert() RETURNS trigger
 LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
-DECLARE owner_set public.control_result_file_sets%ROWTYPE; attempt_worker text; missing integer;
+DECLARE owner_set public.control_result_file_sets%ROWTYPE; attempt_worker text; stored_files integer;
 BEGIN
   SELECT * INTO owner_set FROM public.control_result_file_sets s
     WHERE s.tenant_id=NEW.tenant_id AND s.set_id=NEW.set_id;
-  IF owner_set.set_id IS NULL OR owner_set.state<>'stored' OR owner_set.stored_at IS NULL
+  IF owner_set.set_id IS NULL
     OR owner_set.project_id IS DISTINCT FROM NEW.project_id
     OR owner_set.job_id IS DISTINCT FROM NEW.job_id
     OR owner_set.attempt_id IS DISTINCT FROM NEW.attempt_id THEN
+    RAISE EXCEPTION 'result publication rejected' USING ERRCODE = '23514';
+  END IF;
+  -- Every promised file is already stored, and the set is either stored or one
+  -- step from it. A set with a file still 'declared' is not a publication, it
+  -- is an upload in progress. The count and the byte total are checked against
+  -- the set's own promise here, so a receipt cannot be a second, unchecked
+  -- answer to "what was published".
+  SELECT count(*) INTO stored_files FROM public.control_result_files f
+    WHERE f.tenant_id=NEW.tenant_id AND f.set_id=NEW.set_id AND f.state='stored';
+  IF owner_set.state NOT IN ('declared','stored') OR stored_files<>owner_set.file_count
+    OR (SELECT count(*) FROM public.control_result_files f WHERE f.tenant_id=NEW.tenant_id AND f.set_id=NEW.set_id
+      AND f.state<>'stored')>0
+    OR NEW.file_count IS DISTINCT FROM owner_set.file_count
+    OR NEW.total_bytes IS DISTINCT FROM owner_set.total_bytes THEN
+    RAISE EXCEPTION 'result publication rejected' USING ERRCODE = '23514';
+  END IF;
+  -- The manifest is compared against the set's only when the set is ALREADY
+  -- stored, because a 'declared' set still carries the placeholder digest it
+  -- was created with. On the way in, the set's own guard recomputes the
+  -- manifest over these rows and refuses any value that does not match it —
+  -- so the receipt's digest is proved a moment later either way.
+  IF owner_set.state='stored' AND (owner_set.stored_at IS NULL
+    OR owner_set.manifest_digest IS DISTINCT FROM NEW.manifest_digest) THEN
     RAISE EXCEPTION 'result publication rejected' USING ERRCODE = '23514';
   END IF;
   SELECT a.worker_id INTO attempt_worker FROM public.control_attempts a
@@ -103,20 +138,11 @@ BEGIN
       AND w.worker_id=attempt_worker AND w.state='active') THEN
     RAISE EXCEPTION 'result publication producer rejected' USING ERRCODE = '42501';
   END IF;
-  -- The completeness of the set: a stored set holds exactly its declared files,
-  -- 0206's own trigger proved it, and this count is what "every promised file"
-  -- is measured against.
-  SELECT count(*) INTO missing FROM public.control_result_files f
-    WHERE f.tenant_id=NEW.tenant_id AND f.set_id=NEW.set_id AND f.state<>'stored';
-  IF missing>0 OR NEW.manifest_digest IS DISTINCT FROM owner_set.manifest_digest
-    OR NEW.file_count IS DISTINCT FROM owner_set.file_count
-    OR NEW.total_bytes IS DISTINCT FROM owner_set.total_bytes THEN
-    RAISE EXCEPTION 'result publication rejected' USING ERRCODE = '23514';
-  END IF;
-  -- Every file, every one of them published through its own upload, and every one
-  -- of them vouching for exactly the digest and size the catalog promises. A
-  -- native-text file has no upload and is therefore not publishable here; it is
-  -- already published by the 0206 receipt and never takes this path.
+  -- Every promised file, every one of them published through its own upload,
+  -- and every one of them vouching for exactly the digest and size the catalog
+  -- promises. A native-text file has no upload and is therefore not publishable
+  -- here; it is already published by the 0206 receipt and never takes this
+  -- path.
   IF owner_set.file_count>0 AND EXISTS (SELECT 1 FROM public.control_result_files f
       WHERE f.tenant_id=NEW.tenant_id AND f.set_id=NEW.set_id AND NOT EXISTS (
         SELECT 1 FROM public.control_result_upload_sessions u
@@ -175,7 +201,39 @@ CREATE CONSTRAINT TRIGGER control_result_file_sets_published
   AFTER UPDATE ON control_result_file_sets
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.enforce_result_set_published();
 
--- A file row is only 'stored' through its own published session. Enforced on
+-- The catalog's one writable transition for a FLEET publisher is
+-- 'declared' -> 'stored', and that is all it may make. It holds UPDATE on
+-- `state` because the transition is a state change, so the column grant alone
+-- would also let it write 'quarantined' or 'missing' — which are decisions
+-- about the OWNER's bytes, taken on the web path by a grant-checked owner or by
+-- the native publisher. This trigger is what turns the column grant back into
+-- the single transition it was meant to be, and it belongs here rather than in
+-- 0209 because 0209 reserves uploads and 0210 is what makes a fleet file
+-- 'stored' at all.
+--
+-- A native publisher, the web login and a restore all move a stored file to
+-- 'quarantined' or 'missing', so the rule is stated as "a file in a FLEET set
+-- may only ever move forward into 'stored'", not as an absolute. A native-text
+-- set has no fleet producer and is untouched by this guard, which is exactly
+-- right: it never has a worker in the story.
+CREATE FUNCTION guard_result_file_producer_state() RETURNS trigger
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE producer_id text;
+BEGIN
+  IF NEW.state IS NOT DISTINCT FROM OLD.state THEN RETURN NEW; END IF;
+  SELECT s.producer_id INTO producer_id FROM public.control_result_file_sets s
+    WHERE s.tenant_id = NEW.tenant_id AND s.set_id = NEW.set_id AND s.producer_kind = 'fleet';
+  IF producer_id IS NULL THEN RETURN NEW; END IF;
+  IF NEW.state<>'stored' OR OLD.state<>'declared' THEN
+    RAISE EXCEPTION 'result file state rejected' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_result_file_producer_state() FROM PUBLIC;
+CREATE TRIGGER control_result_files_producer_state_guard BEFORE UPDATE ON control_result_files
+  FOR EACH ROW EXECUTE FUNCTION public.guard_result_file_producer_state();
+
+-- A file row is only 'stored' through its own PUBLISHED session. Enforced on
 -- the file's own UPDATE, so the guarantee holds whichever order a publisher
 -- chooses to write in: it cannot mark one file stored and rely on the set's
 -- later update to notice.

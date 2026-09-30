@@ -28,6 +28,11 @@ DO $$ BEGIN
     -- neither write a plan nor bind a file to itself.
     EXECUTE 'REVOKE SELECT, INSERT ON control_result_upload_sessions FROM control_room_fleet_gateway';
     EXECUTE 'REVOKE SELECT, INSERT ON control_result_upload_chunks FROM control_room_fleet_gateway';
+    -- The catalog SELECT 0209's reservation guard needs. It is granted by the
+    -- same role file for the same three migrations, so it is revoked here with
+    -- them and not by 0209's down file, which owns the schema only.
+    EXECUTE 'REVOKE SELECT ON control_result_file_sets FROM control_room_fleet_gateway';
+    EXECUTE 'REVOKE SELECT ON control_result_files FROM control_room_fleet_gateway';
     EXECUTE 'REVOKE SELECT ON control_task_declared_outputs FROM control_room_fleet_gateway';
     EXECUTE 'REVOKE SELECT ON control_task_declared_inputs FROM control_room_fleet_gateway';
     EXECUTE 'REVOKE SELECT ON control_job_artifact_inputs FROM control_room_fleet_gateway';

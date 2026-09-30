@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0208 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
+// Generated from public migrations through 0211 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "b325d585ebdba71aa7e80226e7d3eabfe43a75e37156141e686c48bd8711f853";
+export const privateWebSchemaDigest = "facae7749b859920c0f98309c5cb2ad01e719f2a6805062252f5521ea8f7329d";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway

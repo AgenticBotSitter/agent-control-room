@@ -199,13 +199,21 @@ CREATE TABLE control_result_upload_sessions (
   -- Bound to the exact declared row, not merely to a set: the promise is
   -- checked against the owner's approved name, type, size and digest below.
   FOREIGN KEY (tenant_id, set_id, ordinal) REFERENCES control_result_files(tenant_id, set_id, ordinal) ON DELETE RESTRICT,
-  -- Each timestamp exists exactly in its own state, so a reader never has to
-  -- infer a stage from a nullable column.
-  CHECK ((state='received') = (received_at IS NOT NULL)),
-  CHECK ((state='published') = (published_at IS NOT NULL)),
-  CHECK ((state='voided') = (voided_at IS NOT NULL AND void_reason IS NOT NULL)),
-  CHECK (NOT (state='voided' AND published_at IS NOT NULL)),
+  -- Each timestamp marks a stage that was REACHED, so a void never erases
+  -- the stage before it: a session that was received and is then voided keeps
+  -- `received_at`, and a reader can still see how far the bytes got. The
+  -- one-way edges and the absence of a rewind are the trigger's job, because a
+  -- CHECK cannot see OLD; these say a stage's stamp exists exactly when the
+  -- session is at or past that stage, and never for a session still reserved.
   CHECK (state<>'reserved' OR (received_at IS NULL AND published_at IS NULL AND voided_at IS NULL)),
+  CHECK (published_at IS NULL OR received_at IS NOT NULL),
+  CHECK (voided_at IS NULL OR (received_at IS NOT NULL OR published_at IS NULL)),
+  -- A void is terminal and never coexists with a publication: a published set
+  -- is already the owner's, and un-publishing it is not a thing any path does.
+  CHECK (NOT (state='voided' AND published_at IS NOT NULL)),
+  -- The reverse, and the one that makes "Stop voids a half-sent upload"
+  -- possible: voiding a RECEIVED session leaves its received_at in place.
+  CHECK (NOT (state='received' AND voided_at IS NOT NULL)),
   CHECK (voided_at IS NULL OR voided_at>=created_at
     AND voided_at<=pg_catalog.statement_timestamp()+interval '1 minute'),
   CHECK (expires_at > created_at AND expires_at <= created_at + interval '24 hours'),
@@ -452,9 +460,6 @@ REVOKE ALL ON FUNCTION public.guard_result_upload_chunk_insert() FROM PUBLIC;
 CREATE TRIGGER control_result_upload_chunks_guard BEFORE INSERT ON control_result_upload_chunks
   FOR EACH ROW EXECUTE FUNCTION public.guard_result_upload_chunk_insert();
 
--- A chunk is never edited: a wrong chunk means a new attempt, and the old one is
--- voided. This is what makes the per-ordinal primary key a create-once claim
--- rather than an upsert target.
 CREATE TRIGGER control_result_upload_chunks_no_update BEFORE UPDATE ON control_result_upload_chunks
   FOR EACH ROW EXECUTE FUNCTION public.reject_append_only_mutation();
 CREATE TRIGGER control_result_upload_chunks_no_delete BEFORE DELETE ON control_result_upload_chunks

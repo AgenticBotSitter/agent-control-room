@@ -37,6 +37,7 @@ END $$;
 -- 0210's triggers on 0206's tables come off first: a trigger cannot outlive the
 -- migration that installed it.
 DROP TRIGGER control_result_files_upload_stored_guard ON control_result_files;
+DROP TRIGGER control_result_files_producer_state_guard ON control_result_files;
 DROP TRIGGER control_result_file_sets_published ON control_result_file_sets;
 DROP TRIGGER control_result_publications_no_truncate ON control_result_publications;
 DROP TRIGGER control_result_publications_no_delete ON control_result_publications;
@@ -45,6 +46,7 @@ DROP TRIGGER control_result_publications_guard ON control_result_publications;
 DROP INDEX control_result_publications_project;
 DROP TABLE control_result_publications;
 DROP FUNCTION guard_result_file_upload_stored();
+DROP FUNCTION guard_result_file_producer_state();
 DROP FUNCTION enforce_result_set_published();
 DROP FUNCTION guard_result_publication_insert();
 COMMIT;
