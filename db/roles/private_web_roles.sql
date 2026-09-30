@@ -55,6 +55,13 @@ GRANT SELECT ON control_durable_result_write_reservations TO control_room_privat
 GRANT SELECT, INSERT, DELETE ON owner_web_push_subscriptions TO control_room_private_web;
 GRANT SELECT, INSERT ON owner_web_push_deliveries TO control_room_private_web;
 GRANT UPDATE (state, status_code, completed_at) ON owner_web_push_deliveries TO control_room_private_web;
+-- The dispatcher's bounded-retry head, one row per owner attention item. This
+-- is delivery bookkeeping, not attention authority: the link is written once
+-- and never repointed, there is no DELETE, and a delivered head cannot return
+-- to a sendable state (0225's guard).
+GRANT SELECT, INSERT ON control_owner_push_attempt_heads TO control_room_private_web;
+GRANT UPDATE (state, attempt_count, next_attempt_at, reserved_at, last_attempt_at, completed_at,
+  safe_reason_code, updated_at) ON control_owner_push_attempt_heads TO control_room_private_web;
 -- Per-project settings (eligible worker kinds, concurrency cap, defaults): the
 -- web role reads them both for the owner-facing Settings tab and to enforce
 -- eligibility/concurrency during assignment, and writes them only through the

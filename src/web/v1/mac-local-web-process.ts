@@ -33,7 +33,8 @@ import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
-import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
+import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1,
+  startOwnerPushLoopV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { FleetOwnerServiceV1 } from "../../fleet/v1";
 import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
 import { RecurringRuleServiceV1 } from "../../recurring/v1";
@@ -102,6 +103,11 @@ export interface MacLocalWebProcessOptionsV1 {
   }> }>;
   /** Optional private VAPID credentials. Omission leaves push unavailable. */
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** Start the bounded-retry dispatcher alongside the site. Defaults to on when
+   * `ownerWebPush` is configured, because a configured push channel that never
+   * dispatches is the exact shape of this feature having been "built" and never
+   * working. Supplied explicitly false for a read-only or test composition. */
+  ownerPushDispatch?: boolean;
   /** Remote workers (T2-F). Owner decisions use a distinct restricted
    * database login; neither the ordinary web login nor the gateway can write
    * those tables. The hook only asks the gateway to reconcile afterward. */

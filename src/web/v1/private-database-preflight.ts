@@ -52,7 +52,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_owner_push_attempt_heads", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
   "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -70,6 +70,8 @@ privateWebInsertTables.add("control_job_dependencies");
 privateWebInsertTables.add("control_project_settings"); privateWebInsertTables.add("pipeline_unattended_transitions");
 privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
+// 0224: the dispatcher records one bounded-retry head per owner attention item.
+privateWebInsertTables.add("control_owner_push_attempt_heads");
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
 privateWebInsertTables.add("installation_operations_mode_revisions");
@@ -119,6 +121,9 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
   control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
+  // The link is written once at INSERT and is deliberately NOT updatable.
+  control_owner_push_attempt_heads: ["state", "attempt_count", "next_attempt_at", "reserved_at",
+    "last_attempt_at", "completed_at", "safe_reason_code", "updated_at"],
   control_skills: ["current_version", "state", "updated_at"],
   control_recurring_rules: ["state", "plain_schedule", "cron_expression", "timezone", "task_template", "version",
     "updated_by_identity_id", "updated_at"],
