@@ -243,6 +243,12 @@ test("FleetUploadStoreV1 publishes a real upload, leaves nothing staged on refus
           for (let tries = 0; tries < 50 && (await staging.stagedNames()).length; tries += 1)
             await new Promise((settle) => setTimeout(settle, 20));
           assert.deepEqual(await staging.stagedNames(), [], "finalise removed the staged chunks");
+          // A resend after finalise must not put the bytes back in staging (N1):
+          // the session is 'published' now, so the digest answer alone is correct.
+          assert.equal((await uploads.chunk(producing.principal, { claimId: producing.claimId,
+            uploadId: first.uploadId, ordinal: 1, bytes: small })).replayed, true,
+          "a resend after finalise still replays");
+          assert.deepEqual(await staging.stagedNames(), [], "and does not re-stage the bytes (N1)");
 
           // ---- Pause answers `paused`, and Resume lets the same call land -----
           const paused = await seedProposedTask(db, PROJECT_B, "store-paused");

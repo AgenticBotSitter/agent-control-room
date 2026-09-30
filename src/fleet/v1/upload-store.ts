@@ -395,7 +395,7 @@ export class FleetUploadStoreV1 {
     });
     const { session } = read;
     const identity = { tenantId: this.tenantId, projectId: session.project_id, uploadId: session.upload_id, ordinal };
-    if (read.prior) return this.replayChunk(read.prior, identity, bytes, chunkDigest);
+    if (read.prior) return this.replayChunk(read.prior, identity, bytes, chunkDigest, session.state);
     if (session.state !== "reserved") return fleetFail("conflict");
     if (Date.parse(iso(session.expires_at)) <= Date.parse(now)) return fleetFail("expired");
     if (ordinal > session.expected_chunks || bytes.byteLength !== chunkSizeFor(session, ordinal))
@@ -440,12 +440,14 @@ export class FleetUploadStoreV1 {
    * wedging the upload on a chunk nobody can resend. */
   private async replayChunk(prior: { chunk_digest: string; size_bytes: string },
     identity: { tenantId: string; projectId: string; uploadId: string; ordinal: number },
-    bytes: Uint8Array, chunkDigest: string) {
+    bytes: Uint8Array, chunkDigest: string, sessionState: string) {
     if (prior.chunk_digest !== chunkDigest || prior.size_bytes !== String(bytes.byteLength))
       return fleetFail("conflict");
-    const onDisk = await staged(() => this.staging.read(identity));
-    if (!onDisk) await staged(() => this.staging.stage(identity, bytes));
-    else if (bytesSha256V1(onDisk) !== chunkDigest) return fleetFail("conflict");
+    if (sessionState === "reserved") {
+      const onDisk = await staged(() => this.staging.read(identity));
+      if (!onDisk) await staged(() => this.staging.stage(identity, bytes));
+      else if (bytesSha256V1(onDisk) !== chunkDigest) return fleetFail("conflict");
+    }
     return Object.freeze({ uploadId: identity.uploadId, ordinal: identity.ordinal, chunkDigest,
       sizeBytes: bytes.byteLength, replayed: true });
   }
