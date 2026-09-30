@@ -276,8 +276,27 @@ const PUBLICATION_GRANTS = "REVOKE ALL ON control_pipeline_build_publications\n"
 const UNATTENDED_GRANTS = ",\n  pipeline_unattended_transitions, pipeline_advance_receipts";
 const UNATTENDED_OBJECTS = ["pipeline_unattended_transitions", "pipeline_advance_receipts"];
 const QUEUE_GRANTS = ", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads";
+// 0160's shared-role revoke. It names control_improvement_requests and the two
+// candidate tables, which 0160 creates; a staged prefix that stops before 0160 does
+// not have them, so the applier would stop the whole grants file there with 42P01
+// and record deferred_partial_schema. Named with the others so a prefix can be
+// staged without it, and asserted present so a grant edit cannot silently drop it.
+const DESK_GRANTS = "REVOKE ALL ON control_improvement_requests, control_update_candidates, control_update_candidate_decisions\n"
+  + "  FROM control_room_application, control_room_reader, control_room_schedule_admissions,\n"
+  + "  control_room_github_broker, control_room_work_intake;\n";
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
+// Everything the shipped ledger carries after 0135's project settings. 0140-0190 were
+// added to the repository after 0108/0109/0135 and sort after them, so a staged prefix
+// that ends at 0108, 0109 or 0135 has this real remainder behind it rather than a shorter
+// one. Declared once and named explicitly: a rung's expected suffix is read from the
+// shipped ledger's order, never re-derived from the list it is asserting, so the
+// assertion stays a comparison rather than a tautology.
+const AFTER_0135 = ["0140_fleet_worker_connector.sql", "0141_fleet_owner_authority.sql", "0160_improve_control_room_desk.sql",
+  "0161_update_candidate_evidence.sql", "0162_validate_update_candidate_evidence.sql", "0173_owner_web_push_subscriptions.sql",
+  "0174_owner_web_push_delivery_ledger.sql", "0175_owner_web_push_tenant_isolation.sql", "0176_owner_web_push_retention.sql",
+  "0177_supervisor_reconciliation.sql", "0178_supervisor_machine_health.sql", "0179_provider_wait_states.sql",
+  "0190_news_task_proposal_links.sql"];
 
 // Stages an older release's root: every migration except the pending suffix,
 // and this head's grants file without the pending objects' grants.
@@ -287,16 +306,30 @@ async function stageAppliedPrefix({ pending, withoutGrants }) {
     for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
       await mkdir(join(stage, dir), { recursive: true });
     const migrations = (await readdir(join(ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
-    const suffix = pending.map(ending => {
-      const found = migrations.filter(name => name.endsWith(ending));
-      assert.equal(found.length, 1, ending);
-      return found[0];
-    });
-    // The pending migrations are the newest files, in filename order.
-    assert.deepEqual(migrations.slice(-suffix.length), suffix);
-    const applied = migrations.slice(0, -suffix.length);
+    // Callers name a migration by its exact filename, e.g. "0161_update_candidate_evidence.sql".
+    // A plain endsWith is ambiguous here: "_update_candidate_evidence.sql" is a suffix of both
+    // 0161 and 0162's file, so the match is exact and a renamed or absent file fails loudly.
+    const locate = (name) => {
+      assert.ok(migrations.includes(name), `no migration named ${name}`);
+      return name;
+    };
+    const suffix = pending.map(locate);
+    // The staged prefix is everything up to the first pending migration, and the
+    // pending suffix is the whole remainder in filename order. Naming the first
+    // pending file is the cut point: the suffix is no longer the newest files on
+    // disk, because 0140-0190 were added after 0108/0109/0135 and sort after them,
+    // so a rung whose first pending file is 0108/0109/0135 has a real remainder
+    // behind it. Deriving the cut from the caller's own list would make this
+    // assertion tautological, so the cut is located independently by name.
+    const cut = migrations.indexOf(suffix[0]);
+    assert.ok(cut >= 0, suffix[0]);
+    const applied = migrations.slice(0, cut);
+    assert.deepEqual(migrations.slice(cut), suffix);
+    assert.ok(suffix.length < migrations.length, "a staged prefix needs at least one pending migration");
     for (const shipped of ["0100_ownership_lease_collision_guard.sql", "0101_owner_review_job_lock.sql",
       "0102_work_batch_owner_approval.sql"]) assert.ok(applied.includes(shipped), shipped);
+    // Every staged file is a real prefix of the shipped ledger, never a hole.
+    assert.deepEqual(applied, migrations.slice(0, applied.length));
     for (const file of applied)
       await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
     // The reviewer role file is a grants entry the production applier verifies
@@ -375,54 +408,54 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
 // role files to its own database and reads the privileges as the server reports
 // them.
 //
-// A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes
-// S3's queue migration, S4's pipeline migration, S5's agent-review migration,
-// 0107's activity grants, S6's build-publication migration, S7's
-// unattended-advance migration and 0135's project settings, in that order.
-test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
+// A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes every
+// migration the shipped ledger still carries: S3's queue, S4's pipeline, S5's
+// agent-review, 0107's activity grants, S6's build-publication, S7's
+// unattended-advance, 0135's project settings, then 0140-0190, in ledger order.
+test("upgrade from S2's applied ledger appends exactly the remaining ledger, from the agent-queue to the news task proposal links", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s2",
-    pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql", "_agent_review_plans.sql",
-      "_task_project_activity_events.sql", "_pipeline_build_publications.sql",
-      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
-    withoutGrants: [QUEUE_GRANTS, UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+    pending: ["0104_work_batch_agent_queue.sql", "0105_linear_pipeline_runs.sql", "0106_agent_review_plans.sql", "0107_task_project_activity_events.sql",
+      "0108_pipeline_build_publications.sql", "0109_pipeline_unattended_advance.sql", "0135_control_project_settings.sql",
+      ...AFTER_0135],
+    withoutGrants: [DESK_GRANTS, QUEUE_GRANTS, UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["work_batch_queue_admissions", "work_batch_agent_queue_heads", "work_batch_effective_queue_admissions",
       "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans",
       "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
 // A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, 0107,
-// S6's 0108, S7's 0109 and 0135.
-test("upgrade from main's applied ledger appends only the pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
+// S6's 0108, S7's 0109, 0135, then 0140-0190, in ledger order.
+test("upgrade from main's applied ledger appends exactly the remaining ledger, from the pipeline to the news task proposal links", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
-    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_task_project_activity_events.sql",
-      "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
-    withoutGrants: [UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+    pending: ["0105_linear_pipeline_runs.sql", "0106_agent_review_plans.sql", "0107_task_project_activity_events.sql", "0108_pipeline_build_publications.sql",
+      "0109_pipeline_unattended_advance.sql", "0135_control_project_settings.sql", ...AFTER_0135],
+    withoutGrants: [DESK_GRANTS, UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
       "control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
 // A database at main plus S4 (0105 applied) takes S5's 0106, 0107, S6's 0108,
-// S7's 0109 and 0135.
-test("upgrade from main plus S4's applied ledger appends only the agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
+// S7's 0109, 0135, then 0140-0190, in ledger order.
+test("upgrade from main plus S4's applied ledger appends exactly the remaining ledger, from agent-review to the news task proposal links", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s4",
-    pending: ["_agent_review_plans.sql", "_task_project_activity_events.sql", "_pipeline_build_publications.sql",
-      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
-    withoutGrants: [UNATTENDED_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+    pending: ["0106_agent_review_plans.sql", "0107_task_project_activity_events.sql", "0108_pipeline_build_publications.sql",
+      "0109_pipeline_unattended_advance.sql", "0135_control_project_settings.sql", ...AFTER_0135],
+    withoutGrants: [DESK_GRANTS, UNATTENDED_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
 // A database at main plus S4 and S5 (0106 applied) is the first that takes
-// 0107's activity grants, then S6's 0108, S7's 0109 and 0135.
-test("upgrade from main plus S4 and S5's applied ledger appends only the activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
+// 0107's activity grants, then S6's 0108, S7's 0109, 0135 and 0140-0190.
+test("upgrade from main plus S4 and S5's applied ledger appends exactly the remaining ledger, from the activity migration to the news task proposal links", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s5",
-    pending: ["_task_project_activity_events.sql", "_pipeline_build_publications.sql",
-      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
-    withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS],
+    pending: ["0107_task_project_activity_events.sql", "0108_pipeline_build_publications.sql",
+      "0109_pipeline_unattended_advance.sql", "0135_control_project_settings.sql", ...AFTER_0135],
+    withoutGrants: [DESK_GRANTS, UNATTENDED_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4, S5 and 0107 (0108 applied) takes S7's 0109 and
-// 0135: no duplicate ledger_order, and a second run is a clean no-op.
-test("upgrade from main plus S4, S5 and 0107's applied ledger appends only the unattended-advance and project-settings migrations", needsPg, () =>
+// A database at main plus S4, S5 and 0107 (0108 applied) takes S7's 0109, 0135
+// and 0140-0190: no duplicate ledger_order, and a second run is a clean no-op.
+test("upgrade from main plus S4, S5 and 0107's applied ledger appends exactly the remaining ledger, from unattended-advance to the news task proposal links", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s6",
-    pending: ["_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
-    withoutGrants: [UNATTENDED_GRANTS],
+    pending: ["0109_pipeline_unattended_advance.sql", "0135_control_project_settings.sql", ...AFTER_0135],
+    withoutGrants: [DESK_GRANTS, UNATTENDED_GRANTS],
     newObjects: UNATTENDED_OBJECTS }));
 
 test("tampered history fails closed: altered, deleted-row and forged-digest states", needsPg, async () => {
@@ -1543,8 +1576,9 @@ test("0109 then 0108 down return a head database to exactly the main plus S4 and
   // down file for 0109/0108 has to be compared against a database that never had
   // 0135's objects, or the comparison is against a state no release was in.
   const { stage, ledgerPath } = await stageAppliedPrefix({
-    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
-    withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS] });
+    pending: ["0108_pipeline_build_publications.sql", "0109_pipeline_unattended_advance.sql",
+      "0135_control_project_settings.sql", ...AFTER_0135],
+    withoutGrants: [DESK_GRANTS, UNATTENDED_GRANTS, PUBLICATION_GRANTS] });
   try {
     await freshDatabase("cr_prod_s6_baseline");
     await applyMigrations({ target: target("cr_prod_s6_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s6_baseline"),
@@ -1623,8 +1657,9 @@ async function installMacRoleFiles(database, edits = {}, absentObjects = []) {
 // the same objects, and the same privileges for every role, including the web
 // and coordinator column grants that exist only in the Mac-local role files.
 test("0109 down returns a Mac-local head database to exactly the main plus S4, S5 and S6 state", needsPg, async () => {
-  const { stage, ledgerPath } = await stageAppliedPrefix({ pending: ["_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
-    withoutGrants: [UNATTENDED_GRANTS] });
+  const { stage, ledgerPath } = await stageAppliedPrefix({
+    pending: ["0109_pipeline_unattended_advance.sql", "0135_control_project_settings.sql", ...AFTER_0135],
+    withoutGrants: [DESK_GRANTS, UNATTENDED_GRANTS] });
   const admin = adminDb();
   const createdPostgres = !(await query(admin, "SELECT 1 FROM pg_roles WHERE rolname='postgres'")).rows.length;
   if (createdPostgres) await query(admin, "CREATE ROLE postgres SUPERUSER LOGIN");
