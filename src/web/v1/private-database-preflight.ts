@@ -125,7 +125,11 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
   control_project_settings: ["eligible_worker_kinds", "max_concurrent_tasks", "default_worker_kind",
-    "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
+    "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at",
+    // MIG-A (0201): the per-project orchestrator selection, owner-gated and
+    // column-scoped for the same reason as 0135's. The row's identity (tenant_id,
+    // project_id) stays outside the grant on purpose.
+    "planner_mode", "planner_worker_id", "planner_worker_kind", "planner_model", "planner_effort"],
   control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
   control_skills: ["current_version", "state", "updated_at"],

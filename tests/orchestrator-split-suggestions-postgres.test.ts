@@ -283,65 +283,94 @@ test("the write guard refuses: no propose grant, a foreign batch, a stale revisi
         proposer: "identity:orch-second", proposal: proposal(3), createdAt: NOW })).rowCount, 1,
       "its own batch accepts a suggestion from it");
 
-      // Each grant CONDITION in isolation. Every variant identity is given a grant
-      // that is invalid in exactly one way, and the suggestion names THAT identity
-      // -- so the only thing that can refuse it is the condition under test.
+      // Every batch here is seeded with the VALID proposer, and the suggestion
+      // names the VARIANT identity. That combination is refused by the intake
+      // login's ROW-LEVEL policy before the guard's grant check ever runs -- the
+      // policy requires the suggestion's proposer to be the batch's own proposer,
+      // and the variant is not. So to isolate a GRANT condition the row has to
+      // reach the guard, which means the variant must own the batch, and that in
+      // turn means 0093's work_batches guard must accept it -- which needs a valid
+      // grant. Both are true at once only in this order: give the variant a valid
+      // grant and let it propose its own batch, THEN break exactly the one
+      // property under test.
       //
-      // Every batch here is seeded with the VALID proposer, never with the
-      // variant. A variant's grant is deliberately broken, and 0093's work_batches
-      // guard requires a valid one, so seeding a batch as a variant would be
-      // refused by 0093 before 0200 ever ran -- proving nothing about 0200. What
-      // 0200 must refuse is a suggestion whose PROPOSER holds a broken grant,
-      // whatever batch it names; the ownership arm is exercised separately above.
-      const variants: Array<[string, string, string, string]> = [
-        // label,             identity,                     role_key,            allowed_actions
-        ["revoked", "identity:orch-revoked", "work_batch_proposer", '["work_batches.propose"]'],
-        ["expired", "identity:orch-expired", "work_batch_proposer", '["work_batches.propose"]'],
-        ["otherrole", "identity:orch-otherrole", "work_batch_reviewer", '["work_batches.propose"]'],
-        ["extraaction", "identity:orch-extra", "work_batch_proposer",
-          '["work_batches.propose","work_batches.decide"]'],
-        ["highrisk", "identity:orch-highrisk", "work_batch_proposer", '["work_batches.propose"]'],
-        ["external", "identity:orch-external", "work_batch_proposer", '["work_batches.propose"]'],
-        ["strongfactor", "identity:orch-strong", "work_batch_proposer", '["work_batches.propose"]'],
-        ["otherproject", "identity:orch-otherproject", "work_batch_proposer", '["work_batches.propose"]'],
-        ["suspended", "identity:orch-suspended", "work_batch_proposer", '["work_batches.propose"]'],
-        ["humanactor", "identity:orch-human", "work_batch_proposer", '["work_batches.propose"]'],
+      // The ten cases below therefore do two steps each -- a valid phase (identity,
+      // grant, batch) and a break phase -- and the break is applied after the batch
+      // exists, so nothing else can be what refuses the suggestion.
+      const variants: Array<[string, string, (identity: string) => Promise<void>]> = [
+        ["revoked", "identity:orch-revoked", async identity => {
+          // The guard compares against statement_timestamp(), which is REAL time,
+          // not the fixture's NOW. A revocation must therefore be at a wall-clock
+          // time already in the past. 0005 requires revoked_at >= created_at, and
+          // created_at is the fixture clock, so the revocation is dated exactly at
+          // created_at -- which is >= created_at, and long past by the time the
+          // statement runs.
+          await admin.query("UPDATE control_role_grants SET revoked_at=$3 WHERE tenant_id=$1 AND id=$2",
+          [scope.tenantId, `grant:${identity}`, NOW]);
+        }],
+        ["expired", "identity:orch-expired", async identity => {
+          // expires_at must be > created_at, so an already-expired grant cannot be
+          // expressed against a fixture created_at. The grant is instead created
+          // with a short window that has ALREADY closed by the time the statement
+          // runs: created_at is set an hour before the fixture clock, and
+          // expires_at an hour before NOW, so it is past while still > created_at.
+          await admin.query(`UPDATE control_role_grants SET created_at=$3, updated_at=$3, expires_at=$4
+            WHERE tenant_id=$1 AND id=$2`,
+          [scope.tenantId, `grant:${identity}`,
+            new Date(Date.parse(NOW) - 7_200_000).toISOString(),
+            new Date(Date.parse(NOW) - 3_600_000).toISOString()]);
+        }],
+        ["otherrole", "identity:orch-otherrole", async identity => {
+          await admin.query("UPDATE control_role_grants SET role_key='work_batch_reviewer' WHERE tenant_id=$1 AND id=$2",
+          [scope.tenantId, `grant:${identity}`]);
+        }],
+        ["extraaction", "identity:orch-extra", async identity => {
+          await admin.query(`UPDATE control_role_grants SET allowed_actions='["work_batches.propose","work_batches.decide"]'::jsonb
+            WHERE tenant_id=$1 AND id=$2`, [scope.tenantId, `grant:${identity}`]);
+        }],
+        ["highrisk", "identity:orch-highrisk", async identity => {
+          await admin.query("UPDATE control_role_grants SET risk_ceiling='high' WHERE tenant_id=$1 AND id=$2",
+          [scope.tenantId, `grant:${identity}`]);
+        }],
+        ["external", "identity:orch-external", async identity => {
+          await admin.query("UPDATE control_role_grants SET allow_external_effects=true WHERE tenant_id=$1 AND id=$2",
+          [scope.tenantId, `grant:${identity}`]);
+        }],
+        ["strongfactor", "identity:orch-strong", async identity => {
+          await admin.query("UPDATE control_role_grants SET require_strong_factor=true WHERE tenant_id=$1 AND id=$2",
+          [scope.tenantId, `grant:${identity}`]);
+        }],
+        ["otherproject", "identity:orch-otherproject", async identity => {
+          await admin.query(`UPDATE control_role_grants SET project_ids='["project:elsewhere"]'::jsonb
+            WHERE tenant_id=$1 AND id=$2`, [scope.tenantId, `grant:${identity}`]);
+        }],
+        ["suspended", "identity:orch-suspended", async identity => {
+          await admin.query("UPDATE control_identities SET state='suspended' WHERE tenant_id=$1 AND id=$2",
+          [scope.tenantId, identity]);
+        }],
+        ["humanactor", "identity:orch-human", async identity => {
+          await admin.query("UPDATE control_identities SET actor_type='human' WHERE tenant_id=$1 AND id=$2",
+          [scope.tenantId, identity]);
+        }],
       ];
-      for (const [label, identity, roleKey, actions] of variants) {
-        const isHuman = label === "humanactor", isSuspended = label === "suspended";
+      for (const [label, identity, breakIt] of variants) {
+        // Phase 1: a completely valid proposer, who proposes its own batch.
         await admin.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
-          auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,
-          $3,'Variant','work-intake',$4,'active',$5,$5) ON CONFLICT DO NOTHING`,
-        [identity, scope.tenantId, isHuman ? "human" : "agent", sha256Digest({ id: identity }), NOW]);
-        // 0005 requires expires_at > created_at and revoked_at >= created_at, so an
-        // expired or revoked grant cannot be expressed with a timestamp earlier
-        // than created_at. These grants are therefore dated BEFORE the fixture
-        // clock, which puts revoked_at and expires_at genuinely in the past as far
-        // as statement_timestamp() is concerned -- which is what the guard asks --
-        // while every CHECK still holds.
-        const variantCreated = new Date(Date.parse(NOW) - 7_200_000).toISOString();
-        const variantPast = new Date(Date.parse(NOW) - 60_000).toISOString();
+          auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'agent','Variant','work-intake',$3,'active',$4,$4)
+          ON CONFLICT DO NOTHING`, [identity, scope.tenantId, sha256Digest({ id: identity }), NOW]);
         await admin.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,
-          project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at,revoked_at,expires_at)
-          VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$10,
-            CASE WHEN $11 THEN $12::timestamptz END,
-            CASE WHEN $13 THEN $12::timestamptz END) ON CONFLICT DO NOTHING`,
-        [`grant:${identity}`, scope.tenantId, identity, roleKey, actions,
-          label === "otherproject" ? JSON.stringify(["project:elsewhere"]) : JSON.stringify(["*"]),
-          label === "highrisk" ? "high" : "low",
-          label === "external", label === "strongfactor", variantCreated,
-          label === "revoked", variantPast, label === "expired"]);
-        // Suspending the identity happens AFTER its grant is in place, so the
-        // grant is what exists and the state is what is wrong.
-        if (isSuspended) await admin.query(
-          "UPDATE control_identities SET state='suspended' WHERE tenant_id=$1 AND id=$2", [scope.tenantId, identity]);
-        const variantBatch = await seedBatch(admin, scope, `batch:${label}`);
+          project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+          VALUES($1,$2,$3,'work_batch_proposer','["work_batches.propose"]'::jsonb,'["*"]'::jsonb,'low',false,false,$4,$4)
+          ON CONFLICT DO NOTHING`, [`grant:${identity}`, scope.tenantId, identity, NOW]);
+        const variantBatch = await seedBatch(admin, scope, `batch:${label}`, identity);
+        // Phase 2: break exactly one property, after the batch exists.
+        await breakIt(identity);
         await assert.rejects(insertSuggestion(intake, {
           id: `split-suggestion:${label.padEnd(32, "0").slice(0, 32)}`,
           tenantId: scope.tenantId, projectId: scope.projectId, batchId: `batch:${label}`,
           requestKey: `orch-guard-${label}-0001`, revision: 1, revisionDigest: variantBatch.digest,
           proposer: identity, proposal: proposal(3), createdAt: NOW }),
-        /work batch split suggestion insert rejected|policy/u,
+        /work batch split suggestion insert rejected/u,
         `a proposer whose grant differs only in "${label}" is refused`);
       }
 
