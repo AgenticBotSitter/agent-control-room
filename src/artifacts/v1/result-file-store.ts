@@ -500,26 +500,27 @@ export class ResultFileStoreV1 {
       // Re-read the directory INSIDE the recovery lock: the list above is only
       // a hint, and a name that appeared since must be judged on its own.
       const current = await bounded(operation, () => readdir(this.root), () => {});
-      if (current.includes(lockName) && await this.namedHolderIsAlive(operation, lockName)) {
-        // A live writer is publishing through this same directory. Its lock and
-        // its pending file are its own, and this store opens anyway: the write
-        // path is already mutually excluded by the kernel, and refusing to open
-        // here would reintroduce the lock-out this recovery exists to remove.
-        return;
-      }
+      // ONE judgement of the write lock, and it is the take-over itself, which
+      // returns false for a live writer and removes the name when nobody holds
+      // it. The obvious earlier form — a read-only liveness probe here, then the
+      // take-over below — probed the same file twice and mutation testing
+      // showed the first probe could be deleted with the lane still green,
+      // because the take-over re-asks the kernel and gets the same answer. A
+      // guard that cannot change the outcome is a second opinion, not a second
+      // check, and this is where the code stops claiming to have one.
+      //
+      // A live writer is publishing through this same directory: its lock and
+      // its pending file are its own, and this store opens anyway, because the
+      // write path is already mutually excluded by the kernel and refusing to
+      // open here would reintroduce the lock-out this recovery exists to remove.
+      if (current.includes(lockName) && !await this.takeOverAbandonedName(operation, lockName))
+        return;                                   // a live writer holds it
       // No live writer. Everything this store wrote for its own bookkeeping and
       // nothing else is now provably abandoned, and the lock is removed FIRST so
       // that a pending file is judged against a directory that genuinely has no
       // lock in it. The ordering matters: a reader of this function's rule 3
       // ("a pending file is removed only when no lock exists") would be reading
       // a stale flag if the lock were removed after.
-      //
-      // The lock is taken over with the proof, not after it: `takeOverAbandonedName`
-      // holds the descriptor that proved it free until the name is unlinked, so
-      // the writer whose lock this is cannot appear between the two and lose it.
-      // That is the review's B1, and this is the line that used to do the deleting.
-      if (current.includes(lockName) && !await this.takeOverAbandonedName(operation, lockName))
-        return;                                   // a writer claimed it in between
       for (const entry of current) {
         if (entry === lockName) continue;          // already taken over above
         if (isStoreBookkeeping(entry)) await this.removeProvenAbandoned(operation, entry);
@@ -778,17 +779,22 @@ export class ResultFileStoreV1 {
       // get wrong in both directions. Reaching here with the name present means
       // the holder is a live writer or a name nobody has released yet; either
       // way this operation cannot proceed, and the answer is a store refusal with
-      // a fixed code — never a raw EEXIST or EAGAIN, which would leak an errno
-      // out of the store and past its own error contract. The lock is NOT
-      // removed here: clearing it is the opener's job, and only after the kernel
-      // has said nobody holds it.
+      // a fixed code — never a raw errno, which would leak out of the store and
+      // past its own error contract. The lock is NOT removed here: clearing it
+      // is the opener's job, and only after the kernel has said nobody holds it.
+      //
+      // Only EEXIST is mapped, and that is measured rather than assumed: with
+      // O_EXCL the kernel checks existence first, so a create against a name that
+      // a live writer holds returns EEXIST and never reaches the lock. The
+      // EAGAIN that O_EXLOCK can raise belongs to the PROBE below, which has no
+      // O_EXCL and is the only place this class asks the kernel about a lock it
+      // did not create.
       try {
         lock = await bounded(operation, () => open(lockPath,
           constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | exclusiveLock | noFollow, 0o600),
         mutating);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EEXIST"
-          || (error as NodeJS.ErrnoException).code === "EAGAIN")
+        if ((error as NodeJS.ErrnoException).code === "EEXIST")
           throw new ResultFileStoreError("store_ambiguous");
         throw error;
       }
