@@ -205,6 +205,46 @@ const uuidShaped = (value: string) => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 };
 const REGISTRATION_ID = (value: string) => `passkey-registration:${uuidShaped(value)}`;
+
+/**
+ * The shape `PasskeyStoreV1.registrationRows` promises.
+ *
+ * Declared HERE rather than imported because the store is a `.mjs` module with no
+ * type declarations, so every callback over its result would otherwise be
+ * implicitly `any` — and `pnpm check` (which does not read test files) would stay
+ * green while `check:demo` failed. Spelling the shape here is also the most
+ * useful place to state it: this IS the contract P-1 asks for, and a reader can
+ * check it against the port without leaving this file.
+ *
+ * Every binary field is unpadded base64url that round-trips exactly, because the
+ * wrapper in passkey.mjs refuses anything else.
+ */
+interface RegistrationRowV1 {
+  readonly registrationDigest: string;
+  readonly credentialId: string;
+  readonly comparisonCode: string;
+  readonly response: {
+    readonly id: string;
+    readonly rawId: string;
+    readonly type: "public-key";
+    readonly response: {
+      readonly clientDataJSON: string;
+      readonly attestationObject: string;
+      readonly transports: readonly string[];
+    };
+    readonly clientExtensionResults: Record<string, never>;
+  };
+  readonly authorizationAssertion: {
+    readonly id: string;
+    readonly response: {
+      readonly clientDataJSON: string;
+      readonly authenticatorData: string;
+      readonly signature: string;
+      readonly userHandle: string | null;
+    };
+  } | null;
+  readonly receivedAt: string;
+}
 const registrationDigest = (value: string) => DIGEST(`registration-${value}`);
 
 /** The options object the updater would publish. Shape is the authority's, not
@@ -288,7 +328,7 @@ test("registrationRows returns every row, whole, with unpadded base64url that ro
       await web.query(INSERT_REGISTRATION, params(CREDENTIAL, REGISTRATION_ID(`${fixed}-a`)));
       await web.query(INSERT_REGISTRATION, params(raceCredential, REGISTRATION_ID(`${fixed}-b`)));
 
-      const rows = await store.registrationRows(digest);
+      const rows = await store.registrationRows(digest) as RegistrationRowV1[];
       assert.equal(rows.length, 2, "both racers are visible; the one-row rule must be able to see them");
       assert.deepEqual(rows.map(row => row.credentialId).sort(), [CREDENTIAL, raceCredential].sort(),
         "every row is its own credential");
@@ -330,7 +370,7 @@ test("registrationRows returns every row, whole, with unpadded base64url that ro
         VALUES($1,$2,$3,$4,$5,$6::text[],$7,$8,$9,$10,$11,$12,$13)`,
       [REGISTRATION_ID(randomUUID()), addDigest, CREDENTIAL, ATTEST, CLIENT, ["internal"],
         comparisonCodeV1(CREDENTIAL), OWNER_SESSION, authId, AUTH, CLIENT, SIG, Buffer.alloc(16, 5)]);
-      const [withAuth] = await store.registrationRows(addDigest);
+      const [withAuth] = await store.registrationRows(addDigest) as RegistrationRowV1[];
       assert.equal(withAuth?.authorizationAssertion?.id, authId, "the add assertion rode along");
       assert.equal(withAuth?.authorizationAssertion?.response.signature, b64(SIG));
       assert.equal(withAuth?.authorizationAssertion?.response.authenticatorData, b64(AUTH));
@@ -566,7 +606,7 @@ test("a registration row is accepted only for a registration the updater opened"
       }
       assert.equal(landed, 4, "the cap is four rows per registration digest");
       assert.equal(capped, 8, "and every insert past it is refused by name");
-      assert.equal((await store.registrationRows(flooded)).length, 4, "the table holds exactly the cap");
+      assert.equal((await store.registrationRows(flooded) as RegistrationRowV1[]).length, 4, "the table holds exactly the cap");
     } finally { await web.end(); await client.end(); }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
@@ -688,7 +728,7 @@ test("50 concurrent registrations on one digest all land, and the one-row rule t
       }));
       const elapsed = Date.now() - started;
       const landed = attempts.filter(Boolean).length;
-      const rows = await store.registrationRows(digest);
+      const rows = await store.registrationRows(digest) as RegistrationRowV1[];
       assert.equal(rows.length, landed, "every row that landed is visible: no LIMIT, no dedupe, no gap");
       assert.equal(landed, 4, "the cap of four holds under 50 concurrent racers, each on its own connection");
       assert.equal(50 - landed, 46, "and the other 46 were refused rather than lost");
@@ -836,14 +876,17 @@ test("a replayed approval is a refusal with no effect, and a skew clock opens no
       // connection's default is, which is not the R10b path production sets — so
       // the replay would be measured on a configuration nobody ships.
       await replayStore.initialize();
-      let second: { error?: string };
+      let second: { error: string } | { resolved: true };
       try {
-        second = await replayStore.recordApprovalRefusal({ approvalId, planId: plan,
+        await replayStore.recordApprovalRefusal({ approvalId, planId: plan,
           reason: "updater_refusal_input_refused" });
+        second = { resolved: true };
       } catch (error) { second = { error: (error as Error).message }; }
       await other.end();
-      assert.match(second.error ?? "ok", /not an approval/u,
-        "a replay is refused by name rather than silently accepted");
+      assert.ok(!("resolved" in second),
+        `a replay must be refused, and the store returned ${JSON.stringify(second)}`);
+      assert.match(second.error, /not an approval/u,
+        "and refused by name rather than silently accepted");
       assert.equal((await client.query<{ count: number }>(
         "SELECT count FROM updater.approval_refusal_buckets WHERE plan_id=$1", [plan])).rows[0]?.count, 1,
       "the count is still 1 after the replay");
@@ -1239,7 +1282,7 @@ test("the web insert path validates the response shape before it reaches the tab
         response, authorizationAssertion: null, ...overrides });
       // The ordinary path lands, and the updater's read sees it whole.
       await insert();
-      const rows = await store.registrationRows(digest);
+      const rows = await store.registrationRows(digest) as RegistrationRowV1[];
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.response.response.clientDataJSON, b64(CLIENT));
       assert.deepEqual(rows[0]?.response.response.transports, ["internal"]);
@@ -1312,7 +1355,7 @@ test("the web insert path validates the response shape before it reaches the tab
       /updater_passkey_authenticator_data_refused/u);
       // A complete assertion is accepted, and rides along whole.
       await insert({ authorizationAssertion: authAssertion });
-      const withAuth = await store.registrationRows(digest);
+      const withAuth = await store.registrationRows(digest) as RegistrationRowV1[];
       assert.equal(withAuth.at(-1)?.authorizationAssertion?.response.signature, b64(SIG));
       assert.equal(withAuth.at(-1)?.authorizationAssertion?.response.userHandle, null,
         "a null user handle is carried as null, not dropped");
