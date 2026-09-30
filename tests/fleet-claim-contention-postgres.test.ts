@@ -9,14 +9,20 @@
 // The worker machines run the real standalone connector against a deterministic
 // fake harness adapter, so nothing here spawns a real agent CLI.
 //
-// Two properties are proved, both of which the three-bot test could not see:
-// 1. At 5 and then 20 concurrent local bots over same-project tasks, every job
-//    ends done or handed back, none is stranded `leased`, and no job is claimed
-//    twice. A 40P01 deadlock is claim-level contention and must move a worker to
-//    its next offer, never end its pass.
+// Three properties are proved, all of which the three-bot test could not see:
+// 1. At 5 concurrent local bots over same-project tasks, every job ends done or
+//    handed back, none is stranded `leased`, and no job is claimed twice. A
+//    contention abort must move a worker to its next offer, never end its pass.
+//    There is NO 20-bot test in this file: at 20 the gateway's own admission
+//    caps answer before the claim path does, so the outcome measures the host,
+//    not the data path. See the comment above the five-bot test.
 // 2. A leased job whose worker is gone recovers: the elapsed lease returns the
 //    task to the open offer as a fresh attempt, so owner-visible work cannot
 //    stall forever behind a dead process.
+// 3. Claims running NEXT TO MCP audit traffic raise ZERO cluster deadlocks,
+//    asserted on `pg_stat_database.deadlocks` rather than on "no failures",
+//    because the bounded retry would satisfy the latter while hiding a
+//    regression.
 //
 // The attack kit provisions a disposable socket-only cluster on this file's
 // reserved port lane (59620-59629 by default; CONTROL_ROOM_PG_TEST_PORT_BASE
@@ -35,9 +41,12 @@ import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type R
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
+import { databaseSqlStateIsAnyV1, databaseSqlStateV1 } from "../src/persistence/database";
+import { ROLLBACK_SQL_STATES_V1 } from "../src/web/v1/bounded-database";
 import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, FleetGatewayStoreV1,
   FleetOwnerServiceV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
 import { ProjectEventStoreV1 } from "../src/project-events/v1/store";
+import { SupervisorReconcilerV1 } from "../src/supervisor/v1";
 import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycle";
 import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
@@ -193,7 +202,10 @@ test("five concurrent local bots over one project: every task is run exactly onc
             await g.asGateway(`UPDATE control_leases SET expires_at=statement_timestamp()-interval '1 second',
               payload=jsonb_set(payload,'{expiresAt}',to_jsonb(statement_timestamp()-interval '1 second'))
               WHERE id=(SELECT lease_id FROM fleet_claims WHERE job_id=$1)`, [pass.jobId]);
-            await g.gateway.reconcile();
+            // Lease expiry is the supervisor's alone since cook/v1 commit
+            // "Make supervisor sole fleet lease expiry owner", so this is the
+            // same product path the Mac-local supervisor runs on its timer.
+            await new SupervisorReconcilerV1(g.fleet.client, FLEET_TENANT).reconcileStalled();
             const recovered = await g.asWeb(`SELECT j.state,o.state AS offer_state FROM control_jobs j
               LEFT JOIN fleet_work_offers o ON o.tenant_id=j.tenant_id AND o.job_id=j.id
               WHERE j.id=$1`, [pass.jobId]);
@@ -226,14 +238,33 @@ test("five concurrent local bots over one project: every task is run exactly onc
           assert.equal(open[0].open_offers, taskCount - done,
             `${label}: every task not yet run is still proposed and still offered — ${JSON.stringify(final)}`);
 
-          // Nothing unexpected may reach the owner. The pool's own admission
-        // backpressure (`database_unavailable` from `admit`, which the gateway
-        // reports to the worker as an honest retryable refusal) is not that:
-        // it is the bounded pool saying "come back shortly", and this file has
-        // already proved the workers recover from it. Everything else is a bug.
-        const unexpectedGatewayErrors = g.unexpected.filter(error => !(error instanceof Error
-          && error.message === "database_unavailable"));
-        assert.deepEqual(unexpectedGatewayErrors, [], "no unexpected gateway error at five bots");
+          // Nothing unexpected may reach the owner.
+          //
+          // Two classes are tolerated, and only these two:
+          //   1. Pool ADMISSION backpressure: `database_unavailable` with NO
+          //      SQLSTATE. That is the bounded pool saying "come back shortly"
+          //      before it checked a connection out, so nothing committed and
+          //      the gateway reports it as a retryable 503. The count is
+          //      bounded, so a regression that floods it fails here too.
+          //   2. Nothing else. In particular a 40P01 / 40001 / 55P03 is NEVER
+          //      filtered: the lock order is fixed at the root, so any of those
+          //      reaching the owner means the fix has regressed. The old filter
+          //      hid every `database_unavailable`, including an exhausted 40P01
+          //      retry, which is exactly the failure this lane exists to catch.
+          const isPoolAdmission = (error: unknown) => error instanceof Error
+            && error.message === "database_unavailable" && !databaseSqlStateV1(error);
+          const admissionRefusals = g.unexpected.filter(isPoolAdmission);
+          // Bounded generously: at this concurrency a saturated pool may refuse
+          // some checkouts, but it must not refuse more than one in eight.
+          assert.ok(admissionRefusals.length <= Math.max(2, Math.floor(taskCount / 8)),
+            `pool admission refusals must stay bounded, not become the norm — ${
+              admissionRefusals.length} of ${taskCount} tasks`);
+          const surfacedSqlState = g.unexpected.filter(error => databaseSqlStateIsAnyV1(error,
+            ROLLBACK_SQL_STATES_V1));
+          assert.deepEqual(surfacedSqlState.map(error => databaseSqlStateV1(error)), [],
+            `no contention SQLSTATE may surface: the tenant mutex is FOR NO KEY UPDATE and the lock order is fixed`);
+          const unexpectedGatewayErrors = g.unexpected.filter(error => !isPoolAdmission(error));
+          assert.deepEqual(unexpectedGatewayErrors, [], "no unexpected gateway error at five bots");
       } finally { await g.close(); await rm(dir, { recursive: true, force: true }); }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 900_000 });
 });
@@ -315,8 +346,13 @@ test("a worker killed mid-job does not strand its task: the elapsed lease hands 
           payload=jsonb_set(payload,'{expiresAt}',to_jsonb((acquired_at+interval '1 second')::timestamptz))
           WHERE id=$1`, [held.lease_id]);
         await new Promise(done => setTimeout(done, 1_100));
-        const applied = await g.gateway.reconcile();
-        assert.equal(applied.expiredLeases, 1);
+        // Lease expiry belongs to SupervisorReconcilerV1 and only to it,
+        // including for fleet work (cook/v1 commit "Make supervisor sole
+        // fleet lease expiry owner"). The gateway's reconcile() deliberately
+        // has no expiredLeases counter any more, so driving it here would
+        // assert a design that was removed rather than a behaviour.
+        const outcomes = await new SupervisorReconcilerV1(g.fleet.client, FLEET_TENANT).reconcileStalled();
+        assert.equal(outcomes.length, 1, `the elapsed lease is reconciled once: ${JSON.stringify(outcomes)}`);
         assert.equal((await g.asWeb("SELECT state FROM control_jobs WHERE id=$1", [lost.jobId]))[0].state, "ready");
         const lease = await g.asWeb("SELECT state FROM control_leases WHERE id=$1", [held.lease_id]);
         assert.equal(lease[0].state, "expired");
@@ -395,3 +431,204 @@ test("a result that cannot be delivered hands the task back instead of holding i
     assert.deepEqual(events, ["blocker"], "the task is handed back to the owner");
   });
 
+test("a transient database refusal on submit is retried to submitted, and the answer is not thrown away", async () => {
+  // This is the B2 half that the single test above used to hide. The gateway
+  // maps `database_unavailable` (the bounded pool's promise that NOTHING
+  // committed) to a retryable 503, and the connector's transient set contains
+  // `http_503`, so an idempotent result is retried and lands. Throwing the
+  // completed answer away on the first attempt is what stranded owner-visible
+  // work as `abandoned/refused` with the job still `leased` for 15 minutes.
+  const events: string[] = [];
+  let resultAttempts = 0;
+  const client = {
+    progress: async () => ({ eventId: "e", replayed: false, leaseExpiresAt: null }),
+    result: async () => { resultAttempts += 1;
+      if (resultAttempts < 3) throw Object.assign(new Error("Control Room refused the request (http_503)."),
+        { code: "http_503" });
+      return { resultId: "r", replayed: false, taskState: "waiting_approval", accepted: false }; },
+    blocker: async (claimId: string, message: string) => { events.push(`blocker:${claimId}`);
+      return { eventId: "b", replayed: false, released: true }; },
+  };
+  const claim = { claimId: "fleet-claim:" + "c".repeat(32), jobId: "job:transient", title: "Transient",
+    instructions: "Work." };
+  const finished = await connector.runClaimedTask({ client: client as never, claim, log: () => {},
+    readMode: async () => "running", secrets: [],
+    adapter: { harness: "codex", deadlineMs: 5_000, execute: async () => ({ kind: "completed",
+      text: "Done.", startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), usage: null }) } });
+  assert.equal(finished.outcome, "submitted",
+    `a transient refusal must be retried, not turned into a lost result: ${JSON.stringify(finished)}`);
+  assert.equal(resultAttempts, 3, "the result is replayed until it lands");
+  assert.deepEqual(events, [], "a retried result must never also release the task");
+});
+
+// The B1 repro. TWO bots are enough; no burst is needed.
+//
+// Before the lock-order fix this shape produced ~200 deadlocks per 200 claim
+// / release cycles, because the claim took `tenants ... FOR UPDATE` and then
+// the audit chain head, while `recordMcpCall` took the chain head first and its
+// `INSERT INTO audit_events` then took `FOR KEY SHARE` on the same tenant row
+// through the foreign key. `FOR KEY SHARE` conflicts with `FOR UPDATE`, so the
+// cycle closed and PostgreSQL killed one transaction per collision.
+//
+// The assertion is the CLUSTER's own deadlock counter, NOT "no failures". The
+// bounded retry in `#contending` would satisfy the latter while hiding the
+// regression completely -- it is exactly what the review said this branch was
+// doing. `pg_stat_database.deadlocks` counts what PostgreSQL actually had to
+// abort, so no retry can satisfy it.
+test("claims beside MCP audit traffic never deadlock: pg_stat_database.deadlocks delta is zero",
+  async t => {
+    if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+    await withRealPostgres(async postgres => {
+      const mode = { value: "running" as FleetOperationsModeV1 };
+      const g = await gatewayFor(postgres, mode,
+        { admission: { maxConcurrent: 32, maxConcurrentKnown: 32, maxConcurrentKnownPerWorker: 32 } });
+      const dir = await mkdtemp(join(tmpdir(), "fleet-lock-order-"));
+      try {
+        await seedFleetTenant((sql, params) => g.admin.client.query(sql, params));
+        const cycles = Number(process.env.FLEET_LOCK_ORDER_CYCLES ?? 30);
+        const mcpCalls = Number(process.env.FLEET_LOCK_ORDER_MCP_CALLS ?? 300);
+        const streams = Number(process.env.FLEET_LOCK_ORDER_STREAMS ?? 4);
+        const claimBots: Array<{ configPath: string }> = [];
+        for (let index = 0; index < streams; index += 1)
+          claimBots.push(await enrollBot(g, dir, index, { delayMs: 5, label: "LockOrder" }));
+        // The MCP side is the store's own audit append, driven with a principal
+        // in the same tenant: that is the transaction that used to lose the
+        // deadlock (it takes the chain head first).
+        const mcpPrincipal = { tenantId: FLEET_TENANT, workerId: `fleet-worker:${"c".repeat(32)}`,
+          nodeId: `node:${"c".repeat(32)}`, identityId: `identity:${"c".repeat(32)}`, workerKind: "codex",
+          displayName: "MCP recorder", projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1,
+          credentialId: `fleet-credential:${"c".repeat(32)}`, credentialExpiresAt: "2099-01-01T00:00:00.000Z" };
+
+        const readDeadlocks = async () => {
+          const rows = await g.admin.client.query(
+            "SELECT deadlocks::bigint AS deadlocks FROM pg_stat_database WHERE datname=current_database()");
+          return Number(rows.rows[0].deadlocks);
+        };
+        const recordMcpCalls = async (from: number, count: number) => {
+          // Globally unique call ids. These are the audit primary key, so two
+          // batches that reuse a serial are ONE row and one "replayed" answer,
+          // which silently under-counts the contention this test must create.
+          const results = await Promise.all(Array.from({ length: count }, (_, n) => {
+            const serial = String(from + n).padStart(32, "0");
+            return g.gateway.recordMcpCall(mcpPrincipal as never, { callId: `mcp-call:${serial}`,
+              toolName: "claim" }).then(result => result, () => undefined);
+          }));
+          // Count what really committed. Under load the bounded pool (8
+          // connections, shared with the claim streams) may refuse a checkout;
+          // that is honest backpressure, not a bug, and it must not be allowed
+          // to make this test vacuously green.
+          return results.filter(result => result && typeof result === "object").length;
+        };
+
+        // EVERYTHING is set up BEFORE the measured window. Seeding a task and
+        // offering it is dozens of statements of owner-side work; if that ran
+        // inside the loop the two sides would barely overlap and the deadlock
+        // would never form. The measured window is claim/release against
+        // already-open offers, next to audit appends, and nothing else.
+        const offers: string[] = [];
+        for (let index = 0; index < streams * cycles; index += 1) {
+          const task = await seedProposedTask(g.admin.client, PROJECT_A, `lock-order-seed-${index + 1}`);
+          const offered = await g.owner.offerTask(ownerIdentity(),
+            { projectId: PROJECT_A, jobId: task.jobId, capability: "writing" });
+          offers.push(offered.offerId);
+        }
+
+        // Warm the audit chain and every connection first, so pool setup is not
+        // measured as contention. The warm-up ids are far above the measured
+        // range so warm-up rows never masquerade as measured writes.
+        await recordMcpCalls(900_000_000, 8);
+
+        const before = await readDeadlocks();
+        let committedWrites = 0, claimSuccesses = 0;
+        const claimFailures: string[] = [];
+        // A real principal per stream, authenticated through the store's
+        // own production path so the loop drives the same transactions a bot
+        // does -- no fakes, no test-only shortcut. One bot per stream matters:
+        // every worker is enrolled `maxConcurrent: 1`, so a single bot claiming
+        // from four streams would conflict with itself and half the loop would
+        // never reach the audit append.
+        const claimPrincipals = [] as any[];
+        for (const bot of claimBots) {
+          const config = await connector.loadConfig(bot.configPath);
+          claimPrincipals.push(await g.gateway.authenticate(
+            { bearer: config.secret, declaredWorkerId: config.workerId }));
+        }
+
+        // THE SHAPE: claim/release cycles against a pool of tasks, running NEXT
+        // TO a loop of pure MCP audit appends. Both touch the tenant row and the
+        // audit chain head, in the order that used to deadlock. Driving the
+        // store directly is what makes the collision window real: a connector
+        // pass spends most of its time in the fake harness, not in SQL.
+        const claimLoop = (async () => {
+          // Claim/release against already-open offers. One stream alone cannot
+          // collide with itself; the deadlock needs the tenant row held by one
+          // transaction while an audit append holds the chain head.
+          await Promise.all(Array.from({ length: streams }, async (_, stream) => {
+            for (let round = 0; round < cycles; round += 1) {
+              const suffix = `${stream}-${round}`;
+              const offerId = offers[stream * cycles + round];
+              if (!offerId) continue;
+              const claimPrincipal = claimPrincipals[stream];
+              const claimed: any = await g.gateway.claim(claimPrincipal,
+                { offerId, idempotencyKey: `lock-order-claim-${suffix}` })
+                .catch((error: unknown) => error);
+              if (claimed instanceof Error || !claimed || typeof claimed.claimId !== "string") {
+                claimFailures.push(String(claimed));
+                continue;
+              }
+              claimSuccesses += 1;
+              // Hand the task straight back: this is the `-> ready` release path,
+              // which now takes the tenant mutex explicitly.
+              await g.gateway.blocker(claimPrincipal, { claimId: claimed.claimId,
+                message: "lock order probe", idempotencyKey: `lock-order-block-${suffix}`, release: true })
+                .catch(() => undefined);
+            }
+          }));
+        })();
+        // The audit traffic must not starve the claim side out of the pool. Both use
+        // the SAME bounded pool (8 connections, as shipped); firing 25 audit
+        // appends at once starves the claim transactions of every connection
+        // and every claim comes back `database_unavailable` with nothing
+        // committed -- which is honest backpressure, but it means no lock cycle
+        // ever forms and the test would be vacuous. Four in flight leaves room
+        // for the claim streams to actually reach the tenant row.
+        const mcpLoop = (async () => {
+          let issued = 0, committed = 0;
+          while (issued < mcpCalls) {
+            const batch = Math.min(4, mcpCalls - issued);
+            committed += await recordMcpCalls(issued, batch);
+            issued += batch;
+          }
+          committedWrites = committed;
+        })();
+        await Promise.all([claimLoop, mcpLoop]);
+        const after = await readDeadlocks();
+
+        // THE PRIMARY ASSERTION FIRST, with the vacuity numbers in its message.
+        // A test that refuses to report its own deadlock because a side-effect
+        // guard tripped first is worse than useless -- it looks like the fix
+        // holds when in fact the shape never formed.
+        assert.equal(after - before, 0,
+          "claims beside MCP audit traffic must not deadlock: the tenant mutex is FOR NO KEY UPDATE, so an "
+          + `audit writer holding the chain head can never wait on the tenant row (${cycles} claim/release cycles, `
+          + `${claimSuccesses} claims landed, ${committedWrites}/${mcpCalls} MCP audit writes committed, `
+          + `${claimFailures.slice(0, 3).join(" | ")})`);
+
+        // Now the vacuity guards. Both sides must really have done work: a
+        // refused audit call or a refused claim would mean zero contention, and
+        // a deadlock count of zero proves nothing at all.
+        assert.ok(committedWrites >= Math.floor(mcpCalls * 0.5),
+          `the MCP audit traffic must really commit, or this test proves nothing — ${
+            committedWrites} of ${mcpCalls} writes landed`);
+        assert.ok(claimSuccesses >= Math.floor(streams * cycles * 0.25),
+          `the claim/release side must really run, or this test proves nothing — ${
+            claimSuccesses} of ${streams * cycles} claims succeeded (${claimFailures.slice(0, 3).join(" | ")})`);
+
+        // And the work itself is intact: nothing was double-claimed or lost.
+        const doubled = await g.asWeb(`SELECT job_id,count(*)::int AS claims FROM fleet_claims
+          WHERE job_id LIKE 'lock-order-task-%' OR job_id IN (SELECT id FROM control_jobs WHERE id LIKE 'job:lock-order%')
+          GROUP BY job_id HAVING count(*)>1`, []);
+        assert.deepEqual(doubled, [], "the concurrent shape never double-claims");
+      } finally { await g.close(); await rm(dir, { recursive: true, force: true }); }
+    }, { port: PORT, allowedPorts: [PORT], boundMs: 900_000 });
+  });
