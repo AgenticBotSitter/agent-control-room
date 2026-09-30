@@ -1,0 +1,158 @@
+{
+  "schema": "control-room.policy.classes/v1",
+  "policyVersion": 1,
+  "author": "Claude Opus 5.5 (updater design item 16, Opus half), 2026-09-30",
+  "readAgainst": { "cook/v1": "60596d5a0", "publisher": "src/improve-control-room/v1/publisher.ts (pubfix2: isDatabasePath, isDependencyPath)" },
+  "installedAt": "updater/<uver>/policy/classes.json. Only updater/current is read. The publisher's riskFlags/changedAreas are display only and never change a class.",
+
+  "diff": {
+    "command": ["<xcrun-resolved git>", "--git-dir", "updater-state/mirror.git", "-c", "core.quotepath=off", "-c", "diff.renames=copies", "-c", "diff.renameLimit=0", "diff", "--raw", "-z", "-M", "-C", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-relative", "<from.commit>", "<candidate.commit>"],
+    "env": "Same clean env as the mirror fetch: GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null HOME=/var/empty, no GIT_* passed through.",
+    "from": "from.commit is the commit of the release that is live now (the known-good pair's release), never a merge-base.",
+    "rowHandling": {
+      "A": "new path",
+      "M": "path (content change)",
+      "D": "old path (a delete is classified exactly like a change)",
+      "T": "path (type change, e.g. file <-> symlink <-> gitlink)",
+      "R<n>": "old path AND new path",
+      "C<n>": "source path AND new path",
+      "modeOnly": "an M row whose blob ids are equal but modes differ (exec bit on/off) is classified like a content change of that path",
+      "U/X/unknown": "refuse: diff_unreadable"
+    },
+    "note": "Rename/copy detection is a heuristic. Correctness never depends on it: an undetected rename shows as D + A and both paths are classified anyway."
+  },
+
+  "combination": {
+    "rule": "Each path collects every class whose detection matches it (protected.json entries + the database and dependency rules below). The plan's classes = the union over all paths. 'code' is present only when some path matched nothing else.",
+    "planKind": "updater if 'updater' ∈ classes; else database if 'database' ∈ classes; else code. ('setting' and 'rollback' plans are never diff-derived.)",
+    "approvals": "The union of the approvals of every class present. Nothing in the candidate can lower a class.",
+    "card": "red ('changes Control Room's safety checks') if any of updater, protected, dependency; else the database card (with the R20c restore text) if database; else the normal card.",
+    "forbiddenCombinations": [
+      { "classes": ["updater", "database"], "result": "refuse", "reason": "updater_with_database: 'An update to the updater can't also change the database. Split it into two updates.' (§7.4)" }
+    ]
+  },
+
+  "classes": [
+    {
+      "id": "code",
+      "detection": "Every changed path matched no protected.json entry and no database or dependency rule below.",
+      "planKind": "code",
+      "path": "§8.3 code-only path",
+      "approval": { "passkey": true, "macConfirm": false, "text": "Face ID on the phone over the updater-derived card" },
+      "independentReview": {
+        "required": false,
+        "sourceTrustStillApplies": "Yes, as for every diff-derived class: every first-parent commit from from.commit to the candidate has a review record whose tree equals that commit's tree and whose reviewer ≠ builder and ≠ lead worker (§10.4). This is a mistake-catcher (R15)."
+      },
+      "testProfiles": ["fast", "targeted", "old-guard-pack"],
+      "card": "normal"
+    },
+    {
+      "id": "database",
+      "detection": {
+        "patterns": ["db/**", "deploy/postgres/**", "scripts/mac-local/database-role-manifest.mjs", "**/*.sql"],
+        "exclude": ["src/updater/v1/ddl/**"],
+        "matchesPublisher": "Same set as publisher.ts isDatabasePath (db, deploy/postgres, database-role-manifest.mjs, any *.sql), plus the updater-DDL exclusion the publisher lacks."
+      },
+      "planKind": "database",
+      "path": "§9: verified backup → migrate clone → automatic restore; N-1 check §9.6",
+      "approval": { "passkey": true, "macConfirm": false, "text": "Face ID over the database card, which states that writes during the post-migrate health window are lost on restore (R20c)" },
+      "independentReview": {
+        "required": true,
+        "boundTo": "candidate.tree (the git tree id of the candidate commit)",
+        "reviewer": "≠ builder, ≠ lead worker, ≠ any author or committer in from.commit..candidate; model in review.json 'databaseReviewers'",
+        "why": "Matches the publisher (a database risk flag already needs an independent review) and SI-15. Mistake-catcher only (R15)."
+      },
+      "testProfiles": ["fast", "targeted", "db", "old-guard-pack", "§6.5 database preview (expectedSchemaDigest, n1Compatible)"],
+      "card": "database (red instead if protected/dependency is also present, e.g. any db/roles or db/setup change)",
+      "refusedWhen": "anything §9.7 lists (non-additive, N-1 incompatible, PG major) → attended_upgrade_required"
+    },
+    {
+      "id": "dependency",
+      "detection": {
+        "patterns": ["**/package.json", "**/pnpm-lock.yaml", "**/.npmrc", "**/pnpm-workspace.yaml", "**/.pnpmfile.cjs", "**/.pnpmfile.mjs", "**/.yarnrc", "**/.yarnrc.yml", "patches/**", "**/.nvmrc", "**/.node-version", "**/.tool-versions"],
+        "packageJsonKeys": {
+          "appliesTo": "every package.json (root and nested). Both versions are parsed as JSON; the class comes from which top-level keys differ.",
+          "dependency": ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "peerDependenciesMeta", "bundledDependencies", "bundleDependencies", "dependenciesMeta", "overrides", "resolutions", "pnpm", "packageManager", "engines", "workspaces"],
+          "protected": ["scripts"],
+          "code": ["name", "version", "description", "license", "private", "type", "author", "repository", "homepage", "keywords", "main", "module", "exports", "imports", "types", "bin", "files", "browserslist"],
+          "unknownKey": "dependency (a key the running policy doesn't know is treated as one pnpm might read)",
+          "unparseable": "dependency + protected (either side not valid JSON, duplicate keys, or not an object)",
+          "addedOrDeleted": "a whole package.json added or deleted → dependency"
+        },
+        "matchesPublisher": "Superset of publisher.ts isDependencyPath (which only sees the five root files). Nested manifests exist today: deploy/vps/upgrade-tool/package.json + pnpm-lock.yaml."
+      },
+      "planKind": "code (or database/updater if those classes are also present)",
+      "approval": { "passkey": true, "macConfirm": false, "text": "Face ID over a red card that lists the added/removed/changed packages and allowBuilds changes (computed by the updater from both lockfiles)" },
+      "independentReview": { "required": true, "boundTo": "candidate.tree", "reviewer": "as for protected", "why": "§10.2: dependency is treated as protected (new third-party code, install scripts, registry)." },
+      "testProfiles": ["fast", "targeted", "full", "old-guard-pack"],
+      "card": "red",
+      "sandboxNote": "The builder still copies the running policy's npmrc over the tree's .npmrc (§6.2); pnpm-workspace.yaml allowBuilds is the candidate's, so a new 'true' there is listed on the card by name."
+    },
+    {
+      "id": "protected",
+      "detection": "Any path matched by a protected.json entry with onChange 'protected' (and every updater-class path, since updater ⊂ protected). Also: any added or changed symlink anywhere (mode 120000); any path that is not plain printable ASCII is refused instead (see refusals).",
+      "planKind": "code (or database if also database)",
+      "approval": { "passkey": true, "macConfirm": false, "text": "Face ID over the red card 'changes Control Room's safety checks', which lists the protected paths first" },
+      "independentReview": {
+        "required": true,
+        "boundTo": "candidate.tree",
+        "reviewer": "≠ builder, ≠ lead worker, ≠ any author or committer in from.commit..candidate; reviewerModel in review.json 'protectedReviewers' (Opus-class today, SI-15)",
+        "why": "§10.2. Honest limit (R15, §10.4): all local bots share one uid and can post as each other, and reviewerModel is self-reported, so this catches mistakes; the owner's Face ID over the updater-derived card is the anti-malice gate."
+      },
+      "testProfiles": ["fast", "targeted", "full", "old-guard-pack"],
+      "card": "red"
+    },
+    {
+      "id": "updater",
+      "detection": "Any path matched by a protected.json entry with onChange 'updater' or 'refuse_reinstall' (src/updater/**, policy, runtime pins, guard, shim, sudoers), or a symlink whose path or lexically-resolved target lies in one of those.",
+      "planKind": "updater",
+      "path": "§7.4 two-phase self-upgrade (item 8b); before 8b only attended `install --commit` with the root confirmation. The fixed bundle step §6.6b builds the new updater; the candidate's own build output is never root code.",
+      "alwaysAlso": ["protected"],
+      "approval": { "passkey": true, "macConfirm": true, "text": "Face ID, then `sudo /usr/local/bin/control-room confirm <4 words>` on the Mac, which prints the plan from root's own file (R4a)" },
+      "independentReview": { "required": true, "boundTo": "candidate.tree", "reviewer": "as for protected", "why": "Updater-class plans are always protected (§7.4)." },
+      "testProfiles": ["fast", "targeted", "full", "old-guard-pack", "Phase-B self-test (no secrets, no network): must classify the last 5 candidates at least as strictly as the running policy"],
+      "card": "red, headed 'changes the updater'",
+      "refusedWhen": [
+        "database is also present (forbiddenCombinations)",
+        "any path matched an onChange 'refuse_reinstall' entry (guard, shim, sudoers) → attended_upgrade_required 'needs a reinstall on the Mac'",
+        "the change loosens the rules AND touches anything outside src/updater/v1/policy/** (POLICY_NOTES §3: a loosening must be confirmed on its own)"
+      ]
+    },
+    {
+      "id": "setting",
+      "detection": "Never from a diff. The updater creates it from an owner request row (updater.owner_requests) for: self-update On; resume after a security-epoch warning; passkey add without an existing passkey (§5.1, §5.6).",
+      "planKind": "setting",
+      "approval": { "passkey": true, "macConfirm": true, "text": "Face ID, then the Mac `confirm` (R4a)" },
+      "independentReview": { "required": false, "why": "No code changes hands." },
+      "testProfiles": [],
+      "card": "setting card: says in plain words what turns on",
+      "restrictions": "A setting plan carries no commit and can never be combined with a code, database or updater plan. Settings that reduce risk (self-update Off, pause) are not plans; they need only the owner session."
+    }
+  ],
+
+  "overlays": [
+    {
+      "id": "security-epoch",
+      "detection": "policy/epoch.json of the RUNNING updater: the candidate lowers the epoch, or its diff reverts (restores the pre-commit blob of) a file changed by an epoch commit (§10.5).",
+      "effect": "Separate red warning line on any class; after install self-update stays paused until a 'setting' plan (passkey + Mac confirm) resumes it."
+    },
+    {
+      "id": "rule-loosening",
+      "detection": "Updater-class plan whose candidate policy classifies any path, or any of the last 5 candidates, less strictly than the running policy (the Phase-B comparison, run early at plan time as well).",
+      "effect": "Red line 'This update makes Control Room check less' listing each removed pattern or lowered class in plain words; refused unless the candidate's diff is confined to src/updater/v1/policy/** (POLICY_NOTES §3)."
+    }
+  ],
+
+  "refusals": [
+    { "id": "path_not_allowed", "when": "Any diff path outside printable ASCII 0x21–0x7e (the publisher's safePath), with a '..' or '.git' segment, a leading '/', or a backslash.", "text": "This update has a file name Control Room can't check safely." },
+    { "id": "case_collision", "when": "The candidate TREE (not just the diff) holds two paths that are equal after ASCII case folding and Unicode NFC/NFD normalisation.", "text": "Two files in this update would overwrite each other on this Mac." },
+    { "id": "submodule", "when": "Any entry with mode 160000 in the candidate tree, or a .gitmodules file.", "text": "Submodules aren't supported." },
+    { "id": "archive_attributes", "when": "Any .gitattributes in the candidate tree sets export-ignore, export-subst, filter, ident, working-tree-encoding, eol=crlf or text=… other than 'auto eol=lf'.", "text": "This update changes how its files are unpacked." },
+    { "id": "symlink_escape", "when": "A symlink whose target is absolute or resolves (lexically) outside the repository.", "text": "This update has a link pointing outside Control Room." },
+    { "id": "updater_with_database", "when": "See forbiddenCombinations.", "text": "An update to the updater can't also change the database. Split it into two updates." },
+    { "id": "needs_reinstall", "when": "A refuse_reinstall path changed.", "text": "This change needs a reinstall on the Mac." },
+    { "id": "diff_unreadable", "when": "git diff fails, prints an unknown status, or a path fails to parse.", "text": "Control Room couldn't read what this update changes." }
+  ],
+
+  "testProfilesSource": "Profile ids match publisher.ts CONTROL_ROOM_UPDATE_TEST_PROFILES_V1 (fast, targeted, db, full); the command lists themselves come from the running policy's profiles.json, never the candidate's package.json."
+}

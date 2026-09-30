@@ -1,0 +1,121 @@
+[
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  const patterns = pattern.toLowerCase().split(\"/\");\n  const paths = path.toLowerCase().split(\"/\");",
+    "replace": "  const patterns = pattern.toLowerCase().split(\"/\");\n  const paths = path.split(\"/\");",
+    "test": "node --import tsx --test --test-name-pattern='supplemental examples' tests/updater-referee.test.ts",
+    "why": "case folding is required because differently-cased candidate paths land on the same APFS path and must retain the running policy class"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  return rule.patterns.some(pattern => updaterPolicyGlobMatchesV1(pattern, path)) &&\n    !rule.exclude.some(pattern => updaterPolicyGlobMatchesV1(pattern, path));",
+    "replace": "  return rule.patterns.some(pattern => updaterPolicyGlobMatchesV1(pattern, path));",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples' tests/updater-referee.test.ts",
+    "why": "the updater DDL exclusion prevents a legitimate updater-only DDL change from becoming the forbidden updater plus database combination"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  return segments.every(segment => segment.length > 0 && segment !== \"..\" && segment.toLowerCase() !== \".git\");",
+    "replace": "  return true;",
+    "test": "node --import tsx --test --test-name-pattern='malformed, oversized' tests/updater-referee.test.ts",
+    "why": "unsafe path segments and names must refuse instead of being treated as ordinary code"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  if (!(raw instanceof Uint8Array) || raw.byteLength === 0 || raw.byteLength > UPDATER_REFEREE_MAX_RAW_DIFF_BYTES_V1)\n    throw new Error(\"diff_unreadable\");",
+    "replace": "  if (!(raw instanceof Uint8Array) || raw.byteLength === 0)\n    throw new Error(\"diff_unreadable\");",
+    "test": "node --import tsx --test --test-name-pattern='malformed, oversized' tests/updater-referee.test.ts",
+    "why": "the raw diff byte bound stops an attacker-shaped candidate from forcing unbounded parsing work"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    const paths = [...new Set([entry.oldPath, entry.newPath].filter((path): path is string => path !== null))];",
+    "replace": "    const paths = [...new Set([entry.newPath].filter((path): path is string => path !== null))];",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples|renames classify' tests/updater-referee.test.ts",
+    "why": "a rename or copy must retain the stronger class from either its old or new path"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "      if (entry.oldMode === \"160000\" || entry.newMode === \"160000\" || paths.some(path => {",
+    "replace": "      if (false || paths.some(path => {",
+    "test": "node --import tsx --test --test-name-pattern='submodules and escaping' tests/updater-referee.test.ts",
+    "why": "a gitlink is refused because git archive omits the reviewed submodule content"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "      if (entry.oldMode === \"120000\" || entry.newMode === \"120000\") {",
+    "replace": "      if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='symlinks classify|submodules and escaping' tests/updater-referee.test.ts",
+    "why": "every added changed or removed symlink is protected even when its path and target are otherwise ordinary"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "          if (resolved.escaped) refusal(\"symlink_escape\", \"This update has a link pointing outside Control Room.\");",
+    "replace": "          if (false) refusal(\"symlink_escape\", \"This update has a link pointing outside Control Room.\");",
+    "test": "node --import tsx --test --test-name-pattern='submodules and escaping' tests/updater-referee.test.ts",
+    "why": "an absolute or lexically escaping link must never survive classification"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "              if (!protectedEntry.patterns.some(pattern => updaterPolicyGlobMatchesV1(pattern, resolved.path!)) ||",
+    "replace": "              if (true || !protectedEntry.patterns.some(pattern => updaterPolicyGlobMatchesV1(pattern, resolved.path!)) ||",
+    "test": "node --import tsx --test --test-name-pattern='symlinks classify' tests/updater-referee.test.ts",
+    "why": "a link into a protected or updater path must carry the target rule and reason as well as generic symlink protection"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "      if (archiveAttributesUnsafe(blobText(diff, entry.newOid, 1024 * 1024)))",
+    "replace": "      if (false && archiveAttributesUnsafe(blobText(diff, entry.newOid, 1024 * 1024)))",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples' tests/updater-referee.test.ts",
+    "why": "archive-changing attributes are refused because installed bytes would differ from the reviewed tree"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    if (onChange === \"refuse_reinstall\") refusal(\"needs_reinstall\", \"This change needs a reinstall on the Mac.\");",
+    "replace": "    if (false) refusal(\"needs_reinstall\", \"This change needs a reinstall on the Mac.\");",
+    "test": "node --import tsx --test --test-name-pattern='supplemental examples' tests/updater-referee.test.ts",
+    "why": "guard shim and sudoers changes are refused because an update cannot safely replace those install-time files"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "            if (policy.packageRules.protected.has(key))",
+    "replace": "            if (false && policy.packageRules.protected.has(key))",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples' tests/updater-referee.test.ts",
+    "why": "package scripts are protected because they select and can silently remove required guard tests"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "            classes.add(\"dependency\");\n            hit(packagePath, \"package-json-unparseable\", \"A package manifest could not be read unambiguously.\", \"protected\");",
+    "replace": "            hit(packagePath, \"package-json-unparseable\", \"A package manifest could not be read unambiguously.\", \"protected\");",
+    "test": "node --import tsx --test --test-name-pattern='package manifests fail closed' tests/updater-referee.test.ts",
+    "why": "ambiguous or duplicate-key package JSON must receive both dependency and protected treatment"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "            else classes.add(\"dependency\");",
+    "replace": "            else { /* mutated: unknown package keys treated as code */ }",
+    "test": "node --import tsx --test --test-name-pattern='package manifests fail closed' tests/updater-referee.test.ts",
+    "why": "a package key unknown to the running policy is dependency-class because the package manager may interpret it"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "  if (classes.has(\"updater\") && classes.has(\"database\"))",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-name-pattern='ten worked policy examples' tests/updater-referee.test.ts",
+    "why": "an updater change and database change must be split into separate update plans"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    approvalNeeded: { phonePasskey: true, macConfirm: classes.has(\"updater\") },",
+    "replace": "    approvalNeeded: { phonePasskey: true, macConfirm: false },",
+    "test": "node --import tsx --test --test-name-pattern='policy edits are judged' tests/updater-referee.test.ts",
+    "why": "an updater-class plan needs the independent root-rendered Mac confirmation in addition to the phone passkey"
+  },
+  {
+    "file": "src/updater/v1/referee/index.ts",
+    "find": "    independentReviewRequired: classes.has(\"database\") || classes.has(\"dependency\") || classes.has(\"protected\") || classes.has(\"updater\"),",
+    "replace": "    independentReviewRequired: false,",
+    "test": "node --import tsx --test --test-name-pattern='policy edits are judged' tests/updater-referee.test.ts",
+    "why": "database dependency protected and updater changes all require an independent review bound to the candidate tree"
+  }
+]
