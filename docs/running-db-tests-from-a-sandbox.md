@@ -6,8 +6,11 @@ The local test runner lets a sandboxed helper ask a trusted Mac-side service to 
 - **Writes:** only the worktree and the run's temporary directory.
 - **Network:** loopback TCP only on the run's port block, and Unix sockets only inside the run's temporary directory. A local PostgreSQL socket, ssh-agent or Docker socket elsewhere is refused.
 - **Programs:** node, the PostgreSQL binaries, esbuild from the worktree's `node_modules`, and a short list of shell tools. `launchctl`, `open`, `osascript` and `ssh` cannot be executed, LaunchServices and Apple Events are denied, and a test can signal only processes inside its own run's sandbox, so it cannot hand work to anything unsandboxed or stop the live app or this service.
+- **Other processes:** a test can see the command line, environment, working directory and open files only of processes inside its own run. It cannot read them for this service, the live app, an agent session or another run, and it cannot list the process table. This matters because those environments hold credentials, and the worktree is writable, so the rule has to hold against native code a helper compiled, not just against node. (`(deny default)` does not cover this on current macOS. The profile denies process info and the `kern.procargs*`/`kern.proc.*` sysctls explicitly; both are needed.) `lsof` is not available to tests.
 
-The environment sets `HOME` and `TMPDIR` to the run's temporary directory, and `ATTACK_KIT_SOCKET_ROOT` to the same place so the attack kit's short Unix-socket folders stay inside the run. Git is not available to tests under the runner (the shared `.git` is outside every allowed root), and `/bin/ps` cannot run under any Seatbelt profile because it is setuid.
+System folders outside the home directory, such as `/opt/homebrew`, `/Library` and `/private/etc`, stay readable, so do not keep secrets or a live database there.
+
+The environment sets `HOME` and `TMPDIR` to the run's temporary directory, and `ATTACK_KIT_SOCKET_ROOT` to the same place so the attack kit's short Unix-socket folders stay inside the run. Git is not available to tests under the runner (the shared `.git` is outside every allowed root), `/bin/ps` cannot run under any Seatbelt profile because it is setuid, and `perl` is not on the exec list. So `tests/attack-kit.test.ts` and three tests in `tests/postgres-shared-memory-teardown.test.mjs` fail under the runner today and must still be run by hand.
 
 ## One-time host setup
 
