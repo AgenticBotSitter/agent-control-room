@@ -43,8 +43,8 @@
   },
   {
     "file": "src/updater/v1/runner.mjs",
-    "find": "if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };",
-    "replace": "if (false) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "find": "if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };\n    this.#running = true;\n    let run;",
+    "replace": "if (false) return { status: \"busy\", message: \"Another updater call is active.\" };\n    this.#running = true;\n    let run;",
     "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
     "why": "the updater has one in-process actor under a 50-caller burst"
   },
@@ -173,6 +173,55 @@
     "replace": "if (!row || false",
     "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
     "why": "the updater store refuses any connection that is not the production deployer login"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (!equalMacV1(prevMac, previous) || !equalMacV1(mac, macV1(key, previous, entry)))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='torn boundary' tests/updater-journal.test.mjs",
+    "why": "a hostile local bot cannot append a forged journal line without the root-held MAC key"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "(entry.mode & 0o022) !== 0",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='torn boundary' tests/updater-journal.test.mjs",
+    "why": "a writable journal is not trusted as root-only authority"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (!text.endsWith(\"\\n\")) throw journalErrorV1(\"updater_journal_short\");",
+    "replace": "if (false) throw journalErrorV1(\"updater_journal_short\");",
+    "test": "node --test --test-name-pattern='torn boundary' tests/updater-journal.test.mjs",
+    "why": "a partial final line after a crash is uncertain, never silently accepted"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (mirror.length > file.length) return { state: \"uncertain\", reason: \"display_ahead\" };",
+    "replace": "if (false) return { state: \"uncertain\", reason: \"display_ahead\" };",
+    "test": "node --test --test-name-pattern='file-first' tests/updater-journal.test.mjs",
+    "why": "a database display ahead of the authoritative journal must stop automatic action"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (!measurement || ![\"succeeded\", \"rolled_back\"].includes(measurement.state))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
+    "why": "check-and-continue removes uncertainty only after an explicit valid measured terminal state"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "?? this.stateFiles.journalUncertain?.();",
+    "replace": "?? false;",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
+    "why": "a disagreement between the authoritative file and database display blocks automatic effects"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (measurement?.state === \"rollback_required\") {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
+    "why": "an inconsistent measured state must run the rollback port rather than resume forward"
   },
   {
     "file": "src/updater/v1/store.mjs",
@@ -425,5 +474,19 @@
     "replace": "if (false) await effects.recover?.();",
     "test": "node --test --test-name-pattern='startup settles' tests/updater-skeleton.test.mjs",
     "why": "startup settles a torn link transaction before opening the updater control socket"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "await this.#read({ missingOk: false, relativePath: temporary });",
+    "replace": "await this.#read({ missingOk: false, relativePath: JOURNAL_PATH_V1 });",
+    "test": "node --test --test-name-pattern='append and compaction disk-full' tests/updater-journal.test.mjs",
+    "why": "compaction validates the replacement file itself before it can replace the old authority"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "journalRecoveryPending = repaired && !fileJournalUncertain;",
+    "replace": "journalRecoveryPending = false;",
+    "test": "node --test --test-name-pattern='torn live file journal' tests/updater-skeleton.test.mjs",
+    "why": "Check and continue only settles a poisoned journal after it is explicitly archived and revalidated"
   }
 ]

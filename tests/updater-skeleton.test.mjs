@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { atomicWriteNoFollowV1, lchownNoFollowV1, readFileNoFollowV1 } from "../src/updater/v1/fs-safety.mjs";
+import { FileStepJournalV1 } from "../src/updater/v1/journal.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "../src/updater/v1/runner.mjs";
 import { UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1 } from "../src/updater/v1/runtime.mjs";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
@@ -88,7 +89,7 @@ class MemoryJournal {
 }
 
 class Effects {
-  calls = []; healthResult = true; gate; fail;
+  calls = []; healthResult = true; measureResult; gate; fail;
   async #call(name) { this.calls.push(name); await this.gate; if (this.fail === name) throw Object.assign(new Error(name),
     { code: `updater_${name}_failed` }); }
   precheck() { return this.#call("precheck"); } stage() { return this.#call("stage"); }
@@ -96,16 +97,18 @@ class Effects {
   switchPair() { return this.#call("switch"); } restart() { return this.#call("restart"); }
   async health() { await this.#call("health"); return this.healthResult; }
   commitKnownGood() { return this.#call("known_good"); } rollback() { return this.#call("rollback"); }
-  measure() { return this.#call("measure"); }
+  async measure() { await this.#call("measure"); return this.measureResult; }
 }
 
 function makeRunner({ flag = "On\n", rescued = false, mode = new UpdaterModeV1(), effects = new Effects(),
-  store = new MemoryStore(), journal = new MemoryJournal() } = {}) {
+  store = new MemoryStore(), journal = new MemoryJournal(), journalUncertain = false } = {}) {
+  let rescuePresent = rescued;
   const stateFiles = { leaseToken: "lease-one", readSelfUpdate: async () => flag,
-    hasRescueMarker: async () => rescued };
+    hasRescueMarker: async () => rescuePresent, journalUncertain: () => journalUncertain,
+    async removeRescueMarker() { rescuePresent = false; } };
   const referee = { calls: 0, async assertPlanAllowed() { this.calls += 1; } };
   return { runner: new UpdaterRunnerV1({ store, effects, journal, mode, stateFiles, referee }),
-    store, effects, journal, mode, referee };
+    store, effects, journal, mode, referee, rescued: () => rescuePresent };
 }
 
 test("the updater state machine records intent before every repeat-safe effect and finishes a code run", async () => {
@@ -128,8 +131,26 @@ test("Off, rescue, pause/stop, retry failure and a second concurrent caller fail
   });
   await t.test("a rescue marker forces uncertain and measures without advancing", async () => {
     const fixture = makeRunner({ rescued: true }), result = await fixture.runner.runOnce();
-    assert.equal(result.status, "uncertain"); assert.deepEqual(fixture.effects.calls, ["measure"]);
+    assert.equal(result.status, "uncertain"); assert.deepEqual(fixture.effects.calls, []);
     assert.equal(fixture.store.run.state, "uncertain");
+  });
+  await t.test("a journal/display disagreement is uncertain before an effect", async () => {
+    const fixture = makeRunner({ journalUncertain: true }), result = await fixture.runner.runOnce();
+    assert.equal(result.status, "uncertain"); assert.deepEqual(fixture.effects.calls, []);
+  });
+  await t.test("only an explicit check-and-continue measures a rescue and it leaves uncertainty on a bad measurement", async () => {
+    const fixture = makeRunner({ rescued: true }); await fixture.runner.runOnce();
+    await assert.rejects(fixture.runner.checkAndContinue(), /updater_measurement_refused/u);
+    assert.equal(fixture.rescued(), true); assert.equal(fixture.store.run.state, "uncertain");
+    fixture.effects.measureResult = { state: "rolled_back", detail: { release: "known-good" } };
+    assert.equal((await fixture.runner.checkAndContinue()).status, "rolled_back");
+    assert.equal(fixture.rescued(), false); assert.equal(fixture.store.run.state, "rolled_back");
+  });
+  await t.test("an inconsistent check-and-continue runs rollback rather than advancing", async () => {
+    const fixture = makeRunner({ rescued: true }); await fixture.runner.runOnce();
+    fixture.effects.measureResult = { state: "rollback_required" };
+    assert.equal((await fixture.runner.checkAndContinue()).status, "rolled_back");
+    assert.deepEqual(fixture.effects.calls, ["measure", "rollback"]); assert.equal(fixture.rescued(), false);
   });
   await t.test("pause before drain waits and stop refuses without switching", async () => {
     const paused = new UpdaterModeV1(); paused.set("paused");
@@ -152,6 +173,29 @@ test("Off, rescue, pause/stop, retry failure and a second concurrent caller fail
     assert.equal(burst.filter(row => row.status === "busy").length, 49);
     fixture.effects.gate = undefined; release(); assert.equal((await first).status, "succeeded");
   });
+});
+
+test("a torn live file journal becomes uncertain, then Check and continue archives it before settling", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const journal = new FileStepJournalV1(root, { ownerUid: process.getuid() });
+  await journal.done({ runId: "run:00000000-0000-4000-8000-000000000001", ordinal: 1, state: "staged", detail: {} });
+  const complete = await readFile(join(root, "updater-state/journal.jsonl"));
+  await writeFile(join(root, "updater-state/journal.jsonl"), complete.subarray(0, complete.length - 5), { mode: 0o600 });
+  const store = new MemoryStore({ ...makeRun(), state: "staged" }), effects = new Effects();
+  const updater = await startUpdaterV1({ root, store, journal, effects, referee: { async assertPlanAllowed() {} } });
+  t.after(() => updater.stop());
+  assert.equal(updater.loop.lastOutcome.status, "uncertain");
+  assert.equal(store.run.state, "uncertain"); assert.deepEqual(effects.calls, []);
+  const status = JSON.parse(await readFile(join(root, "status/status.json"), "utf8"));
+  assert.deepEqual({ state: status.state, needsYou: status.needsYou }, { state: "uncertain", needsYou: true });
+  assert.equal((await updater.runner.runOnce()).status, "uncertain", "a later tick does not livelock as error");
+  await assert.rejects(updater.runner.checkAndContinue(), /updater_measurement_refused/u,
+    "a failed owner measurement keeps the repaired journal recoverable for a retry");
+  effects.measureResult = { state: "rolled_back", detail: { release: "known-good" } };
+  assert.equal((await updater.runner.checkAndContinue()).status, "rolled_back");
+  assert.equal(store.run.state, "rolled_back");
+  assert.ok((await readdir(join(root, "updater-state"))).some(name => name.startsWith("journal.jsonl.poisoned-")));
+  assert.ok((await journal.validate()).entries.length > 0, "settlement starts a fresh signed chain");
 });
 
 test("the heartbeat timer continues while a run step is hung", async t => {

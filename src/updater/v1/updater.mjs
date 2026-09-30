@@ -4,7 +4,7 @@ import { PostgresUpdaterStoreV1 } from "./store.mjs";
 import { UpdaterControlServerV1 } from "./control-socket.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
 import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
-  newUpdaterIdentityV1 } from "./runtime.mjs";
+  newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
 
 // The fixed updater bundle exposes the item-13 actuator for composition with
@@ -69,12 +69,38 @@ export async function startUpdaterV1(options = {}) {
     ? { state: "running", step: acquisition.run.state }
     : { state: "idle", step: null };
   const setHeartbeatState = value => { heartbeatState = value; };
-  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles,
-    journal: new FileStepJournalV1(root), onHeartbeatState: setHeartbeatState });
+  const journal = options.journal ?? new FileStepJournalV1(root);
+  await journal.recoverCompaction();
+  let fileJournalUncertain, displayJournalUncertain, journalRecoveryPending = false;
+  const refreshJournalHealth = async () => {
+    try { await journal.validate(); fileJournalUncertain = undefined; }
+    catch (error) { fileJournalUncertain = error?.code ?? "updater_journal_invalid"; }
+    return fileJournalUncertain;
+  };
+  await refreshJournalHealth();
+  if (!fileJournalUncertain && options.journalDisplay) {
+    const reconciliation = await reconcileJournalDisplayV1({ journal, display: options.journalDisplay,
+      rescued: await stateFiles.hasRescueMarker() });
+    displayJournalUncertain = reconciliation.state === "uncertain" ? reconciliation.reason : undefined;
+  }
+  stateFiles.refreshJournalHealth = refreshJournalHealth;
+  stateFiles.journalUncertain = () => fileJournalUncertain ?? displayJournalUncertain;
+  stateFiles.repairJournalUncertain = async () => {
+    if (!fileJournalUncertain) return false;
+    const repaired = await journal.quarantineCorrupt();
+    await refreshJournalHealth();
+    journalRecoveryPending = repaired && !fileJournalUncertain;
+    return journalRecoveryPending;
+  };
+  stateFiles.journalRecoveryPending = () => journalRecoveryPending;
+  stateFiles.settleJournalRecovery = () => { journalRecoveryPending = false; };
+  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles, journal,
+    onHeartbeatState: setHeartbeatState });
   const ownerActions = options.ownerActions ?? { handle: async request => {
     if (request.request_kind === "pause") mode.set("paused");
     else if (request.request_kind === "stop") mode.set("stopped");
     else if (request.request_kind === "resume") mode.set("running");
+    else if (request.request_kind === "check_and_continue") await runner.checkAndContinue();
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
   const reportTimerError = options.onTimerError ?? (error => {
