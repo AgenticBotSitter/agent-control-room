@@ -16,6 +16,8 @@
 // product write below is the restricted web login.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
@@ -298,6 +300,33 @@ test("the execution freshness fence's scope table stays un-lockable, so no lock 
           /permission denied/u, "the coordinator login cannot take the lock the fence used to ask for");
         await fence.query("SELECT id FROM control_leases LIMIT 1 FOR UPDATE OF control_leases");
       } finally { await fence.end().catch(() => {}); }
+
+      // A privilege fact alone does not stop the lock coming back: the
+      // statements above would still pass with `FOR SHARE` restored in the
+      // source, because it asserts the GRANT, not the SQL. Pin the source
+      // itself, so re-adding a row lock to either fixed read fails here.
+      // Each entry names the file and the table whose read must stay lock-free.
+      const pinned: readonly (readonly [string, string, string])[] = [
+        ["src/idea-lab/v1/canonical-task-link-store.ts", "control_idea_canonical_task_sessions",
+          "the session binding read"],
+        ["src/idea-lab/v1/canonical-task-link-store.ts", "control_idea_canonical_task_links",
+          "the provenance link read"],
+        ["src/web/v1/task-assignment-coordinator.ts", "control_assignment_lease_scopes",
+          "the execution freshness fence's scope read"],
+      ];
+      for (const [file, table, what] of pinned) {
+        // Strip comment lines so the notes explaining why the lock was dropped
+        // are never mistaken for the lock itself.
+        const sql = readFileSync(join(process.cwd(), file), "utf8")
+          .split("\n").filter(line => !/^\s*(\*|\/\/|\/\*)/.test(line)).join("\n");
+        for (const line of sql.split("\n")) {
+          // A multi-line SQL literal puts the table and the lock on different
+          // lines, so check each statement, not each line.
+          if (line.includes(table) && /FOR (UPDATE|SHARE|NO KEY UPDATE|KEY SHARE)\b/.test(line)) {
+            assert.fail(`${file} must not row-lock ${table} in ${what}: ${line.trim()}`);
+          }
+        }
+      }
       return postgres.appliedMigrations;
     }, { port: FENCE_PORT, allowedPorts: [FENCE_PORT], boundMs: 240_000 });
     assert.equal(result.cleanedUp, true); assert.deepEqual(result.leftovers, []); assert.ok(result.value >= 1);
