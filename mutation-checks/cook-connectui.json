@@ -1,0 +1,107 @@
+[
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "    || !FLEET_WORKER_KINDS_V1.includes(body.botKind as never)\n    || body.unattended && !(unattendedWorkerKinds as readonly string[]).includes(body.botKind)\n    || !(connectOperatingSystems as readonly string[]).includes(body.operatingSystem as string))",
+    "replace": "    || !FLEET_WORKER_KINDS_V1.includes(body.botKind as never)\n    || false\n    || !(connectOperatingSystems as readonly string[]).includes(body.operatingSystem as string))",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
+    "why": "the connect-code route accepts only a declared bot kind and one of the three owner-visible operating systems"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "  if (!displayNamePattern.test(displayName) || !workerIdPattern.test(workerId)\n    || !(FLEET_WORKER_KINDS_V1 as readonly string[]).includes(workerKind)) throw new WebAccessError(\"invalid_request\");",
+    "replace": "  if (!displayNamePattern.test(displayName) || !workerIdPattern.test(workerId)\n    || false) throw new WebAccessError(\"invalid_request\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
+    "why": "a shell profile is never derived for a bot kind the connector service does not support"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": " && node \"$d/${release.file}\" install --server ${gatewayOrigin}",
+    "replace": " && node \"$d/${release.file}\" join --server ${gatewayOrigin}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/connect-bot-install-line.test.mjs",
+    "why": "the exact owner line must install and register the selected bot, not merely save a joined credential"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const BOT_KINDS = Object.freeze([\"claude-code\", \"codex\", \"hermes\", \"claude-desktop\", \"cursor\", \"mcp-agent\"]);",
+    "replace": "const BOT_KINDS = Object.freeze([\"claude-code\", \"codex\", \"hermes\", \"claude-desktop\", \"cursor\"]);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/connect-bot-install-line.test.mjs",
+    "why": "the connector install path must accept the sixth owner-visible Generic MCP kind"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (typeof stubDir !== \"string\" || !isAbsolute(stubDir) || /[\\u0000-\\u001f\\u007f]/u.test(stubDir))\n      return Promise.reject(new Error(`Test guard refused to spawn the real ${command} CLI.`));",
+    "replace": "    if (typeof stubDir !== \"string\" || false || /[\\u0000-\\u001f\\u007f]/u.test(stubDir))\n      return Promise.reject(new Error(`Test guard refused to spawn the real ${command} CLI.`));",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^the test guard refuses agent CLIs before even an injected spawner is called$' tests/fleet-connector-install.test.mjs",
+    "why": "the real-CLI test guard accepts only an explicit absolute stub directory"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (bot === \"mcp-agent\") {",
+    "replace": "  if (false) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/connect-bot-install-line.test.mjs",
+    "why": "Generic MCP gets its own importable config instead of falling through to another product"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "  if (!displayNamePattern.test(displayName) || !workerIdPattern.test(workerId)",
+    "replace": "  if (false || !workerIdPattern.test(workerId)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
+    "why": "control characters in an owner display name are refused before a profile command is emitted"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "  if (!displayNamePattern.test(displayName) || !workerIdPattern.test(workerId)",
+    "replace": "  if (!displayNamePattern.test(displayName) || false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
+    "why": "the unique profile suffix is derived only from a canonical fleet worker ID"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "    || !(connectOperatingSystems as readonly string[]).includes(operatingSystem)",
+    "replace": "    || false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-install-line.test.mjs",
+    "why": "owner next-step copy is emitted only for an operating system the page supports"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(profileName)\n    || !/^(?:connector-(?:\\d+\\.){2}\\d+\\.mjs|connector\\.mjs)$/u.test(releaseFile)) throw new WebAccessError(\"invalid_request\");",
+    "replace": "    || false\n    || !/^(?:connector-(?:\\d+\\.){2}\\d+\\.mjs|connector\\.mjs)$/u.test(releaseFile)) throw new WebAccessError(\"invalid_request\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-install-line.test.mjs",
+    "why": "owner next-step copy never interpolates an unsafe profile name"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "  const unattendedArgument = unattended ? \" --unattended\" : \"\";",
+    "replace": "  const unattendedArgument = \"\";",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/connect-bot-install-line.test.mjs",
+    "why": "the opted-in owner line must carry the flag that installs the standing worker"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (installUnattended) {\n      config = await loadConfig(paths.configPath);",
+    "replace": "    if (false) {\n      config = await loadConfig(paths.configPath);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/connect-bot-install-line.test.mjs",
+    "why": "an opted-in install must publish and start its profile-scoped login worker"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (!pendingOnly && config.installation?.unattended === true)\n      await uninstallConnectorService(paths, { platform, env, runner, ownerUid });",
+    "replace": "    if (false)\n      await uninstallConnectorService(paths, { platform, env, runner, ownerUid });",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^a service-manager failure leaves a retryable profile and never redeems the code twice$' tests/fleet-connector-install.test.mjs",
+    "why": "profile uninstall must stop and remove its unattended worker before deleting the credential"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (error?.code === \"unauthenticated\") {\n        say(\"Control Room revoked this machine's key. The background worker is stopping cleanly.\");\n        return Object.freeze({ state: \"revoked\" });\n      }\n      say(`Could not reach Control Room",
+    "replace": "      if (false) {\n        say(\"Control Room revoked this machine's key. The background worker is stopping cleanly.\");\n        return Object.freeze({ state: \"revoked\" });\n      }\n      say(`Could not reach Control Room",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^revocation makes run exit successfully and bounded worker logs rotate$' tests/fleet-connector-install.test.mjs",
+    "why": "a revoked credential is a clean terminal state rather than a failure restart loop"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (size + bytes.length > maxBytes) {",
+    "replace": "  if (false) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-name-pattern='^revocation makes run exit successfully and bounded worker logs rotate$' tests/fleet-connector-install.test.mjs",
+    "why": "the unattended worker log must rotate before it exceeds its configured bound"
+  }
+]

@@ -1,7 +1,34 @@
 import { execFile } from "node:child_process";
-import { loadavg } from "node:os";
+import { availableParallelism, loadavg } from "node:os";
 
 export const SUPERVISOR_MAX_SHARED_MEMORY_SEGMENTS_V1 = 31;
+/** Load average is a queue depth, so an absolute ceiling would make a smaller
+ * Mac pause much later than a larger one. These defaults preserve the former
+ * 18/12-core intervention point while keeping the recovery band below it. */
+export const SUPERVISOR_PAUSE_LOAD_PER_CORE_V1 = 1.5;
+export const SUPERVISOR_RESUME_LOAD_PER_CORE_V1 = 1;
+
+export type SupervisorMachineHealthConfigV1 = Readonly<{
+  cpuCount: number;
+  maxSharedMemorySegments: number;
+  pauseLoadOneMinute: number;
+  resumeLoadOneMinute: number;
+}>;
+
+export function supervisorMachineHealthConfigV1(input: Readonly<{ cpuCount?: number; maxSharedMemorySegments?: number }> = {}):
+  SupervisorMachineHealthConfigV1 {
+  const cpuCount = input.cpuCount ?? availableParallelism();
+  const maxSharedMemorySegments = input.maxSharedMemorySegments ?? SUPERVISOR_MAX_SHARED_MEMORY_SEGMENTS_V1;
+  if (!Number.isSafeInteger(cpuCount) || cpuCount < 1 || cpuCount > 1024
+    || !Number.isSafeInteger(maxSharedMemorySegments) || maxSharedMemorySegments < 1)
+    throw new Error("supervisor_machine_health_config_invalid");
+  return Object.freeze({ cpuCount, maxSharedMemorySegments,
+    pauseLoadOneMinute: cpuCount * SUPERVISOR_PAUSE_LOAD_PER_CORE_V1,
+    resumeLoadOneMinute: cpuCount * SUPERVISOR_RESUME_LOAD_PER_CORE_V1 });
+}
+
+/** Kept for callers that display the historical 12-core default. New checks
+ * must use `supervisorMachineHealthConfigV1()` rather than this absolute value. */
 export const SUPERVISOR_MAX_LOAD_ONE_MINUTE_V1 = 17.999999;
 
 export type SupervisorMachineSampleV1 = Readonly<{
@@ -51,14 +78,25 @@ export function createSupervisorMachineProbeV1(runtime: MachineRuntime = product
   } });
 }
 
-export function evaluateSupervisorMachineHealthV1(sample: SupervisorMachineSampleV1, loopAlive: boolean): SupervisorMachineHealthV1 {
+export function evaluateSupervisorMachineHealthV1(sample: SupervisorMachineSampleV1, loopAlive: boolean,
+  config: SupervisorMachineHealthConfigV1 = supervisorMachineHealthConfigV1()): SupervisorMachineHealthV1 {
   const reasonCodes: SupervisorMachineHealthV1["reasonCodes"][number][] = [];
   if (!sample.hostAlive) reasonCodes.push("host_not_alive");
   if (!loopAlive) reasonCodes.push("loop_not_alive");
   if (sample.sharedMemorySegments === null) reasonCodes.push("shared_memory_unavailable");
-  else if (sample.sharedMemorySegments > SUPERVISOR_MAX_SHARED_MEMORY_SEGMENTS_V1) reasonCodes.push("shared_memory_limit");
+  else if (sample.sharedMemorySegments > config.maxSharedMemorySegments) reasonCodes.push("shared_memory_limit");
   if (sample.loadOneMinute === null) reasonCodes.push("load_unavailable");
-  else if (sample.loadOneMinute >= 18) reasonCodes.push("load_limit");
+  else if (sample.loadOneMinute >= config.pauseLoadOneMinute) reasonCodes.push("load_limit");
   return Object.freeze({ ...sample, loopAlive, healthy: reasonCodes.length === 0,
     reasonCodes: Object.freeze(reasonCodes) });
+}
+
+/** A recovery must satisfy every non-load health check, and its load must be
+ * strictly below the lower threshold. That gap is the hysteresis that stops a
+ * Mac hovering around the pause boundary from repeatedly starting work. */
+export function isSupervisorMachineRecoveryHealthyV1(health: SupervisorMachineHealthV1,
+  config: SupervisorMachineHealthConfigV1 = supervisorMachineHealthConfigV1()): boolean {
+  return health.hostAlive && health.loopAlive && health.sharedMemorySegments !== null
+    && health.sharedMemorySegments <= config.maxSharedMemorySegments && health.loadOneMinute !== null
+    && health.loadOneMinute < config.resumeLoadOneMinute;
 }

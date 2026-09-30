@@ -45,10 +45,12 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
  * deliberate edit here, which names it in the diff.
  *
  * Measured on real PostgreSQL 17 by applying the whole ledger and then this
- * migration's own down, and independently reproduced at this branch's merge base
- * by a build that never had 0234 at all.
+ * migration's own down. It is also cook/v1's own committed
+ * privateWebSchemaDigest, which is the point: this branch adds 0234 and nothing
+ * else, so after applying it onto current cook/v1 and running 0234's down, the
+ * schema must come back to exactly what cook/v1 says it is.
  */
-const PRE_0234_DIGEST = "a4cadc0cc4feda19a13a5a8b51d0b7f8527b4b2b0e5c9a20da02b5d5ddd978f5";
+const PRE_0234_DIGEST = "962ffe43db908640af3adbacfdc2b0d737e6b86cdb5f265764bbdd68fdd03df8";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {

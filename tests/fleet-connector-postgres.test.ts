@@ -21,7 +21,7 @@ import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
 import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyPrivateDatabase } from "../src/web/v1/private-database-preflight";
-import { createFleetGatewayHandlerV1, FleetOwnerServiceV1 } from "../src/fleet/v1";
+import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, FleetWaitRegistryV1 } from "../src/fleet/v1";
 import { createFleetGatewayStoreFromConfigurationV1 } from "../scripts/run-fleet-gateway";
 import { SupervisorReconcilerV1 } from "../src/supervisor/v1";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
@@ -65,6 +65,7 @@ test("fleet connector end to end and least privilege, as the production logins",
     const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(workIntake.client, new Uint8Array(32).fill(3)));
     const unexpected: unknown[] = [];
     const handler = createFleetGatewayHandlerV1({ store: gateway, proposals,
+      waitRegistry: new FleetWaitRegistryV1({ waitMs: 60, pollMs: 10 }),
       onUnexpectedError: error => { unexpected.push(error); console.error(error); } });
     const server = createServer((request, response) => { void handler.handle(request, response); });
     await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
@@ -93,11 +94,23 @@ test("fleet connector end to end and least privilege, as the production logins",
       const betaTask = await seedProposedTask(admin.client, PROJECT_B, "pg-beta");
       const untouched = await seedProposedTask(admin.client, PROJECT_A, "pg-not-offered");
 
+      // The B4 bot kinds use the existing free-form worker_kind column and
+      // existing owner-role insert path; no schema widening or admin write is
+      // needed. Prove both new values through the production owner login.
+      for (const workerKind of ["claude-desktop", "cursor"]) {
+        const appCode = await owner.createEnrollmentCode(ownerIdentity(), { displayName: `PG ${workerKind}`,
+          workerKind, projectIds: [PROJECT_A], capabilities: ["writing"] });
+        const binding = await fleetOwner.client.query("SELECT worker_kind,display_name FROM fleet_enrollment_codes WHERE id=$1", [appCode.codeId]);
+        assert.deepEqual(binding.rows[0], { worker_kind: workerKind, display_name: `PG ${workerKind}` });
+        await owner.cancelCode(ownerIdentity(), appCode.codeId);
+      }
+
       // --- Owner (web login) creates a code; the machine joins (fleet login).
       const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "PG worker", workerKind: "mcp-agent",
-        projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
+        projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 2 });
       const configPath = join(dir, "worker.json");
       const joined = await connector.join({ server: origin, code: code.code, workerKind: "mcp-agent", configPath });
+      assert.deepEqual(Object.keys(joined.workingAgreement).sort(), ["digest", "grantsAuthority", "startsWork", "text", "version"]);
       const client = connector.createClient(await connector.loadConfig(configPath));
       const dispatch = connector.createMcpDispatcher({ client, workspaceRoot: dir });
       let mcpId = 0;
@@ -244,6 +257,25 @@ test("fleet connector end to end and least privilege, as the production logins",
       const pending = await seedProposedTask(admin.client, PROJECT_A, "pg-2");
       const pendingOffer = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: pending.jobId, capability: "writing" });
       const pendingClaim = await client.claim(pendingOffer.offerId, "pg-claim-key-0003");
+      const overlapping = await seedProposedTask(admin.client, PROJECT_A, "pg-overlapping-scope");
+      const overlappingOffer = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A,
+        jobId: overlapping.jobId, capability: "writing" });
+      await assert.rejects(client.claim(overlappingOffer.offerId, "pg-claim-key-overlap"),
+        (error: any) => error.code === "conflict",
+        "the bounded production pool maps its sqlState 23P01 scope refusal to conflict");
+      await owner.withdrawOffer(ownerIdentity(), overlappingOffer.offerId);
+      const leaseBeforeWait = await direct("web", `SELECT l.expires_at FROM control_leases l JOIN fleet_claims c
+        ON c.tenant_id=l.tenant_id AND c.lease_id=l.id WHERE c.claim_id=$1`, [pendingClaim.claimId]);
+      const presenceBeforeWait = await direct("web", "SELECT last_seen_at FROM fleet_worker_presence WHERE worker_id=$1", [joined.workerId]);
+      await new Promise(done => setTimeout(done, 5));
+      assert.deepEqual(await client.waitForWork(), { offers: [], operationsMode: "running" });
+      const leaseAfterWait = await direct("web", `SELECT l.expires_at FROM control_leases l JOIN fleet_claims c
+        ON c.tenant_id=l.tenant_id AND c.lease_id=l.id WHERE c.claim_id=$1`, [pendingClaim.claimId]);
+      const presenceAfterWait = await direct("web", "SELECT last_seen_at FROM fleet_worker_presence WHERE worker_id=$1", [joined.workerId]);
+      assert.equal(new Date(leaseAfterWait.rows[0].expires_at).toISOString(), new Date(leaseBeforeWait.rows[0].expires_at).toISOString(),
+        "a parked wait never renews its active lease");
+      assert.ok(new Date(presenceAfterWait.rows[0].last_seen_at) >= new Date(presenceBeforeWait.rows[0].last_seen_at),
+        "the production fleet login records the wait as presence");
       await client.result(pendingClaim.claimId, "Unreviewed.", [], "pg-result-key-003");
       await assert.rejects(direct("fleet", `UPDATE control_jobs SET state='succeeded',
         payload=jsonb_set(payload,'{state}','"succeeded"') WHERE id=$1`, [pending.jobId]), /job write rejected/u);
