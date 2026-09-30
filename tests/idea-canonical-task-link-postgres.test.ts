@@ -331,9 +331,11 @@ test("the execution freshness fence's scope table stays un-lockable, so no lock 
           const locking = /FOR (?:UPDATE|SHARE|NO KEY UPDATE|KEY SHARE)(?:\s+OF\s+([\w,\s]+?))?(?=\s+(?:SKIP|NOWAIT)\b|\s*$|\s+[),])/m.exec(statement);
           if (!locking) continue;
           const only = locking[1] ? locking[1].split(",").map(s => s.trim()).filter(Boolean) : undefined;
+          // Keep the table even when the next token is a keyword: `FROM t
+          // WHERE ...` yields alias "WHERE", and dropping the whole entry there
+          // would hide the very statement this guard exists to catch.
           const read = [...statement.matchAll(/\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?(\w+))?/gi)]
-            .map(m => ({ table: m[1], alias: m[2] }))
-            .filter(r => !r.alias || !KEYWORDS.test(r.alias));
+            .map(m => ({ table: m[1], alias: m[2] && !KEYWORDS.test(m[2]) ? m[2] : undefined }));
           const targets = only
             ? read.filter(r => only.includes(r.alias) || only.includes(r.table)).map(r => r.table)
             : read.map(r => r.table);
