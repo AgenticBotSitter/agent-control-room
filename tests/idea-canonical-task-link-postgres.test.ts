@@ -337,7 +337,8 @@ test("the execution freshness fence's scope table stays un-lockable, so no lock 
           const read = [...statement.matchAll(/\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?(\w+))?/gi)]
             .map(m => ({ table: m[1], alias: m[2] && !KEYWORDS.test(m[2]) ? m[2] : undefined }));
           const targets = only
-            ? read.filter(r => only.includes(r.alias) || only.includes(r.table)).map(r => r.table)
+            ? read.filter(r => (r.alias !== undefined && only.includes(r.alias)) || only.includes(r.table))
+              .map(r => r.table)
             : read.map(r => r.table);
           for (const table of targets) {
             if (UNLOCKABLE.includes(table)) {
