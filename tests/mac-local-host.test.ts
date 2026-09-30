@@ -63,6 +63,7 @@ test("connector-only host refuses direct task factories and starts without bot e
   assert.throws(() => createMacLocalProtectedHostV1({ connectorOnly: true,
     async loadConfiguration() { return configuration; },
     openDatabase() { return {} as never; },
+    async loadDatabaseRoles() { return {} as never; },
     createTaskApplication: async () => ({ operations: {}, isReady: () => true, async close() {} }),
     assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
   }), /mac_local_host_configuration_invalid/);
