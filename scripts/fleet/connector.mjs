@@ -271,28 +271,48 @@ export function createClient(config, fetcher = globalThis.fetch) {
   });
 }
 
+function isNetworkConnectionError(error) {
+  if (!(error instanceof TypeError)) return false;
+  const codes = new Set(["EAI_AGAIN", "ECONNABORTED", "ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH",
+    "ENOTFOUND", "EPIPE", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"]);
+  for (let current = error; current && typeof current === "object"; current = current.cause) {
+    if (typeof current.code === "string" && codes.has(current.code)) return true;
+  }
+  return false;
+}
+
+function preflightFailure(message) {
+  const error = new Error(message);
+  error.preflightFailure = true;
+  return error;
+}
+
 async function refuseNewerConnectorBeforeEnrollment(origin, fetcher) {
   let response;
   try {
     response = await fetcher(`${origin}/fleet/v1/connector-manifest.json`, { method: "GET", redirect: "error",
       headers: { accept: "application/json" } });
-  } catch {
+  } catch (error) {
     // Older gateways did not offer this public preflight. The signed enrollment
-    // response remains the authoritative compatibility check for those hosts.
-    return;
+    // response remains the authoritative compatibility check only when the
+    // endpoint cannot be reached at all.
+    if (isNetworkConnectionError(error)) return;
+    throw error;
   }
-  if (response.status !== 200) return;
+  if (response.status === 404) return;
+  if (response.status !== 200)
+    throw preflightFailure(`The Control Room connector release check failed (${response.status}). Nothing was installed.`);
   let manifest;
   try { manifest = await response.json(); }
-  catch { throw new Error("The Control Room provided an invalid connector release before enrollment. Nothing was installed."); }
+  catch { throw preflightFailure("The Control Room provided an invalid connector release before enrollment. Nothing was installed."); }
   if (!manifest || manifest.schema !== CONNECTOR_RELEASE_MANIFEST_SCHEMA || typeof manifest.version !== "string")
-    throw new Error("The Control Room provided an invalid connector release before enrollment. Nothing was installed.");
+    throw preflightFailure("The Control Room provided an invalid connector release before enrollment. Nothing was installed.");
   try {
     if (compareReleaseVersionsV1(manifest.version, CONNECTOR_VERSION) > 0)
-      throw new Error(`This Control Room requires connector ${manifest.version}. Download that connector before using this join code.`);
+      throw preflightFailure(`This Control Room requires connector ${manifest.version}. Download that connector before using this join code.`);
   } catch (error) {
     if (String(error?.message ?? "").startsWith("This Control Room requires")) throw error;
-    throw new Error("The Control Room provided an invalid connector release before enrollment. Nothing was installed.");
+    throw preflightFailure("The Control Room provided an invalid connector release before enrollment. Nothing was installed.");
   }
 }
 
@@ -304,7 +324,6 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
   if (!CODE_PATTERN.test(code ?? "")) throw new Error("The join code is not valid. Copy it again from the Workers page.");
   if (typeof workerKind !== "string" || !/^[a-z][a-z0-9-]{1,39}$/u.test(workerKind))
     throw new Error("The worker kind is required to redeem a join code.");
-  await refuseNewerConnectorBeforeEnrollment(origin, fetcher ?? globalThis.fetch);
   const codeDigest = sha256(code);
   let pending;
   try {
@@ -323,6 +342,11 @@ export async function join({ server, code, workerKind, configPath, fetcher, writ
   // retries this exact enrollment instead of consuming a second credential.
   await writeConfig(configPath, { schema: CONFIG_SCHEMA, server: origin, workerId: null, secret,
     credentialExpiresAt: null, codeDigest, clientNonce, workerKind });
+  try { await refuseNewerConnectorBeforeEnrollment(origin, fetcher ?? globalThis.fetch); }
+  catch (error) {
+    if (error?.preflightFailure === true) await removeConfigArtifacts(configPath);
+    throw error;
+  }
   const client = createClient({ server: origin, workerId: null, secret }, fetcher);
   let result;
   try {

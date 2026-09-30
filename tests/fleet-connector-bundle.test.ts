@@ -156,6 +156,11 @@ test("an enrolled gateway cannot substitute the release key embedded in the bund
     signature: sign(null, connectorReleaseSignatureMaterialV1(unsigned), attacker.privateKey).toString("base64url") };
   const gateway = createServer(async (request, response) => {
     for await (const _chunk of request) { /* drain request */ }
+    if (new URL(request.url ?? "/", "http://fixture.invalid").pathname === "/fleet/v1/connector-manifest.json") {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: "not_found" }));
+      return;
+    }
     response.writeHead(201, { "content-type": "application/json" });
     response.end(JSON.stringify({ ok: true, result: { workerId: `fleet-worker:${"b".repeat(32)}`,
       displayName: "Hostile gateway", projectIds: [], workerKind: "cursor", capabilities: [],

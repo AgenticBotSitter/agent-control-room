@@ -1,6 +1,13 @@
 [
   {
     "file": "scripts/fleet/connector.mjs",
+    "find": "    if (isNetworkConnectionError(error)) return;",
+    "replace": "    if (false) return;",
+    "test": "node --test --test-name-pattern \"pre-enrollment manifest fallback\" tests/fleet-connector-install.test.mjs",
+    "why": "only a genuine connection failure may fall back from the public release preflight"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
     "find": "  const release = await acquireRotationLock(`${configPath}.rotate.lock`, lock);\n  let failure;\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
     "replace": "  const release = async () => {};\n  let failure;\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
     "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
@@ -57,10 +64,10 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  // Keep the small, credential-free shim. A bot process that still holds it",
-    "replace": "  await rm(paths.shimPath, { force: true });\n  // Keep the small, credential-free shim. A bot process that still holds it",
-    "test": "node --test --test-name-pattern \"CLI-backed uninstall\" tests/fleet-connector-install.test.mjs",
-    "why": "uninstall keeps the credential-free shim so a stale launch receives a graceful profile refusal"
+    "find": "      await clearMachineConnectorState(paths);\n      return true;",
+    "replace": "      return true;",
+    "test": "node --test --test-name-pattern \"last uninstall clears shared state\" tests/fleet-connector-install.test.mjs",
+    "why": "the final uninstall clears shared machine state so another Control Room key can install"
   },
   {
     "file": "scripts/fleet/connector.mjs",
@@ -113,8 +120,8 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  let failure, joinedRelease;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
-    "replace": "  const release = async () => {};\n  let failure, joinedRelease;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
+    "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  let failure, joinedRelease;\n  try {\n    return await withMachineStateLock(paths, async () => {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
+    "replace": "  const release = async () => {};\n  let failure, joinedRelease;\n  try {\n    return await withMachineStateLock(paths, async () => {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
     "test": "node --test --test-name-pattern \"ten concurrent installs\" tests/fleet-connector-install.test.mjs",
     "why": "same-profile installs serialize through the shared profile mutation lock"
   },

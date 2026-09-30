@@ -184,6 +184,7 @@ test("join refuses a gateway that omits or changes the installation release key"
     await t.test(label, async t => {
       const homeDir = await temporary(t, `connector-release-key-${label}-`), configPath = join(homeDir, "bot.json");
       const gateway = fakeGateway(), fetcher = async (...args) => {
+        if (new URL(args[0]).pathname === "/fleet/v1/connector-manifest.json") return gateway.fetcher(...args);
         const response = await gateway.fetcher(...args), body = await response.json();
         if (body?.result) body.result.releaseTrust = releaseTrust;
         return json(true, body.result, response.status);
@@ -222,6 +223,33 @@ test("a newer public manifest refuses before a join code is redeemed", async t =
     fetcher }), /requires connector 99\.0\.0/u);
   assert.equal(enrollments, 0);
   await assert.rejects(stat(configPath), error => error.code === "ENOENT");
+});
+
+test("pre-enrollment manifest fallback is limited to absent endpoints and connection failures", async t => {
+  const networkFailure = new TypeError("fetch failed", { cause: Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" }) });
+  for (const [label, manifest] of [["absent endpoint", () => new Response("not found", { status: 404 })],
+    ["connection failure", () => { throw networkFailure; }]]) {
+    await t.test(label, async t => {
+      const homeDir = await temporary(t, `connector-preflight-${label.replaceAll(" ", "-")}-`), gateway = fakeGateway();
+      const fetcher = async (...args) => new URL(args[0]).pathname === "/fleet/v1/connector-manifest.json"
+        ? manifest() : gateway.fetcher(...args);
+      await connector.join({ server: "https://control.example", code: code(label[0].toUpperCase()), workerKind: "codex",
+        configPath: join(homeDir, "bot.json"), fetcher });
+      assert.equal(gateway.state.enrollments, 1);
+    });
+  }
+  for (const [label, manifest, expected] of [["server error", () => new Response("unavailable", { status: 503 }), /release check failed \(503\)/u],
+    ["unexpected fetch failure", () => { throw new Error("simulated lost enrollment response"); }, /simulated lost enrollment response/u]]) {
+    await t.test(label, async t => {
+      const homeDir = await temporary(t, `connector-preflight-${label.replaceAll(" ", "-")}-`);
+      let enrollments = 0;
+      const fetcher = async (...args) => new URL(args[0]).pathname === "/fleet/v1/connector-manifest.json"
+        ? manifest() : (enrollments += 1, new Response("unexpected", { status: 500 }));
+      await assert.rejects(connector.join({ server: "https://control.example", code: code(label[0].toUpperCase()), workerKind: "codex",
+        configPath: join(homeDir, "bot.json"), fetcher }), expected);
+      assert.equal(enrollments, 0);
+    });
+  }
 });
 
 test("the fake gateway refuses an unknown worker kind instead of echoing it", async t => {
