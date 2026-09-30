@@ -54,18 +54,29 @@ type WorkerRow = { worker_id: string; node_id: string; identity_id: string; work
 type ClaimRow = { claim_id: string; offer_id: string; worker_id: string; node_id: string; project_id: string;
   job_id: string; attempt_id: string; lease_id: string; idempotency_key: string; claimed_at: string | Date };
 
+/** The installation-wide Pause / Drain / Stop switch as the gateway reports
+ * it to connectors. Only "running" admits a new claim. */
+export const FLEET_OPERATIONS_MODES_V1 = Object.freeze(["running", "paused", "draining", "stopped"] as const);
+export type FleetOperationsModeV1 = (typeof FLEET_OPERATIONS_MODES_V1)[number];
+
 export type FleetGatewayStoreOptionsV1 = Readonly<{ tenantId: string; clock?: () => number;
-  leaseMs?: number; connectorVersionLimit?: number }>;
+  leaseMs?: number; connectorVersionLimit?: number;
+  /** Reads the owner's current Pause / Drain / Stop decision. Without a port
+   * the installation has no such switch and is running. A port that fails or
+   * answers anything unexpected refuses new claims rather than admitting them. */
+  operationsMode?: () => Promise<FleetOperationsModeV1> }>;
 
 export class FleetGatewayStoreV1 {
   readonly #tenantId: string;
   readonly #clock: () => number;
   readonly #leaseMs: number;
+  readonly #operationsMode: (() => Promise<FleetOperationsModeV1>) | undefined;
   constructor(private readonly db: DatabaseClient, options: FleetGatewayStoreOptionsV1) {
     if (!FLEET_PROJECT_ID_PATTERN_V1.test(options.tenantId)) throw new Error("fleet_gateway_configuration_invalid");
     this.#tenantId = options.tenantId;
     this.#clock = options.clock ?? Date.now;
     this.#leaseMs = options.leaseMs ?? FLEET_LEASE_MS_V1;
+    this.#operationsMode = options.operationsMode;
     if (!Number.isSafeInteger(this.#leaseMs) || this.#leaseMs < 30_000 || this.#leaseMs > 3_600_000)
       throw new Error("fleet_gateway_configuration_invalid");
   }
@@ -74,6 +85,15 @@ export class FleetGatewayStoreV1 {
     const now = this.#clock();
     if (!Number.isSafeInteger(now)) return fleetFail("unavailable");
     return new Date(now).toISOString();
+  }
+
+  /** The mode connectors see. "unknown" (an unreadable switch) never admits work. */
+  async operationsMode(): Promise<FleetOperationsModeV1 | "unknown"> {
+    if (!this.#operationsMode) return "running";
+    try {
+      const mode = await this.#operationsMode();
+      return (FLEET_OPERATIONS_MODES_V1 as readonly unknown[]).includes(mode) ? mode : "unknown";
+    } catch { return "unknown"; }
   }
 
   /** Records an authenticated MCP tool attempt before the tool is validated or
@@ -253,7 +273,8 @@ export class FleetGatewayStoreV1 {
     const platform = platforms[input.platform as keyof typeof platforms] ?? "other";
     const now = this.#now();
     await this.db.transaction(tx => this.#presence(tx, principal.workerId, version, platform, now));
-    return this.me(principal);
+    const operationsMode = await this.operationsMode();
+    return Object.freeze({ ...this.me(principal), operationsMode, claimsAllowed: operationsMode === "running" });
   }
 
   me(principal: FleetWorkerPrincipalV1) {
@@ -325,6 +346,8 @@ export class FleetGatewayStoreV1 {
         if (prior.offer_id !== offerId) return fleetFail("conflict");
         return this.#claimView(tx, prior, true);
       }
+      // Pause, Drain and Stop all stop new claims; a replay above is not new.
+      if (await this.operationsMode() !== "running") return fleetFail("paused");
       await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.#tenantId]);
       const offer = (await tx.query<{ project_id: string; job_id: string; capability: string; state: string;
         allowed_worker_ids: string[] | null }>(`SELECT project_id,job_id,capability,state,allowed_worker_ids
