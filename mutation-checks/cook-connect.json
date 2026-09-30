@@ -36,7 +36,7 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "      if (!values.workspace) throw new Error(\"MCP requires an explicit --workspace directory.\");",
+    "find": "  if (!workspaceRoot) throw new Error(\"MCP requires an explicit --workspace directory.\");",
     "replace": "      if (false) throw new Error(\"MCP requires an explicit --workspace directory.\");",
     "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
     "why": "an MCP launch never falls back to the process working directory"
@@ -124,5 +124,54 @@
     "replace": "    if (false)\n      throw new Error(\"That bot profile does not match the installed credential.\");",
     "test": "node --test --test-name-pattern \"validates the current profile\" tests/fleet-connector-install.test.mjs",
     "why": "uninstall rereads and validates the profile after obtaining the mutation lock"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      await mkdir(lockPath, { mode: 0o700 });",
+    "replace": "      await mkdir(lockPath, { mode: 0o700, recursive: true });",
+    "test": "node --test --test-name-pattern \"twenty cross-process rotations\" tests/fleet-connector-install.test.mjs",
+    "why": "a fully written rotation lock is published without replacing a concurrent winner"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    const ownerPath = joinPath(lockPath, `owner-${token}.json`);",
+    "replace": "    const ownerPath = joinPath(lockPath, `owner-${\"0\".repeat(32)}.json`);",
+    "test": "node --test --test-name-pattern \"two dead-owner cleaners\" tests/fleet-connector-install.test.mjs",
+    "why": "dead-owner cleanup targets one observed generation and cannot unlink a later winner"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "          } catch {\n            // Older connector versions exposed the lock before writing its JSON.\n            // A fresh partial record is retried; a stale one still fails closed.\n            ownerPid = null;\n          }",
+    "replace": "          } catch (parseError) {\n            throw parseError;\n          }",
+    "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
+    "why": "malformed legacy lock contents reach the stale-lock refusal instead of leaking a parser failure"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "          if (current?.token !== token) throw new Error(\"The credential lock changed owners before it could be released.\");",
+    "replace": "          if (false) throw new Error(\"The credential lock changed owners before it could be released.\");",
+    "test": "node --test --test-name-pattern \"ownership token changed\" tests/fleet-connector-install.test.mjs",
+    "why": "a releaser never removes a lock now owned by another process"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (typeof workspaceRoot !== \"string\" || !isAbsolute(workspaceRoot))",
+    "replace": "  if (false)",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "MCP refuses a relative workspace instead of resolving it against the process directory"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (error?.code === \"ENOENT\") throw new Error(\"MCP --workspace must exist and be a directory.\");",
+    "replace": "    if (false) throw new Error(\"MCP --workspace must exist and be a directory.\");",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "MCP gives a controlled refusal when the absolute workspace does not exist"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (!workspaceInfo.isDirectory()) throw new Error(\"MCP --workspace must exist and be a directory.\");",
+    "replace": "  if (false) throw new Error(\"MCP --workspace must exist and be a directory.\");",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "MCP refuses a file passed as its workspace"
   }
 ]

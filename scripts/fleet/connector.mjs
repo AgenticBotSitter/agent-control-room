@@ -15,7 +15,7 @@
 // widen permissions: the gateway has no such routes.
 
 import { createHash, randomBytes } from "node:crypto";
-import { copyFile, mkdir, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join as joinPath, resolve, sep } from "node:path";
@@ -188,35 +188,103 @@ export async function join({ server, code, configPath, fetcher, writeConfig = wr
 
 async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_STALE_MS, waitMs = 25,
   deadlineMs = 10_000, clock = Date.now, sleep = ms => new Promise(done => setTimeout(done, ms)),
+  beforeDeadOwnerCleanup = async () => {},
   isPidAlive = pid => {
     try { process.kill(pid, 0); return true; }
     catch (error) { return error?.code !== "ESRCH"; }
   } } = {}) {
   const started = clock();
   for (;;) {
+    const token = randomBytes(16).toString("hex");
+    const contenderPath = `${lockPath}.${process.pid}.${token}.tmp`;
+    const ownerPath = joinPath(lockPath, `owner-${token}.json`);
+    const owner = { pid: process.pid, acquiredAt: new Date(clock()).toISOString(), token };
+    const handle = await open(contenderPath, "wx", 0o600);
+    try { await handle.writeFile(`${JSON.stringify(owner)}\n`); await handle.sync(); }
+    finally { await handle.close(); }
+    let ownsDirectory = false;
     try {
-      const handle = await open(lockPath, "wx", 0o600);
-      await handle.writeFile(`${JSON.stringify({ pid: process.pid, acquiredAt: new Date(clock()).toISOString() })}\n`);
+      // mkdir is the atomic election: exactly one contender can own the
+      // canonical path. The complete owner record is then atomically renamed
+      // into it before that contender begins any protected work.
+      await mkdir(lockPath, { mode: 0o700 });
+      ownsDirectory = true;
+      await rename(contenderPath, ownerPath);
       return async () => {
-        try { await handle.close(); } finally {
-          try { await unlink(lockPath); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+        try {
+          const current = JSON.parse(await readFile(ownerPath, "utf8"));
+          if (current?.token !== token) throw new Error("The credential lock changed owners before it could be released.");
+          await unlink(ownerPath);
+          await rmdir(lockPath);
+        } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
         }
       };
     } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      let age = 0, ownerPid = null;
-      try {
-        const [info, raw] = await Promise.all([stat(lockPath), readFile(lockPath, "utf8")]);
-        age = clock() - info.mtimeMs;
-        const parsed = JSON.parse(raw);
-        if (Number.isSafeInteger(parsed?.pid) && parsed.pid > 0) ownerPid = parsed.pid;
+      try { await unlink(contenderPath); } catch (removeError) {
+        if (removeError?.code !== "ENOENT") throw removeError;
       }
-      catch (readError) { if (readError?.code === "ENOENT") continue; throw readError; }
+      if (ownsDirectory) {
+        try { await rmdir(lockPath); } catch (removeError) {
+          if (removeError?.code !== "ENOENT" && removeError?.code !== "ENOTEMPTY") throw removeError;
+        }
+        if (error?.code === "ENOENT") continue;
+        throw error;
+      }
+      if (error?.code !== "EEXIST") throw error;
+      let age = 0, ownerPid = null, lockIsDirectory = false, ownerMissing = false, observedOwnerPath = null;
+      try {
+        const info = await stat(lockPath);
+        age = clock() - info.mtimeMs;
+        lockIsDirectory = info.isDirectory();
+        let raw;
+        if (lockIsDirectory) {
+          const entries = await readdir(lockPath);
+          const owners = entries.filter(entry => /^owner-[a-f0-9]{32}\.json$/u.test(entry));
+          if (entries.length === 0) ownerMissing = true;
+          else if (entries.length === 1 && owners.length === 1) {
+            observedOwnerPath = joinPath(lockPath, owners[0]);
+            raw = await readFile(observedOwnerPath, "utf8");
+          }
+        } else {
+          raw = await readFile(lockPath, "utf8");
+        }
+        if (!ownerMissing && raw !== undefined) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Number.isSafeInteger(parsed?.pid) && parsed.pid > 0) ownerPid = parsed.pid;
+          } catch {
+            // Older connector versions exposed the lock before writing its JSON.
+            // A fresh partial record is retried; a stale one still fails closed.
+            ownerPid = null;
+          }
+        }
+      }
+      catch (readError) {
+        if (["ENOENT", "EISDIR", "ENOTDIR"].includes(readError?.code)) continue;
+        throw readError;
+      }
       // A dead owner can never release its lock, even if the file is fresh. A
       // live owner is never displaced merely because its work took longer
       // than expected. Malformed locks fail closed instead of guessing.
       if (ownerPid !== null && !isPidAlive(ownerPid)) {
-        try { await unlink(lockPath); } catch (removeError) { if (removeError?.code !== "ENOENT") throw removeError; }
+        await beforeDeadOwnerCleanup({ lockPath, observedOwnerPath });
+        if (lockIsDirectory) {
+          try { await unlink(observedOwnerPath); } catch (removeError) { if (removeError?.code !== "ENOENT") throw removeError; }
+          try { await rmdir(lockPath); } catch (removeError) {
+            if (removeError?.code !== "ENOENT" && removeError?.code !== "ENOTEMPTY") throw removeError;
+          }
+        } else {
+          try { await unlink(lockPath); } catch (removeError) {
+            if (!["ENOENT", "EISDIR", "EPERM"].includes(removeError?.code)) throw removeError;
+          }
+        }
+        continue;
+      }
+      if (ownerMissing && age >= staleMs) {
+        try { await rmdir(lockPath); } catch (removeError) {
+          if (removeError?.code !== "ENOENT" && removeError?.code !== "ENOTEMPTY") throw removeError;
+        }
         continue;
       }
       if (age >= staleMs && ownerPid === null)
@@ -636,7 +704,16 @@ export function createMcpDispatcher({ client, workspaceRoot }) {
 
 /** @param {{ configPath: string, input?: NodeJS.ReadableStream, output?: NodeJS.WritableStream, fetcher?: typeof fetch, workspaceRoot: string }} options */
 export async function serveMcp({ configPath, input = process.stdin, output = process.stdout, fetcher, workspaceRoot }) {
-  if (!workspaceRoot) throw new Error("MCP requires an explicit workspace directory.");
+  if (!workspaceRoot) throw new Error("MCP requires an explicit --workspace directory.");
+  if (typeof workspaceRoot !== "string" || !isAbsolute(workspaceRoot))
+    throw new Error("MCP --workspace must be an absolute directory path.");
+  let workspaceInfo;
+  try { workspaceInfo = await stat(workspaceRoot); }
+  catch (error) {
+    if (error?.code === "ENOENT") throw new Error("MCP --workspace must exist and be a directory.");
+    throw error;
+  }
+  if (!workspaceInfo.isDirectory()) throw new Error("MCP --workspace must exist and be a directory.");
   const config = await recoverPending({ configPath, fetcher });
   const dispatch = createMcpDispatcher({ client: createClient(config, fetcher), workspaceRoot });
   const lines = createInterface({ input, crlfDelay: Infinity });
@@ -1032,8 +1109,7 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       return 0;
     }
     if (command === "mcp") {
-      if (!values.workspace) throw new Error("MCP requires an explicit --workspace directory.");
-      await serveMcp({ configPath, workspaceRoot: resolve(values.workspace), fetcher: runtime.fetcher }); return 0;
+      await serveMcp({ configPath, workspaceRoot: values.workspace, fetcher: runtime.fetcher }); return 0;
     }
     const config = await recoverPending({ configPath, fetcher: runtime.fetcher });
     const client = createClient(config, runtime.fetcher);

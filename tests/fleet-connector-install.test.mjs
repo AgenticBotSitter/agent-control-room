@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -278,6 +280,20 @@ test("bad install input and real-home CLI use fail before enrollment", async t =
     { out: { write: () => {} }, err: { write: value => { err += value; } } }, { homeDir, realHomeDir: homeDir });
   assert.equal(mcpStatus, 1);
   assert.match(err, /explicit --workspace/u);
+  for (const [workspace, message] of [["relative", /absolute directory/u], [join(homeDir, "missing"), /must exist/u]]) {
+    err = "";
+    const invalidWorkspaceStatus = await connector.main(["mcp", "--profile", "real", "--workspace", workspace],
+      { out: { write: () => {} }, err: { write: value => { err += value; } } }, { homeDir, realHomeDir: homeDir });
+    assert.equal(invalidWorkspaceStatus, 1);
+    assert.match(err, message);
+  }
+  const fileWorkspace = join(homeDir, "not-a-directory");
+  await writeFile(fileWorkspace, "fixture\n");
+  err = "";
+  const fileWorkspaceStatus = await connector.main(["mcp", "--profile", "real", "--workspace", fileWorkspace],
+    { out: { write: () => {} }, err: { write: value => { err += value; } } }, { homeDir, realHomeDir: homeDir });
+  assert.equal(fileWorkspaceStatus, 1);
+  assert.match(err, /must exist and be a directory/u);
 });
 
 test("ten concurrent rotations make exactly one server rotation and stale locks recover", async t => {
@@ -305,6 +321,187 @@ test("ten concurrent rotations make exactly one server rotation and stale locks 
   await assert.rejects(connector.rotate({ configPath: path, fetcher: gateway.fetcher,
     lock: { staleMs: 1, deadlineMs: 20, waitMs: 5, isPidAlive: () => true } }), /Another session/u);
   await rm(stale);
+
+  await mkdir(stale);
+  await utimes(stale, old, old);
+  await connector.rotate({ configPath: path, fetcher: gateway.fetcher,
+    lock: { staleMs: 1, deadlineMs: 100, waitMs: 5 } });
+  assert.equal(gateway.state.rotations, 3);
+  await assert.rejects(stat(stale), error => error.code === "ENOENT");
+
+  await writeFile(stale, "{\"pid\":", { mode: 0o600 });
+  await utimes(stale, old, old);
+  await assert.rejects(connector.rotate({ configPath: path, fetcher: gateway.fetcher,
+    lock: { staleMs: 1, deadlineMs: 20, waitMs: 5 } }), /stale but has no valid owner PID/u);
+  await rm(stale);
+
+  await mkdir(stale);
+  await writeFile(join(stale, `owner-${"e".repeat(32)}.json`), `${JSON.stringify({ pid: 777777 })}\n`);
+  await writeFile(join(stale, "unexpected"), "fixture\n");
+  await utimes(stale, old, old);
+  await assert.rejects(connector.rotate({ configPath: path, fetcher: gateway.fetcher,
+    lock: { staleMs: 1, deadlineMs: 20, waitMs: 5 } }), /stale but has no valid owner PID/u);
+  await rm(stale, { recursive: true });
+});
+
+test("twenty cross-process rotations make exactly one server rotation without caller failures", async t => {
+  const homeDir = await temporary(t, "connector-process-rotation-");
+  const configPath = join(homeDir, "bot.json"), secret = `crf_${"R".repeat(43)}`;
+  const state = { digest: connector.sha256(secret), rotations: 0 };
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+    const bearer = String(request.headers.authorization ?? "").replace(/^Bearer /u, "");
+    if (connector.sha256(bearer) !== state.digest) {
+      response.writeHead(401, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: "unauthenticated" }));
+      return;
+    }
+    if (request.url === "/fleet/v1/rotate") {
+      state.rotations += 1;
+      await new Promise(done => setTimeout(done, 100));
+      state.digest = body.newCredentialDigest;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z" } }));
+      return;
+    }
+    if (request.url === "/fleet/v1/me") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z" } }));
+      return;
+    }
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: false, error: "not_found" }));
+  });
+  await new Promise((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  t.after(() => new Promise(resolveClose => server.close(resolveClose)));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  await writeFile(configPath, `${JSON.stringify({ schema: "control-room.fleet-connector/v1",
+    server: `http://127.0.0.1:${address.port}`, workerId: WORKER_ID, secret,
+    credentialExpiresAt: "2026-01-01T00:00:00.000Z" })}\n`, { mode: 0o600 });
+
+  const childSource = `
+    import { resolve } from "node:path";
+    import { pathToFileURL } from "node:url";
+    const { rotate } = await import(pathToFileURL(resolve("scripts/fleet/connector.mjs")).href);
+    try {
+      process.send("ready");
+      await new Promise(resolveStart => process.once("message", resolveStart));
+      process.disconnect();
+      const result = await rotate({ configPath: process.argv[1] });
+      process.stdout.write(JSON.stringify(result));
+    } catch (error) {
+      process.stderr.write(String(error?.stack ?? error));
+      process.exitCode = 1;
+    }
+  `;
+  const rotateInProcess = () => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", childSource, configPath], {
+      cwd: resolve("."), env: { ...process.env, CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    const ready = new Promise((resolveReady, rejectReady) => {
+      child.once("message", message => message === "ready" ? resolveReady() : rejectReady(new Error("child was not ready")));
+      child.once("error", rejectReady);
+    });
+    const done = new Promise(resolveChild => {
+      child.once("error", error => resolveChild({ code: null, stdout, stderr: String(error) }));
+      child.once("close", code => resolveChild({ code, stdout, stderr }));
+    });
+    return { child, ready, done };
+  };
+  const runBurst = async () => {
+    const processes = Array.from({ length: 20 }, rotateInProcess);
+    await Promise.all(processes.map(childProcess => childProcess.ready));
+    for (const childProcess of processes) childProcess.child.send("rotate");
+    return Promise.all(processes.map(childProcess => childProcess.done));
+  };
+  const results = await runBurst();
+  assert.deepEqual(results.filter(result => result.code !== 0), [],
+    `all child rotations must succeed: ${JSON.stringify(results.filter(result => result.code !== 0))}`);
+  assert.equal(state.rotations, 1);
+  assert.equal(results.filter(result => JSON.parse(result.stdout).coalesced === true).length, 19);
+  assert.deepEqual((await readdir(homeDir)).filter(file => file.includes(".rotate.lock")), []);
+
+  const lockPath = `${configPath}.rotate.lock`, deadToken = "d".repeat(32);
+  await mkdir(lockPath);
+  await writeFile(join(lockPath, `owner-${deadToken}.json`), `${JSON.stringify({ pid: 777777,
+    acquiredAt: new Date().toISOString(), token: deadToken })}\n`, { mode: 0o600 });
+  const recovered = await runBurst();
+  assert.deepEqual(recovered.filter(result => result.code !== 0), [],
+    `all dead-lock recovery callers must succeed: ${JSON.stringify(recovered.filter(result => result.code !== 0))}`);
+  assert.equal(state.rotations, 2);
+  assert.equal(recovered.filter(result => JSON.parse(result.stdout).coalesced === true).length, 19);
+  assert.deepEqual((await readdir(homeDir)).filter(file => file.includes(".rotate.lock")), []);
+});
+
+test("rotation release refuses to remove a lock whose ownership token changed", async t => {
+  const homeDir = await temporary(t, "connector-lock-owner-");
+  const configPath = join(homeDir, "bot.json"), secret = `crf_${"T".repeat(43)}`;
+  await writeFile(configPath, `${JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: WORKER_ID, secret, credentialExpiresAt: "2026-01-01T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  let releaseRequest, allowResponse;
+  const requestStarted = new Promise(resolveStarted => { releaseRequest = resolveStarted; });
+  const responseAllowed = new Promise(resolveAllowed => { allowResponse = resolveAllowed; });
+  const fetcher = async (url, init) => {
+    assert.equal(new URL(url).pathname, "/fleet/v1/rotate");
+    releaseRequest();
+    await responseAllowed;
+    return json(true, { credentialExpiresAt: "2099-02-01T00:00:00.000Z" });
+  };
+  const rotating = connector.rotate({ configPath, fetcher });
+  await requestStarted;
+  const lockPath = `${configPath}.rotate.lock`;
+  const [ownerFile] = await readdir(lockPath);
+  const ownerPath = join(lockPath, ownerFile);
+  const replacement = { pid: process.pid, acquiredAt: new Date().toISOString(), token: "replacement" };
+  await writeFile(ownerPath, `${JSON.stringify(replacement)}\n`, { mode: 0o600 });
+  allowResponse();
+  await assert.rejects(rotating, /lock changed owners/u);
+  assert.deepEqual(JSON.parse(await readFile(ownerPath, "utf8")), replacement);
+  await rm(lockPath, { recursive: true });
+});
+
+test("two dead-owner cleaners cannot remove a later lock generation", async t => {
+  const homeDir = await temporary(t, "connector-lock-generation-");
+  const configPath = join(homeDir, "bot.json"), secret = `crf_${"G".repeat(43)}`;
+  await writeFile(configPath, `${JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: WORKER_ID, secret, credentialExpiresAt: "2026-01-01T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  const gateway = fakeGateway({ rotateDelayMs: 50 });
+  gateway.state.digest = connector.sha256(secret);
+  const lockPath = `${configPath}.rotate.lock`, deadToken = "0".repeat(32);
+  await mkdir(lockPath);
+  await writeFile(join(lockPath, `owner-${deadToken}.json`), `${JSON.stringify({ pid: 777777,
+    acquiredAt: new Date().toISOString(), token: deadToken })}\n`, { mode: 0o600 });
+  let laggerObserved;
+  const laggerHasRead = new Promise(resolveLagger => { laggerObserved = resolveLagger; });
+  const cleaner = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
+    beforeDeadOwnerCleanup: async () => laggerHasRead } });
+  const lagger = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
+    beforeDeadOwnerCleanup: async () => {
+      laggerObserved();
+      const deadline = Date.now() + 2_000;
+      for (;;) {
+        const owners = await readdir(lockPath).catch(() => []);
+        const tokens = await Promise.all(owners.map(async file => {
+          try { return JSON.parse(await readFile(join(lockPath, file), "utf8")).token; } catch { return null; }
+        }));
+        if (tokens.some(token => token && token !== deadToken)) return;
+        if (Date.now() >= deadline) throw new Error("replacement lock generation was not published");
+        await new Promise(done => setTimeout(done, 5));
+      }
+    } } });
+  const results = await Promise.all([cleaner, lagger]);
+  assert.equal(gateway.state.rotations, 1);
+  assert.equal(results.filter(result => result.coalesced === true).length, 1);
 });
 
 test("ten concurrent installs of one profile serialize and all succeed", async t => {
