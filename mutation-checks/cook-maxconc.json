@@ -24,7 +24,7 @@
     "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
     "find": "  IF pg_catalog.current_setting('transaction_isolation')='repeatable read' THEN\n    RAISE EXCEPTION 'fleet claim capacity cannot be enforced in a repeatable read transaction'\n      USING ERRCODE='0A000';\n  END IF;",
     "replace": "  -- MUTATED: the repeatable read refusal is gone",
-    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-isolation-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "an advisory lock cannot serialise a REPEATABLE READ caller's COUNT, because its snapshot predates the wait for the lock, so the ceiling only holds if the mode itself is refused"
   },
   {
