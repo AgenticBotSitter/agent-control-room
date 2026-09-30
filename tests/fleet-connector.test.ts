@@ -9,7 +9,7 @@ import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { readdir, readFile } from "node:fs/promises";
@@ -22,6 +22,7 @@ import { captureFleetGatewayConfigurationV1, FLEET_GATEWAY_CONFIGURATION_V1,
   FLEET_GATEWAY_SERVER_OPTIONS_V1, createFleetGatewayStoreFromConfigurationV1, fleetGatewayAdmissionFromConfigurationV1,
   prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
+import { SupervisorReconcilerV1 } from "../src/supervisor/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
 // The connector is a dependency-free .mjs shipped to worker machines.
@@ -79,7 +80,8 @@ function slowEnrollment(port: number, address: string) {
 
 function enrollmentRequestBody() {
   return JSON.stringify({ code: `crj_${"J".repeat(43)}`, credentialDigest: `sha256:${"0".repeat(64)}`,
-    platform: "linux", architecture: "x64", connectorVersion: "1.0.0", clientNonce: `crn_${"A".repeat(43)}` });
+    workerKind: "mcp-agent", platform: "linux", architecture: "x64", connectorVersion: "1.0.0",
+    clientNonce: `crn_${"A".repeat(43)}` });
 }
 
 test("slow enrollment uploads from two networks cannot occupy the enrollment lane", async t => {
@@ -246,7 +248,7 @@ async function joinWorker(f: Fixture, name: string, projectIds = [PROJECT_A], ca
   const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: name, workerKind: "mcp-agent",
     projectIds, capabilities, maxConcurrent });
   const configPath = join(f.dir, `${name}.json`);
-  const joined = await connector.join({ server: f.origin, code: code.code, configPath });
+  const joined = await connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath });
   const config = await connector.loadConfig(configPath);
   return { code, configPath, joined, config, client: connector.createClient(config) };
 }
@@ -277,7 +279,8 @@ test("one-command join: a single-use code enrolls a machine whose secret never l
   assert.equal(me.canApprove, false); assert.equal(me.canMerge, false);
 
   // Single use: the same code cannot enroll a second machine.
-  await assert.rejects(connector.join({ server: f.origin, code: worker.code.code, configPath: join(f.dir, "again.json") }),
+  await assert.rejects(connector.join({ server: f.origin, code: worker.code.code, workerKind: "mcp-agent",
+    configPath: join(f.dir, "again.json") }),
     /unauthenticated/u);
   // The canonical records: an active node, a proposal-only agent grant.
   const grants = await f.query<{ role_key: string; allowed_actions: string[]; project_ids: string[] }>(
@@ -285,6 +288,59 @@ test("one-command join: a single-use code enrolls a machine whose secret never l
   assert.deepEqual(grants, [{ role_key: "work_batch_proposer", allowed_actions: ["work_batches.propose"], project_ids: [PROJECT_A] }]);
   const workers = await f.owner.listWorkers(ownerIdentity());
   assert.equal(workers.workers[0]!.status, "connected");
+});
+
+test("server-side redemption refuses the wrong bot kind without consuming the code", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Kind bound", workerKind: "codex",
+    projectIds: [PROJECT_A], capabilities: ["code.change"] });
+  const configPath = join(f.dir, "kind-bound.json");
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "claude-code", configPath }),
+    /worker_kind_mismatch/u);
+  assert.deepEqual(await f.query<{ state: string }>("SELECT state FROM fleet_enrollment_codes WHERE id=$1", [code.codeId]),
+    [{ state: "issued" }]);
+  assert.equal((await f.query("SELECT 1 FROM fleet_workers")).length, 0);
+  const joined = await connector.join({ server: f.origin, code: code.code, workerKind: "codex", configPath });
+  assert.equal(joined.workerKind, "codex");
+});
+
+test("every connector install target enrolls through the real kind-bound gateway", async t => {
+  const f = await fixture({ admission: createFleetGatewayAdmissionV1({ enrollPerIp: 20, enrollGlobal: 20 }) });
+  t.after(() => f.close());
+  const kinds = ["claude-code", "codex", "hermes", "claude-desktop", "cursor"] as const;
+  const runner = async (command: string, args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}) => {
+    assert.ok(["claude", "codex", "hermes"].includes(command), `unexpected executable ${command}`);
+    if (command === "hermes") {
+      const path = join(options.env!.HERMES_HOME!, "config.yaml");
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, `mcp_servers:\n  ${args[2]}:\n    command: fixture\n`, { mode: 0o600 });
+    }
+    return { stdout: "", stderr: "" };
+  };
+  for (const [index, kind] of kinds.entries()) await t.test(kind, async () => {
+    const issued = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: `Install ${kind}`,
+      workerKind: kind, projectIds: [PROJECT_A], capabilities: ["code.change"] });
+    const homeDir = join(f.dir, `install-${kind}`);
+    await mkdir(homeDir);
+    const installed = await connector.installConnector({ server: f.origin, code: issued.code, bot: kind,
+      name: `real-${kind}`, homeDir, realHomeDir: join(f.dir, "not-the-real-home"), platform: "darwin",
+      env: { ...process.env, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" }, runner,
+      workspace: undefined, fetcher: fetch, sourcePath: resolve("scripts/fleet/connector.mjs") });
+    assert.equal((await connector.loadConfig(installed.paths.configPath)).workerKind, kind);
+
+    const otherKind = kind === "codex" ? "cursor" : "codex";
+    const wrong = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: `Wrong ${kind} ${index}`,
+      workerKind: otherKind, projectIds: [PROJECT_A], capabilities: ["code.change"] });
+    const wrongHome = join(f.dir, `wrong-${kind}`);
+    await mkdir(wrongHome);
+    await assert.rejects(connector.installConnector({ server: f.origin, code: wrong.code, bot: kind,
+      name: `wrong-${kind}`, homeDir: wrongHome, realHomeDir: join(f.dir, "not-the-real-home"), platform: "darwin",
+      env: { ...process.env, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" }, runner,
+      workspace: undefined, fetcher: fetch, sourcePath: resolve("scripts/fleet/connector.mjs") }),
+    /worker_kind_mismatch/u);
+    assert.deepEqual(await f.query<{ state: string }>("SELECT state FROM fleet_enrollment_codes WHERE id=$1", [wrong.codeId]),
+      [{ state: "issued" }]);
+  });
 });
 
 test("a lost enrollment response is recovered with the same pending secret and nonce", async t => {
@@ -298,12 +354,13 @@ test("a lost enrollment response is recovered with the same pending secret and n
     if (drop && response.ok) { drop = false; await response.arrayBuffer(); throw new Error("simulated lost enrollment response"); }
     return response;
   };
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath, fetcher: loseFirstResponse }),
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath,
+    fetcher: loseFirstResponse }),
     /simulated lost enrollment response/u);
   const pending = await connector.loadConfig(configPath);
   assert.equal(pending.workerId, null);
   assert.match(pending.clientNonce, /^crn_[A-Za-z0-9_-]{43}$/u);
-  const recovered = await connector.join({ server: f.origin, code: code.code, configPath });
+  const recovered = await connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath });
   const saved = await connector.loadConfig(configPath);
   assert.equal(saved.workerId, recovered.workerId);
   assert.equal(saved.secret, pending.secret, "retry keeps the credential whose digest was committed");
@@ -312,10 +369,11 @@ test("a lost enrollment response is recovered with the same pending secret and n
   const alteredNoncePath = join(f.dir, "altered-nonce.json");
   await writeFile(alteredNoncePath, JSON.stringify({ schema: "control-room.fleet-connector/v1", server: f.origin,
     workerId: null, secret: pending.secret, credentialExpiresAt: null, codeDigest: connector.sha256(code.code),
-    clientNonce: connector.newEnrollmentNonce() }), { mode: 0o600 });
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath: alteredNoncePath }),
+    clientNonce: connector.newEnrollmentNonce(), workerKind: "mcp-agent" }), { mode: 0o600 });
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath: alteredNoncePath }),
     /unauthenticated/u, "even the committed credential digest cannot replay with a different client nonce");
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath: join(f.dir, "attacker.json") }),
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent",
+    configPath: join(f.dir, "attacker.json") }),
     /unauthenticated/u, "the consumed code is not replayable with another secret or nonce");
 });
 
@@ -329,7 +387,8 @@ test("a lost enrollment response cannot be replayed after the code expires", asy
     await response.arrayBuffer();
     throw new Error("simulated lost enrollment response");
   };
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath, fetcher: loseResponse }),
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath,
+    fetcher: loseResponse }),
     /simulated lost enrollment response/u);
   const pending = await connector.loadConfig(configPath);
   assert.equal(pending.workerId, null);
@@ -340,7 +399,7 @@ test("a lost enrollment response cannot be replayed after the code expires", asy
   } finally {
     await f.raw.exec("ALTER TABLE fleet_enrollment_codes ENABLE TRIGGER fleet_enrollment_codes_guard");
   }
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath }), /unauthenticated/u,
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "mcp-agent", configPath }), /unauthenticated/u,
     "the original nonce and credential do not bypass code expiry");
   assert.equal((await f.query("SELECT 1 FROM fleet_enrollment_redemptions")).length, 1);
   assert.equal((await f.query("SELECT 1 FROM fleet_worker_credentials")).length, 1);
@@ -671,12 +730,14 @@ test("an expired or cancelled enrollment code is refused", async t => {
   const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Late", workerKind: "codex",
     projectIds: [PROJECT_A], capabilities: ["code.change"] });
   skew = 11 * 60_000;
-  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath: join(f.dir, "late.json") }), /unauthenticated/u);
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, workerKind: "codex",
+    configPath: join(f.dir, "late.json") }), /unauthenticated/u);
   skew = 0;
   const cancelled = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Cancelled", workerKind: "codex",
     projectIds: [PROJECT_A], capabilities: ["code.change"] });
   assert.equal((await f.owner.cancelCode(ownerIdentity(), cancelled.codeId)).cancelled, true);
-  await assert.rejects(connector.join({ server: f.origin, code: cancelled.code, configPath: join(f.dir, "c.json") }), /unauthenticated/u);
+  await assert.rejects(connector.join({ server: f.origin, code: cancelled.code, workerKind: "codex",
+    configPath: join(f.dir, "c.json") }), /unauthenticated/u);
   // The database clock also refuses consumption after expiry, whatever the caller's clock says.
   const direct = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Direct", workerKind: "codex",
     projectIds: [PROJECT_A], capabilities: ["code.change"] });
@@ -816,7 +877,7 @@ test("credential rotation retires the old secret and owner re-key replaces it", 
   // Owner re-key: a fresh machine credential, the previous one revoked.
   const rekey = await f.owner.issueRekeyCode(ownerIdentity(), worker.joined.workerId);
   const second = join(f.dir, "rekeyed.json");
-  const rejoined = await connector.join({ server: f.origin, code: rekey.code, configPath: second });
+  const rejoined = await connector.join({ server: f.origin, code: rekey.code, workerKind: "mcp-agent", configPath: second });
   assert.equal(rejoined.workerId, worker.joined.workerId);
   await connector.createClient(await connector.loadConfig(second)).me();
   await assert.rejects(connector.createClient(rotated).me(), /unauthenticated/u);
@@ -836,14 +897,26 @@ test("a claim without a live lease is refused, and no claim can exist without it
       'lease:none','direct-claim-0001',now())`, [FLEET_TENANT, task.offerId, worker.joined.workerId, workerRow.node_id,
       PROJECT_A, task.jobId]);
   }), /without its canonical lease/u);
-  // An elapsed lease: progress and results are refused, and reconcile hands the task back.
+  // An elapsed lease: progress and results are refused, but the gateway leaves
+  // expiry to the supervisor so the durable lapse count cannot be bypassed.
   const claim = await worker.client.claim(task.offerId, "claim-key-lease01");
   await f.raw.query(`UPDATE control_leases SET expires_at=acquired_at+interval '1 millisecond',
     payload=jsonb_set(payload,'{expiresAt}',to_jsonb((acquired_at+interval '1 millisecond')::timestamptz)) WHERE id LIKE 'lease:fleet:%'`);
   await assert.rejects(worker.client.progress(claim.claimId, "late", "progress-key-late"), /expired/u);
   await assert.rejects(worker.client.result(claim.claimId, "late result", [], "result-key-late01"), /expired/u);
   const applied = await f.gateway.reconcile();
-  assert.equal(applied.expiredLeases, 1);
+  assert.deepEqual(applied, { reviews: 0, revocations: 0, leaseRevocations: 0 });
+  const untouched = await f.query<{ state: string }>("SELECT state FROM control_jobs WHERE id=$1", [task.jobId]);
+  assert.deepEqual(untouched, [{ state: "leased" }], "gateway reconcile does not expire or requeue the fleet lease");
+  const expiredAt = await f.query<{ expires_at: string | Date }>(`SELECT l.expires_at FROM fleet_claims fc
+    JOIN control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id WHERE fc.claim_id=$1`, [claim.claimId]);
+  const reconciled = await new SupervisorReconcilerV1(f.db, FLEET_TENANT,
+    () => Date.parse(new Date(expiredAt[0]!.expires_at).toISOString()) + 1).reconcileStalled();
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0]?.lapseNumber, 1);
+  assert.equal(reconciled[0]?.disposition, "queued");
+  assert.equal((await f.query<{ lapse_count: number }>(`SELECT lapse_count FROM control_supervisor_task_heads
+    WHERE tenant_id=$1 AND job_id=$2`, [FLEET_TENANT, task.jobId]))[0]?.lapse_count, 1);
   const job = await f.query<{ state: string }>("SELECT state FROM control_jobs WHERE id=$1", [task.jobId]);
   assert.deepEqual(job, [{ state: "ready" }]);
   assert.equal((await worker.client.work()).length, 1, "the task is claimable again as a new attempt");
@@ -1116,11 +1189,16 @@ test("the owner's join command carries only a safe address and the one-time code
   const code = `crj_${"a".repeat(43)}`;
   const release = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: "0.3.0", file: "connector-0.3.0.mjs",
     sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) } as const;
-  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code, release);
+  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code, "codex", release);
   assert.match(commands.unix, /connector-0\.3\.0\.mjs/u);
   assert.match(commands.unix, new RegExp(release.sha256, "u"));
   assert.match(commands.unix, /connector-manifest\.json/u);
+  assert.match(commands.unix, /--bot codex$/u);
+  assert.match(commands.windows, new RegExp(`node \\$f join --server https://control\\.example\\.ts\\.net --code ${code} --bot codex$`, "u"));
   for (const origin of ["https://x.example;rm -rf ~", "https://x.example/$(id)", "file:///etc", "https://user@x.example"])
-    assert.throws(() => fleetJoinCommandsV1(origin, code, release));
-  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id", release));
+    assert.throws(() => fleetJoinCommandsV1(origin, code, "codex", release));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id", "codex", release));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", code, "codex;id", release));
+  // A kind the server does not offer is refused, so no command is ever printed for it.
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", code, "not-a-kind", release));
 });

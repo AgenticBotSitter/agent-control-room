@@ -51,6 +51,14 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   TO control_room_task_coordinator;
 GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
   control_recurring_rules, control_recurring_proposals TO control_room_task_coordinator;
+-- Read-only, and only for the supervisor's stall decision: reconciling a stalled
+-- attempt asks whether an effect intent is still executing, confirmed or
+-- ambiguous, which is what separates "requeue it" from "the outcome is
+-- uncertain, a human must look". Postgres checks the privilege on every
+-- relation the statement names, so without this the reconciliation query fails
+-- for every eligible candidate. No INSERT, UPDATE or DELETE: intents are
+-- written by the owning paths alone.
+GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
 -- Read-only: the coordinator enforces a project's eligible-worker-kinds and

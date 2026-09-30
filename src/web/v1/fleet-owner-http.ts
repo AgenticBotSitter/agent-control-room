@@ -2,7 +2,7 @@ import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTru
   type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
-import { FleetErrorV1, type FleetOwnerServiceV1 } from "../../fleet/v1";
+import { FleetErrorV1, FLEET_WORKER_KINDS_V1, type FleetOwnerServiceV1 } from "../../fleet/v1";
 import { captureFleetConnectorReleaseManifestV1, type FleetConnectorReleaseManifestV1 } from "../../fleet/v1/connector-release";
 
 /**
@@ -28,8 +28,9 @@ export const FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1 = Buffer.from(installerCh
 
 /** The exact commands shown to the owner. The code is the only secret in it
  * and it is short-lived and single use. */
-export function fleetJoinCommandsV1(gatewayOrigin: string, code: string, releaseValue: FleetConnectorReleaseManifestV1) {
-  if (!shellSafe.test(gatewayOrigin) || !/^crj_[A-Za-z0-9_-]{43}$/u.test(code)) throw new WebAccessError("invalid_request");
+export function fleetJoinCommandsV1(gatewayOrigin: string, code: string, workerKind: string, releaseValue: FleetConnectorReleaseManifestV1) {
+  if (!shellSafe.test(gatewayOrigin) || !/^crj_[A-Za-z0-9_-]{43}$/u.test(code)
+    || !(FLEET_WORKER_KINDS_V1 as readonly string[]).includes(workerKind)) throw new WebAccessError("invalid_request");
   let release: FleetConnectorReleaseManifestV1;
   try { release = captureFleetConnectorReleaseManifestV1(releaseValue); } catch { throw new WebAccessError("invalid_request"); }
   const url = `${gatewayOrigin}/fleet/v1/${release.file}`;
@@ -37,8 +38,8 @@ export function fleetJoinCommandsV1(gatewayOrigin: string, code: string, release
   const check = `node -e "eval(Buffer.from('${FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1}','base64').toString())"`;
   const expected = `${release.version} ${release.sha256} ${release.size} ${release.builtFrom}`;
   return Object.freeze({
-    unix: `d="$HOME/.local/share/control-room"; mkdir -p "$d" && curl -fsSL ${url} -o "$d/${release.file}" && curl -fsSL ${manifestUrl} -o "$d/connector-manifest.json" && ${check} "$d/${release.file}" "$d/connector-manifest.json" ${expected} && node "$d/${release.file}" join --server ${gatewayOrigin} --code ${code}`,
-    windows: `$d=Join-Path $env:LOCALAPPDATA 'ControlRoom'; New-Item -ItemType Directory -Force $d | Out-Null; $f=Join-Path $d '${release.file}'; $m=Join-Path $d 'connector-manifest.json'; Invoke-WebRequest ${url} -OutFile $f; Invoke-WebRequest ${manifestUrl} -OutFile $m; ${check} $f $m ${expected}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node $f join --server ${gatewayOrigin} --code ${code}`,
+    unix: `d="$HOME/.local/share/control-room"; mkdir -p "$d" && curl -fsSL ${url} -o "$d/${release.file}" && curl -fsSL ${manifestUrl} -o "$d/connector-manifest.json" && ${check} "$d/${release.file}" "$d/connector-manifest.json" ${expected} && node "$d/${release.file}" join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`,
+    windows: `$d=Join-Path $env:LOCALAPPDATA 'ControlRoom'; New-Item -ItemType Directory -Force $d | Out-Null; $f=Join-Path $d '${release.file}'; $m=Join-Path $d 'connector-manifest.json'; Invoke-WebRequest ${url} -OutFile $f; Invoke-WebRequest ${manifestUrl} -OutFile $m; ${check} $f $m ${expected}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node $f join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`,
   });
 }
 
@@ -53,9 +54,9 @@ export function createFleetOwnerHttpHandlerV1(options: FleetOwnerHttpOptionsV1) 
   catch { throw new Error("fleet_owner_http_gateway_invalid"); }
   const verify = options.trust ? createAccessVerifier(options.trust, options.gatewayAssertionProfile) : undefined;
   const clock = options.clock ?? Date.now;
-  const withCommands = <T extends { code: string }>(issued: T) => ({ ...issued,
+  const withCommands = <T extends { code: string; workerKind: string }>(issued: T) => ({ ...issued,
     ...(options.gatewayOrigin && connectorRelease
-      ? { commands: fleetJoinCommandsV1(options.gatewayOrigin, issued.code, connectorRelease) } : {}) });
+      ? { commands: fleetJoinCommandsV1(options.gatewayOrigin, issued.code, issued.workerKind, connectorRelease) } : {}) });
 
   return async (request: Request): Promise<Response> => {
     try {

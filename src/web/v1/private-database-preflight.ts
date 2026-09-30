@@ -232,6 +232,10 @@ coordinatorInserts.add("control_update_candidates");
 coordinatorReads.push("control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits", "control_service_incident_heads", "control_service_incidents");
+// The stall decision's outcome-uncertainty test reads effect intents. This is a
+// read, never a write: an intent is created and moved only by the path that
+// owns the external effect.
+coordinatorReads.push("control_effect_intents");
 for (const table of ["control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits"]) coordinatorInserts.add(table);
