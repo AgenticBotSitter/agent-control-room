@@ -13,7 +13,7 @@
 // binaries, no network.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isFleetClaimRefusalV1 } from "../src/fleet/v1";
+import { fleetDatabaseSqlStateV1, isFleetClaimRefusalV1 } from "../src/fleet/v1";
 import { PrivateDatabaseError } from "../src/web/v1/bounded-database";
 
 test("a guarded claim refusal is recognised on sqlState, never on code", () => {
@@ -25,6 +25,15 @@ test("a guarded claim refusal is recognised on sqlState, never on code", () => {
     // The trap this replaces: the refusal is NOT visible on `code`, which is
     // why the old `["P0001", ...].includes(error.code)` test matched nothing.
     assert.equal(error.code, "database_unavailable", `${sqlState} does not appear on code`);
+  }
+  // The in-process PGlite transport passes a driver error through unchanged, so
+  // the same refusal arrives on `code` there. One helper, both transports: a
+  // version that read only `sqlState` left the whole in-process fleet suite
+  // reporting a bare `refused` where a `conflict` is the answer.
+  for (const sqlState of ["54000", "P0001", "23P01", "23514"]) {
+    assert.equal(isFleetClaimRefusalV1(Object.assign(new Error(sqlState), { code: sqlState })), true,
+      `${sqlState} is a claim refusal on the in-process transport too`);
+    assert.equal(fleetDatabaseSqlStateV1(Object.assign(new Error(sqlState), { code: sqlState })), sqlState);
   }
 });
 
@@ -44,9 +53,14 @@ test("a database fault is not a claim refusal, whatever the driver says", () => 
   // Something that is not a database error at all.
   assert.equal(isFleetClaimRefusalV1(new Error("fleet worker claim capacity reached")), false);
   assert.equal(isFleetClaimRefusalV1(undefined), false);
-  // A driver error that still carries the raw `code` shape the old test read.
-  // It must NOT be accepted: the bounded database is the only thing that may
-  // interpret a SQLSTATE, and it moves it to `sqlState`.
-  assert.equal(isFleetClaimRefusalV1(Object.assign(new Error("boom"), { code: "P0001" })), false,
-    "a raw driver error is not a claim refusal the store may answer for");
+  // A `code` that is not a SQLSTATE. Node's own system errors use this field,
+  // and a message must never be read as a decision.
+  for (const code of ["ECONNREFUSED", "ETIMEDOUT", "ERR_SOCKET_CLOSED", "database_unavailable", ""]) {
+    assert.equal(fleetDatabaseSqlStateV1(Object.assign(new Error("boom"), { code })), undefined,
+      `${JSON.stringify(code)} is not a SQLSTATE`);
+    assert.equal(isFleetClaimRefusalV1(Object.assign(new Error("boom"), { code })), false);
+  }
+  // A getter that throws must not take the caller down with it.
+  assert.equal(fleetDatabaseSqlStateV1(Object.defineProperty({}, "code", {
+    get() { throw new Error("no"); } })), undefined);
 });
