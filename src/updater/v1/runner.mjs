@@ -18,7 +18,8 @@ const plainFailureV1 = Object.freeze({
  * - intent is durable before each repeat-safe effect and done is durable after;
  * - an interrupted effect is replayed from observable state;
  * - after drain, the run finishes or rolls back and is never stranded;
- * - a rescue marker forces `uncertain` and no forward effect is attempted.
+ * - a rescue marker forces `uncertain`; only an explicit owner
+ *   check-and-continue can measure or settle it.
  */
 export class UpdaterRunnerV1 {
   #running = false;
@@ -85,8 +86,8 @@ export class UpdaterRunnerV1 {
     let run = initial;
     if (await this.stateFiles.hasRescueMarker()) {
       if (run.state !== "uncertain") run = await this.#record(run, "uncertain", { reason: "rescue_marker" });
-      await this.effects.measure(run);
-      return { status: "uncertain", run, message: "A rescue occurred; no update step was resumed." };
+      return { status: "uncertain", run,
+        message: "Control Room isn't sure the last update finished. Tap Check and continue." };
     }
     if (run.state === "uncertain" || run.state === "attended_upgrade_required")
       return { status: run.state, run, message: "Owner action is required before this run can continue." };
@@ -139,16 +140,34 @@ export class UpdaterRunnerV1 {
     }
   }
 
+  async #journalUncertain(run, reason) {
+    if (run.state === "uncertain") return { status: "uncertain", run,
+      message: "The updater journal is damaged. Tap Check and continue." };
+    const uncertain = await this.store.transition(run.run_id, run.lease_token, "uncertain", { reason });
+    return { status: "uncertain", code: reason, run: uncertain,
+      message: "The updater journal is damaged. Tap Check and continue." };
+  }
+
+  #outcomeHeartbeat(outcome, run) {
+    if (["waiting", "uncertain", "attended_upgrade_required"].includes(outcome.status))
+      this.onHeartbeatState({ state: "awaiting_approval", step: outcome.run?.state ?? run.state });
+    else if (outcome.status === "rolled_back") this.onHeartbeatState({ state: "rolled_back", step: null });
+    else if (outcome.status === "needs_attention") this.onHeartbeatState({ state: "uncertain", step: null });
+    else this.onHeartbeatState({ state: "idle", step: null });
+    return outcome;
+  }
+
   async runOnce() {
     if (this.#running) return { status: "busy", message: "Another updater call is active." };
     this.#running = true;
+    let run;
     try {
       const acquisition = this.store.acquire
         ? await this.store.acquire(this.stateFiles.leaseToken)
         : { status: "acquired", run: await this.store.liveRun(), leaseToken: this.stateFiles.leaseToken };
       if (acquisition.status === "busy") return { status: "busy", liveRun: Boolean(acquisition.run),
         message: "An updater with another live database session owns the active run." };
-      const run = acquisition.run;
+      run = acquisition.run;
       if (!run) {
         this.onHeartbeatState({ state: "idle", step: null });
         return { status: "idle", message: "No approved update is active." };
@@ -156,16 +175,49 @@ export class UpdaterRunnerV1 {
       if (run.lease_token !== acquisition.leaseToken) return { status: "busy", liveRun: true,
         message: "The active run lease could not be acquired." };
       this.onHeartbeatState({ state: "running", step: run.state });
-      const outcome = await this.#advance(run);
-      if (["waiting", "uncertain", "attended_upgrade_required"].includes(outcome.status))
-        this.onHeartbeatState({ state: "awaiting_approval", step: outcome.run?.state ?? run.state });
-      else if (outcome.status === "rolled_back") this.onHeartbeatState({ state: "rolled_back", step: null });
-      else if (outcome.status === "needs_attention") this.onHeartbeatState({ state: "uncertain", step: null });
-      else this.onHeartbeatState({ state: "idle", step: null });
-      return outcome;
+      const reason = await this.stateFiles.refreshJournalHealth?.() ?? this.stateFiles.journalUncertain?.();
+      if (reason) return this.#outcomeHeartbeat(await this.#journalUncertain(run, reason), run);
+      return this.#outcomeHeartbeat(await this.#advance(run), run);
     } catch (error) {
+      if (run && typeof error?.code === "string" && error.code.startsWith("updater_journal_")) {
+        try { return this.#outcomeHeartbeat(await this.#journalUncertain(run, error.code), run); }
+        catch (uncertainError) { error = uncertainError; }
+      }
       return { status: "error", code: typeof error?.code === "string" ? error.code : "updater_runner_error",
         message: "The updater hit an error and will retry from its durable step." };
+    } finally { this.#running = false; }
+  }
+
+  /** Owner-gated recovery. The measurement port must establish one of the two
+   * terminal observable states; a false, missing, or malformed answer leaves
+   * both the rescue marker and the run uncertain. */
+  async checkAndContinue() {
+    if (this.#running) return { status: "busy", message: "Another updater call is active." };
+    this.#running = true;
+    try {
+      const run = await this.store.liveRun();
+      const rescued = await this.stateFiles.hasRescueMarker(), journalUncertain = await this.stateFiles.journalUncertain?.();
+      const journalRecoveryPending = await this.stateFiles.journalRecoveryPending?.();
+      if (!run || run.lease_token !== this.stateFiles.leaseToken || (!rescued && !journalUncertain && !journalRecoveryPending))
+        throw updaterRefuseV1("updater_check_continue_refused");
+      if (run.state !== "uncertain") throw updaterRefuseV1("updater_check_continue_refused");
+      if (journalUncertain && !await this.stateFiles.repairJournalUncertain?.())
+        throw updaterRefuseV1("updater_check_continue_refused");
+      const measurement = await this.effects.measure(run);
+      if (measurement?.state === "rollback_required") {
+        const rollback = await this.#rollback(run, "updater_measurement_inconsistent");
+        if (rollback.status === "rolled_back") {
+          if (rescued) await this.stateFiles.removeRescueMarker();
+          this.stateFiles.settleJournalRecovery?.();
+        }
+        return rollback;
+      }
+      if (!measurement || !["succeeded", "rolled_back"].includes(measurement.state))
+        throw updaterRefuseV1("updater_measurement_refused");
+      const settled = await this.#record(run, measurement.state, { measured: true, ...measurement.detail }, { terminal: true });
+      if (rescued) await this.stateFiles.removeRescueMarker();
+      this.stateFiles.settleJournalRecovery?.();
+      return { status: measurement.state, run: settled, message: "The measured update state is recorded." };
     } finally { this.#running = false; }
   }
 }

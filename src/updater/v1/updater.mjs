@@ -4,8 +4,13 @@ import { PostgresUpdaterStoreV1 } from "./store.mjs";
 import { UpdaterControlServerV1 } from "./control-socket.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
 import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
-  newUpdaterIdentityV1 } from "./runtime.mjs";
+  newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
+
+// The fixed updater bundle exposes the item-13 actuator for composition with
+// the item-5 lifecycle and item-14 health ports. `startUpdaterV1` accepts that
+// composed instance through `options.effects` and settles it before listening.
+export { DiskReserveV1, PairHistoryV1, UpdaterActuatorV1, collectOldReleasesV1 } from "./actuator.mjs";
 
 function updaterRootV1(env) {
   const production = "/Library/Application Support/Control Room";
@@ -64,18 +69,45 @@ export async function startUpdaterV1(options = {}) {
     ? { state: "running", step: acquisition.run.state }
     : { state: "idle", step: null };
   const setHeartbeatState = value => { heartbeatState = value; };
-  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles,
-    journal: new FileStepJournalV1(root), onHeartbeatState: setHeartbeatState });
+  const journal = options.journal ?? new FileStepJournalV1(root);
+  await journal.recoverCompaction();
+  let fileJournalUncertain, displayJournalUncertain, journalRecoveryPending = false;
+  const refreshJournalHealth = async () => {
+    try { await journal.validate(); fileJournalUncertain = undefined; }
+    catch (error) { fileJournalUncertain = error?.code ?? "updater_journal_invalid"; }
+    return fileJournalUncertain;
+  };
+  await refreshJournalHealth();
+  if (!fileJournalUncertain && options.journalDisplay) {
+    const reconciliation = await reconcileJournalDisplayV1({ journal, display: options.journalDisplay,
+      rescued: await stateFiles.hasRescueMarker() });
+    displayJournalUncertain = reconciliation.state === "uncertain" ? reconciliation.reason : undefined;
+  }
+  stateFiles.refreshJournalHealth = refreshJournalHealth;
+  stateFiles.journalUncertain = () => fileJournalUncertain ?? displayJournalUncertain;
+  stateFiles.repairJournalUncertain = async () => {
+    if (!fileJournalUncertain) return false;
+    const repaired = await journal.quarantineCorrupt();
+    await refreshJournalHealth();
+    journalRecoveryPending = repaired && !fileJournalUncertain;
+    return journalRecoveryPending;
+  };
+  stateFiles.journalRecoveryPending = () => journalRecoveryPending;
+  stateFiles.settleJournalRecovery = () => { journalRecoveryPending = false; };
+  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles, journal,
+    onHeartbeatState: setHeartbeatState });
   const ownerActions = options.ownerActions ?? { handle: async request => {
     if (request.request_kind === "pause") mode.set("paused");
     else if (request.request_kind === "stop") mode.set("stopped");
     else if (request.request_kind === "resume") mode.set("running");
+    else if (request.request_kind === "check_and_continue") await runner.checkAndContinue();
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
   const reportTimerError = options.onTimerError ?? (error => {
     process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
   });
-  const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, onError: reportTimerError });
+  const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, watcher: options.watcher ?? null,
+    onError: reportTimerError });
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportTimerError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
@@ -85,6 +117,9 @@ export async function startUpdaterV1(options = {}) {
       requires_passkey: request.verb === "rollback" });
   } });
   try {
+    // Item 13: settle a durable release/database link transaction before any
+    // run is observed. The actuator either completes it or restores its source.
+    await effects.recover?.();
     await control.start(); await heartbeat.beat(); await loop.tick(); await heartbeat.beat(); heartbeat.start(); loop.start();
   } catch (error) {
     loop.stop(); await heartbeat.stop(); await control.stop();

@@ -1,9 +1,9 @@
-import { constants } from "node:fs";
-import { lstat, open, readlink } from "node:fs/promises";
+import { lstat, readlink, unlink } from "node:fs/promises";
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
-import { atomicWriteNoFollowV1, openNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
+import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
 import { parseSelfUpdateFlagV1, publicStatusV1, updaterRefuseV1 } from "./contracts.mjs";
+export { FileStepJournalV1, RefusalAggregatorV1, reconcileJournalDisplayV1 } from "./journal.mjs";
 
 export class UpdaterStateFilesV1 {
   constructor(root, leaseToken) { this.root = root; this.leaseToken = leaseToken; }
@@ -15,6 +15,10 @@ export class UpdaterStateFilesV1 {
         throw updaterRefuseV1("updater_rescue_marker_refused");
       return true;
     } catch (error) { if (error?.code === "ENOENT") return false; throw error; }
+  }
+  async removeRescueMarker() {
+    await this.hasRescueMarker();
+    await unlink(`${this.root}/updater-state/rescued.json`);
   }
   async writeHeartbeat(value) {
     await atomicWriteNoFollowV1(this.root, "updater-state/heartbeat", `${JSON.stringify({
@@ -45,28 +49,6 @@ export class UpdaterStateFilesV1 {
   }
 }
 
-/** Item 15 replaces this structural step journal with the MAC-chained journal.
- * This port already preserves the essential ordering: intent is fsynced before
- * an effect and done is fsynced after its observable result. */
-export class FileStepJournalV1 {
-  constructor(root) { this.root = root; this.path = "updater-state/journal.jsonl"; }
-  async #append(kind, record) {
-    const line = `${JSON.stringify({ schema: "control-room.updater-step/v1", kind,
-      at: new Date().toISOString(), ...record })}\n`;
-    if (Buffer.byteLength(line) > 16_384) throw updaterRefuseV1("updater_journal_line_refused");
-    let handle;
-    try { handle = await openNoFollowV1(this.root, this.path, constants.O_WRONLY | constants.O_APPEND); }
-    catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-      handle = await open(`${this.root}/${this.path}`, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT
-        | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
-    }
-    try { await handle.writeFile(line); await handle.sync(); } finally { await handle.close(); }
-  }
-  intent(record) { return this.#append("intent", record); }
-  done(record) { return this.#append("done", record); }
-}
-
 export class UpdaterModeV1 {
   #value = "running";
   async read() { return this.#value; }
@@ -80,9 +62,9 @@ const RISK_REDUCING_WHILE_OFF_V1 = new Set(["pause", "stop", "backup_now", "chec
 
 export class UpdaterMainLoopV1 {
   #timer; #ticking = false;
-  constructor({ runner, store, stateFiles, mode, ownerActions, intervalMs = 5_000, onError = () => {} }) {
+  constructor({ runner, store, stateFiles, mode, ownerActions, watcher = null, intervalMs = 5_000, onError = () => {} }) {
     this.runner = runner; this.store = store; this.stateFiles = stateFiles; this.mode = mode;
-    this.ownerActions = ownerActions; this.intervalMs = intervalMs; this.onError = onError;
+    this.ownerActions = ownerActions; this.watcher = watcher; this.intervalMs = intervalMs; this.onError = onError;
     this.lastOutcome = { status: "idle" };
   }
   async #requests(flag) {
@@ -104,6 +86,7 @@ export class UpdaterMainLoopV1 {
       await this.#requests(flag);
       // R5iii: while Off, do not read approval rows, watch sources or invoke a
       // builder. Only timer work and risk-reducing owner requests run.
+      if (flag === "On" && this.watcher) await this.watcher.tick();
       const rescued = await this.stateFiles.hasRescueMarker();
       if (rescued) {
         const measured = await this.runner.runOnce();
