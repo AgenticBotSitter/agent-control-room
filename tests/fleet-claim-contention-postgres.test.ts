@@ -351,3 +351,47 @@ test("a worker killed mid-job does not strand its task: the elapsed lease hands 
       }
     }, { port: PORTS[1], allowedPorts: [PORT, PORTS[1]], boundMs: 540_000 });
 });
+
+test("a refused progress note is retried rather than abandoned: one busy gateway must not throw away a claim",
+  async () => {
+    const events: string[] = [];
+    let attempts = 0;
+    const client = {
+      progress: async () => { attempts += 1; events.push(`progress:${attempts}`);
+        if (attempts < 3) throw Object.assign(new Error("Control Room refused the request (rate_limited)."),
+          { code: "rate_limited" });
+        return { eventId: "e", replayed: false, leaseExpiresAt: null }; },
+      blocker: async () => ({ eventId: "b", replayed: false, released: true }),
+      result: async () => ({ resultId: "r", replayed: false, taskState: "waiting_approval", accepted: false }),
+    };
+    const claim = { claimId: "fleet-claim:" + "a".repeat(32), jobId: "job:busy", title: "Busy", instructions: "Work." };
+    const finished = await connector.runClaimedTask({ client: client as never, claim, log: () => {},
+      readMode: async () => "running", secrets: [],
+      adapter: { harness: "codex", deadlineMs: 5_000, execute: async () => ({ kind: "completed",
+        text: "Done.", startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), usage: null }) } });
+    assert.equal(attempts, 3, "a transient refusal is retried, not treated as final");
+    assert.equal(finished.outcome, "submitted", JSON.stringify(finished));
+  });
+
+test("a result that cannot be delivered hands the task back instead of holding it with no worker",
+  async () => {
+    const events: string[] = [];
+    let resultAttempts = 0;
+    const client = {
+      progress: async () => ({ eventId: "e", replayed: false, leaseExpiresAt: null }),
+      result: async () => { resultAttempts += 1;
+        throw Object.assign(new Error("Control Room refused the request (refused)."), { code: "refused" }); },
+      blocker: async (claimId: string, message: string) => { events.push("blocker");
+        return { eventId: "b", replayed: false, released: true }; },
+    };
+    const claim = { claimId: "fleet-claim:" + "b".repeat(32), jobId: "job:undelivered", title: "Undelivered",
+      instructions: "Work." };
+    const finished = await connector.runClaimedTask({ client: client as never, claim, log: () => {},
+      readMode: async () => "running", secrets: [],
+      adapter: { harness: "codex", deadlineMs: 5_000, execute: async () => ({ kind: "completed",
+        text: "Done.", startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), usage: null }) } });
+    assert.equal(finished.outcome, "blocked",
+      `an undeliverable result releases the claim rather than abandoning it: ${JSON.stringify(finished)}`);
+    assert.deepEqual(events, ["blocker"], "the task is handed back to the owner");
+  });
+
