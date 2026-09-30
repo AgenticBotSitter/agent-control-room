@@ -220,6 +220,19 @@ await Promise.all(lanes.map(async lane => {
     else lane.refused += 1;
   }
 }));
+// The catalogue is written as soon as it exists, so a seeding run that is later
+// cut short still leaves the load tool something to read. The delivery phase
+// below only ADDS results and activity; nothing the pages read needs this file
+// to be rewritten afterwards, so a run that is interrupted mid-delivery is a
+// usable, slightly smaller dataset rather than a discarded one.
+const writeSummary = async () => writeFile(seedFile, `${JSON.stringify({
+  schema: "control-room.site-load-seed/v1", origin, seeded: true,
+  projects: projects.map(project => project.projectId), tasks: allTasks.length,
+  running: lanes.reduce((total, lane) => total + lane.delivered, 0),
+  refused: lanes.reduce((total, lane) => total + lane.refused, 0),
+  machineHealthResumes, runningTasks }, null, 2)}\n`, { mode: 0o600 });
+await writeSummary();
+
 const running = lanes.reduce((total, lane) => total + lane.delivered, 0);
 refused = lanes.reduce((total, lane) => total + lane.refused, 0);
 console.log(`load-test seed: ${running} tasks driven to a terminal state through the real queue`
@@ -245,8 +258,9 @@ while (Date.now() < deadline) {
 }
 console.log(`load-test seed: ${delivered}/${sampled.length} sampled tasks reached a terminal state`);
 
-const summary = { schema: "control-room.site-load-seed/v1", origin, seeded: true,
+// The final write carries the delivery tally too, so the report can state it.
+await writeFile(seedFile, `${JSON.stringify({
+  schema: "control-room.site-load-seed/v1", origin, seeded: true,
   projects: projects.map(project => project.projectId), tasks: allTasks.length, running, delivered,
-  refused, machineHealthResumes, runningTasks };
-await writeFile(seedFile, `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
+  refused, machineHealthResumes, runningTasks }, null, 2)}\n`, { mode: 0o600 });
 console.log(`load-test seed complete: ${projects.length} projects, ${allTasks.length} tasks, ${running} submitted`);

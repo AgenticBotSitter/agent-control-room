@@ -49,8 +49,11 @@ const root = rootArg, protectedRoot = join(root, "protected"), repoRoot = proces
 const origin = `http://127.0.0.1:${webPort}`;
 const env = { ...process.env, CONTROL_ROOM_PROTECTED_ROOT: protectedRoot, TMPDIR: process.env.TMPDIR };
 const invoke = (args: string[]) => {
+  // Seeding drives real end-to-end deliveries on a shared Mac that pauses itself
+  // whenever it is busy, so it is given a long budget and prints its own
+  // progress. A shorter budget turned a slow machine into a discarded install.
   const result = spawnSync(process.execPath, ["--import", "tsx", ...args], { cwd: repoRoot, encoding: "utf8",
-    timeout: 900_000, env });
+    timeout: Number(process.env.CONTROL_ROOM_LOAD_SEED_TIMEOUT_MS ?? 3_600_000), env });
   if (result.status !== 0) throw new Error(`${args[0]} failed (${result.status}): ${(result.stderr || result.stdout).trim()}`);
   return result.stdout.trim();
 };
