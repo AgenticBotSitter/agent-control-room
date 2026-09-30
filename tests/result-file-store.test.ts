@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { chmod } from "node:fs/promises";
-import { link, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,6 +58,27 @@ const liveStamp = (pid = process.pid, boot?: string) =>
 const EXLOCK = 0x20;
 const heldLockV1 = (path: string) => open(path,
   constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | EXLOCK | constants.O_NOFOLLOW, 0o600);
+
+/**
+ * Waits for a child process, WITHOUT letting the event loop decide the test's
+ * lifetime.
+ *
+ * A `ChildProcess` is not a ref'd handle, so a test that awaits only `once("exit")`
+ * gives Node nothing to keep it running. Node then ends the test with "Promise
+ * resolution is still pending but the event loop has already resolved" — the
+ * review's B2, arriving through the test rather than through the store, and it
+ * reads exactly like a hang. The ref'd timer here is what holds the loop open,
+ * and the deadline stops a lost child from turning into a stuck lane.
+ */
+function awaitChildV1(child: ReturnType<typeof spawn>, label: string, ms = 60_000): Promise<number | null> {
+  return new Promise<number | null>((resolve, reject) => {
+    if (child.exitCode !== null) { resolve(child.exitCode); return; }
+    const keeper = setTimeout(() => {
+      reject(new Error(`child ${label} did not exit within ${ms} ms`));
+    }, ms);
+    child.once("exit", (code, signal) => { clearTimeout(keeper); resolve(code ?? null); void signal; });
+  });
+}
 const digest = (value: Uint8Array) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
 /** A fresh 0700 root and a store opened on it, both removed afterwards. */
@@ -677,6 +698,185 @@ test("B1: NOTHING in a leftover's stamp decides anything, and every old format s
   }
 });
 
+test("B1: the STORE'S OWN write path takes the kernel lock, not just the tests' fixtures", async () => {
+  // Mutation testing found this one missing, and it is the most important
+  // property of the whole fix: the previous build's fixtures all created their
+  // "live writer" locks BY HAND, so the lane was green while the real write path
+  // took no kernel lock at all — a store whose recovery asked the kernel and
+  // whose writer never locked, which deletes every live write it is asked about.
+  // That is the review's B1 with the guard left off.
+  //
+  // So the lock is caught from a REAL `put()`, mid-write, with no hand-made
+  // fixture anywhere: if the store's own descriptor is not holding it, the probe
+  // below succeeds and this test fails. The payload is large so the window is
+  // wide enough to catch reliably rather than by luck.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-ownlock-")));
+  try {
+    const root = join(base, "store");
+    await mkdir(root, { mode: 0o700 });
+    const store = await ResultFileStoreV1.create({ rootPath: root, maximumFiles: 32,
+      maximumFileBytes: 268_435_456, maximumSetBytes: 536_870_912,
+      maximumTotalBytes: 1_073_741_824, operationTimeoutMs: 30_000 });
+    // 64 MiB: a real payload, and long enough that polling for the lock cannot
+    // miss it (measured: the lock is observable 14-40 ms after a put starts).
+    const payload = new Uint8Array(64 * 1024 * 1024);
+    payload.fill(7);
+    const id = identity("project:ownlock", FILE, payload);
+    const writing = store.put({ ...id, bytes: payload });
+    const lockName = ".control-room-result-file-store.lock";
+    let caught = "";
+    for (let attempt = 0; attempt < 40_000 && !caught.trim(); attempt += 1) {
+      try { caught = await readFile(join(root, lockName), "utf8"); } catch { /* not yet */ }
+      if (!caught) await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    assert.ok(caught.trim(), "the store's own write path created its lock, so it was caught mid-write");
+    // THE ASSERTION. The lock the store just wrote is, right now, locked by the
+    // kernel, because the store's own descriptor holds it.
+    await assert.rejects(open(join(root, lockName), constants.O_RDWR | EXLOCK | constants.O_NONBLOCK),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "EAGAIN",
+    "the store's OWN lock is held by the kernel while its write is in flight");
+    // And the same lock is takeable the moment the write retires, which is what
+    // makes a crash recoverable rather than permanent.
+    await writing;
+    assert.equal((await readdir(root)).filter(entry => entry.endsWith(".crbf")).length, 1,
+      "the write landed");
+    assert.ok(!(await readdir(root)).includes(lockName), "and the store released its own lock");
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+test("B1: a second process's LIVE write is never taken over, measured with a real writer", async () => {
+  // The review's B1 attack, as a test: a real writer in a real child process,
+  // alive for longer than a second, part-way through a real write — and a second
+  // store instance opening the same directory underneath it.
+  //
+  // The last round's version of this test built its "live writer" fixture by
+  // hand, stamping `ps`'s start second itself, and so passed against a store
+  // that was wrong in exactly the way the review found. The fixture has to be a
+  // real writer in a real process, and the store has to be asked while that
+  // writer is actually writing.
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cr-result-store-crossproc-")));
+  // The directory exists BEFORE the child is spawned. Spawning first and
+  // creating the root afterwards loses a race the child cannot report on: it
+  // exits with a store refusal, the poll below never sees a lock, and the test
+  // hangs until the runner's own timeout rather than failing with a reason.
+  await mkdir(join(base, "store"), { mode: 0o700 });
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    const { ResultFileStoreV1 } = await import(${JSON.stringify(join(process.cwd(),
+      "src/artifacts/v1/result-file-store.ts"))});
+    const { createHash, randomUUID } = await import("node:crypto");
+    const store = await ResultFileStoreV1.create({ rootPath: process.env.CR_ROOT,
+      maximumFiles: 32, maximumFileBytes: 268_435_456, maximumSetBytes: 536_870_912,
+      maximumTotalBytes: 1_073_741_824, operationTimeoutMs: 30_000 });
+    // Alive for well over a second before writing, which is what made the old
+    // stamp (the second the lock was TAKEN) disagree with the reader.
+    await new Promise(resolve => setTimeout(resolve, 2_500));
+    // Four 8 MiB files, not six 48 MiB ones. The property under test is "a
+    // second opener must not disturb a live writer", and 8 MiB is comfortably
+    // long enough to be caught mid-write (measured: the lock is observable
+    // within 14-40 ms of the put starting) while costing a fraction of the
+    // disk. Several bots share this Mac, and a 288 MiB child here starves the
+    // lanes that run beside it -- which is how this test came to look hung when
+    // it was merely starved.
+    for (let index = 0; index < 4; index += 1) {
+      const bytes = new Uint8Array(8 * 1024 * 1024).fill(index + 1);
+      try {
+        await store.put({ tenantId: "tenant:crossproc", projectId: "project:crossproc",
+          fileId: "result-file:" + randomUUID().replace(/-/g, ""),
+          contentDigest: "sha256:" + createHash("sha256").update(bytes).digest("hex"), bytes });
+        process.stdout.write("ok\\n");
+      } catch (error) { process.stdout.write("err " + (error.code ?? error.message) + "\\n"); }
+    }
+    process.stdout.write("done\\n");`], { stdio: ["ignore", "pipe", "inherit"],
+  cwd: process.cwd(), env: { ...process.env, CR_ROOT: join(base, "store") } });
+  try {
+    const lines: string[] = [];
+    child.stdout.on("data", chunk => { for (const line of String(chunk).split("\n")) if (line) lines.push(line); });
+    let childExited = false;
+    child.once("exit", () => { childExited = true; });
+    const lockName = ".control-room-result-file-store.lock";
+    const pendingPrefix = ".control-room-result-file-store-pending-";
+    // Wait for the child to be genuinely mid-write: its lock AND a staging file
+    // beside it, and a stamped lock (so the writer is past its first write).
+    //
+    // The loop gives up the moment the child EXITS, and says what the child
+    // reported. Polling for 80 seconds on a process that died 3 seconds in turns
+    // a real failure into a hang, which is strictly worse for whoever reads the
+    // lane's output.
+    let listed: string[] = [];
+    let stamp = "";
+    // A REF'D timer, deliberately. Polling with `setTimeout(2)` gives the event
+    // loop nothing to hold it open, and Node ends a test whose promise is
+    // "still pending but the event loop has already resolved" — which is the
+    // review's B2 arriving through the test instead of through the store. The
+    // child process is not something this loop can observe directly, so the
+    // deadline timer is what keeps the process alive while it runs.
+    const keeper = setTimeout(() => {}, 60_000);
+    try {
+      const deadline = Date.now() + 55_000;
+      while (Date.now() < deadline && !childExited) {
+        listed = await readdir(join(base, "store"));
+        if (listed.includes(lockName) && listed.some(entry => entry.startsWith(pendingPrefix))) {
+          try { stamp = await readFile(join(base, "store", lockName), "utf8"); } catch { stamp = ""; }
+          if (stamp.trim()) break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 2));
+      }
+    } finally { clearTimeout(keeper); }
+    assert.equal(childExited, false,
+      `the child writer exited before it could be attacked: ${lines.join(" ").trim() || "(it said nothing)"}`);
+    assert.ok(stamp.trim(), "the child writer was caught mid-write, with a stamped lock");
+    const alive = (() => { try { process.kill(child.pid!, 0); return true; } catch { return false; } })();
+    assert.equal(alive, true, "and it is alive while we attack it");
+    // THE ATTACK. A second store instance, in this process, over the same
+    // directory, while that child is writing.
+    const second = await ResultFileStoreV1.create({ rootPath: join(base, "store"), maximumFiles: 32,
+      maximumFileBytes: 268_435_456, maximumSetBytes: 536_870_912,
+      maximumTotalBytes: 1_073_741_824, operationTimeoutMs: 10_000 });
+    assert.ok(second, "the second instance opens: a live writer must not stop it starting");
+    // The outcome the review measured as a bug: the live writer's LOCK must still
+    // be there. Before the fix the directory came back EMPTY and the writer's put
+    // died with a raw ENOENT.
+    //
+    // The staging file is deliberately NOT asserted here. A pending file exists
+    // only between a writer's create and its `link()`, which for a small file is
+    // a few milliseconds — by the time a second opener has walked the directory,
+    // the writer may legitimately have finished. Asserting its presence would
+    // make this a test of timing rather than of the store. What is asserted
+    // instead is the pair that cannot be timing: the lock is still held, and the
+    // lock is still the KERNEL's, so the writer has not been interfered with.
+    const after = await readdir(join(base, "store"));
+    assert.ok(after.includes(lockName), "a live writer's lock was NOT taken over by the second opener");
+    await assert.rejects(open(join(base, "store", lockName),
+      constants.O_RDWR | EXLOCK | constants.O_NONBLOCK),
+    (error: unknown) => (error as NodeJS.ErrnoException).code === "EAGAIN",
+    "and the kernel still says the live writer holds it, which is why it was not deleted");
+    // A write through the second instance is refused while that live writer holds
+    // it: the O_EXCL create is the mutual exclusion and it is untouched by this.
+    const blocked = bytes("must not slip past a live writer\n");
+    const blockedId = identity("project:crossproc-other", `result-file:${"8".repeat(32)}`, blocked);
+    await assert.rejects(second.put({ ...blockedId, bytes: blocked }),
+      (error: unknown) => error instanceof ResultFileStoreError && error.code === "store_ambiguous",
+    "a write through the second instance is refused while a live writer holds the lock");
+    // Let the child finish, and read what it reported. Every put must be `ok`:
+    // an `err` here is the review's raw ENOENT, which is a store error contract
+    // breach as well as a lost write.
+    await awaitChildV1(child, "writer");
+    assert.ok(lines.includes("done"), "the child writer finished");
+    const errors = lines.filter(line => line.startsWith("err"));
+    assert.deepEqual(errors, [], "every one of the live writer's puts succeeded");
+    assert.equal(lines.filter(line => line === "ok").length, 4,
+      "all four puts landed, so nothing was destroyed underneath the writer");
+    // And the second instance can read what the live writer wrote, which is the
+    // other half of "a second opener does not damage a live write".
+    const stored = (await readdir(join(base, "store"))).filter(entry => entry.endsWith(".crbf"));
+    assert.equal(stored.length, 4, "every file the live writer wrote is on disk exactly once");
+  } finally {
+    child.kill("SIGKILL");
+    await awaitChildV1(child, "writer (cleanup)").catch(() => {});
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test("B1: a HELD lock is left alone whatever its stamp says, including a lying one", async () => {
   // The fail-open direction, which is the only one that destroys anything. A
   // lock the kernel holds is a live writer, so it is left alone — and that has
@@ -1031,7 +1231,7 @@ test("B1: the KERNEL lock, not a stamp, is what says a writer is alive", async (
         (error: unknown) => (error as NodeJS.ErrnoException).code === "EAGAIN",
         "while the child is ALIVE the lock is held across processes: a second opener must see it");
       child.kill("SIGKILL");
-      await new Promise<void>(resolve => child.once("exit", () => resolve()));
+      await awaitChildV1(child, "lock holder");
       const reclaimed = await open(live, constants.O_RDWR | EXLOCK | constants.O_NONBLOCK);
       assert.ok(reclaimed.fd >= 0,
         "after SIGKILL the kernel released the lock, so the store can tell a dead writer from a live one");
