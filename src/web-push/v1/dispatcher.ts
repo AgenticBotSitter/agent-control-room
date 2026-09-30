@@ -205,13 +205,21 @@ export class OwnerPushDispatcherV1 {
     await this.adoptOpenAttention(limit);
     await this.recoverStaleReservations();
     const at = safeNow(this.#clock());
-    // The claim SELECTs and RESERVES in ONE transaction. That is not a style
-    // choice, it is the whole concurrency guarantee: SKIP LOCKED only protects a
-    // row for as long as the LOCK is held, and the lock is released at COMMIT.
+    // The claim SELECTs and RESERVES in ONE transaction, and it is BOTH the lock
+    // and the compare-and-set that make the claim exclusive.
+    //
     // An earlier version selected under SKIP LOCKED, committed, and reserved in a
-    // second transaction -- so two dispatchers both selected the same rows, both
-    // committed, and both went on to send. The reserve had to come first, in the
-    // same transaction as the lock.
+    // SECOND transaction -- so two dispatchers both selected the same rows, both
+    // committed, and both went on to send. That was a real defect and it is
+    // fixed. What the fix does NOT do is make either mechanism load bearing on
+    // its own: with the reserve's own `state='pending'` in its WHERE clause, the
+    // UPDATE is a compare-and-set that the lock is redundant with, and
+    // mutation testing confirms it -- removing the FOR UPDATE SKIP LOCKED clause
+    // leaves every test green, and removing the reserve's state test does too.
+    // Both are kept because a claim that is safe for a wrong reason today can be
+    // unsafe after one edit, and the two fail differently (a blocking claim under
+    // a long send, versus a duplicate send under any scheduler change). That is a
+    // deliberate redundancy, not two independent proofs of the same thing.
     //
     // The reservation is committed BEFORE the send so the push never happens
     // inside a transaction: a slow or dropped endpoint cannot hold a connection

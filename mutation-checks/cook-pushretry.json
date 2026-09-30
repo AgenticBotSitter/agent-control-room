@@ -11,21 +11,21 @@
     "find": "        SET state='reserved',status_code=NULL,completed_at=NULL\n        WHERE owner_web_push_deliveries.state='failed'",
     "replace": "        SET state='reserved',status_code=NULL,completed_at=NULL\n        WHERE owner_web_push_deliveries.state='never_matches'",
     "test": "pnpm run test:owner-push:postgres",
-    "why": "a failed send must be re-sendable; without the upgrade clause the retry is read as an existing row, a dead endpoint is reported as delivered, and the phone is never rung"
+    "why": "a failed send must be re-sendable; without the upgrade clause the retry is read as an existing row, a dead endpoint is reported as delivered, and the phone is never rung -- NOT independently detectable. A prior 'failed' 0174 row is re-sendable, and the dispatcher's own attempt bound plus the reservation make this the second line of defence. The burst test does cover the RESEND path (50 failures then delivery), but removing this clause does not change the outcome, so the clause is currently defence in depth rather than load bearing."
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
     "find": "        WHERE tenant_id=$1 AND action_inbox_id=ANY($3::text[]) AND state='pending'",
     "replace": "        WHERE tenant_id=$1 AND action_inbox_id=ANY($3::text[])",
     "test": "pnpm run test:owner-push:postgres",
-    "why": "the reserve is the compare-and-set that makes a claim exclusive; without the state test two racing dispatchers both reserve the same item and both send"
+    "why": "the reserve is the compare-and-set that makes a claim exclusive; without the state test two racing dispatchers both reserve the same item and both send -- NOT independently detectable, and recorded as defence in depth. The reserve runs inside the same transaction as SELECT ... FOR UPDATE SKIP LOCKED, so the lock already serialises two racing dispatchers and this state test is a second condition on top of it, not the only one. The two-dispatcher race test proves exclusivity and does fail if the WHOLE claim/reserve pairing is broken (verified by mutating the SELECT's state filter instead), but not by mutating this one. -- MEASURED: not independently detectable. With the reserve's own state='pending' compare-and-set in the same transaction, the FOR UPDATE SKIP LOCKED lock is redundant with it; removing either one alone leaves every test green. Both are kept deliberately because they fail differently (a blocking claim under a long send vs a duplicate send under any scheduler change), and the original defect was the two being in SEPARATE transactions, not either being absent."
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
     "find": "        WHERE h.tenant_id=$1 AND h.state='pending' AND h.next_attempt_at<=$2",
     "replace": "        WHERE h.tenant_id=$1 AND h.state IN ('pending','reserved') AND h.next_attempt_at<=$2",
     "test": "pnpm run test:owner-push:postgres",
-    "why": "only 'pending' is claimable: a 'reserved' row is a send in flight RIGHT NOW, and re-claiming it is a second push for one stall"
+    "why": "only 'pending' is claimable: a 'reserved' row is a send in flight RIGHT NOW, and re-claiming it is a second push for one stall -- NOT independently detectable, and recorded as defence in depth. Same reason as the entry above: the FOR UPDATE lock in the claim transaction already prevents re-claiming a 'reserved' row, so this filter is a second condition. The crash-window test proves a live reservation is not stolen, but does so via the lock rather than via this clause. -- MEASURED: not independently detectable for the same reason as the entry above; the lock in the claim transaction is what the crash-window test exercises, and the reserve's own state test is redundant with it."
   },
   {
     "file": "src/web-push/v1/dispatcher.ts",
@@ -46,7 +46,7 @@
     "find": "    if (!sendFailure) {\n      // No subscription, or a channel that reported success while delivering",
     "replace": "    if (false) {\n      // No subscription, or a channel that reported success while delivering",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
-    "why": "no-subscription is distinguished from send-failure by the failure report, never by the counters alone"
+    "why": "no-subscription is distinguished from send-failure by the failure report, never by the counters alone -- NOT independently detectable from a dispatcher test. The no-subscription refund path is reached only when list() returns no subscriptions, and every stress test installs one; the counters assertion lives in deliverOwnerPushV1 and is covered by tests/owner-web-push.test.ts, which is why this entry points at the delivery counters rather than at the refund."
   },
   {
     "file": "db/migrations/0225_owner_push_attempt_guards.sql",
