@@ -56,7 +56,11 @@ export interface MacLocalWebProcessOptionsV1 {
   localOwnerSessionStore?: LocalOwnerSessionStoreV1;
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
-  database: { client: DatabaseClient; close: () => Promise<void> };
+  /** The one database client, and its lifecycle. `isAvailable` is optional so a
+   * simulation or a test double may omit it; when it is present, a permanently
+   * closed client must make this process report NOT ready, because every page it
+   * serves will fail and nothing else notices. */
+  database: { client: DatabaseClient; close: () => Promise<void>; isAvailable?: () => boolean };
   /** The existing task service from the Mac task application. This keeps
    * owner-review follow-up creation and browser task routes on one service. */
   taskService?: WebTaskService;
@@ -552,5 +556,17 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     }
   }
 
-  return Object.freeze({ handle, isReady: () => closed === undefined, close: () => closed ??= options.database.close() });
+  // Readiness folds in the database. It used to be `closed === undefined`, which
+  // is true for the entire life of a process whose database client has been
+  // closed underneath it: `bindPrivatePgPool` quarantines a client PERMANENTLY
+  // on an uncertain outcome, and the process keeps answering `/ready` while
+  // every page it serves fails. The review's N1 was invisible for exactly this
+  // reason — the host was told the app was ready, so nothing restarted it.
+  //
+  // `isAvailable` is optional because a host may supply a database without one
+  // (a simulation, a test double); when it is absent the old answer stands,
+  // and when it is present a closed client is a process that is NOT ready.
+  return Object.freeze({ handle,
+    isReady: () => closed === undefined && (options.database.isAvailable?.() ?? true),
+    close: () => closed ??= options.database.close() });
 }
