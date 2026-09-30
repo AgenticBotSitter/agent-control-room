@@ -527,7 +527,7 @@ export class PostgresIntakeCompletionLookupV1 implements IntakeCompletionLookupP
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u.test(input.requestKey)) return null;
     const row = (await this.db.query<{ result: unknown; request_digest: string }>(`SELECT result, request_digest
       FROM control_idempotency
-      WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3 AND status='completed'`,
+      WHERE tenant_id=$1 AND operation_scope=$2 AND idempotency_key=$3`,
     [input.tenantId, `work-batches.propose/v1:${input.identityId}`, input.requestKey])).rows[0];
     const receipt = workBatchReceiptSchemaV1.safeParse(row?.result);
     if (!row || !receipt.success) return null;

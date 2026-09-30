@@ -40,6 +40,13 @@ OWNER=src/web/v1/project-orchestration-owner.ts
 UI=private-app/app/project-orchestration.tsx
 MIGRATION=db/migrations/0203_work_batch_split_suggestions_tenant_bound_read.sql
 NEEDSYOU_MIGRATION=db/migrations/0204_planner_needs_you_digest_scopes.sql
+# Round 3's migration. It carries the security_barrier, the scope-keyed ledger and
+# the owner-retry latch, so every guard in it is a database guard and every
+# mutation below re-applies the whole schema to a real cluster.
+RETRY_MIGRATION=db/migrations/0205_planner_barrier_and_owner_retry.sql
+# The lane that proves N-B1 and N-B3 on a real cluster, as the production logins.
+BARRIER_PATTERN="tenant-bound|leaks nothing through an ERROR"
+RETRY_PATTERN="one description gives one"
 # The results directory defaults to a path under the repository's own scratch
 # area, not a home directory. The sibling scripts/orchui-mutations.sh carries an
 # absolute home path here; this one does not, because a home path in committed
@@ -71,7 +78,7 @@ PY
   # A migration edit changes the ledger digest, so the applier would refuse with
   # migration_altered. Regenerating the ledger is part of applying the mutation,
   # and the ledger itself is restored with the file.
-  if [ "$file" = "$MIGRATION" ] || [ "$file" = "$NEEDSYOU_MIGRATION" ]; then
+  if [ "$file" = "$MIGRATION" ] || [ "$file" = "$NEEDSYOU_MIGRATION" ] || [ "$file" = "$RETRY_MIGRATION" ]; then
     node scripts/generate-migration-ledger.mjs >/dev/null 2>&1
   fi
   local files=()
@@ -93,7 +100,7 @@ PY
     pass=$((pass+1))
   fi
   git checkout -- "$file"
-  if [ "$file" = "$MIGRATION" ] || [ "$file" = "$NEEDSYOU_MIGRATION" ]; then
+  if [ "$file" = "$MIGRATION" ] || [ "$file" = "$NEEDSYOU_MIGRATION" ] || [ "$file" = "$RETRY_MIGRATION" ]; then
     node scripts/generate-migration-ledger.mjs >/dev/null 2>&1
   fi
 }
@@ -286,3 +293,125 @@ echo "CAUGHT: $pass   ESCAPED/ERROR: $fail"
 [ -n "$failures" ] && echo "not caught:$failures"
 git status --short
 exit $((fail > 0))
+
+# ---------------------------------------------------------------------------
+# Round 3 (N-B1): the security_barrier on the tenant-bound view.
+# ---------------------------------------------------------------------------
+# Each of these removes ONE reloption, and the cast/oracle test must fail. The
+# first is the one the review measured; the other five are the sweep, and they are
+# here so a later edit that drops one of them is caught by the same mechanism
+# rather than by a reader's memory.
+mutate F1a-split-suggestion-barrier-dropped "$RETRY_MIGRATION" \
+  "ALTER VIEW work_batch_current_split_suggestions SET (security_barrier = true);" \
+  "-- dropped" \
+  --lane db --pattern "$BARRIER_PATTERN"
+
+mutate F1b-queue-admissions-barrier-dropped "$RETRY_MIGRATION" \
+  "ALTER VIEW work_batch_effective_queue_admissions SET (security_barrier = true);" \
+  "-- dropped" \
+  --lane db --pattern "$BARRIER_PATTERN"
+
+mutate F1c-stage-runs-barrier-dropped "$RETRY_MIGRATION" \
+  "ALTER VIEW pipeline_ordered_stage_runs SET (security_barrier = true);" \
+  "-- dropped" \
+  --lane db --pattern "$BARRIER_PATTERN"
+
+mutate F1d-operations-mode-barrier-dropped "$RETRY_MIGRATION" \
+  "ALTER VIEW installation_effective_operations_mode SET (security_barrier = true);" \
+  "-- dropped" \
+  --lane db --pattern "$BARRIER_PATTERN"
+
+# ---------------------------------------------------------------------------
+# Round 3 (N-B3): the Needs-you ledger is keyed on the escalating scope.
+# ---------------------------------------------------------------------------
+mutate F2a-needs-you-still-keyed-on-request-key "$RETRY_MIGRATION" \
+  "  ON public.control_planner_needs_you_items (tenant_id,project_id,scope_key);" \
+  "  ON public.control_planner_needs_you_items (tenant_id,project_id,request_key);" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+mutate F2b-needs-you-id-not-bound-to-the-scope "$RETRY_MIGRATION" \
+  "    OR NEW.id<>'planner-needs-you:' || substring(pg_catalog.encode(pg_catalog.sha256(
+      pg_catalog.convert_to(NEW.tenant_id || '/' || NEW.project_id || '/' || NEW.scope_key,'UTF8')),'hex') from 1 for 32)" \
+  "    OR false" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+mutate F2c-needs-you-counter-not-matched-on-its-own-scope "$RETRY_MIGRATION" \
+  "        AND c.scope_key=NEW.scope_key
+        AND c.failure_count>=NEW.failure_count AND c.cleared_at IS NULL) THEN" \
+  "        AND c.failure_count>=NEW.failure_count AND c.cleared_at IS NULL) THEN" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+# ---------------------------------------------------------------------------
+# Round 3 (N-B3): the owner retry is a one-shot latch, and the grant cannot
+# lower the count it is stamped on.
+# ---------------------------------------------------------------------------
+mutate F3a-retry-grant-needs-no-escalation "$RETRY_MIGRATION" \
+  "    AND control_planner_failure_counters.failure_count>=2
+    AND control_planner_failure_counters.owner_retry_cleared_at IS NULL;" \
+  "    AND control_planner_failure_counters.owner_retry_cleared_at IS NULL;" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+mutate F3b-retry-grant-not-one-shot "$RETRY_MIGRATION" \
+  "    AND control_planner_failure_counters.failure_count>=2
+    AND control_planner_failure_counters.owner_retry_cleared_at IS NULL;" \
+  "    AND control_planner_failure_counters.failure_count>=2;" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+mutate F3c-retry-could-lower-the-count "$RETRY_MIGRATION" \
+  "      OR NEW.failure_count IS DISTINCT FROM OLD.failure_count
+      OR NEW.last_failure_at IS DISTINCT FROM OLD.last_failure_at
+      OR NEW.cleared_at IS DISTINCT FROM OLD.cleared_at
+      OR OLD.cleared_at IS NOT NULL OR OLD.failure_count<2 THEN" \
+  "      OR OLD.cleared_at IS NOT NULL OR OLD.failure_count<2 THEN" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+mutate F3d-latch-could-be-set-without-escalation "$RETRY_MIGRATION" \
+  "      OR OLD.cleared_at IS NOT NULL OR OLD.failure_count<2 THEN" \
+  "      OR OLD.cleared_at IS NOT NULL THEN" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+mutate F3e-latch-could-survive-its-own-clear "$RETRY_MIGRATION" \
+  "  IF NEW.failure_count=0 AND NEW.cleared_at IS NOT NULL
+    AND NEW.last_failure_at IS NOT NULL AND NEW.owner_retry_cleared_at IS NULL THEN" \
+  "  IF NEW.failure_count=0 AND NEW.cleared_at IS NOT NULL
+    AND NEW.last_failure_at IS NOT NULL THEN" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+# ---------------------------------------------------------------------------
+# The COORDINATOR's half of the retry, which no migration can prove: the grant
+# is what lets a press through, and it is spent by the run.
+# ---------------------------------------------------------------------------
+mutate F4a-escalated-press-runs-anyway "$COORD" \
+  "      if (!(await this.failures.ownerRetryGranted?.(scope))) return true;" \
+  "      if (false) return true;" \
+  --lane unit --pattern "escalated description is refused"
+
+mutate F4b-retry-is-never-spent "$COORD" \
+  "      await this.failures.clear(scope);
+    }
+    return false;" \
+  "    }
+    return false;" \
+  --lane unit --pattern "retry that fails again"
+
+mutate F4c-any-store-is-treated-as-having-a-grant "$COORD" \
+  "      if (!(await this.failures.ownerRetryGranted?.(scope))) return true;" \
+  "      if (!(await this.failures.ownerRetryGranted?.(scope)) && false) return true;" \
+  --lane unit --pattern "escalated description is refused"
+
+# The ledger identity in the ADAPTER: it is what stops one item per press, and the
+# in-memory double cannot stand in for it.
+mutate F5a-adapter-keys-the-item-on-the-request-key "$STORE" \
+  '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING`,' \
+  '      ON CONFLICT (tenant_id,project_id,request_key) DO NOTHING`,' \
+  --lane db --pattern "$RETRY_PATTERN"
+
+# The completion lookup's N8 refusal.
+mutate F6-completion-lookup-answers-a-different-description "$STORE" \
+  "    if (input.ownerRequest !== undefined) return null;" \
+  "    // removed" \
+  --lane coord --pattern "retry|completed"
+
+echo
+echo "round-3 summary: $pass caught / $fail escaped  (failures:${failures:- none})"
+[ "$fail" -eq 0 ]

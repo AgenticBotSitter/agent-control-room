@@ -16,13 +16,17 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 }
 
 // Generated from public migrations through 0196 plus this stream's chief-of-staff
-// migrations 0200-0204 (filename order, including assigned gaps, 0110-0111,
-// 0155-0157, 0160-0162, 0186, 0200-0204 and 0115), including generic
+// migrations 0200-0205 (filename order, including assigned gaps, 0110-0111,
+// 0155-0157, 0160-0162, 0186, 0200-0205 and 0115), including generic
 // external-content migrations 0025/0026, plus MIG-I's owner push attempt heads
 // 0224-0226 and the push-endpoint allow list 0227, read from a real PostgreSQL 17
 // cluster installed the production way and built from these migrations. Catalog
 // query below; not a mutable database marker.
-export const privateWebSchemaDigest = "a4cadc0cc4feda19a13a5a8b51d0b7f8527b4b2b0e5c9a20da02b5d5ddd978f5";
+//
+// The value was read from a live cluster on this stream's assigned ports AND
+// cross-checked against a PGlite build of the same migrations; both agree, so the
+// number is not an artefact of either applier.
+export const privateWebSchemaDigest = "d131791e12067282c8135a464b8da7c90469158af8bed36322bfb6616a1dcb13";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway

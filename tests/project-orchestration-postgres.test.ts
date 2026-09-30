@@ -14,9 +14,10 @@ import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { workBatchProposalDigestV1 } from "../src/work-intake/v1/digest";
+import { randomUUID } from "node:crypto";
 import { IntakeCoordinatorV1, PostgresIntakeCompletionLookupV1, PostgresIntakeNeedsYouStoreV1,
-  PostgresIntakePlannerFailureStoreV1, PostgresIntakeSuggestionStoreV1, WorkBatchServiceV1, WorkBatchStoreV1 } from
-  "../src/work-intake/v1";
+  PostgresIntakeOwnerRetryStoreV1, PostgresIntakePlannerFailureStoreV1, PostgresIntakeSuggestionStoreV1,
+  intakeProjectScopeV1, WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { createProjectOrchestrationServiceV1 } from "../src/web/v1/project-orchestration-composition";
 import { PostgresProjectOrchestrationAccessV1, PostgresProjectOrchestrationBatchRevisionsV1,
   PostgresProjectOrchestrationStoreV1 } from "../src/web/v1/project-orchestration-postgres-store";
@@ -864,4 +865,110 @@ test("STRESS: 20 concurrent describes + retries on one project, two tenants, thr
     } finally { await Promise.all([...clients, ...coordinators].map(async client => {
       await client.end().catch(() => {}); })); await admin.end(); }
   }, { port: PORT + 9, allowedPorts: ALLOWED, boundMs: 300_000 });
+});
+
+
+test("STRESS: 20 concurrent presses and owner retries of ONE description stay one item and one run", async t => {
+  // Round 3's stress, and it is the shape the review said it could not rule out
+  // from the panel: "One panel cannot do this, because `pending` disables the
+  // button. Two tabs or devices can."
+  //
+  // What it has to hold, and what round 2 measured failing:
+  //   * 20 concurrent presses of ONE description -> ONE Needs-you row and ONE
+  //     open inbox item, not 19 of each. That is the de-duplication.
+  //   * 20 concurrent owner retries -> at most ONE grant, because the grant is
+  //     one-shot at the database, and the count is never lowered.
+  //   * and no run loop: the presses that are refused cost no planner run.
+  if (!PG) { t.skip(realPostgresSkipMessage()); return; }
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    const CONCURRENCY = 20;
+    const coordinators = await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
+      const client = new Client(postgres.connection("coordinator")); await client.connect(); return client;
+    }));
+    try {
+      await seedTenant(admin, scope, { withBinding: true }); await seedIdentities(admin, scope, "");
+      const description = "Make the release notes match the shipped behaviour.";
+      const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
+      const scopeOf = () => ({ tenantId: scope.tenantId, projectId: scope.projectId });
+
+      // Escalate through the real adapter on one connection, so the counter is
+      // real before the burst rather than hand-set.
+      const warm = new PostgresIntakePlannerFailureStoreV1(database(coordinators[0]!), scopeOf, () => LATER);
+      assert.equal(await warm.record(projectScope), 1);
+      assert.equal(await warm.record(projectScope), 2);
+
+      // TWENTY CONCURRENT PRESSES, a fresh request key each, through twenty
+      // coordinators each on its own connection -- the two-tabs case.
+      let runs = 0;
+      const results = await Promise.all(coordinators.map(async (client, index) => {
+        const { coordinator } = coordinatorFor({ intake: database(client),
+          coordinatorDb: database(client), agentId: "identity:chief-agent",
+          onRun: () => { runs += 1; }, onConsume: () => {}, varying: true,
+          completions: false, projectId: scope.projectId });
+        try {
+          const value = await coordinator.coordinateInitial({ principal: {
+            tenantId: scope.tenantId, identityId: "identity:chief-agent", actorType: "agent",
+            authenticatedAt: NOW, expiresAt: LATER }, projectId: scope.projectId,
+            ownerRequest: description, idempotencyKey: `orchestrator:burst-${String(index).padStart(4, "0")}`,
+            now: LATER });
+          return value.status;
+        } catch { return "threw" as const; }
+      }));
+      // EVERY press is refused with Needs-you -- none of them is a run, and none
+      // is a submission.
+      assert.deepEqual([...new Set(results)], ["needs_you"],
+        `every concurrent press of an escalated description is refused as needs_you, got ${JSON.stringify(results)}`);
+      assert.equal(runs, 0, "and not one of them spent a planner run");
+
+      // ONE ITEM, however many pressed. This is the flood the review measured at
+      // five items and five inbox entries for one broken description.
+      const items = await admin.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM control_planner_needs_you_items WHERE scope_key=$1", [projectScope]);
+      assert.equal(items.rows[0]!.n, "1", "twenty presses of ONE description leave ONE Needs-you item");
+      const inbox = await admin.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM control_action_inbox WHERE kind='failure'");
+      assert.equal(inbox.rows[0]!.n, "1", "and ONE open inbox item, not twenty");
+
+      // TWENTY CONCURRENT OWNER RETRIES. The grant is one-shot IN THE DATABASE,
+      // and this is the only place that can be shown: twenty callers race the
+      // same row, and the trigger plus the function's own WHERE must leave at
+      // most one latch standing.
+      const granted = await Promise.all(coordinators.map(async client => {
+        const retry = new PostgresIntakeOwnerRetryStoreV1(database(client));
+        try { return await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+          requestKey: `orchestrator:retry-${randomUUID()}`, ownerRequest: description }); }
+        catch { return 0; }
+      }));
+      const total = granted.reduce((sum, value) => sum + value, 0);
+      assert.equal(total, 1, `exactly one of twenty concurrent retries may be granted, got ${total}`);
+      const latched = await admin.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM control_planner_failure_counters WHERE scope_key=$1 AND owner_retry_cleared_at IS NOT NULL",
+      [projectScope]);
+      assert.equal(latched.rows[0]!.n, "1", "and exactly one latch is standing");
+      const count = await admin.query<{ failure_count: string }>(
+        "SELECT failure_count::text FROM control_planner_failure_counters WHERE scope_key=$1", [projectScope]);
+      assert.equal(count.rows[0]!.failure_count, "2", "a granted retry never lowers the count");
+      // THE OWNER'S WEB LOGIN is the one that normally asks, and it holds no
+      // privilege on the table -- so the same race through it must produce the
+      // same single grant, and must be refused outright for anything else.
+      const web = new Client(postgres.connection("web")); await web.connect();
+      try {
+        const retry = new PostgresIntakeOwnerRetryStoreV1(database(web));
+        assert.equal(await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
+          requestKey: `orchestrator:web-retry-${randomUUID()}`, ownerRequest: description }), 0,
+        "a second grant through the owner's own login is refused: the latch is one-shot");
+        await assert.rejects(web.query("UPDATE control_planner_failure_counters SET failure_count=0"),
+          /permission denied/u, "and the owner still holds no UPDATE on the counters");
+      } finally { await web.end(); }
+
+      // AND THE GRANT IS SPENT BY THE RUN IT AUTHORISED, so the burst cannot be
+      // repeated: the next press runs the planner, the counter restarts at 1 on a
+      // failure, and a second burst finds no latch.
+      await warm.clear(projectScope);
+      assert.equal(await warm.count(projectScope), 0);
+      assert.equal(await warm.ownerRetryGranted(projectScope), false,
+        "the latch is gone, so no further press is exempt from the escalation");
+    } finally { for (const client of coordinators) await client.end(); await admin.end(); }
+  }, { port: PORT + 5, allowedPorts: ALLOWED, boundMs: 240_000 });
 });
