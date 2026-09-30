@@ -22,21 +22,21 @@
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
-    "find": "      AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[])\n    THEN",
+    "find": "      AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[])\n    THEN\n    RAISE EXCEPTION 'updater health count function must be STABLE SECURITY DEFINER",
     "replace": "      AND true)\n    THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
     "why": "the pinned search_path is what stops candidate SQL shadowing an object the definer's body names (R10b); dropping it must be caught"
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
-    "find": "      WHERE a.privilege_type = 'EXECUTE' AND a.is_grantable\n        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN",
-    "replace": "      WHERE false) THEN",
+    "find": "      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE' AND a.is_grantable\n        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN",
+    "replace": "      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE' AND false\n        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
     "why": "a GRANTABLE EXECUTE would let the updater's login hand this definer's reach to anybody, which is the exact authority growth the function exists not to permit"
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
-    "find": "    WHERE b.singleton\n      AND (SELECT count(*) FROM public.workspaces x WHERE x.tenant_id = b.tenant_id) = 1",
+    "find": "    WHERE b.singleton\n      AND (SELECT count(*) FROM public.workspaces x WHERE x.tenant_id = b.tenant_id) = 1\n  )\n",
     "replace": "    WHERE b.singleton",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts",
     "why": "workspaces has no unique constraint on tenant_id alone, so an ambiguous scope would silently DOUBLE every count -- and a health signal that doubles still says healthy"
@@ -78,8 +78,8 @@
   },
   {
     "file": "src/web/v1/updater-health-web-reads.ts",
-    "find": "      if (await input.privilege.hasPlanApprovalInsert() !== true) refused(\"plan_approval_insert\");",
-    "replace": "      await input.privilege.hasPlanApprovalInsert();",
+    "find": "      if (await sources.privilege.hasPlanApprovalInsert() !== true) refused(\"plan_approval_insert\");",
+    "replace": "      await sources.privilege.hasPlanApprovalInsert();",
     "test": "pnpm test:updater -- --test-name-pattern='the authority port|the web port'",
     "why": "§8.4 requires the web login's INSERT on updater.plan_approvals; a false result is the whole signal that the approval path is broken, so it must refuse health rather than report it"
   },
