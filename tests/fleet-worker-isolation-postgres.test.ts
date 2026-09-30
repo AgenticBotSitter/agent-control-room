@@ -405,12 +405,18 @@ test("a repeatable read claimer is refused, and a serializable one is not", asyn
             // this does: a claim row is written BEFORE its lease, because 0140's
             // guard admits an attempt or lease only once a guarded claim already
             // names it, and 0140's lease-consistency constraint is DEFERRED, so
-            // the lease is only required at COMMIT. A count that joins claims to
-            // their leases therefore cannot see this transaction's own first
-            // claim, and the transaction inserts its way past the ceiling.
-            // Measured before the LEFT JOIN, as the fleet login on real
-            // PostgreSQL 17: one READ COMMITTED transaction, ceiling 2, claims
-            // A then B then C then their leases, and all three commit.
+            // the lease is only required at COMMIT.
+            //
+            // The order is the load-bearing part, and it is the reviewer's
+            // measurement rather than mine: ALL THREE claims, then all three
+            // leases. A count that joins claims to their leases cannot see a
+            // claim whose lease is not written yet, so with every lease still
+            // pending the count reads zero for all three inserts and all three
+            // are admitted at a ceiling of 2. Writing each lease right after its
+            // own claim hides the bug -- by the third insert the first two leases
+            // exist and the count sees them -- and I confirmed that on this
+            // suite: the inner-JOIN mutant survived the interleaved order, and
+            // only this one bites it.
             //
             // This is on the isolation file rather than the capacity file
             // because it needs a worker holding NOTHING, which is the same
@@ -424,24 +430,21 @@ test("a repeatable read claimer is refused, and a serializable one is not", asyn
               // Bounded like every racer here, so a guard that does not refuse
               // still ends in a failure rather than a hang: the third insert is
               // what the ceiling is supposed to stop, and if it does not, this
-              // transaction holds the worker lock until it is rolled back below.
+              // transaction holds the worker lock until it is released below.
               await multi.query("BEGIN");
               await multi.query("SET LOCAL lock_timeout = '3s'");
               await multi.query("SET LOCAL statement_timeout = '15s'");
+              const claimId = (seed: string, index: number) =>
+                `fleet-claim:${(index + 1).toString(16).padStart(32, seed)}`;
               const results: string[] = [];
               for (const [index, offer] of multiOffers.entries()) {
                 try {
                   await multi.query(`INSERT INTO fleet_claims(tenant_id,claim_id,offer_id,worker_id,node_id,
                     project_id,job_id,attempt_id,lease_id,idempotency_key,claimed_at)
                     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())`,
-                  [FLEET_TENANT, `fleet-claim:${(index + 1).toString(16).padStart(32, "d")}`, offer.offerId,
-                    subject, subjectNode, offer.projectId, offer.jobId, offer.attemptId, offer.leaseId,
-                    `iso-multi-key-${index}`]);
+                  [FLEET_TENANT, claimId("d", index), offer.offerId, subject, subjectNode, offer.projectId,
+                    offer.jobId, offer.attemptId, offer.leaseId, `iso-multi-key-${index}`]);
                   results.push("won");
-                  // The lease follows its claim, in the same transaction, so
-                  // each earlier claim is a real claim whose lease merely does
-                  // not exist YET -- the exact row the count has to still count.
-                  await writeCanonicalAttemptAndLease(multi, offer);
                 } catch (error) {
                   results.push(`refused:${sqlState(error)}`);
                 }
@@ -457,20 +460,18 @@ test("a repeatable read claimer is refused, and a serializable one is not", asyn
               // PostgreSQL aborts a transaction at the statement that raises, so
               // the refusal above left this one ABORTED, and a COMMIT on an
               // aborted transaction is a rollback that still succeeds. So a batch
-              // that runs into the ceiling commits NOTHING, not a partial batch --
-              // all-or-nothing, and the evidence is that the worker is still
-              // holding nothing afterwards. A caller that wanted the first two
-              // claims kept has to re-run the batch, which is PostgreSQL's rule
-              // and not something 0234 changes.
+              // that runs into the ceiling commits NOTHING, not a partial batch.
+              // The two claims it did admit are rolled back with it, which is
+              // PostgreSQL's rule and not something 0234 changes: a caller that
+              // wanted them kept has to re-run the batch.
               await multi.query("COMMIT");
               assert.equal(await liveCounts(), 0,
                 `a batch that ran into the ceiling left no claim behind (${results.join(", ")})`);
 
               // And the batch path still WORKS at the ceiling rather than above
-              // it: two claims in one transaction commit, and each sees the
-              // other's claim as a slot already taken. Without the LEFT JOIN this
-              // would also pass, which is why the over-ceiling case above is the
-              // one that proves the count.
+              // it: all the claims first, then all the leases, and both claims
+              // commit. Each claim counted the earlier one as a slot already
+              // taken -- its lease was pending, not absent forever.
               await multi.query("BEGIN");
               await multi.query("SET LOCAL lock_timeout = '3s'");
               await multi.query("SET LOCAL statement_timeout = '15s'");
@@ -478,11 +479,10 @@ test("a repeatable read claimer is refused, and a serializable one is not", asyn
                 await multi.query(`INSERT INTO fleet_claims(tenant_id,claim_id,offer_id,worker_id,node_id,
                   project_id,job_id,attempt_id,lease_id,idempotency_key,claimed_at)
                   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())`,
-                [FLEET_TENANT, `fleet-claim:${(index + 1).toString(16).padStart(32, "e")}`, offer.offerId,
-                  subject, subjectNode, offer.projectId, offer.jobId, offer.attemptId, offer.leaseId,
-                  `iso-multi-at-key-${index}`]);
-                await writeCanonicalAttemptAndLease(multi, offer);
+                [FLEET_TENANT, claimId("e", index), offer.offerId, subject, subjectNode, offer.projectId,
+                  offer.jobId, offer.attemptId, offer.leaseId, `iso-multi-at-key-${index}`]);
               }
+              for (const offer of multiOffers.slice(0, 2)) await writeCanonicalAttemptAndLease(multi, offer);
               await multi.query("COMMIT");
               assert.equal(await liveCounts(), 2,
                 "a batch of exactly maxConcurrent claims commits, and both are live");
