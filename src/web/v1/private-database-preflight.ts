@@ -15,7 +15,8 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0230 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
+
+// Generated from public migrations through 0237 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Recomputed for the fix round after 0206's quota guard
 // gained its per-tenant advisory lock, 0207's producer guard was corrected, and
@@ -24,13 +25,14 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // 90-day sweep, which closed the review's S3 (an unaccepted set was previously
 // undisposable by anyone, the superuser included). The pre-0230 digest was
 // re-derived with 0230 removed and matched the previous value exactly, so this
-// change is 0230's and only 0230's; catalog query below; not a mutable database
-// marker.
-// Generated from public migrations through 0196 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162, 0186 and 0115),
-// including generic external-content migrations 0025/0026, plus MIG-I's owner push attempt heads 0224-0226 and the push-endpoint
-// allow list 0227, read from a real PostgreSQL 17 cluster installed the production way and built from these migrations. Catalog
-// query below; not a mutable database marker.
-export const privateWebSchemaDigest = "10f1bc5beb5f65aacfdac818d7d690b35c8bc4f884e5034d451913ec621e980c";
+// change is 0230's and only 0230's. Recomputed once more after 0209-0211 (the
+// upload sessions, the publication receipt and the combine-input bindings) were
+// merged onto the ledger cook/v1 had reached at 0237; catalog query below; not a
+// mutable database marker.
+// Recomputed once more after 0210's stored-set guard was corrected to key on
+// `producer_kind` rather than `source_kind`, so the digest records THAT and not
+// 0209-0211's arrival alone.
+export const privateWebSchemaDigest = "f6be955079d2065915b378ff3c62529da47036412368483c02653a11b604ef45";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -80,7 +82,14 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // 0206-0208: the result-file catalog and its download grants. Read only; the
   // preflight's column audit is what proves the web login cannot write a
   // catalog row, cannot quarantine a file and cannot rewrite a producer.
-  "control_result_file_sets", "control_result_files", "control_result_file_download_grants"] as const;
+  "control_result_file_sets", "control_result_files", "control_result_file_download_grants",
+  // 0209-0211: the owner's approval artefacts for the upload path. Read plus
+  // INSERT on the three the owner actually declares and binds; the upload
+  // sessions, their chunks and the publication receipt are read only, so the
+  // owner's Stop decision about an upload is the 0209 guard's to check and not
+  // a column this login can simply set.
+  "control_task_declared_outputs", "control_task_declared_inputs", "control_job_artifact_inputs",
+  "control_result_upload_sessions", "control_result_upload_chunks", "control_result_publications"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -114,6 +123,13 @@ privateWebInsertTables.add("control_result_file_download_grants");
 // cook/v1 (recurring + skills): the owner's rules and reusable skills.
 for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
   privateWebInsertTables.add(table);
+// 0209-0211: the owner approves what a part may produce and what it needs, and
+// binds an accepted file to the consumer that declared it. Each insert is
+// guarded by a live-owner check in the database (0209/0211), so this is
+// permission to ask, not permission to declare.
+privateWebInsertTables.add("control_task_declared_outputs");
+privateWebInsertTables.add("control_task_declared_inputs");
+privateWebInsertTables.add("control_job_artifact_inputs");
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */

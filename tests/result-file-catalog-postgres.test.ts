@@ -364,18 +364,48 @@ test("the result-file catalog, its byte store and the owner download grant hold 
         assert.equal(await store.read({ ...identity, projectId: projectB }), undefined);
         assert.equal((await readdir(storeRoot)).length, 1, "exactly one file is on disk: no cross-project dedupe");
 
-        // ==== 4. a worker login can neither read nor download ===============
+        // ==== 4. a worker login can neither write nor download ==============
+        //
+        // A worker login now DOES hold SELECT on control_result_files and
+        // control_result_file_sets, and that is a deliberate part-2 change rather
+        // than a regression: 0209's reservation guard is SECURITY INVOKER and
+        // reads both to pin an upload to the owner's approved row, so a gateway
+        // that could not read them would fail closed on every reservation -
+        // a broken installation, not a safer one. What it does NOT hold is any
+        // write, any download, or a quarantine decision about the OWNER's bytes,
+        // and those are what this block proves.
+        //
         // Each statement carries exactly the parameters it declares. A worker
         // login must be refused on its MERITS — a protocol error about parameter
         // count would be a different, much weaker statement.
         for (const [statement, params] of [
-          ["SELECT * FROM control_result_files", []],
-          ["SELECT * FROM control_result_file_sets", []],
           ["SELECT * FROM control_result_file_download_grants", []],
           [insertSet, [TENANT, setId(9), projectA, 1, 1, ZERO, issuedAt]],
-          ["UPDATE control_result_files SET state='quarantined' WHERE tenant_id=$1", [TENANT]],
+          // This fixture's set is native-text, so the fleet producer-state guard
+          // (0210, FLEET sets only) does not apply and the refusal here is
+          // 0206's own append-only rule. Both are refusals; only the second is
+          // a privilege one, so they are asserted separately rather than
+          // lumped together with 42501.
+          ["UPDATE control_result_files SET display_name='other.txt' WHERE tenant_id=$1", [TENANT]],
+          ["DELETE FROM control_result_files WHERE tenant_id=$1", [TENANT]],
         ] as const) await guard(fleet, { sql: statement, params: [...params],
           what: `the fleet gateway is refused: ${statement.slice(0, 40)}`, states: ["42501"] });
+        // A quarantine is refused, but on 0206's append-only rule rather than on
+        // the column grant: this set is native-text, and 0210's producer-state
+        // guard is deliberately about FLEET sets. The FLEET case is proved in
+        // tests/result-upload-ingress-postgres.test.ts, where the refusal is
+        // 42501 from the guard itself.
+        await guard(fleet, { sql: "UPDATE control_result_files SET state='quarantined' WHERE tenant_id=$1",
+          params: [TENANT], what: "a quarantine is refused even for a native-text set",
+          states: ["23514", "42501"] });
+        // It CAN read the catalog, and reads nothing that identifies a cross-
+        // project file: the download-grant table - the one that names an owner,
+        // an expiry and a purpose - is refused, so reading the catalog teaches a
+        // worker a digest and a name and nothing it could not already compute.
+        const readable = await fleet("SELECT count(*)::int AS files FROM control_result_files WHERE tenant_id=$1",
+          [TENANT]);
+        assert.equal(readable[0]?.files, 1,
+          "the gateway reads the catalog rows it must pin an upload to, and no more");
 
         // ==== 5. acceptance is the owner's, and permanent ===================
         await webRefusal({ sql: "UPDATE control_result_file_sets SET retention_state='retained',accepted_at=$2,accepted_by_identity_id=$3 WHERE tenant_id=$1 AND set_id=$4",
