@@ -34,9 +34,14 @@ import { WebTaskService } from "../src/web/v1/task-service";
 import { composeResultFileService } from "../src/web/v1/result-file-composition";
 import { ResultFileStoreV1 } from "../src/artifacts/v1/result-file-store";
 
-// The assigned lane for this fix round: 59520-59529.
-const PORTS = Array.from({ length: 10 }, (_, index) => 59520 + index);
-const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59520);
+// The assigned lane for this fix round. It comes from the environment, because
+// the review had to copy this file to make it run: a hard-coded 59520-59529 made
+// every other block fail `attack_kit_port_outside_block`, which means the
+// evidence for the download path could only be produced on one machine's
+// schedule. Ten ports from the base, which is the block the lane was assigned.
+const PORT_BASE = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59520);
+const PORTS = Array.from({ length: 10 }, (_, index) => PORT_BASE + index);
+const PORT = PORT_BASE;
 const PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => { if (PG) { required += 1; return undefined; } return { skip: realPostgresSkipMessage() }; };
@@ -244,12 +249,27 @@ test("the real download path, the grant it writes, two sessions one file, the qu
       const webLogin = postgres.connection("web");
       const config = { host: "127.0.0.1", port: postgres.port, database: postgres.database,
         username: webLogin.user, password: webLogin.password, majorVersion: 17 as const };
+      // THE PRODUCTION BINDING, EXACTLY AS `mac-local-web-process.ts` BUILDS IT,
+      // AND WITH NO WRAPPER OF ANY KIND. The previous revision of this lane
+      // wrapped it in a `passthrough` client whose `transaction()` handed the
+      // callback a session backed by the POOL rather than by the transaction:
+      //
+      //   const passthrough: DatabaseSession = { query: (sql, params) => bound.client.query(sql, params) };
+      //   transaction: work => bound.client.transaction(tx => work(passthrough)),
+      //
+      // That wrapper is the only reason N1 reached production. It made "use the
+      // pool while holding a transaction" look exactly like "use the
+      // transaction", so every proof below passed against a service that was
+      // holding one of the pool's eight connections and asking for a ninth —
+      // which is the defect. The review measured it: 8 parallel downloads closed
+      // the database client for good and every page in the app failed after it.
+      //
+      // `bound.client` IS the `DatabaseClient`. Nothing is substituted, so what
+      // this lane proves is the production behaviour, and a request for a
+      // second connection inside a held transaction exhausts the real pool here
+      // exactly as it does on the owner's Mac.
       const bound = bindPrivatePgPool(new Pool({ ...privatePgOptions(config), host: webLogin.host }));
-      const passthrough: DatabaseSession = { query: (sql, params) => bound.client.query(sql, params) };
-      const client: DatabaseClient = { query: (sql, params) => bound.client.query(sql, params),
-        transaction: work => bound.client.transaction(tx => work(passthrough)),
-        transactionWithPreCommitCheck: (work, check) =>
-          bound.client.transactionWithPreCommitCheck(tx => work(passthrough), check) };
+      const client: DatabaseClient = bound.client;
       // The real WebTaskService. Its scope is the tenant and workspace the
       // fixtures created, and the keys are the only ones it insists on.
       // No review or planning keys: the download path authorises through the
@@ -676,6 +696,172 @@ test("the real download path, the grant it writes, two sessions one file, the qu
           content.byteLength, issuedAt, new Date(Date.parse(issuedAt) + 240_000).toISOString()]),
         (error: unknown) => ["23514", "23503"].includes(stateOf(error)),
         "a grant for a file that is not in the set is still refused");
+        // ==== N1: the reviewer's parallel table, on the production binding ===
+        //
+        // Before the fix (review `files2.md`, live, production binding, fresh
+        // binding per level, identical on two runs):
+        //
+        //   parallel  mints                       downloads            app afterwards
+        //   1, 2, 4, 6  all ok (10-36 ms)         all ok               ok
+        //   8           8 x database_outcome_uncertain after 5 s   ok   DEAD
+        //   9, 12, 16   all fail after 5 s        all fail after 5 s         DEAD
+        //   50 dl + 50 up  -                     0/50 ok (8 uncertain,
+        //                                              42 unavailable)        DEAD
+        //
+        // "DEAD" is `isAvailable() === false`: `bindPrivatePgPool` closed the
+        // database client PERMANENTLY, `isReady` did not look at the database,
+        // and every page in the app failed with nothing to restart it. Six at a
+        // time was fine, which is why it survived the previous round.
+        //
+        // This block is that table as a test, on the binding the owner actually
+        // runs, with the lane's `passthrough` wrapper deleted above.
+        const ownerIdentity: VerifiedWebIdentity = { provider: "test", subject: OWNER,
+          tokenDigest: token(OWNER), issuedAt, expiresAt, verificationExpiresAt: expiresAt };
+        // Fifty DIFFERENT sessions of the same owner — a phone, a laptop, a
+        // second browser profile. Each needs its own grant, so each of the fifty
+        // downloads has something of its own to spend, and the burst is fifty
+        // real owner requests rather than fifty attempts on one spent link.
+        const sessionsFor = (index: number): VerifiedWebIdentity => ({
+          ...ownerIdentity, tokenDigest: sha256Digest({ session: `${OWNER}-burst-${index}` }) });
+        // Each burst identity needs a session row of its own, because 0208's
+        // grant guard requires a live unrevoked `control_web_sessions` row for
+        // the digest the grant names (the review's B5 rule), and because the
+        // spend statement now re-checks it. Seeded as the superuser, whose only
+        // job in this file is fixtures: the web login holds no INSERT on that
+        // table. `ON CONFLICT DO NOTHING` so a re-run is idempotent.
+        for (let index = 0; index < 64; index += 1)
+          await admin(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
+            VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+          [TENANT, sessionsFor(index).tokenDigest, OWNER, issuedAt, expiresAt]);
+        // Assert the digest really is the one the service will use, rather than
+        // trusting that the two sides compute `sha256Digest` identically.
+        const [probe] = await admin<{ n: number }>(`SELECT count(*)::int AS n
+          FROM control_web_sessions WHERE tenant_id=$1 AND token_digest=$2`, [TENANT, sessionsFor(0).tokenDigest]);
+        assert.equal(probe!.n, 1, "the seeded session digest is the one the service will use");
+
+        /** A healthy share, not all of them. The admission limit is eight
+         * running plus eight queued, so a burst larger than sixteen is EXPECTED
+         * to lose some callers to a clean `database_unavailable`. "Healthy" here
+         * means the pool kept serving and kept returning bytes — which is the
+         * contrast with the pre-fix run, where NONE of the fifty came back. */
+        const boundedShare = (ok: number, of: number) => ok >= Math.ceil(of / 4);
+
+        /** One burst, and the honest summary of it. Every outcome must be a
+         * success or a CLEAN refusal; `database_outcome_uncertain` is the
+         * outcome that means a transaction was lost, and it is the one that
+         * closes the client. */
+        const burst = async (count: number, kind: "mint" | "download") => {
+          // One request per caller, end to end: a mint, and for a download the
+          // mint plus the spend that link then needs. Nothing is pre-fetched
+          // outside the try, because a caller that cannot get a connection at
+          // all is exactly the case under test and must be counted, not thrown.
+          const outcomes = await concurrently(count, async index => {
+            const who = sessionsFor(index);
+            try {
+              const link = await service.issueDownload(who, projectId, storedSet, storedFile);
+              if (kind === "mint") return `ok:${link.href.length > 0}`;
+              const file = await service.download(who, projectId, storedSet, storedFile,
+                new URL(`https://x${link.href}`).searchParams.get("token")!);
+              // The bytes are the real ones. A refused-but-not-uncertain run that
+              // returned the wrong content would be worse than a refusal.
+              return `ok:${Buffer.from(file.bytes).equals(Buffer.from(content))}`;
+            } catch (error) {
+              const code = String((error as { code?: string }).code ?? "unknown");
+              // `database_unavailable` is the bounded database refusing
+              // overload: a clean, retryable answer from the admission limit, and
+              // the pool still serving. Anything else is a defect to name.
+              return `refused:${code}`;
+            }
+          }, { boundMs: 60_000 });
+          const ok = outcomes.filter(entry => entry === "ok:true").length;
+          const refused = outcomes.filter(entry => entry.startsWith("refused:"));
+          const uncertain = refused.filter(entry => entry !== "refused:database_unavailable");
+          assert.deepEqual([...new Set(outcomes.filter(entry => entry.startsWith("ok:")))],
+            ["ok:true"], `${kind} x${count}: every success returned the exact bytes`);
+          assert.deepEqual(uncertain, [],
+            `${kind} x${count}: no request lost its outcome: ${JSON.stringify([...new Set(uncertain)])}`);
+          assert.ok(bound.isAvailable(),
+            `${kind} x${count}: the database client is STILL AVAILABLE afterwards`);
+          return { ok, refused: refused.length };
+        };
+
+        // The deadlock's signature, measured on the real cluster while the burst
+        // is in flight: a connection holding an open transaction and waiting.
+        // The pool is eight wide, so a run where all eight sit
+        // `idle in transaction` at once is the run that is about to be killed by
+        // `idle_in_transaction_session_timeout` — which is precisely what the
+        // pre-fix build produced at eight requests.
+        let worstIdleInTransaction = 0;
+        let sampling = true;
+        const sampler = (async () => {
+          while (sampling) {
+            const [row] = await admin<{ n: number }>(`SELECT count(*)::int AS n
+              FROM pg_catalog.pg_stat_activity
+              WHERE application_name='control-room-private-web' AND state='idle in transaction'`);
+            worstIdleInTransaction = Math.max(worstIdleInTransaction, row?.n ?? 0);
+            await new Promise<void>(resolve => setTimeout(resolve, 5));
+          }
+        })();
+        try {
+          for (const count of [1, 2, 4, 6]) {
+            const minted = await burst(count, "mint");
+            const downloaded = await burst(count, "download");
+            assert.equal(minted.ok, count, `mint x${count}: all ${count} succeed`);
+            assert.equal(downloaded.ok, count, `download x${count}: all ${count} succeed`);
+            console.log(`burst ${count}: ${minted.ok} mints ok, ${downloaded.ok} downloads ok, `
+              + `client available=${bound.isAvailable()}`);
+          }
+          // 8 is the review's blocking case and the pool's exact width. Everything
+          // here must succeed, because nothing is ever waiting for a ninth
+          // connection.
+          for (const count of [8, 16]) {
+            const minted = await burst(count, "mint");
+            const downloaded = await burst(count, "download");
+            assert.equal(minted.ok, count,
+              `N1: ${count} parallel mints all succeed — the review measured 8 x database_outcome_uncertain`);
+            assert.equal(downloaded.ok, count,
+              `N1: ${count} parallel downloads all succeed — the review measured the database client closing for good`);
+            console.log(`burst ${count}: ${minted.ok} mints ok, ${downloaded.ok} downloads ok, `
+              + `client available=${bound.isAvailable()}`);
+          }
+          // The briefed stress: 50 downloads and 50 mints together, each caller
+          // minting AND (for a download) spending. Every one of those fifty is a
+          // real owner request, and fifty simultaneous requests to an eight-wide
+          // pool is more than the admission limit admits at once: eight running
+          // plus eight queued, and the rest get a clean, retryable
+          // `database_unavailable`. That refusal is CORRECT — it is the bounded
+          // database declining overload rather than deadlocking, and it leaves the
+          // client serving. What must not happen, and is the whole point of the
+          // fix, is `database_outcome_uncertain` or a closed client: before the
+          // fix this exact burst was 0/50 with the app dead. So the assertion is
+          // "every outcome is a success or a clean refusal, a healthy majority
+          // served, and the app is still alive afterwards" — not "all 50", which
+          // would be a claim about the admission limit, not about N1.
+          const fiftyDownloads = await burst(50, "download");
+          const fiftyMints = await burst(50, "mint");
+          console.log(`burst 50: ${fiftyDownloads.ok}/50 downloads ok (${fiftyDownloads.refused} clean refusals), `
+            + `${fiftyMints.ok}/50 mints ok (${fiftyMints.refused} clean refusals), `
+            + `client available=${bound.isAvailable()}`);
+          assert.ok(boundedShare(fiftyDownloads.ok, 50), `the pool still serves under the briefed download burst: `
+            + `${fiftyDownloads.ok}/50`);
+          assert.ok(boundedShare(fiftyMints.ok, 50), `the pool still serves under the briefed mint burst: `
+            + `${fiftyMints.ok}/50`);
+        } finally { sampling = false; await sampler; }
+        // The deadlock signature, asserted after the fact. Under the pre-fix
+        // build this peaked at 8 and stayed there; a mint that never asks for a
+        // second connection cannot produce a connection that is waiting for one.
+        assert.ok(worstIdleInTransaction < 8,
+          `N1: no more than ${worstIdleInTransaction} of the pool's 8 connections were ever idle-in-transaction `
+          + `during the bursts; 8 means every one of them was waiting for a ninth`);
+        // And the rest of the app is alive: an ordinary page read, on the same
+        // binding, after the whole table.
+        const afterBurst = await service.catalog(ownerIdentity, projectId, "job:files-fix");
+        assert.equal(afterBurst.sets.length > 0, true,
+          "the task's own result-file catalog still loads after every burst");
+        const afterTasks = await tasks.list(ownerIdentity, projectId);
+        assert.equal(afterTasks.tasks.length > 0, true,
+          "and so does the ordinary task list — the app did not die with the client");
+        assert.ok(bound.isAvailable(), "and the database client is still available at the end");
       } finally { await bound.close(); }
     }, { port: PORT, allowedPorts: PORTS, database: "control_room" });
   } finally {

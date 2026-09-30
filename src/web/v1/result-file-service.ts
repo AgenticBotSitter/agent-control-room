@@ -174,13 +174,26 @@ export function createResultFileServiceV1(db: DatabaseClient, authority: ResultF
     throw new Error("result_file_service_store_invalid");
   const clock = configuration.clock ?? Date.now;
   const key = Uint8Array.from(configuration.keys.downloadKey);
+  const listedRetentionStates = ["provisional", "retained", "trash"] as const;
+  const downloadableRetentionStates = ["provisional", "retained"] as const;
 
+  /**
+   * The sets this project is showing, newest first.
+   *
+   * The retention filter is in the SQL, not applied afterwards, because the
+   * `LIMIT` is: filtering the twenty-one returned rows in JavaScript would let
+   * a single purged set push a live one off the end of the catalog and report
+   * fewer sets than exist for no reason the owner can see. 0206 allows
+   * `trash` and `purged`, so this is an ordinary value in the column and not an
+   * error state.
+   */
   const readSets = async (tx: DatabaseSession, projectId: string, jobId?: string) =>
     (await tx.query<SetRow>(`SELECT set_id,project_id,job_id,state,source_kind,producer_kind,producer_id,
         manifest_digest,retention_state,created_at,stored_at
       FROM control_result_file_sets WHERE tenant_id=$1 AND project_id=$2 AND ($3::text IS NULL OR job_id=$3)
+        AND retention_state=ANY($5::text[])
       ORDER BY created_at DESC,set_id COLLATE "C" LIMIT $4`,
-    [configuration.tenantId, projectId, jobId ?? null, maxSets + 1])).rows;
+    [configuration.tenantId, projectId, jobId ?? null, maxSets + 1, [...listedRetentionStates]])).rows;
 
   const readFiles = async (tx: DatabaseSession, setIds: readonly string[]) => {
     if (!setIds.length) return new Map<string, FileRow[]>();
@@ -227,16 +240,12 @@ export function createResultFileServiceV1(db: DatabaseClient, authority: ResultF
    * distinction is the honest one: trash is reversible until the sweeper runs,
    * purge is not.
    */
-  const listedRetentionStates = ["provisional", "retained", "trash"] as const;
-  const downloadableRetentionStates = ["provisional", "retained"] as const;
-
   const project = async (tx: DatabaseSession, projectId: string,
     jobId?: string): Promise<ResultFileCatalog> => {
     if (!configuration.store) return resultFileCatalogSchema.parse({ projectId, ...(jobId ? { jobId } : {}),
       sets: [], additionalSetsOmitted: false, catalogSource: "not_configured",
       observedAt: new Date(clock()).toISOString(), startsWork: false, grantsExecutionAuthority: false });
-    const sets = (await readSets(tx, projectId, jobId))
-      .filter(set => (listedRetentionStates as readonly string[]).includes(set.retention_state));
+    const sets = await readSets(tx, projectId, jobId);
     const files = await readFiles(tx, sets.map(set => set.set_id));
     const now = clock();
     const parsed = sets.slice(0, maxSets).map(set => {

@@ -106,6 +106,15 @@ function database(over: { fileState?: string; setState?: string; setJobId?: stri
     // The set's own job id, resolved before any authorisation. B1: a set id was
     // being handed to `readScopedResult` where a job id was expected, so this
     // lookup is the fix and the test below asserts the JOB id is what arrives.
+    // The catalog's set read. It carries the retention filter in SQL (see the
+    // note on `readSets`), so the fake honours it rather than filtering in
+    // JavaScript — a test that dropped the clause would otherwise see the same
+    // rows and pass.
+    if (flat.includes("FROM control_result_file_sets WHERE tenant_id=$1 AND project_id=$2")) {
+      const retention = (params as unknown[])[4] as string[] | undefined;
+      const live = retention ? retention.includes(state.retentionState) : true;
+      return { rows: (live ? [setRow] : []) as T[] };
+    }
     if (flat.includes("FROM control_result_files WHERE tenant_id=$1 AND set_id=ANY")) {
       const [, setIds] = params as [string, string[]];
       return { rows: (setIds.includes(SET) ? [fileRow] : []) as T[] };
@@ -113,7 +122,6 @@ function database(over: { fileState?: string; setState?: string; setJobId?: stri
     if (flat.startsWith("SELECT job_id FROM control_result_file_sets")) {
       return { rows: (state.setJobId === null ? [] : [{ job_id: state.setJobId }]) as T[] };
     }
-    if (flat.includes("FROM control_result_file_sets WHERE tenant_id=$1 AND project_id=$2")) return { rows: [setRow] as T[] };
     if (flat.includes("FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2 AND project_id=$3 AND job_id=$4"))
       return { rows: [setRow] as T[] };
     if (flat.includes("FROM control_result_files WHERE tenant_id=$1 AND set_id=$2 AND file_id=$3 AND state='stored'"))
