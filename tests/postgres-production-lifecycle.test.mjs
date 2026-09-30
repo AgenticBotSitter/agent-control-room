@@ -1649,25 +1649,58 @@ test("pruning a role file for a database that lacks a table keeps the grants tha
   // `read_agent_review_plan(text), bytea)`, which is not SQL.
   const signature = "GRANT EXECUTE ON FUNCTION read_plan(text), bytea) TO reviewer;";
   assert.equal(prune(signature, []), signature);
-  // A real role file pruned against a database holding everything it names keeps
-  // every statement: the object list is the same set, only the layout is rebuilt.
-  // Only GRANT and REVOKE name an object here; ALTER DEFAULT PRIVILEGES names a kind.
-  const listed = sql => sql.split(";")
-    .map(statement => statement.replace(/^\s*--[^\n]*\n/gmu, ""))
-    .filter(statement => /^\s*(?:GRANT|REVOKE)\b/iu.test(statement))
-    .flatMap(statement => [...statement.matchAll(/\bON\s+(.*?)\s+(?:TO|FROM)\b/giu)]
-      .flatMap(match => match[1].split(",").map(name => name.trim()).filter(name => /^[a-z_][a-z0-9_]*$/iu.test(name))))
-    .sort();
-  // A name may appear in more than one statement, and a statement that becomes
-  // entirely absent is dropped, so the comparison is over the distinct names.
-  const names = sql => [...new Set(listed(sql))].sort();
+  // The same, with a name the database LACKS: without the guard the signature is
+  // split on its own commas and rebuilt as `read_plan(text), bytea)` plus a dropped
+  // grantee, which is the corruption this guard exists to prevent.
+  assert.equal(prune(signature, ["unrelated"]), signature);
+  // A real function grant out of a role file, against a database with none of it.
+  const grant = readFileSync(join(ROOT, "db/roles", "agent_reviewer_roles.sql"), "utf8");
+  const functionGrant = grant.split(/(?=\s*GRANT\b)/u)
+    .find(statement => /ON FUNCTION\s+read_agent_review_plan\b/u.test(statement));
+  assert.ok(functionGrant, "the reviewer role file grants read_agent_review_plan");
+  // Compared on the trimmed statement text: the pruner preserves layout, and the
+  // surrounding file's own trailing lines are not what this assertion is about.
+  assert.equal(prune(functionGrant, ["nothing_here"]).trim(), functionGrant.trim());
+  // A real role file pruned against a database holding only SOME of what it names
+  // keeps the names that are present, drops the ones that are not, and keeps every
+  // statement that still has a name. A pruner that quietly kept an absent name, or
+  // dropped a statement whole, would pass a weaker check than this. Only GRANT and
+  // REVOKE name an object; ALTER DEFAULT PRIVILEGES names a kind, and a name can
+  // appear in several grants, so each distinct name is counted once.
+  // The names are read the way the pruner reads them -- GRANT/REVOKE only, split at
+  // a line that begins one -- so the present/absent split is derived from exactly the
+  // names the pruner is deciding about. Reading them any other way would compute a
+  // different set and the assertions below would be about the reader, not the pruner.
+  const names = sql => {
+    const bare = name => /^[a-z_][a-z0-9_]*$/iu.test(name);
+    const statements = sql.split(/(?=\s*(?:GRANT|REVOKE)\b)/gmu)
+      .filter(statement => /^\s*(?:GRANT|REVOKE)\b/iu.test(statement));
+    const found = [];
+    for (const statement of statements)
+      for (const match of statement.matchAll(/\bON\s+(.*?)\s+(?:TO|FROM)\b/giu))
+        for (const entry of match[1].split(",")) {
+          const name = entry.trim();
+          if (bare(name)) found.push(name);
+        }
+    return [...new Set(found)].sort();
+  };
   for (const name of ["private_web_roles.sql", "task_coordinator_roles.sql", "production_table_grants.sql"]) {
     const sql = readFileSync(join(ROOT, "db/roles", name), "utf8");
-    const pruned = prune(sql, names(sql));
-    // Nothing is lost: every name the file named survives, and a pruned file never
-    // names something the original did not.
-    for (const object of names(sql)) assert.ok(names(pruned).includes(object), `${name}: ${object}`);
-    assert.deepEqual(names(pruned).filter(object => !names(sql).includes(object)), [], name);
+    const all = names(sql);
+    // Halve the DEDUPLICATED name list, so "present" and "absent" are decided from
+    // the same list the assertions read. Deriving them from separate lists would let
+    // a name be called present in one and absent in the other.
+    const half = all.filter((_, index) => index % 2 === 0);
+    const pruned = prune(sql, half);
+    const kept = new Set(names(pruned));
+    // Every name the database has is still granted somewhere, and nothing the file
+    // did not name appears. The per-statement layout is deliberately not compared:
+    // dropping a statement whose whole list was absent makes the surviving
+    // statements run together in a split, which is a change of layout, not of grant.
+    for (const object of half) assert.ok(kept.has(object), `${name}: dropped ${object}`);
+    assert.deepEqual([...kept].filter(object => !all.includes(object)), [], name);
+    // A pruner that kept an absent name would be caught here.
+    assert.ok(all.length > half.length, `${name}: nothing was pruned`);
   }
 });
 
