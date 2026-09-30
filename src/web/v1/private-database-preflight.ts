@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0196 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162, 0186 and 0115),
+// Generated from public migrations through 0202 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162, 0186 and 0115),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "73656436f409f2284844fbe402ccab4aa9849697bbf80599fd11616045111e6c";
+export const privateWebSchemaDigest = "d1d8eaa69f3821c57b735c02a7373c40e2fc87c32a5b804c8038cab656227788";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -53,7 +53,8 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
-  "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals"] as const;
+  "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals",
+  "work_batch_current_split_suggestions", "control_planner_open_needs_you", "control_project_planner_selections"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -73,8 +74,16 @@ privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTabl
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
 privateWebInsertTables.add("installation_operations_mode_revisions");
+// 0190: a task proposal may cite a retained news story (append-only provenance).
+privateWebInsertTables.add("control_news_task_proposal_links");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
+// MIG-A (0200-0202): the orchestrator's two owner-facing VIEWS are declared in
+// privateWebReadTables, and the base tables behind them are deliberately absent
+// from this insert set and must not be added -- the web login reads a
+// current-revision-only view of the suggestions and a content-free view of the
+// escalated Needs-you ledger, and holds nothing on either base table, so it can
+// neither insert a suggestion (an agent's act), clear a counter, nor raise an item.
 for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
   privateWebInsertTables.add(table);
 
@@ -184,6 +193,16 @@ coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_run
 coordinatorReads.push("control_improvement_requests", "control_update_candidates");
 // Scheduling reads each project's worker and concurrency settings (0135).
 coordinatorReads.push("control_project_settings");
+// MIG-A (0200-0202): the orchestrator's durable run bookkeeping. The coordinator
+// WRITES both tables -- the failure counter with a five-column UPDATE its guard
+// constrains, and the append-only escalation ledger -- and reads nothing of either
+// owner's views, which belong to the web login alone. Its split suggestions are
+// appended on the INTAKE login (0200 grants control_room_work_intake the table),
+// not here: the proposer is an agent, and a coordinator-login insert would put the
+// orchestrator's own suggestion on a login that also dispatches work.
+coordinatorReads.push("control_planner_failure_counters", "control_planner_needs_you_items");
+coordinatorInserts.add("control_planner_failure_counters");
+coordinatorInserts.add("control_planner_needs_you_items");
 coordinatorReads.push("installation_operations_mode_revisions");
 coordinatorReads.push("control_skills", "control_skill_versions", "control_task_skill_bindings",
   "control_recurring_rules", "control_recurring_proposals");
@@ -246,6 +265,10 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_provider_waits: ["state", "released_at"],
   control_recurring_proposals: ["state", "attempt_count", "batch_id", "safe_reason_code", "updated_at"],
   control_recurring_rules: ["last_evaluated_at"],
+  // MIG-A (0202): the failure counter's two admitted transitions and nothing else.
+  // The guard trigger refuses any other move, so a caller cannot set the count to
+  // 2 by hand and raise an escalation it never earned, nor reset a live failure.
+  control_planner_failure_counters: ["failure_count", "last_failure_at", "cleared_at", "version", "updated_at"],
   // An incident is opened with a bounded column set and then corrected in
   // place; the head's generation counter is the only service-registry write.
   control_service_incident_heads: ["next_generation"],

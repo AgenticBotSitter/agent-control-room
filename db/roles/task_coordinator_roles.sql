@@ -120,4 +120,15 @@ GRANT UPDATE (signal_sequence, fingerprint, trust, observed_at, expires_at, payl
   ON control_node_fleet_current TO control_room_task_coordinator;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_task_coordinator;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_task_coordinator;
+-- MIG-A (0201, 0202): the orchestrator's selection read and its durable run
+-- bookkeeping. 0201's planner columns ride on the existing 0135 SELECT, so the
+-- coordinator holds nothing new there. For 0202 it holds SELECT and INSERT on the
+-- counter plus a five-column UPDATE that guard_planner_failure_counter_write
+-- constrains to exactly two transitions, and SELECT plus INSERT on the append-only
+-- ledger. It holds NO UPDATE or DELETE on either table, so a recorded escalation
+-- cannot be edited afterwards, and no privilege on either of the owner views.
+GRANT SELECT, INSERT ON control_planner_failure_counters TO control_room_task_coordinator;
+GRANT UPDATE (failure_count, last_failure_at, cleared_at, version, updated_at)
+  ON control_planner_failure_counters TO control_room_task_coordinator;
+GRANT SELECT, INSERT ON control_planner_needs_you_items TO control_room_task_coordinator;
 COMMIT;
