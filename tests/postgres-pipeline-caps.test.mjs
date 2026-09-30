@@ -1792,6 +1792,129 @@ test("a burst of 40 concurrent advances holds every ceiling at once", needsPg, a
     + `${byCeiling} refused by a pipeline ceiling, ${refused - byCeiling} by pool admission, ${replayed} replayed`);
 });
 
+test("40 stages finishing and cancelling at once leave the process count exact", needsPg, async t => {
+  // Self-test item 4 for B3 specifically. The two cases above prove the rule on
+  // one stage at a time; this proves the COUNT stays exact when forty stages are
+  // released at once, which is the only shape a night actually has.
+  //
+  // The bug being fixed was a count that only ever went UP, so the interesting
+  // assertion is not "the ceiling is enforced" (the old code enforced it, too
+  // well) but that the number is EXACT after a concurrent release: never
+  // negative, never double counted, and never leaving a slot behind. A lost
+  // UPDATE or a count read mid-release shows up here and nowhere else.
+  //
+  // 40 runs in ONE installation. The pool admits 8 sessions plus a queue of 8, so
+  // a single 40-caller wave proves the pool, not the ceiling; the burst runs in
+  // two waves of 20 so callers actually reach the ceiling. 24 is the product's
+  // own agent-process ceiling, so 24 stages are claimed and the rest are refused
+  // by a PIPELINE ceiling. All 24 are then released at once -- half finished,
+  // half cancelled in the queue -- so both terminal paths are released under
+  // contention, which is the only shape a night actually has.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  const publisher = productionPool("control_room_publisher");
+  t.after(async () => { await web.close(); await coordinator.close(); await publisher.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(97);
+  const own = await seedInstallation(admin, "stagerelease", key, new Date(webNow).toISOString(),
+    { executionPlanShape: "planner", maxLoops: 0, maxTotalLoops: 12 });
+  for (const ordinal of [0, 1, 2]) await planExecutionJob(admin, own, ordinal);
+  await admin.query(`UPDATE control_harness_runs SET state='succeeded' WHERE tenant_id=$1`, [own.tenantId]);
+  await ownerSetsUp(web, own, key, { runsPerHour: 100, runsPerAgentPerDay: 100, machineMaxAgentProcesses: 24,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const runs = [own];
+  for (let index = 1; index < 40; index += 1) {
+    const seeded = await seedSecondRun(admin, own, key, index);
+    // `seedSecondRun` writes the seed-shaped plan (the execution job IS the
+    // source job), so there is no distinct `job:execution:*` job to plan here and
+    // `planExecutionJob` would refuse a second plan for the same stage.
+    await ownerConsents(web, seeded, key);
+    runs.push(seeded);
+  }
+  const CEILING = 24;
+
+  // Two waves of 20, so every caller gets a session and the refusals that remain
+  // are the ceiling's, not the pool's. `database_unavailable` is the bounded pool
+  // refusing BY DESIGN and is tolerated; a PIPELINE refusal is the ceiling.
+  const wave = async (from, to) => Promise.allSettled(runs.slice(from, to).map(run =>
+    advanceService(coordinator, run, key, { accepted: new Set() })
+      .service.advance(run.pipeline.runId, own.policyId)));
+  const first = await wave(0, 20);
+  const second = await wave(20, 40);
+  const outcomes = [...first, ...second];
+  const described = outcomes.map(o => o.status === "fulfilled"
+    ? ["ok", o.value.replayed] : ["refused", o.reason?.safeReason ?? String(o.reason?.message)]);
+  const unexpected = outcomes.filter(o => o.status === "rejected" && !o.reason?.safeReason
+    && String(o.reason?.message ?? o.reason) !== "database_unavailable");
+  assert.deepEqual(unexpected.map(o => String(o.reason?.message ?? o.reason)), [],
+    `every refusal must be a pipeline or pool refusal: ${JSON.stringify(described)}`);
+  // A REPLAY also reports `startsWork: true`, so `replayed` is what separates a
+  // caller that claimed a stage from one that re-issued an existing one. Each run
+  // is called once, so every non-replay here is a fresh claim.
+  const claimed = outcomes.filter(o => o.status === "fulfilled" && o.value.startsWork === true
+    && o.value.replayed !== true);
+  const refused = outcomes.filter(o => o.status === "rejected");
+  assert.equal(claimed.length, CEILING,
+    `a ceiling of ${CEILING} must admit exactly ${CEILING} of 40 callers, got ${claimed.length}: `
+    + JSON.stringify(described));
+  // The second wave is where the ceiling is proved: the first wave spent it, so
+  // this wave is refused by a PIPELINE ceiling rather than by pool admission.
+  const secondRefused = second.filter(o => o.status === "rejected");
+  assert.ok(secondRefused.some(o => o.reason?.safeReason === "installation_agent_process_ceiling_reached"),
+    `the second wave must hit the process ceiling, got ${JSON.stringify(second.map(o => o.status === "fulfilled"
+      ? ["ok", o.value.replayed] : ["refused", o.reason?.safeReason ?? String(o.reason?.message)]))}`);
+  const peak = Number(await activeProcessCount(coordinator, own));
+  assert.equal(peak, CEILING,
+    `the count during the burst is exactly the ceiling (${CEILING}), got ${peak}`);
+
+  // THE RELEASE: all 24 claimed stages finish or cancel at once, half each, so
+  // both terminal paths are released under contention. The same bounded pool
+  // applies (24 concurrent writers, 8 sessions + 8 queued), so the release runs in
+  // batches and each batch must fully succeed -- a `database_unavailable` here is
+  // the pool refusing, not a lost release, and the exact-zero assertion below is
+  // what would catch a stage that never actually reached a terminal state.
+  const jobIds = [...new Set(claimed.map(o => o.value.jobId))];
+  const half = Math.floor(jobIds.length / 2);
+  const releaseBatch = async (start) => {
+    const batch = jobIds.slice(start, start + 8);
+    if (batch.length === 0) return;
+    const settled = await Promise.allSettled(batch.map((jobId, offset) =>
+      finishExecutionJob(coordinator, publisher, own, jobId, start + offset < half
+        ? { jobState: "succeeded", harnessState: "succeeded" }
+        : { jobState: "cancelled", harnessState: "succeeded" })));
+    const failed = settled.filter(o => o.status === "rejected");
+    assert.deepEqual(failed.map(o => String(o.reason?.message ?? o.reason)), [],
+      `every release in the batch at ${start} must succeed, ${failed.length} did not`);
+  };
+  for (let start = 0; start < jobIds.length; start += 8) await releaseBatch(start);
+
+  // The invariant: every claimed stage is terminal, so the count is exactly zero.
+  const terminalJobs = (await admin.query(`SELECT count(*)::int count FROM control_jobs j
+    JOIN (SELECT DISTINCT execution_job_id id FROM pipeline_advance_receipts WHERE tenant_id=$1) r
+      ON r.id=j.id AND j.tenant_id=$1
+    WHERE j.state IN('succeeded','failed','cancelled')`, [own.tenantId])).rows[0].count;
+  assert.equal(terminalJobs, jobIds.length, "every claimed stage reached a terminal job state");
+  const after = Number(await activeProcessCount(coordinator, own));
+  assert.equal(after, 0,
+    `all ${jobIds.length} stages are terminal, so the process count must be exactly 0, got ${after}`);
+  // And the count must be a real read, not a cached zero: the receipts are still
+  // there, and the release freed them by state rather than by deletion.
+  const receipts = (await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts"
+    + " WHERE tenant_id=$1", [own.tenantId])).rows[0].count;
+  assert.ok(receipts >= jobIds.length, "the receipts are never deleted; the count follows job state");
+  // A fresh run in the same installation now has the whole ceiling again.
+  const restarted = await seedSecondRun(admin, own, key, 99);
+  await admin.query(`UPDATE control_harness_runs SET state='succeeded' WHERE tenant_id=$1`, [own.tenantId]);
+  await ownerConsents(web, restarted, key);
+  assert.equal((await advanceService(coordinator, restarted, key, { accepted: new Set() })
+    .service.advance(restarted.pipeline.runId, own.policyId)).startsWork, true,
+    "the installation can start a new run after releasing all its stages");
+  console.error(`RELEASE: ${outcomes.length} callers, ${claimed.length} claimed (peak ${peak}), `
+    + `${refused.length} refused, ${half} finished and ${jobIds.length - half} cancelled concurrently, `
+    + `count now ${after}`);
+});
+
 test("a run ceiling of one admits exactly one run and refuses the second", needsPg, async t => {
   const admin = superuser();
   await admin.connect();
