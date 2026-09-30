@@ -88,7 +88,6 @@ test("0238 makes 0211's combine-readiness guard satisfiable for every login that
       const admin = adminBound.client as DatabaseClient;
       const coordinator = new Client(postgres.connection("coordinator"));
       const news = new Client(postgres.connection("news"));
-      const newsLogin = postgres.connection("news");
       t.after(async () => {
         await coordinator.end().catch(() => {});
         await news.end().catch(() => {});
@@ -129,18 +128,28 @@ test("0238 makes 0211's combine-readiness guard satisfiable for every login that
         .then(result => result.rowCount, (error: Error & { code?: string }) => {
           throw new Error(`the news coordinator holds UPDATE on control_jobs.state and must satisfy the same trigger: ${error.code} ${error.message}`); });
       assert.equal(newsReady, 1, "the news coordinator can move a job into 'ready' with the guard enabled");
-      assert.ok(newsLogin.user.length > 0, "the news connection really is the production news login");
 
       // ---- 3: the grant is read-only. A scheduler that could write these two
       // tables could promise a project where to send its files, or hand itself
       // an input to combine.
+      //
+      // Matched on the SQLSTATE rather than the message, and with `DEFAULT
+      // VALUES` avoided for UPDATE/DELETE: a statement refused for a NOT NULL or
+      // a missing-column reason would satisfy a loose matcher while saying
+      // nothing about privilege, and a privilege check is the only thing this
+      // asserts. 42501 is insufficient_privilege, which is what a role with only
+      // SELECT must get.
       for (const table of TABLES) {
-        await assert.rejects(coordinator.query(`INSERT INTO ${table} DEFAULT VALUES`),
-          /permission denied/u, `the coordinator must not INSERT into ${table}`);
-        await assert.rejects(coordinator.query(`UPDATE ${table} SET tenant_id=tenant_id`),
-          /permission denied/u, `the coordinator must not UPDATE ${table}`);
-        await assert.rejects(coordinator.query(`DELETE FROM ${table}`),
-          /permission denied/u, `the coordinator must not DELETE from ${table}`);
+        const refusals: Array<{ statement: string; code: string | undefined; message: string }> = [];
+        for (const statement of [
+          `INSERT INTO ${table}(tenant_id) VALUES ('nope')`,
+          `UPDATE ${table} SET tenant_id='nope'`,
+          `DELETE FROM ${table}`,
+        ]) await coordinator.query(statement).then(
+          () => refusals.push({ statement, code: undefined, message: "ACCEPTED" }),
+          (error: Error & { code?: string }) => refusals.push({ statement, code: error.code, message: error.message }));
+        assert.deepEqual(refusals.map(refusal => refusal.code), ["42501", "42501", "42501"],
+          `the coordinator must hold no write privilege on ${table}: ${JSON.stringify(refusals)}`);
       }
 
       // ---- 5: the rule still holds. The grants make the guard EVALUABLE; they
