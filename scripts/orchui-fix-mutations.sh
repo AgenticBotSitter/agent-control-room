@@ -46,7 +46,12 @@ NEEDSYOU_MIGRATION=db/migrations/0204_planner_needs_you_digest_scopes.sql
 RETRY_MIGRATION=db/migrations/0205_planner_barrier_and_owner_retry.sql
 # The lane that proves N-B1 and N-B3 on a real cluster, as the production logins.
 BARRIER_PATTERN="tenant-bound|leaks nothing through an ERROR"
-RETRY_PATTERN="one description gives one"
+# EVERY test that carries a round-3 assertion, not just the first one found. Three
+# of these mutations were reported ESCAPED in a full run while passing when run
+# individually, because the pattern named one test and the assertion that caught
+# them lives in another -- the lane ran, and the test that would have failed was
+# filtered out of it. A pattern is part of the proof, so it is written out.
+RETRY_PATTERN="one description gives one|failure counter is durable|REAL coordinator spends"
 # The results directory defaults to a path under the repository's own scratch
 # area, not a home directory. The sibling scripts/orchui-mutations.sh carries an
 # absolute home path here; this one does not, because a home path in committed
@@ -401,12 +406,16 @@ mutate F4a-escalated-press-runs-anyway "$COORD" \
   "      if (false) return true;" \
   --lane unit --pattern "escalated description is refused"
 
+# Single-quoted, not double-quoted: the replacement ends a line with a bare `}`,
+# and a double-quoted continuation does not stop bash treating a following `}` or
+# `(` as a command. Two runs died at exactly this line with "AND: command not
+# found", which reads like the script's problem and is a quoting one.
 mutate F4b-retry-is-never-spent "$COORD" \
-  "      await this.failures.clear(scope);
+  '      await this.failures.clear(scope);
     }
-    return false;" \
-  "    }
-    return false;" \
+    return false;' \
+  '    }
+    return false;' \
   --lane unit --pattern "retry that fails again"
 
 mutate F4c-any-store-is-treated-as-having-a-grant "$COORD" \
