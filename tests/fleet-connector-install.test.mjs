@@ -594,6 +594,24 @@ test("a reused live PID does not preserve a dead owner generation", async t => {
   await assert.rejects(stat(lockPath), error => error.code === "ENOENT");
 });
 
+test("a live process generation is never cleaned merely because its lock is old", async t => {
+  const root = await temporary(t, "connector-live-generation-"), lockPath = join(root, "bot.rotate.lock");
+  const token = "d".repeat(32), ownerPath = join(lockPath, `owner-${token}.json`);
+  await mkdir(lockPath);
+  await writeFile(ownerPath, `${JSON.stringify({ pid: process.pid, processIdentity: "same-process", token })}\n`, { mode: 0o600 });
+  const old = new Date(Date.now() - 60_000);
+  await utimes(lockPath, old, old);
+  await assert.rejects(connector.acquireRotationLock(lockPath, {
+    staleMs: 1,
+    deadlineMs: 30,
+    waitMs: 5,
+    isPidAlive: () => true,
+    getProcessIdentity: async () => "same-process",
+  }), /Another session is renewing/u);
+  assert.deepEqual(JSON.parse(await readFile(ownerPath, "utf8")),
+    { pid: process.pid, processIdentity: "same-process", token });
+});
+
 test("the lock stress probe stops children after a no-progress timeout", async () => {
   const child = spawn(process.execPath, ["scripts/fleet/stress-connector-lock.mjs", "1", "40", "0.05"], {
     cwd: resolve("."),

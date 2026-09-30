@@ -15,9 +15,9 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "        if (ownerPid !== null && !await sameProcess(ownerPid, ownerIdentity, isPidAlive, inspectProcessIdentity)) {",
-    "replace": "        if (ownerPid !== null) {",
-    "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
+    "find": "  return currentIdentity === null || currentIdentity === expectedIdentity;",
+    "replace": "  return false;",
+    "test": "node --test --test-name-pattern \"live process generation\" tests/fleet-connector-install.test.mjs",
     "why": "a live lock owner is never displaced even when the lock file is old"
   },
   {
