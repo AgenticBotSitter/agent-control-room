@@ -15,6 +15,14 @@ import { createPipelineAdvanceCycleV1 } from "../src/web/v1/private-task-startup
 const key=new Uint8Array(32).fill(41), at=Date.parse("2026-09-27T12:00:00.000Z"), iso=(n=0)=>new Date(at+n).toISOString();
 const digest=(c:string)=>`sha256:${c.repeat(64)}`;
 const result=<T>(rows:T[]):QueryResult<T>=>({rows});
+/** The three CHECK constraints `pipeline_stage_loop_counts` enforces, restated
+ * here so the fake table can be held to exactly what the real one is. A row
+ * that breaks one of these could never be written to the real table, so a fake
+ * that accepts it would let a regression pass. */
+const floors=(row:{loop_index:number|string;max_loops:number|string;max_total_loops:number|string;
+  run_total_loops:number|string})=>{const loop=Number(row.loop_index),max=Number(row.max_loops),
+  totalMax=Number(row.max_total_loops),total=Number(row.run_total_loops);
+  return loop<=max&&total<=totalMax&&total>=loop+1;};
 const templateDefinition={name:"Pipeline",description:"Bounded pipeline.",stages:[
   {ordinal:0,stageKind:"build",role:"builder",description:"Build.",requiredCapability:"code.change",workerId:"worker:one",
     workerKind:"codex",nodeId:"node:one",selectionKey:"selection:one",model:"model-one",effort:"high",provider:null,profile:null,
@@ -440,6 +448,11 @@ test("the loop limit stops advancing that run and raises exactly one Needs Atten
   // stop fail its constraint and left the owner with a database error.
   const stops=f.loops.filter(row=>row.reason_code!=="stage_advanced");
   assert.equal(stops.length,1);
+  // The clamp is the point of this assertion: the refused round is 2, one past
+  // the ceiling of 1, and the recorded row must sit AT the ceiling instead. A
+  // fake table cannot prove the CHECK catches it, so this asserts the value the
+  // CHECK exists to guarantee, and the real-login suite proves the CHECK.
+  assert.equal(floors(stops[0]),true,"the recorded round is inside the ceiling it names");
   assert.equal(stops[0].loop_index,1);
   assert.equal(stops[0].max_loops,1);
   assert.equal(stops[0].run_total_loops,2);

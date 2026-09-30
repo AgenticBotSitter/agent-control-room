@@ -763,9 +763,10 @@ export class PipelineAdvanceServiceV1 {
     // moment, and which moment depends on which ceiling was reached.
     //
     // A STAGE stop is about this stage's rounds, so it records this stage's
-    // last started round and the run total that round started at. A RUN stop is
-    // about the whole run, so it records the run's own real total, clamped
-    // inside the run ceiling, and the stage round that run was on.
+    // last STARTED round, clamped to the ceiling it reached, and the run total
+    // that round started at. A RUN stop is about the whole run, so it records
+    // the run's own real total, clamped inside the run ceiling, and the stage
+    // round that run was on.
     const stageStopped = reasonCode === "pipeline_stage_loop_limit_reached";
     const lastStartedRound = Math.min(current.stageRounds, current.maxLoops);
     const lastRunTotal = stageStopped
@@ -826,7 +827,9 @@ export class PipelineAdvanceServiceV1 {
   async #recordLoopStop(run: RunRow, stage: StageRow, reasonCode: "pipeline_stage_loop_limit_reached"
     | "pipeline_run_loop_limit_reached", reachedLoopIndex: number, maxLoops: number, maxTotalLoops: number,
     reachedRunTotal: number, requestDigest: string) {
-    // The last round inside each ceiling that the run really started.
+    // The last round inside each ceiling that the run really started. This is
+    // the ONLY clamp: the call site passes the values it actually reached, and
+    // the row records the ceiling it stopped at.
     const loopIndex = Math.min(reachedLoopIndex, maxLoops);
     const runTotalLoops = Math.min(reachedRunTotal, maxTotalLoops);
     await this.db.transaction(async tx => {
