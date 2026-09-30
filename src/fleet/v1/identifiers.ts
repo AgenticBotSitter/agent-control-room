@@ -11,6 +11,9 @@ export const FLEET_ENTITY_ID_PATTERN_V1 = /^fleet-(?:claim|result|offer|code|eve
 export const FLEET_PROJECT_ID_PATTERN_V1 = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
 export const FLEET_CAPABILITY_PATTERN_V1 = /^[a-z][a-z0-9._-]{1,63}$/u;
 export const FLEET_WORKER_KIND_PATTERN_V1 = /^[a-z][a-z0-9-]{1,39}$/u;
+/** Worker kinds offered in the owner form and bound into enrollment codes.
+ * "mcp-agent" is any other agent that connects only through MCP tools. */
+export const FLEET_WORKER_KINDS_V1 = Object.freeze(["codex", "claude-code", "hermes", "mcp-agent"] as const);
 export const FLEET_IDEMPOTENCY_PATTERN_V1 = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/u;
 
 export const FLEET_CODE_LIFETIME_MS_V1 = 10 * 60_000;

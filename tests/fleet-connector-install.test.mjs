@@ -18,7 +18,7 @@ function json(ok, result, status = ok ? 200 : 409) {
   });
 }
 
-function fakeGateway({ rotateDelayMs = 0 } = {}) {
+function fakeGateway({ rotateDelayMs = 0, resultWorkerKind } = {}) {
   const used = new Set();
   const bindings = new Map();
   const state = { enrollments: 0, rotations: 0, digest: null, dropAfterEnroll: false, dropAfterRotate: false };
@@ -36,7 +36,8 @@ function fakeGateway({ rotateDelayMs = 0 } = {}) {
         if (state.dropAfterEnroll) { state.dropAfterEnroll = false; throw new Error("enrollment response dropped"); }
       }
       return json(true, { workerId: WORKER_ID, displayName: "Fixture bot", projectIds: ["project:test"],
-        capabilities: ["writing"], credentialExpiresAt: "2099-01-01T00:00:00.000Z" }, 201);
+        workerKind: resultWorkerKind ?? body.workerKind, capabilities: ["writing"],
+        credentialExpiresAt: "2099-01-01T00:00:00.000Z" }, 201);
     }
     if (!authenticated) return json(false, "unauthenticated", 401);
     if (path === "/fleet/v1/rotate") {
@@ -99,7 +100,8 @@ test("install registers Claude Code, Codex and Hermes with per-bot credentials a
       assert.equal(commands.calls.length, 1);
       const args = commands.calls[0][1];
       assert.ok(args.includes(installed.paths.shimPath));
-      assert.deepEqual(args.slice(-4), ["--profile", name, "--workspace", installed.paths.workspace]);
+      assert.deepEqual(args.slice(-6), ["--profile", name, "--config", installed.paths.configPath,
+        "--workspace", installed.paths.workspace]);
       if (bot === "hermes") assert.deepEqual(args.slice(0, 6),
         ["mcp", "add", `control-room-${name}`, "--command", installed.paths.shimPath, "--args"]);
       assert.match(await readFile(installed.paths.shimPath, "utf8"), /connector\.mjs.*mcp/u);
@@ -123,6 +125,61 @@ test("spawned bot CLIs receive only paths derived from the injected home", async
   assert.equal(childEnv.CLAUDE_CONFIG_DIR, join(homeDir, ".claude"));
   assert.equal(childEnv.XDG_CONFIG_HOME, join(homeDir, ".config"));
   assert.equal(childEnv.XDG_CUSTOM_HOME, undefined);
+});
+
+test("real-home installs honor explicit bot profile directories and refuse invalid ones before enrollment", async t => {
+  for (const [index, [bot, key]] of [["hermes", "HERMES_HOME"], ["codex", "CODEX_HOME"],
+    ["claude-code", "CLAUDE_CONFIG_DIR"]].entries()) {
+    await t.test(bot, async t => {
+      const homeDir = await temporary(t, `connector-explicit-${bot}-`), gateway = fakeGateway(), commands = recorder();
+      const target = join(homeDir, `target-${bot}`), env = { [key]: target };
+      await connector.installConnector({ server: "https://control.example", code: code(String.fromCharCode(97 + index)),
+        bot, name: `explicit-${bot}`, homeDir, realHomeDir: homeDir, platform: "linux", env,
+        fetcher: gateway.fetcher, runner: commands.runner, sourcePath: SOURCE });
+      assert.equal(commands.calls[0][2].env[key], target);
+      if (bot === "hermes") assert.equal((await stat(join(target, "config.yaml"))).isFile(), true);
+    });
+  }
+
+  const homeDir = await temporary(t, "connector-invalid-profile-"), gateway = fakeGateway();
+  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("v"), bot: "hermes",
+    name: "invalid-profile", homeDir, realHomeDir: homeDir, platform: "linux", env: { HERMES_HOME: "relative" },
+    fetcher: gateway.fetcher, runner: recorder().runner, sourcePath: SOURCE }), /HERMES_HOME must be an absolute/u);
+  assert.equal(gateway.state.enrollments, 0);
+});
+
+test("a code for another bot is refused before registration and leaves no profile", async t => {
+  const homeDir = await temporary(t, "connector-kind-mismatch-"), gateway = fakeGateway({ resultWorkerKind: "codex" });
+  const commands = recorder(), input = { server: "https://control.example", code: code("w"), bot: "claude-code",
+    name: "wrong-kind", homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher,
+    runner: commands.runner, sourcePath: SOURCE };
+  await assert.rejects(connector.installConnector(input), /made for codex, not claude-code.*Nothing was installed/u);
+  assert.equal(commands.calls.length, 0);
+  await assert.rejects(stat(connector.connectorInstallPaths(input).configPath), error => error.code === "ENOENT");
+});
+
+test("a definitive enrollment refusal is cleanly retryable and a transport-pending profile can be uninstalled", async t => {
+  const homeDir = await temporary(t, "connector-refused-enrollment-"), pathsInput = { homeDir, platform: "linux", env: {}, name: "refused" };
+  let refuse = true;
+  const valid = fakeGateway();
+  const fetcher = async (...args) => refuse ? (refuse = false, json(false, "code_expired", 410)) : valid.fetcher(...args);
+  const input = { server: "https://control.example", code: code("x"), bot: "cursor", name: "refused", homeDir,
+    platform: "linux", env: {}, fetcher, runner: recorder().runner, sourcePath: SOURCE };
+  await assert.rejects(connector.installConnector(input), /code_expired/u);
+  await assert.rejects(stat(connector.connectorInstallPaths(pathsInput).configPath), error => error.code === "ENOENT");
+  await connector.installConnector({ ...input, code: code("y") });
+
+  const pendingHome = await temporary(t, "connector-pending-uninstall-"), dropped = fakeGateway();
+  dropped.state.dropAfterEnroll = true;
+  const pendingInput = { server: "https://control.example", code: code("z"), bot: "cursor", name: "pending",
+    homeDir: pendingHome, platform: "linux", env: {}, fetcher: dropped.fetcher, runner: recorder().runner, sourcePath: SOURCE };
+  await assert.rejects(connector.installConnector(pendingInput), /response dropped/u);
+  const pendingPath = connector.connectorInstallPaths(pendingInput).configPath;
+  assert.equal((await connector.loadConfig(pendingPath)).workerId, null);
+  const removed = await connector.uninstallConnector({ bot: "cursor", name: "pending", homeDir: pendingHome,
+    platform: "linux", env: {}, runner: recorder().runner });
+  assert.match(removed.ownerAction, /Control Room.*Workers/u);
+  await assert.rejects(stat(pendingPath), error => error.code === "ENOENT");
 });
 
 test("Hermes zero exit without a saved entry is not reported as installed", async t => {
@@ -173,7 +230,7 @@ test("Claude Desktop and Cursor JSON merges preserve other servers, back up firs
       assert.equal(merged.theme, "dark");
       assert.deepEqual(merged.mcpServers.existing, { command: "existing" });
       assert.deepEqual(merged.mcpServers[`control-room-${name}`].args,
-        ["--profile", name, "--workspace", installed.paths.workspace]);
+        ["--profile", name, "--config", installed.paths.configPath, "--workspace", installed.paths.workspace]);
       assert.equal((await readdir(dirname(configPath))).filter(file => file.includes(".backup-")).length, 1);
 
       const removed = await connector.uninstallConnector({ bot, name, homeDir, runner: recorder().runner,
@@ -260,8 +317,27 @@ test("CLI-backed uninstall removes each registration and keeps the graceful shar
   assert.deepEqual(commands.calls.filter(call => call[1][1] === "remove").map(call => call[0]), ["claude", "codex", "hermes"]);
 });
 
+test("uninstall tolerates an already-missing CLI entry and removes credential temp files", async t => {
+  const homeDir = await temporary(t, "connector-missing-cli-entry-"), gateway = fakeGateway(), commands = recorder();
+  const input = { server: "https://control.example", code: code("n"), bot: "codex", name: "already-removed",
+    homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher, runner: commands.runner, sourcePath: SOURCE };
+  const installed = await connector.installConnector(input);
+  const orphan = `${installed.paths.configPath}.999999.dead.tmp`;
+  await writeFile(orphan, "secret fixture\n", { mode: 0o600 });
+  const missingRunner = async (command, args, options) => {
+    if (command === "codex" && args[1] === "remove") throw new Error("No such server");
+    return commands.runner(command, args, options);
+  };
+  await connector.uninstallConnector({ bot: "codex", name: input.name, homeDir,
+    platform: "linux", env: {}, runner: missingRunner });
+  await assert.rejects(stat(installed.paths.configPath), error => error.code === "ENOENT");
+  await assert.rejects(stat(orphan), error => error.code === "ENOENT");
+});
+
 test("bad install input and real-home CLI use fail before enrollment", async t => {
   const homeDir = await temporary(t, "connector-refusal-");
+  await assert.rejects(connector.join({ server: "https://control.example", code: code("A"), configPath: join(homeDir, "join.json"),
+    fetcher: async () => { throw new Error("must not call"); } }), /worker kind is required/u);
   await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "other",
     name: "bad", homeDir }), /Choose one bot/u);
   await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "codex",
@@ -296,6 +372,39 @@ test("bad install input and real-home CLI use fail before enrollment", async t =
   assert.match(err, /must exist and be a directory/u);
 });
 
+test("an explicit credential path overrides profile-derived lookup", async t => {
+  const homeDir = await temporary(t, "connector-explicit-config-"), configPath = join(homeDir, "chosen.json");
+  const secret = `crf_${"V".repeat(43)}`;
+  await writeFile(configPath, `${JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: WORKER_ID, secret, credentialExpiresAt: "2099-01-01T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  let out = "";
+  const status = await connector.main(["status", "--profile", "different", "--config", configPath],
+    { out: { write: value => { out += value; } }, err: { write: () => {} } },
+    { homeDir, realHomeDir: homeDir, fetcher: async url => {
+      assert.equal(new URL(url).pathname, "/fleet/v1/heartbeat");
+      return json(true, { displayName: "Chosen" });
+    } });
+  assert.equal(status, 0);
+  assert.match(out, /Chosen/u);
+});
+
+test("install refuses unsafe workspace roots and preserves an existing workspace mode", async t => {
+  const homeDir = await temporary(t, "connector-workspace-guard-"), gateway = fakeGateway();
+  const base = { server: "https://control.example", code: code("o"), bot: "cursor", name: "workspace",
+    homeDir, platform: "linux", env: {}, fetcher: gateway.fetcher, runner: recorder().runner, sourcePath: SOURCE };
+  const paths = connector.connectorInstallPaths(base);
+  for (const workspace of [homeDir, paths.configRoot, dirname(paths.configRoot)]) {
+    await assert.rejects(connector.installConnector({ ...base, workspace }), /workspace cannot be/u);
+  }
+  assert.equal(gateway.state.enrollments, 0);
+
+  const existing = join(homeDir, "shared-project");
+  await mkdir(existing, { mode: 0o750 });
+  await chmod(existing, 0o750);
+  await connector.installConnector({ ...base, workspace: existing, code: code("p") });
+  assert.equal((await stat(existing)).mode & 0o777, 0o750);
+});
+
 test("ten concurrent rotations make exactly one server rotation and stale locks recover", async t => {
   const homeDir = await temporary(t, "connector-rotation-");
   const path = join(homeDir, "bot.json");
@@ -324,10 +433,10 @@ test("ten concurrent rotations make exactly one server rotation and stale locks 
 
   await mkdir(stale);
   await utimes(stale, old, old);
-  await connector.rotate({ configPath: path, fetcher: gateway.fetcher,
-    lock: { staleMs: 1, deadlineMs: 100, waitMs: 5 } });
-  assert.equal(gateway.state.rotations, 3);
-  await assert.rejects(stat(stale), error => error.code === "ENOENT");
+  await assert.rejects(connector.rotate({ configPath: path, fetcher: gateway.fetcher,
+    lock: { staleMs: 1, deadlineMs: 100, waitMs: 5 } }), /stale but has no owner record/u);
+  assert.equal(gateway.state.rotations, 2);
+  await rm(stale, { recursive: true });
 
   await writeFile(stale, "{\"pid\":", { mode: 0o600 });
   await utimes(stale, old, old);
@@ -344,10 +453,12 @@ test("ten concurrent rotations make exactly one server rotation and stale locks 
   await rm(stale, { recursive: true });
 });
 
-test("twenty cross-process rotations make exactly one server rotation without caller failures", async t => {
+test("fifty cross-process rotations stay exclusive and recover an actually killed owner", async t => {
   const homeDir = await temporary(t, "connector-process-rotation-");
   const configPath = join(homeDir, "bot.json"), secret = `crf_${"R".repeat(43)}`;
-  const state = { digest: connector.sha256(secret), rotations: 0 };
+  const state = { digest: connector.sha256(secret), rotations: 0, activeRotations: 0, maximumActiveRotations: 0, blockNext: false };
+  let blockedRequestStarted, allowBlockedRequest, blockedRequestFinished;
+  let blockedStarted = Promise.resolve(), blockedAllowed = Promise.resolve(), blockedFinished = Promise.resolve();
   const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -360,10 +471,19 @@ test("twenty cross-process rotations make exactly one server rotation without ca
     }
     if (request.url === "/fleet/v1/rotate") {
       state.rotations += 1;
+      state.activeRotations += 1;
+      state.maximumActiveRotations = Math.max(state.maximumActiveRotations, state.activeRotations);
+      if (state.blockNext) {
+        state.blockNext = false;
+        blockedRequestStarted();
+        await blockedAllowed;
+      }
       await new Promise(done => setTimeout(done, 100));
       state.digest = body.newCredentialDigest;
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-02-01T00:00:00.000Z" } }));
+      state.activeRotations -= 1;
+      blockedRequestFinished?.();
       return;
     }
     if (request.url === "/fleet/v1/me") {
@@ -419,7 +539,7 @@ test("twenty cross-process rotations make exactly one server rotation without ca
     return { child, ready, done };
   };
   const runBurst = async () => {
-    const processes = Array.from({ length: 20 }, rotateInProcess);
+    const processes = Array.from({ length: 50 }, rotateInProcess);
     await Promise.all(processes.map(childProcess => childProcess.ready));
     for (const childProcess of processes) childProcess.child.send("rotate");
     return Promise.all(processes.map(childProcess => childProcess.done));
@@ -428,19 +548,60 @@ test("twenty cross-process rotations make exactly one server rotation without ca
   assert.deepEqual(results.filter(result => result.code !== 0), [],
     `all child rotations must succeed: ${JSON.stringify(results.filter(result => result.code !== 0))}`);
   assert.equal(state.rotations, 1);
-  assert.equal(results.filter(result => JSON.parse(result.stdout).coalesced === true).length, 19);
+  assert.equal(state.maximumActiveRotations, 1);
+  assert.equal(results.filter(result => JSON.parse(result.stdout).coalesced === true).length, 49);
   assert.deepEqual((await readdir(homeDir)).filter(file => file.includes(".rotate.lock")), []);
 
-  const lockPath = `${configPath}.rotate.lock`, deadToken = "d".repeat(32);
-  await mkdir(lockPath);
-  await writeFile(join(lockPath, `owner-${deadToken}.json`), `${JSON.stringify({ pid: 777777,
-    acquiredAt: new Date().toISOString(), token: deadToken })}\n`, { mode: 0o600 });
+  blockedStarted = new Promise(resolveStarted => { blockedRequestStarted = resolveStarted; });
+  blockedAllowed = new Promise(resolveAllowed => { allowBlockedRequest = resolveAllowed; });
+  blockedFinished = new Promise(resolveFinished => { blockedRequestFinished = resolveFinished; });
+  state.blockNext = true;
+  const killedOwner = rotateInProcess();
+  await killedOwner.ready;
+  killedOwner.child.send("rotate");
+  await blockedStarted;
+  const lockPath = `${configPath}.rotate.lock`;
+  assert.equal((await readdir(lockPath)).filter(file => file.startsWith("owner-")).length, 1);
+  killedOwner.child.kill("SIGKILL");
+  const killedResult = await killedOwner.done;
+  assert.notEqual(killedResult.code, 0);
+  allowBlockedRequest();
+  await blockedFinished;
+
   const recovered = await runBurst();
   assert.deepEqual(recovered.filter(result => result.code !== 0), [],
     `all dead-lock recovery callers must succeed: ${JSON.stringify(recovered.filter(result => result.code !== 0))}`);
   assert.equal(state.rotations, 2);
-  assert.equal(recovered.filter(result => JSON.parse(result.stdout).coalesced === true).length, 19);
+  assert.equal(state.maximumActiveRotations, 1);
+  assert.equal(recovered.filter(result => JSON.parse(result.stdout).coalesced === true).length, 50);
   assert.deepEqual((await readdir(homeDir)).filter(file => file.includes(".rotate.lock")), []);
+});
+
+test("directory election admits only one contender before owner publication", async t => {
+  const homeDir = await temporary(t, "connector-directory-election-");
+  const configPath = join(homeDir, "bot.json"), secret = `crf_${"E".repeat(43)}`;
+  await writeFile(configPath, `${JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: WORKER_ID, secret, credentialExpiresAt: "2026-01-01T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  const gateway = fakeGateway({ rotateDelayMs: 20 });
+  gateway.state.digest = connector.sha256(secret);
+  let firstElected, releaseFirst;
+  const firstHasDirectory = new Promise(resolveElected => { firstElected = resolveElected; });
+  const firstMayPublish = new Promise(resolveRelease => { releaseFirst = resolveRelease; });
+  let secondElected = false;
+  const first = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: {
+    afterDirectoryElection: async () => { firstElected(); await firstMayPublish; },
+  } });
+  await firstHasDirectory;
+  const second = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: {
+    afterDirectoryElection: async () => { secondElected = true; await firstMayPublish; },
+  } });
+  try {
+    await new Promise(done => setTimeout(done, 75));
+    assert.equal(secondElected, false);
+  } finally {
+    releaseFirst();
+    await Promise.allSettled([first, second]);
+  }
 });
 
 test("rotation release refuses to remove a lock whose ownership token changed", async t => {
@@ -470,6 +631,24 @@ test("rotation release refuses to remove a lock whose ownership token changed", 
   await rm(lockPath, { recursive: true });
 });
 
+test("a lock release failure does not hide the protected operation failure", async t => {
+  const homeDir = await temporary(t, "connector-release-error-"), configPath = join(homeDir, "bot.json");
+  const secret = `crf_${"U".repeat(43)}`;
+  await writeFile(configPath, `${JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: WORKER_ID, secret, credentialExpiresAt: "2026-01-01T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  const fetcher = async () => {
+    const lockPath = `${configPath}.rotate.lock`, [ownerFile] = await readdir(lockPath);
+    await writeFile(join(lockPath, ownerFile), `${JSON.stringify({ pid: process.pid, token: "replacement" })}\n`, { mode: 0o600 });
+    throw new Error("protected operation failed");
+  };
+  await assert.rejects(connector.rotate({ configPath, fetcher }), error => {
+    assert.match(error.message, /protected operation failed/u);
+    assert.match(error.cause?.message ?? "", /lock changed owners/u);
+    return true;
+  });
+  await rm(`${configPath}.rotate.lock`, { recursive: true });
+});
+
 test("two dead-owner cleaners cannot remove a later lock generation", async t => {
   const homeDir = await temporary(t, "connector-lock-generation-");
   const configPath = join(homeDir, "bot.json"), secret = `crf_${"G".repeat(43)}`;
@@ -481,27 +660,63 @@ test("two dead-owner cleaners cannot remove a later lock generation", async t =>
   await mkdir(lockPath);
   await writeFile(join(lockPath, `owner-${deadToken}.json`), `${JSON.stringify({ pid: 777777,
     acquiredAt: new Date().toISOString(), token: deadToken })}\n`, { mode: 0o600 });
-  let laggerObserved;
+  let laggerObserved, replacementPublished, releaseReplacement;
   const laggerHasRead = new Promise(resolveLagger => { laggerObserved = resolveLagger; });
+  const replacementHasOwner = new Promise(resolvePublication => { replacementPublished = resolvePublication; });
+  const replacementMayContinue = new Promise(resolveRelease => { releaseReplacement = resolveRelease; });
+  let laggerAcquired = false;
   const cleaner = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
-    beforeDeadOwnerCleanup: async () => laggerHasRead } });
+    beforeDeadOwnerCleanup: async () => laggerHasRead,
+    afterOwnerPublication: async () => { replacementPublished(); await replacementMayContinue; } } });
   const lagger = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
     beforeDeadOwnerCleanup: async () => {
       laggerObserved();
-      const deadline = Date.now() + 2_000;
-      for (;;) {
-        const owners = await readdir(lockPath).catch(() => []);
-        const tokens = await Promise.all(owners.map(async file => {
-          try { return JSON.parse(await readFile(join(lockPath, file), "utf8")).token; } catch { return null; }
-        }));
-        if (tokens.some(token => token && token !== deadToken)) return;
-        if (Date.now() >= deadline) throw new Error("replacement lock generation was not published");
-        await new Promise(done => setTimeout(done, 5));
-      }
-    } } });
+      await replacementHasOwner;
+    },
+    afterOwnerPublication: async () => { laggerAcquired = true; } } });
+  try {
+    await replacementHasOwner;
+    await new Promise(done => setTimeout(done, 75));
+    assert.equal(laggerAcquired, false);
+  } finally { releaseReplacement(); }
   const results = await Promise.all([cleaner, lagger]);
   assert.equal(gateway.state.rotations, 1);
   assert.equal(results.filter(result => result.coalesced === true).length, 1);
+});
+
+test("a losing stale cleaner cannot remove a new winner before owner publication", async t => {
+  const homeDir = await temporary(t, "connector-lock-publication-gap-");
+  const configPath = join(homeDir, "bot.json"), secret = `crf_${"P".repeat(43)}`;
+  await writeFile(configPath, `${JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: WORKER_ID, secret, credentialExpiresAt: "2026-01-01T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  const gateway = fakeGateway({ rotateDelayMs: 20 });
+  gateway.state.digest = connector.sha256(secret);
+  const lockPath = `${configPath}.rotate.lock`, deadToken = "a".repeat(32);
+  await mkdir(lockPath);
+  await writeFile(join(lockPath, `owner-${deadToken}.json`), `${JSON.stringify({ pid: 777777,
+    acquiredAt: new Date().toISOString(), token: deadToken })}\n`, { mode: 0o600 });
+  let laggerObserved, winnerElected, releaseWinner;
+  const laggerHasRead = new Promise(resolveLagger => { laggerObserved = resolveLagger; });
+  const winnerHasDirectory = new Promise(resolveWinner => { winnerElected = resolveWinner; });
+  const winnerMayPublish = new Promise(resolveRelease => { releaseWinner = resolveRelease; });
+  let laggerElected = false;
+  const winner = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
+    beforeDeadOwnerCleanup: async () => laggerHasRead,
+    afterDirectoryElection: async () => { winnerElected(); await winnerMayPublish; } } });
+  const lagger = connector.rotate({ configPath, fetcher: gateway.fetcher, lock: { isPidAlive: pid => pid !== 777777,
+    beforeDeadOwnerCleanup: async () => {
+      laggerObserved();
+      await winnerHasDirectory;
+    },
+    afterDirectoryElection: async () => { laggerElected = true; await winnerMayPublish; } } });
+  try {
+    await winnerHasDirectory;
+    await new Promise(done => setTimeout(done, 75));
+    assert.equal(laggerElected, false);
+  } finally {
+    releaseWinner();
+    await Promise.allSettled([winner, lagger]);
+  }
 });
 
 test("ten concurrent installs of one profile serialize and all succeed", async t => {

@@ -1,8 +1,8 @@
 [
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  const release = await acquireRotationLock(`${configPath}.rotate.lock`, lock);\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
-    "replace": "  const release = async () => {};\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
+    "find": "  const release = await acquireRotationLock(`${configPath}.rotate.lock`, lock);\n  let failure;\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
+    "replace": "  const release = async () => {};\n  let failure;\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
     "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
     "why": "concurrent sessions for one bot coalesce behind one credential-rotation lock"
   },
@@ -22,7 +22,7 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  const launch = [shimPath, \"--profile\", name, \"--workspace\", workspace];",
+    "find": "  const launch = [shimPath, \"--profile\", name, \"--config\", configPath, \"--workspace\", workspace];",
     "replace": "  const launch = [shimPath, \"--profile\", name];",
     "test": "node --test --test-name-pattern \"registers Claude Code\" tests/fleet-connector-install.test.mjs",
     "why": "every CLI-backed MCP registration launches with the selected explicit workspace"
@@ -85,14 +85,14 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    HERMES_HOME: joinPath(homeDir, \".hermes\"),",
-    "replace": "    HERMES_HOME: env.HERMES_HOME,",
-    "test": "node --test --test-name-pattern \"only paths derived\" tests/fleet-connector-install.test.mjs",
+    "find": "    HERMES_HOME: respectExplicitProfiles && env.HERMES_HOME !== undefined ? env.HERMES_HOME : joinPath(homeDir, \".hermes\"),",
+    "replace": "    HERMES_HOME: joinPath(homeDir, \".hermes\"),",
+    "test": "node --test --test-name-pattern \"real-home installs honor\" tests/fleet-connector-install.test.mjs",
     "why": "Hermes receives a home derived from the injected installation home rather than an inherited live profile"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  const isolated = Object.fromEntries(Object.entries(env).filter(([key]) =>\n    key !== \"HERMES_HOME\" && key !== \"CODEX_HOME\" && key !== \"CLAUDE_CONFIG_DIR\" && !key.startsWith(\"XDG_\")));",
+    "find": "  const isolated = respectExplicitProfiles ? { ...env } : Object.fromEntries(Object.entries(env).filter(([key]) =>\n    !profileKeys.includes(key) && !key.startsWith(\"XDG_\")));",
     "replace": "  const isolated = { ...env };",
     "test": "node --test --test-name-pattern \"only paths derived\" tests/fleet-connector-install.test.mjs",
     "why": "inherited XDG variables are stripped before isolated values are installed"
@@ -113,14 +113,14 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  try {\n    let config;",
-    "replace": "  const release = async () => {};\n  try {\n    let config;",
+    "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
+    "replace": "  const release = async () => {};\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
     "test": "node --test --test-name-pattern \"ten concurrent installs\" tests/fleet-connector-install.test.mjs",
     "why": "same-profile installs serialize through the shared profile mutation lock"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    if (config.installation?.bot !== bot || config.installation?.name !== name)\n      throw new Error(\"That bot profile does not match the installed credential.\");",
+    "find": "    if (!pendingOnly && (config.installation?.bot !== bot || config.installation?.name !== name))\n      throw new Error(\"That bot profile does not match the installed credential.\");",
     "replace": "    if (false)\n      throw new Error(\"That bot profile does not match the installed credential.\");",
     "test": "node --test --test-name-pattern \"validates the current profile\" tests/fleet-connector-install.test.mjs",
     "why": "uninstall rereads and validates the profile after obtaining the mutation lock"
@@ -129,7 +129,7 @@
     "file": "scripts/fleet/connector.mjs",
     "find": "      await mkdir(lockPath, { mode: 0o700 });",
     "replace": "      await mkdir(lockPath, { mode: 0o700, recursive: true });",
-    "test": "node --test --test-name-pattern \"twenty cross-process rotations\" tests/fleet-connector-install.test.mjs",
+    "test": "node --test --test-name-pattern \"directory election admits\" tests/fleet-connector-install.test.mjs",
     "why": "a fully written rotation lock is published without replacing a concurrent winner"
   },
   {
@@ -173,5 +173,110 @@
     "replace": "  if (false) throw new Error(\"MCP --workspace must exist and be a directory.\");",
     "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
     "why": "MCP refuses a file passed as its workspace"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (typeof workerKind !== \"string\" || !/^[a-z][a-z0-9-]{1,39}$/u.test(workerKind))\n    throw new Error(\"The worker kind is required to redeem a join code.\");",
+    "replace": "  if (false)\n    throw new Error(\"The worker kind is required to redeem a join code.\");",
+    "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
+    "why": "join refuses to redeem a code without declaring the intended worker kind"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (result.workerKind !== workerKind) {",
+    "replace": "  if (false) {",
+    "test": "node --test --test-name-pattern \"code for another bot\" tests/fleet-connector-install.test.mjs",
+    "why": "the installer refuses an older or fake gateway response bound to a different bot kind"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (typeof error?.code === \"string\" && !/^http_5\\d\\d$/u.test(error.code)) await removeConfigArtifacts(configPath);",
+    "replace": "    if (false) await removeConfigArtifacts(configPath);",
+    "test": "node --test --test-name-pattern \"definitive enrollment refusal\" tests/fleet-connector-install.test.mjs",
+    "why": "a final enrollment refusal removes the pending secret so a fresh code can be used"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "            continue;\n          }\n          try { await rmdir(lockPath); }",
+    "replace": "          }\n          try { await rmdir(lockPath); }",
+    "test": "node --test --test-name-pattern \"losing stale cleaner\" tests/fleet-connector-install.test.mjs",
+    "why": "only the cleaner that removed the observed owner generation may remove its directory"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "        throw new Error(\"The credential lock is stale but has no owner record. Remove it only after checking that no connector is running.\");",
+    "replace": "        return async () => {};",
+    "test": "node --test --test-name-pattern \"stale locks recover\" tests/fleet-connector-install.test.mjs",
+    "why": "stale empty lock directories fail closed because they cannot be conditionally removed"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    HERMES_HOME: respectExplicitProfiles && env.HERMES_HOME !== undefined ? env.HERMES_HOME : joinPath(homeDir, \".hermes\"),",
+    "replace": "    HERMES_HOME: joinPath(homeDir, \".hermes\"),",
+    "test": "node --test --test-name-pattern \"real-home installs honor\" tests/fleet-connector-install.test.mjs",
+    "why": "a real Hermes install targets the explicitly selected profile directory"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (dirname(paths.workspace) === paths.workspace || resolve(paths.workspace) === resolve(homeDir)\n    || pathContains(paths.workspace, paths.configRoot) || pathContains(paths.configRoot, paths.workspace))",
+    "replace": "  if (false)",
+    "test": "node --test --test-name-pattern \"unsafe workspace roots\" tests/fleet-connector-install.test.mjs",
+    "why": "install refuses roots that could expose the live connector credential as a result attachment"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (workspaceCreated) await chmod(paths.workspace, 0o700);",
+    "replace": "    await chmod(paths.workspace, 0o700);",
+    "test": "node --test --test-name-pattern \"unsafe workspace roots\" tests/fleet-connector-install.test.mjs",
+    "why": "install does not change permissions on a workspace it did not create"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    const pendingOnly = config.workerId === null && config.installation === undefined;",
+    "replace": "    const pendingOnly = false;",
+    "test": "node --test --test-name-pattern \"definitive enrollment refusal\" tests/fleet-connector-install.test.mjs",
+    "why": "uninstall can remove a never-enrolled pending profile"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    catch (error) { if (!missingRegistration(error)) throw error; }\n    return;",
+    "replace": "    catch (error) { throw error; }\n    return;",
+    "test": "node --test --test-name-pattern \"already-missing CLI entry\" tests/fleet-connector-install.test.mjs",
+    "why": "an already absent CLI registration does not strand the credential during uninstall"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (values.profile && !values.config) configPath = connectorInstallPaths({ homeDir, env, platform, name: values.profile }).configPath;",
+    "replace": "    if (values.profile) configPath = connectorInstallPaths({ homeDir, env, platform, name: values.profile }).configPath;",
+    "test": "node --test --test-name-pattern \"explicit credential path overrides\" tests/fleet-connector-install.test.mjs",
+    "why": "the absolute credential path baked into an MCP registration overrides profile-derived lookup"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  } catch (error) { failure = error; throw error; }\n  finally { await releaseRotationLock(release, failure); }\n}\n\n/** @param {{ configPath: string, fetcher?: typeof fetch, lock?: object }} options */",
+    "replace": "  } catch (error) { failure = error; throw error; }\n  finally { await release(); }\n}\n\n/** @param {{ configPath: string, fetcher?: typeof fetch, lock?: object }} options */",
+    "test": "node --test --test-name-pattern \"release failure does not hide\" tests/fleet-connector-install.test.mjs",
+    "why": "lock cleanup errors do not replace the protected operation's real failure"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);",
+    "replace": "        [\"code\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);",
+    "test": "node --import tsx --test --test-name-pattern \"server-side redemption refuses\" tests/fleet-connector.test.ts",
+    "why": "the enrollment HTTP contract admits the declared local worker kind for server-side binding"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      if (row.worker_kind !== workerKind) return fleetFail(\"worker_kind_mismatch\");",
+    "replace": "      if (false) return fleetFail(\"worker_kind_mismatch\");",
+    "test": "node --import tsx --test --test-name-pattern \"server-side redemption refuses\" tests/fleet-connector.test.ts",
+    "why": "redemption rolls back when the owner's code kind differs from the requested local bot kind"
+  },
+  {
+    "file": "src/web/v1/fleet-owner-http.ts",
+    "find": "    unix: `curl -fsSL ${url} -o control-room-connector.mjs && node control-room-connector.mjs join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`",
+    "replace": "    unix: `curl -fsSL ${url} -o control-room-connector.mjs && node control-room-connector.mjs join --server ${gatewayOrigin} --code ${code}`",
+    "test": "node --import tsx --test --test-name-pattern \"owner's join command\" tests/fleet-connector.test.ts",
+    "why": "the owner-facing command declares the worker kind bound into its one-time code"
   }
 ]

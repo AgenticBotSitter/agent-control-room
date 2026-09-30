@@ -354,7 +354,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     if (method === "POST" && path === "/fleet/v1/enroll") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),
-        ["code", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"]);
+        ["code", "workerKind", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"]);
       const lease = admission.enter(request, "enroll");
       try {
         const result = await options.store.enroll(body as never);
