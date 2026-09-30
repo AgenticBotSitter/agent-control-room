@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0190 (filename order, including assigned gaps and 0160),
+// Generated from public migrations through 0190 (filename order, including assigned gaps, 0155-0157 and 0160),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "3e88272beb54989e9fc67814f61421fcae9f2184dba05498f3ebc19736b953b5";
+export const privateWebSchemaDigest = "6d4acf9aca6e8773d47b253757d88945e0e559e5d26950bee55bebf155354ab2";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -41,7 +41,8 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links"] as const;
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
+  "installation_operations_mode_revisions", "installation_effective_operations_mode"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -59,6 +60,7 @@ privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTabl
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
+privateWebInsertTables.add("installation_operations_mode_revisions");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -163,6 +165,7 @@ coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_run
 coordinatorReads.push("control_improvement_requests", "control_update_candidates");
 // Scheduling reads each project's worker and concurrency settings (0135).
 coordinatorReads.push("control_project_settings");
+coordinatorReads.push("installation_operations_mode_revisions");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");

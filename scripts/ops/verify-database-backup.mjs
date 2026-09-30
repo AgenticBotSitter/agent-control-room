@@ -95,7 +95,10 @@ export function databaseBackupVerificationRootPrefixV1(platform = process.platfo
   return platform === "darwin" ? "/tmp/crv-" : join(temporaryDirectory, "control-room-backup-verify-");
 }
 
-async function readBoundBackup(backup) {
+/** Read the immutable binding for one backup before a disposable restore. This
+ * deliberately proves only the on-disk binding; a caller must still restore it
+ * before describing the backup as verified. */
+export async function readBoundMacLocalDatabaseBackupV1(backup) {
   if (typeof backup !== "string" || !isAbsolute(backup) || resolve(backup) !== backup)
     throw new Error("database_backup_path_refused");
   const paths = { dump: join(backup, "database.dump"), metadata: join(backup, "metadata.json"), manifest: join(backup, "manifest.json") };
@@ -201,12 +204,16 @@ export async function normalizeMacApplicationOwnershipV1(client) {
  * @param {{ backup: string, port: number, pgBin?: string,
  *   teardown?: DatabaseBackupVerificationTeardownOptionsV1,
  *   portRange?: DatabaseBackupVerificationPortRangeV1 | string,
- *   portRangeEnv?: DatabaseBackupVerificationEnvV1 }} options
+ *   portRangeEnv?: DatabaseBackupVerificationEnvV1,
+ *   afterRestore?: (context: Readonly<{ target: Readonly<{ host: string, port: number, database: string, user: string }>,
+ *     root: string }>) => Promise<void> }} options
  * @returns {Promise<Readonly<{ verified: true, identityDigest: string,
  *   ledgerHead: Readonly<{ order: number, file: string, digest: string }> }>>} */
 export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin",
-  teardown: teardownOptions = {}, portRange = undefined, portRangeEnv = process.env }) {
+  teardown: teardownOptions = {}, portRange = undefined, portRangeEnv = process.env, afterRestore = undefined }) {
   if (teardownOptions === null || typeof teardownOptions !== "object" || Array.isArray(teardownOptions))
+    throw new Error("database_backup_verification_arguments_refused");
+  if (afterRestore !== undefined && typeof afterRestore !== "function")
     throw new Error("database_backup_verification_arguments_refused");
   // The range is read from the same input as the rest of the arguments, so a
   // refused range is refused BEFORE a cluster is created — the same position the
@@ -215,7 +222,7 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
   if (!Number.isInteger(port) || port < range.min || port > range.max
     || typeof pgBin !== "string" || !isAbsolute(pgBin))
     throw new Error("database_backup_verification_arguments_refused");
-  const bound = await readBoundBackup(backup);
+  const bound = await readBoundMacLocalDatabaseBackupV1(backup);
   const root = await mkdtemp(databaseBackupVerificationRootPrefixV1());
   const data = join(root, "pg"), socket = join(root, "socket"), log = join(root, "postgres.log");
   // The shared teardown owns the signal handlers, the exit hook, the ordered
@@ -279,6 +286,11 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
       // to the recorded schema owner before proving the owner invariant.
       await normalizeMacApplicationOwnershipV1(client);
       await verifyOwnership(client);
+      // The one caller that continues after a restore is the VPS upgrade rehearsal.
+      // It receives only the fresh socket target and the disposable root, never a
+      // production target. Its work remains inside this try/finally so any failed
+      // rehearsal follows the same owned-cluster teardown as a failed verification.
+      if (afterRestore !== undefined) await afterRestore(Object.freeze({ target: Object.freeze({ ...target }), root }));
       const diff = diffMacGrantsV1(await readMacGrantCatalogV1(client), await readDesiredMacGrantsV1());
       if (diff.extra.length > 0 || diff.missing.length > 0) throw new Error("database_backup_mac_grants_refused");
     } finally { await client.end(); }

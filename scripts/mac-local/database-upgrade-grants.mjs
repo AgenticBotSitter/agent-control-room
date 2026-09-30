@@ -1,4 +1,4 @@
-/** Exact direct ACL comparison for the six Mac-local database logins.
+/** Exact direct ACL comparison for the Mac-local database logins.
  * This is an offline installer component, never imported by the task host. */
 import { readFile } from "node:fs/promises";
 import { databaseRoleManifestV1 } from "./database-role-manifest.mjs";
@@ -9,19 +9,25 @@ export const macRolePlan = Object.freeze(Object.fromEntries(Object.entries(datab
 const roleFiles = Object.freeze([
   "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
-  "agent_reviewer_roles.sql",
+  "agent_reviewer_roles.sql", "fleet_gateway_roles.sql",
 ]);
 const groups = new Set(Object.values(macRolePlan));
 const identifier = /^[a-z][a-z0-9_]*$/u;
 const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "USAGE", "EXECUTE"]);
 const workIntakeIdentityFunction = "public.is_work_intake_session()";
 const workIntakeIdentityRoles = new Set(["control_room_private_web", "control_room_task_coordinator",
-  "control_room_native_results", "control_room_local_result_publisher"]);
+  "control_room_native_results", "control_room_local_result_publisher", "control_room_fleet_gateway",
+  "control_room_fleet_owner_authority"]);
 // The reviewer's whole authority: the tenant-bound plan read and the commit.
 const agentReviewFunctions = new Set(["public.read_agent_review_plan(text)",
   "public.commit_agent_review(text, jsonb, jsonb, bytea)"]);
-const knownFunctionGrant = object => object === workIntakeIdentityFunction || agentReviewFunctions.has(object);
+const fleetEnrollmentFunction = "public.redeem_fleet_enrollment(text, text, text, text, timestamptz)";
+const fleetClaimFunction = "public.fleet_claim_is_live(text, text, text)";
+const knownFunctionGrant = object => object === workIntakeIdentityFunction || object === fleetEnrollmentFunction
+  || object === fleetClaimFunction
+  || agentReviewFunctions.has(object);
 const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
+  || (object === fleetEnrollmentFunction || object === fleetClaimFunction) && role === "control_room_fleet_gateway"
   || agentReviewFunctions.has(object) && role === "control_room_agent_reviewer";
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");
@@ -124,7 +130,17 @@ SELECT r.rolname, 'database', d.datname, '', a.privilege_type, a.is_grantable
 FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])
 UNION ALL
-SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')', '', a.privilege_type, a.is_grantable
+-- The argument types must be spelled the way db/roles/*.sql spells them, which
+-- is pg_type.typname (timestamptz), not the SQL-standard expansion
+-- oidvectortypes prints (timestamp with time zone). Comparing an expanded
+-- spelling against a compact one can never match, so a function whose signature
+-- contains an alias would stay permanently "missing" and refuse convergence
+-- after its grant had in fact been applied. quote_ident covers a type that has
+-- to be quoted; COALESCE keeps the zero-argument case rendering as empty.
+SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || COALESCE((SELECT string_agg(
+  pg_catalog.quote_ident(t.typname), ', ' ORDER BY u.ord)
+  FROM unnest(p.proargtypes) WITH ORDINALITY AS u(oid, ord)
+  JOIN pg_type t ON t.oid = u.oid), '') || ')', '', a.privilege_type, a.is_grantable
 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
 CROSS JOIN LATERAL aclexplode(p.proacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])`;

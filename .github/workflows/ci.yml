@@ -425,6 +425,12 @@ jobs:
         run: node --import tsx scripts/check-migration-search-path.mjs
       - name: Attack-test kit
         run: pnpm run test:attack-kit
+      - name: Installation operations mode
+        # The owner-facing Pause / Drain / Stop switch, its database guards, the
+        # coordinator-backed stop, the Mac-local host composition and the
+        # supervisor's machine-health port. It is its own lane because each file
+        # builds its own disposable cluster on the reserved 58710-58719 range.
+        run: pnpm run test:operations-mode
       - name: Resource-bound connector contracts
         # The wrapper preserves this command's flags/files after filtering:
         # node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts

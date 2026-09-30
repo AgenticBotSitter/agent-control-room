@@ -2414,6 +2414,83 @@ export class TaskAssignmentCoordinator {
     });
   }
 
+  /** The installation's running work, as this coordinator's own login sees it.
+   * `leased` and `running` are the two attempt states that mean a worker may
+   * still be executing; `offered` and `waiting` have no process behind them yet.
+   *
+   * Bounded, and ordered, so a stop is a finite list rather than an open-ended
+   * scan: a very large installation stops what it found and says so through the
+   * receipt's counts rather than running unbounded. */
+  async listRunning(tenantId: string): Promise<readonly {
+    jobId: string; attemptId: string; leaseId: string; leaseEpoch: number; attemptVersion: number;
+    jobVersion: number; projectId: string }[]> {
+    if (tenantId !== this.scope.tenantId) return [];
+    const rows = (await this.db.query<{ job_id: string; attempt_id: string; lease_id: string; lease_epoch: string | number;
+      attempt_version: string | number; job_version: string | number; project_id: string }>(`SELECT l.job_id,l.attempt_id,
+        l.id AS lease_id,l.epoch AS lease_epoch,a.version AS attempt_version,j.version AS job_version,j.project_id
+      FROM control_leases l
+      JOIN control_attempts a ON a.tenant_id=l.tenant_id AND a.id=l.attempt_id
+      JOIN control_jobs j ON j.tenant_id=l.tenant_id AND j.id=l.job_id
+      WHERE l.tenant_id=$1 AND l.state='active' AND a.state IN ('leased','running')
+      ORDER BY l.job_id LIMIT 500`, [this.scope.tenantId])).rows;
+    return Object.freeze(rows.map(row => Object.freeze({ jobId: row.job_id, attemptId: row.attempt_id,
+      leaseId: row.lease_id, leaseEpoch: Number(row.lease_epoch), attemptVersion: Number(row.attempt_version),
+      jobVersion: Number(row.job_version), projectId: row.project_id })));
+  }
+
+  /** The installation-wide `stopped` mode asks running work to stop through
+   * exactly the canonical transition `revoke()` performs, on the coordinator's
+   * own login, in its own transaction. It exists so the operations-mode service
+   * has one stop path rather than a weaker private copy, and so the tenant and
+   * project lock order, the derived-scope release and the audit record all stay
+   * in the ordinary `revoke()` body above.
+   *
+   * `already_terminal` is a definite outcome, not an error: a job that finished
+   * or was already revoked needs no second stop. Anything else throws, and the
+   * caller records the job as uncertain rather than stopped. */
+  async revokeRunning(input: Readonly<{ tenantId: string; projectId: string; jobId: string; attemptId: string;
+    leaseId: string; leaseEpoch: number; attemptVersion: number; jobVersion: number; actorId: string; now: string }>)
+    : Promise<"revoked" | "already_terminal"> {
+    if (input.tenantId !== this.scope.tenantId) conflict();
+    for (const id of [input.projectId, input.jobId, input.attemptId, input.leaseId]) localId.parse(id);
+    if (!Number.isSafeInteger(input.leaseEpoch) || input.leaseEpoch < 1) conflict();
+    return this.db.transaction(async tx => {
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, input.projectId]);
+      const leaseRow = (await tx.query<{ payload: LeaseRecord }>("SELECT payload FROM control_leases WHERE tenant_id=$1 AND id=$2",
+        [this.scope.tenantId, input.leaseId])).rows[0];
+      if (!leaseRow) return "already_terminal";
+      const lease = leaseRow.payload;
+      if (lease.jobId !== input.jobId || lease.attemptId !== input.attemptId) conflict();
+      if (lease.state !== "active") return "already_terminal";
+      if (lease.epoch !== input.leaseEpoch) conflict();
+      const attempt = (await tx.query<{ payload: AttemptRecord }>("SELECT payload FROM control_attempts WHERE tenant_id=$1 AND id=$2",
+        [this.scope.tenantId, input.attemptId])).rows[0];
+      const job = (await tx.query<{ payload: JobRecord }>("SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2",
+        [this.scope.tenantId, input.jobId])).rows[0];
+      if (!attempt || !job || job.payload.projectId !== input.projectId) conflict();
+      if (attempt.payload.version !== input.attemptVersion || job.payload.version !== input.jobVersion) conflict();
+      const ids = this.ids(input.jobId, attempt.payload.attemptNumber), canonical = new CanonicalStore(joined(tx));
+      const revoked = await canonical.revokeLease({ tenantId: this.scope.tenantId, leaseId: lease.id, jobId: job.payload.id,
+        attemptId: attempt.payload.id, expectedLeaseVersion: lease.version, expectedAttemptVersion: attempt.payload.version,
+        expectedJobVersion: job.payload.version, epoch: lease.epoch, transitionId: `${ids.transitionId}:operations-stop`,
+        idempotencyKey: `${ids.idempotencyKey}:operations-stop`,
+        actor: { actorId: input.actorId, actorType: "human" }, occurredAt: input.now });
+      await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+        [this.scope.tenantId, lease.id]);
+      // confirmedProcessStop is false on purpose: this records that the stop was
+      // requested of the canonical record. Whether a process on a worker
+      // observed it is not known here and is never claimed to be.
+      await appendAuditWith(tx, { id: `${ids.auditId}:operations-stop`, tenantId: this.scope.tenantId,
+        projectId: input.projectId, actorId: input.actorId, actorType: "human", action: "tasks.assignment.operations_stop",
+        targetType: "job", targetId: input.jobId, idempotencyKey: `${ids.idempotencyKey}:operations-stop`,
+        occurredAt: input.now, safeMetadata: { attemptId: attempt.payload.id, leaseId: lease.id, leaseEpoch: lease.epoch,
+          requestedBy: "installation_operations_mode", confirmedProcessStop: false } });
+      return revoked.replayed ? "already_terminal" : "revoked";
+    });
+  }
+
   /** Owner-only, idempotent stop. A queued reservation (no run yet started, attempt state
    * "offered" or "leased") is cancelled immediately: attempt and job move to "cancelled" and the
    * lease is revoked, exactly like an explicit owner lease revocation. A running attempt cannot

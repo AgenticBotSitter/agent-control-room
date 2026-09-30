@@ -1,0 +1,23 @@
+[
+  {
+    "file": "deploy/postgres/restore-database.mjs",
+    "find": "    for (const name of PRODUCTION_GROUP_ROLES) {\n      if (!recordedRoleNames.has(name)) continue;",
+    "replace": "    for (const name of PRODUCTION_GROUP_ROLES) {",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test tests/mac-local-database-upgrade-vps-pg17.test.mjs",
+    "why": "a backup taken before a group role existed must not have that role invented during restore, or the restore identity check corrupts a good backup"
+  },
+  {
+    "file": "scripts/mac-local/database-upgrade-vps-rehearse.mjs",
+    "find": "const plan = await runMacDatabaseUpgradeVpsStepV1({ args: [\"plan\", ...common], write, onStage });",
+    "replace": "const plan = await runMacDatabaseUpgradeVpsStepV1({ args: [\"plan\", ...common], write });",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test tests/mac-local-database-upgrade-vps-pg17.test.mjs",
+    "why": "a rehearsal refusal must report the stage it actually happened at (e.g. check), not a hardcoded default, or an operator reading upgrade_error:...stage=... is misled"
+  },
+  {
+    "file": "scripts/mac-local/database-upgrade-vps-rehearse.mjs",
+    "find": "      if (!newest || createdAt > newest.createdAt) newest = { path: candidate, createdAt };",
+    "replace": "      if (!newest || createdAt < newest.createdAt) newest = { path: candidate, createdAt };",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test tests/mac-local-database-upgrade-vps-pg17.test.mjs",
+    "why": "the rehearsal must pick the backup with the latest recorded time, not the earliest, or it can silently rehearse a stale backup"
+  }
+]
