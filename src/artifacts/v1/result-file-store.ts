@@ -117,6 +117,15 @@ const pendingPrefix = ".control-room-result-file-store-pending-";
 // after a recovery that was itself interrupted.
 const recoveryName = ".control-room-result-file-store-recovery.lock";
 const recoveryPathOf = (root: string): string => join(root, recoveryName);
+// The O_EXLOCK probe's own prefix, and it is a prefix of its own rather than a
+// reuse of the staging one. That is not tidiness: a name that shares the
+// staging prefix is indistinguishable from a writer's half-written file to
+// anything that reads the directory, which is exactly what the race lane's
+// observer does. Sharing it made the probe count as a second writer inside the
+// lock, so a guard that works looked like the bug it was written to stop. A
+// distinct name is also the honest description: this is bookkeeping, and
+// bookkeeping is a separate thing from staging.
+const probePrefix = ".control-room-result-file-store-exlock-probe-";
 const noFollow = constants.O_NOFOLLOW ?? 0;
 const nonBlock = constants.O_NONBLOCK ?? 0;
 
@@ -146,10 +155,7 @@ const nonBlock = constants.O_NONBLOCK ?? 0;
  * `O_NOFOLLOW`.
  *
  * The consequence the reviewer asked for follows directly: a takeover needs no
- * stamp at all, so a lock is cleared ONLY when the kernel released it. There is
- * no empty-lock window to re-examine either — a writer that has created the
- * name but not yet written to it already holds the kernel lock, from the same
- * `open` call, so an EMPTY lock with a live writer is a live lock.
+ * stamp at all, so a lock is cleared ONLY when the kernel released it.
  */
 const exclusiveLock = 0x20;
 
@@ -267,16 +273,25 @@ export function resultFileStorageKeyV1(tenantId: string, projectId: string, file
 /** The on-disk name. The key's own hex, so the key is never parsed back. */
 const onDiskName = (storageKey: string): string => `${storageKey.slice(keyPrefix.length)}.crbf`;
 
-/** The store's OWN bookkeeping entries: the write lock, and the staging file a
- * writer builds before it links it into place. Both are written only by this
- * store, neither is ever a readable result, and both are transient by design.
+/** The store's OWN bookkeeping entries: the write lock, the staging file a
+ * writer builds before it links it into place, the recovery lock and the
+ * O_EXLOCK probe. All of them are written only by this store, none is ever a
+ * readable result, and all are transient by design.
  *
  * They are recognised by their exact prefixes and are excluded from the byte and
  * name accounting — never from the target-name derivation, which is the hex
  * digest alone. A file called `.control-room-result-file-store-pending-x` is not
- * a result, so it can neither be read as one nor displace one. */
+ * a result, so it can neither be read as one nor displace one.
+ *
+ * The probe is listed for the same reason, and it has its OWN prefix rather than
+ * reusing the staging one on purpose. When it shared it, a test that counts
+ * staging files to decide whether two writers are inside the lock counted the
+ * probe as a second writer, so a working guard looked exactly like the bug it
+ * was written to stop. A separate name is both the fix and the honest
+ * description: this is bookkeeping, not staging. */
 const isStoreBookkeeping = (entry: string): boolean =>
-  entry === lockName || entry === recoveryName || entry.startsWith(pendingPrefix);
+  entry === lockName || entry === recoveryName || entry.startsWith(pendingPrefix)
+  || entry.startsWith(probePrefix);
 
 function abortError(): Error {
   const error = new Error("result_file_store_aborted");
@@ -292,6 +307,37 @@ interface RootIdentity { device: bigint; inode: bigint }
 
 function safe(error: unknown): ResultFileStoreError {
   return error instanceof ResultFileStoreError ? error : new ResultFileStoreError("store_ambiguous");
+}
+
+/**
+ * Is the name at `path` still THIS descriptor's own file?
+ *
+ * The review's B3, gap 1, and it is a real gap on this Mac. `O_CREAT |
+ * O_EXCL | O_EXLOCK` is NOT one step in the kernel: the name is created first and
+ * the lock is applied afterwards, so for a moment the name exists and nobody
+ * holds it. A take-over's `O_EXLOCK | O_NONBLOCK` probe that lands in that
+ * window SUCCEEDS, and the recovery then unlinks a lock file whose writer is
+ * still alive. The writer's own open has no `O_NONBLOCK`, so it simply blocks
+ * until the name is gone, locks a file with no name under it, and carries on
+ * with no lock file in the directory at all.
+ *
+ * So "I created and locked the name" is a claim about a file that can be proved
+ * only against the directory entry, and this is that proof: the same open's
+ * `fstat` and the name's `lstat` must be the same inode on the same device. A
+ * take-over that got in during the gap holds its own lock until AFTER its
+ * unlink, and this descriptor's blocking open cannot return before that, so a
+ * name that is gone — or a different inode — means somebody took the lock away,
+ * and the honest answer is a refusal with nothing deleted and nothing written.
+ *
+ * A missing name is a refusal rather than a tolerated state, and so is any errno
+ * that is not "there is no such name": a store that cannot ASK must not answer.
+ */
+async function stillOwnsTheName(operation: Operation, handle: FileHandle, path: string): Promise<boolean> {
+  const mine = await bounded(operation, () => handle.stat({ bigint: true }), () => {});
+  let named: BigIntStats | undefined;
+  try { named = await bounded(operation, () => lstat(path, { bigint: true }), () => {}); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  return named !== undefined && named.ino === mine.ino && named.dev === mine.dev;
 }
 
 /** A whole-operation context. One deadline for the operation, not per call. */
@@ -391,6 +437,55 @@ export class ResultFileStoreV1 {
     const store = new ResultFileStoreV1(canonical, { device: stats.dev, inode: stats.ino },
       Object.freeze({ ...configuration }));
     const opened: Operation = { deadline: Date.now() + configuration.operationTimeoutMs };
+    // The root must be a volume that HONOURS `O_EXLOCK`, and the only way to know
+    // is to ask: a driver that ignores the flag (exFAT, some network volumes)
+    // accepts a second `O_EXLOCK` open with no `EAGAIN`, so two writers get the
+    // lock at once and every exclusion this store claims would be decoration.
+    // The review's N-4c. Two opens of the SAME name from ONE process are the
+    // cheapest honest question — the kernel's lock table is per INODE, not per
+    // process, so a held lock is refused for the process that took it too, which
+    // is also the case the store's own single-process test proves.
+    //
+    // The probe is a name the store recognises and nobody else, it is removed
+    // while its own lock is still held (the same ordering the write lock uses,
+    // and for the same reason), and it is synced so a crash cannot leave it.
+    const probe = join(canonical, `${probePrefix}${process.pid}`);
+    let exclusivity: FileHandle | undefined;
+    try {
+      try {
+        exclusivity = await bounded(opened,
+          () => open(probe, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY
+            | exclusiveLock | noFollow, 0o600),
+        () => {});
+      } catch {
+        // A probe name left by a crashed opener of THIS pid. It is not a
+        // result and never was, so it is removed and the question is asked
+        // again; failing to remove it is a refusal, never a silent pass.
+        await bounded(opened, () => unlink(probe), () => {});
+        exclusivity = await bounded(opened,
+          () => open(probe, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY
+            | exclusiveLock | noFollow, 0o600),
+        () => {});
+      }
+      let second: FileHandle | undefined;
+      try {
+        second = await bounded(opened, () => open(probe,
+          constants.O_RDWR | exclusiveLock | nonBlock | noFollow), () => {});
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        // EAGAIN is the answer that proves the volume honours the flag. Anything
+        // else is a volume that cannot be asked, and a store that cannot ASK
+        // must not answer — including by assuming exclusion it does not have.
+        if (code !== "EAGAIN" && code !== "EWOULDBLOCK")
+          throw new ResultFileStoreError("store_invalid");
+      } finally { await second?.close().catch(() => {}); }
+    } finally {
+      if (exclusivity) {
+        try { await bounded(opened, () => unlink(probe), () => {}); await store.syncRoot(opened); }
+        catch { /* the next open finds it and removes it: a `pending-*` name is never a result */ }
+        await exclusivity.close().catch(() => {});
+      }
+    }
     await store.assertRootIdentity(opened);
     await store.recoverAbandonedWriterEntries(opened);
     await store.inventory(opened);
@@ -425,6 +520,13 @@ export class ResultFileStoreV1 {
    *     window closing. Nothing in the file is parsed, no pid is signalled and no
    *     clock is compared, which is what removed the two ways the previous build
    *     could delete a live writer's work (see `takeOverAbandonedName`).
+   *   * Creating a name and locking it are TWO steps in the kernel, not one, so
+   *     every writer re-proves against the directory that the lock name is still
+   *     its own file before it writes anything (`stillOwnsTheName`). Without that
+   *     a take-over can win the create-then-lock gap, and the writer it stole from
+   *     goes on holding a lock with no name under it — two writers inside one lock,
+   *     and a staging file the next opener deletes. This is the review's B3, and
+   *     it is the reason the rules below are about a NAME as well as a lock.
    *
    * The rules, in the order they are applied:
    *
@@ -497,6 +599,16 @@ export class ResultFileStoreV1 {
         throw raced;
       }
     }
+    // The same create-then-lock gap the write lock has, and the same answer: the
+    // name has to still be this descriptor's own file, or somebody took it in the
+    // window between the kernel creating the name and applying the lock, and
+    // this recovery must not decide anything on a lock it no longer owns. The
+    // descriptor is CLOSED and nothing is removed, so a take-over that got there
+    // first keeps the name it is entitled to.
+    if (!await stillOwnsTheName(operation, recovery!, recoveryPathOf(this.root))) {
+      await recovery!.close().catch(() => {});
+      throw new ResultFileStoreError("store_ambiguous");
+    }
     try {
       await bounded(operation, async () => {
         await recovery!.writeFile(`control-room-result-file-store-recovery\n${holderStamp()}\n`, "utf8");
@@ -531,18 +643,27 @@ export class ResultFileStoreV1 {
       }
       await this.syncRoot(operation);
     } finally {
-      // The recovery's own lock is retired with its descriptor still open, so
-      // the name cannot be created-and-locked by anyone in the gap between the
-      // close and the unlink. That is NOT the same race the write lock's
-      // take-over closes, though it looks like it: the recovery lock is what
-      // kept every other opener out of this whole critical section, so the only
-      // writer that could appear here is one that started before the lock was
-      // taken — and it was refused at its own O_EXCL create. Close, then unlink
-      // the now-unlocked name.
-      await recovery.close().catch(() => {});
-      await bounded(operation, () => unlink(recoveryPathOf(this.root)).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== "ENOENT") throw error;
-      }), () => {});
+      // The recovery's own lock is retired with the name removed FIRST and the
+      // descriptor closed after it, which is the review's B3, gap 2: the reverse
+      // order releases the kernel lock and only then removes the name, and in
+      // that gap another opener's probe succeeds, it takes the name over, it
+      // unlinks it, and this process's late unlink then deletes SOMEONE ELSE'S
+      // lock. Measured on the real store: `create()` threw a raw `ENOENT` 18-22
+      // times in 20 seconds with one writer and three openers, from
+      // `removeProvenAbandoned → unlink(recovery.lock)` — two recoveries each
+      // removing the other's recovery lock.
+      //
+      // Unlinking while the lock is still HELD removes the gap: a probe landing
+      // in it gets `EAGAIN`, so it cannot win the name. It does not re-open the
+      // create-then-lock gap, because the only writer that could appear is one
+      // that started before this lock was taken, and it was refused at its own
+      // O_EXCL create; and the name is gone either way, so a late O_EXCL create
+      // makes a fresh file and a fresh lock.
+      try {
+        await bounded(operation, () => unlink(recoveryPathOf(this.root)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        }), () => {});
+      } finally { await recovery!.close().catch(() => {}); }
     }
   }
 
@@ -564,10 +685,8 @@ export class ResultFileStoreV1 {
    *     deleted a writer that stalled longer than the window, and, because that
    *     timer was `unref`'d, could end the process mid-`create` (B2).
    *
-   * Neither case exists any more: the kernel lock is taken by the same `open`
-   * that creates the name, so an empty lock with a live writer IS a live lock,
-   * and a lock the kernel released belongs to a process that is gone -- not
-   * assumed, released.
+   * Neither case exists any more: a lock is judged by the kernel, so a name
+   * nobody holds belongs to a process that is gone — not assumed, released.
    *
    * The descriptor that proved the name free IS the lock on it, so it is held
    * from the proof until after the unlink. That closes the one window a kernel
@@ -576,6 +695,14 @@ export class ResultFileStoreV1 {
    * against a real writer child: a take-over cannot unlink a HELD lock in
    * either order, so this narrows a microsecond race rather than preventing a
    * data loss -- and it costs one open, which is cheaper than the bug.
+   *
+   * What this CANNOT do is protect a writer that is between its own create and
+   * its own lock, because the kernel does those as two steps and no flag on this
+   * probe changes that. The other side of that hole is closed where the writer
+   * is, in `stillOwnsTheName`: the take-over here can still win the gap, but the
+   * writer it stole from proves afterwards that the name is not its own and
+   * refuses the write. So the worst case is a refusal, never a lost file and
+   * never a second writer inside a lock.
    *
    * The shape test above the probe is about WHOSE FILE the name is, not about
    * who is alive: a directory, a symlink or a multi-linked name at a bookkeeping
@@ -632,7 +759,18 @@ export class ResultFileStoreV1 {
     }
     if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== BigInt(1)
       || !validPrivateMode(stats.mode)) throw new ResultFileStoreError("store_ambiguous");
-    await bounded(operation, () => unlink(path), () => {});
+    // The `lstat` above and this `unlink` are two syscalls, and another recovery
+    // running concurrently can remove the name in between — which is not a
+    // failure of anything, it is the same outcome reached by a different route.
+    // The review's race lane measured it: 39 raw `ENOENT`s escaping `create()`
+    // in 20 seconds, every one of them from this line, because a store that
+    // only answers its own fixed codes cannot let a system errno out of here.
+    // So a name that has gone is a name that is already dealt with, and only a
+    // removal that FAILS is re-thrown.
+    try { await bounded(operation, () => unlink(path), () => {}); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
 
   private usable(operation: Operation): void {
@@ -737,6 +875,29 @@ export class ResultFileStoreV1 {
         throw error;
       }
       ownedLock = true;
+      // …and it is only this descriptor's lock if the NAME is still that same
+      // file, which is not the same question and is the review's B3, gap 1.
+      // Creating a name and locking it are two steps in the kernel, so a
+      // take-over's `O_EXLOCK | O_NONBLOCK` probe can succeed in between, take
+      // the name, and unlink a lock whose writer is alive. This open has no
+      // `O_NONBLOCK`, so it blocks instead of failing, and would then carry on
+      // holding a lock with no name under it — the exact state in which two
+      // writers are inside the lock at once, and in which a later opener finds a
+      // staging file with no lock and deletes it. Measured on the real store with
+      // two writers and four openers over 40 s: 375 samples with two staging
+      // files alive at once, 242 with a staging file and no lock, two writers
+      // losing their half-written file, and 73 raw `ENOENT`s escaping `create()`.
+      // So the name is proved and, if it is not this descriptor's own file, the
+      // write is REFUSED with nothing written and nothing deleted — including no
+      // removal of the take-over's lock, which is not this store's to remove.
+      //
+      // This is the same shape the recovery lock carries a few lines above, and
+      // for the same reason: a lock is a fact about a file, and the fact has to
+      // be checked against the directory entry that names it.
+      if (!await stillOwnsTheName(operation, lock, lockPath)) {
+        ownedLock = false;
+        throw new ResultFileStoreError("store_ambiguous");
+      }
       mutationStarted = true;
       // The stamp is for whoever READS this file by hand — on a Mac mini, that
       // is a person looking at a leftover in Finder. It records this PROCESS's
@@ -784,7 +945,24 @@ export class ResultFileStoreV1 {
         } finally { await pending.close().catch(() => {}); }
         // link() is atomic and refuses to overwrite, so the file appears whole
         // or not at all; the directory sync is what makes it survive a crash.
-        await bounded(operation, () => link(pendingPath!, targetPath), mutating);
+        //
+        // A staging file that is GONE at this point is the one thing `link` can
+        // fail with that is not a raw disk error, and it means something removed
+        // this writer's own file mid-write — a concurrent recovery, or another
+        // writer that got inside the lock. Either way this operation's outcome
+        // cannot be proved, so it takes the SAME path as any other unprovable
+        // mutation: the store poisons itself and answers `store_ambiguous`.
+        // Before this it escaped as a raw `ENOENT` from `link()` straight to the
+        // caller, which is a breach of the store's own error contract and reads
+        // to the product as a system failure rather than as "try again"; the
+        // review measured both writers losing a half-written file that way.
+        try {
+          await bounded(operation, () => link(pendingPath!, targetPath), mutating);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          uncertain = true;
+          throw new ResultFileStoreError("store_ambiguous");
+        }
         await this.syncRoot(operation);
         await this.discard(pendingPath, operation);
         pendingPath = undefined;
@@ -812,7 +990,22 @@ export class ResultFileStoreV1 {
     } finally {
       try {
         if (!uncertain && pendingPath) { await this.discard(pendingPath, operation); pendingPath = undefined; }
-        if (lock) await lock.close().catch(() => {});
+        // The lock is retired with the name removed BEFORE the descriptor is
+        // closed, which is the review's B3, gap 2. Closing first releases the
+        // kernel lock and only then removes the name, and in that gap a second
+        // process's take-over probe succeeds, it claims the name, and this
+        // process's late unlink then removes SOMEONE ELSE'S lock — which is how a
+        // third writer ends up inside the lock with a live one. The review
+        // measured `create()` failing with a raw `ENOENT` 73 times in 40 s
+        // against unmodified code, from exactly this.
+        //
+        // Unlinking while the lock is still HELD closes it: a probe landing in
+        // the gap gets `EAGAIN` and cannot win the name. The unlink only happens
+        // when `ownedLock` is true, which is the result of the create-then-lock
+        // proof above, so the name being removed here is provably THIS writer's
+        // own file. The sync moves with it: the name's removal is part of what
+        // has to survive a crash, so it is synced with the lock still held and
+        // the descriptor is closed after.
         if (ownedLock && !uncertain) {
           await unlink(lockPath).catch((error: NodeJS.ErrnoException) => {
             if (error.code !== "ENOENT") throw error;
@@ -820,6 +1013,8 @@ export class ResultFileStoreV1 {
           ownedLock = false;
           await this.syncRoot(operation);
         }
+        if (lock) await lock.close().catch(() => {});
+        if (!uncertain) await this.syncRoot(operation);
       } catch { uncertain = true; this.poisoned = true; }
     }
     if (refusal) throw refusal;
