@@ -4,6 +4,7 @@
 // database with every migration applied. The same guards are exercised as the
 // production logins in tests/fleet-connector-postgres.test.ts.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
@@ -25,6 +26,7 @@ import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, see
   seedProposedTask } from "./support/fleet-fixture";
 // The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
+import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1 } from "../src/fleet/v1/connector-release";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 const CF_PROXY = Object.freeze({ trustedProxyAddresses: ["127.0.0.1"], trustedClientHeader: "cf-connecting-ip" as const });
@@ -217,8 +219,13 @@ async function fixture(options: { gatewayClock?: () => number; admission?: Fleet
   const owner = new FleetOwnerServiceV1(db, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
     afterDecision: () => gateway.reconcile() });
   const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(db, new Uint8Array(32).fill(3)));
+  const fixtureBundle = Buffer.from("export {};\n");
+  const fixtureManifest = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: "0.3.0", file: "connector-0.3.0.mjs",
+    sha256: createHash("sha256").update(fixtureBundle).digest("hex"), size: fixtureBundle.length,
+    builtFrom: "0".repeat(40) } as const;
   const handler = createFleetGatewayHandlerV1({ store: gateway, proposals,
-    connectorScript: { body: "export {};\n", digest: `sha256:${"0".repeat(64)}` },
+    connectorRelease: { bundle: fixtureBundle, manifest: fixtureManifest,
+      manifestBody: `${JSON.stringify(fixtureManifest, null, 2)}\n` },
     ...(options.admission ? { admission: options.admission } : {}) });
   let reads = 0;
   const server: Server = createServer((request, response) => {
@@ -1107,9 +1114,13 @@ test("the connector refuses insecure servers and loosely protected credential fi
 test("the owner's join command carries only a safe address and the one-time code", async () => {
   const { fleetJoinCommandsV1 } = await import("../src/web/v1/fleet-owner-http");
   const code = `crj_${"a".repeat(43)}`;
-  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code);
-  assert.equal(commands.unix, `curl -fsSL https://control.example.ts.net/fleet/v1/connector.mjs -o control-room-connector.mjs && node control-room-connector.mjs join --server https://control.example.ts.net --code ${code}`);
+  const release = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: "0.3.0", file: "connector-0.3.0.mjs",
+    sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) } as const;
+  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code, release);
+  assert.match(commands.unix, /connector-0\.3\.0\.mjs/u);
+  assert.match(commands.unix, new RegExp(release.sha256, "u"));
+  assert.match(commands.unix, /connector-manifest\.json/u);
   for (const origin of ["https://x.example;rm -rf ~", "https://x.example/$(id)", "file:///etc", "https://user@x.example"])
-    assert.throws(() => fleetJoinCommandsV1(origin, code));
-  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id"));
+    assert.throws(() => fleetJoinCommandsV1(origin, code, release));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id", release));
 });

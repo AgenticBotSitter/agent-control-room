@@ -15,8 +15,8 @@ database password and never gets your login.
    command into a terminal. It looks like this:
 
    ```sh
-   curl -fsSL https://<your-control-room>/fleet/v1/connector.mjs -o control-room-connector.mjs \
-     && node control-room-connector.mjs join --server https://<your-control-room> --code crj_…
+   # Use the complete line shown by Control Room. It downloads the versioned
+   # connector and manifest, verifies their displayed digest, then joins.
    ```
 
    On Windows, use the PowerShell line shown under **Windows** on the same page.
@@ -74,7 +74,6 @@ Write a settings file next to the key file
 ```json
 {
   "schema": "control-room.fleet-harnesses/v1",
-  "adapterModule": "/path/to/control-room/src/fleet/v1/harness-adapters.ts",
   "harnesses": {
     "codex": { "enabled": true, "executablePath": "/opt/homebrew/bin/codex",
       "workingDirectory": "/path/to/an/empty/work/folder", "deadlineMs": 1800000 }
@@ -82,8 +81,9 @@ Write a settings file next to the key file
 }
 ```
 
-Then, from a Control Room checkout on that machine: `pnpm fleet:worker`
-(the same as `node --import tsx scripts/fleet/connector.mjs run`).
+Then run the downloaded connector with `run`. Its reviewed Codex, Claude Code
+and Hermes adapters are inside the same file; the machine needs no Control Room
+checkout and the settings cannot select a replacement adapter module.
 
 - `deadlineMs` is the longest one task may run (at most one hour).
 - Codex and Claude Code can also take `"model"` and `"effort"`
