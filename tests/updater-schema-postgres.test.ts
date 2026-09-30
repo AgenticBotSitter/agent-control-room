@@ -884,6 +884,32 @@ test("the item-8 store runs every query as the production deployer login", async
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 
+test("the item-17 watcher plan port uses database time and atomically supersedes the only open plan", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    const deployer = as(postgres, "deployer"); await deployer.connect();
+    try {
+      const store = new PostgresUpdaterStoreV1(deployer); await store.initialize();
+      const plan = (id: string, commit: string) => ({ schema: "control-room.install-plan/v2", planId: id,
+        installationId: "install-fixture", kind: "code", candidate: { commit }, updaterDerived: { classes: ["code"],
+          changesDatabase: false, changesUpdater: false } });
+      const first = plan("plan-watcher-a", "a".repeat(40)), second = plan("plan-watcher-b", "b".repeat(40));
+      assert.ok((await store.databaseNow()) instanceof Date, "plan timestamps come from PostgreSQL, not the app clock");
+      assert.equal((await store.replaceOpenPlan({ plan: first, planDigest: planDigest("watcher-a"), expectedOpenPlanId: null })).status, "created");
+      assert.equal((await store.openPlan())?.plan.candidate.commit, first.candidate.commit);
+      assert.equal((await store.replaceOpenPlan({ plan: second, planDigest: planDigest("watcher-b"), expectedOpenPlanId: first.planId })).status, "created");
+      assert.equal((await store.openPlan())?.plan.candidate.commit, second.candidate.commit);
+      assert.equal((await store.replaceOpenPlan({ plan: second, planDigest: planDigest("watcher-b"), expectedOpenPlanId: second.planId })).status, "existing",
+        "a restart cannot mint a second plan for the same commit");
+      const old = await deployer.query("SELECT state,superseded_by_plan_id FROM updater.plans WHERE plan_id=$1", [first.planId]);
+      assert.deepEqual(old.rows[0], { state: "superseded", superseded_by_plan_id: second.planId });
+    } finally { await deployer.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
 test("startUpdaterV1 boots with a live run and only one of 20 production sessions acquires it", async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }

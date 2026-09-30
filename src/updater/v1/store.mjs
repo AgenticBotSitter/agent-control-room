@@ -5,6 +5,7 @@ const RUN_STATES_V1 = new Set(["approved", "prechecked", "staged", "quick_backup
   "succeeded", "rollback_started", "restore_started", "db_restored", "code_restored", "rolled_back",
   "needs_attention", "uncertain", "attended_upgrade_required", "refused"]);
 const UPDATER_LEASE_LOCK_V1 = Object.freeze([1128354389, 1431323730]);
+const OPEN_PLAN_STATES_V1 = Object.freeze(["building", "ready_for_approval", "approved", "approval_required"]);
 
 /** Typed adapter over item 7's fixed updater schema. The client is the
  * production peer-authenticated control_room_deployer login. */
@@ -108,5 +109,59 @@ export class PostgresUpdaterStoreV1 {
     const result = await this.client.query(`UPDATE updater.owner_requests SET handled_at=pg_catalog.now(),
       handled_outcome=$2 WHERE id=$1 AND handled_at IS NULL RETURNING id`, [id, outcome]);
     return result.rows.length === 1;
+  }
+
+  /** Item 17 plan port. The transaction uses the same DB lock as the schema
+   * trigger so two updater processes cannot manufacture two open plans. */
+  async openPlan() {
+    const result = await this.client.query(`SELECT plan_id,state,plan_json,plan_digest FROM updater.plans
+      WHERE state = ANY($1::text[]) ORDER BY created_at,plan_id LIMIT 2`, [OPEN_PLAN_STATES_V1]);
+    if (result.rows.length > 1) throw updaterRefuseV1("updater_multiple_open_plans");
+    const row = result.rows[0];
+    return row ? { planId: row.plan_id, state: row.state, plan: row.plan_json, planDigest: row.plan_digest } : null;
+  }
+
+  async databaseNow() {
+    const row = (await this.client.query("SELECT pg_catalog.now() AS now")).rows[0];
+    const value = row?.now instanceof Date ? row.now : new Date(row?.now);
+    if (!Number.isFinite(value.getTime())) throw updaterRefuseV1("updater_database_time_refused");
+    return value;
+  }
+
+  async replaceOpenPlan(input) {
+    const value = assertPlainObjectV1(input, "updater_plan_refused"), plan = assertPlainObjectV1(value.plan, "updater_plan_refused");
+    assertSafeIdV1(plan.planId, "updater_plan_refused"); assertSafeIdV1(plan.installationId, "updater_plan_refused");
+    if (plan.schema !== "control-room.install-plan/v2" || !["code", "database", "updater"].includes(plan.kind)
+        || typeof value.planDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(value.planDigest))
+      throw updaterRefuseV1("updater_plan_refused");
+    if (value.expectedOpenPlanId !== null && value.expectedOpenPlanId !== undefined)
+      assertSafeIdV1(value.expectedOpenPlanId, "updater_plan_refused");
+    await this.client.query("BEGIN");
+    try {
+      await this.client.query(`SELECT pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended('updater:open-plan', 0))`);
+      const current = await this.client.query(`SELECT plan_id,state,plan_json,plan_digest FROM updater.plans
+        WHERE state = ANY($1::text[]) ORDER BY created_at,plan_id LIMIT 2 FOR UPDATE`, [OPEN_PLAN_STATES_V1]);
+      if (current.rows.length > 1) throw updaterRefuseV1("updater_multiple_open_plans");
+      const existing = current.rows[0];
+      if ((existing?.plan_id ?? null) !== (value.expectedOpenPlanId ?? null)) {
+        await this.client.query("COMMIT");
+        return existing ? { status: "raced", plan: existing.plan_json, planId: existing.plan_id, planDigest: existing.plan_digest }
+          : { status: "raced", plan: null };
+      }
+      if (existing?.plan_json?.candidate?.commit === plan.candidate?.commit) {
+        await this.client.query("COMMIT");
+        return { status: "existing", plan: existing.plan_json, planId: existing.plan_id, planDigest: existing.plan_digest };
+      }
+      if (existing) await this.client.query(`UPDATE updater.plans SET state='superseded',superseded_by_plan_id=$1
+        WHERE plan_id=$2`, [plan.planId, existing.plan_id]);
+      await this.client.query(`INSERT INTO updater.plans(plan_id,installation_id,kind,state,classes,changes_database,
+        changes_updater,plan_digest,plan_json,needs_mac_confirm,expires_at) VALUES($1,$2,$3,'building',$4,$5,$6,$7,$8::jsonb,$9,
+        pg_catalog.now() + interval '72 hours')`, [plan.planId, plan.installationId, plan.kind, plan.updaterDerived.classes,
+        plan.updaterDerived.changesDatabase, plan.updaterDerived.changesUpdater, value.planDigest, JSON.stringify(plan),
+        plan.kind === "updater"]);
+      await this.client.query("COMMIT");
+      return { status: "created", plan, planId: plan.planId, planDigest: value.planDigest };
+    } catch (error) { await this.client.query("ROLLBACK").catch(() => {}); throw error; }
   }
 }
