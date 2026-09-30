@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,6 +62,12 @@ test("missing, corrupt, huge, symlinked, stale, unknown and HTML-shaped updater 
   assert.equal((await read()).state, "attention", "HTML-shaped field");
   await f.write(publicStatus({ needsYou: true })); assert.equal((await read()).state, "attention", "needs owner");
   await f.write(publicStatus({ state: "uncertain" })); assert.equal((await read()).state, "attention", "uncertain");
+  if (process.platform !== "win32") {
+    await rm(file); execFileSync("mkfifo", [file]);
+    const fifo = await Promise.race([read(), new Promise<"hung">(resolve => setTimeout(() => resolve("hung"), 2_000).unref())]);
+    assert.notEqual(fifo, "hung", "a FIFO at the status path must not block the reader");
+    assert.equal((fifo as Awaited<ReturnType<typeof read>>).state, "attention", "FIFO");
+  }
 });
 
 test("the browser reader rejects an oversized or unexpected response as attention", async () => {

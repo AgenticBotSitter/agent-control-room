@@ -53,7 +53,9 @@ async function readNoFollowStatusV1(root: string): Promise<{ text: string; modif
     if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("updater_home_status_path_refused");
   }
   const path = join(root, STATUS_FILE_V1);
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  // O_NONBLOCK: a FIFO planted at the status path must be refused by the isFile() check below,
+  // not block this open forever waiting for a writer.
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {
     const entry = await handle.stat();
     if (!entry.isFile() || entry.nlink !== 1 || entry.size < 2 || entry.size > MAX_STATUS_BYTES_V1)
