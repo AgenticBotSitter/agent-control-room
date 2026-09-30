@@ -167,7 +167,7 @@ for (const [behaviour, pattern] of [
   });
 }
 
-test("timeout: a harness that ignores its time limit is abandoned, reported, and run stops taking work", async t => {
+test("timeout: a harness that ignores its time limit is abandoned, reported, and run stops taking work", { timeout: 20_000 }, async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Hung");
   const task = await offer(f, "handoff-hang");
@@ -227,7 +227,7 @@ test("pause: Pause, Drain, Stop and an unreadable switch all stop new claims", a
   assert.equal((await runOnce(f, worker, path)).pass.outcome, "submitted");
 });
 
-test("stop during a run: the harness is cancelled and a blocker hands the task back", async t => {
+test("stop during a run: the harness is cancelled and a blocker hands the task back", { timeout: 20_000 }, async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Stoppable");
   const task = await offer(f, "handoff-stop");
@@ -240,7 +240,7 @@ test("stop during a run: the harness is cancelled and a blocker hands the task b
     /^Stopped from Control Room before Codex finished\. Nothing was submitted\.$/u);
 });
 
-test("revoked mid-run: the harness is cancelled and nothing is posted with the dead credential", async t => {
+test("revoked mid-run: the harness is cancelled and nothing is posted with the dead credential", { timeout: 20_000 }, async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Revoked");
   const task = await offer(f, "handoff-revoked");

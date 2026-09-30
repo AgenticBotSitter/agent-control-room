@@ -367,8 +367,15 @@ async function refuseSharedWrite(path, what) {
     throw new Error(`${what} ${path} can be changed by other users. Run: chmod go-w ${path}`);
 }
 
+/** @typedef {Readonly<{ adapterModule: string | null, harnesses: Readonly<Record<string,
+ *   Readonly<{ enabled: boolean, configuration: Readonly<Record<string, unknown>> }>>> }>} HarnessSettings */
+/** @typedef {Readonly<{ state: string, mode?: string, outcome?: "submitted" | "blocked" | "abandoned", claimId?: string,
+ *   jobId?: string, resultId?: string, message?: string, reason?: string, forcedTimeout?: boolean }>} RunPass */
+
 /** Reads the machine owner's harness settings. A missing file means no
- * harness is enabled; anything malformed is refused, never guessed. */
+ * harness is enabled; anything malformed is refused, never guessed.
+ * @param {string} path
+ * @returns {Promise<HarnessSettings | null>} */
 export async function loadHarnessSettings(path) {
   let raw;
   try { raw = await readFile(path, "utf8"); }
@@ -395,7 +402,10 @@ export async function loadHarnessSettings(path) {
   return Object.freeze({ adapterModule: anyEnabled ? value.adapterModule : null, harnesses: Object.freeze(harnesses) });
 }
 
-/** Loads the adapter for one harness only if the machine owner enabled it. */
+/** Loads the adapter for one harness only if the machine owner enabled it.
+ * @param {HarnessSettings | null} settings
+ * @param {string} harness
+ * @param {(specifier: string) => Promise<any>} [importer] */
 export async function loadHarnessAdapter(settings, harness, importer = specifier => import(specifier)) {
   const entry = settings?.harnesses?.[harness];
   if (!HANDOFF_HARNESSES.includes(harness) || entry?.enabled !== true || !settings.adapterModule) return null;
@@ -429,6 +439,9 @@ async function report(send, attempts = 3) {
  * happened. Only a completed, well-formed, in-bounds answer becomes a result;
  * a failure, crash, timeout, stop, malformed or oversized answer becomes a
  * blocker that hands the task back. Nothing here can accept the result.
+ * @param {{ client: ReturnType<typeof createClient>, claim: any, adapter: any, progressIntervalMs?: number,
+ *   readMode?: () => Promise<string>, log?: (message: string) => void, watchdogGraceMs?: number }} options
+ * @returns {Promise<RunPass>}
  */
 export async function runClaimedTask({ client, claim, adapter, progressIntervalMs = 60_000, readMode = async () => "running",
   log = () => {}, watchdogGraceMs = WATCHDOG_GRACE_MS }) {
@@ -513,6 +526,10 @@ export async function runClaimedTask({ client, claim, adapter, progressIntervalM
  * Drain / Stop), renews the credential when due, and, only when the worker's
  * harness is enabled here and Control Room is running, claims one offered
  * task and hands it to that harness. One task at a time.
+ * @param {{ configPath: string, harnessesPath?: string, fetcher?: typeof fetch, once?: boolean,
+ *   importer?: (specifier: string) => Promise<any>, progressIntervalMs?: number, pollMs?: number,
+ *   log?: (message: string) => void, sleep?: (ms: number) => Promise<void>, watchdogGraceMs?: number }} options
+ * @returns {Promise<RunPass>}
  */
 export async function runWorker({ configPath, harnessesPath = defaultHarnessSettingsPath(configPath), fetcher, once = false,
   importer, progressIntervalMs = 60_000, pollMs = 60_000, log = message => process.stderr.write(`${message}\n`),

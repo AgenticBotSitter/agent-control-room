@@ -110,7 +110,7 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
         ON c.tenant_id=e.tenant_id AND c.claim_id=e.claim_id WHERE c.job_id=$1`, [task.jobId]);
       assert.deepEqual(progress.map(row => [row.kind, row.message]), [["progress", "Started on Codex on this machine."]]);
       const audit = await asWeb(`SELECT action FROM audit_events WHERE target_id=$1 ORDER BY chain_sequence`, [task.jobId]);
-      assert.deepEqual(audit.map(row => row.action), ["fleet.task.claimed", "fleet.result.submitted"]);
+      assert.deepEqual(audit.map(row => row.action), ["fleet.task.offered", "fleet.task.claimed", "fleet.result.submitted"]);
 
       // --- The owner accepts through the owner path; only then is the task done.
       await owner.review(ownerIdentity(), { resultId: shown[0]!.resultId, decision: "accepted" });
