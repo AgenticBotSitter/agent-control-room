@@ -26,6 +26,15 @@ importers:
       luxon:
         specifier: 3.7.2
         version: 3.7.2
+      mdast-util-from-markdown:
+        specifier: 2.0.3
+        version: 2.0.3(supports-color@10.2.2)
+      mdast-util-gfm:
+        specifier: 3.1.0
+        version: 3.1.0(supports-color@10.2.2)
+      micromark-extension-gfm:
+        specifier: 3.0.0
+        version: 3.0.0
       pg:
         specifier: 8.23.0
         version: 8.23.0

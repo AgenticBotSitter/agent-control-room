@@ -7,7 +7,8 @@ import { StateChip, UnavailableState, type ChipTone } from "../owner-ui";
  * the browser never sees a worker credential, and a join code is shown once. */
 type FleetWorker = { workerId: string; displayName: string; workerKind: string; status: string; projectIds: string[];
   capabilities: string[]; maxConcurrent: number; activeClaims: number; lastSeenAt: string | null; platform: string | null;
-  credentialExpiresAt: string | null };
+  credentialExpiresAt: string | null;
+  latestNote?: { kind: string; message: string; occurredAt: string; taskTitle: string } | null };
 type FleetResult = { resultId: string; projectId: string; workerName: string; title: string; summary: string;
   fileCount: number; submittedAt: string; decision: string | null; note: string | null };
 type FleetBoard = { workers: FleetWorker[]; pendingCodes: { codeId: string; displayName: string; purpose: string; expiresAt: string }[];
@@ -157,6 +158,10 @@ export function FleetWorkers() {
           <h3>{worker.displayName}</h3>
           <p><StateChip state={worker.status} tone={tone} label={label} /> Last seen {ago(worker.lastSeenAt)}
             {worker.activeClaims > 0 ? ` · ${worker.activeClaims} task${worker.activeClaims === 1 ? "" : "s"} in progress` : ""}</p>
+          {worker.latestNote && <p role={worker.latestNote.kind === "blocker" ? "alert" : undefined}>
+            {worker.latestNote.kind === "blocker" && <><StateChip state="blocked" tone="bad" label="Blocked" />{" "}</>}
+            {worker.latestNote.taskTitle ? <strong>{worker.latestNote.taskTitle}: </strong> : null}
+            {worker.latestNote.message} <span>({ago(worker.latestNote.occurredAt)})</span></p>}
           <details><summary>Details</summary><ul>
             <li>Kind: {worker.workerKind}{worker.platform ? ` on ${worker.platform}` : ""}</li>
             <li>Projects: {worker.projectIds.join(", ")}</li><li>May do: {worker.capabilities.join(", ")}</li>

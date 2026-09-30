@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   PORTABLE_PRINTABLE_TEXT_V1,
+  assertNoHiddenTextV1,
   assertNoPortablePrototypePollutionV1,
   assertPortableGuardedTextV1,
   assertPortableInputSizeV1,
@@ -178,6 +179,11 @@ export type ModuleManifestV1 = z.infer<typeof moduleManifestSchemaV1>;
 function assertGuardedText(value: unknown, path: string): void {
   if (typeof value === "string") {
     assertPortableGuardedTextV1("module_manifest", path, value);
+    // The shared guard blocks script and credential/authority wording, but not
+    // invisible or direction-changing characters: the owner's approval card
+    // shows `name` and `publisher` verbatim, so every manifest string gets the
+    // same character allowlist as declarative file text.
+    assertNoHiddenTextV1(value, `module_manifest_${path}_hidden_text`);
     return;
   }
   if (Array.isArray(value)) {
