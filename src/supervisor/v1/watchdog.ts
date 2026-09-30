@@ -43,27 +43,37 @@ export class SupervisorWatchdogV1 {
     if(!health.healthy){
       let pauseFailed=false;
       try{await this.operations.pauseNewStarts({reasonCode:"machine_health_failed",observedAt:at});}catch{pauseFailed=true;}
+      // Recording an incident is best-effort from here down: the pause above
+      // already protects the machine, so a failure to record (a still-missing
+      // grant, a transient blip under the same load that made the machine
+      // unhealthy) must not turn a health-check failure into a crashed cycle --
+      // especially the first cycle, which host startup awaits directly.
       for(const reason of health.reasonCodes){
-        const result=await this.#incidents.apply({tenantId:this.tenantId,serviceId:this.supervisorId,
-          correlationKey:`supervisor.health.${reason}`,observedAt:at,action:"open_or_update",severity:"critical",
-          safeReasonCode:reason,safeRemedyCode:"inspect_machine_health"});
-        if(result.incident){
-          const digest=createHash("sha256").update(result.incident.id).digest("hex").slice(0,32);
-          const id=`attention:supervisor:${digest}`;
-          const item=actionInboxItemSchemaV1.parse({id,tenantId:this.tenantId,kind:"incident",state:"open",
-            requestedAction:"Inspect machine health before resuming new task starts.",reasonCode:reason,
-            blockedWorkItemIds:[],legalResponses:[{id:`response:${digest}`,kind:"open_source",
-              label:"Inspect recorded machine health",requiresConfirmation:false,available:true}],
-            evidence:[{id:`incident:${digest}`,kind:"incident",observedAt:at}],createdAt:at,deliveryState:"not_requested"});
-          await this.db.query(`INSERT INTO control_action_inbox
-            (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
-            VALUES($1,$2,NULL,NULL,'incident','open','not_requested',$3,NULL,$4::jsonb) ON CONFLICT DO NOTHING`,
-          [item.id,item.tenantId,item.createdAt,JSON.stringify(item)]);
-        }
+        try{
+          const result=await this.#incidents.apply({tenantId:this.tenantId,serviceId:this.supervisorId,
+            correlationKey:`supervisor.health.${reason}`,observedAt:at,action:"open_or_update",severity:"critical",
+            safeReasonCode:reason,safeRemedyCode:"inspect_machine_health"});
+          if(result.incident){
+            const digest=createHash("sha256").update(result.incident.id).digest("hex").slice(0,32);
+            const id=`attention:supervisor:${digest}`;
+            const item=actionInboxItemSchemaV1.parse({id,tenantId:this.tenantId,kind:"incident",state:"open",
+              requestedAction:"Inspect machine health before resuming new task starts.",reasonCode:reason,
+              blockedWorkItemIds:[],legalResponses:[{id:`response:${digest}`,kind:"open_source",
+                label:"Inspect recorded machine health",requiresConfirmation:false,available:true}],
+              evidence:[{id:`incident:${digest}`,kind:"incident",observedAt:at}],createdAt:at,deliveryState:"not_requested"});
+            await this.db.query(`INSERT INTO control_action_inbox
+              (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
+              VALUES($1,$2,NULL,NULL,'incident','open','not_requested',$3,NULL,$4::jsonb) ON CONFLICT DO NOTHING`,
+            [item.id,item.tenantId,item.createdAt,JSON.stringify(item)]);
+          }
+        }catch{process.stderr.write(`supervisor_incident_record_unavailable ${reason}\n`);}
       }
-      if(pauseFailed)await this.#incidents.apply({tenantId:this.tenantId,serviceId:this.supervisorId,
-        correlationKey:"supervisor.health.operations_pause",observedAt:at,action:"open_or_update",severity:"critical",
-        safeReasonCode:"operations_pause_unavailable",safeRemedyCode:"inspect_operations_mode"});
+      if(pauseFailed){
+        try{await this.#incidents.apply({tenantId:this.tenantId,serviceId:this.supervisorId,
+          correlationKey:"supervisor.health.operations_pause",observedAt:at,action:"open_or_update",severity:"critical",
+          safeReasonCode:"operations_pause_unavailable",safeRemedyCode:"inspect_operations_mode"});}
+        catch{process.stderr.write("supervisor_incident_record_unavailable operations_pause_unavailable\n");}
+      }
     }
     return health;
   }

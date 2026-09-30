@@ -61,6 +61,10 @@ import { SessionWatchServiceV1 } from "./session-watch-service";
 import { sessionWatchIdSchema } from "./session-watch-wire";
 import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
+import { RecurringRuleServiceV1 } from "../../recurring/v1";
+import { ReusableSkillServiceV1 } from "../../skills/v1";
+import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
+import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -113,6 +117,8 @@ export interface PrivateWebProcessOptions {
   }) => Promise<OperatorSurfaceSnapshotV1> };
   /** Bounded per-node task and terminal-result attribution from canonical records. */
   workerBoard?: { read: (input: { tenantId: string; now: string }) => Promise<unknown> };
+  /** Read-only per worker-kind/model pipeline build-stage outcomes over trailing windows. */
+  workerScorecard?: { read: (input: { tenantId: string; now: string }) => Promise<unknown> };
   /** Owner-only canonical attention reader supplied by trusted composition.
    * It is intentionally separate from the full operator snapshot so the
    * coordinator role needs access only to the inbox table for this route. */
@@ -264,6 +270,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   }) : undefined;
   if (options.workerBoard && typeof options.workerBoard.read !== "function") throw new Error("invalid_private_app_config");
   const workerBoard = options.workerBoard ? Object.freeze({ read: options.workerBoard.read.bind(options.workerBoard) }) : undefined;
+  if (options.workerScorecard && typeof options.workerScorecard.read !== "function") throw new Error("invalid_private_app_config");
+  const workerScorecard = options.workerScorecard ? Object.freeze({ read: options.workerScorecard.read.bind(options.workerScorecard) }) : undefined;
   if (options.actionInboxSource && typeof options.actionInboxSource.read !== "function") throw new Error("invalid_private_app_config");
   const actionInboxSource = options.actionInboxSource ? Object.freeze({
     read: options.actionInboxSource.read.bind(options.actionInboxSource),
@@ -323,6 +331,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey, newsIntegrityKey: options.news?.integrityKey,
       productConfiguration });
+  const recurringRules = new RecurringRuleServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
+  const reusableSkills = new ReusableSkillServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
@@ -377,7 +389,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!,
-      ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
+      ideaIntegrityKey: options.ideaProjects?.integrityKey, followUps: tasks }, clock) : undefined;
   const ownerVerifications = options.tasks?.manualVerificationScenarios ? new WebTaskVerificationService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.reviews!,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey,
@@ -515,6 +527,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               return { tenantId: options.tenantId, now: actor.now };
             });
             return Response.json(await workerBoard.read(scope), { headers: privateResponseHeaders });
+          }
+          if (url.pathname === "/api/v1/workers-scorecard") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!workerScorecard) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return { tenantId: options.tenantId, now: actor.now };
+            });
+            return Response.json(await workerScorecard.read(scope), { headers: privateResponseHeaders });
           }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
           if (observations) {
@@ -834,6 +855,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
             return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications,
               planning, assignment, approvals, submission, revisions, gatewayAssertionProfile, clock })(request);
+          if (/^\/api\/v1\/projects\/[^/]+\/recurring-rules(?:\/|$)/.test(url.pathname))
+            return createRecurringRuleHttpHandlerV1({ origin: site.origin, trust, service: recurringRules,
+              gatewayAssertionProfile, clock })(request);
+          if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname))
+            return createReusableSkillHttpHandlerV1({ origin: site.origin, trust, service: reusableSkills,
+              gatewayAssertionProfile, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });

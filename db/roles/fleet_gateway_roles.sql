@@ -55,6 +55,10 @@ GRANT UPDATE (state, version, payload, updated_at) ON control_requests, control_
   control_jobs, control_attempts, control_leases TO control_room_fleet_gateway;
 GRANT UPDATE (expires_at, renewed_at) ON control_leases TO control_room_fleet_gateway;
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_fleet_gateway;
+-- 0111: a hand-off's required note is presented on the owner's task timeline,
+-- exactly like the other lifecycle writers granted in 0107.
+GRANT SELECT, INSERT ON control_project_event_stream_heads, control_project_events TO control_room_fleet_gateway;
+GRANT UPDATE (last_sequence, last_event_digest, head_auth_tag, updated_at) ON control_project_event_stream_heads TO control_room_fleet_gateway;
 -- Row-lock rights only, matching the coordinator's lock order.
 GRANT UPDATE (coordinator_lock) ON tenants, control_manual_project_heads, projects TO control_room_fleet_gateway;
 -- The 0156 claim guard is SECURITY INVOKER and reads the installation
@@ -70,7 +74,8 @@ GRANT SELECT ON fleet_enrollment_codes, fleet_workers, fleet_worker_credentials,
   fleet_result_reviews TO control_room_private_web;
 
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_fleet_owner_authority;
-GRANT SELECT ON work_intake_tenant_binding, tenants, workspaces, projects, control_manual_project_heads,
+GRANT SELECT ON work_intake_tenant_binding TO control_room_fleet_owner_authority;
+GRANT SELECT ON tenants, workspaces, projects, control_manual_project_heads,
   control_identities, control_role_grants, control_web_sessions, control_requests, control_workflows,
   control_jobs, control_attempts, control_leases, audit_events, control_audit_chain_heads,
   fleet_enrollment_codes, fleet_enrollment_redemptions, fleet_workers, fleet_worker_credentials,

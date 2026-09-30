@@ -37,6 +37,8 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   control_service_incident_heads, control_service_incidents,
   installation_operations_mode_revisions
   TO control_room_task_coordinator;
+GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
+  control_recurring_rules, control_recurring_proposals TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
 -- Read-only: the coordinator enforces a project's eligible-worker-kinds and
@@ -60,6 +62,10 @@ GRANT INSERT ON control_installation_transition_revisions TO control_room_task_c
 GRANT INSERT ON control_agent_review_plans TO control_room_task_coordinator;
 GRANT INSERT ON control_pipeline_build_publications TO control_room_task_coordinator;
 GRANT INSERT ON control_update_candidates TO control_room_task_coordinator;
+GRANT INSERT ON control_recurring_proposals TO control_room_task_coordinator;
+GRANT UPDATE (state,attempt_count,batch_id,safe_reason_code,updated_at)
+  ON control_recurring_proposals TO control_room_task_coordinator;
+GRANT UPDATE (last_evaluated_at) ON control_recurring_rules TO control_room_task_coordinator;
 GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
   control_action_inbox TO control_room_task_coordinator;
@@ -81,10 +87,11 @@ GRANT UPDATE (node_id,state,safe_reason_code,last_heartbeat_at,observed_at)
 GRANT UPDATE (version,last_started_at,last_completed_at,state)
   ON control_supervisor_loop_heads TO control_room_task_coordinator;
 GRANT UPDATE (state,released_at) ON control_provider_waits TO control_room_task_coordinator;
-GRANT INSERT (tenant_id,correlation_key), UPDATE (next_generation)
-  ON control_service_incident_heads TO control_room_task_coordinator;
-GRANT INSERT (id,tenant_id,correlation_key,generation,service_id,severity,safe_reason_code,safe_remedy_code,state,opened_at,last_observed_at),
-  UPDATE (severity,safe_reason_code,safe_remedy_code,state,last_observed_at,resolved_at)
+GRANT INSERT (tenant_id,correlation_key) ON control_service_incident_heads TO control_room_task_coordinator;
+GRANT UPDATE (next_generation) ON control_service_incident_heads TO control_room_task_coordinator;
+GRANT INSERT (id,tenant_id,correlation_key,generation,service_id,severity,safe_reason_code,safe_remedy_code,state,opened_at,last_observed_at)
+  ON control_service_incidents TO control_room_task_coordinator;
+GRANT UPDATE (severity,safe_reason_code,safe_remedy_code,state,last_observed_at,resolved_at)
   ON control_service_incidents TO control_room_task_coordinator;
 GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at)
   ON pipeline_runs TO control_room_task_coordinator;

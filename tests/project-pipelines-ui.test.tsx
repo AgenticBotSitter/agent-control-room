@@ -5,11 +5,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { LocalRuntimeContextV1, parseLocalStatusV1 } from "../private-app/app/local-runtime";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
 import { PipelineAttention, PipelineBatchDetail, PipelineBatchList, PrivateProjectPipelines, createPipelineRunOwnerBrowserClient,
-  createWorkBatchOwnerBrowserClient } from
+  ProposalGraphEditor, createWorkBatchOwnerBrowserClient, createWorkBatchStartBrowserClient, fillGraphPresetV1 } from
   "../private-app/app/project-pipelines-workspace";
 import type { WorkBatchOwnerViewV1 } from "../src/work-intake/v1/owner-schemas";
 
 const projectId = "project:alpha", batchId = "batch:alpha";
+const digest = (char: string) => `sha256:${char.repeat(64)}`;
+const routingOptions = [
+  { workerId: "worker:exact", workerKind: "codex", nodeId: "node:codex", modelKeys: ["model:one"] },
+  { workerId: "worker:second", workerKind: "claude-code", nodeId: "node:claude", modelKeys: ["model:two"] },
+  { workerId: "worker:third", workerKind: "hermes", nodeId: "node:hermes", modelKeys: ["profile:three"] },
+];
 const proposal = {
   schema: "control-room.work-batch-proposal/v1" as const, projectId,
   tasks: [{ localId: "build", title: "Build the change", instructions: "Change only the declared files.",
@@ -41,6 +47,8 @@ const view = (state: WorkBatchOwnerViewV1["state"] = "proposed"): WorkBatchOwner
     workerKind: "codex", nodeId: "mac-1.codex", position: 3, queueDepthLimit: 10,
     selectionKey: "model:one", model: "model:one", effort: "high", provider: null, profile: null,
     state: "waiting_turn" }], queueDepthLimit: 10,
+  flagsByLocalId: {},
+  routingOptions,
   startsWork: false, grantsExecutionAuthority: false,
 });
 
@@ -125,9 +133,9 @@ test("pipeline detail shows every revision, phone-friendly decisions, and links 
   assert.match(proposed, /Reject all items/);
   assert.match(proposed, /Revision 1/);
   assert.match(proposed, /Revision 2/);
-  assert.match(proposed, /Revise this proposal/);
+  assert.match(proposed, /Edit this proposal graph/);
   assert.match(proposed, /does not assign, approve execution, dispatch, or start work/);
-  assert.match(proposed, /private-pipeline-items/);
+  assert.match(proposed, /private-work-graph/);
   assert.match(proposed, /worker:exact/);
   assert.doesNotMatch(proposed, />codex<\/dd>/);
 
@@ -150,6 +158,67 @@ test("pipeline detail shows every revision, phone-friendly decisions, and links 
   const awaiting = renderToStaticMarkup(createElement(PipelineBatchDetail, { projectId,
     data: { state: "ready", value: approvedWithoutWorker } }));
   assert.match(awaiting, /Awaiting an exact worker choice; this item is not admitted to an agent queue/);
+});
+
+test("proposal graph renders arrows, capability chips, editable parts and plain missing-machine status", () => {
+  const graph = renderToStaticMarkup(createElement(PipelineBatchDetail, { projectId,
+    data: { state: "ready", value: { ...view(), routingOptions: [] } }, editedProposal: proposal,
+    revisionText: JSON.stringify(proposal), onProposalChange() {} }));
+  assert.match(graph, /aria-label="Proposal graph"/);
+  assert.match(graph, /aria-label="Dependency arrows"/);
+  assert.match(graph, /build[\s\S]*→[\s\S]*check/);
+  assert.match(graph, /capability:build/);
+  assert.match(graph, /No eligible machine is recorded for this part/);
+  assert.match(graph, /aria-label="Edit proposal graph"/);
+  assert.match(graph, /Pin or pool/);
+  assert.match(graph, /Inputs from other parts/);
+  const editor = renderToStaticMarkup(createElement(ProposalGraphEditor,
+    { proposal, routingOptions, onChange() {} }));
+  assert.match(editor, /Add part/);
+  assert.match(editor, /Pool: all codex/);
+  assert.match(editor, /Pin: worker:exact/);
+  const invalid = renderToStaticMarkup(createElement(PipelineBatchDetail, { projectId,
+    data: { state: "ready", value: view() }, editedProposal: proposal, revisionText: "{" }));
+  assert.match(invalid, /not a valid acyclic proposal/);
+  assert.match(invalid, /<button type="button" disabled="">Save revision<\/button>/);
+});
+
+test("graph presets fill the existing proposal schema and compare preset uses the shared builder", () => {
+  const split = fillGraphPresetV1(projectId, "split_by_part", proposal, routingOptions)!;
+  assert.equal(split.schema, "control-room.work-batch-proposal/v1");
+  assert.deepEqual(split.tasks.map(task => task.localId), ["part-1", "part-2"]);
+  assert.deepEqual(split.edges, []);
+  const compare = fillGraphPresetV1(projectId, "compare_and_combine", proposal, routingOptions)!;
+  assert.deepEqual(compare.tasks.map(task => task.localId), ["answer-1", "answer-2", "combine"]);
+  assert.deepEqual(compare.edges, [{ fromLocalId: "answer-1", toLocalId: "combine" },
+    { fromLocalId: "answer-2", toLocalId: "combine" }]);
+  assert.deepEqual(compare.tasks.map(task => task.requestedWorkerId),
+    ["worker:exact", "worker:second", "worker:third"]);
+  assert.equal(fillGraphPresetV1(projectId, "compare_and_combine", proposal, routingOptions.slice(0, 2)), null);
+});
+
+test("Approve and Start remain two separate taps and both disable while pending", () => {
+  const proposed = renderToStaticMarkup(createElement(PipelineBatchDetail, { projectId,
+    data: { state: "ready", value: view() }, decisions: {
+      build: { decision: "approve", reasonCode: "" }, check: { decision: "approve", reasonCode: "" },
+    }, pending: true, revisionText: JSON.stringify(proposal) }));
+  assert.match(proposed, /<button type="button" disabled="">Approve plan<\/button>/);
+  assert.doesNotMatch(proposed, />Start approved plan<\/button>/);
+  const approved = renderToStaticMarkup(createElement(PipelineBatchDetail, { projectId,
+    data: { state: "ready", value: view("approved") }, startPending: true }));
+  assert.match(approved, /Plan decision recorded/);
+  assert.match(approved, /<button type="button" disabled="">Starting approved plan…<\/button>/);
+});
+
+test("open intake-gate flags still block plan approval until dismissed", () => {
+  const flagged = { ...view(), flagsByLocalId: { build: [{ kind: "needs_more_info" as const,
+    reasonCode: "vague_acceptance", dismissed: false }] } };
+  const html = renderToStaticMarkup(createElement(PipelineBatchDetail, { projectId,
+    data: { state: "ready", value: flagged }, decisions: {
+      build: { decision: "approve", reasonCode: "" }, check: { decision: "approve", reasonCode: "" },
+    }, revisionText: JSON.stringify(proposal) }));
+  assert.match(html, /Resolve every open intake flag/);
+  assert.match(html, /<button type="button" disabled="">Approve plan<\/button>/);
 });
 
 test("pipeline browser client binds reads and an exact no-start owner decision", async () => {
@@ -175,6 +244,172 @@ test("pipeline browser client binds reads and an exact no-start owner decision",
   assert.equal(post.path, "/api/v1/projects/project%3Aalpha/pipelines/batch%3Aalpha");
   assert.equal(post.init?.method, "POST");
   assert.equal((post.init?.headers as Record<string, string>)["idempotency-key"], "pipeline:test-key-0001");
+});
+
+const startDetail = (jobId: string) => ({ project: { projectId, title: "Project", summary: "",
+  lifecycle: "active", version: 1, createdAt: "2026-09-27T09:00:00.000Z", updatedAt: "2026-09-27T09:00:00.000Z",
+  origin: "ordinary", lifecycleEditable: true }, task: { jobId, projectId, requestId: `request:${jobId.split(":").at(-1)}`,
+    title: "Approved part", state: "proposed", version: 0, createdAt: "2026-09-27T11:00:00.000Z",
+    updatedAt: "2026-09-27T11:00:00.000Z" }, instructions: "Do the approved work.", inputDigest: digest("a"),
+  observedAt: "2026-09-27T11:01:00.000Z", modelSelection: null, ownershipLeases: [], attempts: [],
+  usageRollup: { runs: 0, inputTokens: null, outputTokens: null, totalTokens: null, wallTimeMs: null,
+    knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0, unknownCostRuns: 0, unknownCostReasons: [] },
+  priceTable: { state: "not_recorded", tableId: null, recordedAt: null }, earlierAttemptsOmitted: false,
+  preparedFor: "codex", localRouteObservation: { state: "configured_local_route", adapter: "codex" },
+  hermesDeliveryRecovery: { source: "not_applicable" }, progressSource: "configured", dispatch: "configured",
+  artifacts: "configured", review: "not_connected" });
+
+test("batch Start rechecks the exact ordinary task preview and submits no batch-only command", async () => {
+  const calls: Array<{ path: string; method: string; body?: string }> = [];
+  const packetDigest = digest("b");
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input), method = init?.method ?? "GET";
+    calls.push({ path, method, body: init?.body as string | undefined });
+    if (!path.includes("/submission")) return Response.json(startDetail("job:approved"));
+    if (method === "GET") return Response.json({ projectId, jobId: "job:approved", inputDigest: digest("a"),
+      receipt: null, preview: { projectId, jobId: "job:approved", packetDigest } });
+    return Response.json({ projectId, jobId: "job:approved", attemptId: "attempt:approved", queueId: "queue:approved",
+      packetDigest, operationDigest: digest("c"), queuedAt: "2026-09-27T11:02:00.000Z", replayed: false,
+      evidence: "recorded_delivery_intent", startsWork: false, grantsExecutionAuthority: false }, { status: 201 });
+  }) as typeof fetch;
+  const client = createWorkBatchStartBrowserClient(transport);
+  const result = await client.start(projectId, view("approved"));
+  assert.deepEqual(result, { started: ["job:approved"], alreadyStarted: [], notReady: [] });
+  assert.equal(calls.filter(call => call.method === "POST").length, 1);
+  assert.equal(calls.filter(call => call.method === "GET" && call.path.includes("/submission")).length, 2);
+  assert.deepEqual(JSON.parse(calls.find(call => call.method === "POST")!.body!),
+    { expectedInputDigest: digest("a"), expectedPacketDigest: packetDigest });
+  assert.equal(calls.some(call => call.path.includes("/pipelines/") && call.method === "POST"), false);
+});
+
+test("batch Start refuses a second caller, stops on failure, and reconciles a lost reply before retrying", async () => {
+  const packetDigest = digest("b"); let releaseDetail!: () => void;
+  const detailGate = new Promise<void>(resolve => { releaseDetail = resolve; });
+  let lost = true, receiptRecorded = false, postCount = 0;
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input), method = init?.method ?? "GET";
+    if (!path.includes("/submission")) { await detailGate; return Response.json(startDetail("job:approved")); }
+    if (method === "POST") { postCount += 1; receiptRecorded = true;
+      if (lost) { lost = false; throw new Error("synthetic lost response"); } }
+    const receipt = { projectId, jobId: "job:approved", attemptId: "attempt:approved", queueId: "queue:approved",
+      packetDigest, operationDigest: digest("c"), queuedAt: "2026-09-27T11:02:00.000Z",
+      evidence: "recorded_delivery_intent", startsWork: false, grantsExecutionAuthority: false };
+    if (method === "POST") return Response.json({ ...receipt, replayed: false }, { status: 201 });
+    return Response.json({ projectId, jobId: "job:approved", inputDigest: digest("a"),
+      receipt: receiptRecorded ? receipt : null, ...(receiptRecorded ? {} : { preview: { projectId, jobId: "job:approved", packetDigest } }) });
+  }) as typeof fetch;
+  const client = createWorkBatchStartBrowserClient(transport);
+  const first = client.start(projectId, view("approved"));
+  await assert.rejects(client.start(projectId, view("approved")), /uncertain/);
+  releaseDetail();
+  await assert.rejects(first, /uncertain/);
+  assert.equal(client.hasPending(), true);
+  await assert.rejects(client.start(projectId, { ...view("approved"), batchId: "batch:other" }), /uncertain/);
+  const retried = await client.start(projectId, view("approved"));
+  assert.deepEqual(retried, { started: [], alreadyStarted: ["job:approved"], notReady: [] });
+  assert.equal(postCount, 1, "reconciliation must not send a second POST after a lost reply");
+});
+
+test("batch Start refuses bad state, missing routes, changed previews and wrong-scope reads", async () => {
+  let calls = 0;
+  const never = (async () => { calls += 1; throw new Error("transport should stay idle"); }) as typeof fetch;
+  const idle = createWorkBatchStartBrowserClient(never);
+  await assert.rejects(idle.start(projectId, view()), /invalid_request/);
+  await assert.rejects(idle.start(projectId, { ...view("approved"), projectId: "project:other" }), /invalid_request/);
+  const noRoute = { ...view("approved"), queue: [] };
+  assert.deepEqual(await idle.start(projectId, noRoute), { started: [], alreadyStarted: [], notReady: ["job:approved"] });
+  assert.equal(calls, 0);
+
+  let reads = 0, posts = 0;
+  const changed = createWorkBatchStartBrowserClient((async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (!path.includes("/submission")) return Response.json(startDetail("job:approved"));
+    if (init?.method === "POST") { posts += 1; throw new Error("must not post changed preview"); }
+    reads += 1; const packetDigest = reads === 1 ? digest("b") : digest("d");
+    return Response.json({ projectId, jobId: "job:approved", inputDigest: digest("a"), receipt: null,
+      preview: { projectId, jobId: "job:approved", packetDigest } });
+  }) as typeof fetch);
+  assert.deepEqual(await changed.start(projectId, view("approved")),
+    { started: [], alreadyStarted: [], notReady: ["job:approved"] });
+  assert.equal(posts, 0);
+
+  const wrongScope = createWorkBatchStartBrowserClient((async (input: RequestInfo | URL) => String(input).includes("/submission")
+    ? Response.json({ projectId, jobId: "job:other", inputDigest: digest("a"), receipt: null })
+    : Response.json(startDetail("job:approved"))) as typeof fetch);
+  await assert.rejects(wrongScope.start(projectId, view("approved")), /unavailable/);
+
+  const wrongDetail = createWorkBatchStartBrowserClient((async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input), packetDigest = digest("b");
+    if (!path.includes("/submission")) return Response.json({ ...startDetail("job:approved"),
+      task: { ...startDetail("job:approved").task, projectId: "project:other" } });
+    if (init?.method === "POST") return Response.json({ projectId, jobId: "job:approved", attemptId: "attempt:approved",
+      queueId: "queue:approved", packetDigest, operationDigest: digest("c"), queuedAt: "2026-09-27T11:02:00.000Z",
+      replayed: false, evidence: "recorded_delivery_intent", startsWork: false, grantsExecutionAuthority: false });
+    return Response.json({ projectId, jobId: "job:approved", inputDigest: digest("a"), receipt: null,
+      preview: { projectId, jobId: "job:approved", packetDigest } });
+  }) as typeof fetch);
+  await assert.rejects(wrongDetail.start(projectId, view("approved")), /unavailable/);
+
+  let receiptPosts = 0;
+  const wrongReceipt = createWorkBatchStartBrowserClient((async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input), packetDigest = digest("b");
+    if (!path.includes("/submission")) return Response.json(startDetail("job:approved"));
+    if (init?.method === "POST") { receiptPosts += 1; return Response.json({ projectId, jobId: "job:other",
+      attemptId: "attempt:other", queueId: "queue:other", packetDigest, operationDigest: digest("c"),
+      queuedAt: "2026-09-27T11:02:00.000Z", replayed: false, evidence: "recorded_delivery_intent",
+      startsWork: false, grantsExecutionAuthority: false }, { status: 201 }); }
+    return Response.json({ projectId, jobId: "job:approved", inputDigest: digest("a"), receipt: null,
+      preview: { projectId, jobId: "job:approved", packetDigest } });
+  }) as typeof fetch);
+  await assert.rejects(wrongReceipt.start(projectId, view("approved")), /uncertain/);
+  assert.equal(receiptPosts, 1);
+
+  let missingPreviewReads = 0, missingPreviewPosts = 0;
+  const missingPreview = createWorkBatchStartBrowserClient((async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (!String(input).includes("/submission")) return Response.json(startDetail("job:approved"));
+    if (init?.method === "POST") missingPreviewPosts += 1;
+    else missingPreviewReads += 1;
+    return Response.json({ projectId, jobId: "job:approved", inputDigest: digest("a"), receipt: null });
+  }) as typeof fetch);
+  assert.deepEqual(await missingPreview.start(projectId, view("approved")),
+    { started: [], alreadyStarted: [], notReady: ["job:approved"] });
+  assert.equal(missingPreviewReads, 1);
+  assert.equal(missingPreviewPosts, 0);
+
+  let freshReads = 0, freshMissingPosts = 0;
+  const freshMissing = createWorkBatchStartBrowserClient((async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (!String(input).includes("/submission")) return Response.json(startDetail("job:approved"));
+    if (init?.method === "POST") freshMissingPosts += 1;
+    else freshReads += 1;
+    return Response.json({ projectId, jobId: "job:approved", inputDigest: digest("a"), receipt: null,
+      ...(freshReads === 1 ? { preview: { projectId, jobId: "job:approved", packetDigest: digest("b") } } : {}) });
+  }) as typeof fetch);
+  assert.deepEqual(await freshMissing.start(projectId, view("approved")),
+    { started: [], alreadyStarted: [], notReady: ["job:approved"] });
+  assert.equal(freshMissingPosts, 0);
+});
+
+test("stopping batch Start halfway sends no later task", async () => {
+  const second = { ...view("approved"), items: [...view("approved").items.slice(0, 1), {
+    ...view("approved").items[1]!, decisionState: "approved" as const, decisionReasonCode: null, jobId: "job:second",
+  }], queue: [...view("approved").queue, { ...view("approved").queue[0]!, localId: "check", jobId: "job:second",
+    workerId: "worker:second", workerKind: "claude-code", nodeId: "node:claude", position: 1,
+    selectionKey: "model:two", model: "model:two" }] };
+  const controller = new AbortController(); let posts = 0;
+  const client = createWorkBatchStartBrowserClient((async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input), jobId = path.includes("job%3Asecond") ? "job:second" : "job:approved";
+    if (!path.includes("/submission")) return Response.json(startDetail(jobId));
+    const packetDigest = jobId === "job:second" ? digest("d") : digest("b");
+    if (init?.method === "POST") { posts += 1; if (posts === 1) controller.abort();
+      return Response.json({ projectId, jobId, attemptId: `attempt:${jobId.split(":").at(-1)}`,
+        queueId: `queue:${jobId.split(":").at(-1)}`, packetDigest, operationDigest: digest("c"),
+        queuedAt: "2026-09-27T11:02:00.000Z", replayed: false, evidence: "recorded_delivery_intent",
+        startsWork: false, grantsExecutionAuthority: false }, { status: 201 }); }
+    return Response.json({ projectId, jobId, inputDigest: digest("a"), receipt: null,
+      preview: { projectId, jobId, packetDigest } });
+  }) as typeof fetch);
+  await assert.rejects(client.start(projectId, second, controller.signal));
+  assert.equal(posts, 1);
 });
 
 test("pipeline browser client retains an exact uncertain command and key", async () => {

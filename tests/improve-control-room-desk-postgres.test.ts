@@ -30,21 +30,33 @@ const identity: VerifiedWebIdentity = { provider: "test", subject: ids.identity,
 const operator: VerifiedWebIdentity = { provider: "test", subject: ids.operator, tokenDigest: ids.operatorToken,
   issuedAt, expiresAt, verificationExpiresAt: expiresAt };
 const DIGEST = `sha256:${"f".repeat(64)}`, TAG = `hmac-sha256:${"f".repeat(64)}`;
+const CANDIDATE_REVISION = "b".repeat(40);
+const PASSED_RESULT = { profile: "db" as const, profileVersion: 1, profileDigest: `sha256:${"1".repeat(64)}`,
+  commandIds: ["test.postgres"], candidateRevision: CANDIDATE_REVISION, status: "passed" as const,
+  summary: "Real PostgreSQL role path passed.", evidenceDigest: `sha256:${"c".repeat(64)}`, testCount: 2,
+  durationMs: 100, workerId: "service:test-runner", runner: { kind: "local_test_runner" as const,
+    serviceId: "runner:local-postgres" }, observedAt: new Date().toISOString() };
 const notUsed = { instantiate: async () => { throw new Error("not_used"); } } as never;
 const candidateInput = (request: { requestId: string; pipelineRunId: string }) => ({ projectId: ids.project,
   improvementRequestId: request.requestId, pipelineRunId: request.pipelineRunId, baseRevision: "a".repeat(40),
-  candidateRevision: "b".repeat(40), summary: "Production-role candidate.", changedAreas: ["desk"],
-  testResults: [{ profile: "db" as const, status: "passed" as const, summary: "Real PostgreSQL role path passed.",
-    evidenceDigest: `sha256:${"c".repeat(64)}` }],
-  databaseChanges: { kind: "migrations" as const, migrationIds: ["0160_improve_control_room_desk"], summary: "Desk records." },
+  candidateRevision: CANDIDATE_REVISION, summary: "Production-role candidate.", changedAreas: ["desk"],
+  testResults: [PASSED_RESULT],
+  databaseChanges: { kind: "migrations" as const, migrationIds: ["0160_improve_control_room_desk"], summary: "Desk records.",
+    compatibilityNotes: "Run the ledger.", rollbackNotes: "Use the reviewed restore plan." },
+  riskFlags: [{ kind: "database" as const, summary: "database changed", needsIndependentReview: true as const }],
+  independentReviews: [{ reviewId: "review:postgres", reviewDigest: `sha256:${"2".repeat(64)}`,
+    reviewerWorkerId: "worker:check" }],
   leadWorkerId: "worker:lead" });
 /** A direct candidate INSERT, bypassing the service, as a given login. */
-const forgeCandidate = (request: { requestId: string; pipelineRunId: string }, id: string, state: string, decidedAt: string | null) => [
+const forgeCandidate = (request: { requestId: string; pipelineRunId: string }, id: string, state: string, decidedAt: string | null,
+  testResults: unknown = [PASSED_RESULT], riskFlags: unknown = [], independentReviews: unknown = []) => [
   `INSERT INTO control_update_candidates(tenant_id,id,project_id,improvement_request_id,pipeline_run_id,base_revision,
-    candidate_revision,summary,changed_areas,test_results,database_changes,lead_worker_id,state,version,record_digest,
-    auth_tag,created_at,decided_at) VALUES($1,$2,$3,$4,$5,$6,$7,'forged','["x"]','[]','{"kind":"none"}','worker:lead',$8,1,$9,$10,now(),$11)`,
-  [scope.tenantId, id, ids.project, request.requestId, request.pipelineRunId, "a".repeat(40), "b".repeat(40), state,
-    DIGEST, TAG, decidedAt]] as [string, unknown[]];
+    candidate_revision,summary,changed_areas,test_results,database_changes,risk_flags,independent_reviews,lead_worker_id,state,
+    version,record_digest,auth_tag,created_at,decided_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'forged','["x"]',$8::jsonb,'{"kind":"none"}',$9::jsonb,$10::jsonb,
+      'worker:lead',$11,1,$12,$13,now(),$14)`,
+  [scope.tenantId, id, ids.project, request.requestId, request.pipelineRunId, "a".repeat(40), "b".repeat(40),
+    JSON.stringify(testResults), JSON.stringify(riskFlags), JSON.stringify(independentReviews), state, DIGEST, TAG, decidedAt]] as [string, unknown[]];
 const forgeDecision = (candidateId: string, version: number, recordDigest: string, owner: string, key: string) => [
   `INSERT INTO control_update_candidate_decisions(tenant_id,id,candidate_id,project_id,candidate_version,
     candidate_record_digest,decision,owner_identity_id,idempotency_key,decision_digest,auth_tag,decided_at)
@@ -166,6 +178,14 @@ test("production web and coordinator roles complete the inert desk lifecycle and
       await asAdmin("UPDATE pipeline_runs SET state='succeeded' WHERE id=$1", [request.pipelineRunId]);
       await asAdmin("UPDATE pipeline_stage_runs SET state='succeeded' WHERE pipeline_run_id=$1 AND stage_kind='signoff'",
         [request.pipelineRunId]);
+      await assert.rejects(postgres.query("coordinator", ...forgeCandidate(request, "update-candidate:failed-tests", "ready", null,
+        [{ ...PASSED_RESULT, status: "failed" }])), /tests have not passed/u,
+      "the database refuses a ready candidate whose recorded profile failed");
+      await assert.rejects(postgres.query("coordinator", ...forgeCandidate(request, "update-candidate:missing-test-evidence", "ready", null,
+        [{}])), /tests have not passed/u, "SQL NULLs cannot bypass the required test evidence");
+      await assert.rejects(postgres.query("coordinator", ...forgeCandidate(request, "update-candidate:missing-review", "ready", null,
+        [PASSED_RESULT], [{ kind: "security", summary: "security changed", needsIndependentReview: true }], [])),
+      /needs independent review/u, "the database refuses a risk flag without review evidence");
       // A double publication: one candidate, the loser replays it.
       holdTwoAt(/INSERT INTO control_update_candidates/u);
       const [a, b] = await Promise.all([publisher.recordCandidate(candidateInput(request)),

@@ -18,7 +18,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { privateWebReadTables, privateWebInsertColumns, privateWebReadColumns,
-  privateWebInsertTables, privateWebUpdateColumns } from "../src/web/v1/private-database-preflight";
+  privateWebInsertTables, privateWebUpdateColumns, privateWebFleetReadTables, taskCoordinatorReadTables,
+  taskCoordinatorInsertColumns, taskCoordinatorInsertTables, taskCoordinatorUpdateColumns, taskCoordinatorDeleteTables,
+} from "../src/web/v1/private-database-preflight";
 
 const ROLE_DIRECTORY = join(process.cwd(), "db/roles");
 const PREFLIGHT_SOURCE = join(process.cwd(), "src/web/v1/private-database-preflight.ts");
@@ -85,12 +87,12 @@ function parseGrants(sql: string, role: string): Grants {
 }
 
 /** The web role's table privileges across every role file an operator applies. */
-async function appliedGrants(): Promise<Grants> {
+async function appliedGrants(role = ROLE): Promise<Grants> {
   const files = (await readdir(ROLE_DIRECTORY)).filter(file => file.endsWith(".sql")).sort();
   assert.ok(files.length > 0, "no db/roles/*.sql files were found");
   const combined: Grants = new Map();
   for (const file of files) {
-    const grants = parseGrants(await readFile(join(ROLE_DIRECTORY, file), "utf8"), ROLE);
+    const grants = parseGrants(await readFile(join(ROLE_DIRECTORY, file), "utf8"), role);
     for (const [privilege, tables] of grants) {
       const target = combined.get(privilege) ?? new Map<string, Columns>();
       for (const [table, columns] of tables) target.set(table, mergeGrant(target.get(table), columns));
@@ -109,9 +111,18 @@ async function appliedGrants(): Promise<Grants> {
  * table in BOTH sets is expected to be entirely readable, which is what the
  * role files' two overlapping grants on `control_job_dependencies` — a
  * table-wide one and a three-column one — actually produce.
+ *
+ * The conditional read set is the fully-applied one: `privateWebFleetReadTables`
+ * is folded in unconditionally here because this comparison is static and
+ * asserts the declaration a FULL production install must hold. A Mac-local
+ * cluster does not apply `fleet_gateway_roles.sql`, so it legitimately holds
+ * none of them — the preflight asks for them only when
+ * `control_room_fleet_gateway` exists, which the real-PostgreSQL lanes prove.
+ * What matters statically is that the tables are declared at all, and declared
+ * exactly, so they are added here.
  */
 function acceptedGrants(): Grants {
-  const wideReads = new Set<string>(privateWebReadTables);
+  const wideReads = new Set<string>([...privateWebReadTables, ...privateWebFleetReadTables]);
   const selectable = new Map<string, Columns>();
   for (const table of new Set([...wideReads, ...Object.keys(privateWebReadColumns)])) {
     if (wideReads.has(table)) { selectable.set(table, null); continue; }
@@ -197,11 +208,154 @@ test("every table the role files grant the web login is one the private-web pref
     "the private-web preflight and the db/roles files disagree; a correct database would fail startup");
 });
 
+test("every task-coordinator grant is exactly declared by its startup preflight", async () => {
+  const role = "control_room_task_coordinator";
+  const applied = await appliedGrants(role);
+  // pg-boss objects live in their own schema and are verified by the native
+  // queue preflight. This comparison covers the public application tables
+  // accepted by verifyTaskCoordinatorDatabase.
+  for (const tables of applied.values()) for (const table of [...tables.keys()])
+    if (table.includes(".")) tables.delete(table);
+  const wideInserts = new Set(taskCoordinatorInsertTables);
+  const insertable = new Map<string, Columns>();
+  for (const table of new Set([...wideInserts, ...Object.keys(taskCoordinatorInsertColumns)]))
+    insertable.set(table, wideInserts.has(table) ? null : [...taskCoordinatorInsertColumns[table]!]);
+  const accepted = new Map<Privilege, Map<string, Columns>>([
+    ["SELECT", new Map(taskCoordinatorReadTables.map(table => [table, null] as [string, Columns]))],
+    ["INSERT", insertable],
+    ["UPDATE", new Map(Object.entries(taskCoordinatorUpdateColumns)
+      .map(([table, columns]) => [table, [...columns]] as [string, Columns]))],
+    ["DELETE", new Map([...taskCoordinatorDeleteTables].map(table => [table, null] as [string, Columns]))],
+  ]);
+  const disagreements: string[] = [];
+  for (const privilege of PRIVILEGES) {
+    const granted = applied.get(privilege) ?? new Map<string, Columns>();
+    const expected = accepted.get(privilege)!;
+    for (const table of granted.keys()) if (!expected.has(table))
+      disagreements.push(`${role} holds ${privilege} on ${table}, undeclared`);
+    for (const table of expected.keys()) if (!granted.has(table))
+      disagreements.push(`${privilege} on ${table} is declared, not granted`);
+    for (const [table, columns] of granted) {
+      const wanted = expected.get(table);
+      if (wanted === undefined) continue;
+      if ((wanted === null) !== (columns === null)) disagreements.push(`${table}: ${privilege} grant shape differs`);
+      else if (columns && wanted) {
+        const difference = [...wanted].filter(column => !columns.includes(column))
+          .concat([...columns].filter(column => !wanted.includes(column))).sort();
+        if (difference.length) disagreements.push(`${table}: ${privilege} columns differ: ${difference.join(", ")}`);
+      }
+    }
+  }
+  assert.deepEqual(disagreements, [], "the task-coordinator grants and startup preflight disagree");
+});
+
 test("the web DELETE declaration is read from the preflight, not restated here", () => {
   // A restatement of the DELETE set would pass while describing a value the
   // preflight no longer holds, so the read is asserted against the source it
   // parses, and the single grant it returns is the one the role files give.
   assert.deepEqual(declaredDeletes(), ["owner_web_push_subscriptions"]);
+});
+
+test("the fleet read tables come only from the fleet role file, and the preflight gates them on that role", async () => {
+  // The eleven fleet tables are declared separately precisely because
+  // db/roles/fleet_gateway_roles.sql is the ONLY file granting them to the web
+  // role, and a Mac-local cluster never applies it. Two things have to stay
+  // true together, or the preflight is wrong on some cluster:
+  //   1. every one of them really is granted by the fleet file and by nothing
+  //      else, so a Mac-local cluster holds none of them;
+  //   2. the preflight still demands them whenever the fleet gateway role is
+  //      present, so a full production install stays fully checked.
+  const fleetFile = await readFile(join(ROLE_DIRECTORY, "fleet_gateway_roles.sql"), "utf8");
+  const others = (await readdir(ROLE_DIRECTORY)).filter(file => file.endsWith(".sql") && file !== "fleet_gateway_roles.sql");
+  for (const table of privateWebFleetReadTables) {
+    assert.ok(parseGrants(fleetFile, ROLE).get("SELECT")?.has(table), `${table} is not granted by the fleet file`);
+    // No non-fleet role file may also grant it: if one did, the conditional
+    // would be wrong in the other direction, dropping the demand on a
+    // Mac-local cluster that does hold the privilege. `parseGrants` returns
+    // undefined for a role the file never grants to, which is the case here.
+    for (const file of others) {
+      const granted = parseGrants(await readFile(join(ROLE_DIRECTORY, file), "utf8"), ROLE).get("SELECT");
+      assert.ok(granted === undefined || !granted.has(table),
+        `${file} also grants ${table}; the conditional demand would be wrong`);
+    }
+  }
+  // The gate is the role's existence, and it is the fleet file that creates it.
+  assert.match(fleetFile, /CREATE ROLE control_room_fleet_gateway\b/);
+  const source = readFileSync(PREFLIGHT_SOURCE, "utf8");
+  assert.ok(source.includes("rolname='control_room_fleet_gateway'"),
+    "the preflight no longer gates the fleet read tables on the gateway role's existence");
+  // And the tables must not have crept back into the unconditional set, which
+  // is what broke every Mac-local preflight in the first place.
+  for (const table of privateWebFleetReadTables)
+    assert.ok(!(privateWebReadTables as readonly string[]).includes(table),
+      `${table} is back in the unconditional read set`);
+});
+
+test("every SECURITY DEFINER function the preflight exempts is owned by the schema owner, unconditionally", async () => {
+  // The comparison above is about TABLES. The same preflight also exempts a
+  // fixed set of SECURITY DEFINER functions from its catalog scan, and that
+  // allowlist has its own drift: the owner test for the two agent-review
+  // boundary functions sat inside the agent-reviewer disjunct, so every other
+  // kind exempted them on "this login has no EXECUTE" alone, whatever owned
+  // them. Nothing here compared the allowlist with the migrations, so the gap
+  // was invisible until a fixture that replays db/migrations without SET ROLE
+  // produced it. The real-PostgreSQL lanes prove a correct install is accepted;
+  // this proves the allowlist tracks the migrations and keeps the owner test
+  // unconditional, both without a database.
+  const source = readFileSync(PREFLIGHT_SOURCE, "utf8");
+  const exempted = new Set<string>();
+  for (const match of source.matchAll(/'([a-z_0-9]+\([^']*?\))'::regprocedure/g))
+    exempted.add(match[1]!);
+  assert.ok(exempted.size >= 4,
+    `only ${exempted.size} exempted signature(s) found in the preflight; the read is too narrow to prove anything`);
+
+  // Every SECURITY DEFINER function a migration creates that a login could
+  // CALL must be an allowlist entry, and every allowlist entry must be one a
+  // migration creates: an unlisted one is flagged by the scan on a correct
+  // database, and a phantom one is a hole in it.
+  //
+  // Trigger functions are excluded, and deliberately so. A trigger function
+  // cannot be invoked directly — it has no SQL-callable signature — and it
+  // executes as the owner of the table it is attached to, so the web login can
+  // never reach it however its ACL reads. Only 0093, 0106, 0141 create
+  // SECURITY DEFINER functions a login can call, and those are exactly the four
+  // the scan names.
+  const shipped = new Map<string, string>();
+  for (const file of (await readdir(join(process.cwd(), "db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
+    const sql = await readFile(join(process.cwd(), "db/migrations", file), "utf8");
+    if (!/SECURITY\s+DEFINER/i.test(sql)) continue;
+    // `RETURNS trigger` is what marks a function as a trigger function.
+    const triggers = [...sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION[\s\S]*?RETURNS\s+trigger/gi)].length;
+    for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_0-9]+)\s*\(([^)]*)\)([\s\S]*?)RETURNS\s+([a-z ]+)/gi)) {
+      if (match[4]!.trim().toLowerCase() === "trigger") continue;
+      const args = match[2]!.split(",").map(argument => argument.trim().split(/\s+/)[0]!.toLowerCase())
+        .filter(argument => argument !== "");
+      shipped.set(`${match[1]!.toLowerCase()}(${args.join(",")})`, file);
+    }
+    void triggers;
+  }
+  // The shipped names carry SQL argument NAMES; the preflight carries TYPES.
+  // Compare on shape, so a rename of a parameter is not a finding and a new
+  // function is.
+  const shape = (signature: string) => signature.replace(/\(([^)]*)\)/u, (all, args: string) =>
+    `(${args.split(",").length})`);
+  const shapes = new Set([...shipped.keys()].map(shape));
+  assert.deepEqual([...shipped.keys()].filter(signature => !exempted.has(signature) && !shapes.has(shape(signature))).sort(), [],
+    "a SECURITY DEFINER function a migration creates is not on the preflight's allowlist, so a correct database is refused");
+  assert.deepEqual([...exempted].filter(signature => !shapes.has(shape(signature))).sort(), [],
+    "the preflight exempts a function no migration creates; a renamed or removed function is now a hole in the scan");
+
+  // The specific shape that broke: the owner check may not sit inside the
+  // reviewer-only disjunct, or these two functions are exempt for every kind.
+  const branch = /OR\s*\(p\.oid IN \('commit_agent_review[\s\S]*?NOT has_function_privilege\(p\.oid,'EXECUTE'\)\)\)\)\)/.exec(source);
+  assert.ok(branch, "the agent-review allowlist branch was not found in the preflight");
+  const owner = "pg_get_userbyid(p.proowner)='control_room_schema_owner'";
+  const reviewerDisjunct = "$2 AND p.prosecdef";
+  assert.ok(branch[0].includes(owner), "the agent-review allowlist branch no longer checks the owner at all");
+  assert.ok(branch[0].includes(reviewerDisjunct),
+    "the reviewer-only disjunct is gone; the ordering assertion below no longer means anything");
+  assert.ok(branch[0].indexOf(owner) < branch[0].indexOf(reviewerDisjunct),
+    "the owner test is inside the reviewer disjunct again, so every non-reviewer kind exempts these functions whatever owns them");
 });
 
 test("the comparison above reads role files it has to be able to read", () => {

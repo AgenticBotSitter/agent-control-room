@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { improvementDeskViewSchemaV1, improvementRequestDraftSchemaV1,
-  type ImprovementDeskViewV1 } from "../../src/improve-control-room/v1";
+  type ImprovementDeskViewV1 } from "../../src/improve-control-room/v1/schemas";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";

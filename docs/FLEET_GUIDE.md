@@ -60,6 +60,72 @@ appears in the red **needs you** box on the Workers page:
 A machine can never accept its own work, approve anything, merge, or give
 itself more access.
 
+## Let a machine do the work with Codex, Claude Code or Hermes
+
+When you add the machine, pick its kind: **Codex**, **Claude Code** or
+**Hermes**. `run` then does the work itself: it takes one offered task at a
+time, gives it to that bot on the machine, and sends the answer back to you
+for review.
+
+It only does this when the person at that machine has switched the bot on.
+Write a settings file next to the key file
+(`~/.config/control-room/harnesses.json`) that only you can change:
+
+```json
+{
+  "schema": "control-room.fleet-harnesses/v1",
+  "adapterModule": "/path/to/control-room/src/fleet/v1/harness-adapters.ts",
+  "harnesses": {
+    "codex": { "enabled": true, "executablePath": "/opt/homebrew/bin/codex",
+      "workingDirectory": "/path/to/an/empty/work/folder", "deadlineMs": 1800000 }
+  }
+}
+```
+
+Then, from a Control Room checkout on that machine: `pnpm fleet:worker`
+(the same as `node --import tsx scripts/fleet/connector.mjs run`).
+
+- `deadlineMs` is the longest one task may run (at most one hour).
+- Codex and Claude Code can also take `"model"` and `"effort"`
+  (Claude Code also needs `"supportsEffort": true` or `false` with them).
+  Hermes needs `"profile"`, `"model"` and `"provider"`.
+- A bot that is missing from the file, or set to `"enabled": false`, is never
+  started. `run` says so and takes no work.
+
+What you will see:
+
+- The machine's card on the Workers page shows its latest note:
+  **Started on Codex on this machine**, then "still working" about once a minute.
+- A finished answer arrives in the red **needs you** box. Nothing is accepted
+  until you accept it.
+- If the bot fails, crashes, runs out of time, or gives an answer over 64 KiB,
+  its card shows a red **Blocked** note saying so, and the task goes back to the queue for
+  another machine. It is never shown as a result. That machine does not pick
+  the same task again until `run` restarts.
+- If a bot ignores its own time limit, `run` stops taking work until someone
+  checks the machine.
+- When Control Room is paused, draining or stopped, machines take no new
+  tasks, and Stop cancels the task that is running. (This follows the
+  server-side Pause switch once it is connected to the fleet gateway.)
+- **Remove** the machine and it stops at once; its running task is dropped
+  and goes back to the queue when its time runs out.
+
+The connector never hands the bot the machine's key, and it talks only to
+your Control Room address. The bot itself uses its own normal sign-in (for
+example your Codex or Claude account) and its own network access.
+
+Codex runs read-only, but read-only still means it can **read** files,
+including this machine's key file, if a task tells it to. The connector checks
+every answer and refuses to send one that contains the key written out plainly.
+It cannot catch a key that Codex was told to disguise (for example base64 or
+split into pieces), so only give a Codex machine tasks you wrote or trust. If a
+result contains a long string that looks like code or random letters and you
+did not ask for one, reject it and rotate the machine's key. Claude Code and
+Hermes run with no tools at all, so they cannot read files in the first place.
+Running the connector under its own OS user account keeps your personal files
+(`~/.ssh`, other sign-ins) out of Codex's reach. It does not hide the machine's
+own key, which Codex can always read.
+
 ## Connect a new agent over MCP
 
 Any agent that speaks MCP (Claude Code, Codex, Hermes and others) can use a
@@ -106,8 +172,22 @@ web and gateway logins have no direct write grant on those records. Workers
 never see either login.
 
 The unauthenticated join endpoint accepts at most 4 KiB, defaults to 8 attempts
-per client address and 80 attempts total per minute, and shares a 16-request
-pre-authentication concurrency ceiling with credential checks. Rejections happen
-before a request body or database lookup. Because the gateway binds to loopback,
-it accepts `CF-Connecting-IP` or the first `X-Forwarded-For` address only from
-that loopback proxy; a non-loopback peer cannot supply its own rate-limit identity.
+per IPv4 `/24` or IPv6 `/64` and 80 attempts total per minute, and shares a
+16-request pre-authentication concurrency ceiling with credential checks.
+Enrollment rejections happen before a request body or database lookup. Failed
+credential checks have their own per-network and global budget. Successfully
+authenticated workers use a separate per-worker reserve which failed credentials
+can never consume or fill. The gateway remembers only the verified credential
+digest after enrollment or authentication, never the bearer secret. Unknown
+credentials provisionally spend the failure budget before a database lookup;
+a successful or interrupted lookup refunds that charge. On startup, active
+unexpired credential digests are loaded through the same least-privilege fleet
+database login, so already-enrolled machines retain this reserve after restart.
+
+Forwarded client-address headers are not trusted by default, including from a
+loopback peer. If the gateway is behind a known proxy, set both
+`trustedProxyAddresses` (an array of the proxy's exact socket IP addresses) and
+exactly one `trustedClientHeader`: `"cf-connecting-ip"` for Cloudflare, or
+`"x-forwarded-for-rightmost"` for a proxy which appends the immediate client to
+X-Forwarded-For. Do not enable both header formats. A forwarded header is ignored
+unless the request's immediate socket peer is in the configured proxy list.

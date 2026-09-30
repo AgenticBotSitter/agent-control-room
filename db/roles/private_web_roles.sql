@@ -35,7 +35,10 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_project_coordination_operation_jobs, control_work_resources,
   control_project_event_stream_heads, control_project_events,
   control_attempt_resource_admissions, control_attempt_resource_scopes,
-  work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
+  work_batches, work_batch_revisions, work_batch_items, work_batch_intake_flag_dismissals,
+  control_action_inbox TO control_room_private_web;
+GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
+  control_recurring_rules TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
   pipeline_ordered_stage_runs, pipeline_unattended_transitions,
   pipeline_installation_allowances, pipeline_machine_capacity_observations,
@@ -80,10 +83,15 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
+GRANT INSERT ON control_skills, control_skill_versions, control_task_skill_bindings,
+  control_recurring_rules TO control_room_private_web;
+GRANT UPDATE (current_version,state,updated_at) ON control_skills TO control_room_private_web;
+GRANT UPDATE (state,plain_schedule,cron_expression,timezone,task_template,version,
+  updated_by_identity_id,updated_at) ON control_recurring_rules TO control_room_private_web;
 GRANT INSERT ON control_project_event_stream_heads, control_project_events TO control_room_private_web;
 GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
   ON control_project_event_stream_heads TO control_room_private_web;
-GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web;
+GRANT INSERT ON work_batch_revisions, work_batch_items, work_batch_intake_flag_dismissals TO control_room_private_web;
 GRANT INSERT ON work_batch_queue_admissions, work_batch_agent_queue_heads TO control_room_private_web;
 GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO control_room_private_web;
 GRANT INSERT ON control_improvement_requests, control_update_candidate_decisions TO control_room_private_web;

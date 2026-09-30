@@ -47,6 +47,7 @@ import {
   sharedMemorySegments,
   shutdownLadder,
   shortSocketDirectories,
+  shortSocketRoot,
   splitSqlStatements,
   staleAllowlistEntries,
   stripSqlComments,
@@ -1249,9 +1250,9 @@ describe("attack kit: port discipline", () => {
     countedRealPostgresRun();
     const port = PORTS[7]!;
     await withRealPostgres(async first => {
-      // The kit's own socket directory is under /tmp, not the temp directory.
+      // The kit's own socket directory is under its short socket root, not the temp directory.
       const sockets = await shortSocketDirectories();
-      assert.ok(sockets.some(directory => directory.startsWith("/tmp/ak")),
+      assert.ok(sockets.some(directory => directory.startsWith(join(shortSocketRoot(), "ak"))),
         `the kit's short socket directory must be discoverable, saw: ${sockets.join(", ")}`);
       assert.ok(existsSync(join(first.socketDirectory, `.s.PGSQL.${port}`)),
         "the running cluster really published its socket");

@@ -7,6 +7,8 @@ import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssig
   type CodexOwnerTrustedLocalQueueDeliveryTarget, type RemoteControllerWorkerQueueDeliveryTarget,
   type InstallationTransitionAdmissionFence } from "./task-assignment-coordinator";
 import { isInstallationTransitionAdmissionPausedV1 } from "../../harness/v1/installation-transition-store";
+import { ImproveControlRoomDeskServiceV1, UpdateCandidatePublisherV1,
+  type UpdateCandidatePublisherConfigurationV1 } from "../../improve-control-room/v1";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
@@ -110,7 +112,8 @@ export type TaskCoordinatorConfiguration = {
   workBatches?: { integrityKey: Uint8Array; selectionAuthority: WorkBatchQueueSelectionAuthorityV1 };
   /** Explicit installation-owned unattended continuation. Absent is disabled;
    * a configured callback still defaults operationally off until it returns true. */
-  pipelineAdvance?: { enabled: () => boolean; costEvidence: CoordinationCostEvidencePortV1 };
+  pipelineAdvance?: { enabled: () => boolean; costEvidence: CoordinationCostEvidencePortV1;
+    candidatePublisher?: UpdateCandidatePublisherConfigurationV1 };
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
   /** Installation-owned, authenticated result reader for a supported local adapter.
@@ -131,6 +134,26 @@ export type TaskCoordinatorConfiguration = {
   nativeHttp?: NativeHttpSettings;
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
 };
+
+/** Adds candidate publication after durable pipeline completion without turning a
+ * publisher outage into a false pipeline failure; the periodic sweep retries it. */
+export function bindCandidatePublisherToPipelineAdvanceV1(
+  pipelineAdvance: Pick<PipelineAdvanceServiceV1, "advance" | "advanceReady">,
+  candidatePublisher?: Pick<UpdateCandidatePublisherV1, "publishRun" | "sweep">) {
+  return Object.freeze({
+    advance: async (...args: Parameters<PipelineAdvanceServiceV1["advance"]>) => {
+      const result = await pipelineAdvance.advance(...args);
+      if ("state" in result && result.state === "succeeded")
+        await candidatePublisher?.publishRun(result.runId).catch(() => undefined);
+      return result;
+    },
+    sweep: async (limit: number) => {
+      const result = await pipelineAdvance.advanceReady(limit);
+      await candidatePublisher?.sweep(limit).catch(() => undefined);
+      return result;
+    },
+  });
+}
 
 /** Takes ownership only after synchronous construction succeeds. No pool opening, role verification,
  * listener, credential loading, approval or dispatch. The supplying bootstrap must verify the pool.
@@ -434,6 +457,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     return new PipelineAdvanceServiceV1(db,scope,workBatchAuthority.integrityKey,
       {unattendedEnabled:input.pipelineAdvance.enabled,capability},input.clock);
   })():undefined;
+  const candidatePublisher = input.pipelineAdvance?.candidatePublisher && pipelineAdvance && input.workBatches
+    ? new UpdateCandidatePublisherV1(db, scope,
+      new ImproveControlRoomDeskServiceV1(db, scope, input.workBatches.integrityKey, undefined, input.clock),
+      input.pipelineAdvance.candidatePublisher) : undefined;
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
@@ -662,8 +689,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
-    ...(pipelineAdvance?{pipelineAdvance:Object.freeze({advance:pipelineAdvance.advance.bind(pipelineAdvance),
-      sweep:pipelineAdvance.advanceReady.bind(pipelineAdvance)})}:{}),
+    ...(pipelineAdvance?{pipelineAdvance:bindCandidatePublisherToPipelineAdvanceV1(pipelineAdvance,candidatePublisher)}:{}),
     ...(workBatchAuthority ? { workBatchAuthority: workBatchAuthority.ownerAuthority,
       workBatchView: workBatchAuthority.viewAuthority } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),

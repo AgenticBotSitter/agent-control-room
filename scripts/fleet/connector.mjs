@@ -328,6 +328,312 @@ export async function serveMcp({ configPath, input = process.stdin, output = pro
 }
 
 // ---------------------------------------------------------------------------
+// Harness hand-off: `run` gives a claimed task to one local harness
+// ---------------------------------------------------------------------------
+// The machine owner enables harnesses in a local settings file next to the
+// credential file. Nothing the server sends can pick an executable, a folder,
+// a model or an adapter module; the server only offers tasks.
+//
+// Each harness is reached through the shared local CLI delivery contract that
+// Control Room's own Codex, Claude Code and Hermes runners implement
+// (OwnerTrustedLocalCliExecutionAdapterV1): the adapter module exports
+// createFleetHarnessAdapter({ harness, configuration }) returning an object
+// with execute({ delivery: { identity: { jobId }, input: { prompt, instructions } }, signal })
+// that resolves to { kind: "completed", text } or { kind: "failed", reason }.
+// src/fleet/v1/harness-adapters.ts is that module for a Control Room checkout.
+const HARNESS_SETTINGS_SCHEMA = "control-room.fleet-harnesses/v1";
+export const HANDOFF_HARNESSES = Object.freeze(["codex", "claude-code", "hermes"]);
+const HARNESS_LABELS = Object.freeze({ codex: "Codex", "claude-code": "Claude Code", hermes: "Hermes" });
+const MAX_MESSAGE_CHARS = 2000;
+const WATCHDOG_GRACE_MS = 15_000;
+const operationsMode = value => ["running", "paused", "draining", "stopped"].includes(value) ? value : "unknown";
+// Refusals that mean this claim can no longer be reported on.
+const LOST_CLAIM_CODES = new Set(["expired", "not_found", "conflict", "unauthenticated"]);
+// Answers that are worth repeating with the same idempotency key.
+const TRANSIENT_CODES = new Set(["rate_limited", "unavailable", "http_502", "http_503", "http_504"]);
+
+const plainObject = value => Boolean(value) && typeof value === "object" && !Array.isArray(value)
+  && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+const absolutePath = value => typeof value === "string" && value.length > 0 && value.length <= 4096
+  && resolve(value) === value && !/[\u0000-\u001f\u007f]/u.test(value);
+
+export function defaultHarnessSettingsPath(configPath) {
+  return joinPath(dirname(configPath), "harnesses.json");
+}
+
+async function refuseSharedWrite(path, what) {
+  const info = await stat(path);
+  if (!info.isFile()) throw new Error(`${what} ${path} is not a regular file.`);
+  if (process.platform !== "win32" && (info.mode & 0o022) !== 0)
+    throw new Error(`${what} ${path} can be changed by other users. Run: chmod go-w ${path}`);
+}
+
+/** @typedef {Readonly<{ adapterModule: string | null, harnesses: Readonly<Record<string,
+ *   Readonly<{ enabled: boolean, configuration: Readonly<Record<string, unknown>> }>>> }>} HarnessSettings */
+/** @typedef {Readonly<{ state: string, mode?: string, outcome?: "submitted" | "blocked" | "abandoned", claimId?: string,
+ *   jobId?: string, resultId?: string, message?: string, reason?: string, forcedTimeout?: boolean }>} RunPass */
+
+/** Reads the machine owner's harness settings. A missing file means no
+ * harness is enabled; anything malformed is refused, never guessed.
+ * @param {string} path
+ * @returns {Promise<HarnessSettings | null>} */
+export async function loadHarnessSettings(path) {
+  let raw;
+  try { raw = await readFile(path, "utf8"); }
+  catch (error) { if (error?.code === "ENOENT") return null; throw new Error(`The harness settings file ${path} cannot be read.`); }
+  await refuseSharedWrite(path, "The harness settings file");
+  let value;
+  try { value = JSON.parse(raw); } catch { throw new Error("The harness settings file is not valid JSON."); }
+  const invalid = detail => new Error(`The harness settings file is not valid: ${detail}.`);
+  if (!plainObject(value) || value.schema !== HARNESS_SETTINGS_SCHEMA) throw invalid(`schema must be "${HARNESS_SETTINGS_SCHEMA}"`);
+  if (Object.keys(value).some(key => !["schema", "adapterModule", "harnesses"].includes(key))) throw invalid("unknown setting");
+  if (!plainObject(value.harnesses)) throw invalid("harnesses must be an object");
+  const harnesses = {};
+  for (const [name, entry] of Object.entries(value.harnesses)) {
+    if (!HANDOFF_HARNESSES.includes(name)) throw invalid(`unknown harness "${name}"`);
+    if (!plainObject(entry) || typeof entry.enabled !== "boolean") throw invalid(`${name}.enabled must be true or false`);
+    const { enabled, ...configuration } = entry;
+    if (enabled && (!Number.isSafeInteger(configuration.deadlineMs) || configuration.deadlineMs < 100
+      || configuration.deadlineMs > 3_600_000)) throw invalid(`${name}.deadlineMs must be 100 to 3600000`);
+    harnesses[name] = Object.freeze({ enabled, configuration: Object.freeze(configuration) });
+  }
+  const anyEnabled = Object.values(harnesses).some(entry => entry.enabled);
+  if (anyEnabled && !absolutePath(value.adapterModule)) throw invalid("adapterModule must be an absolute path");
+  if (anyEnabled) await refuseSharedWrite(value.adapterModule, "The harness adapter module");
+  return Object.freeze({ adapterModule: anyEnabled ? value.adapterModule : null, harnesses: Object.freeze(harnesses) });
+}
+
+/** Loads the adapter for one harness only if the machine owner enabled it.
+ * @param {HarnessSettings | null} settings
+ * @param {string} harness
+ * @param {(specifier: string) => Promise<any>} [importer] */
+export async function loadHarnessAdapter(settings, harness, importer = specifier => import(specifier)) {
+  const entry = settings?.harnesses?.[harness];
+  if (!HANDOFF_HARNESSES.includes(harness) || entry?.enabled !== true || !settings.adapterModule) return null;
+  const module = await importer(pathToFileURL(settings.adapterModule).href);
+  if (typeof module?.createFleetHarnessAdapter !== "function")
+    throw new Error("The harness adapter module does not export createFleetHarnessAdapter.");
+  const adapter = await module.createFleetHarnessAdapter(Object.freeze({ harness, configuration: entry.configuration }));
+  if (!adapter || typeof adapter.execute !== "function") throw new Error("The harness adapter module returned no adapter.");
+  return Object.freeze({ harness, deadlineMs: entry.configuration.deadlineMs, execute: adapter.execute.bind(adapter) });
+}
+
+/** Text the gateway will store: no control characters except tab and newlines. */
+export function storableText(value) {
+  return String(value).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, "").trim();
+}
+const shortReason = value => storableText(value).replace(/\s+/gu, " ").slice(0, 200) || "no reason given";
+
+/** The strings to refuse in outgoing text: each live credential whole, and
+ * the bare base64url part after "crf_" (a harness that reads the credential
+ * file could echo either form back in its answer). A read-only harness such
+ * as Codex can read this machine's own key file even though it was never
+ * given the key; this is the only guard standing between that read and the
+ * key leaving the machine in a result or blocker message. */
+function secretNeedles(secrets) {
+  const needles = new Set();
+  for (const secret of secrets) {
+    if (typeof secret !== "string" || !secret) continue;
+    needles.add(secret);
+    if (secret.startsWith("crf_")) needles.add(secret.slice(4));
+  }
+  return [...needles];
+}
+const containsSecret = (text, needles) => needles.some(needle => needle.length > 0 && String(text).includes(needle));
+
+async function report(send, attempts = 3) {
+  for (let attempt = 1; ; attempt += 1) {
+    try { return await send(); }
+    catch (error) {
+      const transient = error?.code === undefined || TRANSIENT_CODES.has(error.code);
+      if (!transient || attempt >= attempts) throw error;
+      await new Promise(done => setTimeout(done, 250 * attempt));
+    }
+  }
+}
+
+/**
+ * Runs one claimed task on one local harness and reports what really
+ * happened. Only a completed, well-formed, in-bounds answer becomes a result;
+ * a failure, crash, timeout, stop, malformed or oversized answer becomes a
+ * blocker that hands the task back. Nothing here can accept the result.
+ * @param {{ client: ReturnType<typeof createClient>, claim: any, adapter: any, progressIntervalMs?: number,
+ *   readMode?: () => Promise<string>, log?: (message: string) => void, watchdogGraceMs?: number,
+ *   secrets?: string[] }} options
+ * @returns {Promise<RunPass>}
+ */
+export async function runClaimedTask({ client, claim, adapter, progressIntervalMs = 60_000, readMode = async () => "unknown",
+  log = () => {}, watchdogGraceMs = WATCHDOG_GRACE_MS, secrets = [] }) {
+  const label = HARNESS_LABELS[adapter.harness] ?? adapter.harness;
+  const keyBase = `handoff-${claim.claimId.slice("fleet-claim:".length)}`;
+  const outcome = { claimId: claim.claimId, jobId: claim.jobId };
+  const needles = secretNeedles(secrets);
+  const keyLeakMessage = `${label}'s answer contained this machine's key, so it was not sent. Rotate the key.`;
+  const blocked = async (message, extra = {}) => {
+    const safeMessage = containsSecret(message, needles) ? keyLeakMessage : message;
+    try {
+      await report(() => client.blocker(claim.claimId, safeMessage.slice(0, MAX_MESSAGE_CHARS), `${keyBase}-blocker`, true));
+      return Object.freeze({ ...outcome, outcome: "blocked", message: safeMessage, ...extra });
+    } catch (error) {
+      return Object.freeze({ ...outcome, outcome: "abandoned", message: safeMessage, reason: error?.code ?? "unreachable", ...extra });
+    }
+  };
+  try { await report(() => client.progress(claim.claimId, `Started on ${label} on this machine.`, `${keyBase}-start`)); }
+  catch (error) { return Object.freeze({ ...outcome, outcome: "abandoned", reason: error?.code ?? "unreachable" }); }
+
+  const controller = new AbortController();
+  let stop, ticks = 0, ticking = Promise.resolve(), watchdogTimer;
+  const halt = reason => { if (!stop) { stop = reason; controller.abort(); } };
+  const startedAt = Date.now();
+  const tick = async () => {
+    ticks += 1;
+    try { if (await readMode() === "stopped") halt("stopped"); }
+    catch (error) { if (error?.code === "unauthenticated") halt("lost"); }
+    if (stop) return;
+    const minutes = Math.max(1, Math.round((Date.now() - startedAt) / 60_000));
+    try { await client.progress(claim.claimId, `Still working on ${label} (${minutes} min).`, `${keyBase}-p${ticks}`); }
+    catch (error) { if (LOST_CLAIM_CODES.has(error?.code)) halt("lost"); }
+  };
+  const ticker = setInterval(() => { ticking = ticking.then(tick); }, progressIntervalMs);
+  const watchdog = new Promise(done => {
+    watchdogTimer = setTimeout(() => { halt("watchdog"); done({ watchdog: true }); }, adapter.deadlineMs + watchdogGraceMs);
+  });
+  let settled;
+  try {
+    // The adapter sees the task text and a cancel signal: never the
+    // credential, the server address or anything that grants authority.
+    const delivery = Object.freeze({ identity: Object.freeze({ jobId: claim.jobId }), input: Object.freeze({
+      prompt: [claim.title, claim.instructions].filter(Boolean).join("\n\n"),
+      instructions: "Complete this Control Room task and reply with the result. Your reply is sent to the owner for review; the owner decides whether to accept it." }) });
+    settled = await Promise.race([
+      Promise.resolve().then(() => adapter.execute({ delivery, signal: controller.signal }))
+        .then(value => ({ value }), error => ({ error })),
+      watchdog,
+    ]);
+  } finally {
+    clearInterval(ticker); clearTimeout(watchdogTimer);
+    await ticking;
+  }
+  if (stop === "lost") {
+    log(`The task ${claim.jobId} can no longer be reported on (its claim ended); nothing was submitted.`);
+    return Object.freeze({ ...outcome, outcome: "abandoned", reason: "claim_lost" });
+  }
+  if (settled.watchdog) return blocked(`The ${label} run did not stop by its time limit, so it was abandoned. Nothing was submitted.`,
+    { forcedTimeout: true });
+  const value = settled.value;
+  // A run that finished anyway is still reported honestly after a Stop.
+  if (stop === "stopped" && !(plainObject(value) && value.kind === "completed" && typeof value.text === "string"))
+    return blocked(`Stopped from Control Room before ${label} finished. Nothing was submitted.`);
+  if ("error" in settled) return blocked(`The ${label} adapter failed before it gave an answer. Nothing was submitted.`);
+  if (!plainObject(value) || (value.kind === "completed" ? typeof value.text !== "string"
+    : value.kind !== "failed" || typeof value.reason !== "string"))
+    return blocked(`${label} gave an answer Control Room does not understand. Nothing was submitted.`);
+  if (value.kind === "failed") return blocked(`The ${label} run did not finish (${shortReason(value.reason)}). Nothing was submitted.`);
+  const summary = storableText(value.text);
+  if (!summary) return blocked(`${label} finished with an empty answer. Nothing was submitted.`);
+  if (Buffer.byteLength(summary, "utf8") > MAX_RESULT_BYTES)
+    return blocked(`${label}'s answer was larger than 64 KiB, so it was not submitted. Ask for a shorter answer.`);
+  if (containsSecret(summary, needles)) return blocked(keyLeakMessage, { keyLeak: true });
+  try {
+    const result = await report(() => client.result(claim.claimId, summary, [], `${keyBase}-result`));
+    return Object.freeze({ ...outcome, outcome: "submitted", resultId: result.resultId });
+  } catch (error) {
+    if (error?.code === "too_large" || error?.code === "invalid")
+      return blocked(`${label}'s answer could not be stored (${error.code}). Nothing was submitted.`);
+    return Object.freeze({ ...outcome, outcome: "abandoned", reason: error?.code ?? "unreachable" });
+  }
+}
+
+/**
+ * The `run` loop. Each pass checks in (which also reads the owner's Pause /
+ * Drain / Stop), renews the credential when due, and, only when the worker's
+ * harness is enabled here and Control Room is running, claims one offered
+ * task and hands it to that harness. One task at a time.
+ * @param {{ configPath: string, harnessesPath?: string, fetcher?: typeof fetch, once?: boolean,
+ *   importer?: (specifier: string) => Promise<any>, progressIntervalMs?: number, pollMs?: number,
+ *   log?: (message: string) => void, sleep?: (ms: number) => Promise<void>, watchdogGraceMs?: number }} options
+ * @returns {Promise<RunPass>}
+ */
+export async function runWorker({ configPath, harnessesPath = defaultHarnessSettingsPath(configPath), fetcher, once = false,
+  importer, progressIntervalMs = 60_000, pollMs = 60_000, log = message => process.stderr.write(`${message}\n`),
+  sleep = ms => new Promise(done => setTimeout(done, ms)), watchdogGraceMs = WATCHDOG_GRACE_MS }) {
+  const settings = await loadHarnessSettings(harnessesPath);
+  const handedBack = new Set(); // tasks this machine could not finish; left for another worker
+  let adapter = null, said = "";
+  const say = message => { if (message !== said) { said = message; log(`${new Date().toISOString()} ${message}`); } };
+  for (;;) {
+    let current = await recoverPending({ configPath, fetcher });
+    if (current.credentialExpiresAt && Date.parse(current.credentialExpiresAt) - Date.now() < ROTATE_BEFORE_MS) {
+      await rotate({ configPath, fetcher }); current = await loadConfig(configPath);
+      log("Credential renewed.");
+    }
+    const client = createClient(current, fetcher);
+    let me;
+    try { me = await client.heartbeat(); }
+    catch (error) {
+      if (error?.code === "unauthenticated") throw new Error("Control Room no longer accepts this machine's key. Ask the owner for a new key.");
+      say(`Could not reach Control Room (${error?.code ?? "network"}); trying again.`);
+      if (once) return Object.freeze({ state: "unreachable" });
+      await sleep(pollMs); continue;
+    }
+    const mode = operationsMode(me.operationsMode);
+    const harness = HANDOFF_HARNESSES.includes(me.workerKind) ? me.workerKind : null;
+    let pass = { state: "idle" };
+    if (!harness) {
+      say(`Connected as ${me.displayName}. This worker is driven through MCP, so run starts no harness.`);
+      pass = { state: "no_harness" };
+    } else if (settings?.harnesses?.[harness]?.enabled !== true) {
+      say(`Connected as ${me.displayName}. ${HARNESS_LABELS[harness]} is not enabled on this machine, so no work is taken. `
+        + `Enable it in ${harnessesPath}.`);
+      pass = { state: "not_enabled" };
+    } else if (mode !== "running") {
+      say(`Connected as ${me.displayName}. ${mode === "unknown" ? "Control Room could not read its Pause switch"
+        : `Control Room is ${mode}`}, so no new work is taken.`);
+      pass = { state: "paused", mode };
+    } else {
+      // Load before claiming, so a broken local setup never strands a task.
+      adapter ??= await loadHarnessAdapter(settings, harness, importer);
+      let offers = [], claim;
+      try {
+        offers = (await client.work()).filter(item => !handedBack.has(item.jobId));
+        for (const offer of offers) {
+          try { claim = await client.claim(offer.offerId, `handoff-claim-${randomBytes(16).toString("hex")}`); break; }
+          catch (error) {
+            if (error?.code === "paused") { pass = { state: "paused", mode: "paused" }; break; }
+            if (error?.code !== "conflict" && error?.code !== "not_found") throw error;
+          }
+        }
+      } catch (error) {
+        if (error?.code === "unauthenticated") throw new Error("Control Room no longer accepts this machine's key. Ask the owner for a new key.");
+        say(`Could not take work (${error?.code ?? "network"}); trying again.`);
+        pass = { state: "unreachable" };
+      }
+      if (pass.state === "paused") say("Control Room paused new work, so none was taken.");
+      else if (!claim && pass.state !== "unreachable") say(`Connected as ${me.displayName}. Waiting for work (${offers.length} offered).`);
+      else if (claim) {
+        say(`Claimed "${claim.title}" for ${HARNESS_LABELS[harness]}.`);
+        const readMode = async () => operationsMode((await client.heartbeat()).operationsMode);
+        // The adapter never receives these; they are only checked against the
+        // adapter's own answer afterward, so a leaked key cannot be sent on.
+        const secrets = [current.secret, current.pendingSecret].filter(value => typeof value === "string" && value);
+        const finished = await runClaimedTask({ client, claim, adapter, progressIntervalMs, readMode, log,
+          watchdogGraceMs, secrets });
+        if (finished.outcome !== "submitted") handedBack.add(claim.jobId);
+        say(finished.outcome === "submitted" ? `Sent the result of "${claim.title}" to the owner for review.`
+          : `Could not finish "${claim.title}": ${finished.message ?? finished.reason}`);
+        pass = { state: "ran", ...finished };
+        // A harness that ignored its own time limit may still be running.
+        // Taking more work next to it is not safe; stop and let a person look.
+        if (finished.forcedTimeout) throw new Error(`${HARNESS_LABELS[harness]} did not stop by its time limit. `
+          + "run has stopped taking work; check this machine before starting it again.");
+      }
+    }
+    if (once) return Object.freeze(pass);
+    if (pass.state !== "ran") await sleep(pollMs);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command line
 // ---------------------------------------------------------------------------
 function options(args) {
@@ -348,7 +654,9 @@ const usage = `Control Room worker connector ${CONNECTOR_VERSION}
   join --server <address> --code <code>   Join this machine (code from the Workers page)
   status                                  Show this worker and its credential
   rotate                                  Replace this machine's credential now
-  run [--once]                            Stay connected: check in, renew the credential
+  run [--once] [--harnesses <path>]       Stay connected: check in, renew the credential, and
+                                          hand offered tasks to the harness enabled in
+                                          harnesses.json (next to the credential file)
   work                                    List tasks this worker may claim
   claims                                  List this worker's claims and owner decisions
   claim <offerId>
@@ -395,18 +703,10 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       return 0;
     }
     if (command === "run") {
-      for (;;) {
-        let current = await loadConfig(configPath);
-        if (current.credentialExpiresAt && Date.parse(current.credentialExpiresAt) - Date.now() < ROTATE_BEFORE_MS) {
-          await rotate({ configPath }); current = await loadConfig(configPath);
-          io.err.write("Credential renewed.\n");
-        }
-        const me = await createClient(current).heartbeat();
-        const work = await createClient(current).work();
-        io.err.write(`${new Date().toISOString()} connected as ${me.displayName}; ${work.length} task(s) available.\n`);
-        if (values.once) return 0;
-        await new Promise(done => setTimeout(done, 60_000));
-      }
+      const pass = await runWorker({ configPath, once: values.once === true,
+        ...(values.harnesses ? { harnessesPath: resolve(values.harnesses) } : {}),
+        log: message => io.err.write(`${message}\n`) });
+      return pass.state === "unreachable" ? 1 : 0;
     }
     io.err.write(usage); return 2;
   } catch (error) {

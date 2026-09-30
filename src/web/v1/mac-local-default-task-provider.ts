@@ -255,10 +255,13 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
           selectionAuthority: input.workBatches.selectionAuthority } } : {}) },
       hermes, claude: voidClaude, codex: voidCodex,
     });
-    if (input.supervisor) supervisorLoop = await startSupervisorLoopV1({ service: new SupervisorServiceV1({
-      db: readPool.client, tenantId, supervisorId: input.supervisor.supervisorId,
-      machine: createSupervisorMachineProbeV1(), operations: input.supervisor.operations,
-    }) });
+    // A busy machine at startup must not crash the host: the first health
+    // cycle is reported and retried exactly like every later one, not
+    // awaited as a startup precondition.
+    if (input.supervisor) supervisorLoop = await startSupervisorLoopV1({ toleratesFirstCycleFailure: true,
+      service: new SupervisorServiceV1({ db: readPool.client, tenantId, supervisorId: input.supervisor.supervisorId,
+        machine: createSupervisorMachineProbeV1(), operations: input.supervisor.operations,
+      }) });
     const agentReviews = input.workBatches ? (() => {
       const planService = new AgentReviewServiceV1(readPool.client, tenantId, keys.review, checkpointStore,
         built.routes, () => new Date().toISOString(), input.workBatches!.integrityKey);

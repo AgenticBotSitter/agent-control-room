@@ -1,0 +1,177 @@
+[
+  {
+    "file": "src/recurring/v1/scheduler.ts",
+    "find": "    if (decision !== \"start\") return Object.freeze({ proposed: [], failed: [],",
+    "replace": "    if (false) return Object.freeze({ proposed: [], failed: [],",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='Pause, Drain, and Stop' tests/recurring-work.test.ts",
+    "why": "Pause, Drain, and Stop must refuse a recurring cycle before any proposal bookkeeping"
+  },
+  {
+    "file": "src/recurring/v1/scheduler.ts",
+    "find": "      if (immediateDecision !== \"start\") {",
+    "replace": "      if (false) {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='Pause, Drain, and Stop' tests/recurring-work.test.ts",
+    "why": "Stop observed immediately before S1 must block the proposal"
+  },
+  {
+    "file": "src/recurring/v1/scheduler.ts",
+    "find": "      const occurrence = calculation.occurrences.at(-1);",
+    "replace": "      const occurrence = calculation.occurrences.at(0);",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='a long-off Mac proposes' tests/recurring-work.test.ts",
+    "why": "missed runs must collapse to the newest occurrence instead of replaying stale work"
+  },
+  {
+    "file": "src/recurring/v1/scheduler.ts",
+    "find": "        WHERE control_recurring_proposals.state<>'proposed'\n          AND control_recurring_proposals.definition_digest=EXCLUDED.definition_digest`,",
+    "replace": "        WHERE control_recurring_proposals.definition_digest=EXCLUDED.definition_digest`,",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='a long-off Mac proposes' tests/recurring-work.test.ts",
+    "why": "an already-proposed occurrence must not consume its bounded retry budget on later ticks"
+  },
+  {
+    "file": "src/recurring/v1/scheduler.ts",
+    "find": "      if (!prior || prior.definition_digest !== definitionDigest || prior.idempotency_key !== idempotencyKey) {",
+    "replace": "      if (false) {",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='a failed proposal retries safely' tests/recurring-work.test.ts",
+    "why": "an edited rule must not retarget a previously recorded failed occurrence"
+  },
+  {
+    "file": "src/recurring/v1/scheduler.ts",
+    "find": "      if (attempted >= RECURRING_S7B_CAPS_V1.maxProposalsPerCycle) break;",
+    "replace": "      if (proposed.length >= RECURRING_S7B_CAPS_V1.maxProposalsPerCycle) break;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='the recurring cycle enforces' tests/recurring-work.test.ts",
+    "why": "failed proposal calls must consume the S7b per-cycle cap"
+  },
+  {
+    "file": "src/recurring/v1/scheduler.ts",
+    "find": "    if (!(\"batchId\" in result) || result.startsWork !== false || result.grantsExecutionAuthority !== false)",
+    "replace": "    if (!(\"batchId\" in result))",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='the S1 adapter refuses' tests/recurring-work.test.ts",
+    "why": "the S1 adapter must reject any receipt that claims work start or execution authority"
+  },
+  {
+    "file": "src/recurring/v1/scheduler.ts",
+    "find": "        if (receipt.startsWork !== false || receipt.grantsExecutionAuthority !== false || receipt.projectId !== rule.project_id)",
+    "replace": "        if (receipt.projectId !== rule.project_id)",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='a failed proposal retries safely' tests/recurring-work.test.ts",
+    "why": "the scheduler must not persist an authority-bearing receipt as a valid proposal"
+  },
+  {
+    "file": "src/recurring/v1/scheduler.ts",
+    "find": "      WHERE tenant_id=$1 AND state='active' ORDER BY rule_id LIMIT 100`, [this.tenantId])).rows;",
+    "replace": "      WHERE tenant_id=$1 ORDER BY rule_id LIMIT 100`, [this.tenantId])).rows;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='Pause, Drain, and Stop' tests/recurring-work.test.ts",
+    "why": "an owner-paused recurring rule must never reach S1"
+  },
+  {
+    "file": "src/skills/v1/service.ts",
+    "find": "    if (!row || digest(row.skill_id, Number(row.version), row.name, row.instructions) !== row.content_digest)",
+    "replace": "    if (!row)",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='skills create immutable exact versions' tests/recurring-work.test.ts",
+    "why": "a task may resolve only an untampered exact skill version"
+  },
+  {
+    "file": "src/skills/v1/service.ts",
+    "find": "  assertPortableGuardedTextV1(\"reusable_skill\", \"instructions\", instructions);",
+    "replace": "  void instructions;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='skills create immutable exact versions' tests/recurring-work.test.ts",
+    "why": "shared skill text must remain inert and reject executable-shaped interpolation"
+  },
+  {
+    "file": "src/skills/v1/service.ts",
+    "find": "  assertNoSecretMaterial({ name, instructions }, \"reusable skill\");",
+    "replace": "  void name;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='skills create immutable exact versions' tests/recurring-work.test.ts",
+    "why": "shared skill text must reject secret-shaped content"
+  },
+  {
+    "file": "src/skills/v1/service.ts",
+    "find": "  if (composed.length > 4_000) throw new WebAccessError(\"invalid_request\");",
+    "replace": "  if (false) throw new WebAccessError(\"invalid_request\");",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='skills create immutable exact versions' tests/recurring-work.test.ts",
+    "why": "skill composition must stay within the canonical task prompt limit"
+  },
+  {
+    "file": "src/skills/v1/service.ts",
+    "find": "    if (expected !== row.content_digest || expected !== row.version_digest) throw new WebAccessError(\"conflict\");",
+    "replace": "    if (false) throw new WebAccessError(\"conflict\");",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='owner approval binds the exact skill version' tests/recurring-work.test.ts",
+    "why": "execution planning must refuse a task binding whose exact stored skill version drifted"
+  },
+  {
+    "file": "db/migrations/0186_recurring_rules_and_reusable_skills.sql",
+    "find": "CREATE TRIGGER control_skill_versions_append_only BEFORE UPDATE OR DELETE ON control_skill_versions\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();",
+    "replace": "-- mutation removes the immutable-version trigger",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='skills create immutable exact versions' tests/recurring-work.test.ts",
+    "why": "stored skill versions must be append-only even for direct SQL callers"
+  },
+  {
+    "file": "db/migrations/0186_recurring_rules_and_reusable_skills.sql",
+    "find": "CREATE TRIGGER control_recurring_proposals_update_guard BEFORE UPDATE ON control_recurring_proposals\n  FOR EACH ROW EXECUTE FUNCTION guard_recurring_proposal_update();",
+    "replace": "-- mutation removes the immutable recurring-proposal update guard",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='a long-off Mac proposes' tests/recurring-work.test.ts",
+    "why": "a recorded recurring occurrence cannot be retargeted by direct SQL"
+  },
+  {
+    "file": "db/migrations/0186_recurring_rules_and_reusable_skills.sql",
+    "find": "CREATE TRIGGER control_recurring_proposals_batch_guard BEFORE INSERT OR UPDATE ON control_recurring_proposals\n  FOR EACH ROW EXECUTE FUNCTION guard_recurring_proposal_batch();",
+    "replace": "-- mutation removes the exact S1 batch lineage guard",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='a long-off Mac proposes' tests/recurring-work.test.ts",
+    "why": "a proposed recurring occurrence must cite an existing S1 batch from the same tenant and project"
+  },
+  {
+    "file": "db/migrations/0186_recurring_rules_and_reusable_skills.sql",
+    "find": "CREATE TRIGGER control_recurring_proposals_delete_guard BEFORE DELETE ON control_recurring_proposals\n  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();",
+    "replace": "-- mutation removes the recurring-proposal delete guard",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='a long-off Mac proposes' tests/recurring-work.test.ts",
+    "why": "a recorded recurring occurrence cannot be deleted by direct SQL"
+  },
+  {
+    "file": "src/work-intake/v1/owner-service.ts",
+    "find": "      await bindReusableSkillsToTaskInSessionV1(tx, { tenantId: this.scope.tenantId,\n        projectId: batch.project_id, jobId: command.receipt.jobId, references: task.skillRefs ?? [], boundAt: actor.now });",
+    "replace": "      void skills;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='owner approval binds the exact skill version' tests/recurring-work.test.ts",
+    "why": "an approved S1 task must retain the exact skill version and digest it used"
+  },
+  {
+    "file": "src/pipelines/v1/service.ts",
+    "find": "        await bindReusableSkillsToTaskInSessionV1(tx, { tenantId: this.scope.tenantId, projectId,\n          jobId: job.id, references: stage.skillRefs ?? [], boundAt: now });",
+    "replace": "        void stage.skillRefs;",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='pipeline stages bind the exact reusable skill version' tests/linear-pipeline.test.ts",
+    "why": "a pipeline task must retain the exact skill version and digest it used"
+  },
+  {
+    "file": "src/modules/v1/manifest.ts",
+    "find": "  if (skill.contentDigest !== expected)",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-name-pattern='shares exact immutable skill versions' tests/module-contract.test.ts",
+    "why": "a Module Contract shared skill must bind its exact declarative content digest"
+  },
+  {
+    "file": "src/modules/v1/manifest.ts",
+    "find": "  if (manifest.skills?.length && manifest.class !== \"declarative\")",
+    "replace": "  if (false)",
+    "test": "node --import tsx --test --test-name-pattern='shares exact immutable skill versions' tests/module-contract.test.ts",
+    "why": "shared skill blocks must remain on the declarative Module Contract path"
+  },
+  {
+    "file": "db/roles/private_web_roles.sql",
+    "find": "GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,\n  control_recurring_rules TO control_room_private_web;",
+    "replace": "GRANT SELECT ON control_skills, control_task_skill_bindings,\n  control_recurring_rules TO control_room_private_web;",
+    "test": "node --import tsx --test --test-name-pattern='every table the role files grant the web login' tests/private-web-role-preflight-declaration.test.ts",
+    "why": "the production web grants and exact startup preflight declaration must remain identical"
+  },
+  {
+    "file": "db/roles/task_coordinator_roles.sql",
+    "find": "GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,\n  control_recurring_rules, control_recurring_proposals TO control_room_task_coordinator;",
+    "replace": "GRANT SELECT ON control_skills, control_task_skill_bindings,\n  control_recurring_rules, control_recurring_proposals TO control_room_task_coordinator;",
+    "test": "node --import tsx --test --test-name-pattern='every task-coordinator grant' tests/private-web-role-preflight-declaration.test.ts",
+    "why": "the production coordinator grants and exact startup preflight declaration must remain identical"
+  },
+  {
+    "file": "db/down/0186_recurring_rules_and_reusable_skills.sql",
+    "find": "  IF EXISTS (SELECT 1 FROM control_recurring_proposals) OR EXISTS (SELECT 1 FROM control_recurring_rules)\n    OR EXISTS (SELECT 1 FROM control_task_skill_bindings) OR EXISTS (SELECT 1 FROM control_skill_versions)\n    OR EXISTS (SELECT 1 FROM control_skills) THEN",
+    "replace": "  IF false THEN",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern='the 0186 down migration' tests/recurring-work.test.ts",
+    "why": "downgrade must refuse while recurring or reusable-skill records remain"
+  }
+]

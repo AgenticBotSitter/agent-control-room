@@ -154,15 +154,25 @@ export class FleetOwnerServiceV1 {
       const now = Date.parse(actor.now);
       const workers = (await tx.query<{ worker_id: string; display_name: string; worker_kind: string; project_ids: string[];
         capabilities: string[]; max_concurrent: number; state: string; enrolled_at: string | Date; last_seen_at: string | Date | null;
-        platform: string | null; connector_version: string | null; active_claims: string; credential_expires_at: string | Date | null }>(
+        platform: string | null; connector_version: string | null; active_claims: string; credential_expires_at: string | Date | null;
+        note_kind: string | null; note_message: string | null; note_at: string | Date | null; note_title: string | null }>(
         `SELECT w.worker_id,w.display_name,w.worker_kind,w.project_ids,w.capabilities,w.max_concurrent,w.state,w.enrolled_at,
-          p.last_seen_at,p.platform,p.connector_version,
+          p.last_seen_at,p.platform,p.connector_version,n.kind AS note_kind,n.message AS note_message,n.occurred_at AS note_at,
+          n.title AS note_title,
           (SELECT count(*)::text FROM fleet_claims fc JOIN control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id
             WHERE fc.tenant_id=w.tenant_id AND fc.worker_id=w.worker_id AND l.state='active') AS active_claims,
           (SELECT c.expires_at FROM fleet_worker_credentials c WHERE c.tenant_id=w.tenant_id AND c.worker_id=w.worker_id
             AND c.state='active') AS credential_expires_at
         FROM fleet_workers w LEFT JOIN fleet_worker_presence p ON p.tenant_id=w.tenant_id AND p.worker_id=w.worker_id
-        WHERE w.tenant_id=$1 ORDER BY w.state,w.display_name LIMIT 100`, [this.#tenantId])).rows;
+        -- The machine's latest progress or blocker note from the last day, with its task title.
+        LEFT JOIN LATERAL (SELECT e.kind,e.message,e.occurred_at,rq.payload->>'title' AS title FROM fleet_worker_events e
+          JOIN fleet_claims fc ON fc.tenant_id=e.tenant_id AND fc.claim_id=e.claim_id
+          JOIN control_jobs j ON j.tenant_id=fc.tenant_id AND j.id=fc.job_id
+          JOIN control_workflows wf ON wf.tenant_id=j.tenant_id AND wf.id=j.workflow_id
+          JOIN control_requests rq ON rq.tenant_id=wf.tenant_id AND rq.id=wf.request_id
+          WHERE e.tenant_id=w.tenant_id AND e.worker_id=w.worker_id AND e.occurred_at>$2::timestamptz-interval '1 day'
+          ORDER BY e.occurred_at DESC,e.event_id DESC LIMIT 1) n ON true
+        WHERE w.tenant_id=$1 ORDER BY w.state,w.display_name LIMIT 100`, [this.#tenantId, actor.now])).rows;
       const codes = (await tx.query<{ id: string; purpose: string; worker_id: string; display_name: string; expires_at: string | Date }>(
         `SELECT c.id,c.purpose,c.worker_id,c.display_name,c.expires_at FROM fleet_enrollment_codes c
           WHERE c.tenant_id=$1 AND c.state='issued' AND c.expires_at>$2::timestamptz
@@ -178,7 +188,9 @@ export class FleetOwnerServiceV1 {
             activeClaims: Number(row.active_claims), enrolledAt: iso(row.enrolled_at),
             lastSeenAt: row.last_seen_at ? iso(row.last_seen_at) : null, platform: row.platform,
             connectorVersion: row.connector_version,
-            credentialExpiresAt: row.credential_expires_at ? iso(row.credential_expires_at) : null });
+            credentialExpiresAt: row.credential_expires_at ? iso(row.credential_expires_at) : null,
+            latestNote: row.note_kind && row.note_message && row.note_at ? Object.freeze({ kind: row.note_kind,
+              message: row.note_message, occurredAt: iso(row.note_at), taskTitle: row.note_title ?? "" }) : null });
         }),
         pendingCodes: codes.map(row => Object.freeze({ codeId: row.id, purpose: row.purpose, workerId: row.worker_id,
           displayName: row.display_name, expiresAt: iso(row.expires_at) })),

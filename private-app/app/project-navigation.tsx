@@ -32,6 +32,7 @@ export function ProjectNavigation({ projectId, current, presentation }: {
       {runtime.status?.projectSections.includes("agents") && link(`${base}/agents`, "Agents", "agents")}
       {runtime.status?.projectSections.includes("reviews") && link(`${base}/reviews`, "Reviews", "reviews")}
       {runtime.status?.projectSections.includes("activity") && link(`${base}/activity`, "Activity", "activity")}
+      {runtime.status?.projectSections.includes("automations") && link(`${base}/automations`, "Automations", "automations")}
       {runtime.status?.projectSections.includes("files") && link(`${base}/files`, "Files", "files")}
       {runtime.status?.projectSections.includes("settings") && link(`${base}/settings`, "Settings", "settings")}
     </> : runtime.mode === "checking" ? link(`${base}/tasks`, "Tasks", "work") : <>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { reusableSkillReferencesSchemaV1 } from "../../skills/v1/schemas";
 
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const safeText = z.string().min(1).max(2000);
@@ -27,7 +28,8 @@ export const PIPELINE_MAX_TOTAL_LOOPS_CEILING_V1 = 6;
 const baseStage = z.object({ ordinal: z.number().int().min(0).max(2), description: safeText,
   requiredCapability: id, workerId: id, workerKind, nodeId: id, selectionKey: id,
   model: z.string().min(1).max(180), effort, provider: id.nullable().default(null),
-  profile: id.nullable().default(null), maxLoops: z.number().int().min(0).max(20) }).strict();
+  profile: id.nullable().default(null), maxLoops: z.number().int().min(0).max(20),
+  skillRefs: reusableSkillReferencesSchemaV1.optional() }).strict();
 export const pipelineStageTemplateSchemaV1 = z.discriminatedUnion("stageKind", [
   baseStage.extend({ stageKind: z.literal("build"), role: z.literal("builder"),
     ...pipelineBuildWritePolicySchemaV1.shape }).strict(),

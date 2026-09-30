@@ -10,6 +10,7 @@ import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILI
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1, randomHexV1 } from "./identifiers";
+import type { TaskProjectEventWriterV1 } from "../../project-events/v1/task-lifecycle";
 
 /** Authenticated machine principal. It is derived from the credential digest
  * and the stored worker row only; nothing in a request body can change it. */
@@ -54,18 +55,33 @@ type WorkerRow = { worker_id: string; node_id: string; identity_id: string; work
 type ClaimRow = { claim_id: string; offer_id: string; worker_id: string; node_id: string; project_id: string;
   job_id: string; attempt_id: string; lease_id: string; idempotency_key: string; claimed_at: string | Date };
 
+/** The installation-wide Pause / Drain / Stop switch as the gateway reports
+ * it to connectors. Only "running" admits a new claim. */
+export const FLEET_OPERATIONS_MODES_V1 = Object.freeze(["running", "paused", "draining", "stopped"] as const);
+export type FleetOperationsModeV1 = (typeof FLEET_OPERATIONS_MODES_V1)[number];
+
 export type FleetGatewayStoreOptionsV1 = Readonly<{ tenantId: string; clock?: () => number;
-  leaseMs?: number; connectorVersionLimit?: number }>;
+  leaseMs?: number; connectorVersionLimit?: number;
+  /** Reads the owner's current Pause / Drain / Stop decision. A missing port,
+   * a failed read or an unexpected answer is unknown and refuses new claims. */
+  operationsMode?: () => Promise<FleetOperationsModeV1>;
+  /** Presentation-only task timeline. Without it, a hand-off is still recorded
+   * in the audit log and worker events, but not shown on the Activity page. */
+  projectEvents?: Pick<TaskProjectEventWriterV1, "appendInSession"> }>;
 
 export class FleetGatewayStoreV1 {
   readonly #tenantId: string;
   readonly #clock: () => number;
   readonly #leaseMs: number;
+  readonly #operationsMode: (() => Promise<FleetOperationsModeV1>) | undefined;
+  readonly #projectEvents: Pick<TaskProjectEventWriterV1, "appendInSession"> | undefined;
   constructor(private readonly db: DatabaseClient, options: FleetGatewayStoreOptionsV1) {
     if (!FLEET_PROJECT_ID_PATTERN_V1.test(options.tenantId)) throw new Error("fleet_gateway_configuration_invalid");
     this.#tenantId = options.tenantId;
     this.#clock = options.clock ?? Date.now;
     this.#leaseMs = options.leaseMs ?? FLEET_LEASE_MS_V1;
+    this.#operationsMode = options.operationsMode;
+    this.#projectEvents = options.projectEvents;
     if (!Number.isSafeInteger(this.#leaseMs) || this.#leaseMs < 30_000 || this.#leaseMs > 3_600_000)
       throw new Error("fleet_gateway_configuration_invalid");
   }
@@ -74,6 +90,15 @@ export class FleetGatewayStoreV1 {
     const now = this.#clock();
     if (!Number.isSafeInteger(now)) return fleetFail("unavailable");
     return new Date(now).toISOString();
+  }
+
+  /** The mode connectors see. "unknown" (an unreadable switch) never admits work. */
+  async operationsMode(): Promise<FleetOperationsModeV1 | "unknown"> {
+    if (!this.#operationsMode) return "unknown";
+    try {
+      const mode = await this.#operationsMode();
+      return (FLEET_OPERATIONS_MODES_V1 as readonly unknown[]).includes(mode) ? mode : "unknown";
+    } catch { return "unknown"; }
   }
 
   /** Records an authenticated MCP tool attempt before the tool is validated or
@@ -224,6 +249,18 @@ export class FleetGatewayStoreV1 {
         platform=EXCLUDED.platform`, [this.#tenantId, workerId, now, connectorVersion, platform]);
   }
 
+  /** Supplies the digest-only startup cache through the gateway's existing
+   * least-privilege read grant. Expired and revoked credentials stay out. */
+  async activeAdmissionCredentials() {
+    const now = this.#now();
+    const rows = (await this.db.query<{ worker_id: string; secret_digest: string }>(`SELECT c.worker_id,c.secret_digest
+      FROM fleet_worker_credentials c JOIN fleet_workers w ON w.tenant_id=c.tenant_id AND w.worker_id=c.worker_id
+      WHERE c.tenant_id=$1 AND c.state='active' AND w.state='active'
+        AND c.expires_at>statement_timestamp() AND c.expires_at>$2::timestamptz
+      ORDER BY c.worker_id`, [this.#tenantId, now])).rows;
+    return Object.freeze(rows.map(row => Object.freeze({ workerId: row.worker_id, credentialDigest: row.secret_digest })));
+  }
+
   /** Resolves the bearer to exactly one worker. The declared worker id must
    * match the credential's own worker, so a stolen credential cannot pose as
    * another machine, and nothing about the refusal says which check failed. */
@@ -253,7 +290,8 @@ export class FleetGatewayStoreV1 {
     const platform = platforms[input.platform as keyof typeof platforms] ?? "other";
     const now = this.#now();
     await this.db.transaction(tx => this.#presence(tx, principal.workerId, version, platform, now));
-    return this.me(principal);
+    const operationsMode = await this.operationsMode();
+    return Object.freeze({ ...this.me(principal), operationsMode, claimsAllowed: operationsMode === "running" });
   }
 
   me(principal: FleetWorkerPrincipalV1) {
@@ -318,6 +356,10 @@ export class FleetGatewayStoreV1 {
   async claim(principal: FleetWorkerPrincipalV1, input: Readonly<{ offerId: unknown; idempotencyKey: unknown }>) {
     const offerId = entityId(input.offerId, "offer"), idempotencyKey = key(input.idempotencyKey);
     const now = this.#now();
+    // Read the mode before the transaction: the provider uses its own pool
+    // connection, and reading it inside would hold two per claim. The 0156
+    // trigger still decides inside the transaction, so a race costs nothing.
+    const mode = await this.operationsMode();
     return this.db.transaction(async tx => {
       const prior = (await tx.query<ClaimRow>(`SELECT * FROM fleet_claims WHERE tenant_id=$1 AND worker_id=$2
         AND idempotency_key=$3`, [this.#tenantId, principal.workerId, idempotencyKey])).rows[0];
@@ -325,6 +367,8 @@ export class FleetGatewayStoreV1 {
         if (prior.offer_id !== offerId) return fleetFail("conflict");
         return this.#claimView(tx, prior, true);
       }
+      // Pause, Drain and Stop all stop new claims; a replay above is not new.
+      if (mode !== "running") return fleetFail("paused");
       await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.#tenantId]);
       const offer = (await tx.query<{ project_id: string; job_id: string; capability: string; state: string;
         allowed_worker_ids: string[] | null }>(`SELECT project_id,job_id,capability,state,allowed_worker_ids
@@ -511,6 +555,17 @@ export class FleetGatewayStoreV1 {
       await appendAuditWith(tx, { id: `audit:fleet-release:${event.eventId.slice(12)}`, tenantId: this.#tenantId,
         projectId: claim.project_id, actorId: principal.identityId, actorType: "worker", action: "fleet.task.released",
         targetType: "job", targetId: claim.job_id, occurredAt: now, safeMetadata: { claimId: claim.claim_id, eventId: event.eventId } });
+      if (this.#projectEvents) {
+        const project = (await tx.query<{ workspace_id: string }>(`SELECT workspace_id FROM projects
+          WHERE tenant_id=$1 AND id=$2`, [this.#tenantId, claim.project_id])).rows[0];
+        // A project row must already exist for a fleet offer to have been made
+        // against it; a missing row here would mean stored data disagreed with
+        // itself, so the hand-off note is skipped rather than guessed.
+        if (project) await this.#projectEvents.appendInSession(tx, { tenantId: this.#tenantId,
+          workspaceId: project.workspace_id, projectId: claim.project_id, subjectId: claim.job_id,
+          action: "task_handed_off", sourceId: claim.job_id, sourceVersion: "1", occurredAt: now,
+          safeDetail: message.length > 800 ? `${message.slice(0, 799)}…` : message });
+      }
       return { ...event, released: true };
     });
   }

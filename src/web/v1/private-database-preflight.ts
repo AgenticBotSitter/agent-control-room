@@ -15,12 +15,21 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0195 (filename order, including assigned gaps, 0155-0157 and 0160),
+// Generated from public migrations through 0196 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162, 0186 and 0115),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script and cross-checked against a real PostgreSQL 17 cluster
 // installed the production way; both agree. Catalog query below; not a mutable
 // database marker.
-export const privateWebSchemaDigest = "ecc00c00f0ab888447fabaff5f605baf49784814cebf66576b8babd1313b2faa";
+export const privateWebSchemaDigest = "ee04b1e328d412bead6ce9052a36fc91bcaff09098d7a033d9b7bb814b68b4b3";
+/** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
+ * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
+ * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
+ * the web login must hold exactly SELECT, and without it the web login must hold nothing,
+ * because the column audit still compares every column against the live grant, so an
+ * unexpected fleet grant is refused either way. */
+export const privateWebFleetReadTables = ["fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials",
+  "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events",
+  "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -38,13 +47,15 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
+  "work_batch_intake_flag_dismissals",
+  "control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules",
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
   "pipeline_installation_allowances", "pipeline_machine_capacity_observations",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
   "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -55,6 +66,7 @@ export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_event_stream_heads", "control_project_events", "control_project_coordinator_heads",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
 privateWebInsertTables.add("work_batch_revisions"); privateWebInsertTables.add("work_batch_items");
+privateWebInsertTables.add("work_batch_intake_flag_dismissals");
 privateWebInsertTables.add("work_batch_queue_admissions"); privateWebInsertTables.add("work_batch_agent_queue_heads");
 privateWebInsertTables.add("pipeline_templates"); privateWebInsertTables.add("pipeline_runs"); privateWebInsertTables.add("pipeline_stage_runs");
 privateWebInsertTables.add("control_job_dependencies");
@@ -68,6 +80,8 @@ privateWebInsertTables.add("pipeline_installation_allowances"); privateWebInsert
 privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
+for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
+  privateWebInsertTables.add(table);
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -113,6 +127,9 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
   control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
+  control_skills: ["current_version", "state", "updated_at"],
+  control_recurring_rules: ["state", "plain_schedule", "cron_expression", "timezone", "task_template", "version",
+    "updated_by_identity_id", "updated_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
@@ -177,6 +194,9 @@ coordinatorReads.push("control_improvement_requests", "control_update_candidates
 // Scheduling reads each project's worker and concurrency settings (0135).
 coordinatorReads.push("control_project_settings");
 coordinatorReads.push("installation_operations_mode_revisions");
+coordinatorReads.push("control_skills", "control_skill_versions", "control_task_skill_bindings",
+  "control_recurring_rules", "control_recurring_proposals");
+coordinatorInserts.add("control_recurring_proposals");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
@@ -184,12 +204,21 @@ coordinatorInserts.add("pipeline_stage_loop_counts");
 coordinatorInserts.add("control_update_candidates");
 // Supervisor (0177-0179 and the 0017 incident tables): reconciliation heads,
 // health, loop heads and provider waits; incidents are column-scoped writes.
+// The supervisor reconciler, the loop watchdog and the provider-wait tracker all
+// run on the coordinator login's own pool (see mac-local-default-task-provider's
+// `readPool`), so the grants db/roles/task_coordinator_roles.sql confers on them
+// are part of this login's reviewed profile. Settings stay read-only: assignment
+// enforces them, only an owner-gated web action writes them.
 coordinatorReads.push("control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits", "control_service_incident_heads", "control_service_incidents");
 for (const table of ["control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits"]) coordinatorInserts.add(table);
+/** Column-scoped INSERT grants the coordinator login holds, as
+ * db/roles/task_coordinator_roles.sql confers them. A table listed here must
+ * NOT be in `coordinatorInserts`: the grant covers only the named columns, and
+ * a table-wide entry would demand INSERT on every column. */
 const coordinatorInsertColumns: Record<string, readonly string[]> = {
   control_service_incident_heads: ["tenant_id", "correlation_key"],
   control_service_incidents: ["id", "tenant_id", "correlation_key", "generation", "service_id", "severity",
@@ -220,13 +249,27 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
     .map(table => [table, ["coordinator_lock"]])),
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
+  // The supervisor's own mutable fields: a lapsed task head, an agent's health
+  // verdict, the loop's last run, and a provider wait's release. Everything
+  // else on those tables stays append-only history.
   control_supervisor_task_heads: ["lapse_count", "last_attempt_id", "state", "updated_at"],
   control_supervisor_agent_health: ["node_id", "state", "safe_reason_code", "last_heartbeat_at", "observed_at"],
   control_supervisor_loop_heads: ["version", "last_started_at", "last_completed_at", "state"],
   control_provider_waits: ["state", "released_at"],
+  control_recurring_proposals: ["state", "attempt_count", "batch_id", "safe_reason_code", "updated_at"],
+  control_recurring_rules: ["last_evaluated_at"],
+  // An incident is opened with a bounded column set and then corrected in
+  // place; the head's generation counter is the only service-registry write.
   control_service_incident_heads: ["next_generation"],
   control_service_incidents: ["severity", "safe_reason_code", "safe_remedy_code", "state", "last_observed_at", "resolved_at"],
 };
+export const taskCoordinatorReadTables = Object.freeze([...coordinatorReads]);
+export const taskCoordinatorInsertTables = Object.freeze([...coordinatorInserts]);
+export const taskCoordinatorDeleteTables = Object.freeze([...coordinatorDeletes]);
+export const taskCoordinatorInsertColumns = Object.freeze(Object.fromEntries(Object.entries(coordinatorInsertColumns)
+  .map(([table, columns]) => [table, Object.freeze([...columns])])) as Record<string, readonly string[]>);
+export const taskCoordinatorUpdateColumns = Object.freeze(Object.fromEntries(Object.entries(coordinatorUpdates)
+  .map(([table, columns]) => [table, Object.freeze([...columns])])) as Record<string, readonly string[]>);
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
   "control_attempts", "control_task_model_selections",
@@ -496,13 +539,37 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-              AND has_function_privilege('control_room_fleet_gateway',p.oid,'EXECUTE')
+              -- The gateway is the only role allowed to call this, so when it
+              -- exists it must hold EXECUTE. It may legitimately be ABSENT: a
+              -- Mac-local cluster never installs db/roles/fleet_gateway_roles.sql,
+              -- and has_function_privilege on a missing role raises 42704
+              -- rather than answering false, which would fail every Mac-local
+              -- preflight on a database that is in fact correct. When the role
+              -- is absent the ACL check below is the whole proof: no grantee can
+              -- be named control_room_fleet_gateway if it does not exist, so
+              -- any surviving non-owner EXECUTE grantee still fails here.
+              AND (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway')
+                OR has_function_privilege('control_room_fleet_gateway',p.oid,'EXECUTE'))
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
                   OR pg_get_userbyid(a.grantee)<>'control_room_fleet_gateway')))
+            /* The owner is checked for EVERY kind, not only the reviewer. The
+               rest of this branch (SECURITY DEFINER, the pinned search_path, the
+               volatility of each signature) describes what these two functions
+               must be on a correct database; none of it says who may own them.
+               Leaving the owner test inside the $2 disjunct made the whole shape
+               conditional, so on a database where the functions exist with the
+               right properties but are owned by anyone other than
+               control_room_schema_owner, every non-reviewer kind exempted them on
+               the strength of the web login merely lacking EXECUTE - which is
+               exactly the state a SECURITY DEFINER function an operator can
+               re-create, or a fixture that replays migrations without SET ROLE,
+               is in. redeem_fleet_enrollment above checks its owner
+               unconditionally for the same reason. */
             OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-              AND (($2 AND p.prosecdef AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND (($2 AND p.prosecdef
                 AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
                 AND NOT p.proleakproof AND p.proparallel='u'
                 AND p.provolatile=CASE WHEN p.oid='read_agent_review_plan(text)'::regprocedure THEN 's' ELSE 'v' END)
@@ -545,13 +612,35 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           OR has_table_privilege(c.oid,'TRIGGER') OR has_table_privilege(c.oid,'MAINTAIN') AS extra
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
-      const reads: ReadonlySet<string> = new Set(allowedReads);
-      // Column-scoped INSERT grants (the web role's idempotency ledger, the
-      // coordinator's incident rows): listed columns must carry INSERT, unlisted must not.
-      const scopedInserts = kind === "web" ? privateWebInsertColumns : kind === "coordinator" ? coordinatorInsertColumns : {};
+      const reads: Set<string> = new Set(allowedReads);
+      // The web login's read-only fleet tables exist only where
+      // db/roles/fleet_gateway_roles.sql was applied, which is exactly when
+      // control_room_fleet_gateway is in the cluster. See
+      // `privateWebFleetReadTables`: demanding them unconditionally made every
+      // correct Mac-local database fail this preflight, and dropping them
+      // unconditionally would under-check a full production install. Nothing is
+      // granted by this: the live ACL is still read from the server, only the
+      // expected set follows the role file that was applied.
+      if (kind === "web" && (await tx.query<{ present: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') AS present`)).rows[0]?.present)
+        for (const table of privateWebFleetReadTables) reads.add(table);
+      // Column-scoped INSERT grants (the web role's idempotency ledger and the
+      // coordinator's incident appends): listed columns must carry INSERT,
+      // unlisted must not.
+      const scopedInserts = kind === "web" ? privateWebInsertColumns
+        : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
-      if (!columns.length || columns.some(c => c.extra
-        || c.read !== (reads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))
+      if (!columns.length) fail();
+      // Fleet tables are granted to the web login by fleet_gateway_roles.sql, which the
+      // Mac-local install never runs, so where the fleet gateway is absent the web login
+      // must hold nothing on any fleet table. The expectation follows the install; the
+      // comparison does not soften, so a stray grant is still refused.
+      const effectiveReads = new Set(reads);
+      if (kind === "web" && (await tx.query<{ present: boolean }>(
+        "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') AS present")
+      ).rows[0]?.present !== true) for (const table of privateWebFleetReadTables) effectiveReads.delete(table);
+      if (columns.some(c => c.extra
+        || c.read !== (effectiveReads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))
         || c.insert !== (allowedInserts.has(c.table_name) || !!scopedInserts[c.table_name]?.includes(c.column_name))
         || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name)
         || c.remove !== allowedDeletes.has(c.table_name))) fail();

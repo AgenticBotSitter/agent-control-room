@@ -5,6 +5,7 @@ import { PrivateHeader } from "../private-header";
 import { localWorkerStateLabel, useLocalRuntime } from "../local-runtime";
 import { StateChip, UnavailableState, workerChipToneV1 } from "../owner-ui";
 import { FleetWorkers } from "./fleet-workers";
+import { WorkersScorecard } from "./workers-scorecard";
 
 function LocalWorkers() {
   const runtime = useLocalRuntime();
@@ -25,6 +26,7 @@ function LocalWorkers() {
           <p><StateChip state={worker.state} tone={workerChipToneV1(worker)} />. {localWorkerStateLabel(worker)}.</p>
           <p className="private-note">Current task, capacity and last seen are unknown in Mac-local mode: this host does not yet record them per worker.</p></li>)}</ul></>}
     <FleetWorkers />
+    <WorkersScorecard />
     <p><a href="/projects">Open projects</a></p>
   </main></div>;
 }

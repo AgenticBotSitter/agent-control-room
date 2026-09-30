@@ -1,17 +1,17 @@
 [
   {
-    "file": "db/migrations/0140_fleet_worker_connector.sql",
-    "find": "IF NEW.state='consumed' AND (pg_catalog.statement_timestamp()>=OLD.expires_at",
-    "replace": "IF NEW.state='consumed' AND (false",
-    "test": "node --import tsx --test --test-name-pattern \"expired or cancelled\" tests/fleet-connector.test.ts",
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "    OR NOT EXISTS (SELECT 1 FROM public.fleet_enrollment_codes c\n      WHERE c.tenant_id=NEW.tenant_id AND c.id=NEW.code_id AND c.worker_id=NEW.worker_id\n        AND c.state='issued' AND c.expires_at>pg_catalog.statement_timestamp()",
+    "replace": "    OR NOT EXISTS (SELECT 1 FROM public.fleet_enrollment_codes c\n      WHERE c.tenant_id=NEW.tenant_id AND c.id=NEW.code_id AND c.worker_id=NEW.worker_id\n        AND c.state='issued' AND c.expires_at>'2000-01-01'::timestamptz",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && node --import tsx --test tests/fleet-connector-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "the database clock refuses an expired enrollment code"
   },
   {
-    "file": "src/fleet/v1/gateway-store.ts",
-    "find": "if (!row || row.state !== \"issued\" || row.expired) return fleetFail(\"unauthenticated\");",
-    "replace": "if (!row) return fleetFail(\"unauthenticated\");",
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "  IF NOT FOUND OR enrollment.state<>'issued' OR enrollment.expires_at<=pg_catalog.statement_timestamp()\n    OR enrollment.expires_at<=p_redeemed_at THEN RETURN; END IF;",
+    "replace": "  IF NOT FOUND THEN RETURN; END IF;",
     "test": "node --import tsx --test --test-name-pattern \"one-command join|expired or cancelled\" tests/fleet-connector.test.ts",
-    "why": "an enrollment code is single use and expires"
+    "why": "an enrollment code is single use and expires, and the redemption is refused in the database, not by a caller's clock"
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
@@ -77,10 +77,10 @@
     "why": "result files over the 1 MiB total are refused"
   },
   {
-    "file": "db/migrations/0140_fleet_worker_connector.sql",
-    "find": "OR worker.project_ids<>NEW.project_ids",
-    "replace": "",
-    "test": "node --import tsx --test --test-name-pattern \"codes cannot be widened\" tests/fleet-connector.test.ts",
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "      OR worker.project_ids<>NEW.project_ids OR worker.capabilities<>NEW.capabilities\n      OR worker.max_concurrent<>NEW.max_concurrent)) THEN",
+    "replace": "      OR worker.max_concurrent<>NEW.max_concurrent)) THEN",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && node --import tsx --test tests/fleet-connector-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "a re-key code cannot widen a worker's project scope"
   },
   {

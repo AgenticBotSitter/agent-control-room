@@ -1,6 +1,6 @@
 # Improve Control Room desk
 
-**Status:** design and first-slice contract
+**Status:** candidate publication implemented; deployment remains inactive
 **Scope:** the built-in Control Room self-project, from an owner request through an update candidate
 **Not active in the first slice:** installation mutation, database upgrade, restart, rollback and GitHub publication
 
@@ -48,6 +48,7 @@ The managed integration repository is installation-private configuration, not a 
 - the managed integration branch name;
 - the expected remote and release branch names;
 - the last accepted candidate revision;
+- a durable lead-integration binding from each completed pipeline run to its exact managed-branch revision;
 - bounded worktree roots that are separate from the live installation;
 - the reviewed commands allowed by each test profile; and
 - the service and protected-data identities used only by the later upgrade executor.
@@ -99,7 +100,9 @@ An update candidate is immutable evidence for one successful pipeline/integratio
 - record digest and integrity tag; and
 - state: `ready`, `accepted` or `declined`.
 
-Only a completed pipeline whose sign-off stage is accepted, whose candidate revision matches the managed integration branch, and whose required profiles/reviews pass may become `ready`. The first slice stores the bounded candidate evidence and decision contract; branch observation and automatic candidate publication are the next slice.
+Only a completed pipeline whose sign-off stage is accepted, whose durable lead-integration binding matches the managed integration branch, and whose required profiles/reviews pass may become `ready`. The coordinator publisher observes the installation-private managed branch for that exact pipeline run, derives changed paths and migrations, selects the configured profiles, binds runner evidence to the exact revision, and records the candidate. Its periodic sweep retries a completed run that has no candidate; failures never create a partial or accepted candidate.
+
+The repository observer resolves and pins the canonical repository identity, exact managed branch, configured remote, clean status and last accepted ancestor. It rechecks the branch, status and revision after observation. Repository paths remain installation-private and are never written to candidate, audit or browser data. The test runner remains a narrow injected service interface: configuration supplies reviewed command IDs and fixes `fast`/`targeted` to the candidate worktree and `db`/`full` to the local test-runner service.
 
 Home shows ready candidates before normal activity. The card says what changed, tests passed/failed/not run, and whether the candidate declares database changes. It links to the self-project and offers one decision. An unreadable candidate source must show unavailable, never “no updates”.
 
@@ -176,7 +179,7 @@ Publication requires separate current GitHub release credentials held by the rel
 ## Delivery slices
 
 1. **First slice (this document):** built-in template, improvement request → pipeline run, update-candidate/owner-decision records, Home “Update ready”, and explicit inactive deploy/restart copy.
-2. **Candidate publication:** private repository binding, changed-path classifier, sandbox test runner evidence, independent-review binding and lead publication from a successful pipeline.
+2. **Candidate publication (implemented):** private repository binding, changed-path classifier, sandbox test runner evidence, independent-review binding and automatic coordinator publication from a successful pipeline.
 3. **Signed approval:** durable upgrade request/approval tables, strong-session signature, exact migration/release/rollback binding and in-app Approve.
 4. **Safe deploy:** verified backup, rehearsal, database upgrade, build, graceful restart, health checks, automatic rollback and uncertain-state recovery.
 5. **Release train:** weekly/monthly setting, public-name guard, changelog, squash commit, version tag, artifacts and publication reconciliation.

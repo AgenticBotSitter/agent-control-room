@@ -60,7 +60,9 @@ export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, m
       if (receipt.projectId !== pending.projectId || receipt.jobId !== pending.jobId || receipt.artifactId !== pending.draft.artifactId
         || receipt.targetId !== pending.draft.targetId || receipt.targetDigest !== pending.draft.targetDigest
         || receipt.contentHash !== pending.draft.contentHash || receipt.decision !== pending.draft.decision
-        || receipt.feedbackDigest !== feedbackDigest || (receipt.findingId !== null) !== (receipt.decision === "changes_requested")) throw new Error();
+        || receipt.feedbackDigest !== feedbackDigest || (receipt.findingId !== null) !== (receipt.decision === "changes_requested")
+        || (receipt.exceptions?.length ?? 0) !== (pending.draft.exceptions?.length ?? 0)
+        || receipt.exceptions?.some((value, index) => value.statement !== pending!.draft.exceptions?.[index])) throw new Error();
       pending = undefined; return receipt;
     } catch (error) {
       if (pending) pending.uncertain = true;
