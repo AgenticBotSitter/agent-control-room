@@ -66,6 +66,23 @@ const ROLE_PASSWORDS = Object.freeze({
  * The queue role files raise when their pg-boss prerequisite is missing, so
  * the runner builds the two queues those files assert on before applying any
  * of them. Every other role file is independent of the queue.
+ *
+ * These are the PRODUCTION Mac-local grants and nothing more, which is what
+ * every preflight this kit exercises is written against. The coordinator
+ * preflight is an exact-equality check over the pg-boss queue schema, so a
+ * fixture that holds a privilege production never grants does not merely test
+ * more: it makes a correctly installed database fail its own startup preflight.
+ * That is exactly what `native_queue_recovery_roles.sql` did here — it grants
+ * the coordinator UPDATE on sixteen `job`/`job_common` columns, which
+ * `verifyPgBossApplicationPermissions` requires only for the recovery profile.
+ *
+ * No production path applies that file: the narrow-role installer
+ * (`scripts/mac-local/narrow-role-provision.mjs`), the live upgrade ACL
+ * comparison (`scripts/mac-local/database-upgrade-grants.mjs`),
+ * `scripts/mac-local/check-database.ts` and every Mac-local upgrade and
+ * lifecycle test omit it. It is not a fixture to widen but an authority an
+ * owner has to grant explicitly, so a test that needs it must ask for it by
+ * name through `extraRoleFiles` rather than have every test inherit it.
  */
 const ROLE_FILES = Object.freeze([
   "production_roles.sql",
@@ -78,10 +95,14 @@ const ROLE_FILES = Object.freeze([
   "news_coordinator_roles.sql",
   "native_queue_producer_roles.sql",
   "native_queue_worker_roles.sql",
-  "native_queue_recovery_roles.sql",
   "news_queue_producer_roles.sql",
   "fleet_gateway_roles.sql",
 ]);
+
+/** The role files the kit applies by default, for the ACL-equivalence guard.
+ * Exported read-only so a test can compare them against the production grant
+ * manifest without restating the list and letting the two drift apart. */
+export const DEFAULT_ROLE_FILES = ROLE_FILES;
 
 const QUEUES = Object.freeze(["native-task-delivery", "news-feed-collection"]);
 
