@@ -26,7 +26,8 @@ import { applyMacGrantDiffV1, diffMacGrantsV1, macRolePlan, readDesiredMacGrants
   from "../scripts/mac-local/database-upgrade-grants.mjs";
 import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
-import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
+import { parseDatabaseBackupVerificationPortRangeV1, verifyMacLocalDatabaseBackupV1 }
+  from "../scripts/ops/verify-database-backup.mjs";
 import { AuditStore } from "../src/audit/audit-store.ts";
 import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
 import { WorkBatchOwnerServiceV1 } from "../src/work-intake/v1/owner-service.ts";
@@ -73,15 +74,29 @@ const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 15630);
 //
 // The verification port is `PORT+3`, and the accepted block is that lane's own:
 // `CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE` when the operator set one, otherwise
-// the module default. With the documented base that is the default block and
-// nothing is set at all, so the same command passes today; with a moved base the
-// run sets the variable and the verifier checks against the range it was given.
+// THIS lane's own assigned block, `PORT+1`..`PORT+9`. The test-runner sets the
+// variable from the same base (`scripts/test-runner/service.mjs`), so a run
+// under the runner and a bare local run now agree, and the documented default
+// base still lands in the module's own default block.
+//
+// The DIRECT calls need this as much as the CLI, and the missing half was the
+// fifth failure after S7b: `--port-range` was forwarded to the CLI but the
+// programmatic calls got only a port, so a moved base reached
+// `verifyMacLocalDatabaseBackupV1`, it fell back to the module's default block,
+// and it refused with `database_backup_verification_arguments_refused` — an
+// error naming no port and no range. `backupVerify()` passes the range for both,
+// from the one source below, so the two cannot drift apart again.
 const BACKUP_VERIFY_PORT = PORT + 3;
-const backupVerify = () => ({ port: BACKUP_VERIFY_PORT });
+const BACKUP_VERIFY_RANGE = process.env.CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE ?? `${PORT + 1}-${PORT + 9}`;
+// The verifier's own `MIN-MAX` validation, run here so a typo in this lane's
+// environment fails with the verifier's message rather than as a confusing port
+// refusal much later in the journey test.
+const verifyRange = parseDatabaseBackupVerificationPortRangeV1(BACKUP_VERIFY_RANGE);
+assert.ok(BACKUP_VERIFY_PORT >= verifyRange.min && BACKUP_VERIFY_PORT <= verifyRange.max,
+  `the backup-verification port ${BACKUP_VERIFY_PORT} is outside this run's range ${BACKUP_VERIFY_RANGE}`);
+const backupVerify = () => ({ port: BACKUP_VERIFY_PORT, portRange: BACKUP_VERIFY_RANGE });
 /** The same two settings for the CLI, which takes its range as a flag. */
-const backupVerifyFlags = () => ["--port", String(BACKUP_VERIFY_PORT),
-  ...(process.env.CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE === undefined ? []
-    : ["--port-range", process.env.CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE])];
+const backupVerifyFlags = () => ["--port", String(BACKUP_VERIFY_PORT), "--port-range", BACKUP_VERIFY_RANGE];
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
@@ -284,17 +299,14 @@ const UNATTENDED_OBJECTS = ["pipeline_unattended_transitions", "pipeline_advance
 
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
-// Everything the shipped ledger carries after 0135's project settings. 0140-0190 were
-// added to the repository after 0108/0109/0135 and sort after them, so a staged prefix
-// that ends at 0108, 0109 or 0135 has this real remainder behind it rather than a shorter
-// one. Declared once and named explicitly: a rung's expected suffix is read from the
-// shipped ledger's order, never re-derived from the list it is asserting, so the
-// assertion stays a comparison rather than a tautology.
-const AFTER_0135 = ["0140_fleet_worker_connector.sql", "0141_fleet_owner_authority.sql", "0160_improve_control_room_desk.sql",
-  "0161_update_candidate_evidence.sql", "0162_validate_update_candidate_evidence.sql", "0173_owner_web_push_subscriptions.sql",
-  "0174_owner_web_push_delivery_ledger.sql", "0175_owner_web_push_tenant_isolation.sql", "0176_owner_web_push_retention.sql",
-  "0177_supervisor_reconciliation.sql", "0178_supervisor_machine_health.sql", "0179_provider_wait_states.sql",
-  "0190_news_task_proposal_links.sql"];
+// A rung's expected suffix is read from `pendingFromLedger` below, which takes the
+// real ledger order, never from a list of the migrations that happened to follow
+// 0135 when the test was written. Such a list is a constant that goes stale in
+// silence: `AFTER_0135` named thirteen files and the shipped ledger now orders
+// twenty-five after 0135, so it was missing every one of S7b's 0150-0154, the
+// operations-mode 0155-0157, and 0185/0186/0195/0196. Nothing read it, so
+// nothing failed — a restated copy of the ledger that looks checked because it
+// compiles. It is gone rather than extended; the derivation is the check.
 
 /** Splits a SQL file into its top-level statements, keeping each one's text.
  *
@@ -405,6 +417,151 @@ const sliceOrder = (ending) => {
 const pendingFromLedger = async (head) => (await readdir(join(ROOT, "db/migrations")))
   .filter(name => name.endsWith(".sql")).sort().slice(head - 1);
 
+/** The shipped ledger's migrate entries in ledger order, with the UP SQL read
+ * once. Read once, so every derivation below compares the same files the applier
+ * would run. */
+const shippedLedger = await collectLedgerEntries(ROOT)
+  .then(entries => entries.filter(entry => (entry.kind ?? "migrate") === "migrate")
+    .sort((a, b) => a.order - b.order)
+    .map(entry => ({ file: entry.file.replace("db/migrations/", ""), order: entry.order,
+      up: readFileSync(join(ROOT, entry.file), "utf8") })))
+  .then(entries => entries.map(entry => ({ ...entry,
+    down: (() => { const path = join(ROOT, "db/down", entry.file);
+      return existsSync(path) ? readFileSync(path, "utf8") : null; })() })));
+
+/** SQL with its comments and quoted literals removed, so a name that only
+ * appears in prose is never read as a dependency. */
+function sqlCodeV1(sql) {
+  return sql.replace(/\/\*[\s\S]*?\*\//gu, " ").replace(/--[^\n]*/gu, " ")
+    .replace(/'[^']*'/gu, "''");
+}
+
+/** Every `CREATE POLICY` statement's own text, each terminated at the `;` that
+ * ends it. A policy's OWN table is not a dependency on that table, so the
+ * table is read off each statement rather than guessed. */
+function policyStatementsV1(sql) {
+  const body = sqlCodeV1(sql);
+  return [...body.matchAll(/CREATE\s+POLICY\b/giu)].map(match => {
+    const end = body.indexOf(";", match.index);
+    return body.slice(match.index, end < 0 ? body.length : end);
+  });
+}
+
+/** Every `CREATE VIEW`/`CREATE MATERIALIZED VIEW` statement's own text, for the
+ * same reason. A view is a real dependency: PostgreSQL refuses to drop the
+ * relation it selects from while the view exists. */
+function viewStatementsV1(sql) {
+  const body = sqlCodeV1(sql);
+  return [...body.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\b/giu)]
+    .map(match => {
+      const end = body.indexOf(";", match.index);
+      return body.slice(match.index, end < 0 ? body.length : end);
+    });
+}
+
+/** What a down file removes: the relations, views and functions it drops. This
+ * is the down file's own record of the footprint it reverses, so a dependant is
+ * found from the two shipped files rather than from any list. */
+function removedByDownFileV1(down) {
+  return new Set([...down.matchAll(
+    /^\s*DROP\s+(?:TABLE|VIEW|MATERIALIZED VIEW|FUNCTION|INDEX|SCHEMA|TYPE|DOMAIN)\s+(?:IF EXISTS\s+)?([a-z_][a-z0-9_]*)/gmu)]
+    .map(match => match[1]));
+}
+
+/** The four dependency shapes PostgreSQL actually refuses to drop through,
+ * each read from a later migration's UP file.
+ *
+ * 1. `FOREIGN KEY ... REFERENCES <table>` — 0110 points one at 0093's
+ *    `work_batches` without naming anything else of 0093's, which is exactly
+ *    why a derivation watching only the binding table missed it.
+ * 2. `EXECUTE FUNCTION <fn>` on a trigger — S7b's 0151 and 0153 build their
+ *    append-only triggers on 0109's `reject_pipeline_unattended_history_mutation()`,
+ *    so 0109's own guard refuses until they are reversed first.
+ * 3. A policy or view whose body names the object. Verified against a live
+ *    PostgreSQL 17: `DROP TABLE` on a relation a view selects from fails with
+ *    `view X depends on table Y`, and a policy's expression fails the same way.
+ * 4. `ALTER TABLE <table>` — 0152 and 0154 both add a column to 0109's
+ *    `pipeline_advance_receipts`. A staged release that never applied 0109
+ *    cannot apply them at all, and the applier reports
+ *    `relation "pipeline_advance_receipts" does not exist`, naming no cause.
+ *
+ * A plpgsql FUNCTION body is deliberately NOT one of the shapes. A live probe
+ * on PostgreSQL 17 dropped a table a plpgsql function selected from with no
+ * error at all: the body is parsed at run time, so the dependency is not a
+ * catalog one. Including it would pull in 0141, whose down file refuses
+ * unconditionally, and turn a derivable teardown into an impossible one. */
+function upFileDependsOnV1(up, removed) {
+  const body = sqlCodeV1(up);
+  const named = object => {
+    const pattern = `(?<![a-z0-9_])${object}(?![a-z0-9_])`;
+    return {
+      fk: new RegExp(`REFERENCES\\s+(?:ONLY\\s+)?(?:public\\.)?${pattern}`, "iu"),
+      trigger: new RegExp(`EXECUTE FUNCTION\\s+(?:public\\.)?${pattern}\\s*\\(`, "iu"),
+      alter: new RegExp(`ALTER TABLE\\s+(?:ONLY\\s+)?(?:public\\.)?${pattern}\\s`, "iu"),
+      named: new RegExp(pattern, "iu") };
+  };
+  const statements = [...policyStatementsV1(up), ...viewStatementsV1(up)];
+  const reasons = [];
+  for (const object of removed) {
+    const shape = named(object);
+    if (shape.fk.test(body)) reasons.push(`foreign key into ${object}`);
+    if (shape.trigger.test(body)) reasons.push(`trigger on ${object}()`);
+    if (shape.alter.test(body)) reasons.push(`alters ${object}`);
+    // A policy or view that names a relation it does not itself own.
+    if (statements.some(statement => {
+      const own = /\bON\s+(?:public\.)?([a-z_][a-z0-9_]*)/iu.exec(statement);
+      return !(own && own[1].toLowerCase() === object.toLowerCase()) && shape.named.test(statement);
+    })) reasons.push(`policy or view reads ${object}`);
+  }
+  return [...new Set(reasons)];
+}
+
+/** Every migration that has to be reversed before `roots` can be, derived from
+ * the shipped up and down files and closed to a fixed point, in LEDGER ORDER
+ * (oldest first), so a caller that walks it in reverse takes the newest down
+ * first.
+ *
+ * A hard-coded list is what this replaces twice over. S7b's 0151 and 0153 reused
+ * 0109's history-guard function, and 0155 read 0093's intake binding; a list
+ * naming only 0110 left all three out, and three tests failed with errors that
+ * name no migration at all:
+ *
+ *   - `pipeline unattended down migration refused: a later migration depends on
+ *     its history guard` — the work-intake teardown reaching 0109's down;
+ *   - `function public.reject_pipeline_unattended_history_mutation() does not
+ *     exist` — the STAGED baseline withheld 0109 and then applied 0151, which
+ *     builds a trigger on the function 0109 was supposed to have created. This
+ *     one is not a guard at all: in a release that never applied 0109, 0151
+ *     cannot be applied either, so the whole closure has to be withheld.
+ *
+ * Every entry must ship a down file. A migration that does not cannot be
+ * reversed here, and the assertion says so by name instead of failing later
+ * with a 42P01 nobody can read. */
+async function dependentMigrationsV1(roots) {
+  const rootsSet = new Set(roots), withheld = new Set(roots), reasons = new Map();
+  for (let pass = 0; pass < 20; pass += 1) {
+    const removed = new Set();
+    for (const entry of shippedLedger)
+      if (withheld.has(entry.file) && entry.down)
+        for (const object of removedByDownFileV1(entry.down)) removed.add(object);
+    let added = false;
+    for (const entry of shippedLedger) {
+      if (withheld.has(entry.file) || !entry.down) continue;
+      const found = upFileDependsOnV1(entry.up, removed);
+      if (found.length === 0) continue;
+      withheld.add(entry.file);
+      reasons.set(entry.file, found);
+      added = true;
+    }
+    if (!added) break;
+  }
+  const ordered = shippedLedger.filter(entry => withheld.has(entry.file));
+  for (const entry of ordered) assert.ok(entry.down, `${entry.file} has no down file to reverse`);
+  const unexplained = [...withheld].filter(file => !rootsSet.has(file) && !reasons.has(file));
+  assert.deepEqual(unexplained, [], "a withheld migration was derived with no dependency reason");
+  return ordered.map(entry => entry.file);
+}
+
 // Stages an older release's root: every migration except the withheld ones,
 // and this head's grants file without the withheld objects' grants.
 //
@@ -413,7 +570,7 @@ const pendingFromLedger = async (head) => (await readdir(join(ROOT, "db/migratio
 // written — is staged, so both sides of a down-migration comparison carry the
 // same newer work and the comparison is still exactly about what the withheld
 // migrations' down files revoke.
-async function stageAppliedPrefix({ withheld }) {
+async function stageAppliedPrefix({ withheld, withDependants = false }) {
   const stage = await mkdtemp(join(tmpdir(), "cr-pg63prefix-"));
   try {
     for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
@@ -424,6 +581,18 @@ async function stageAppliedPrefix({ withheld }) {
       assert.equal(found.length, 1, ending);
       return found[0];
     });
+    // A down-migration rung stages a release that never applied the withheld
+    // migrations, so every migration that DEPENDS on them has to be withheld
+    // too. S7b's 0151 builds a trigger on 0109's history-guard function, and
+    // staging it after a release without 0109 fails the apply outright with
+    // `function public.reject_pipeline_unattended_history_mutation() does not
+    // exist` — naming no migration and no cause. The closure is derived from
+    // the shipped up and down files, so a later slice is covered by itself.
+    if (withDependants) {
+      const closure = await dependentMigrationsV1(held);
+      assert.deepEqual([...new Set([...held, ...closure])].sort(), [...new Set(closure)].sort());
+      held.push(...closure.filter(file => !held.includes(file)));
+    }
     // A withheld migration may not be staged twice, and the staged set must be
     // the real ledger order with exactly those files removed.
     assert.equal(new Set(held).size, held.length);
@@ -904,33 +1073,64 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   const queueDown=await readFile(join(ROOT,"db/down/0104_work_batch_agent_queue.sql"),"utf8");
   const ownerDown=await readFile(join(ROOT,"db/down/0102_work_batch_owner_approval.sql"),"utf8");
   const down=await readFile(join(ROOT,"db/down/0093_work_batch_intake.sql"),"utf8");
-  // Every migration that installed a row-level policy, trigger or view READING
-  // work_intake_tenant_binding has to be rolled back before 0093 drops it, or
-  // PostgreSQL refuses with 2BP01. Which migrations those is DERIVED from the
-  // UP migrations — the dependency lives in what they create (a policy whose
-  // USING clause selects the binding), not in what their down file removes —
-  // and never listed, because a list is exactly what goes stale: 0155 added
-  // `installation_operations_mode_revisions_work_intake_scope` and this
-  // teardown began failing with a dependency error naming a migration the test
-  // had never heard of.
+  // Every migration that attached anything to what 0093 drops has to be rolled
+  // back first, or PostgreSQL refuses with 2BP01. Which migrations those is
+  // DERIVED from the shipped up and down files — the dependency lives in what a
+  // migration creates and in what the reversed migration removes, not in a list
+  // that goes stale the moment the next slice lands.
   //
-  // Scanned newest-first by ledger order, so a migration added later is torn
-  // down before the one it depends on. Only down files that exist are applied,
-  // and 0093 itself is excluded because it is the table being dropped.
+  // Four dependencies, and deriving only the first is what broke this teardown
+  // three times:
+  //
+  //   1. A row-level policy, trigger or view READING work_intake_tenant_binding.
+  //      0155 added `installation_operations_mode_revisions_work_intake_scope`
+  //      and the teardown began failing with a dependency error naming a
+  //      migration the test had never heard of.
+  //   2. A FOREIGN KEY pointing AT a table 0093 drops. 0110 declares
+  //      `FOREIGN KEY (tenant_id,batch_id,project_id) REFERENCES
+  //      work_batches(tenant_id,id,project_id)`, so its
+  //      `work_batch_intake_flag_dismissals` table holds a constraint on
+  //      work_batches even though its up file never mentions the binding
+  //      table. Deriving on the binding name alone therefore left 0110 out and
+  //      `DROP TABLE work_batches` failed with
+  //      `2BP01 cannot drop table work_batches because other objects depend on
+  //      it`, naming no migration.
+  //   3. A trigger's EXECUTE FUNCTION naming a function an earlier down file
+  //      drops. S7b's 0151 and 0153 build their append-only triggers on 0109's
+  //      `reject_pipeline_unattended_history_mutation()`, so 0109's own guard
+  //      refused with `pipeline unattended down migration refused: a later
+  //      migration depends on its history guard` — a correct refusal pointed at
+  //      no migration, because 0151 and 0153 were not in the order.
+  //   4. An ALTER TABLE against a table one of the reversed migrations drops.
+  //      0152 and 0154 add columns to 0109's `pipeline_advance_receipts`, so
+  //      reversing 0109 first would leave them holding a column on a table that
+  //      is gone.
+  //
+  // `dependentMigrationsV1` closes over the whole set, newest first, so nothing
+  // still reading the binding is attached to it when 0093 drops the table, and
+  // nothing is still built on 0109's function when 0109's down runs. Only down
+  // files that exist are applied, and 0093 itself is the table being dropped.
+  const INTAKE_TABLES = ["work_intake_tenant_binding", "work_batches", "work_batch_revisions"];
   const explicitlyRolledBack = ["0109_pipeline_unattended_advance.sql", "0108_pipeline_build_publications.sql",
     "0104_work_batch_agent_queue.sql", "0102_work_batch_owner_approval.sql"];
-  const downFiles = new Set((await readdir(join(ROOT, "db/down"))).filter(name => name.endsWith(".sql")));
-  const intakeBindingDeps = [];
-  for (const entry of (await collectLedgerEntries(ROOT)).filter(entry => (entry.kind ?? "migrate") === "migrate")) {
-    const file = entry.file.replace("db/migrations/", "");
-    if (file.startsWith("0093_") || explicitlyRolledBack.includes(file)) continue;
-    // Not every migration ships a down file: the base ones never needed one.
-    if (!downFiles.has(file)) continue;
-    if ((await readFile(join(ROOT, entry.file), "utf8")).includes("work_intake_tenant_binding"))
-      intakeBindingDeps.push(file);
-  }
+  const intakeBindingDeps = (await dependentMigrationsV1(["0093_work_batch_intake.sql"]))
+    .filter(file => file !== "0093_work_batch_intake.sql" && !explicitlyRolledBack.includes(file))
+    .reverse();
   assert.ok(intakeBindingDeps.length>0,
-    "no migration's up file mentions work_intake_tenant_binding; the teardown order is wrong");
+    "no migration's up file depends on the work-intake tables; the teardown order is wrong");
+  // The derivation has to stay a comparison rather than an assumption. Each of
+  // the three shapes above was a real failure, and each is named so the
+  // derivation is proven to have found it. A future migration adding the same
+  // shape is found by the derivation, and these keep proving it did.
+  const intakeUpt = new Map(shippedLedger.map(entry => [entry.file, entry.up]));
+  for (const [file, shape] of [
+    ["0110_work_batch_intake_flag_dismissals.sql", /REFERENCES\s+work_batches\b/u],
+    ["0151_pipeline_stage_loop_counts.sql", /EXECUTE FUNCTION\s+(?:public\.)?reject_pipeline_unattended_history_mutation\s*\(/u],
+    ["0152_pipeline_advance_unknown_cost.sql", /ALTER TABLE\s+pipeline_advance_receipts\b/u],
+    ["0155_installation_operations_modes.sql", /work_intake_tenant_binding/u]]) {
+    assert.ok(intakeBindingDeps.includes(file), `${file} was not derived: the teardown order is wrong`);
+    assert.match(intakeUpt.get(file) ?? "", shape, `${file} no longer has the dependency it was derived for`);
+  }
   await query(db,"CREATE POLICY test_dependent_policy ON audit_events AS RESTRICTIVE USING (true)");
   await assert.rejects(query(db,down),/shared-ledger RLS policies depend on it/u);
   const retained=(await query(db,`SELECT
@@ -939,21 +1139,35 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     (SELECT count(*)::int FROM pg_policies WHERE policyname='audit_events_work_intake_scope') AS policy_count`)).rows[0];
   assert.deepEqual(retained,{column_update:true,guard_count:1,policy_count:1});
   await query(db,"DROP POLICY test_dependent_policy ON audit_events");
-  // The owner-approval slice depends on the intake tables, and the queue and
-  // build-publication and unattended-advance tenant policies read the intake
-  // binding. Exercise the reviewed recovery order, newest first, before
-  // removing the base slice.
-  await query(db,await readFile(join(ROOT,"db/down/0109_pipeline_unattended_advance.sql"),"utf8"));
-  await query(db,await readFile(join(ROOT,"db/down/0108_pipeline_build_publications.sql"),"utf8"));
+  // The derived dependants, newest first, so nothing still reading
+  // work_intake_tenant_binding, and nothing still built on 0109's history
+  // guard, is attached when the migrations that own them are reversed.
+  for (const file of [...intakeBindingDeps, "0109_pipeline_unattended_advance.sql",
+    "0108_pipeline_build_publications.sql"]) await query(db, await readFile(join(ROOT, "db/down", file), "utf8"));
   await query(db,queueDown);
   await query(db,ownerDown);
-  // The derived dependants, newest first, so nothing still reading
-  // work_intake_tenant_binding is attached to it when 0093 drops the table.
-  for (const file of intakeBindingDeps) await query(db, await readFile(join(ROOT, "db/down", file), "utf8"));
+  // Nothing from the derived set may still be attached to the relations 0093
+  // drops, so the base teardown below is the assertion that the order was
+  // complete rather than merely successful.
   const restoredSearchPath=(await query(db,`SELECT proconfig FROM pg_proc
     WHERE oid='public.guard_initial_work_batch_revision_insert()'::regprocedure`)).rows[0]?.proconfig;
   assert.deepEqual(restoredSearchPath,["search_path=pg_catalog, public, pg_temp"]);
   await query(db,down);
+  // Nothing the derived set owned may still be attached once 0093 has gone.
+  // This runs AFTER 0093's own down, so it is the whole set's state and not
+  // 0093's, and the guard function is counted by name rather than by
+  // `::regprocedure`, which would now raise on the function 0109 dropped.
+  const stillAttached=(await query(db,`SELECT
+    (SELECT count(*)::int FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
+      WHERE NOT t.tgisinternal AND p.proname='reject_pipeline_unattended_history_mutation') AS guard_triggers,
+    (SELECT count(*)::int FROM pg_policies WHERE policyname LIKE '%\_work\_intake\_scope'
+      AND tablename NOT IN ('control_idempotency','audit_events')) AS intake_policies,
+    (SELECT count(*)::int FROM pg_constraint con JOIN pg_class rel ON rel.oid=con.confrelid
+      WHERE con.contype='f' AND rel.relname IN ('work_batches','work_batch_revisions','work_intake_tenant_binding'))
+      AS batch_keys,
+    (SELECT count(*)::int FROM pg_class WHERE relname IN ('pipeline_stage_loop_counts',
+      'pipeline_machine_capacity_observations','pipeline_installation_allowances')) AS s7b_relations`)).rows[0];
+  assert.deepEqual(stillAttached,{guard_triggers:0,intake_policies:0,batch_keys:0,s7b_relations:0});
   const remaining=(await query(db,`SELECT
     has_table_privilege('control_room_work_intake','control_idempotency','SELECT') AS table_select,
     has_column_privilege('control_room_work_intake','control_idempotency','status','UPDATE') AS column_update,
@@ -1227,6 +1441,20 @@ test("S7 unattended consent, advance, sweep and history run on the Mac-local pro
     assert.equal(consent.replayed,false);
     assert.equal((await owner.setUnattended(identity,projectId,command,"pipeline-unattended-logins-0001")).replayed,true);
 
+    // S7b made the installation allowance a prerequisite of every advance, so
+    // the owner sets the ceilings before the coordinator claims anything. This
+    // is the same owner operation the Mac-local pipeline run page drives, and
+    // the only writer of the column grants this test's preflight just verified.
+    // The cluster count is the owner's own report; nothing in the system can
+    // observe a host-level postmaster.
+    const allowance=await owner.setAllowance(identity,{runsPerHour:6,runsPerAgentPerDay:12,
+      machineMaxAgentProcesses:12,machineMaxDbClusters:6,dollarCapMicroUsd:null,observedDbClusters:1});
+    assert.deepEqual([allowance.allowanceVersion,allowance.replayed,allowance.recordedDbClusters,allowance.startsWork],
+      [1,false,1,false]);
+    // Reading it back is a replay, not a second write: the owner sees their own
+    // signed record, and the web login may never claim it wrote work.
+    assert.deepEqual((await owner.allowance()).replayed,true);
+
     // The coordinator advances stage 0 through the production read authority.
     // Assignment and the native queue are the existing protected composition,
     // so they are stubbed to one real attempt row.
@@ -1292,6 +1520,37 @@ test("S7 unattended consent, advance, sweep and history run on the Mac-local pro
     // predecessor edge; the accepted final stage completes the run.
     accepted.add(buildJob);
     assert.deepEqual(await advance.advance(runId,"policy:advance").then(value=>[value.stageOrdinal,value.jobId]),[1,checkJob]);
+    // A stored ceiling the service cannot re-verify is not a ceiling, and the
+    // OWNER's own read proves it on the login the owner reads it on. 0150's
+    // write guard is satisfied here — the version moves forward one step and the
+    // timestamp does not go back — so only re-verification of the signed
+    // material can catch a forged digest and tag. The advance path re-verifies
+    // the same record inside its transaction (proven by the caps lane), so one
+    // forged ceiling cannot be read, reported or enforced.
+    const ceilings=await client.query(`SELECT runs_per_hour FROM pipeline_installation_allowances
+      WHERE tenant_id=$1 AND workspace_id=$2`,[own.tenantId,own.workspaceId]);
+    assert.deepEqual(ceilings.rows.map(row=>Number(row.runs_per_hour)),[6]);
+    await client.query(`UPDATE pipeline_installation_allowances SET version=version+1,
+      record_digest='sha256:'||repeat('a',64), auth_tag='hmac-sha256:'||repeat('b',64)
+      WHERE tenant_id=$1 AND workspace_id=$2`,[own.tenantId,own.workspaceId]);
+    await assert.rejects(owner.allowance(),
+      error=>error?.name==="PipelineAdvanceErrorV1"&&error.safeReason==="pipeline_integrity_failed",
+      "a re-signed allowance the service cannot verify is never reported as the owner's ceiling");
+    // The advance path re-verifies the same record inside its own transaction
+    // and refuses on the same reason, which the caps lane proves on real
+    // PostgreSQL; here the owner-facing read is the one this login performs.
+    // The row cannot simply be deleted — 0150 refuses that too — so the owner
+    // restores it the only way it can be written, a version-2 update carrying a
+    // freshly signed digest and tag, and the rest of the test runs on that.
+    await assert.rejects(client.query("DELETE FROM pipeline_installation_allowances WHERE tenant_id=$1",
+      [own.tenantId]),/pipeline installation allowance rejected/u,
+      "0150 refuses to delete the one allowance record");
+    const before=Number((await client.query(`SELECT version FROM pipeline_installation_allowances
+      WHERE tenant_id=$1 AND workspace_id=$2`,[own.tenantId,own.workspaceId])).rows[0].version);
+    const restored=await owner.setAllowance(identity,{runsPerHour:6,runsPerAgentPerDay:12,
+      machineMaxAgentProcesses:12,machineMaxDbClusters:6,dollarCapMicroUsd:null,observedDbClusters:1});
+    assert.equal(restored.allowanceVersion,before+1,
+      "the owner's re-set moves the version forward exactly one step, never back");
     accepted.add(checkJob);
     assert.deepEqual(await advance.advance(runId,"policy:advance").then(value=>[value.stageOrdinal,value.jobId]),[2,signoffJob]);
     accepted.add(signoffJob);
@@ -2049,7 +2308,20 @@ test("pruning a role file for a database that lacks a table keeps the grants tha
  * statements; it does not re-converge the blanket grants, so a head that has been
  * rolled back holds a different privilege set from a baseline that was built by a
  * migration run. Replaying the grants file is the step that makes the two comparable,
- * and it is the same step a real upgrade takes. */
+ * and it is the same step a real upgrade takes.
+ *
+ * The file's blanket statements are `GRANT ... ON ALL TABLES`, which only ever
+ * ADD: a head that had 0150-0154 when it was last converged keeps whatever
+ * those grants were, and re-running the file grants over the survivors without
+ * taking anything away. A baseline staged without those migrations never had
+ * them, so the two databases then differ on every relation the downs removed a
+ * migration from — `control_room_anchors` and friends kept an
+ * `application/reader/backup` grant the baseline has no way to have. So the
+ * blanket sweeps are resolved against the SURVIVING catalog and replayed in
+ * both directions: the same `ON ALL TABLES` name list the applier would have
+ * used, derived from what this database actually has now. That is what makes
+ * the comparison about the down files rather than about which tables once
+ * existed. */
 async function replayGrants(db) {
   // The grants file is a forward-looking document: it names 0109's and 0108's tables,
   // which a rolled-back head no longer has, so 42P01 would stop it part way. Comments
@@ -2081,12 +2353,25 @@ async function replayGrants(db) {
 // was written is applied to BOTH sides and the comparison stays the one that
 // matters: what those two down files revoke, nothing more and nothing less.
 test("0109 then 0108 down return a head database to exactly the main plus S4 and S5 state", needsPg, async () => {
-  // Only 0108 and 0109 are withheld, so every migration the ledger orders after
-  // 0109 — 0135's project settings included — is applied to BOTH sides. The
-  // comparison therefore stays exactly about what these two down files revoke:
-  // the head is not rolled back past a migration the baseline also carries.
+  // Only 0108 and 0109 and the migrations that DEPEND on them are withheld, so
+  // every migration the ledger orders after 0154 — 0155's project settings and
+  // everything after it — is applied to BOTH sides. The comparison therefore
+  // stays exactly about what these two down files revoke: the head is not
+  // rolled back past a migration the baseline also carries.
   const withheld = ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"];
-  const { stage, ledgerPath } = await stageAppliedPrefix({ withheld });
+  const { stage, ledgerPath, suffix } = await stageAppliedPrefix({ withheld, withDependants: true });
+  // The dependants the derivation found, and why. Both of S7b's 0151 and 0153
+  // build append-only triggers on the function 0109 owns, so 0109's own guard
+  // refuses until they are reversed; both have to come off the head too, or the
+  // comparison would be against a database no release can be in.
+  const dependants = suffix.filter(file => !withheld.some(ending => file.endsWith(ending)));
+  // 0151 and 0153 build triggers on 0109's function; 0152 and 0154 add columns
+  // to 0109's table. All four have to be off the head before 0109's own down
+  // can run, and all four have to be off the staged release before it can
+  // apply at all.
+  assert.deepEqual(dependants, ["0151_pipeline_stage_loop_counts.sql", "0152_pipeline_advance_unknown_cost.sql",
+    "0153_pipeline_machine_capacity_observations.sql", "0154_pipeline_advance_round_receipts.sql"],
+    "the dependants of 0109's tables and history guard are no longer the derived set");
   // The narrow-role install runs as the cluster superuser, and both databases
   // are dropped afterwards, so the cluster is left as it was found.
   const admin = adminDb();
@@ -2098,11 +2383,17 @@ test("0109 then 0108 down return a head database to exactly the main plus S4 and
     await freshDatabase("cr_prod_s6_baseline");
     await applyMigrations({ target: target("cr_prod_s6_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s6_baseline"),
       migrateTarget: migrateTarget("cr_prod_s6_baseline"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
-    // The baseline carries the role state those two migrations had not yet
+    // The baseline carries the role state those migrations had not yet
     // produced, derived from the withheld migrations themselves rather than from
     // a hand-written list of the grants they add — the same derivation the
     // S-slice tests use for the staged grants file.
-    await installMacRoleFilesWithout("cr_prod_s6_baseline", withheld);
+    // The baseline's role state is derived from the WHOLE withheld set, not
+    // just the two files under test: the staged release also lacks 0151-0154,
+    // so a baseline built from 0108/0109 alone would still grant on tables it
+    // does not have, and the comparison would fail for a reason that has
+    // nothing to do with the two down files. `suffix` holds file names, which
+    // match exactly one migration each as endings.
+    await installMacRoleFilesWithout("cr_prod_s6_baseline", suffix);
     await freshDatabase("cr_prod_s6_down");
     await applyMigrations({ target: target("cr_prod_s6_down"), bootstrapTarget: bootstrapTarget("cr_prod_s6_down"),
       migrateTarget: migrateTarget("cr_prod_s6_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
@@ -2113,6 +2404,12 @@ test("0109 then 0108 down return a head database to exactly the main plus S4 and
     await installMacRoleFiles("cr_prod_s6_down");
     assert.notDeepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
 
+    // The dependants first, newest first, then the two down files under test.
+    // None of them holds a row here — the head has never run unattended advance
+    // — so their own refusal guards are not reached, which is the ordinary
+    // state for a head that has not been used.
+    for (const file of [...dependants].reverse())
+      await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down", file), "utf8"));
     await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
     await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0108_pipeline_build_publications.sql"), "utf8"));
     await replayGrants(target("cr_prod_s6_down"));
@@ -2327,6 +2624,15 @@ async function installMacRoleFilesWithout(database, withheld) {
     assert.deepEqual(diff.missing, [], "the withheld work is the only role difference to remove");
     await applyMacGrantDiffV1(client, { extra: diff.extra, missing: [] });
   } finally { await client.end(); }
+  // The applier runs the grants file as ONE script, so a single 42P01 on a
+  // relation this release does not have rolls the WHOLE file back and the
+  // database is left with no shared-role grants at all — a state no real
+  // release is ever in, and one a head that was rolled back can never match.
+  // Replaying the file with the absent names pruned, against this database's
+  // own catalog, is the same convergence `replayGrants` gives the head, so
+  // both sides of the comparison are in the applier's converged state and the
+  // difference left is exactly what the withheld migrations' down files do.
+  await replayGrants(target(database));
 }
 
 // The narrow-role installer's database steps, from the real role files with
@@ -2396,11 +2702,19 @@ async function installMacRoleFiles(database, edits = {}) {
 // Only 0109 is withheld, so every later migration the ledger orders is staged
 // on BOTH sides and the comparison is still exactly about 0109's down file.
 test("0109 down returns a Mac-local head database to exactly the main plus S4, S5 and S6 state", needsPg, async () => {
-  // Only 0109 is withheld, so every migration the ledger orders after it —
-  // 0135's project settings included — is installed on BOTH sides, and the
-  // comparison is still exactly about what 0109's down file revokes.
+  // Only 0109 and the migrations that DEPEND on it are withheld, so every later
+  // migration the ledger orders is installed on BOTH sides, and the comparison
+  // is still exactly about what 0109's down file revokes.
   const withheld = ["_pipeline_unattended_advance.sql"];
-  const { stage, ledgerPath } = await stageAppliedPrefix({ withheld });
+  const { stage, ledgerPath, suffix } = await stageAppliedPrefix({ withheld, withDependants: true });
+  const dependants = suffix.filter(file => !withheld.some(ending => file.endsWith(ending)));
+  // 0151 and 0153 build triggers on 0109's function; 0152 and 0154 add columns
+  // to 0109's table. All four have to be off the head before 0109's own down
+  // can run, and all four have to be off the staged release before it can
+  // apply at all.
+  assert.deepEqual(dependants, ["0151_pipeline_stage_loop_counts.sql", "0152_pipeline_advance_unknown_cost.sql",
+    "0153_pipeline_machine_capacity_observations.sql", "0154_pipeline_advance_round_receipts.sql"],
+    "the dependants of 0109's tables and history guard are no longer the derived set");
   const admin = adminDb();
   const createdPostgres = !(await query(admin, "SELECT 1 FROM pg_roles WHERE rolname='postgres'")).rows.length;
   if (createdPostgres) await query(admin, "CREATE ROLE postgres SUPERUSER LOGIN");
@@ -2409,7 +2723,7 @@ test("0109 down returns a Mac-local head database to exactly the main plus S4, S
     await freshDatabase("cr_prod_s7_baseline");
     await applyMigrations({ target: target("cr_prod_s7_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s7_baseline"),
       migrateTarget: migrateTarget("cr_prod_s7_baseline"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
-    await installMacRoleFilesWithout("cr_prod_s7_baseline", withheld);
+    await installMacRoleFilesWithout("cr_prod_s7_baseline", suffix);
     await freshDatabase("cr_prod_s7_down");
     await applyMigrations({ target: target("cr_prod_s7_down"), bootstrapTarget: bootstrapTarget("cr_prod_s7_down"),
       migrateTarget: migrateTarget("cr_prod_s7_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
@@ -2417,6 +2731,13 @@ test("0109 down returns a Mac-local head database to exactly the main plus S4, S
     const head = await catalogState(target("cr_prod_s7_down"));
     assert.notDeepEqual(head, await catalogState(target("cr_prod_s7_baseline")));
 
+    // The dependants first, newest first. 0151 and 0153 build append-only
+    // triggers on the function 0109 owns, so 0109's own guard refuses with `a
+    // later migration depends on its history guard` until they are gone; 0152
+    // and 0154 add columns to 0109's receipts table. None holds a row on a head
+    // that has never advanced unattended work.
+    for (const file of [...dependants].reverse())
+      await query(target("cr_prod_s7_down"), await readFile(join(ROOT, "db/down", file), "utf8"));
     await query(target("cr_prod_s7_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
     await replayGrants(target("cr_prod_s7_down"));
     assert.deepEqual(await catalogState(target("cr_prod_s7_down")), await catalogState(target("cr_prod_s7_baseline")));

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { access } from "node:fs/promises";
 import { readFile, readdir } from "node:fs/promises";
 import handler from "../dist-vps/server/index.js";
 import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
@@ -32,6 +33,63 @@ test("browser bundles never include server-only host-value security code", async
     const text = await readFile(new URL(path, root), "utf8");
     assert.equal(text.includes("host intrinsics unavailable"), false, `server-only host-value code in ${path}`);
   }
+});
+
+// The artifact scan above only sees a leak once someone has rebuilt dist-vps,
+// so a barrel import reintroduced into src/ is green until the next build. This
+// reads the sources instead, which is the check that fails at the edit.
+//
+// The rule: a module reachable from a "use client" component must not import
+// the `src/security` barrel. The barrel re-exports digest.ts and
+// rollback-checkpoint.ts, which import host-value.ts, which throws at import
+// time in a browser. The leaf that is safe to import directly is
+// canonical-digest.ts (createHash only).
+//
+// Reachability is derived, not listed: it starts at every "use client" file
+// under private-app/ and follows relative imports that stay inside the
+// repository. A file may be added to the graph without editing this test.
+test("no client-reachable module imports the server-only security barrel", async () => {
+  const root = process.cwd();
+  const read = async (relative) => readFile(`${root}/${relative}`, "utf8");
+  const readable = async (path) => { try { await access(path); return true; } catch { return false; } };
+  const clientRoots = (await readdir(`${root}/private-app/app`, { recursive: true }))
+    .filter(path => path.endsWith(".tsx") || path.endsWith(".ts"));
+  const barrel = /(?:^|\s)import[\s\S]*?from\s+["'][^"']*\/security["']\s*;?/u;
+  const relativeImport = /(?:^|\s)import[\s\S]*?from\s+["'](\.[^"']*)["']/gu;
+  const resolveFrom = (from, specifier) => {
+    const base = `${from.slice(0, from.lastIndexOf("/"))}/${specifier}`;
+    const parts = [];
+    for (const segment of base.split("/")) {
+      if (segment === "." || segment === "") continue;
+      if (segment === "..") parts.pop(); else parts.push(segment);
+    }
+    const joined = parts.join("/");
+    return [joined, `${joined}.ts`, `${joined}.tsx`, `${joined}/index.ts`];
+  };
+  const queue = clientRoots.map(path => `private-app/app/${path}`);
+  const seen = new Set();
+  const offenders = [];
+  while (queue.length) {
+    const file = queue.shift();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let source;
+    try { source = await read(file); } catch { continue; }
+    if (barrel.test(source)) offenders.push(file);
+    for (const [, specifier] of source.matchAll(relativeImport)) {
+      for (const candidate of resolveFrom(file, specifier)) {
+        if (seen.has(candidate)) continue;
+        // Only enqueue a candidate that exists, so a missing file cannot mask
+        // a later module by throwing here instead of being reported.
+        if (await readable(`${root}/${candidate}`)) { queue.push(candidate); break; }
+      }
+    }
+  }
+  // A parser that silently matched nothing would make the walk vacuous.
+  assert.ok(seen.size > clientRoots.length + 20,
+    `the client walk reached only ${seen.size} files; it is not following imports`);
+  assert.deepEqual(offenders.sort(), [],
+    "a module reachable from a \"use client\" component imports the src/security barrel, which pulls host-value's import-time throw into browser chunks");
 });
 
 test("compiled private assignment API records, reads and expires a real lease under shared logout", async t => {

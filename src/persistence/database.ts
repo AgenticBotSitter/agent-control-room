@@ -6,6 +6,34 @@ export interface QueryResult<T> {
   rows: T[];
 }
 
+/** The PostgreSQL SQLSTATE behind a refused statement, or undefined when the
+ * failure was not the server rejecting a statement (a transport loss, a
+ * deadline, or an error with no sanitized code).
+ *
+ * Every adapter must be readable through this one function, because the
+ * production private-PostgreSQL driver deliberately sanitizes: it replaces the
+ * driver's error with a PrivateDatabaseError carrying `code` =
+ * "database_unavailable" and the SQLSTATE on `sqlState`. A caller that reads
+ * only `error.code` therefore sees the wrapper's own code and never matches a
+ * refusal class -- which silently turns a clean, typed refusal into an opaque
+ * one. The raw driver, PGlite and a raw `pg` client all carry the code
+ * directly, so both shapes are read here. */
+export function databaseSqlStateV1(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  for (const key of ["sqlState", "code"] as const) {
+    let value: unknown;
+    try { value = Reflect.get(error, key); } catch { return undefined; }
+    if (typeof value === "string" && /^[0-9A-Z]{5}$/u.test(value)) return value;
+  }
+  return undefined;
+}
+
+/** True when the refusal carries any of the given SQLSTATEs, on any adapter. */
+export function databaseSqlStateIsAnyV1(error: unknown, states: readonly string[]): boolean {
+  const sqlState = databaseSqlStateV1(error);
+  return sqlState !== undefined && states.includes(sqlState);
+}
+
 export interface DatabaseSession {
   query<T = Record<string, unknown>>(statement: string, params?: unknown[]): Promise<QueryResult<T>>;
 }

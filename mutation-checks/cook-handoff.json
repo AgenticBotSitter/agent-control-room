@@ -43,7 +43,7 @@
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
-    "find": "      if (await this.operationsMode() !== \"running\") return fleetFail(\"paused\");",
+    "find": "      if (mode !== \"running\") return fleetFail(\"paused\");",
     "replace": "",
     "test": "node --import tsx --test --test-force-exit --test-name-pattern \"^pause\" tests/fleet-harness-handoff.test.ts",
     "why": "the gateway refuses new claims unless Control Room is running"

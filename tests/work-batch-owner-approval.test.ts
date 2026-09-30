@@ -106,6 +106,8 @@ test("approval records an exact per-agent queue in dependency order without star
     "owner-batch-queue-order-0001");
   assert.equal(receipt.startsWork, false);
   const view = await f.owner.view(f.identity, f.project.projectId, batch.batchId);
+  assert.deepEqual(view.routingOptions, [{ workerId: "worker:codex-one", workerKind: "codex",
+    nodeId: "node:mac.codex", modelKeys: ["gpt-build", "gpt-check"] }]);
   assert.deepEqual(view.queue.map(item => [item.localId, item.position, item.workerId, item.model, item.effort, item.state]), [
     ["build", 1, "worker:codex-one", "gpt-build", "high", "awaiting_preparation"],
     ["check", 2, "worker:codex-one", "gpt-check", "high", "awaiting_preparation"],

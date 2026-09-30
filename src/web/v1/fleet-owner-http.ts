@@ -2,7 +2,8 @@ import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTru
   type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
-import { FleetErrorV1, type FleetOwnerServiceV1 } from "../../fleet/v1";
+import { FleetErrorV1, FLEET_WORKER_KINDS_V1, type FleetOwnerServiceV1 } from "../../fleet/v1";
+import { captureFleetConnectorReleaseManifestV1, type FleetConnectorReleaseManifestV1 } from "../../fleet/v1/connector-release";
 
 /**
  * Owner-only fleet routes: add a worker, give it a new key, revoke it, open a
@@ -11,7 +12,8 @@ import { FleetErrorV1, type FleetOwnerServiceV1 } from "../../fleet/v1";
  */
 export type FleetOwnerHttpOptionsV1 = Readonly<{ origin: string; service: FleetOwnerServiceV1;
   /** Public address of the connector gateway, shown in the one-line join command. */
-  gatewayOrigin?: string; trust?: AccessTrust; gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
+  gatewayOrigin?: string; connectorRelease?: FleetConnectorReleaseManifestV1;
+  trust?: AccessTrust; gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
   clock?: () => number; localOwnerSession?: LocalOwnerSessionServiceV1 }>;
 
 function translate(error: unknown): never {
@@ -21,15 +23,23 @@ function translate(error: unknown): never {
 }
 
 const shellSafe = /^https?:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?$/u;
+const installerCheck = `const f=require("fs"),c=require("crypto"),a=process.argv.slice(1);try{const b=f.readFileSync(a[0]),m=JSON.parse(f.readFileSync(a[1],"utf8")),k=Object.keys(m).sort().join(",");if(k!=="builtFrom,file,schema,sha256,size,version"||m.schema!=="control-room.fleet-connector-release/v1"||m.version!==a[2]||m.file!=="connector-"+a[2]+".mjs"||m.sha256!==a[3]||m.size!==Number(a[4])||m.builtFrom!==a[5]||b.length!==m.size||c.createHash("sha256").update(b).digest("hex")!==m.sha256)throw 0}catch{console.error("This download does not match what Control Room showed you. Nothing was installed.");process.exit(1)}`;
+export const FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1 = Buffer.from(installerCheck).toString("base64");
 
 /** The exact commands shown to the owner. The code is the only secret in it
  * and it is short-lived and single use. */
-export function fleetJoinCommandsV1(gatewayOrigin: string, code: string) {
-  if (!shellSafe.test(gatewayOrigin) || !/^crj_[A-Za-z0-9_-]{43}$/u.test(code)) throw new WebAccessError("invalid_request");
-  const url = `${gatewayOrigin}/fleet/v1/connector.mjs`;
+export function fleetJoinCommandsV1(gatewayOrigin: string, code: string, workerKind: string, releaseValue: FleetConnectorReleaseManifestV1) {
+  if (!shellSafe.test(gatewayOrigin) || !/^crj_[A-Za-z0-9_-]{43}$/u.test(code)
+    || !(FLEET_WORKER_KINDS_V1 as readonly string[]).includes(workerKind)) throw new WebAccessError("invalid_request");
+  let release: FleetConnectorReleaseManifestV1;
+  try { release = captureFleetConnectorReleaseManifestV1(releaseValue); } catch { throw new WebAccessError("invalid_request"); }
+  const url = `${gatewayOrigin}/fleet/v1/${release.file}`;
+  const manifestUrl = `${gatewayOrigin}/fleet/v1/connector-manifest.json`;
+  const check = `node -e "eval(Buffer.from('${FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1}','base64').toString())"`;
+  const expected = `${release.version} ${release.sha256} ${release.size} ${release.builtFrom}`;
   return Object.freeze({
-    unix: `curl -fsSL ${url} -o control-room-connector.mjs && node control-room-connector.mjs join --server ${gatewayOrigin} --code ${code}`,
-    windows: `Invoke-WebRequest ${url} -OutFile control-room-connector.mjs; node control-room-connector.mjs join --server ${gatewayOrigin} --code ${code}`,
+    unix: `d="$HOME/.local/share/control-room"; mkdir -p "$d" && curl -fsSL ${url} -o "$d/${release.file}" && curl -fsSL ${manifestUrl} -o "$d/connector-manifest.json" && ${check} "$d/${release.file}" "$d/connector-manifest.json" ${expected} && node "$d/${release.file}" join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`,
+    windows: `$d=Join-Path $env:LOCALAPPDATA 'ControlRoom'; New-Item -ItemType Directory -Force $d | Out-Null; $f=Join-Path $d '${release.file}'; $m=Join-Path $d 'connector-manifest.json'; Invoke-WebRequest ${url} -OutFile $f; Invoke-WebRequest ${manifestUrl} -OutFile $m; ${check} $f $m ${expected}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; node $f join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`,
   });
 }
 
@@ -37,11 +47,16 @@ export function createFleetOwnerHttpHandlerV1(options: FleetOwnerHttpOptionsV1) 
   const local = options.localOwnerSession;
   if (local && (options.trust || options.gatewayAssertionProfile) || !local && !options.trust)
     throw new Error("fleet_owner_http_authentication_invalid");
-  if (options.gatewayOrigin !== undefined && !shellSafe.test(options.gatewayOrigin)) throw new Error("fleet_owner_http_gateway_invalid");
+  if ((options.gatewayOrigin === undefined) !== (options.connectorRelease === undefined)
+    || options.gatewayOrigin !== undefined && !shellSafe.test(options.gatewayOrigin)) throw new Error("fleet_owner_http_gateway_invalid");
+  let connectorRelease: FleetConnectorReleaseManifestV1 | undefined;
+  try { connectorRelease = options.connectorRelease && captureFleetConnectorReleaseManifestV1(options.connectorRelease); }
+  catch { throw new Error("fleet_owner_http_gateway_invalid"); }
   const verify = options.trust ? createAccessVerifier(options.trust, options.gatewayAssertionProfile) : undefined;
   const clock = options.clock ?? Date.now;
-  const withCommands = <T extends { code: string }>(issued: T) => ({ ...issued,
-    ...(options.gatewayOrigin ? { commands: fleetJoinCommandsV1(options.gatewayOrigin, issued.code) } : {}) });
+  const withCommands = <T extends { code: string; workerKind: string }>(issued: T) => ({ ...issued,
+    ...(options.gatewayOrigin && connectorRelease
+      ? { commands: fleetJoinCommandsV1(options.gatewayOrigin, issued.code, issued.workerKind, connectorRelease) } : {}) });
 
   return async (request: Request): Promise<Response> => {
     try {

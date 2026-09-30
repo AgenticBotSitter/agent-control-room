@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "69bb2324bcd22d24d540583d922dd5be9e6483bcc3cd39397d32b9462aa3c37f",
+  "digest": "ef5d8ed0c08ee0e26a1a50134a755f15f3200114c7fad670bcd1f7eecf68f397",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -651,134 +651,194 @@
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0155_installation_operations_modes.sql",
+      "file": "db/migrations/0150_pipeline_installation_allowances.sql",
       "order": 109,
+      "sha256": "21d89c7af8c6ece4173578df7d2fedcd9967fdfface9b5a4f2b665e6fe1df2ea",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0151_pipeline_stage_loop_counts.sql",
+      "order": 110,
+      "sha256": "3511c5aa69e383ee4b5f100ad8ce14fc245bb4a3553d23584fed0d165ead7d24",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0152_pipeline_advance_unknown_cost.sql",
+      "order": 111,
+      "sha256": "4e0c09fd02fbc1696aa30c379e22d11fb38a96c2b78e61006af57a805868ac72",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0153_pipeline_machine_capacity_observations.sql",
+      "order": 112,
+      "sha256": "952ea8d3bff4d8df1c378bed03508ae3f5b0b679bcbcc0ae07a3766e47d7c47f",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0154_pipeline_advance_round_receipts.sql",
+      "order": 113,
+      "sha256": "d4a72c7287ac385ad77ebd773ca2091c01337be514b2018096a13cdd68588df9",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0155_installation_operations_modes.sql",
+      "order": 114,
       "sha256": "2542b1cd19e0b9215c32eb09046481b3d71a580f8709da54955dbbe1ca62d667",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0156_installation_operations_mode_gates.sql",
-      "order": 110,
+      "order": 115,
       "sha256": "209599dd63ce0d7debdb3b0f7044b3b283b6e2e3d15215931e6050f070b54bae",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0157_installation_operations_mode_grants.sql",
-      "order": 111,
+      "order": 116,
       "sha256": "d85dc5ca942091cbe4c96aae5a1ac287b0befa44fb947e1b4b34f423d7133366",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0160_improve_control_room_desk.sql",
-      "order": 112,
+      "order": 117,
       "sha256": "38ecf365e222c50bca814b103c3159607e24cc99b70cd929ddb6688823822b8d",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0161_update_candidate_evidence.sql",
-      "order": 113,
+      "order": 118,
       "sha256": "fc20337f12964b44b64915762ba8158f2d49a0745f24c0b6a60ea35d9a9eb30d",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0162_validate_update_candidate_evidence.sql",
-      "order": 114,
+      "order": 119,
       "sha256": "757c27002a4db203642d25d902503c5f568ba493febd7c21a760e149d8a531f4",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0173_owner_web_push_subscriptions.sql",
-      "order": 115,
+      "order": 120,
       "sha256": "db167e9858d1e229202e6a72df105c9bcd947dac0d7cc7ee81721b6f7068d100",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0174_owner_web_push_delivery_ledger.sql",
-      "order": 116,
+      "order": 121,
       "sha256": "cfe71fa0f86af24a1c5cdabd733a5123494c04e76b9aea4239eba8ddb601961b",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0175_owner_web_push_tenant_isolation.sql",
-      "order": 117,
+      "order": 122,
       "sha256": "32dac31f73e8b58f4dc87f2e462ddb5a996220ad8c05989f150ded864c883e1b",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0176_owner_web_push_retention.sql",
-      "order": 118,
+      "order": 123,
       "sha256": "71ad26a9a7192fcc682d416d6e3960e0f7897e1fea68143c73820e24dc5dd19c",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0177_supervisor_reconciliation.sql",
-      "order": 119,
+      "order": 124,
       "sha256": "35a67d9adfc50d699b66e6fdb97967b4ab9a4a85fbce8656e5131d0fda81152d",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0178_supervisor_machine_health.sql",
-      "order": 120,
+      "order": 125,
       "sha256": "723b85cf066043f8a30c62f7182f1c4663e3e137debe028aa07fb615287a7e0f",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0179_provider_wait_states.sql",
-      "order": 121,
+      "order": 126,
       "sha256": "8c42f57ee21f5a05da8caa539ec8c75ed5cc6df98eaa85b174687588e54d41f5",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0185_idea_promotion_task_links.sql",
-      "order": 122,
+      "order": 127,
       "sha256": "fa283a10b0c3a315c450d5f2a0d024798618609b443add11bd28f4f83793d9cc",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0186_recurring_rules_and_reusable_skills.sql",
-      "order": 123,
+      "order": 128,
       "sha256": "ab0da4776b9c4e9bb277f69c03fec1aca82efd7da1cc04a6c71387f6d4dd4d29",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0190_news_task_proposal_links.sql",
-      "order": 124,
+      "order": 129,
       "sha256": "6c63b8143c1e6a31311dec9bfbc76ef6063a418187a640dc7a5f5046cfb836d0",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0195_module_install_approvals.sql",
-      "order": 125,
+      "order": 130,
       "sha256": "24f348af037ed35308feb243edbb2553661c4dbcddd38a9ca4680193a005826e",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0196_supervisor_incident_outbox_guard.sql",
-      "order": 126,
+      "order": 131,
       "sha256": "f457aecd166f393aecfa559767ef10f462bd075bcd0d022102fd851fc0076a5a",
       "kind": "migrate"
     },
     {
+      "file": "db/migrations/0224_owner_push_attempt_heads.sql",
+      "order": 132,
+      "sha256": "b754fb5d2740cfffa3c1907014b91aa7380b763dc6c504a54808ffb1a1c1172d",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0225_owner_push_attempt_guards.sql",
+      "order": 133,
+      "sha256": "12aaa27dd2970893c3768c0f1c158a45fbb2199287f7a83340ea3610a7331bc8",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0226_owner_push_attempt_grants.sql",
+      "order": 134,
+      "sha256": "76fbb1db277847f2fbd6eac355d55ab81020352cafa263e8bb3b02e4e82f4ddf",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0227_owner_push_endpoint_allow_list.sql",
+      "order": 135,
+      "sha256": "7be226a0f7b977a1a2f135d55aefcdeb911df15089b38663b3c0a2e6eec86a7f",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0237_supervisor_effect_intent_read.sql",
+      "order": 136,
+      "sha256": "04141b680eee687929a014c89421a2946c0be6855136695e830457d099fff9f3",
+      "kind": "migrate"
+    },
+    {
       "file": "db/roles/production_roles.sql",
-      "order": 127,
+      "order": 137,
       "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 128,
-      "sha256": "435cdb989fcff2ee4820fa8b5cc9bd98968748a966a4298f0a8c6c4624ddbeeb",
+      "order": 138,
+      "sha256": "3ed54c6a2a63024ff8f71d1f09cecdd64035a5d180fc91cd8dcf2df291e4f844",
       "kind": "grants"
     },
     {
       "file": "db/roles/agent_reviewer_roles.sql",
-      "order": 129,
+      "order": 139,
       "sha256": "69a199a5dc16a7263e7037c47bb86b2908bdbbf3d741d2d948c4889781b5d5f9",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 130,
+      "order": 140,
       "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }

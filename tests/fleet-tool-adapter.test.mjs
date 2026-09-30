@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn as nodeSpawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -215,6 +215,73 @@ writeFileSync(process.argv[3] + "/result.txt", readFileSync(process.argv[2]));`)
   assert.equal(results.length, 20);
 });
 
+test("overflow terminates once, an escaped pipe holder is bounded, and same-group children die", { timeout: 20_000 }, async t => {
+  const dir = await workspace(t);
+  const overflow = await executable(dir, "for (;;) process.stdout.write('x'.repeat(4096));");
+  const overflowRunner = connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
+    [entry(overflow, { maxOutputBytes: 1024, timeoutMs: 1_000 })], 1, "overflow.json")));
+  await assert.rejects(overflowRunner.execute(input()), error => error?.code === "tool_adapter_output_too_large");
+
+  const escapedPid = join(dir, "escaped.pid");
+  const escaped = await executable(dir, `import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "inherit" });
+writeFileSync(${JSON.stringify(escapedPid)}, String(child.pid)); process.exit(0);`);
+  const started = Date.now();
+  await connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
+    [entry(escaped, { timeoutMs: 150 })], 1, "escaped.json"))).execute(input());
+  assert.ok(Date.now() - started < 700, "an escaped stdout holder cannot wedge execute");
+  const escapedProcess = Number(await readFile(escapedPid, "utf8"));
+  try { process.kill(escapedProcess, "SIGKILL"); } catch {}
+
+  const groupedPid = join(dir, "grouped.pid");
+  const grouped = await executable(dir, `import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+writeFileSync(${JSON.stringify(groupedPid)}, String(child.pid)); process.exit(0);`);
+  await connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
+    [entry(grouped, { timeoutMs: 1_000 })], 1, "grouped.json"))).execute(input());
+  const pid = Number(await readFile(groupedPid, "utf8"));
+  await new Promise(done => setTimeout(done, 40));
+  assert.throws(() => process.kill(pid, 0), /ESRCH/u, "same-group child is gone before execute returns");
+});
+
+test("rechecks executable identity, refuses output hard links, and cleanup failure still releases the slot", async t => {
+  const dir = await workspace(t);
+  const original = await executable(dir, "process.exit(0)");
+  const registry = await connector.loadToolAdapters(await manifest(dir, [entry(original, { executable: original })], 1, "recheck.json"));
+  const replacement = await executable(dir, "process.exit(0)");
+  await rename(replacement, original);
+  await assert.rejects(connector.createLocalToolAdapterRunner(registry).execute(input()), error => error?.code === "tool_adapter_executable_changed");
+
+  const source = join(dir, "private.txt"); await writeFile(source, "ordinary private text");
+  const hardlink = await executable(dir, `import { linkSync } from "node:fs"; linkSync(${JSON.stringify(source)}, process.argv[3] + "/linked.txt");`);
+  await assert.rejects(connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
+    [entry(hardlink)], 1, "links.json"))).execute(input()), error => error?.code === "tool_adapter_output_invalid");
+
+  const cleanup = await executable(dir, "process.exit(0)");
+  const cleanRegistry = await connector.loadToolAdapters(await manifest(dir, [entry(cleanup)], 1, "cleanup.json"));
+  const runner = connector.createLocalToolAdapterRunner(cleanRegistry, { removeWork: async () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); } });
+  await runner.execute(input());
+  assert.equal(runner.active, 0, "cleanup trouble does not retain a concurrency slot");
+});
+
+test("stress: 50 runs cap at four with one third aborted", { timeout: 30_000 }, async t => {
+  const dir = await workspace(t);
+  const script = await executable(dir, `import { readFileSync, writeFileSync } from "node:fs";
+await new Promise(done => setTimeout(done, 80)); writeFileSync(process.argv[3] + "/ok.txt", readFileSync(process.argv[2]));`);
+  const runner = connector.createLocalToolAdapterRunner(await connector.loadToolAdapters(await manifest(dir,
+    [entry(script, { timeoutMs: 2_000 })], 4, "stress-50.json")));
+  let peak = 0, watching = true;
+  const watch = (async () => { while (watching) { peak = Math.max(peak, runner.active); await new Promise(done => setTimeout(done, 2)); } })();
+  const controllers = Array.from({ length: 50 }, () => new AbortController());
+  const pending = controllers.map((controller, i) => runner.execute(input(`run-${i}`), controller.signal));
+  setTimeout(() => controllers.filter((_, i) => i % 3 === 0).forEach(controller => controller.abort()), 15);
+  const settled = await Promise.allSettled(pending); watching = false; await watch;
+  assert.equal(peak, 4); assert.equal(runner.active, 0);
+  assert.ok(settled.filter(result => result.status === "rejected").length >= 16);
+});
+
 test("enrollment and heartbeat advertise manifest capabilities as evidence without changing approved capabilities", async t => {
   const dir = await workspace(t);
   const configPath = join(dir, "connector.json");
@@ -225,11 +292,11 @@ test("enrollment and heartbeat advertise manifest capabilities as evidence witho
   const fetcher = async (_url, init) => {
     requests.push(JSON.parse(init.body));
     if (requests.length === 1) return Response.json({ ok: true, result: { workerId, displayName: "Tools", projectIds: ["project:one"],
-      capabilities: ["owner.approved"], credentialExpiresAt: new Date(Date.now() + 86_400_000).toISOString() } });
+      capabilities: ["owner.approved"], workerKind: "tool", credentialExpiresAt: new Date(Date.now() + 86_400_000).toISOString() } });
     return Response.json({ ok: true, result: { workerId, capabilities: ["owner.approved"] } });
   };
   const code = `crj_${"A".repeat(43)}`;
-  const joined = await connector.join({ server: "https://control.example", code, configPath, fetcher });
+  const joined = await connector.join({ server: "https://control.example", code, workerKind: "tool", configPath, fetcher });
   assert.deepEqual(joined.capabilities, ["owner.approved"]);
   assert.deepEqual(requests[0].adapterCapabilities, ["gpu.metal", "tool.whisper"]);
   const client = connector.createClient(await connector.loadConfig(configPath), fetcher);

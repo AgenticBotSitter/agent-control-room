@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { actionInboxItemSchemaV1 } from "../../operator-surfaces/v1/validators";
+import { ServiceIncidentStore } from "../../services/v1/incident-store";
 
 type Candidate = Readonly<{ project_id: string; job_id: string; job_state: string; job_version: number | string;
   job_payload: Record<string, unknown>; attempt_id: string; attempt_state: string; attempt_version: number | string;
@@ -65,11 +66,20 @@ async function transitionCanonical(tx: DatabaseSession, tenantId: string, row: C
     `${eventPrefix}:${value.kind}`,JSON.stringify({ reasonCode }),at]);
 }
 
+const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
+  transactionWithPreCommitCheck: async (work, check) => { const value = await work(tx); await check(); return value; } });
+
 async function attention(tx: DatabaseSession, tenantId: string, row: Candidate, reasonCode: string,
-  disposition: "needs_attention" | "uncertain", at: string): Promise<void> {
-  const id = `attention:supervisor:${randomUUID()}`;
+  disposition: "needs_attention" | "uncertain", at: string, reconciliationEventId: string): Promise<void> {
+  const incident = disposition === "needs_attention" ? (await new ServiceIncidentStore(joined(tx)).apply({
+    tenantId,serviceId:"service:supervisor:v1",correlationKey:`supervisor.lapse.${reconciliationEventId}`,
+    observedAt:at,action:"open_or_update",severity:"warning",safeReasonCode:reasonCode,
+    safeRemedyCode:"review_stalled_task",
+  })).incident : undefined;
+  const digest = createHash("sha256").update(incident?.id ?? reconciliationEventId).digest("hex").slice(0,32);
+  const id = `attention:supervisor:${digest}`;
   const item = actionInboxItemSchemaV1.parse({ id,tenantId,projectId:row.project_id,
-    kind: disposition === "uncertain" ? "ambiguity" : "failure", state:"open",
+    kind: disposition === "uncertain" ? "ambiguity" : "incident", state:"open",
     requestedAction: disposition === "uncertain"
       ? "Inspect the recorded attempt before deciding whether to retry."
       : "Review this task after two stalled attempts.",
@@ -79,7 +89,9 @@ async function attention(tx: DatabaseSession, tenantId: string, row: Candidate, 
       { id:`response:${id}:retry`,kind:"request_retry",label:"Request a new attempt",
         requiresConfirmation:true,available:disposition!=="uncertain",
         ...(disposition==="uncertain"?{unavailableReasonCode:"outcome_uncertain"}: {}) },
-    ],evidence:[{id:`reconciliation:${row.attempt_id}`,kind:"service_observation",observedAt:at}],
+    ],evidence:incident
+      ? [{id:`incident:${digest}`,kind:"incident" as const,observedAt:at}]
+      : [{id:`reconciliation:${row.attempt_id}`,kind:"service_observation" as const,observedAt:at}],
     createdAt:at,deliveryState:"not_requested" });
   await tx.query(`INSERT INTO control_action_inbox
     (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
@@ -155,7 +167,7 @@ export class SupervisorReconcilerV1 {
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [eventId,this.tenantId,row.project_id,row.job_id,row.attempt_id,row.lease_id,row.node_id,
         lapseNumber,disposition,reasonCode,at]);
-      if (disposition !== "queued") await attention(tx,this.tenantId,row,reasonCode,disposition,at);
+      if (disposition !== "queued") await attention(tx,this.tenantId,row,reasonCode,disposition,at,eventId);
       return Object.freeze({jobId:row.job_id,attemptId:row.attempt_id,disposition,lapseNumber,replayed:false});
     });
   }

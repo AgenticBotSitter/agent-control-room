@@ -23,11 +23,23 @@ const agentReviewFunctions = new Set(["public.read_agent_review_plan(text)",
   "public.commit_agent_review(text, jsonb, jsonb, bytea)"]);
 const fleetEnrollmentFunction = "public.redeem_fleet_enrollment(text, text, text, text, timestamptz)";
 const fleetClaimFunction = "public.fleet_claim_is_live(text, text, text)";
+// MIG-I's push-endpoint allow list (0227). A CHECK constraint runs as its
+// WRITER, so the login that INSERTs owner_web_push_subscriptions has to hold
+// EXECUTE on both or the constraint is unevaluable by the very role it exists
+// to constrain, and every subscribe fails 42501 instead of 204. They are the
+// narrowest grant in the file: both functions are IMMUTABLE, pure SQL, own no
+// object, and reach no table, so EXECUTE conveys no authority at all — it only
+// makes the constraint readable. They are listed here rather than left to a
+// blanket rule because EXECUTE on a function is only ever as safe as the
+// function, and this one has to be named and checked.
+const ownerPushEndpointFunctions = new Set(["public.owner_push_endpoint_host(text)",
+  "public.owner_push_endpoint_allowed(text)"]);
 const knownFunctionGrant = object => object === workIntakeIdentityFunction || object === fleetEnrollmentFunction
-  || object === fleetClaimFunction
+  || object === fleetClaimFunction || ownerPushEndpointFunctions.has(object)
   || agentReviewFunctions.has(object);
 const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
   || (object === fleetEnrollmentFunction || object === fleetClaimFunction) && role === "control_room_fleet_gateway"
+  || ownerPushEndpointFunctions.has(object) && role === "control_room_private_web"
   || agentReviewFunctions.has(object) && role === "control_room_agent_reviewer";
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");

@@ -82,5 +82,47 @@
     "replace": "const binding = undefined;",
     "test": "node --import tsx --test --test-name-pattern \"tool worker end to end\" tests/fleet-harness-handoff.test.ts",
     "why": "a tool offer carries only its structured owner-approved adapter binding"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (terminating) return;",
+    "replace": "if (false) return;",
+    "test": "node --import tsx --test --test-name-pattern \"overflow terminates once\" tests/fleet-tool-adapter.test.mjs",
+    "why": "an output overflow sends only one termination sequence"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "child.once(\"exit\", (code, processSignal) => done({ code, signal: processSignal }));",
+    "replace": "child.once(\"close\", (code, processSignal) => done({ code, signal: processSignal }));",
+    "test": "node --import tsx --test --test-name-pattern \"escaped pipe holder\" tests/fleet-tool-adapter.test.mjs",
+    "why": "a descendant holding a pipe cannot keep execute pending after parent exit"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "killToolProcess(child, \"SIGKILL\"); child.stdout?.destroy(); child.stderr?.destroy();",
+    "replace": "child.stdout?.destroy(); child.stderr?.destroy();",
+    "test": "node --import tsx --test --test-name-pattern \"same-group children die\" tests/fleet-tool-adapter.test.mjs",
+    "why": "successful parent exit cannot leave same-group descendants alive"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "finally { releaseToolSlot(state); }",
+    "replace": "finally { }",
+    "test": "node --import tsx --test --test-name-pattern \"cleanup failure still releases\" tests/fleet-tool-adapter.test.mjs",
+    "why": "cleanup failure cannot permanently consume a local concurrency slot"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (JSON.stringify(identity) !== JSON.stringify(adapter.executableIdentity))",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern \"rechecks executable identity\" tests/fleet-tool-adapter.test.mjs",
+    "why": "the executable identity is checked again immediately before every run"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (info.nlink > 1)",
+    "replace": "if (false)",
+    "test": "node --import tsx --test --test-name-pattern \"refuses output hard links\" tests/fleet-tool-adapter.test.mjs",
+    "why": "tool output cannot use a hard link to collect outside data"
   }
 ]
