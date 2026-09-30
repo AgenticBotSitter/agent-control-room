@@ -8,10 +8,10 @@
   },
   {
     "file": "src/web/v1/fleet-owner-http.ts",
-    "find": "  if (!shellSafe.test(gatewayOrigin) || !/^crj_[A-Za-z0-9_-]{43}$/u.test(code)\n    || !(FLEET_WORKER_KINDS_V1 as readonly string[]).includes(workerKind)) throw new WebAccessError(\"invalid_request\");",
-    "replace": "  if (!shellSafe.test(gatewayOrigin) || !/^crj_[A-Za-z0-9_-]{43}$/u.test(code)\n    || false) throw new WebAccessError(\"invalid_request\");",
+    "find": "  if (!displayNamePattern.test(displayName) || !workerIdPattern.test(workerId)\n    || !(FLEET_WORKER_KINDS_V1 as readonly string[]).includes(workerKind)) throw new WebAccessError(\"invalid_request\");",
+    "replace": "  if (!displayNamePattern.test(displayName) || !workerIdPattern.test(workerId)\n    || false) throw new WebAccessError(\"invalid_request\");",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/connect-bot-page.test.tsx",
-    "why": "a displayed install command is never emitted for a bot kind the connector service does not support"
+    "why": "a shell profile is never derived for a bot kind the connector service does not support"
   },
   {
     "file": "src/web/v1/fleet-owner-http.ts",

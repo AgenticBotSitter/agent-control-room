@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { ConnectBotWorkspace, InstallLine, type ConnectBotInstallResult }
   from "../private-app/app/workers/connect/connect-bot-workspace";
-import { createFleetOwnerHttpHandlerV1, fleetJoinCommandsV1 } from "../src/web/v1/fleet-owner-http";
+import { createFleetOwnerHttpHandlerV1, fleetConnectorProfileNameV1, fleetJoinCommandsV1 } from "../src/web/v1/fleet-owner-http";
 import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1, type FleetConnectorReleaseManifestV1 }
   from "../src/fleet/v1/connector-release";
 
@@ -39,6 +39,7 @@ test("the owner page shows the exact versioned fleet command, including its curr
   }
   assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", code, "wrong-kind", release, commandIdentity));
   assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", "crj_short", "codex", release, commandIdentity));
+  assert.throws(() => fleetConnectorProfileNameV1("safe", workerId, "wrong-kind"));
   assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", code, "codex", release,
     { displayName: "line\nbreak", workerId }));
   assert.throws(() => fleetJoinCommandsV1("https://control.example.ts.net", code, "codex", release,
@@ -76,6 +77,7 @@ test("the connect-code route binds the chosen kind and returns only the current 
     const invalid = await post(refused);
     assert.equal(invalid.status, 400);
   }
+  assert.equal(issued.length, 1, "invalid page choices are refused before an enrollment code is created");
 });
 
 test("the result says plainly when a code expired and disables copying it", async () => {
