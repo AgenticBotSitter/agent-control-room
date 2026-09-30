@@ -274,9 +274,9 @@
   },
   {
     "file": "src/web/v1/fleet-owner-http.ts",
-    "find": "    unix: `curl -fsSL ${url} -o control-room-connector.mjs && node control-room-connector.mjs join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`",
-    "replace": "    unix: `curl -fsSL ${url} -o control-room-connector.mjs && node control-room-connector.mjs join --server ${gatewayOrigin} --code ${code}`",
+    "find": "&& node \"$d/${release.file}\" join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`",
+    "replace": "&& node \"$d/${release.file}\" join --server ${gatewayOrigin} --code ${code}`",
     "test": "node --import tsx --test --test-name-pattern \"owner's join command\" tests/fleet-connector.test.ts",
-    "why": "the owner-facing command declares the worker kind bound into its one-time code"
+    "why": "the verified-release owner command still declares the worker kind bound into its one-time code"
   }
 ]
