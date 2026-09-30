@@ -206,9 +206,21 @@ export class PostgresBackupStoreV1 {
     const generationId = await nextGenerationIdV1(this.client);
     await this.client.query(`INSERT INTO updater.backup_generations(generation_id,state,completed_at,failure_code)
       VALUES($1,'failed',pg_catalog.now(),'backup_in_progress')`, [generationId]);
+    // The failure counter is NOT incremented here. An attempt is a failure once
+    // it has FAILED, not once it has started: a `kill -9` mid-dump leaves an
+    // in-flight row that never completes, and counting it twice — once on start
+    // and again on the next attempt's start — let the guard's one-step rule refuse
+    // the retry, which is a real deadlock in the recovery path. Measured: a
+    // killed child followed by a retry produced "updater backup failure counter
+    // moved by more than one" and the backup could not recover without help.
+    //
+    // So `beginAttempt` only records that an attempt HAPPENED (the badge goes
+    // red, the retry is scheduled an hour out) and `failAttempt` is what counts
+    // it. An in-flight row that is never completed is visible as
+    // `failure_code='backup_in_progress'`, which is a better signal than a
+    // counter anyway: it names a run that is stuck rather than one that failed.
     await this.client.query(`UPDATE updater.backup_state SET max_age_seconds=$2, kept_generations=$3,
       last_attempt_at=pg_catalog.now(), last_failure_at=pg_catalog.now(), last_failure_code='backup_in_progress',
-      consecutive_failures=consecutive_failures+1,
       next_due_at=pg_catalog.now() + make_interval(secs => $4),
       last_generation_id=$1
       WHERE singleton AND $1::text NOT IN (SELECT generation_id FROM updater.backup_generations
@@ -263,20 +275,33 @@ export class PostgresBackupStoreV1 {
   }
 
   /**
-   * Record a failure. The `backup_in_progress` row is rewritten from
-   * `backup_in_progress` to the real code, which the immutability trigger
-   * allows for exactly one transition: the row's own attempt, named twice.
+   * Record a failure. The `backup_in_progress` row is rewritten to the real code
+   * — the one transition the immutability trigger permits besides completion —
+   * and THIS is where the consecutive-failure counter moves, one step, because
+   * this is the point at which an attempt is known to have failed.
+   *
+   * The row must still be in flight (`failure_code='backup_in_progress'`). A
+   * failure recorded against an already-failed row, or against a completed one,
+   * is a caller reporting something that did not just happen, and is refused.
    */
   async failAttempt({ generationId, code, detail = null }) {
     assertGenerationIdV1(generationId, "updater_backup_failure_refused");
-    if (typeof code !== "string" || !FAILURE_CODE_V1.test(code)) throw updaterRefuseV1("updater_backup_failure_refused");
+    if (typeof code !== "string" || !FAILURE_CODE_V1.test(code) || code === "backup_in_progress")
+      throw updaterRefuseV1("updater_backup_failure_refused");
     const text = detail === null ? null : (typeof detail === "string" && detail.length <= 200 ? detail : null);
     const result = await this.client.query(`UPDATE updater.backup_generations SET completed_at=pg_catalog.now(),
-        failure_code=$2, failure_detail=$3 WHERE generation_id=$1 AND state='failed'
-        RETURNING generation_id`, [generationId, code, text]);
+        failure_code=$2, failure_detail=$3
+      WHERE generation_id=$1 AND state='failed' AND failure_code='backup_in_progress'
+      RETURNING generation_id`, [generationId, code, text]);
     if (result.rows.length !== 1) throw updaterRefuseV1("updater_backup_failure_refused");
-    await this.client.query(`UPDATE updater.backup_state SET next_due_at=pg_catalog.now()
-        + make_interval(secs => $1) WHERE singleton`, [BACKUP_FAILURE_RETRY_SECONDS_V1]);
+    // The failure pair (code + time) and the counter move together, which is
+    // what the state guard requires: it refuses a half-cleared pair, and it
+    // refuses a counter that moved by more than one. The attempt that just
+    // failed is counted exactly once, here.
+    await this.client.query(`UPDATE updater.backup_state SET consecutive_failures=consecutive_failures+1,
+      last_failure_at=pg_catalog.now(), last_failure_code=$2,
+      next_due_at=pg_catalog.now() + make_interval(secs => $1) WHERE singleton`,
+    [BACKUP_FAILURE_RETRY_SECONDS_V1, code]);
     return Object.freeze({ generationId, code });
   }
 

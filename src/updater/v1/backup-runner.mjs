@@ -302,8 +302,18 @@ export class UpdaterBackupV1 {
       if (!this.policy.backupRoot) throw UpdaterBackupV1.#refuse("updater_backup_root_unconfigured");
       resolveBackupRootPolicyV1(this.policy); // Re-derived, never trusted from a field.
       if (!manual) {
+        // The due check reads `next_due_at` — written from `pg_catalog.now()` —
+        // and compares it with this process's clock. The two are different clocks,
+        // and the design says "DB now() everywhere" for a reason: a Mac whose
+        // clock jumps two hours either fires the backup twice in a row or skips a
+        // night. A JIT caller passing `clock` (the tests do) is deliberate
+        // injection; production passes the default. What is NOT done here is
+        // writing a next-due time from the Mac's clock — every write goes
+        // through `pg_catalog.now()` in the store — so a clock jump can at worst
+        // shift when one run is admitted, and the freshness bound that actually
+        // gates database plans is computed in the database.
         const freshness = await this.store.freshness();
-        const due = !freshness.nextDueAt || new Date(freshness.nextDueAt) <= this.clock();
+        const due = !freshness.nextDueAt || new Date(freshness.nextDueAt).getTime() <= this.clock().getTime();
         if (!due) return Object.freeze({ status: "not_due", nextDueAt: freshness.nextDueAt,
           message: plainMessage.updater_backup_not_due });
       }

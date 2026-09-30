@@ -66,7 +66,12 @@ const TEST_COUNT = 7;
  * path, no HOME, no PG* inherited, LC_ALL=C so the cluster starts at all (the
  * lead's item-3b amendment 3). */
 function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", NODE_ENV: "test", ...extra };
+  // LANG/LC_ALL=C is the lead's item-3b amendment 3 and is not optional: a
+  // PostgreSQL cluster refuses to start under a non-C locale on this Mac.
+  // PATH is the three system directories only — the design's stripped list —
+  // which is enough for /usr/bin/openssl and /usr/bin/mkfifo and deliberately
+  // not enough for anything a developer's shell would have added.
+  return { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C", NODE_ENV: "test", ...extra };
 }
 
 async function runV1(file: string, args: readonly string[], maxBuffer = 1 << 30) {
@@ -316,12 +321,19 @@ function realPortsV1({ postgres, scratchRoot, evidenceClient, onDumpStarted = ()
       try {
         // A real throwaway cluster with its OWN socket, exactly as R17a wants:
         // root creates and lchowns `pg/scratch-<id>`, `_crdb` fills it.
+        // `--no-sync` at initdb AND `fsync=off` on the server, plus a local
+        // maintenance_work_mem: this is a THROWAWAY cluster whose only job is to
+        // prove the dump restores, so durability buys nothing and cost a lot of
+        // wall clock. The real settings live in the production runtime's
+        // pg-current and are not this file's business. Measured: the first
+        // version of this lane spent 150 s in one test, nearly all of it fsync.
         await runV1(join(PG_BIN, "initdb"), ["-D", dataDir, "-U", "fixture_admin", "-A", "trust",
           "--no-sync", "-E", "UTF8"]);
         await writeFile(join(dataDir, "postgresql.conf"),
-          `\nunix_socket_directories = '${socketDir.replaceAll("'", "''")}'\nlisten_addresses = ''\n`);
-        await runV1(join(PG_BIN, "pg_ctl"), ["-D", dataDir, "-o", "-c fsync=off -c full_page_writes=off",
-          "-w", "-t", "60", "start"]);
+          `\nunix_socket_directories = '${socketDir.replaceAll("'", "''")}'\nlisten_addresses = ''\n`
+          + "fsync = off\nfull_page_writes = off\nsynchronous_commit = off\n"
+          + "max_connections = 20\nshared_buffers = 32MB\n");
+        await runV1(join(PG_BIN, "pg_ctl"), ["-D", dataDir, "-w", "-t", "60", "start"]);
         const restored = "restored";
         await runV1(join(PG_BIN, "createdb"), ["-h", socketDir, "-U", "fixture_admin", restored]);
         await runV1(join(PG_BIN, "pg_restore"), ["--no-owner", "--no-privileges", "-h", socketDir,
@@ -458,7 +470,14 @@ test("a backup killed mid-dump leaves no countable generation and releases the l
       // A CHILD PROCESS is the honest kill. SIGKILL cannot be caught, so no
       // `finally` in the runner runs and the only thing that can hold the
       // invariants is that they were never in a state that needed saving.
-      const readyFile = join(base, "ready"), script = join(base, "killed-backup.mjs");
+      // The ready file is in the disposable root; the SCRIPT is in the worktree.
+      // A script under `/private/tmp` cannot resolve `pg` (ERR_MODULE_NOT_FOUND,
+      // measured), and under the stripped environment the child's module
+      // resolution walks up from the SCRIPT's own path rather than from the
+      // parent's cwd — so the script has to live where node_modules is. The
+      // worktree is read by the child and written by neither, and the file is
+      // removed in the finally below.
+      const readyFile = join(base, "ready"), script = join(process.cwd(), ".b19-killed-backup.mjs");
       await writeFile(script, `import { writeFile } from "node:fs/promises";
   import { Client } from "pg";
   import { PostgresBackupStoreV1 } from ${JSON.stringify(join(process.cwd(), "src/updater/v1/backup-store.mjs"))};
@@ -481,18 +500,32 @@ test("a backup killed mid-dump leaves no countable generation and releases the l
   } });
   await backup.runOnce({ manual: true });
   `);
-      const child = spawn(process.execPath, [script, postgres.socketDirectory, String(postgres.port),
-        postgres.database, installRoot, backupRoot, readyFile],
-      { stdio: ["ignore", "pipe", "pipe"], env: cleanEnv() });
+      // The child gets `process.execPath` plus the tsx loader this process was
+      // started with, and the repository as its working directory, because it
+      // imports `pg` and two project modules. The stripped environment the
+      // design requires (no HOME, no PG*, no PATH surprises) is kept — a test
+      // child that inherited a developer shell's environment would not be
+      // testing the real thing, and the whole point of the child is that it is
+      // a separate process that can be SIGKILLed.
+      const child = spawn(process.execPath, ["--import", "tsx", script, postgres.socketDirectory,
+        String(postgres.port), postgres.database, installRoot, backupRoot, readyFile],
+      { stdio: ["ignore", "pipe", "pipe"], cwd: process.cwd(), env: cleanEnv() });
       let stderr = "";
       child.stderr.on("data", chunk => { stderr += String(chunk); });
       try {
+        // Bounded, and it FAILS FAST on a child that exited: a child that died
+        // on an import error would otherwise be waited for until the whole test
+        // file's timeout, which is exactly what happened once. The exit check is
+        // the difference between "the child is broken, here is its stderr" and
+        // "the suite timed out with no clue".
+        let started = false;
         for (let attempt = 0; attempt < 400; attempt += 1) {
-          if (await readFile(readyFile, "utf8").catch(() => "") === "started") break;
+          if (await readFile(readyFile, "utf8").catch(() => "") === "started") { started = true; break; }
+          if (child.exitCode !== null) break;
           await new Promise(resolve => setTimeout(resolve, 50));
         }
-        assert.equal(await readFile(readyFile, "utf8").catch(() => ""), "started",
-          `the child reached the dump${stderr ? `: ${stderr}` : ""}`);
+        assert.ok(started, `the child reached the dump (exit ${child.exitCode ?? "running"}`
+          + `${stderr ? `: ${stderr.trim()}` : ""})`);
         // While the dump runs: a row is in flight, the directory is NOT promoted.
         const during = await readdir(backupRoot);
         assert.equal(during.filter(name => name.startsWith("gen-")).length, 0,
@@ -502,6 +535,7 @@ test("a backup killed mid-dump leaves no countable generation and releases the l
       } finally {
         child.kill("SIGKILL");
         await new Promise(resolve => child.once("exit", resolve));
+        await rm(script, { force: true, maxRetries: 2 });
       }
       // The killed attempt left a `failed`-shaped row with no dump evidence.
       assert.equal((await store.verifiedGenerations(BACKUP_KEPT_GENERATIONS_V1)).length, 0,
@@ -521,6 +555,14 @@ test("a backup killed mid-dump leaves no countable generation and releases the l
       const lock = await store.acquireBackupLock();
       assert.equal(lock.status, "acquired", "the killed process released the backup lock");
       await store.releaseBackupLock();
+      // The killed child never reached `failAttempt`, so it was never COUNTED as
+      // a failure — only recorded as an attempt. That is the property the counter
+      // move buys: a run that was killed or stuck does not inflate the failure
+      // count that drives the retry cadence, and the state guard's one-step rule
+      // cannot deadlock the recovery path. Measured before the move: the retry
+      // was refused with "updater backup failure counter moved by more than one".
+      assert.equal((await store.freshness()).consecutiveFailures, 0,
+        "a run that never completed is recorded but not counted as a failure");
       // And the next run completes normally.
       const backup = new UpdaterBackupV1({ store, ports: realPortsV1({ postgres, scratchRoot, evidenceClient }),
         policy: internalPolicyV1(installRoot, backupRoot) });

@@ -21,7 +21,7 @@ import test from "node:test";
 import { updaterDdlFilesV1, updaterTablesV1 } from "../src/updater/v1/schema-installer.ts";
 import { BACKUP_LOCK_V1, BACKUP_MAX_AGE_SECONDS_V1, BACKUP_KEPT_GENERATIONS_V1, generationLeafV1 }
   from "../src/updater/v1/backup-store.mjs";
-import { assertSafeGenerationV1, backupManifestV1, resolveBackupRootPolicyV1 }
+import { UpdaterBackupV1, assertSafeGenerationV1, backupManifestV1, resolveBackupRootPolicyV1 }
   from "../src/updater/v1/backup-runner.mjs";
 
 const DDL_DIRECTORY = join(process.cwd(), "src/updater/v1/ddl");
@@ -212,4 +212,125 @@ test("the safety check reports a generation that is not there, rather than throw
     /updater_backup_generation_refused/u);
   await assert.rejects(assertSafeGenerationV1("/tmp", "backup:2026-09-30T13-18-22Z"),
     /updater_backup_generation_refused/u);
+});
+
+/**
+ * The scheduling and lock decisions, driven with a store double.
+ *
+ * These are the parts of `runOnce` that decide WHEN a backup is admitted, and
+ * they are the parts a real-cluster lane cannot reach on demand — "not due yet"
+ * needs a next-due time in the future, and "the lock is held" needs a second
+ * session. Both are cheap here and would each cost a real cluster to test
+ * otherwise, so they are tested as logic and the SQL behind them is tested on a
+ * cluster in the other lane.
+ *
+ * The double records every call, so an assertion can check what the runner DID
+ * as well as what it returned. A double that only answers `status` would pass a
+ * runner that wrote a `failed` row it should not have.
+ */
+class RecordingStore {
+  constructor({ lockStatus = "acquired", nextDueAt = null, policy = { maxAgeSeconds: 93600, keptGenerations: 14 } } = {}) {
+    this.lockStatus = lockStatus; this.nextDueAt = nextDueAt; this.policyValue = policy;
+    this.calls = []; this.generationSeq = 0;
+  }
+  #record(name, detail = {}) { this.calls.push({ name, ...detail }); }
+  async freshness() { this.#record("freshness"); return { fresh: false, lastSuccessAt: null, lastFailureCode: null,
+    lastFailureAt: null, nextDueAt: this.nextDueAt, consecutiveFailures: 0, maxAgeSeconds: 93600 }; }
+  async policy() { this.#record("policy"); return this.policyValue; }
+  async acquireBackupLock() { this.#record("acquireBackupLock"); return { status: this.lockStatus, inFlight: false }; }
+  async releaseBackupLock() { this.#record("releaseBackupLock"); }
+  async scheduleNext(seconds) { this.#record("scheduleNext", { seconds }); this.nextDueAt = null; }
+  async beginAttempt() { this.#record("beginAttempt"); this.generationSeq += 1;
+    return { generationId: `backup:2026-01-0${this.generationSeq}T02-30-00-00${this.generationSeq}Z` }; }
+  async completeAttempt(detail) { this.#record("completeAttempt", detail); return { generationId: detail.generationId }; }
+  async failAttempt(detail) { this.#record("failAttempt", detail); return detail; }
+  async latestAttempt() { return null; }
+  async verifiedGenerations() { return []; }
+  async pinnedGenerations() { return []; }
+  async knownGenerationIds() { return []; }
+  names() { return this.calls.map(entry => entry.name); }
+}
+
+const throwingPorts = {
+  dump: async () => { throw new Error("dump_must_not_run"); },
+  restoreVerify: async () => { throw new Error("restoreVerify_must_not_run"); },
+  seal: async () => { throw new Error("seal_must_not_run"); },
+  writeManifest: async () => { throw new Error("writeManifest_must_not_run"); },
+};
+
+const makeBackup = (store, extra = {}) => new UpdaterBackupV1({ store, ports: throwingPorts,
+  policy: { installRoot: "/opt/control-room", backupRoot: "/opt/control-room/backups", seal: false,
+    freeSpaceFloorBytes: 0 }, ...extra });
+
+test("a backup that is not due is not started, and writes nothing", async () => {
+  const store = new RecordingStore({ nextDueAt: new Date(Date.now() + 3_600_000).toISOString() });
+  const outcome = await makeBackup(store).runOnce();
+  assert.equal(outcome.status, "not_due");
+  assert.match(outcome.message, /not due yet/u);
+  // The lock is not even taken: a not-due check that took the shared backup lock
+  // would block a database upgrade for no reason.
+  assert.deepEqual(store.names(), ["freshness"],
+    "a not-due tick touches the database once and stops there");
+  assert.ok(outcome.nextDueAt);
+});
+
+test("a due backup takes the lock, and a held lock refuses without recording an attempt", async () => {
+  const held = new RecordingStore({ lockStatus: "busy" });
+  const busy = await makeBackup(held).runOnce({ manual: true });
+  assert.equal(busy.status, "busy");
+  assert.equal(busy.code, "updater_backup_lock_busy");
+  // `beginAttempt` MUST NOT appear: a deferred backup is not a failed one, and a
+  // `failed` row here would turn Home red on every database update.
+  assert.deepEqual(held.names(), ["acquireBackupLock", "scheduleNext"],
+    "a refused-for-lock backup reschedules and writes no attempt row");
+  const scheduled = held.calls.find(entry => entry.name === "scheduleNext");
+  assert.ok(scheduled.seconds > 0 && scheduled.seconds <= 900,
+    "and reschedules within the quarter hour, so it is not a day away and not never");
+  // The lock is NOT released on the busy path, because it was never taken.
+  assert.ok(!held.names().includes("releaseBackupLock"),
+    "releasing a lock this caller never held would release somebody else's");
+
+  const free = new RecordingStore();
+  const attempted = await makeBackup(free).runOnce({ manual: true });
+  // The dump throws, so the run fails — but it must have taken, attempted and
+  // released the lock on the way through, in that order.
+  assert.equal(attempted.status, "failed");
+  assert.deepEqual(free.names().slice(0, 3), ["acquireBackupLock", "policy", "beginAttempt"]);
+  assert.ok(free.names().includes("failAttempt"));
+  assert.equal(free.names().at(-1), "releaseBackupLock",
+    "the lock is released on the failure path too, which is the whole reason it is a session lock");
+});
+
+test("a second concurrent caller is refused as busy, not queued behind the first", async () => {
+  const store = new RecordingStore();
+  const backup = makeBackup(store);
+  const [first, second] = await Promise.all([backup.runOnce({ manual: true }),
+    backup.runOnce({ manual: true })]);
+  const statuses = [first.status, second.status].sort();
+  assert.deepEqual(statuses, ["busy", "failed"],
+    "exactly one caller ran; the other was told the Mac is busy");
+  const busy = first.status === "busy" ? first : second;
+  assert.equal(busy.code, "updater_backup_already_running",
+    "an in-process second caller is a refusal with its own code, not a second dump");
+  // The refusal happened before the lock, so it cannot have disturbed the first.
+  assert.equal(store.names().filter(name => name === "acquireBackupLock").length, 1);
+});
+
+test("an unconfigured backup root refuses before touching the database", async () => {
+  const store = new RecordingStore();
+  const backup = new UpdaterBackupV1({ store, ports: throwingPorts,
+    policy: { installRoot: "/opt/control-room", backupRoot: null, seal: false } });
+  const outcome = await backup.runOnce({ manual: true });
+  assert.equal(outcome.status, "failed");
+  assert.equal(outcome.code, "updater_backup_root_unconfigured");
+  assert.deepEqual(store.names(), [],
+    "nothing was written, and no lock was taken, for a root that is not configured");
+});
+
+test("the badge is plain words and is derived from the freshness predicate", async () => {
+  const backup = makeBackup(new RecordingStore());
+  assert.deepEqual(await backup.status(), { fresh: false, state: "none", lastSuccessAt: null,
+    lastFailureCode: null, lastFailureAt: null, nextDueAt: null, consecutiveFailures: 0,
+    badge: "never run" },
+  "with nothing ever attempted the badge says so in words rather than showing a number");
 });

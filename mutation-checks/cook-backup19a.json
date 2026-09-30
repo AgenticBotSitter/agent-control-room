@@ -3,133 +3,133 @@
     "file": "src/updater/v1/ddl/0004_backups.sql",
     "find": "CREATE OR REPLACE FUNCTION updater.guard_plan_backup_fresh() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$\nBEGIN\n  IF NEW.kind <> 'database' THEN RETURN NEW; END IF;",
     "replace": "CREATE OR REPLACE FUNCTION updater.guard_plan_backup_fresh() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$\nBEGIN\n  IF true THEN RETURN NEW; END IF;\n  IF NEW.kind <> 'database' THEN RETURN NEW; END IF;",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "a database plan with no fresh backup must be refused, or item 19a's §9.5 promise (\"blocks DB plans until fixed\") is void and a database can be migrated with nothing to restore from"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
     "find": "  IF bound IS NULL THEN RETURN false; END IF;\n  RETURN EXISTS (\n    SELECT 1 FROM updater.backup_generations g\n     WHERE g.state = 'verified' AND g.completed_at > bound\n  );",
     "replace": "  IF bound IS NULL THEN RETURN true; END IF;\n  RETURN EXISTS (\n    SELECT 1 FROM updater.backup_generations g\n     WHERE g.state = 'verified'\n  );",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the freshness bound is the rule: with it dropped, one backup ever taken would satisfy it forever and the 26-hour red badge would never appear. The mutation also flips the missing-policy case to fail open"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
     "find": "    (state = 'failed'\n      AND completed_at IS NOT NULL\n      AND failure_code IS NOT NULL\n      AND dump_sha256 IS NULL AND dump_bytes IS NULL AND file_sha256 IS NULL\n      AND shape_digest IS NULL AND row_counts_digest IS NULL)",
     "replace": "    (state = 'failed'\n      AND completed_at IS NOT NULL\n      AND failure_code IS NOT NULL)",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "THIS IS THE daemons4 CARRY-FORWARD. A failed row must be physically unable to carry a dump digest, size, schema digest or row-count digest, or retention has something to mistake for a dump and deletes a good one to keep the count at 14"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
     "find": "  IF OLD.state <> 'failed' OR OLD.failure_code <> 'backup_in_progress' THEN",
     "replace": "  IF false THEN",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the whole immutability guard: with the condition inverted, a completed verified row becomes freely rewritable, so a failed attempt could be turned into a good one with no dump behind it"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
     "find": "  IF NEW.consecutive_failures < OLD.consecutive_failures - 1 OR NEW.consecutive_failures > OLD.consecutive_failures + 1 THEN",
     "replace": "  IF false THEN",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the failure counter must move by at most one, or one statement can zero it and reset the retry schedule the badge's urgency depends on"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
     "find": "  IF OLD.last_success_at IS NOT NULL AND NEW.last_success_at IS NOT NULL\n      AND NEW.last_success_at < OLD.last_success_at THEN",
     "replace": "  IF false THEN",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "last_success_at must not move backwards: a wrong clock or a rewritten value would make a stale backup look fresh and re-admit database plans"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
     "find": "  max_age_seconds integer NOT NULL CHECK (max_age_seconds BETWEEN 3600 AND 604800),",
     "replace": "  max_age_seconds integer NOT NULL CHECK (max_age_seconds BETWEEN 3600 AND 2147483647),",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the policy bound must be capped: a caller that could set it to years would make the freshness rule satisfied by any backup ever taken, while still satisfying the type"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
     "find": "REVOKE ALL ON updater.backup_generations, updater.backup_state FROM control_room_private_web;\nGRANT SELECT (generation_id, state, created_at, completed_at, encrypted, failure_code, retain_until)",
     "replace": "GRANT SELECT ON updater.backup_generations, updater.backup_state TO control_room_private_web;\nGRANT SELECT (generation_id, state, created_at, completed_at, encrypted, failure_code, retain_until)",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the web must read state and ages, not the operator's digests and per-table counts. The mutation targets the REVOKE itself, because the later narrower GRANT does not undo a table-wide one (measured: grants accumulate)"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
     "find": "CREATE OR REPLACE TRIGGER plans_backup_fresh_guard BEFORE INSERT OR UPDATE ON updater.plans\n  FOR EACH ROW EXECUTE FUNCTION updater.guard_plan_backup_fresh();",
     "replace": "-- mutation removes the backup-freshness plan trigger",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the refusal must be ATTACHED to the table, not merely defined: an unattached function is a comment"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
     "find": "    for (const row of rows.slice(0, keep)) keepSet.add(row.generationId);",
     "replace": "    for (const row of rows) keepSet.add(row.generationId);",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "retention keeps exactly the newest `kept_generations`; keeping every verified row would let the backup root grow without limit, and would hide a policy that stopped applying"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
     "find": "    for (const id of pinned) keepSet.add(id);",
     "replace": "    // mutation drops the retention pin from the keep set",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "item 18 pins a pre-update dump until the next successful database update plus seven days; a nightly sweep that ignored the pin would delete the one dump a failed upgrade would be restored from"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
     "find": "      lock = await this.store.acquireBackupLock();\n      if (lock.status === \"busy\") {",
     "replace": "      lock = { status: \"acquired\" };\n      if (lock.status === \"busy\") {",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the backup lock is shared with the upgrader; without it a nightly dump and a database upgrade's pre-image dump can run against one cluster at once, and neither sees the other"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
     "find": "    await rename(paths.inProgress, paths.final);",
     "replace": "    // mutation skips the promotion rename, so a partial generation is never committed",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the rename IS the commit point: it is the only thing that makes a generation countable, and it is what makes a crash mid-backup leave nothing but an .inprogress- directory"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
     "find": "    if (verified?.shapeDigest !== source.shapeDigest) {\n      const refusal = UpdaterBackupV1.#refuse(\"updater_backup_shape_digest_mismatch\");\n      refusal.evidence = `source=${source.shapeDigest} restored=${verified?.shapeDigest}`;\n      throw refusal;\n    }\n    if (JSON.stringify(verified.rowCounts) !== JSON.stringify(source.rowCounts))\n      throw UpdaterBackupV1.#refuse(\"updater_backup_row_counts_mismatch\");",
     "replace": "    if (false) {\n      throw UpdaterBackupV1.#refuse(\"updater_backup_shape_digest_mismatch\");\n    }\n    if (false)\n      throw UpdaterBackupV1.#refuse(\"updater_backup_row_counts_mismatch\");",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the restore-VERIFY comparison is what makes a backup a backup; without it a dump that cannot be restored would be promoted and counted as good"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
     "find": "    if (sealPolicy.sealRequired && encrypted !== true)\n      throw UpdaterBackupV1.#refuse(\"updater_backup_seal_refused\");",
     "replace": "    // mutation accepts an unsealed dump on a root with no ownership protection",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the owner's external drive has ownership DISABLED, so R-FS does not protect a dump left there; an external root must be sealed, and a failed seal must refuse the generation"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
     "find": "    if (Number.isFinite(free) && free < floor) throw UpdaterBackupV1.#refuse(\"updater_backup_disk_full\");",
     "replace": "    if (false) throw UpdaterBackupV1.#refuse(\"updater_backup_disk_full\");",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the free-space preflight is §8.6's rule: without it a nearly-full disk is discovered half way through a dump, and the failure leaves a partial generation and a full root"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
     "find": "          await assertSafeGenerationV1(this.policy.backupRoot, generationId);\n          await rm(paths.final, { recursive: true, force: false, maxRetries: 1 });",
     "replace": "          await rm(paths.final, { recursive: true, force: false, maxRetries: 1 });",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "a generation is deleted only after it validates: without the check, a planted symlink at a generation's name would let the sweep remove a directory outside the backup root"
   },
   {
     "file": "src/updater/v1/backup-store.mjs",
     "find": "    const result = await this.client.query(`SELECT * FROM updater.backup_generations\n      WHERE state='verified' ORDER BY completed_at DESC, generation_id DESC LIMIT $1`, [bounded + 1]);",
     "replace": "    const result = await this.client.query(`SELECT * FROM updater.backup_generations\n      ORDER BY completed_at DESC, generation_id DESC LIMIT $1`, [bounded + 1]);",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the retention read must filter to `verified` in the DATABASE, not in JavaScript: a failed attempt would otherwise occupy one of the fourteen slots. This is the daemons4 finding, and filtering after the LIMIT would also pick the wrong fourteen"
   },
   {
     "file": "src/updater/v1/backup-store.mjs",
     "find": "      WHERE generation_id=$1 AND state='failed' AND failure_code='backup_in_progress'\n      RETURNING generation_id`,",
     "replace": "      WHERE generation_id=$1\n      RETURNING generation_id`,",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=200000 tests/updater-backup-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "only an IN-FLIGHT attempt may complete: without the predicate, a retry or a replay could rewrite a finished generation, and a row already completed would be counted twice"
   }
 ]
