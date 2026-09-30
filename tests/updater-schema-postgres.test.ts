@@ -661,8 +661,19 @@ test("50 concurrent approval inserts on one plan leave no duplicate effects", as
     const CONCURRENCY = 50;
     const ids = Array.from({ length: CONCURRENCY }, () => `approval:${randomUUID()}`);
     const started = Date.now();
+    // The burst's clients are collected and closed in ONE awaited pass after the
+    // counts, rather than from 50 concurrent `finally` blocks. Closing 50 sockets
+    // concurrently raced the kit's own teardown: the test's assertions passed, and
+    // then `pg_ctl -m immediate stop` could land while those backends were still
+    // exiting and report `pg_ctl_stop_immediate_failed` — a failure in the
+    // FIXTURE's teardown, with nothing to do with what the burst proved. Measured
+    // on two ports before this was changed, then four consecutive green runs
+    // after. Nothing the burst asserts is affected: the refusals it measures are
+    // statements, not connections.
+    const burstClients: Client[] = [];
     const results = await Promise.all(ids.map(async (id, index) => {
       const client = as(postgres, "web");
+      burstClients.push(client);
       await client.connect();
       try {
         await client.query("INSERT INTO updater.plan_approvals(id,plan_id,credential_id,authenticator_data,"
@@ -675,9 +686,12 @@ test("50 concurrent approval inserts on one plan leave no duplicate effects", as
         // SQLSTATE alone ("42501") does not name the column or the constraint.
         const { code, message } = error as { code?: string; message?: string };
         return { id, inserted: false as const, code: `${code ?? "no-code"}: ${(message ?? "").split("\n")[0]}` };
-      } finally { await client.end(); }
+      }
     }));
     const elapsed = Date.now() - started;
+    for (const client of burstClients) {
+      try { await client.end(); } catch { /* the driver may already have closed it */ }
+    }
 
     // Every one of the 50 landed. The point of the burst is that nothing here
     // serialises on a plan-level lock, because an approval row is evidence, not
