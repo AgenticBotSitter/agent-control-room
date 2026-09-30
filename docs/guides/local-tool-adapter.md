@@ -58,6 +58,8 @@ node control-room-connector.mjs run
 
 The connector reports `tool.whisper` as observed evidence. That report does not grant the capability; the capability you approved in Workers remains the ceiling.
 
+Saving the server-side link between a task, its adapter id, and its input files is a separate reviewed database change. Until that storage is connected, the connector safely waits instead of guessing an adapter from task wording.
+
 ## What the connector refuses
 
 It refuses an unknown adapter id, a changed or unsafe manifest, relative executables, shell characters or partial placeholders in arguments, missing inputs, excess concurrent runs, timeouts, oversized output, symbolic links, unsupported file types, and output containing recognizable secrets. A timeout or Stop terminates the process group and removes the temporary directory.
