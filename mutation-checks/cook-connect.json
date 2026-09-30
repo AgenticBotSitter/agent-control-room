@@ -113,8 +113,8 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
-    "replace": "  const release = async () => {};\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
+    "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  let failure, joinedRelease;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
+    "replace": "  const release = async () => {};\n  let failure, joinedRelease;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
     "test": "node --test --test-name-pattern \"ten concurrent installs\" tests/fleet-connector-install.test.mjs",
     "why": "same-profile installs serialize through the shared profile mutation lock"
   },
