@@ -13,10 +13,19 @@ import { now } from "./helpers/web-foundation";
 test("an owner can save an extractive recap only after every canonical reviewed task result is present", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());
   const source = buildIdeaLabFixtureV1();
+  // createdAt is pinned to the shared test clock, never to the Idea Lab
+  // fixture's own t0. The fixture clock is 2026-08-31T16:00:00.000Z, which is
+  // days before `now`; a session built on it is already past its own
+  // maxDurationSeconds deadline and WebIdeaRoundProposalOperation correctly
+  // refuses the round. Keep this session inside its own window, and derive the
+  // contribution times from it so every time in the test shares one clock.
+  const createdAt = new Date(now - 60_000).toISOString();
   const session = buildIdeaLabSessionV1({ sessionId: "idea:canonical-synthesis", tenantId: "tenant:web", workspaceId: "workspace:web",
     title: source.session.title, ideaSummary: source.session.ideaSummary, targetCustomer: source.session.targetCustomer,
     participants: source.session.participants, maxRounds: 1, maxDurationSeconds: source.session.maxDurationSeconds,
-    maxCostUsd: source.session.maxCostUsd, createdByIdentityDigest: source.session.createdByIdentityDigest, createdAt: source.session.createdAt });
+    maxCostUsd: source.session.maxCostUsd, createdByIdentityDigest: source.session.createdByIdentityDigest, createdAt });
+  assert.equal(now <= Date.parse(session.createdAt) + session.maxDurationSeconds * 1000, true,
+    "the session must still be inside its own discussion window");
   const key = new Uint8Array(32).fill(37), store = new IdeaLabProjectRegistryStoreV1(f.client, key);
   await store.registerSession(session);
   const proposals = new WebIdeaRoundProposalOperation(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, f.tasks, () => now);
@@ -32,7 +41,7 @@ test("an owner can save an extractive recap only after every canonical reviewed 
       participantId: link.participantId, round: 1, safeOpinion: `Reviewed output ${index + 1} is a bounded local result.`,
       opportunityCode: `opportunity_${index + 1}`, primaryRiskCode: `risk_${index + 1}`,
       suggestedExperiment: `Perform bounded experiment ${index + 1} before any external effect.`, confidencePercent: 70,
-      contributedAt: `2026-09-04T00:0${index + 1}:00.000Z`,
+      contributedAt: new Date(Date.parse(createdAt) + (index + 1) * 1000).toISOString(),
     }, { sourceMode: "canonical_task_result", liveBotContactAuthorized: false, providerContacted: false, canonicalTaskEvidence: {
       taskKey: link.taskKey, taskLinkDigest: link.linkDigest, taskPlanDigest: link.taskPlanDigest, taskInputDigest: link.taskInputDigest,
       projectId: link.projectId, jobId: link.jobId, runId: `run:reviewed-${index + 1}`, artifactId: `artifact:reviewed-${index + 1}`,
