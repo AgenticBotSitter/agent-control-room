@@ -213,6 +213,37 @@ test("recovery does not demand stop proof after the database-link effect is alre
   assert.equal(recovered.status, "completed");
 });
 
+test("code-only recovery completes with pg/current absent and never asks for stop proof", async t => {
+  const root = await fixtureV1(t); let armed = true;
+  await assert.rejects(switchPairLinksV1({ root, operationId: "recover-code-only", from: pair("r2", "p2", 2),
+    to: pair("r3", "p2", 2), fault: step => { if (armed && step === "after_previous_done") {
+      armed = false; throw Object.assign(new Error("killed"), { code: "simulated_kill" });
+    } } }), /killed/u);
+  await unlink(join(root, "pg/current"));
+  const recovered = await recoverPairLinksV1(root, { databaseStopped: async () => {
+    throw new Error("a code-only switch must not request database stop proof");
+  } });
+  assert.equal(recovered.status, "completed");
+  assert.equal(await readlink(join(root, "current")), "releases/r3");
+  assert.equal(await readlink(join(root, "pg/current")), "data-p2");
+});
+
+test("recovery refuses a malformed pg/current target before a database move", async t => {
+  const root = await fixtureV1(t); let armed = true, proofs = 0;
+  await assert.rejects(switchPairLinksV1({ root, operationId: "recover-malformed-pg", from: pair("r2", "p2", 2),
+    to: pair("r3", "p3", 3), fault: step => { if (armed && step === "after_previous_done") {
+      armed = false; throw Object.assign(new Error("killed"), { code: "simulated_kill" });
+    } } }), /killed/u);
+  await unlink(join(root, "pg/current"));
+  await symlink("../outside", join(root, "pg/current"));
+  await assert.rejects(recoverPairLinksV1(root, { databaseStopped: async () => {
+    proofs += 1; return true;
+  } }), /updater_pg_link_refused/u);
+  assert.equal(proofs, 0);
+  assert.equal(await readlink(join(root, "current")), "releases/r2");
+  assert.equal(await readlink(join(root, "pg/current")), "../outside");
+});
+
 test("rollback walks past a corrupt release and uses the reserve only for ENOSPC recovery", async t => {
   const root = await fixtureV1(t), history = new PairHistoryV1(root);
   await writeFile(join(root, "updater-state/known-good"), `${JSON.stringify({ schema: "control-room.known-good/v1", count: 3,
@@ -254,6 +285,31 @@ test("reserve recreation failure is reported after a double ENOSPC", async t => 
     throw Object.assign(new Error("operation still full"), { code: "ENOSPC" });
   }), /operation still full/u);
   assert.deepEqual(reported, ["operation still full", "no room for reserve"]);
+  await assert.rejects(reserve.assertIntact(), /ENOENT/u);
+});
+
+test("a throwing depletion hook cannot strand a rebuilt rescue reserve", async t => {
+  const root = await fixtureV1(t); let attempts = 0, notifications = 0;
+  const reserve = new DiskReserveV1(root, { reserveBytes: 4096,
+    createReserve: async () => writeFile(join(root, "rescue-reserve.bin"), Buffer.alloc(4096)),
+    onDepleted: async () => { notifications += 1; throw new Error("push transport down"); } });
+  await assert.rejects(reserve.finishWithReserve(async () => {
+    attempts += 1; throw Object.assign(new Error("operation still full"), { code: "ENOSPC" });
+  }), error => error.code === "ENOSPC" && error.message === "operation still full");
+  assert.equal(attempts, 2);
+  assert.equal(notifications, 1);
+  assert.equal((await reserve.assertIntact()).size, 4096);
+});
+
+test("throwing depletion hooks do not hide retry or reserve recreation failures", async t => {
+  const root = await fixtureV1(t); let notifications = 0;
+  const reserve = new DiskReserveV1(root, { reserveBytes: 4096,
+    createReserve: async () => { throw Object.assign(new Error("no room for reserve"), { code: "ENOSPC" }); },
+    onDepleted: async () => { notifications += 1; throw new Error("push transport down"); } });
+  await assert.rejects(reserve.finishWithReserve(async () => {
+    throw Object.assign(new Error("operation still full"), { code: "ENOSPC" });
+  }), error => error.code === "ENOSPC" && error.message === "operation still full");
+  assert.equal(notifications, 2);
   await assert.rejects(reserve.assertIntact(), /ENOENT/u);
 });
 
@@ -317,6 +373,31 @@ test("a promoted staged release survives a crash before switch and its marker se
   assert.equal(await readFile(join(root, "releases/r3/manifest"), "utf8"), "new");
   await actuator.switchPair(runV1());
   await assert.rejects(readFile(join(root, "updater-state/staged-release")), /ENOENT/u);
+});
+
+test("a replayed stage pins an already-present release against retention", async t => {
+  const root = await fixtureV1(t, { releases: ["r0", "r1", "r2", "r3", "r4", "r5", "r6"], data: ["p2"] });
+  assert.deepEqual(await actuatorV1(root).actuator.stage(runV1()), { replayed: true });
+  assert.match(await readFile(join(root, "updater-state/staged-release"), "utf8"), /"releaseId":"r3"/u);
+  const removed = await collectOldReleasesV1(root, { keep: 3 });
+  assert.ok(!removed.includes("r3"));
+  assert.equal(await readFile(join(root, "releases/r3/manifest"), "utf8"), "r3");
+});
+
+test("retention fails closed on corrupt and symlinked staged-release markers", async t => {
+  await t.test("corrupt marker", async t => {
+    const root = await fixtureV1(t, { releases: ["r0", "r1", "r2", "r3", "r4", "r5"], data: ["p2"] });
+    await writeFile(join(root, "updater-state/staged-release"), "{not-json\n");
+    await assert.rejects(collectOldReleasesV1(root, { keep: 3 }), /updater_staged_release_refused/u);
+    assert.equal(await readFile(join(root, "releases/r3/manifest"), "utf8"), "r3");
+  });
+  await t.test("symlink marker", async t => {
+    const root = await fixtureV1(t); const outside = join(root, "outside-staged-marker");
+    await writeFile(outside, `${JSON.stringify({ schema: "control-room.staged-release/v1", releaseId: "r3" })}\n`);
+    await symlink(outside, join(root, "updater-state/staged-release"));
+    await assert.rejects(collectOldReleasesV1(root), /updater_symlink_refused/u);
+    assert.match(await readFile(outside, "utf8"), /"releaseId":"r3"/u);
+  });
 });
 
 test("settling an older switch never clears a different staged release", async t => {

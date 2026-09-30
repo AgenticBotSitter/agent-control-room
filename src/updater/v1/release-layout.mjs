@@ -142,6 +142,7 @@ async function readCurrentPgDataIdV1(root) {
 }
 
 async function assertRecoveryDatabaseStoppedV1(root, record, nextPgDataId, direction, databaseStopped) {
+  if (record.from.pgDataId === record.to.pgDataId) return;
   const currentPgDataId = await readCurrentPgDataIdV1(root);
   if (currentPgDataId === nextPgDataId) return;
   try {

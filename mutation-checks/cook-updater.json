@@ -280,6 +280,48 @@
     "why": "settling an older transaction must not unpin the staged release belonging to another run"
   },
   {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (record.from.pgDataId === record.to.pgDataId) return;",
+    "replace": "if (false) return;",
+    "test": "node --test --test-name-pattern='code-only recovery completes' tests/updater-actuator.test.mjs",
+    "why": "code-only recovery must not read or require a pre-existing pg/current link"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "async #reportDepleted(error) {\n    try { await this.onDepleted(error); } catch { /* notification is best-effort */ }\n  }",
+    "replace": "async #reportDepleted(error) {\n    await this.onDepleted(error);\n  }",
+    "test": "node --test --test-name-pattern='throwing depletion hook' tests/updater-actuator.test.mjs",
+    "why": "a failing owner-notification hook must not prevent reserve restoration or replace the operation error"
+  },
+  {
+    "file": "src/updater/v1/staged-release.mjs",
+    "find": "if (error instanceof SyntaxError) throw updaterRefuseV1(\"updater_staged_release_refused\");",
+    "replace": "if (error instanceof SyntaxError) return undefined;",
+    "test": "node --test --test-name-pattern='corrupt and symlinked staged-release markers' tests/updater-actuator.test.mjs",
+    "why": "a corrupt staged-release marker must fail closed instead of silently unprotecting its release"
+  },
+  {
+    "file": "src/updater/v1/staged-release.mjs",
+    "find": "if (error?.code === \"ENOENT\") return undefined;",
+    "replace": "if (true) return undefined;",
+    "test": "node --test --test-name-pattern='corrupt and symlinked staged-release markers' tests/updater-actuator.test.mjs",
+    "why": "only an absent staged-release marker is optional; planted symlinks and other read failures must refuse"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (!/^data-[A-Za-z0-9._-]{1,80}$/u.test(target)) throw updaterRefuseV1(\"updater_pg_link_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_pg_link_refused\");",
+    "test": "node --test --test-name-pattern='malformed pg/current target' tests/updater-actuator.test.mjs",
+    "why": "recovery must reject traversal and out-of-root pg/current target shapes before a database move"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "await this.artifacts.verifyRelease(run, final, plan);\n      await writeStagedReleaseV1(this.root, plan.to.releaseId);",
+    "replace": "await this.artifacts.verifyRelease(run, final, plan);",
+    "test": "node --test --test-name-pattern='replayed stage pins' tests/updater-actuator.test.mjs",
+    "why": "a replayed stage must durably pin its already-present release until the switch settles"
+  },
+  {
     "file": "src/updater/v1/updater.mjs",
     "find": "await effects.recover?.();",
     "replace": "if (false) await effects.recover?.();",

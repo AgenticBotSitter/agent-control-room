@@ -120,6 +120,10 @@ export class DiskReserveV1 {
     return Object.freeze({ freeBytes: free, requiredBytes: required });
   }
 
+  async #reportDepleted(error) {
+    try { await this.onDepleted(error); } catch { /* notification is best-effort */ }
+  }
+
   async finishWithReserve(operation) {
     try { return await operation(); }
     catch (error) {
@@ -130,13 +134,16 @@ export class DiskReserveV1 {
       let result;
       try { result = await operation(); }
       catch (retryError) {
-        if (isNoSpaceV1(retryError)) await this.onDepleted(retryError);
+        if (isNoSpaceV1(retryError)) await this.#reportDepleted(retryError);
         try { await this.createReserve(); await this.assertIntact(); }
-        catch (reserveError) { await this.onDepleted(reserveError); }
+        catch (reserveError) { await this.#reportDepleted(reserveError); }
         throw retryError;
       }
       try { await this.createReserve(); await this.assertIntact(); }
-      catch (reserveError) { if (!isNoSpaceV1(reserveError)) throw reserveError; await this.onDepleted(reserveError); }
+      catch (reserveError) {
+        if (!isNoSpaceV1(reserveError)) throw reserveError;
+        await this.#reportDepleted(reserveError);
+      }
       return result;
     }
   }
