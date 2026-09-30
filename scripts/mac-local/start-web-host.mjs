@@ -49,52 +49,67 @@ export async function startMacLocalWebHost(input, runtime = {}) {
     runtime.hostReleaseIdentity ?? hostReleaseIdentityV1(fileURLToPath(releaseRoot)),
   ]);
   const load = runtime.load ?? (path => import(path));
-  const [hostModule, loaderModule, postgresModule, servingModule, rendererModule, intakeModule] = await Promise.all([
+  const [hostModule, loaderModule, postgresModule, servingModule, rendererModule, intakeModule, fleetModule] = await Promise.all([
     load(new URL("macLocalHost.js", releaseRoot).href), load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
     load(new URL("privatePostgres.js", releaseRoot).href), load(new URL("serving.js", releaseRoot).href),
     load(new URL("index.js", releaseRoot).href), load(new URL("workIntakePrivateService.js", releaseRoot).href),
+    load(new URL("macLocalFleet.js", releaseRoot).href),
   ]);
   if (typeof hostModule.createMacLocalProtectedHostV1 !== "function" || typeof loaderModule.loadMacLocalProtectedConfigurationFromRootV1 !== "function"
     || typeof loaderModule.loadOwnerWebPushConfigFromRootV1 !== "function"
     || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof servingModule.loadPrivateClientAssets !== "function"
     || typeof rendererModule.default !== "function"
     || typeof loaderModule.loadWorkIntakeServerConfigurationFromRootV1 !== "function"
-    || typeof intakeModule.prepareWorkIntakePrivateServiceV1 !== "function")
+    || typeof loaderModule.loadMacLocalDatabaseRolesFromRootV1 !== "function"
+    || typeof intakeModule.prepareWorkIntakePrivateServiceV1 !== "function"
+    || typeof fleetModule.prepareMacLocalFleetOwnerV1 !== "function"
+    || typeof fleetModule.loadMacLocalFleetConnectorReleaseV1 !== "function")
     throw new Error("mac_local_web_host_release_invalid");
   const assets = await servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url)));
-  const [configuration,installed,ownerWebPush] = await Promise.all([
+  const [configuration,installed,ownerWebPush,databaseRoles,connectorRelease] = await Promise.all([
     loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
     loaderModule.loadWorkIntakeServerConfigurationFromRootV1(input.protectedRoot),
-    loaderModule.loadOwnerWebPushConfigFromRootV1(input.protectedRoot)]);
+    loaderModule.loadOwnerWebPushConfigFromRootV1(input.protectedRoot),
+    loaderModule.loadMacLocalDatabaseRolesFromRootV1(input.protectedRoot),
+    fleetModule.loadMacLocalFleetConnectorReleaseV1(fileURLToPath(new URL("../fleet/release", import.meta.url)))]);
   verifyIntakeRoster(configuration,installed);
-  const host = hostModule.createMacLocalProtectedHostV1({
-    loadConfiguration: async () => configuration,
-    connectorOnly: true,
-    openDatabase: postgresModule.createPrivatePostgresDatabase,
-    ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
-    ...(ownerWebPush ? { ownerWebPush } : {}),
-    healthProbeKey, healthReleaseId, healthStartedAt: hostStartedAt,
-    assets, render: rendererModule.default,
-  });
-  return startHostWithOptionalIntake(host, installed, intakeModule);
+  const fleetOwner = fleetModule.prepareMacLocalFleetOwnerV1({ configuration, databaseRoles,
+    openDatabase: postgresModule.createPrivatePostgresDatabase, ...(connectorRelease ? { connectorRelease } : {}) });
+  let host;
+  try {
+    host = hostModule.createMacLocalProtectedHostV1({
+      loadConfiguration: async () => configuration,
+      connectorOnly: true,
+      openDatabase: postgresModule.createPrivatePostgresDatabase,
+      ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
+      ...(ownerWebPush ? { ownerWebPush } : {}),
+      fleet: fleetOwner.fleet,
+      healthProbeKey, healthReleaseId, healthStartedAt: hostStartedAt,
+      assets, render: rendererModule.default,
+    });
+  } catch (error) {
+    await fleetOwner.close().catch(() => { throw new Error("mac_local_web_host_cleanup_uncertain"); });
+    throw error;
+  }
+  return startHostWithOptionalIntake(host, installed, intakeModule, fleetOwner);
 }
 
-async function startHostWithOptionalIntake(host, installed, intakeModule) {
+async function startHostWithOptionalIntake(host, installed, intakeModule, fleetOwner) {
   let active, intake;
   try {
     if (installed) intake = await intakeModule.prepareWorkIntakePrivateServiceV1({ ...installed,
       integrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) });
     active = await host.start();
-    if (!intake) return active;
-    await intake.start();
+    if (intake) await intake.start();
     return Object.freeze({
+      ...active,
       async close() {
-        const results = await Promise.allSettled([intake.close(), active.close()]);
+        const results = await Promise.allSettled([intake?.close(), active.close(), fleetOwner.close()]);
         if (results.some(result => result.status === "rejected")) throw new Error("mac_local_web_host_cleanup_uncertain");
       },
     });
   } catch (error) {
-    const cleanup = await Promise.allSettled([intake?.close(), active?.close()]);
+    const cleanup = await Promise.allSettled([intake?.close(), active?.close(), fleetOwner.close()]);
     if (cleanup.some(result => result.status === "rejected")) throw new Error("mac_local_web_host_cleanup_uncertain");
     throw error;
   }

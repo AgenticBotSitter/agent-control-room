@@ -521,8 +521,11 @@ async function installMacWorker(paths, configuration, { runner, env, userId = pr
   await mkdir(paths.workerLogDir, { recursive: true, mode: 0o700 });
   await Promise.all([writeFile(joinPath(paths.workerLogDir, "out.log"), "", { flag: "a", mode: 0o600 }),
     writeFile(joinPath(paths.workerLogDir, "err.log"), "", { flag: "a", mode: 0o600 })]);
-  await writePrivate(paths.harnessesPath, { schema: HARNESS_SETTINGS_SCHEMA,
+  const settings = await captureHarnessSettings({ schema: HARNESS_SETTINGS_SCHEMA,
     harnesses: { [configuration.bot]: { enabled: true, ...configuration.settings } } });
+  await writePrivate(paths.harnessesPath, { schema: HARNESS_SETTINGS_SCHEMA,
+    harnesses: Object.fromEntries(Object.entries(settings.harnesses).map(([name, entry]) =>
+      [name, { enabled: entry.enabled, ...entry.configuration }])) });
   const temporary = `${paths.launchAgentPath}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
   await writeFile(temporary, launchAgentBytes(paths, { nodePath }), { mode: 0o600, flag: "wx" });
   await rename(temporary, paths.launchAgentPath);
@@ -561,6 +564,8 @@ export async function installConnector({ server, code, bot, name, workspace, hom
   workerProfile, workerProvider, userId, nodePath }) {
   validateInstallInput({ bot, workspace });
   if (alsoWorker && platform !== "darwin") throw new Error("Unattended worker installation is currently available on macOS only.");
+  if (alsoWorker && !bundledHarnessAdapterFactory)
+    throw new Error("Unattended worker installation requires the bundled Control Room connector release.");
   const paths = connectorInstallPaths({ homeDir, env, platform, name, workspace });
   if (alsoWorker) {
     workerConfiguration({ bot, executablePath: workerExecutable ?? "/control-room/resolved-worker", workspace: paths.workspace,
@@ -842,6 +847,12 @@ export async function loadHarnessSettings(path) {
   await refuseSharedWrite(path, "The harness settings file");
   let value;
   try { value = JSON.parse(raw); } catch { throw new Error("The harness settings file is not valid JSON."); }
+  return captureHarnessSettings(value, path);
+}
+
+/** One parser is shared by installation and startup, so the installer cannot
+ * write a harness document that this exact connector build later refuses. */
+export async function captureHarnessSettings(value, sourcePath) {
   const invalid = detail => new Error(`The harness settings file is not valid: ${detail}.`);
   if (!plainObject(value) || value.schema !== HARNESS_SETTINGS_SCHEMA) throw invalid(`schema must be "${HARNESS_SETTINGS_SCHEMA}"`);
   if (Object.keys(value).some(key => !["schema", "adapterModule", "harnesses"].includes(key))) throw invalid("unknown setting");
@@ -858,7 +869,9 @@ export async function loadHarnessSettings(path) {
   const anyEnabled = Object.values(harnesses).some(entry => entry.enabled);
   if (anyEnabled && !bundledHarnessAdapterFactory && !absolutePath(value.adapterModule))
     throw invalid("adapterModule must be an absolute path");
-  if (anyEnabled && !bundledHarnessAdapterFactory) await refuseSharedWrite(value.adapterModule, "The harness adapter module");
+  if (anyEnabled && !bundledHarnessAdapterFactory && sourcePath) {
+    await refuseSharedWrite(value.adapterModule, "The harness adapter module");
+  }
   return Object.freeze({ adapterModule: anyEnabled && !bundledHarnessAdapterFactory ? value.adapterModule : null,
     harnesses: Object.freeze(harnesses) });
 }

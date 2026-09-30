@@ -170,6 +170,9 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   listenerTiming?: { bindMs?: number; closeMs?: number };
   workBatchIntegrityKey?: Uint8Array;
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** Owner fleet routes backed by the separately opened fleet-owner login.
+   * The connector gateway itself is a different process. */
+  fleet?: MacLocalWebProcessOptionsV1["fleet"];
   /** The identity the health loop reports under. Defaults to the one fixed
    * Mac-local supervisor; supplied only where a distinct id is needed. */
   supervisorId?: string;
@@ -265,6 +268,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
           ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+          ...(input.fleet ? { fleet: input.fleet } : {}),
           ...(input.hostProcessId ? { hostProcessId: input.hostProcessId } : {}),
           ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
             healthStartedAt: input.healthStartedAt } : {}),

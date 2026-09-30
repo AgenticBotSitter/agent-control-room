@@ -2,11 +2,22 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { buildFleetConnectorReleaseForTestV1 } from "../scripts/build-fleet-connector.mjs";
 
 const SOURCE = resolve("scripts/fleet/connector.mjs");
 const WORKER_ID = `fleet-worker:${"a".repeat(32)}`;
+let bundledRoot, bundledSource, bundledConnector;
+
+test.before(async () => {
+  bundledRoot = await mkdtemp(join(tmpdir(), "connector-install-bundle-"));
+  const release = await buildFleetConnectorReleaseForTestV1({ root: bundledRoot, builtFrom: "7".repeat(40) });
+  bundledSource = join(bundledRoot, release.manifest.file);
+  bundledConnector = await import(`${pathToFileURL(bundledSource).href}?install-tests=1`);
+});
+test.after(async () => { if (bundledRoot) await rm(bundledRoot, { recursive: true, force: true }); });
 
 function code(character) { return `crj_${character.repeat(43)}`; }
 
@@ -126,10 +137,10 @@ test("spawned bot CLIs receive only paths derived from the injected home", async
 test("macOS worker install writes a per-bot harness profile and owner LaunchAgent, then removes both", async t => {
   const homeDir = await temporary(t, "connector-mac-worker-"), gateway = fakeGateway(), commands = recorder();
   const input = { server: "https://control.example", code: code("W"), bot: "codex", name: "local-codex",
-    homeDir, platform: "darwin", env: {}, fetcher: gateway.fetcher, runner: commands.runner, sourcePath: SOURCE,
+    homeDir, platform: "darwin", env: {}, fetcher: gateway.fetcher, runner: commands.runner, sourcePath: bundledSource,
     alsoWorker: true, workerExecutable: "/fixture/bin/codex", workerDeadlineMs: 120_000,
     userId: 501, nodePath: "/fixture/bin/node" };
-  const installed = await connector.installConnector(input);
+  const installed = await bundledConnector.installConnector(input);
   const harnesses = JSON.parse(await readFile(installed.paths.harnessesPath, "utf8"));
   assert.deepEqual(harnesses, { schema: "control-room.fleet-harnesses/v1", harnesses: { codex: {
     enabled: true, executablePath: "/fixture/bin/codex", workingDirectory: installed.paths.workspace, deadlineMs: 120_000,
@@ -138,17 +149,22 @@ test("macOS worker install writes a per-bot harness profile and owner LaunchAgen
   assert.match(plist, /<string>run<\/string>/u);
   assert.match(plist, /<string>--profile<\/string>\s*<string>local-codex<\/string>/u);
   assert.match(plist, /<string>--harnesses<\/string>/u);
-  assert.equal(plist.includes((await connector.loadConfig(installed.paths.configPath)).secret), false);
+  assert.equal(plist.includes((await bundledConnector.loadConfig(installed.paths.configPath)).secret), false);
   assert.equal((await stat(installed.paths.launchAgentPath)).mode & 0o777, 0o600);
   assert.deepEqual(commands.calls.filter(call => call[0] === "/bin/launchctl").map(call => call[1][0]),
     ["bootout", "bootstrap"]);
-  assert.equal((await connector.loadConfig(installed.paths.configPath)).installation.worker, "launch-agent");
+  assert.equal((await bundledConnector.loadConfig(installed.paths.configPath)).installation.worker, "launch-agent");
 
-  await connector.installConnector({ ...input, alsoWorker: false });
-  assert.equal((await connector.loadConfig(installed.paths.configPath)).installation.worker, "launch-agent",
+  const installedCopy = await import(`${pathToFileURL(installed.paths.connectorPath).href}?installed-round-trip=1`);
+  const accepted = await installedCopy.loadHarnessSettings(installed.paths.harnessesPath);
+  assert.equal(accepted.adapterModule, null);
+  assert.equal(typeof (await installedCopy.loadHarnessAdapter(accepted, "codex")).execute, "function");
+
+  await bundledConnector.installConnector({ ...input, alsoWorker: false });
+  assert.equal((await bundledConnector.loadConfig(installed.paths.configPath)).installation.worker, "launch-agent",
     "an ordinary retry must not orphan an already-running worker service");
 
-  await connector.uninstallConnector({ bot: input.bot, name: input.name, homeDir, platform: "darwin", env: {},
+  await bundledConnector.uninstallConnector({ bot: input.bot, name: input.name, homeDir, platform: "darwin", env: {},
     runner: commands.runner, userId: 501 });
   await assert.rejects(stat(installed.paths.configPath), error => error.code === "ENOENT");
   await assert.rejects(stat(installed.paths.harnessesPath), error => error.code === "ENOENT");
@@ -165,13 +181,13 @@ test("worker install retries safely after launchctl stops halfway without a seco
     return commands.runner(...args);
   };
   const input = { server: "https://control.example", code: code("X"), bot: "claude-code", name: "retry-worker",
-    homeDir, platform: "darwin", env: {}, fetcher: gateway.fetcher, runner, sourcePath: SOURCE, alsoWorker: true,
+    homeDir, platform: "darwin", env: {}, fetcher: gateway.fetcher, runner, sourcePath: bundledSource, alsoWorker: true,
     workerExecutable: "/fixture/bin/claude", userId: 501, nodePath: "/fixture/bin/node" };
-  await assert.rejects(connector.installConnector(input), /fixture failure/u);
-  assert.equal((await connector.loadConfig(connector.connectorInstallPaths(input).configPath)).installation.state, "registering");
-  const installed = await connector.installConnector(input);
+  await assert.rejects(bundledConnector.installConnector(input), /fixture failure/u);
+  assert.equal((await bundledConnector.loadConfig(bundledConnector.connectorInstallPaths(input).configPath)).installation.state, "registering");
+  const installed = await bundledConnector.installConnector(input);
   assert.equal(gateway.state.enrollments, 1);
-  assert.equal((await connector.loadConfig(installed.paths.configPath)).installation.state, "installed");
+  assert.equal((await bundledConnector.loadConfig(installed.paths.configPath)).installation.state, "installed");
 });
 
 test("Hermes zero exit without a saved entry is not reported as installed", async t => {
@@ -319,20 +335,23 @@ test("bad install input and real-home CLI use fail before enrollment", async t =
     name: "bad", workspace: "relative", homeDir }), /absolute directory/u);
   await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "codex",
     name: "linux-worker", homeDir, platform: "linux", alsoWorker: true }), /macOS only/u);
-  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "cursor",
+  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "codex",
+    name: "source-worker", homeDir, platform: "darwin", alsoWorker: true, workerExecutable: "/fixture/bin/codex",
+    userId: 501, fetcher: gateway.fetcher }), /requires the bundled Control Room connector release/u);
+  await assert.rejects(bundledConnector.installConnector({ server: "https://control.example", code: code("A"), bot: "cursor",
     name: "desktop-worker", homeDir, platform: "darwin", alsoWorker: true }), /Only Claude Code/u);
-  await assert.rejects(connector.installConnector({ server: "https://control.example", code: code("A"), bot: "hermes",
+  await assert.rejects(bundledConnector.installConnector({ server: "https://control.example", code: code("A"), bot: "hermes",
     name: "hermes-worker", homeDir, platform: "darwin", alsoWorker: true }), /requires --worker-profile/u);
   const workerBase = { server: "https://control.example", code: code("A"), bot: "codex", name: "invalid-worker",
     homeDir, platform: "darwin", alsoWorker: true, userId: 501, fetcher: gateway.fetcher };
-  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "relative" }), /absolute path/u);
-  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "/fixture/bin/codex",
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "relative" }), /absolute path/u);
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "/fixture/bin/codex",
     workerDeadlineMs: 99 }), /worker deadline/u);
-  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "/fixture/bin/codex",
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "/fixture/bin/codex",
     workerModel: "gpt-build" }), /model selection/u);
-  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "/fixture/bin/codex",
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "/fixture/bin/codex",
     nodePath: "relative" }), /Node executable/u);
-  await assert.rejects(connector.installConnector({ ...workerBase, workerExecutable: "/fixture/bin/codex",
+  await assert.rejects(bundledConnector.installConnector({ ...workerBase, sourcePath: bundledSource, workerExecutable: "/fixture/bin/codex",
     userId: 0 }), /user id/u);
   assert.equal(gateway.state.enrollments, 0, "all worker input refusals happen before enrollment");
   let out = "", err = "";

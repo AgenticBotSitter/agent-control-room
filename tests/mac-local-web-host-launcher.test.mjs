@@ -4,6 +4,7 @@ import { parseMacLocalWebHostArguments, startMacLocalTaskHost,
   startMacLocalWebHost } from "../scripts/mac-local/start-web-host.mjs";
 import { readPinnedMacExecutableVersion, verifyPinnedMacModelPolicy }
   from "../scripts/mac-local/bot-executable-inspection.mjs";
+import { startMacLocalFleetGateway } from "../scripts/mac-local/start-fleet-gateway.mjs";
 
 test("Mac local web host launcher accepts only the owner-attended fixed protected root", () => {
   assert.deepEqual(parseMacLocalWebHostArguments(["--owner-attended", "--protected-root", "/Library/Application Support/Agent Control Room"]),
@@ -51,12 +52,14 @@ test("web host validates and prepares optional intake before listeners and clean
       async loadWorkIntakeServerConfigurationFromRootV1() { calls.push("load-intake"); return {
         port:3211,integrityKey:"y".repeat(43),database:{},credentials:[{workerId:"worker:test",workerKind:"codex"}]}; },
       async loadMacLocalProtectedConfigurationFromRootV1() { return {enablement:{workers:[{workerId:"worker:test",kind:"codex"}]}}; },
+      async loadMacLocalDatabaseRolesFromRootV1() { calls.push("load-roles"); return {}; },
       async loadOwnerWebPushConfigFromRootV1() { calls.push("load-owner-web-push"); return ownerWebPush; },
     };
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1(input) {
       assert.equal(input.workBatchIntegrityKey instanceof Uint8Array, true);
       assert.equal(input.workBatchIntegrityKey.length, 32);
       assert.equal(input.ownerWebPush, ownerWebPush);
+      assert.ok(input.fleet);
       calls.push("prepare-web"); return {
       async start() { calls.push("start-web"); return { async close() { calls.push("close-web"); } }; },
     }; } };
@@ -64,6 +67,8 @@ test("web host validates and prepares optional intake before listeners and clean
       calls.push("prepare-intake"); return { async start() { calls.push("start-intake"); throw new Error("fixture"); },
         async close() { calls.push("close-intake"); } };
     } };
+    if (name === "macLocalFleet.js") return { async loadMacLocalFleetConnectorReleaseV1() { return undefined; },
+      prepareMacLocalFleetOwnerV1() { return { fleet: { ownerAuthority: {} }, async close() { calls.push("close-fleet"); } }; } };
     if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
     if (name === "serving.js") return { async loadPrivateClientAssets() { return {}; } };
     if (name === "index.js") return { default() {} };
@@ -72,8 +77,8 @@ test("web host validates and prepares optional intake before listeners and clean
   await assert.rejects(startMacLocalWebHost({ protectedRoot: "/protected" }, {
     load, loadHealthProbeKey: async () => Buffer.alloc(32, 7), hostReleaseIdentity: async () => "dev",
   }), /fixture/);
-  assert.deepEqual(calls, ["load-intake", "load-owner-web-push", "prepare-web", "prepare-intake", "start-web", "start-intake",
-    "close-intake", "close-web"]);
+  assert.deepEqual(calls, ["load-intake", "load-owner-web-push", "load-roles", "prepare-web", "prepare-intake", "start-web", "start-intake",
+    "close-intake", "close-web", "close-fleet"]);
 });
 
 test("task host is connector-only and loads neither a task provider nor a native queue worker", async () => {
@@ -90,6 +95,7 @@ test("task host is connector-only and loads neither a task provider nor a native
           assert.equal(input.createTaskApplication, undefined);
           assert.equal(input.startQueueWorker, undefined);
           assert.equal(input.readVersion, undefined);
+          assert.ok(input.fleet);
           return task;
         },
       }) };
@@ -97,6 +103,7 @@ test("task host is connector-only and loads neither a task provider nor a native
         loadMacLocalProtectedConfigurationFromRootV1: async () => ({ localOwnerSession: { tenantId: "tenant:fixture" },
           workspaceId: "workspace:fixture",enablement:{workers:[]} }),
         loadWorkIntakeServerConfigurationFromRootV1: async()=>undefined,
+        loadMacLocalDatabaseRolesFromRootV1: async()=>({}),
         loadOwnerWebPushConfigFromRootV1: async()=>undefined,
       };
       if (path.endsWith("privatePostgres.js")) return { createPrivatePostgresDatabase: () => ({
@@ -105,12 +112,14 @@ test("task host is connector-only and loads neither a task provider nor a native
       if (path.endsWith("serving.js")) return { loadPrivateClientAssets: async () => ({ respond() {} }) };
       if (path.endsWith("index.js")) return { default() {} };
       if(path.endsWith("workIntakePrivateService.js"))return{prepareWorkIntakePrivateServiceV1(){}};
+      if(path.endsWith("macLocalFleet.js"))return{loadMacLocalFleetConnectorReleaseV1:async()=>undefined,
+        prepareMacLocalFleetOwnerV1:()=>({fleet:{ownerAuthority:{}},async close(){}})};
       throw new Error(`unexpected ${path}`);
     },
   });
-  assert.equal(result, task);
+  assert.equal(result.isReady(), true);
   assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js",
-    "privatePostgres.js", "serving.js", "workIntakePrivateService.js"].sort());
+    "privatePostgres.js", "serving.js", "workIntakePrivateService.js", "macLocalFleet.js"].sort());
 });
 
 test("a zero-project connector-only start remains website/intake-only", async () => {
@@ -122,6 +131,7 @@ test("a zero-project connector-only start remains website/intake-only", async ()
     if (name === "macLocalProtectedLoader.js") return {
       loadMacLocalProtectedConfigurationFromRootV1: async () => ({enablement:{workers:[]}}),
       loadWorkIntakeServerConfigurationFromRootV1:async()=>undefined,
+      loadMacLocalDatabaseRolesFromRootV1:async()=>({}),
       loadOwnerWebPushConfigFromRootV1:async()=>undefined,
     };
     if (name === "privatePostgres.js") return { createPrivatePostgresDatabase: () => ({}) };
@@ -131,9 +141,38 @@ test("a zero-project connector-only start remains website/intake-only", async ()
     if (name === "serving.js") return { loadPrivateClientAssets: async () => ({ respond() {} }) };
     if (name === "index.js") return { default() {} };
     if(name==="workIntakePrivateService.js")return{prepareWorkIntakePrivateServiceV1(){}};
+    if(name==="macLocalFleet.js")return{loadMacLocalFleetConnectorReleaseV1:async()=>undefined,
+      prepareMacLocalFleetOwnerV1:()=>({fleet:{ownerAuthority:{}},async close(){}})};
     throw new Error(`unexpected ${name}`);
   } });
-  assert.equal(result, site);
+  assert.equal(result.isReady(), true);
   assert.equal(loaded.includes("macLocalTaskProvider.js"), false);
   assert.equal(loaded.includes("nativeQueueFactories.js"), false);
+});
+
+test("the Mac fleet gateway launcher composes one separate loopback service from protected roles", async () => {
+  const loaded = [], calls = [], service = { origin: "http://127.0.0.1:3212", async start() { calls.push("start"); },
+    async close() { calls.push("close"); } };
+  const active = await startMacLocalFleetGateway({ protectedRoot: "/protected" }, { load: async path => {
+    const name = path.split("/").at(-1); loaded.push(name);
+    if (name === "macLocalProtectedLoader.js") return {
+      loadMacLocalProtectedConfigurationFromRootV1: async () => ({ localOwnerSession: { tenantId: "tenant:test" } }),
+      loadMacLocalDatabaseRolesFromRootV1: async () => ({ fleetGateway: {}, fleetOwner: {} }),
+      loadWorkIntakeServerConfigurationFromRootV1: async () => ({ integrityKey: "k".repeat(43) }),
+    };
+    if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
+    if (name === "macLocalFleet.js") return {
+      loadMacLocalFleetConnectorReleaseV1: async () => ({ manifest: {} }),
+      async prepareMacLocalFleetGatewayV1(input) {
+        assert.equal(input.configuration.localOwnerSession.tenantId, "tenant:test");
+        assert.ok(input.databaseRoles.fleetGateway); assert.ok(input.connectorRelease); return service;
+      },
+    };
+    throw new Error(`unexpected ${name}`);
+  } });
+  assert.equal(active, service);
+  assert.deepEqual(calls, ["start"]);
+  assert.deepEqual(loaded.sort(), ["macLocalFleet.js", "macLocalProtectedLoader.js", "privatePostgres.js"].sort());
+  await active.close();
+  assert.deepEqual(calls, ["start", "close"]);
 });

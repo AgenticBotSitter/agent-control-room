@@ -916,6 +916,8 @@ async function startWebHostOnRoster(t, protectedRoot) {
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() {
       return { async start() { return { async close() {} }; } };
     } };
+    if (name === "macLocalFleet.js") return { async loadMacLocalFleetConnectorReleaseV1() { return undefined; },
+      prepareMacLocalFleetOwnerV1() { return { fleet: { ownerAuthority: {} }, async close() {} }; } };
     if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {
       return { async start() {}, async close() {} };
     } };
