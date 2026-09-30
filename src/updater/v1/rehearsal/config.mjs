@@ -38,7 +38,8 @@ export function parseRehearsalConfigV1(value) {
       refuse("rehearsal_throwaway_root_refused");
     if (value.allowRealRoot !== false) refuse("rehearsal_real_root_authority_refused");
   } else {
-    if (value.allowRealRoot !== true || !inside("/Volumes/CRRehearsal", root))
+    if (value.allowRealRoot !== true || root === "/Volumes/CRRehearsal"
+        || !inside("/Volumes/CRRehearsal", root))
       refuse("rehearsal_real_root_authority_refused");
   }
   if (typeof value.rehearsalHostname !== "string" || !HOSTNAME_V1.test(value.rehearsalHostname)

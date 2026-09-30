@@ -7,6 +7,7 @@ import { REHEARSAL_CASES_V1 } from "../src/updater/v1/rehearsal/catalog.mjs";
 import { assertRehearsalAncestryV1, parseRehearsalConfigV1, prepareRehearsalRootV1 }
   from "../src/updater/v1/rehearsal/config.mjs";
 import { runUpdaterRehearsalV1 } from "../src/updater/v1/rehearsal/harness.mjs";
+import { REHEARSAL_IMPLEMENTATIONS_V1 } from "../src/updater/v1/rehearsal/scenarios.mjs";
 
 async function fixture(t) {
   const root = join("/private/tmp", `control-room-rehearsal-test-${randomUUID()}`);
@@ -18,6 +19,13 @@ async function fixture(t) {
     accounts: { service: "_rehearsal_service", database: "_rehearsal_database", builder: "_rehearsal_builder" },
     daemonLabelPrefix: "xyz.agentcontrolroom.rehearsal.unit", allowRealRoot: false });
   return { root, config };
+}
+
+function selectedCases(...ids) {
+  const wanted = new Set(ids);
+  return REHEARSAL_CASES_V1.map(phase => ({ ...phase,
+    scenarios: phase.scenarios.filter(scenario => wanted.has(scenario.id)) }))
+    .filter(phase => phase.scenarios.length > 0);
 }
 
 test("rehearsal config refuses live roots, production ports, aliases, hostile origins and unconfigured accounts", async t => {
@@ -36,6 +44,8 @@ test("rehearsal config refuses live roots, production ports, aliases, hostile or
     /rehearsal_daemon_labels_refused/u);
   assert.throws(() => parseRehearsalConfigV1(changed({ mode: "real-root", allowRealRoot: false })),
     /rehearsal_real_root_authority_refused/u);
+  assert.throws(() => parseRehearsalConfigV1(changed({ mode: "real-root", allowRealRoot: true,
+    rehearsalRoot: "/Volumes/CRRehearsal" })), /rehearsal_real_root_authority_refused/u);
 });
 
 test("rehearsal root requires owners and an exact marker before reuse", async t => {
@@ -66,6 +76,7 @@ test("catalog names every v2 hostile and rescue case and keeps future items expl
     "P7.updater-symlink", "P7.fixed-step-wins", "P8.sudo-shim", "P8.origin-and-port",
     "P8.registration-race", "P8.approval-flood", "P8.health-auth", "P8.push-host",
     "P9.all-links-revert", "P9.pg-pin", "P11.rescue-db-points", "P11.failed-heartbeat-links",
+    "P10.rescue-reboot-persistence",
     "P13.environment", "P13.profile-shape", "P13.running-identities", "P13.provider-module",
     "P13.static-process-scan", "DB-R8.preimage", "DB-R8.restore"]) assert.ok(ids.has(id), id);
   const future = REHEARSAL_CASES_V1.flatMap(item => item.scenarios).filter(item => item.pending);
@@ -73,6 +84,105 @@ test("catalog names every v2 hostile and rescue case and keeps future items expl
   assert.ok(future.some(item => item.pending.includes("item 11a")));
   assert.ok(future.some(item => item.pending.includes("item 14")));
   assert.ok(future.some(item => item.pending.includes("item 18")));
+  assert.ok(future.every(item => /items? \d/u.test(item.pending)), "every pending check names its unblocking item");
+});
+
+test("scenario implementations must return positive assertion evidence", async t => {
+  const { config } = await fixture(t);
+  const noops = Object.fromEntries(Object.keys(REHEARSAL_IMPLEMENTATIONS_V1).map(name => [name, async () => ({})]));
+  const result = await runUpdaterRehearsalV1(config, { implementations: noops });
+  const runnableCount = REHEARSAL_CASES_V1.flatMap(phase => phase.scenarios)
+    .filter(scenario => !scenario.pending).length;
+  assert.equal(result.passed, 0);
+  assert.equal(result.failed, runnableCount);
+  assert.ok(result.phases.flatMap(phase => phase.scenarios)
+    .filter(scenario => scenario.status === "fail")
+    .every(scenario => scenario.reason === "rehearsal_assertion_evidence_missing"));
+});
+
+test("owner-code and clipboard checks inspect planted evidence instead of returning constants", async t => {
+  const owner = await fixture(t);
+  await prepareRehearsalRootV1(owner.config);
+  await mkdir(join(owner.root, "updater-state"));
+  await writeFile(join(owner.root, "updater-state/owner-code.txt"), "planted\n");
+  const ownerResult = await runUpdaterRehearsalV1(owner.config, {
+    cases: selectedCases("P0.no-owner-code-or-clipboard") });
+  assert.equal(ownerResult.failed, 1);
+  assert.equal(ownerResult.phases[0].scenarios[0].reason, "rehearsal_owner_code_present");
+
+  const clipboard = await fixture(t);
+  await prepareRehearsalRootV1(clipboard.config);
+  await mkdir(join(clipboard.root, "evidence"));
+  await writeFile(join(clipboard.root, "evidence/fake-commands.jsonl"),
+    '{"command":"pbcopy","arguments":""}\n');
+  const clipboardResult = await runUpdaterRehearsalV1(clipboard.config, {
+    cases: selectedCases("P0.no-owner-code-or-clipboard") });
+  assert.equal(clipboardResult.failed, 1);
+  assert.equal(clipboardResult.phases[0].scenarios[0].reason, "rehearsal_clipboard_invoked");
+});
+
+test("named H2 scenarios exercise target, phase, runner and refusal guards", { timeout: 120_000 }, async t => {
+  const { config } = await fixture(t);
+  const result = await runUpdaterRehearsalV1(config, { cases: selectedCases(
+    "P2.torn-pair-switch", "P6.lease-burst", "P8.known-good-injection") });
+  assert.equal(result.failed, 0);
+  assert.equal(result.passed, 3);
+  const detail = new Map(result.phases.flatMap(phase => phase.scenarios).map(scenario => [scenario.id, scenario.detail]));
+  assert.equal(detail.get("P2.torn-pair-switch").missingTargetRecovery, "rolled_back");
+  assert.equal(detail.get("P2.torn-pair-switch").invalidPhaseRefusal, "updater_link_switch_refused");
+  assert.equal(detail.get("P6.lease-burst").busy, 19);
+  assert.equal(detail.get("P8.known-good-injection").malformedShapeRefused, "updater_known_good_refused");
+});
+
+test("a marked root is rerunnable with identical outcomes even when the clock repeats", { timeout: 120_000 }, async t => {
+  const { config } = await fixture(t), clock = () => new Date("2026-09-30T12:00:00.000Z");
+  const cases = selectedCases("P6.lease-burst");
+  const first = await runUpdaterRehearsalV1(config, { clock, cases });
+  const second = await runUpdaterRehearsalV1(config, { clock, cases });
+  const shape = result => ({ passed: result.passed, pending: result.pending, failed: result.failed,
+    acceptanceReady: result.acceptanceReady, phases: result.phases.map(phase => ({ id: phase.id,
+      status: phase.status, counts: phase.counts })) });
+  assert.deepEqual(shape(second), shape(first));
+  assert.notEqual(second.runRoot, first.runRoot);
+});
+
+test("twenty same-root callers yield one run and nineteen typed busy refusals", { timeout: 120_000 }, async t => {
+  const { config } = await fixture(t);
+  await prepareRehearsalRootV1(config);
+  const cases = selectedCases("P6.lease-burst");
+  const results = await Promise.allSettled(Array.from({ length: 20 }, () =>
+    runUpdaterRehearsalV1(config, { cases })));
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  const refusals = results.filter(result => result.status === "rejected").map(result => result.reason?.code);
+  assert.deepEqual(refusals, Array(19).fill("rehearsal_root_busy"));
+});
+
+test("a failed halfway scenario releases the root lock and a retry can pass", async t => {
+  const { config } = await fixture(t); let attempts = 0;
+  const cases = [{ id: "P-stop", title: "stop and retry", scenarios: [{ id: "P-stop.halfway",
+    title: "a stopped attempt can retry", implementation: "halfway" }] }];
+  const implementations = { halfway: async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("simulated_stop_halfway");
+    return { assertions: 1, retryPassed: true };
+  } };
+  const stopped = await runUpdaterRehearsalV1(config, { cases, implementations });
+  assert.equal(stopped.failed, 1);
+  const retried = await runUpdaterRehearsalV1(config, { cases, implementations });
+  assert.equal(retried.failed, 0);
+  assert.equal(retried.passed, 1);
+});
+
+test("a stale lock left by a stopped process is reclaimed before retry", async t => {
+  const { root, config } = await fixture(t);
+  await prepareRehearsalRootV1(config);
+  await mkdir(join(root, ".rehearsal-running"));
+  await writeFile(join(root, ".rehearsal-running/owner.json"), JSON.stringify({
+    schema: "control-room.rehearsal-lock/v1", pid: 2_147_483_647, token: "stale",
+  }));
+  const result = await runUpdaterRehearsalV1(config, { cases: selectedCases("P6.lease-burst") });
+  assert.equal(result.failed, 0);
+  assert.equal(result.passed, 1);
 });
 
 test("throwaway harness runs all available scenarios, records four evidence files per case and never promotes pending", { timeout: 120_000 }, async t => {

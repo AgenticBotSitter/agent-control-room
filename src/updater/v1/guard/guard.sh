@@ -19,7 +19,11 @@ ASSUME_YES=0
 # The rehearsal uses only temp roots and fake privileged commands. A production
 # invocation cannot redirect the guard with inherited variables.
 if [ "${CONTROL_ROOM_GUARD_TESTING-}" = 1 ]; then
-  case "${CONTROL_ROOM_GUARD_ROOT-}" in /tmp/*|/private/tmp/*|/Volumes/CRRehearsal/*) ROOT=$CONTROL_ROOM_GUARD_ROOT ;; *) exit 70 ;; esac
+  GUARD_ROOT_INPUT=${CONTROL_ROOM_GUARD_ROOT-}
+  case "/$GUARD_ROOT_INPUT/" in */../*|*/./*) exit 70 ;; esac
+  GUARD_ROOT_CANONICAL=$(cd "$GUARD_ROOT_INPUT" 2>/dev/null && /bin/pwd -P) || exit 70
+  [ "$GUARD_ROOT_CANONICAL" = "$GUARD_ROOT_INPUT" ] || exit 70
+  case "$GUARD_ROOT_CANONICAL" in /private/tmp/*|/Volumes/CRRehearsal/*) ROOT=$GUARD_ROOT_CANONICAL ;; *) exit 70 ;; esac
   case "${CONTROL_ROOM_GUARD_TEST_BIN-}" in "$ROOT"/*)
     LAUNCHCTL="$CONTROL_ROOM_GUARD_TEST_BIN/launchctl"
     STAT="$CONTROL_ROOM_GUARD_TEST_BIN/stat"

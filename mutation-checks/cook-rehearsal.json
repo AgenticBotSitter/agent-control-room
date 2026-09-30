@@ -33,5 +33,89 @@
     "replace": "if (!entry.isDirectory() || entry.isSymbolicLink())",
     "test": "node --test --test-name-pattern='real-root ancestry' tests/updater-rehearsal.test.mjs",
     "why": "every real rehearsal-root ancestor must remain root-owned and non-writable by lower identities"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/scenarios.mjs",
+    "find": "if (forbidden.length > 0)\n    throw Object.assign(new Error(\"owner-code material exists\"), { code: \"rehearsal_owner_code_present\" });",
+    "replace": "if (false)\n    throw Object.assign(new Error(\"owner-code material exists\"), { code: \"rehearsal_owner_code_present\" });",
+    "test": "node --test --test-name-pattern='owner-code and clipboard' tests/updater-rehearsal.test.mjs",
+    "why": "a planted owner-code file anywhere in the disposable root must make the named P0 check fail"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/scenarios.mjs",
+    "find": "if (clipboardInvocations.length > 0)\n    throw Object.assign(new Error(\"a clipboard fake was invoked\"), { code: \"rehearsal_clipboard_invoked\" });",
+    "replace": "if (false)\n    throw Object.assign(new Error(\"a clipboard fake was invoked\"), { code: \"rehearsal_clipboard_invoked\" });",
+    "test": "node --test --test-name-pattern='owner-code and clipboard' tests/updater-rehearsal.test.mjs",
+    "why": "an observed pbcopy or pbpaste invocation must make the named P0 clipboard check fail"
+  },
+  {
+    "file": "src/updater/v1/contracts.mjs",
+    "find": "if (object.schema !== \"control-room.known-good/v1\" || !Array.isArray(object.pairs)\n      || object.pairs.length < 1 || object.pairs.length > 3) throw updaterRefuseV1(\"updater_known_good_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_known_good_refused\");",
+    "test": "node --test --test-name-pattern='named H2 scenarios' tests/updater-rehearsal.test.mjs",
+    "why": "P8 must exercise the known-good shape guard and require its exact named refusal code"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "await assertDirectoryTargetV1(root, `releases/${pair.releaseId}`, \"updater_release_target_refused\");",
+    "replace": "await Promise.resolve();",
+    "test": "node --test --test-name-pattern='named H2 scenarios' tests/updater-rehearsal.test.mjs",
+    "why": "P2 must roll back rather than complete through a missing release target"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (record.phase !== \"completed\") throw updaterRefuseV1(\"updater_link_switch_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_link_switch_refused\");",
+    "test": "node --test --test-name-pattern='named H2 scenarios' tests/updater-rehearsal.test.mjs",
+    "why": "P2 must refuse an invalid forward-recovery phase instead of calling it complete"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "replace": "if (false) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "test": "node --test --test-name-pattern='named H2 scenarios' tests/updater-rehearsal.test.mjs",
+    "why": "P6 must send twenty calls through one runner and detect removal of its in-process exclusion guard"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/harness.mjs",
+    "find": "if (!detail || typeof detail !== \"object\" || Array.isArray(detail)\n      || !Number.isInteger(detail.assertions) || detail.assertions < 1)\n    throw updaterRefuseV1(\"rehearsal_assertion_evidence_missing\");",
+    "replace": "if (false)\n    throw updaterRefuseV1(\"rehearsal_assertion_evidence_missing\");",
+    "test": "node --test --test-name-pattern='positive assertion evidence' tests/updater-rehearsal.test.mjs",
+    "why": "a scenario implementation that returns an empty object and asserts nothing must never pass"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "  GUARD_ROOT_INPUT=${CONTROL_ROOM_GUARD_ROOT-}\n  case \"/$GUARD_ROOT_INPUT/\" in */../*|*/./*) exit 70 ;; esac\n  GUARD_ROOT_CANONICAL=$(cd \"$GUARD_ROOT_INPUT\" 2>/dev/null && /bin/pwd -P) || exit 70\n  [ \"$GUARD_ROOT_CANONICAL\" = \"$GUARD_ROOT_INPUT\" ] || exit 70\n  case \"$GUARD_ROOT_CANONICAL\" in /private/tmp/*|/Volumes/CRRehearsal/*) ROOT=$GUARD_ROOT_CANONICAL ;; *) exit 70 ;; esac",
+    "replace": "  case \"${CONTROL_ROOM_GUARD_ROOT-}\" in /tmp/*|/private/tmp/*|/Volumes/CRRehearsal/*) ROOT=$CONTROL_ROOM_GUARD_ROOT ;; *) exit 70 ;; esac",
+    "test": "node --test --test-name-pattern='guard root rejects traversal' tests/updater-guard.test.mjs",
+    "why": "the guard test seam must reject dot-dot traversal even when it canonicalises back inside an allowed root"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/harness.mjs",
+    "find": "    await rm(path, { force: true });\n    await writeFile(path, `#!/bin/sh\\n${body}\\n`, { mode: 0o500, flag: \"wx\" });",
+    "replace": "    await writeFile(path, `#!/bin/sh\\n${body}\\n`, { mode: 0o500 });",
+    "test": "node --test --test-name-pattern='marked root is rerunnable' tests/updater-rehearsal.test.mjs",
+    "why": "reinstalling read-only fake commands must not make a marked rehearsal root one-shot"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/harness.mjs",
+    "find": "if (error?.code === \"EEXIST\") throw updaterRefuseV1(\"rehearsal_root_busy\");",
+    "replace": "if (error?.code === \"EEXIST\") throw error;",
+    "test": "node --test --test-name-pattern='twenty same-root callers' tests/updater-rehearsal.test.mjs",
+    "why": "concurrent same-root runs must produce a stable typed busy refusal rather than raw EEXIST"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/config.mjs",
+    "find": "if (value.allowRealRoot !== true || root === \"/Volumes/CRRehearsal\"\n        || !inside(\"/Volumes/CRRehearsal\", root))",
+    "replace": "if (value.allowRealRoot !== true || !inside(\"/Volumes/CRRehearsal\", root))",
+    "test": "node --test --test-name-pattern='config refuses live roots' tests/updater-rehearsal.test.mjs",
+    "why": "real-root mode must use a child install directory and never the rehearsal volume root itself"
+  },
+  {
+    "file": "src/updater/v1/rehearsal/harness.mjs",
+    "find": "if (probeError?.code === \"ESRCH\") {\n            await rm(path, { recursive: true, force: true });\n            return acquireRootLock(root, false);\n          }",
+    "replace": "if (false) {\n            await rm(path, { recursive: true, force: true });\n            return acquireRootLock(root, false);\n          }",
+    "test": "node --test --test-name-pattern='stale lock left' tests/updater-rehearsal.test.mjs",
+    "why": "a stopped rehearsal process must not leave a permanent root lock that blocks a safe retry"
   }
 ]

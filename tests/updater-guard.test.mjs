@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, readlink, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
@@ -36,11 +36,18 @@ async function guardRootV1(t, suffix = "one") {
   return { root, bin, log, runtime };
 }
 
-async function runGuardV1(fixture, verb = "rescue") {
+async function runGuardV1(fixture, verb = "rescue", root = fixture.root) {
   return exec("/bin/sh", ["-p", guard, verb], { env: { CONTROL_ROOM_GUARD_TESTING: "1",
-    CONTROL_ROOM_GUARD_ROOT: fixture.root, CONTROL_ROOM_GUARD_TEST_BIN: fixture.bin,
+    CONTROL_ROOM_GUARD_ROOT: root, CONTROL_ROOM_GUARD_TEST_BIN: fixture.bin,
     CONTROL_ROOM_GUARD_ASSUME_YES: "1" } });
 }
+
+test("the test-only guard root rejects traversal before running a fake command", async t => {
+  const fixture = await guardRootV1(t);
+  const traversed = `${fixture.root}/../${basename(fixture.root)}`;
+  await assert.rejects(runGuardV1(fixture, "rescue", traversed), error => error.code === 70);
+  await assert.rejects(readFile(fixture.log), /ENOENT/u);
+});
 
 async function declineGuardV1(fixture) {
   return exec("/bin/sh", ["-c", "printf 'NO\\n' | /bin/sh -p \"$1\" rescue", "guard-test", guard], {

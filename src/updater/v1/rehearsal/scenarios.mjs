@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, link, lstat, mkdir, readFile, readlink, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, readFile, readdir, readlink, rm, symlink, unlink, writeFile }
+  from "node:fs/promises";
 import { join } from "node:path";
 import { DiskReserveV1, PairHistoryV1, UpdaterActuatorV1 } from "../actuator.mjs";
 import { verifyBundleManifestV1 } from "../attended-flip.mjs";
@@ -15,6 +16,7 @@ import { buildTrustedEnvironment, trustedToolEnvironment } from "../trusted-runt
 const digest = value => `sha256:${createHash("sha256").update(String(value)).digest("hex")}`;
 const pair = (releaseId, pgDataId, value = pgDataId) => ({ releaseId, pgDataId, schemaDigest: digest(value) });
 const guard = join(process.cwd(), "src/updater/v1/guard/guard.sh");
+const evidence = (assertions, detail) => Object.freeze({ assertions, ...detail });
 
 async function executable(path, body) { await writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o500 }); }
 async function expectRefusal(operation, pattern) {
@@ -129,14 +131,15 @@ async function rootSafety(context) {
   assert.ok(Object.values(context.config.accounts).every(name => name.includes("rehearsal")));
   const fakeCommands = [];
   if (context.config.mode === "throwaway") {
-    for (const name of ["launchctl", "sudo", "tailscale", "diskutil"]) {
+    for (const name of ["launchctl", "sudo", "tailscale", "pbcopy", "pbpaste", "diskutil"]) {
       const entry = await lstat(join(context.fakes.directory, name));
       assert.ok(entry.isFile() && (entry.mode & 0o111) !== 0); fakeCommands.push(name);
     }
   }
-  return { ownersEnabled: context.preflight.ownersEnabled, mode: context.config.mode,
+  return evidence(context.config.mode === "throwaway" ? 9 : 3, { ownersEnabled: context.preflight.ownersEnabled,
+    mode: context.config.mode,
     hostname: context.config.rehearsalHostname, ports: context.config.ports, accounts: context.config.accounts,
-    daemonLabelPrefix: context.config.daemonLabelPrefix, fakeCommands };
+    daemonLabelPrefix: context.config.daemonLabelPrefix, fakeCommands });
 }
 
 async function filesystemSwaps({ work }) {
@@ -148,13 +151,37 @@ async function filesystemSwaps({ work }) {
   assert.equal(await readFile(join(root, "outside"), "utf8"), "untouched\n");
   await writeFile(join(root, "lower/state"), "safe\n"); await link(join(root, "lower/state"), join(root, "lower/alias"));
   const hardlinkCode = await expectRefusal(() => readFileNoFollowV1(root, "lower/state"), /updater_file_refused/u);
-  return { outsideUntouched: true, refusals: [readCode, hardlinkCode] };
+  return evidence(3, { outsideUntouched: true, refusals: [readCode, hardlinkCode] });
 }
 
-async function absenceChecks({ root }) {
-  const forbidden = ["owner-code", "owner-code.txt", "clipboard.txt"];
-  for (const name of forbidden) await assert.rejects(readFile(join(root, "updater-state", name)), /ENOENT/u);
-  return { ownerCodeFileExists: false, clipboardInvocationCount: 0 };
+async function findForbiddenOwnerCode(root) {
+  const pending = [root], found = [];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if ((entry.isFile() || entry.isSymbolicLink())
+          && /(?:^|[._-])owner[._-]?code(?:[._-]|$)/iu.test(entry.name)) found.push(path);
+      if (entry.isDirectory() && !entry.isSymbolicLink()) pending.push(path);
+    }
+  }
+  return found;
+}
+
+async function absenceChecks({ root, fakes }) {
+  const forbidden = await findForbiddenOwnerCode(root);
+  if (forbidden.length > 0)
+    throw Object.assign(new Error("owner-code material exists"), { code: "rehearsal_owner_code_present" });
+  let log = "";
+  if (fakes) {
+    try { log = await readFile(fakes.log, "utf8"); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+  }
+  const clipboardInvocations = log.split("\n").filter(line => /"command":"pb(?:copy|paste)"/u.test(line));
+  if (clipboardInvocations.length > 0)
+    throw Object.assign(new Error("a clipboard fake was invoked"), { code: "rehearsal_clipboard_invoked" });
+  return evidence(2, { ownerCodeFileExists: false, clipboardInvocationCount: clipboardInvocations.length,
+    scannedRoot: true, clipboardLogObserved: Boolean(fakes) });
 }
 
 async function hostileEnvironment() {
@@ -164,7 +191,7 @@ async function hostileEnvironment() {
     async () => buildTrustedEnvironment({ [name]: "/untrusted/value" }), /trusted_spawn_environment_refused/u));
   const clean = trustedToolEnvironment("node");
   assert.deepEqual(Object.keys(clean).sort(), ["LANG", "LC_ALL"]);
-  return { hostileNames: names, refusalCount: refused.length, inheritedValues: 0 };
+  return evidence(names.length + 1, { hostileNames: names, refusalCount: refused.length, inheritedValues: 0 });
 }
 
 async function bundleFixture(work) {
@@ -179,14 +206,14 @@ async function bundleTamper({ work }) {
   const fixture = await bundleFixture(work); await writeFile(join(fixture.root, "unlisted"), "hostile\n", { mode: 0o400 });
   const code = await expectRefusal(() => verifyBundleManifestV1(fixture.root, fixture.manifest),
     /updater_bundle_manifest_refused/u);
-  return { refused: code, candidateInstalled: false };
+  return evidence(1, { refused: code, candidateInstalled: false });
 }
 async function bundleSymlink({ work }) {
   const fixture = await bundleFixture(work); await unlink(join(fixture.root, "updater.mjs"));
   await writeFile(join(work, "outside"), "export const fixed = false;\n", { mode: 0o500 });
   await symlink(join(work, "outside"), join(fixture.root, "updater.mjs"));
   const code = await expectRefusal(() => verifyBundleManifestV1(fixture.root, fixture.manifest), /updater_/u);
-  return { refused: code, outsideUntouched: true };
+  return evidence(1, { refused: code, outsideUntouched: true });
 }
 
 async function codeCrashPoints({ work }) {
@@ -208,7 +235,7 @@ async function codeCrashPoints({ work }) {
     completed.push({ index, killedAt: (await readFile(join(root, "kill-fired"), "utf8")).trim(),
       attempts: effects.attempts });
   }
-  return { faultPoints: completed.length, completed };
+  return evidence(completed.length * 4, { faultPoints: completed.length, completed });
 }
 
 async function tornSwitch({ work }) {
@@ -224,7 +251,30 @@ async function tornSwitch({ work }) {
     assert.equal(await readlink(join(root, "current")), "releases/r3");
     assert.equal(await readlink(join(root, "pg/current")), "data-p3");
   }
-  return { faultPoints: cuts.length, terminalPair: "new-healthy", mixedPairs: 0 };
+  const missingRoot = await pairRoot(join(work, "missing-release-target")); let missingArmed = true;
+  await expectRefusal(() => switchPairLinksV1({ root: missingRoot, operationId: "switch-missing",
+    from: pair("r2", "p2"), to: pair("r3", "p3"), fault: step => {
+      if (missingArmed && step === "after_database_done") { missingArmed = false;
+        throw Object.assign(new Error("killed"), { code: "simulated_kill" }); }
+    } }), /simulated_kill/u);
+  await rm(join(missingRoot, "releases/r3"), { recursive: true });
+  const rolledBack = await recoverPairLinksV1(missingRoot);
+  assert.equal(rolledBack.status, "rolled_back");
+  assert.equal(rolledBack.reason, "updater_release_target_refused");
+  assert.equal(await readlink(join(missingRoot, "current")), "releases/r2");
+  assert.equal(await readlink(join(missingRoot, "pg/current")), "data-p2");
+
+  const phaseRoot = await pairRoot(join(work, "invalid-forward-phase"));
+  await writeFile(join(phaseRoot, "updater-state/link-switch.json"), `${JSON.stringify({
+    schema: "control-room.pair-link-switch/v1", operationId: "switch-phase", phase: "rollback_intent",
+    from: pair("r2", "p2"), to: pair("r3", "p3"), previousReleaseId: "r2",
+  })}\n`);
+  const phaseCode = await expectRefusal(() => recoverPairLinksV1(phaseRoot), /^updater_link_switch_refused$/u);
+  assert.equal(phaseCode, "updater_link_switch_refused");
+  assert.equal(await readlink(join(phaseRoot, "current")), "releases/r2");
+  assert.equal(await readlink(join(phaseRoot, "pg/current")), "data-p2");
+  return evidence(cuts.length * 4 + 9, { faultPoints: cuts.length, terminalPair: "new-healthy", mixedPairs: 0,
+    missingTargetRecovery: rolledBack.status, invalidPhaseRefusal: phaseCode });
 }
 
 async function diskPreflight({ work }) {
@@ -233,7 +283,7 @@ async function diskPreflight({ work }) {
     diskFree: async () => 3000 });
   const code = await expectRefusal(() => reserve.preflight({ releaseBytes: 1024 }), /updater_disk_reserve_low/u);
   assert.equal(await readlink(join(root, "current")), "releases/r2");
-  return { refused: code, terminalPair: "old-healthy" };
+  return evidence(2, { refused: code, terminalPair: "old-healthy" });
 }
 async function diskReserveRetry({ work }) {
   const root = await pairRoot(join(work, "disk-retry")); let attempts = 0, rebuilds = 0;
@@ -242,30 +292,37 @@ async function diskReserveRetry({ work }) {
   const result = await reserve.finishWithReserve(async () => { attempts += 1;
     if (attempts === 1) throw Object.assign(new Error("full"), { code: "ENOSPC" }); return "restored"; });
   assert.equal(result, "restored"); await reserve.assertIntact();
-  return { attempts, reserveRebuilds: rebuilds, recovered: true };
+  return evidence(2, { attempts, reserveRebuilds: rebuilds, recovered: true });
 }
 
 async function runnerLeaseBurst() {
   const store = new MemoryStore(), effects = new Effects(); let release;
   effects.gate = new Promise(resolve => { release = resolve; });
-  const actors = Array.from({ length: 20 }, (_, index) => runnerFixture({ store,
-    effects: index === 0 ? effects : new Effects(), leaseToken: index === 0 ? "lease-one" : `lease-${index}` }).runner);
-  const promises = actors.map(actor => actor.runOnce()); await new Promise(resolve => setImmediate(resolve));
+  const actor = runnerFixture({ store, effects }).runner;
+  const promises = Array.from({ length: 20 }, () => actor.runOnce());
+  await new Promise(resolve => setImmediate(resolve));
   effects.gate = undefined; release(); const results = await Promise.all(promises);
   assert.equal(results.filter(result => result.status === "succeeded").length, 1);
   assert.equal(results.filter(result => result.status === "busy").length, 19);
-  return { callers: 20, leaseOwners: 1, busy: 19 };
+  assert.deepEqual(effects.calls, ["precheck", "stage", "quick_backup", "drain", "switch", "restart", "health",
+    "known_good"], "the winning caller performs each physical effect exactly once");
+  return evidence(3, { callers: 20, leaseOwners: 1, busy: 19, duplicatedEffects: 0 });
 }
 
 async function knownGoodInjection({ work }) {
   const marker = join(work, "effect-marker");
+  const shapeCode = await expectRefusal(() => parseKnownGoodV1({ schema: "hostile-known-good/v1", count: 1,
+    pairs: [{ releaseId: "r1", pgDataId: "p1", schemaDigest: digest("p1") }] }),
+  /^updater_known_good_refused$/u);
+  assert.equal(shapeCode, "updater_known_good_refused");
   const code = await expectRefusal(async () => {
     parseKnownGoodV1({ schema: "control-room.known-good/v1", count: 1,
       pairs: [{ releaseId: "../../outside", pgDataId: "p1", schemaDigest: digest("p1") }] });
     await writeFile(marker, "effect\n");
-  }, /updater_known_good_refused/u);
+  }, /^updater_known_good_refused$/u);
+  assert.equal(code, "updater_known_good_refused");
   await assert.rejects(readFile(marker), /ENOENT/u);
-  return { refused: code, effectsBeforeRefusal: 0 };
+  return evidence(4, { refused: code, malformedShapeRefused: shapeCode, effectsBeforeRefusal: 0 });
 }
 
 async function rollbackChain({ work }) {
@@ -281,7 +338,7 @@ async function rollbackChain({ work }) {
     to: pair("r3", "p2"), releaseBytes: 1, databaseBytes: 0, databaseClass: "none" } };
   const restored = await actuator.rollback(run);
   assert.equal(restored.releaseId, "r0"); assert.equal(await readlink(join(root, "current")), "releases/r0");
-  return { corruptPairSkipped: "r1", selectedPair: restored, restarts };
+  return evidence(2, { corruptPairSkipped: "r1", selectedPair: restored, restarts });
 }
 
 async function guardAllLinks({ work, config }) {
@@ -292,7 +349,8 @@ async function guardAllLinks({ work, config }) {
   const serviceCalls = await readFile(fixture.log, "utf8");
   assert.doesNotMatch(serviceCalls, /system\/xyz\.agentcontrolroom\.(?!rehearsal\.)/u);
   assert.match(serviceCalls, new RegExp(`system/${config.daemonLabelPrefix.replaceAll(".", "\\.")}\\.updater`, "u"));
-  return { revertedLinks: fixture.runtime.length, rescuedTo: rescued.to, labelPrefix: config.daemonLabelPrefix };
+  return evidence(fixture.runtime.length + 3, { revertedLinks: fixture.runtime.length, rescuedTo: rescued.to,
+    labelPrefix: config.daemonLabelPrefix });
 }
 
 async function guardRescuePoints({ work, config }) {
@@ -305,7 +363,7 @@ async function guardRescuePoints({ work, config }) {
     const rescued = JSON.parse(await readFile(join(fixture.root, "updater-state/rescued.json"), "utf8"));
     assert.equal(rescued.to.releaseId, "r1");
   }
-  return { killPoints: steps.length, terminalPair: "older-known-good", forwardResumes: 0 };
+  return evidence(steps.length * 2, { killPoints: steps.length, terminalPair: "older-known-good", forwardResumes: 0 });
 }
 
 async function pauseStop() {
@@ -325,7 +383,7 @@ async function pauseStop() {
       plan_id: "plan-one", state, run_class: "code", lease_token: "lease-one", detail: {} }, mode });
     assert.ok(["succeeded", "rolled_back"].includes((await fixture.runner.runOnce()).status));
   }
-  return { preDrainStates: preDrain.length, postDrainStates: 4, strandedRuns: 0 };
+  return evidence(preDrain.length * 4 + 4, { preDrainStates: preDrain.length, postDrainStates: 4, strandedRuns: 0 });
 }
 
 async function profileShape() {
@@ -335,7 +393,7 @@ async function profileShape() {
     for (const path of ["/opt/homebrew", "/usr/local", "/Users"]) assert.ok(text.includes(path), `${role}: ${path}`);
     assert.match(text, /deny file-read\* file-map-executable/u); checked.push(role);
   }
-  return { profiles: checked, deniedRootsPerProfile: 3 };
+  return evidence(roles.length * 4, { profiles: checked, deniedRootsPerProfile: 3 });
 }
 
 export const REHEARSAL_IMPLEMENTATIONS_V1 = Object.freeze({
