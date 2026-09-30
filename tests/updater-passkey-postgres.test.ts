@@ -1386,6 +1386,48 @@ test("the web insert path validates the response shape before it reaches the tab
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 
+test("the deployer and web ports are separate objects, checked on the prototype", async () => {
+  // NO DATABASE NEEDED, and deliberately not part of the real-PG count: this is a
+  // structural claim about the two classes, and it is the claim that keeps
+  // `PasskeyAuthorityV1`'s `updater_passkey_store_port_unbound` refusal meaningful.
+  //
+  // WHY IT MATTERS. `PasskeyAuthorityV1` and `PasskeyRefusalAggregatorV1` look for
+  // exactly three methods and refuse with `updater_passkey_store_port_unbound` when
+  // any is absent — that refusal is how the updater declines to start a registration
+  // it cannot complete safely. If the WEB's port also carried them, a caller that
+  // wired the wrong object would pass that check and fail later, at the first call,
+  // as a 42501 rather than as the named refusal.
+  //
+  // Checked on the PROTOTYPE, not with `in` or a truthy lookup, so an own property
+  // that only exists because some test assigned it cannot satisfy the assertion.
+  const deployer = Object.getPrototypeOf(new PasskeyStoreV1({ query: async () => ({ rows: [] }) }));
+  const web = Object.getPrototypeOf(new PasskeyWebStoreV1({ query: async () => ({ rows: [] }) }));
+  for (const name of ["registrationRows", "notifyCoolingOff", "recordApprovalRefusal"]) {
+    assert.equal(typeof deployer[name], "function", `the deployer port must carry ${name}`);
+    assert.equal(web[name], undefined,
+      `the web port must NOT carry ${name}: a web login holds no authority to do it`);
+  }
+  // And the two the web genuinely has.
+  for (const name of ["options", "insert"]) {
+    assert.equal(typeof web[name], "function", `the web port must carry ${name}`);
+    assert.equal(deployer[name], undefined, `the deployer port must NOT carry ${name}`);
+  }
+  // `openRegistration` is how the updater OPENS a registration; the web must never
+  // be able to do that, which is the whole reason the table has no INSERT grant.
+  for (const name of ["openRegistration", "consumeRegistration"]) {
+    assert.equal(typeof deployer[name], "function");
+    assert.equal(web[name], undefined, `the web port must NOT carry ${name}`);
+  }
+  // And every method is bound, so a destructured port still works — the aggregator
+  // holds the store, not the method, but this states that nothing here relies on
+  // `this` being the object a caller happens to have.
+  const store = new PasskeyStoreV1({ query: async () => ({ rows: [] }) });
+  const { registrationRows } = store;
+  assert.equal(typeof registrationRows, "function");
+  await assert.rejects(registrationRows("not-a-digest"), /updater_registration_digest_refused/u,
+    "a destructured method still validates its own input, so the guard does not need `this`");
+});
+
 test("every routine in schema updater pins its search_path with pg_temp last", async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
