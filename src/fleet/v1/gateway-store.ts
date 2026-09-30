@@ -6,6 +6,7 @@ import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema, requestRecordSchema, workflo
 import { sha256Digest } from "../../security";
 import { moveFleetEntityV1, readFleetEntityV1, type FleetActorV1 } from "./canonical-transitions";
 import { fleetFail, FleetErrorV1 } from "./errors";
+import { isFleetClaimRefusalV1 } from "./database-failure";
 import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_PATTERN_V1,
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
@@ -417,8 +418,11 @@ export class FleetGatewayStoreV1 {
         [this.#tenantId, claimId, offerId, principal.workerId, principal.nodeId, offer.project_id, job.id, attemptId, leaseId,
           idempotencyKey, now]);
       } catch (error) {
-        // The database guard refuses revoked, out-of-scope, over-capacity and doubly-leased claims.
-        if (["P0001", "23505", "23503"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        // The database guards refuse revoked, out-of-scope, over-capacity and
+        // doubly-leased claims, each with a SQLSTATE the store reads off
+        // `sqlState`. At the ceiling this is a conflict the connector moves past
+        // to the next offer, not a fault that ends the pass.
+        if (isFleetClaimRefusalV1(error)) return fleetFail("conflict");
         throw error;
       }
       const claimed = await canonical.claimReadyTaskJob({ tenantId: this.#tenantId, jobId: job.id,
@@ -436,7 +440,9 @@ export class FleetGatewayStoreV1 {
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.#tenantId, claimed.lease.id, offer.project_id, job.id,
           claimed.attempt.id, principal.nodeId, scope.scope_kind, scope.path_fold]);
       } catch (error) {
-        if (["23P01", "23514"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        // The same rewrite as the claim above: 0100 raises 23P01 and 23514, and
+        // the bounded database carries them on `sqlState`, not `code`.
+        if (isFleetClaimRefusalV1(error)) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-claim:${suffix}`, tenantId: this.#tenantId, projectId: offer.project_id,

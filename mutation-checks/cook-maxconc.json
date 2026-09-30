@@ -1,0 +1,30 @@
+[
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "  PERFORM pg_catalog.pg_advisory_xact_lock(\n    pg_catalog.hashtextextended(json_build_array(NEW.tenant_id, NEW.worker_id)::text, 0));",
+    "replace": "  -- MUTATED: the serialising lock is gone",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "why": "a worker's live-claim ceiling is serialised in the database, so three unlocked racing claimers cannot all read the same count and all win"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "    AND l.state='active' AND l.expires_at>pg_catalog.statement_timestamp();",
+    "replace": "    AND l.state='active';",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "why": "a lease past its expiry does not occupy a slot, so a crashed machine does not hold its own ceiling open"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "  IF live_claims>=worker_max_concurrent THEN",
+    "replace": "  IF live_claims>worker_max_concurrent THEN",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts",
+    "why": "the ceiling is exactly maxConcurrent, not one above it"
+  },
+  {
+    "file": "src/fleet/v1/database-failure.ts",
+    "find": "  \"54000\", \"P0001\", \"23505\", \"23503\", \"23P01\", \"23514\",",
+    "replace": "  \"P0001\", \"23505\", \"23503\", \"23P01\", \"23514\",",
+    "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
+    "why": "0234's capacity refusal reaches the worker as a conflict, so the connector moves to the next offer instead of abandoning its pass"
+  }
+]

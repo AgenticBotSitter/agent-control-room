@@ -1,4 +1,5 @@
 export * from "./errors";
+export * from "./database-failure";
 export * from "./identifiers";
 export * from "./canonical-transitions";
 export * from "./gateway-store";
