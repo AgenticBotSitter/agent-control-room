@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "ffe17740eaacaef472d34de72b278da0c81f381ec64a8e2998be0b6c7714cc03",
+  "digest": "950d623afd6d8383ef12756fb734358fcdccfee9785bd7bc041c07f06dba8910",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -659,7 +659,7 @@
     {
       "file": "db/migrations/0154_pipeline_advance_round_receipts.sql",
       "order": 110,
-      "sha256": "cfc55f35b64d7a3566512ee4a81cbc85c759dc1a4f051a750b010393483217a9",
+      "sha256": "d4a72c7287ac385ad77ebd773ca2091c01337be514b2018096a13cdd68588df9",
       "kind": "migrate"
     },
     {

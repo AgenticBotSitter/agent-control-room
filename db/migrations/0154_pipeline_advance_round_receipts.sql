@@ -49,6 +49,7 @@ BEGIN
     OR NEW.payload->>'kind' IS DISTINCT FROM NEW.kind
     OR NEW.payload->>'state' IS DISTINCT FROM NEW.state
     OR NEW.payload->>'deliveryState' IS DISTINCT FROM NEW.delivery_state
+    OR NEW.payload->>'reasonCode' IS NULL
     OR NEW.payload->>'reasonCode' NOT IN ('pipeline_stage_loop_limit_reached',
       'pipeline_run_loop_limit_reached')
     OR NEW.payload->>'requestedAction' IS NULL
@@ -71,13 +72,21 @@ CREATE TRIGGER control_action_inbox_pipeline_loop_guard
 
 -- The owner resolves it exactly as every other attention item: the payload's
 -- state moves to resolved and nothing else changes.
+--
+-- This guard is UPDATE ONLY. It used to be attached to UPDATE OR DELETE, but a
+-- BEFORE DELETE row trigger returns NEW, which is NULL on a delete, so every
+-- DELETE on control_action_inbox -- including admin cleanup and restore tooling
+-- on an ordinary, unrelated inbox row -- silently affected zero rows without
+-- raising anything. The delete path is its own guard below, which passes a
+-- non-pipeline row through and refuses to delete a pipeline-loop item that is
+-- still open, so an owner item can never be removed while it is unresolved.
 CREATE FUNCTION guard_pipeline_loop_attention_update() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF OLD.id NOT LIKE 'attention:pipeline-loop:%' THEN
     RETURN NEW;
   END IF;
-  IF TG_OP<>'UPDATE' OR NEW.tenant_id<>OLD.tenant_id OR NEW.id<>OLD.id
+  IF NEW.tenant_id<>OLD.tenant_id OR NEW.id<>OLD.id
     OR NEW.project_id IS DISTINCT FROM OLD.project_id
     OR NEW.work_item_id IS DISTINCT FROM OLD.work_item_id
     OR NEW.kind<>OLD.kind OR OLD.state<>'open' OR NEW.state<>'resolved'
@@ -90,5 +99,21 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.guard_pipeline_loop_attention_update() FROM PUBLIC;
 CREATE TRIGGER control_action_inbox_pipeline_loop_update_guard
-  BEFORE UPDATE OR DELETE ON public.control_action_inbox
+  BEFORE UPDATE ON public.control_action_inbox
   FOR EACH ROW EXECUTE FUNCTION public.guard_pipeline_loop_attention_update();
+
+CREATE FUNCTION guard_pipeline_loop_attention_delete() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF OLD.id NOT LIKE 'attention:pipeline-loop:%' THEN
+    RETURN OLD;  -- an existing writer's row keeps the store's own rules
+  END IF;
+  IF OLD.state<>'resolved' THEN
+    RAISE EXCEPTION 'pipeline loop attention delete rejected';
+  END IF;
+  RETURN OLD;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_pipeline_loop_attention_delete() FROM PUBLIC;
+CREATE TRIGGER control_action_inbox_pipeline_loop_delete_guard
+  BEFORE DELETE ON public.control_action_inbox
+  FOR EACH ROW EXECUTE FUNCTION public.guard_pipeline_loop_attention_delete();

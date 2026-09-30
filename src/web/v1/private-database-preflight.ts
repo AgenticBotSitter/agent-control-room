@@ -20,7 +20,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // PGlite digest script and cross-checked against a real PostgreSQL 17 cluster
 // installed the production way; both agree. Catalog query below; not a mutable
 // database marker.
-export const privateWebSchemaDigest = "9929454e7ba2354e08cc49e2e6837f255678b3593c718c522ad21b22c11c6bc7";
+export const privateWebSchemaDigest = "ecc00c00f0ab888447fabaff5f605baf49784814cebf66576b8babd1313b2faa";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",

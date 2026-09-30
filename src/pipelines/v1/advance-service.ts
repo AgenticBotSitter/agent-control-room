@@ -314,13 +314,11 @@ export class PipelineAdvanceServiceV1 {
         if (resolved.state==="uncertain" || candidate.state==="uncertain") refuse("stage_uncertain");
         if (resolved.state==="waiting_approval") refuse("waiting_approval");
         const selected = {...base,executionJobId:resolved.executionJobId};
-        // A receipt replays only while it still describes THIS stage's current
-        // job. A fix round re-enters the stage with a new planned job, so the old
-        // receipt is history: replaying it would refuse a legitimate round, and
-        // treating it as a new receipt would collide with the per-stage key.
-        // The round is the job chain's own count for this stage, so a replay of
-        // the same job always lands on the same receipt.
-        const round = await this.#stageRound(tx,run.id,Number(candidate.stage_ordinal));
+        // The round a REPLAY lands on is that SOURCE job's own receipt: a fix round
+        // is a new source job and the stage's `current_job_id` moves with it, so
+        // the receipt a job already wrote is found by that job, not by counting.
+        const round = await this.#stageRound(tx,run.id,Number(candidate.stage_ordinal),
+          candidate.current_job_id);
         const prior = await this.#receipt(tx,run.id,candidate.stage_ordinal,round);
         if (prior) return this.#replayReceipt(prior,selected,policyId);
         if (resolved.state!=="eligible") refuse("stage_not_eligible");
@@ -389,7 +387,7 @@ export class PipelineAdvanceServiceV1 {
       // in the SAME transaction that inserts the advance receipt below: a check
       // and its claim commit together or not at all, so two concurrent advances
       // can never both see the last unit of a ceiling as free.
-      const loop=await this.#claimLoopRound(tx,run,stage,template);
+      const loop=await this.#claimLoopRound(tx,run,stage,template,source.id);
       const delegation=await capability.authorizeDelegationInSession(tx,selected,policyId);
       const nextCost=delegation.nextCost;
       const allowance=await this.#claimInstallationAllowance(tx,loop.workerId,
@@ -420,8 +418,10 @@ export class PipelineAdvanceServiceV1 {
         return refuse("execution_authority_missing");});
       await authenticate();
       // The receipt is per fix round, so a re-entered stage has its own durable
-      // record and a replay of the same job lands on the same row.
-      const advancedAt=new Date(this.#now()).toISOString(),roundIndex=await this.#stageRound(tx,run.id,selected.stageOrdinal),
+      // record and a replay of the same job lands on the same row. The round is
+      // the one `#claimLoopRound` already claimed and compared, so the receipt's
+      // key and the counted round can never disagree.
+      const advancedAt=new Date(this.#now()).toISOString(),roundIndex=loop.loopIndex,
         receiptId=`pipeline-advance:${run.id}:${selected.stageOrdinal}:${roundIndex}`;
       // "Count runs, never dollars": an unknown cost is recorded as unknown, with
       // no invented number and no refusal. The pairing check in 0152 refuses any
@@ -663,8 +663,20 @@ export class PipelineAdvanceServiceV1 {
         ON s.tenant_id=r.tenant_id AND s.pipeline_run_id=r.pipeline_run_id AND s.stage_ordinal=r.stage_ordinal
         WHERE r.tenant_id=$1 AND s.worker_id=$3
         AND r.advanced_at > $2::timestamptz - interval '1 day')::text AS agent_runs_today,
-      (SELECT COUNT(DISTINCT id) FROM control_harness_runs WHERE tenant_id=$1
-        AND state IN('discovered','starting','running','waiting_input','waiting_approval','cancelling'))::text
+      -- A process this machine is already running. A lease and a queue row, not a
+      -- harness run: a worker mints the harness run when it picks the work up,
+      -- so counting only harness runs let successive sweeps each see the same
+      -- live count and queue past the ceiling until a worker started them. The
+      -- overshoot was bounded only by runs-per-hour. This counts the two: a
+      -- live harness run, OR a pipeline advance that claimed work and has no
+      -- harness run yet. Both hold a process open from the moment the work was
+      -- claimed, and a finished harness run is not one of them.
+      ((SELECT COUNT(DISTINCT id) FROM control_harness_runs WHERE tenant_id=$1
+        AND state IN('discovered','starting','running','waiting_input','waiting_approval','cancelling'))
+        + (SELECT COUNT(DISTINCT execution_job_id) FROM pipeline_advance_receipts r WHERE r.tenant_id=$1
+        AND NOT EXISTS(SELECT 1 FROM control_harness_runs h
+          WHERE h.tenant_id=r.tenant_id AND h.job_id=r.execution_job_id
+          AND h.state IN('discovered','starting','running','waiting_input','waiting_approval','cancelling'))))::text
         AS active_agent_processes,
       (SELECT COALESCE(SUM(delegation_cost_microusd),0) FROM pipeline_advance_receipts WHERE tenant_id=$1
         AND delegation_cost_state='known')::text AS spent_microusd`,
@@ -695,14 +707,21 @@ export class PipelineAdvanceServiceV1 {
       runsPerHour, runsPerAgentPerDay, agentCeiling, clusterCeiling, dbClusters };
   }
 
-  /** The round count that already exists: the distinct pipeline jobs carrying
-   * each stage's ordinal. One stage spans N jobs and N attempts as the loop
-   * runs, so there is no second stored counter that could disagree with the job
-   * chain. */
+  /** The fix rounds that already exist, counted as DURABLE RECEIPTS rather than
+   * jobs. The receipt is the one row the advance transaction itself appends
+   * per round, under the run row lock, so a round cannot be counted twice and
+   * cannot be invented by planning an extra job.
+   *
+   * Counting jobs was wrong, and the real planner proves it: a stage holds a
+   * SOURCE job and a DISTINCT `job:execution:*` job per round (both carry
+   * `stage_ordinal`), so a job count made a stage's first attempt look like
+   * round 1 and stopped a signoff stage -- which is signed with `max_loops: 0`
+   * -- before it had ever run. The receipt count is exactly "fix rounds this
+   * stage has started", which is what `loop_index` and `max_loops` mean. */
   async #loopRounds(runId: string, projectId?: string) {
-    return (await this.db.query<{ stage_ordinal: number | string }>(`SELECT stage_ordinal FROM control_jobs
-      WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal IS NOT NULL ORDER BY stage_ordinal,id`,
-    [this.scope.tenantId, runId])).rows;
+    return (await this.db.query<{ stage_ordinal: number | string; loop_index: number | string; source_job_id: string }>(
+      `SELECT stage_ordinal,loop_index,source_job_id FROM pipeline_advance_receipts
+      WHERE tenant_id=$1 AND pipeline_run_id=$2`, [this.scope.tenantId, runId])).rows;
   }
 
   /** The stage this run is on, its effective ceilings and the current count.
@@ -724,11 +743,21 @@ export class PipelineAdvanceServiceV1 {
     if (!stage) return undefined;
     const rounds = await this.#loopRounds(runId, locator.project_id);
     const stageOrdinal = Number(stage.stage_ordinal);
+    // `stageRounds` is the round THIS advance would be: the stage's own receipt
+    // count, unless the stage's current source job already has one, in which
+    // case this is a replay of that job and its round is that job's own. That is
+    // exactly what `#stageRound` computes inside the transaction, so a replay of
+    // an already-started round is never mistaken for a fresh round past the
+    // ceiling. `runTotal` is the rounds the whole run has started, so the round
+    // it would start is `runTotal + 1`. Both comparisons are `>`, the same two
+    // `#claimLoopRound` makes.
+    const stageRows = rounds.filter(row => Number(row.stage_ordinal) === stageOrdinal);
+    const replay = stageRows.find(row => row.source_job_id === stage.current_job_id);
+    const stageRounds = replay ? Number(replay.loop_index) : stageRows.length;
     return { projectId: locator.project_id, stage, stageOrdinal,
       maxLoops: pipelineEffectiveMaxLoopsV1(Number(stage.max_loops)),
       maxTotalLoops: pipelineEffectiveMaxTotalLoopsV1(Number(stage.max_total_loops)),
-      stageRounds: Math.max(0, rounds.filter(row => Number(row.stage_ordinal) === stageOrdinal).length - 1),
-      runTotal: Math.max(0, rounds.length - 1) };
+      stageRounds, runTotal: rounds.length };
   }
 
   /** A run that is already at a loop ceiling stops advancing, and the owner is
@@ -743,12 +772,15 @@ export class PipelineAdvanceServiceV1 {
     if (active?.eligible !== true) return;
     const current = await this.#loopCeilings(runId);
     if (!current) return;
-    // `runTotal` is the number of rounds the run has already started; this
-    // advance would start one more. A run may start `maxTotalLoops` rounds.
-    const nextRunTotal = current.runTotal;
+    // `stageRounds` is the fix rounds this stage has started, so the round this
+    // advance would start is `stageRounds`. `runTotal` is the rounds the run has
+    // started, so the round it would start is `runTotal + 1`. Both comparisons
+    // are `>` and are the same two comparisons `#claimLoopRound` makes, so the
+    // pre-check and the in-transaction claim can never disagree by one.
+    const nextRunTotal = current.runTotal + 1;
     const reasonCode = current.stageRounds > current.maxLoops
       ? "pipeline_stage_loop_limit_reached" as const
-      : nextRunTotal >= current.maxTotalLoops ? "pipeline_run_loop_limit_reached" as const : undefined;
+      : nextRunTotal > current.maxTotalLoops ? "pipeline_run_loop_limit_reached" as const : undefined;
     if (!reasonCode) return;
     const stage = { stage_ordinal: current.stageOrdinal, stage_kind: current.stage.stage_kind,
       worker_id: current.stage.worker_id } as unknown as StageRow;
@@ -763,15 +795,26 @@ export class PipelineAdvanceServiceV1 {
     // moment, and which moment depends on which ceiling was reached.
     //
     // A STAGE stop is about this stage's rounds, so it records this stage's
-    // last STARTED round, clamped to the ceiling it reached, and the run total
-    // that round started at. A RUN stop is about the whole run, so it records
-    // the run's own real total, clamped inside the run ceiling, and the stage
-    // round that run was on.
+    // last STARTED round, clamped to the ceiling it reached, and a run total at
+    // least that round plus one. A RUN stop is about the whole run, so it
+    // records the run's own real total -- the number of rounds it started --
+    // clamped inside the run ceiling, and the stage round that run was on.
+    //
+    // `loop_index` is the last round this stage STARTED and `run_total_loops` is
+    // the number of rounds this run started; the table's three CHECKs say
+    // exactly how they relate: `loop_index <= max_loops`,
+    // `run_total_loops <= max_total_loops` and `run_total_loops >=
+    // loop_index + 1`. A refused round was never started, so it never appears in
+    // either number; each is clamped to the ceiling it stopped at.
     const stageStopped = reasonCode === "pipeline_stage_loop_limit_reached";
     const lastStartedRound = Math.min(current.stageRounds, current.maxLoops);
+    // A stage stop still counts every round the run really started, so the
+    // truthful run total is the run's own count, floored at this stage's last
+    // started round plus one and capped at the run ceiling. A run stop uses the
+    // same numbers, and the cap is the one the run reached.
     const lastRunTotal = stageStopped
-      ? lastStartedRound + 1
-      : Math.max(lastStartedRound + 1, Math.min(current.runTotal, current.maxTotalLoops));
+      ? Math.min(current.maxTotalLoops, Math.max(current.runTotal, lastStartedRound + 1))
+      : Math.min(current.maxTotalLoops, Math.max(lastStartedRound + 1, current.runTotal));
     // The attention item and the signed record of the ceiling decision commit
     // together, before the refusal, so "the run stopped and the owner was told"
     // is a fact rather than an attempt.
@@ -784,22 +827,42 @@ export class PipelineAdvanceServiceV1 {
 
   /** The counted fix round this advance is about to start, or the refusal that
    * stops it. `max_loops` and `max_total_loops` are compared here for the first
-   * time in the product's life, against the job chain's own count. */
-  async #claimLoopRound(tx: DatabaseSession, run: RunRow, stage: StageRow, template: TemplateRow) {
+   * time in the product's life, against the durable receipts of the rounds the
+   * run has already started.
+   *
+   * A stage's first attempt is round 0, so the index of the round this advance
+   * starts is exactly the receipts this stage already has, with no "+1" and no
+   * subtraction for a job that has not run yet. The run total is every receipt
+   * the run holds, so a three-stage run that has never looped starts at 1, not at
+   * 2, and a run ceiling of 0 or 1 cannot stop a run that has not run.
+   *
+   * This comparison is `>` on both ceilings, and it is the SAME comparison
+   * `#precheckLoopStop` makes, so the two guards can never disagree by one. */
+  async #claimLoopRound(tx: DatabaseSession, run: RunRow, stage: StageRow, template: TemplateRow,
+    sourceJobId: string) {
     const stageOrdinal = Number(stage.stage_ordinal);
     const maxLoops = pipelineEffectiveMaxLoopsV1(safeInteger(stage.max_loops));
     const maxTotalLoops = pipelineEffectiveMaxTotalLoopsV1(safeInteger(template.max_total_loops));
-    const rounds = (await tx.query<{ stage_ordinal: number | string }>(`SELECT stage_ordinal FROM control_jobs
-      WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 AND stage_ordinal IS NOT NULL
-      ORDER BY stage_ordinal,id`, [this.scope.tenantId, run.project_id, run.id])).rows;
-    // The chain holds every job the run has planned, including the one this
-    // advance is about to run. A stage's first job is round 0, so the round this
-    // advance starts is the count minus that one.
-    const loopIndex = Math.max(0, rounds.filter(row => Number(row.stage_ordinal) === stageOrdinal).length - 1);
-    const nextRunTotal = Math.max(0, rounds.length - 1);
+    // The rounds this run has already started, read under the run row lock that
+    // every advance takes first. The receipts are written in the same
+    // transaction as the advance, so this cannot lag a round that committed.
+    const rounds = (await tx.query<{ stage_ordinal: number | string }>(`SELECT stage_ordinal
+      FROM pipeline_advance_receipts WHERE tenant_id=$1 AND pipeline_run_id=$2`,
+    [this.scope.tenantId, run.id])).rows;
+    // A stage's first attempt is round 0, so the index of the round this advance
+    // starts is the receipts this stage already has -- the same count the replay
+    // path uses to find a job's own receipt, so the round this guards, the round
+    // the receipt is keyed on, and the round a replay lands on are one number.
+    const loopIndex = await this.#stageRound(tx, run.id, stageOrdinal, sourceJobId);
+    // `run_total_loops` on the counted row is "every round this run has started,
+    // INCLUDING this one", so this advance's own figure is one more than the
+    // receipts the run already holds. The table's CHECK caps that figure at
+    // `max_total_loops`, which is what makes "a run may start `maxTotalLoops`
+    // rounds" true rather than aspirational.
+    const nextRunTotal = rounds.length + 1;
     // The pre-check already recorded the stop and told the owner, in a
-    // transaction that committed before this one opened. Re-reading the chain
-    // here, under the run row lock, is what makes the decision honest: a chain
+    // transaction that committed before this one opened. Re-reading the receipts
+    // here, under the run row lock, is what makes the decision honest: a run
     // that moved after the pre-check stops here too. This path only refuses,
     // because the refusal aborts this transaction and a write inside it would
     // roll the owner's attention item straight back out. A stop first seen here
@@ -895,8 +958,15 @@ export class PipelineAdvanceServiceV1 {
       if (existing&&typeof existing.createdAt==="string") return;  // already raised for this run
       refuse("advance_conflict");
     }
+    // Two overlapping sweeps can both pre-check the same stopped run and both
+    // reach this insert. The item's id is per run, so the second one collides
+    // with a 23505 that is not a `PipelineAdvanceErrorV1` and would abort the
+    // rest of that sweep. `ON CONFLICT DO NOTHING` makes the collision a no-op:
+    // the identical item is already recorded, which is exactly what this insert
+    // would have written. The audit append below is itself replay-safe by id.
     await tx.query(`INSERT INTO control_action_inbox(id,tenant_id,project_id,work_item_id,kind,state,delivery_state,
-      created_at,expires_at,payload) VALUES($1,$2,$3,$4,'question','open','not_requested',$5,NULL,$6::jsonb)`,
+      created_at,expires_at,payload) VALUES($1,$2,$3,$4,'question','open','not_requested',$5,NULL,$6::jsonb)
+      ON CONFLICT (tenant_id,id) DO NOTHING`,
     [item.id,item.tenantId,item.projectId,item.workItemId,item.createdAt,JSON.stringify(item)]);
     await appendAuditWith(tx,{id:`audit:${item.id}`,...this.scope,projectId:run.project_id,actorId:SERVICE_ACTOR,
       actorType:"service",action:"pipelines.loops.exhausted",targetType:"pipeline_run",targetId:run.id,
@@ -923,9 +993,24 @@ export class PipelineAdvanceServiceV1 {
     if(RISK[execution.authority.maxRisk]>RISK[policy.risk_ceiling])refuse("policy_risk_exceeded");
     if(safeInteger(receipt.taskUnits)>=safeInteger(policy.max_total_tasks))refuse("policy_task_allowance_exhausted");
     if(safeInteger(receipt.concurrentTasks)>=safeInteger(policy.max_concurrent_tasks))refuse("policy_concurrency_exhausted");
-    // "Count runs, never dollars." An unknown cost is recorded as unknown and
-    // never refuses. The dollar ceiling is the installation's optional cap, so
-    // it is enforced exactly when the owner has set one and the cost is known.
+    // "Count runs, never dollars" dropped the refusal on an UNKNOWN cost, which
+    // is right: an unknown number cannot be compared to a ceiling, and inventing
+    // one would stop every unattended night until a cost port answered. It did
+    // not drop the ceiling the owner SIGNED. `max_total_cost_microusd` is a
+    // signed column of the delegation policy and the same ceiling is enforced
+    // for non-pipeline coordination (canonical-store.ts), so pipelines are
+    // compared against it here too: whenever the next cost is KNOWN, the run's
+    // committed cost plus it must still fit under what the owner signed.
+    // Micro-USD ceilings are bigint columns, so the arithmetic stays exact and
+    // the ceiling is subtracted rather than added, and a policy at 0 refuses.
+    const nextCost=receipt.nextCost;
+    if(nextCost.kind==="known"){
+      const spent=safeInteger(receipt.committedCostMicroUsd),next=safeInteger(nextCost.microUsd),
+        ceiling=safeInteger(policy.max_total_cost_microusd);
+      if(spent>ceiling||next>ceiling-spent)refuse("policy_cost_allowance_exhausted");}
+    // The installation's optional dollar cap is a SECOND, machine-wide ceiling
+    // on top of the signed one. It is null by default, so it is enforced exactly
+    // when the owner has set one and the cost is known.
     if(installationCostCap.cap!==null&&installationCostCap.next!==null
       &&(installationCostCap.spent>installationCostCap.cap
         ||installationCostCap.next>installationCostCap.cap-installationCostCap.spent))
@@ -943,13 +1028,27 @@ export class PipelineAdvanceServiceV1 {
     delegation_cost_state,delegation_cost_microusd,delegation_cost_evidence_digest,request_digest,receipt_digest,
     auth_tag,advanced_at FROM pipeline_advance_receipts WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3
     AND loop_index=$4`,[this.scope.tenantId,runId,ordinal,round])).rows[0];}
-  /** The round this stage is on: the number of jobs it has planned, minus the
-   * one about to run. Derived from the immutable job chain, never from a counter
-   * this service keeps. */
-  async #stageRound(tx:DatabaseSession,runId:string,ordinal:number){const row=(await tx.query<{count:string|number}>(
-    `SELECT COUNT(*)::text count FROM control_jobs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
-    [this.scope.tenantId,runId,ordinal])).rows[0];
-    return Math.max(0,Number(row?.count??1)-1);}
+  /** The round this stage is on: the number of DURABLE RECEIPTS it has already
+   * written, which is exactly "fix rounds this stage has started". A stage's
+   * first attempt is round 0, so this is also the index of the round the next
+   * advance is about to start. Derived from the receipts the advance itself
+   * appends under the run row lock, never from a counter this service keeps.
+   *
+   * A REPLAY names a job that has already run, so its round is that job's OWN
+   * receipt, found by matching the SOURCE job: a fix round is a new source job
+   * and the stage's `current_job_id` moves with it. Counting alone made every
+   * replay look like the next fix round, so a lost response opened a second
+   * round instead of replaying the first. */
+  async #stageRound(tx:DatabaseSession,runId:string,ordinal:number,sourceJobId?:string){
+    if(sourceJobId!==undefined){
+      const prior=(await tx.query<{loop_index:number|string}>(`SELECT loop_index FROM pipeline_advance_receipts
+        WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3 AND source_job_id=$4`,
+      [this.scope.tenantId,runId,ordinal,sourceJobId])).rows[0];
+      if(prior)return safeInteger(prior.loop_index);}
+      const row=(await tx.query<{count:string|number}>(
+            `SELECT COUNT(*)::text count FROM pipeline_advance_receipts WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
+            [this.scope.tenantId,runId,ordinal])).rows[0];
+            return Math.max(0,Number(row?.count??0));}
   #replayReceipt(row:AdvanceReceiptRow,selection:PipelineAdvanceSelectionV1,policyId:string){const material={id:row.id,
     tenantId:this.scope.tenantId,projectId:row.project_id,pipelineRunId:row.pipeline_run_id,stageOrdinal:Number(row.stage_ordinal),
     loopIndex:safeInteger(row.loop_index),

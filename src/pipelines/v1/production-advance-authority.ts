@@ -106,12 +106,20 @@ export class ProductionPipelineAdvanceAuthorityV1 implements Pick<PipelineAdvanc
       routeId:selection.nodeId,requiredCapability:job.required_capability});
     // "Count runs, never dollars." An unknown cost is reported as unknown and
     // is not a refusal here: it is refused nowhere. The installation's optional
-    // dollar cap is compared in the advance service, which owns the ceilings.
+    // dollar cap and the owner's signed policy ceiling are both compared in the
+    // advance service, which owns the ceilings.
+    //
+    // A port that CLAIMS to know the cost and returns something impossible --
+    // a negative, fractional, non-finite or absurdly large amount, or an
+    // evidence digest that is not a digest -- is not an honest unknown, it is an
+    // integrity failure, and demoting it to `unknown` let it slip past every
+    // dollar ceiling. So it refuses here, before anything is queued or claimed.
     let nextCost: Readonly<{kind:"known";microUsd:number;evidenceDigest:string}>
       | Readonly<{kind:"unknown"}> = {kind:"unknown"};
-    if (cost.kind==="known" && Number.isSafeInteger(cost.admittedCostMicroUsd) && cost.admittedCostMicroUsd>=0
-      && /^sha256:[a-f0-9]{64}$/.test(cost.evidenceDigest))
-      nextCost = {kind:"known" as const,microUsd:cost.admittedCostMicroUsd,evidenceDigest:cost.evidenceDigest};
+    if (cost.kind==="unknown") nextCost = {kind:"unknown"};
+    else if (!Number.isSafeInteger(cost.admittedCostMicroUsd) || cost.admittedCostMicroUsd<0
+      || !/^sha256:[a-f0-9]{64}$/.test(cost.evidenceDigest)) fail("advance_conflict");
+    else nextCost = {kind:"known" as const,microUsd:cost.admittedCostMicroUsd,evidenceDigest:cost.evidenceDigest};
     const usage=(await tx.query<{tasks:string;cost:string;concurrent:string}>(`SELECT
       (SELECT COALESCE(SUM(task_units),0) FROM control_project_coordination_operation_receipts WHERE tenant_id=$1 AND policy_id=$2)
        +(SELECT COALESCE(SUM(delegation_task_units),0) FROM pipeline_advance_receipts WHERE tenant_id=$1 AND policy_id=$2) tasks,

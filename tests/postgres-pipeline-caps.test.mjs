@@ -153,8 +153,16 @@ function superuserDatabase(client) {
 
 /** One installation with a consented run, a real delegation policy, and the
  * attempt rows the advance assigns against. Everything the service needs is a
- * real row on the real login. */
-async function seedInstallation(client, suffix, key, at, { maxLoops = 1, maxTotalLoops = 6 } = {}) {
+ * real row on the real login.
+ *
+ * `executionPlanShape` is the one thing this seed cannot do for itself. `"seed"`
+ * plans each stage as its own job, which is representable but not what the real
+ * planner emits; `"planner"` writes NO plan at all, so `planExecutionJob` can
+ * write the planner's own output (a distinct execution job per stage) without
+ * having to delete the seed's row -- `control_task_execution_plans` is
+ * append-only, so a plan can only be written once. */
+async function seedInstallation(client, suffix, key, at, { maxLoops = 1, maxTotalLoops = 6,
+  policyCostMicroUsd = 1_000_000, executionPlanShape = "seed" } = {}) {
   const tenantId = `tenant:caps-${suffix}`, workspaceId = `workspace:caps-${suffix}`;
   const db = superuserDatabase(client);
   await client.query("INSERT INTO tenants(id,display_name) VALUES($1,'Caps probe')", [tenantId]);
@@ -184,12 +192,16 @@ async function seedInstallation(client, suffix, key, at, { maxLoops = 1, maxTota
   const pipeline = await pipelines.instantiate(identity, project.projectId,
     { templateId: saved.templateId, title: "Capped run" }, `caps-${suffix}-pipeline-0001`);
   const [buildJob, checkJob, signoffJob] = pipeline.jobIds;
-  // The real planner's output: one execution plan per stage, whose job is the
-  // stage's own job. The production read authority joins on exactly these rows,
-  // so without them every stage is honestly uncertain.
-  for (const job of [buildJob, checkJob, signoffJob]) {
-    await client.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
-      VALUES($1,$2,$3,$3,'{}'::jsonb,$4)`, [tenantId, project.projectId, job, `hmac-sha256:${"9".repeat(64)}`]);
+  // The real planner's output is one execution plan per stage whose job is a
+  // DISTINCT `job:execution:*` job (task-execution-planner.ts). The production
+  // read authority joins on exactly these rows, so without them every stage is
+  // honestly uncertain. `executionPlanShape: "planner"` leaves the plan to
+  // `planExecutionJob`, which writes the planner's own shape.
+  if (executionPlanShape !== "planner") {
+    for (const job of [buildJob, checkJob, signoffJob]) {
+      await client.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
+        VALUES($1,$2,$3,$3,'{}'::jsonb,$4)`, [tenantId, project.projectId, job, `hmac-sha256:${"9".repeat(64)}`]);
+    }
   }
   const identityDigest = sha256Digest(identityId);
   await client.query(`INSERT INTO control_project_coordinator_heads(tenant_id,project_id,state,coordinator_identity_id,
@@ -199,9 +211,9 @@ async function seedInstallation(client, suffix, key, at, { maxLoops = 1, maxTota
     coordinator_version,state,version,policy_digest,owner_identity_id,owner_identity_digest,allowed_actions,eligible_routes,
     risk_ceiling,effect_ceiling,max_total_tasks,max_total_cost_microusd,max_concurrent_tasks,valid_from,valid_until,payload,
     created_at,updated_at) VALUES($1,$2,$3,$4,1,'active',1,$5,$4,$5,'["tasks.assign"]',
-    $6,'low','none',100,1000000,32,$7,$8,'{}',$7,$7)`, [tenantId, `policy:caps-${suffix}`, project.projectId, identityId,
+    $6,'low','none',100,$9,32,$7,$8,'{}',$7,$7)`, [tenantId, `policy:caps-${suffix}`, project.projectId, identityId,
     sha256Digest("policy"), JSON.stringify([`node:build:${suffix}`, `node:check:${suffix}`, `node:validate:${suffix}`]),
-    new Date(webNow - 1000).toISOString(), new Date(webNow + 600_000).toISOString()]);
+    new Date(webNow - 1000).toISOString(), new Date(webNow + 600_000).toISOString(), policyCostMicroUsd]);
   // Real attempt and node rows for every stage, plus the live harness runs the
   // machine agent-process ceiling counts.
   for (const [job, stage] of [[buildJob, "build"], [checkJob, "check"], [signoffJob, "validate"]]) {
@@ -248,8 +260,18 @@ function advanceService(coordinator, own, key, { accepted = new Set(), cost = { 
   // a map frozen at seed time: a fix round mints a new attempt for the same
   // stage, and the receipt's foreign key must resolve to the row that exists.
   let queued = 0;
+  // `accepted` is a set of SOURCE job ids. The production read authority, on an
+  // accepted predecessor, resolves the execution job the Completion Gate
+  // accepted and requires that exact job to be the plan row's job. Under the
+  // planner shape the execution job is a distinct `job:execution:*` job, so the
+  // accepted proof names the plan's real `job_id` rather than the source job.
+  // Under the seed shape they are the same id and this is a no-op.
+  const executionJobOf = async (tx, sourceJobId) => (await own.client.query(
+    "SELECT job_id FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
+    [own.tenantId, sourceJobId])).rows[0]?.job_id;
   const supporting = new ProductionPipelineAdvanceAuthorityV1(own.scope, { assertCurrent: () => true },
-    { acceptedResultProof: async (_tx, value) => accepted.has(value.sourceJobId) ? { executionJobId: value.sourceJobId } : null,
+    { acceptedResultProof: async (_tx, value) => accepted.has(value.sourceJobId)
+      ? { executionJobId: await executionJobOf(_tx, value.sourceJobId) ?? value.sourceJobId } : null,
       isAcceptedResultCurrent: async (_tx, value) => accepted.has(value.sourceJobId) },
     { currentCost: async () => cost }, () => webNow);
   const capability = new ProductionPipelineAdvanceCapabilityV1(supporting,
@@ -413,6 +435,66 @@ async function seedSecondRun(client, own, key) {
     signoffJob: pipeline.jobIds[2], attemptIds };
 }
 
+/** The REAL planner's shape for one stage: a distinct `job:execution:*` job
+ * that copies the stage ordinal and run lineage onto the execution job, with its
+ * own model selection and execution plan. The caps lane used to plan every
+ * stage as its own source job, which hid the fact that a stage therefore holds
+ * TWO labelled jobs per round; `task-execution-planner.ts` is the code that
+ * says otherwise, so this helper copies its output exactly.
+ *
+ * The seed must have been called with `executionPlanShape: "planner"`, because
+ * `control_task_execution_plans` is append-only: the plan can only be written
+ * once, so the seed's placeholder (source_job_id = job_id) can never be
+ * replaced. */
+async function planExecutionJob(client, own, stageOrdinal) {
+  const at = new Date(webNow).toISOString();
+  const sourceJobId = own.pipeline.jobIds[stageOrdinal];
+  const executionJobId = `job:execution:${own.pipeline.runId}:${stageOrdinal}`;
+  const existing = (await client.query("SELECT source_job_id,job_id FROM control_task_execution_plans"
+    + " WHERE tenant_id=$1 AND source_job_id=$2", [own.tenantId, sourceJobId])).rows[0];
+  assert.ok(!existing, `this stage already has a plan (${existing?.job_id ?? "unknown"}); `
+    + "seed the installation with executionPlanShape: \"planner\"");
+  await client.query(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,
+    required_capability,authority_digest,payload,created_at,updated_at,stage_kind,stage_ordinal,pipeline_run_id)
+    SELECT $2,tenant_id,workflow_id,project_id,'proposed',0,50,required_capability,authority_digest,
+      jsonb_set(payload,'{id}',to_jsonb($2::text)),$3,$3,stage_kind,$4,pipeline_run_id
+    FROM control_jobs WHERE tenant_id=$1 AND id=$5`,
+  [own.tenantId, executionJobId, at, stageOrdinal, sourceJobId]);
+  await client.query(`INSERT INTO control_task_model_selections(tenant_id,project_id,job_id,worker_kind,selection_key,
+    model,effort,provider,profile,inherited_from_job_id,created_at)
+    SELECT tenant_id,project_id,$2,worker_kind,selection_key,model,effort,provider,profile,$3,created_at
+    FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$3`,
+  [own.tenantId, executionJobId, sourceJobId]);
+  await client.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
+    VALUES($1,$2,$3,$4,'{}'::jsonb,$5)`, [own.tenantId, own.project.projectId, sourceJobId, executionJobId,
+    `hmac-sha256:${"9".repeat(64)}`]);
+  const attemptId = `attempt:execution:${own.pipeline.runId}:${stageOrdinal}`;
+  const stage = (await client.query("SELECT worker_id,node_id FROM pipeline_stage_runs"
+    + " WHERE pipeline_run_id=$1 AND stage_ordinal=$2", [own.pipeline.runId, stageOrdinal])).rows[0];
+  await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,
+    lease_epoch,payload,created_at,updated_at) VALUES($1,$2,$3,1,'offered',1,$4,$5,1,$6::jsonb,$7,$7)`,
+  [attemptId, own.tenantId, executionJobId, stage.worker_id, stage.node_id,
+    JSON.stringify({ id: attemptId, tenantId: own.tenantId, state: "offered", version: 1, jobId: executionJobId,
+      attemptNumber: 1, workerId: stage.worker_id, nodeId: stage.node_id, leaseEpoch: 1 }), at]);
+  own.attemptIds.set(executionJobId, attemptId);
+  return executionJobId;
+}
+
+/** The owner's SIGNED delegation policy, with one ceiling tightened. The policy
+ * row is versioned and append-only in every column but `state`, `version` and
+ * `updated_at`, so a ceiling is signed once at seed time and never mutated by a
+ * probe. `seedInstallation` takes `policyCostMicroUsd` for exactly this reason;
+ * this helper only asserts that the ceiling the owner signed is the one in force. */
+async function assertPolicyCeiling(client, own, column, value) {
+  assert.ok(["max_total_cost_microusd", "max_total_tasks", "max_concurrent_tasks"].includes(column),
+    `not a policy ceiling this helper checks: ${column}`);
+  const stored = (await client.query(`SELECT ${column}::text AS ceiling
+    FROM control_project_delegation_policies WHERE tenant_id=$1 AND id=$2`,
+  [own.tenantId, own.policyId])).rows[0].ceiling;
+  assert.equal(Number(stored), value, `the owner's signed ${column} must be the one in force`);
+}
+
+
 /** The owner's consent alone, for a run that shares another's installation. */
 async function ownerConsents(web, own, key) {
   const owner = new PipelineAdvanceServiceV1(web.client, own.scope, key, {}, () => webNow);
@@ -447,6 +529,323 @@ async function ownerSetsUp(web, own, key, limits) {
   }
   return owner.setAllowance(own.identity, limits);
 }
+
+test("the loop counter counts FIX ROUNDS, not jobs, so a real pipeline runs", needsPg, async t => {
+  // The reviewer's B1, verbatim on real PostgreSQL with the production login and
+  // the REAL planner's shape. The planner creates a DISTINCT `job:execution:*`
+  // job per stage and copies the stage ordinal onto it, so a stage holds TWO
+  // labelled jobs per round. Counting jobs made round 0 look like round 1, and
+  // stopped a stage that had never run.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(71);
+
+  // A signoff stage uses max_loops 0: one attempt, no fix rounds. Under a job
+  // count its FIRST advance computed loop_index 1 and was refused with a
+  // "Pipeline stopped" Needs Attention item for a stage that never ran.
+  const signoffOwn = await seedInstallation(admin, "roundsignoff", key, new Date(webNow).toISOString(),
+    { maxLoops: 0, executionPlanShape: "planner" });
+  // Every stage planned the real way, so the job chain holds two jobs per stage.
+  for (const ordinal of [0, 1, 2]) await planExecutionJob(admin, signoffOwn, ordinal);
+  assert.equal((await admin.query("SELECT count(*)::int count FROM control_jobs WHERE tenant_id=$1"
+    + " AND pipeline_run_id=$2 AND stage_ordinal IS NOT NULL", [signoffOwn.tenantId, signoffOwn.pipeline.runId]))
+    .rows[0].count, 6, "the real planner leaves six labelled jobs for three stages");
+  await ownerSetsUp(web, signoffOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const { service, queuedCount } = advanceService(coordinator, signoffOwn, key);
+  const first = await service.advance(signoffOwn.pipeline.runId, signoffOwn.policyId)
+    .catch(error => assert.fail(`a stage's first attempt is round 0 and must advance: ${error?.safeReason ?? error}`));
+  assert.equal(first.startsWork, true);
+  assert.equal(first.stageOrdinal, 0, "the run advances to its first stage, not straight past it");
+  assert.equal(queuedCount(), 1);
+  // Round 0, at the ceiling the stage was signed with. A job count recorded 1.
+  // `max_loops` is the STAGE's ceiling, so it is read from the stage row the
+  // counted row names, not from the receipt table.
+  const round0 = (await admin.query("SELECT loop_index::text loop_index,run_total_loops::text run_total_loops,"
+    + " max_loops::text max_loops FROM pipeline_stage_loop_counts WHERE tenant_id=$1"
+    + " AND pipeline_run_id=$2", [signoffOwn.tenantId, signoffOwn.pipeline.runId])).rows;
+  assert.deepEqual(round0.map(row => [Number(row.loop_index), Number(row.max_loops)]), [[0, 0]],
+    "the first attempt is round 0 under a max_loops of zero");
+  // And no false "stopped" item was raised for a stage that ran.
+  assert.equal((await admin.query("SELECT count(*)::int count FROM control_action_inbox WHERE tenant_id=$1",
+    [signoffOwn.tenantId])).rows[0].count, 0, "a stage that ran must not raise a loop-limit stop");
+
+  // A run-wide ceiling of 2 must admit a FRESH run's three stages. The job count
+  // made runTotal 2 on the very first advance and stopped the run at once.
+  const runCeilingOwn = await seedInstallation(admin, "roundrun", key, new Date(webNow).toISOString(),
+    { maxLoops: 1, maxTotalLoops: 2, executionPlanShape: "planner" });
+  for (const ordinal of [0, 1, 2]) await planExecutionJob(admin, runCeilingOwn, ordinal);
+  await ownerSetsUp(web, runCeilingOwn, key, { runsPerHour: 100, runsPerAgentPerDay: 100,
+    machineMaxAgentProcesses: 12, machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  // Nothing is accepted yet, so the first advance is stage 0. It is accepted
+  // afterwards, so the second advance is stage 1: two rounds of a run whose
+  // ceiling is two, and neither of them is a fix round.
+  const runCeiling = advanceService(coordinator, runCeilingOwn, key);
+  const runFirst = await runCeiling.service.advance(runCeilingOwn.pipeline.runId, runCeilingOwn.policyId)
+    .catch(error => assert.fail(`a fresh run under a run ceiling of two must advance: ${error?.safeReason ?? error}`));
+  assert.equal(runFirst.stageOrdinal, 0);
+  runCeiling.accepted.add(runCeilingOwn.buildJob);
+  const runSecond = await runCeiling.service.advance(runCeilingOwn.pipeline.runId, runCeilingOwn.policyId)
+    .catch(error => assert.fail(`the run's second round must advance: ${error?.safeReason ?? error}`));
+  assert.equal(runSecond.stageOrdinal, 1, "a three-stage run under a ceiling of two reaches its second stage");
+  // The run total counts the ROUNDS the run has started, one per stage advanced
+  // here: 1, then 2. The lane's clock is fixed, so `recorded_at` cannot order
+  // them; the loop index within the run's single advanced stage orders them.
+  const totals = (await admin.query("SELECT stage_ordinal::text stage_ordinal,loop_index::text loop_index,"
+    + " run_total_loops::text run_total_loops FROM pipeline_stage_loop_counts WHERE tenant_id=$1"
+    + " AND reason_code='stage_advanced' ORDER BY stage_ordinal,loop_index",
+  [runCeilingOwn.tenantId])).rows.map(row => [Number(row.stage_ordinal), Number(row.loop_index), Number(row.run_total_loops)]);
+  assert.deepEqual(totals, [[0, 0, 1], [1, 0, 2]],
+    `each stage advanced once, and the run total counts the rounds it started, got ${JSON.stringify(totals)}`);
+});
+
+test("the owner's signed policy dollar ceiling refuses a known cost", needsPg, async t => {
+  // The reviewer's B2, verbatim on real PostgreSQL with the production login.
+  // "Count runs, never dollars" called for dropping the refusal on an UNKNOWN
+  // cost. It did not call for silently dropping the known-cost ceiling the owner
+  // signed: this policy is active and its dollar ceiling is enforced on the
+  // non-pipeline coordination path, so pipelines must not be the one path that
+  // ignores it.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(72);
+  const expensive = { kind: "known", admittedCostMicroUsd: 5_000_000, evidenceDigest: sha256Digest("cost") };
+
+  // The policy is the seeded 1,000,000 micro-USD ceiling, which the next cost
+  // blows through. No installation cap is set at all, so the ONLY dollar
+  // ceiling in force is the one the owner signed.
+  const over = await seedInstallation(admin, "policycost", key, new Date(webNow).toISOString(),
+    { policyCostMicroUsd: 1_000_000 });
+  await ownerSetsUp(web, over, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  await assertPolicyCeiling(admin, over, "max_total_cost_microusd", 1_000_000);
+  const overService = advanceService(coordinator, over, key, { cost: expensive });
+  try {
+    await overService.service.advance(over.pipeline.runId, over.policyId);
+    assert.fail(`expected a refusal, refused statements: ${JSON.stringify(coordinator.refused.slice(-4))}`);
+  } catch (error) {
+    if (error?.safeReason !== "policy_cost_allowance_exhausted") {
+      throw new Error(`wrong refusal: ${error?.safeReason ?? error}; refused=${JSON.stringify(coordinator.refused.slice(-6))}`);
+    }
+  }
+  assert.equal(overService.queuedCount(), 0, "a refused advance queues nothing");
+  assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts WHERE tenant_id=$1",
+    [over.tenantId])).rows[0].count, 0, "a refused advance claims no receipt");
+
+  // EXACTLY at the ceiling still fits, and one micro-USD less refuses. That is
+  // the boundary that distinguishes `>` from `>=`.
+  const edge = await seedInstallation(admin, "policycostedge", key, new Date(webNow).toISOString(),
+    { policyCostMicroUsd: 5_000_000 });
+  await ownerSetsUp(web, edge, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  await assertPolicyCeiling(admin, edge, "max_total_cost_microusd", 5_000_000);
+  const edgeService = advanceService(coordinator, edge, key, { cost: expensive });
+  assert.equal((await edgeService.service.advance(edge.pipeline.runId, edge.policyId)).startsWork, true,
+    "a policy ceiling of exactly the next cost still fits");
+
+  const short = await seedInstallation(admin, "policycostshort", key, new Date(webNow).toISOString(),
+    { policyCostMicroUsd: 4_999_999 });
+  await ownerSetsUp(web, short, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  await assertPolicyCeiling(admin, short, "max_total_cost_microusd", 4_999_999);
+  const shortService = advanceService(coordinator, short, key, { cost: expensive });
+  await assert.rejects(shortService.service.advance(short.pipeline.runId, short.policyId),
+    error => error.safeReason === "policy_cost_allowance_exhausted",
+    "one micro-USD short of the policy ceiling must refuse");
+
+  // The pass-through survives: an UNKNOWN cost is never a refusal, however
+  // small the ceiling is, and it is recorded as unknown.
+  const unknownOwn = await seedInstallation(admin, "policycostunknown", key, new Date(webNow).toISOString(),
+    { policyCostMicroUsd: 0 });
+  await ownerSetsUp(web, unknownOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  await assertPolicyCeiling(admin, unknownOwn, "max_total_cost_microusd", 0);
+  const unknownService = advanceService(coordinator, unknownOwn, key, { cost: { kind: "unknown" } });
+  const unknownReceipt = await unknownService.service.advance(unknownOwn.pipeline.runId, unknownOwn.policyId)
+    .catch(error => assert.fail(`an unknown cost must never refuse: ${error?.safeReason ?? error}`));
+  assert.equal(unknownReceipt.startsWork, true);
+  const stored = (await admin.query("SELECT delegation_cost_state FROM pipeline_advance_receipts"
+    + " WHERE tenant_id=$1", [unknownOwn.tenantId])).rows[0];
+  assert.equal(stored.delegation_cost_state, "unknown", "and it is recorded as unknown, not as zero");
+});
+
+test("a malformed known cost refuses rather than becoming an unknown", needsPg, async t => {
+  // Reviewer follow-up 1: a `kind:"known"` cost with a negative, fractional or
+  // bad-digest value used to be demoted to `unknown`, which slipped past the
+  // dollar cap. A cost port that lies about being known is an integrity failure,
+  // not an honest unknown, so it refuses with no receipt and no queued work.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(73);
+  // A suffix per case, because each one is its own tenant and installation.
+  const malformed = [
+    ["negative", { kind: "known", admittedCostMicroUsd: -1, evidenceDigest: "garbage" }],
+    ["fractional", { kind: "known", admittedCostMicroUsd: 1.5, evidenceDigest: sha256Digest("c") }],
+    ["nan", { kind: "known", admittedCostMicroUsd: Number.NaN, evidenceDigest: sha256Digest("c") }],
+    ["unbounded", { kind: "known", admittedCostMicroUsd: Number.MAX_VALUE, evidenceDigest: sha256Digest("c") }],
+    ["baddigest", { kind: "known", admittedCostMicroUsd: 10, evidenceDigest: "not-a-digest" }],
+  ];
+  for (const [label, cost] of malformed) {
+    const own = await seedInstallation(admin, `badcost-${label}`, key, new Date(webNow).toISOString());
+    await ownerSetsUp(web, own, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+      machineMaxDbClusters: 6, dollarCapMicroUsd: 1, observedDbClusters: 1 });
+    const { service, queuedCount } = advanceService(coordinator, own, key, { cost });
+    await assert.rejects(service.advance(own.pipeline.runId, own.policyId),
+      error => error.safeReason === "advance_conflict", `${label} must refuse`);
+    assert.equal(queuedCount(), 0, `${label} queues nothing`);
+    assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts"
+      + " WHERE tenant_id=$1", [own.tenantId])).rows[0].count, 0, `${label} claims no receipt`);
+  }
+});
+
+test("a forged loop attention item with no reason code is refused", needsPg, async t => {
+  // Reviewer follow-up 4: `NULL NOT IN (...)` is NULL, not true, so a
+  // pipeline-loop item with NO reasonCode passed the guard. The owner would see
+  // a Needs Attention item that names no reason at all.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const key = new Uint8Array(32).fill(74);
+  t.after(async () => { await web.close(); await admin.end(); });
+  const own = await seedInstallation(admin, "loopreason", key, new Date(webNow).toISOString());
+  const item = { id: "attention:pipeline-loop:forged-null-reason", tenantId: own.tenantId,
+    projectId: own.project.projectId, workItemId: "work:one", kind: "question", state: "open",
+    schema: "control-room.pipeline-loop-attention/v1", pipelineRunId: own.pipeline.runId,
+    stageOrdinal: 0, stageKind: "build", requestedAction: "Pipeline stopped", blockedWorkItemIds: [],
+    legalResponses: [], evidence: [], loopIndex: 0, maxLoops: 0, maxTotalLoops: 6, runTotalLoops: 1,
+    createdAt: new Date(webNow).toISOString(), deliveryState: "not_requested" };
+  await assert.rejects(admin.query(`INSERT INTO control_action_inbox(id,tenant_id,project_id,work_item_id,kind,state,
+    delivery_state,created_at,expires_at,payload) VALUES($1,$2,$3,$4,'question','open','not_requested',$5,NULL,
+    $6::jsonb)`, [item.id, item.tenantId, item.projectId, item.workItemId, item.createdAt,
+    JSON.stringify(item)]), /pipeline loop attention item rejected/u);
+  // The same item WITH a reason code is accepted, so the guard is this one field
+  // and not something the seed above happened to get wrong.
+  await admin.query(`INSERT INTO control_action_inbox(id,tenant_id,project_id,work_item_id,kind,state,
+    delivery_state,created_at,expires_at,payload) VALUES($1,$2,$3,$4,'question','open','not_requested',$5,NULL,
+    $6::jsonb)`, [item.id, item.tenantId, item.projectId, item.workItemId, item.createdAt,
+    JSON.stringify({ ...item, reasonCode: "pipeline_stage_loop_limit_reached" })]);
+  assert.equal((await admin.query("SELECT count(*)::int count FROM control_action_inbox WHERE id=$1", [item.id]))
+    .rows[0].count, 1);
+});
+
+test("the loop-attention guard does not silently cancel an ordinary inbox delete", needsPg, async t => {
+  // Reviewer follow-up 3: the 0154 update guard was attached to UPDATE OR DELETE,
+  // and its `RETURN NEW` returns NULL on DELETE, so every DELETE on
+  // control_action_inbox silently affected zero rows. No production login holds
+  // DELETE, but admin cleanup and restore tooling must still work.
+  const admin = superuser();
+  await admin.connect();
+  t.after(async () => { await admin.end(); });
+  const own = await seedInstallation(admin, "loopdelete", new Uint8Array(32).fill(75),
+    new Date(webNow).toISOString());
+  await admin.query(`INSERT INTO control_action_inbox(id,tenant_id,project_id,work_item_id,kind,state,
+    delivery_state,created_at,expires_at,payload) VALUES($1,$2,$3,$4,'question','open','not_requested',$5,NULL,
+    '{"state":"open"}'::jsonb)`, [`attention:ordinary-${own.tenantId}`, own.tenantId, own.project.projectId,
+    "work:ordinary", new Date(webNow).toISOString()]);
+  const removed = await admin.query("DELETE FROM control_action_inbox WHERE id=$1",
+    [`attention:ordinary-${own.tenantId}`]);
+  assert.equal(removed.rowCount, 1, "an ordinary inbox row is deletable again");
+  assert.equal((await admin.query("SELECT count(*)::int count FROM control_action_inbox WHERE id=$1",
+    [`attention:ordinary-${own.tenantId}`])).rows[0].count, 0, "and it is really gone");
+
+  // The split guard must not have made the pipeline item deletable while it is
+    // unresolved: an owner Needs Attention item cannot be quietly removed.
+    //
+    // Resolving it here goes through 0102's own work-batch guard as well, which
+    // refuses ANY update to a non-`attention:work-batch:%` row by a member of
+    // `control_room_private_web` -- and the superuser is one. So the one legal
+    // resolution cannot be written directly from this connection at all; what is
+    // proved below is the delete guard, which is the thing that was broken.
+    const openId = `attention:pipeline-loop:${own.pipeline.runId}`;
+    const loopItem = { id: openId, tenantId: own.tenantId, projectId: own.project.projectId,
+      workItemId: `${own.pipeline.runId}:stage:0`, kind: "question", state: "open",
+      schema: "control-room.pipeline-loop-attention/v1", pipelineRunId: own.pipeline.runId,
+      stageOrdinal: 0, stageKind: "build", reasonCode: "pipeline_stage_loop_limit_reached",
+      requestedAction: "Pipeline stopped", blockedWorkItemIds: [], legalResponses: [],
+      evidence: [], loopIndex: 0, maxLoops: 0, maxTotalLoops: 6, runTotalLoops: 1,
+      createdAt: new Date(webNow).toISOString(), deliveryState: "not_requested" };
+    await admin.query(`INSERT INTO control_action_inbox(id,tenant_id,project_id,work_item_id,kind,state,
+      delivery_state,created_at,expires_at,payload) VALUES($1,$2,$3,$4,'question','open','not_requested',$5,NULL,
+      $6::jsonb)`, [openId, own.tenantId, own.project.projectId, loopItem.workItemId,
+      loopItem.createdAt, JSON.stringify(loopItem)]);
+    await assert.rejects(admin.query("DELETE FROM control_action_inbox WHERE id=$1", [openId]),
+      /pipeline loop attention delete rejected/u, "an OPEN pipeline loop item is not deletable");
+    // The update guard is still UPDATE-only and still refuses anything but the one
+    // legal transition: this is the same refusal 0102 already gave, so it is
+    // asserted by name rather than by which guard produced it.
+    await assert.rejects(admin.query("UPDATE control_action_inbox SET kind='review' WHERE id=$1", [openId]),
+      /rejected/u);
+    // With the 0102 guard disabled for this one connection the pipeline guard is
+    // the only thing left, and it still admits exactly open -> resolved.
+    await admin.query("ALTER TABLE control_action_inbox DISABLE TRIGGER control_action_inbox_work_batch_update_guard");
+    await assert.rejects(admin.query("UPDATE control_action_inbox SET kind='review' WHERE id=$1", [openId]),
+      /pipeline loop attention update rejected/u);
+    await admin.query(`UPDATE control_action_inbox SET state='resolved',
+      payload=jsonb_set(payload,'{state}','"resolved"'::jsonb) WHERE id=$1`, [openId]);
+    await admin.query("ALTER TABLE control_action_inbox ENABLE TRIGGER control_action_inbox_work_batch_update_guard");
+    const cleared = await admin.query("DELETE FROM control_action_inbox WHERE id=$1", [openId]);
+    assert.equal(cleared.rowCount, 1, "a resolved pipeline loop item is deletable");
+  });
+
+test("the agent-process ceiling counts queued work that has no harness run yet", needsPg, async t => {
+  // Reviewer follow-up 2: the count was only live control_harness_runs, but an
+  // advance creates a lease and a queue row, not a harness run. Successive
+  // sweeps each saw the same live count and could queue past the ceiling until a
+  // worker picked the queue up.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(76);
+  // Each seed leaves three live harness runs; the ceiling is exactly those three,
+  // so the very next process is already over the line.
+  const own = await seedInstallation(admin, "procqueued", key, new Date(webNow).toISOString());
+  await ownerSetsUp(web, own, key, { runsPerHour: 100, runsPerAgentPerDay: 100, machineMaxAgentProcesses: 3,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const { service, queuedCount } = advanceService(coordinator, own, key);
+  await assert.rejects(service.advance(own.pipeline.runId, own.policyId),
+    error => error.safeReason === "installation_agent_process_ceiling_reached");
+  assert.equal(queuedCount(), 0);
+  // And the admission side of the same boundary: a ceiling of FOUR admits the
+  // advance, which now claims the process it queues. A second advance on the
+  // same installation sees that claim and stops, rather than waiting for a
+  // worker to mint a harness run.
+  //
+  // The planner shape matters here: the advance's execution job must be a
+  // DISTINCT job from the seeded harness run's, or the two are the same process
+  // and the receipt's job already has a live harness run.
+  const roomy = await seedInstallation(admin, "procqueuedroomy", key, new Date(webNow).toISOString(),
+    { executionPlanShape: "planner" });
+  for (const ordinal of [0, 1, 2]) await planExecutionJob(admin, roomy, ordinal);
+  await ownerSetsUp(web, roomy, key, { runsPerHour: 100, runsPerAgentPerDay: 100, machineMaxAgentProcesses: 4,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const second = await seedSecondRun(admin, roomy, key);
+  await ownerConsents(web, second, key);
+  const roomyService = advanceService(coordinator, roomy, key, { accepted: new Set() });
+  const secondService = advanceService(coordinator, second, key, { accepted: new Set() });
+  assert.equal((await roomyService.service.advance(roomy.pipeline.runId, roomy.policyId)).startsWork, true,
+    "one unit of headroom is admitted");
+  // The first run's stage is still queued with no harness run, so the ceiling of
+  // four is spent: the next queued process would be the fifth.
+  const queuedNotStarted = (await admin.query(`SELECT count(*)::int count FROM pipeline_advance_receipts r
+    WHERE r.tenant_id=$1 AND NOT EXISTS(SELECT 1 FROM control_harness_runs h
+      WHERE h.tenant_id=r.tenant_id AND h.job_id=r.execution_job_id)`, [roomy.tenantId])).rows[0].count;
+  assert.equal(queuedNotStarted, 1, "the admitted advance queued work with no harness run yet");
+  await assert.rejects(secondService.service.advance(second.pipeline.runId, roomy.policyId),
+    error => error.safeReason === "installation_agent_process_ceiling_reached",
+    "queued-but-unstarted work must count toward the process ceiling");
+  assert.equal(secondService.queuedCount(), 0);
+});
 
 test("every installation ceiling refuses at its own boundary on the production coordinator login", needsPg, async t => {
   const admin = superuser();
@@ -711,7 +1110,7 @@ test("the loop ceiling stops the run and creates one real Needs Attention item",
     + " AND pipeline_run_id=$2 AND stage_ordinal=0 AND loop_index=0", [own.tenantId, own.pipeline.runId])).rows[0].id,
     `pipeline-advance:${own.pipeline.runId}:0:0`);
   assert.deepEqual((await counted(0)).map(row => [Number(row.loop_index), Number(row.max_loops), Number(row.run_total_loops)]),
-    [[0, 1, 2]], "the counted round is the stage's, and the run total is the run's own job chain");
+    [[0, 1, 1]], "the counted round is the stage's, and the run total is the rounds the run has started");
   assert.equal((await counted(0))[0].worker_id, "worker:build:loops");
   assert.equal((await counted(0))[0].reason_code, "stage_advanced");
   // The counted row points at the round's own receipt, whose id carries the round.
@@ -739,7 +1138,7 @@ test("the loop ceiling stops the run and creates one real Needs Attention item",
   const reentered = await service.advance(own.pipeline.runId, own.policyId)
     .catch(error => assert.fail(`the re-entered stage must advance again: ${error?.safeReason ?? error}`));
   assert.equal(reentered.stageOrdinal, 0, "the re-entered stage advances again");
-  assert.deepEqual((await counted(0)).map(row => [Number(row.loop_index), Number(row.run_total_loops)]), [[0, 2], [1, 3]],
+  assert.deepEqual((await counted(0)).map(row => [Number(row.loop_index), Number(row.run_total_loops)]), [[0, 1], [1, 3]],
     "the re-entry is round 1 of that stage, and the run total keeps moving");
   // Each round has its own durable receipt, so a replay still lands on round 1.
   assert.equal((await service.advance(own.pipeline.runId, own.policyId)).replayed, true);
@@ -775,7 +1174,7 @@ test("the loop ceiling stops the run and creates one real Needs Attention item",
     + " FROM pipeline_stage_loop_counts WHERE pipeline_run_id=$1 AND reason_code<>'stage_advanced'",
   [own.pipeline.runId])).rows;
   assert.deepEqual(stops.map(row => [Number(row.loop_index), Number(row.max_loops),
-    Number(row.run_total_loops), row.reason_code]), [[1, 1, 2, "stage_loop_limit_reached"]],
+    Number(row.run_total_loops), row.reason_code]), [[1, 1, 3, "stage_loop_limit_reached"]],
   "the recorded stop is the last started round, inside the ceiling it reached");
   assert.equal(stops[0].worker_id, "worker:build:loops", "the stop names the stage's own worker");
   // Three advances really happened (build round 0, check round 0, build round 1),
@@ -1121,8 +1520,8 @@ test("every S7b down file revokes only what its own up migration granted", needs
     assert.deepEqual(key.map(r => r.def), ["UNIQUE (tenant_id, pipeline_run_id, stage_ordinal)"],
       "0154's down restores the original one-receipt-per-stage key");
     const guard = (await target.query(`SELECT tgname FROM pg_trigger
-      WHERE tgrelid='control_action_inbox'::regclass AND tgname LIKE '%pipeline_loop%'`)).rows;
-    assert.deepEqual(guard, [], "0154's down drops both loop-attention guards");
+      WHERE tgrelid='control_action_inbox'::regclass AND tgname LIKE '%pipeline_loop%' ORDER BY tgname`)).rows;
+    assert.deepEqual(guard.map(r => r.tgname), [], "0154's down drops all three loop-attention guards");
     // And the up restores exactly that state, so the pair round-trips.
     await target.query(await readFile(join(ROOT, "db/migrations/0154_pipeline_advance_round_receipts.sql"), "utf8"));
     const restoredColumn = (await target.query(`SELECT column_name FROM information_schema.columns
