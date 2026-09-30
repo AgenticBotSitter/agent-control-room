@@ -19,6 +19,15 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
 export const privateWebSchemaDigest = "4e2487b5e85ee2214dad38eef0d90d2bb9a7f7feb63656b0edd6484383431016";
+/** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
+ * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
+ * `effectivePrivateWebReadTables` applies them conditionally, which keeps both shapes exact: with
+ * the gateway the web login must hold exactly SELECT, and without it the web login must hold
+ * nothing, because the column audit in `verifyDatabase` still compares every column against the
+ * live grant, so an unexpected fleet grant is refused either way. */
+export const privateWebFleetReadTables = ["fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials",
+  "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events",
+  "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -41,7 +50,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links"] as const;
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", ...privateWebFleetReadTables, "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -477,7 +486,14 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-              AND has_function_privilege('control_room_fleet_gateway',p.oid,'EXECUTE')
+              -- Where the fleet gateway is installed, this function is its boundary
+              -- and must stay executable by that role alone. The Mac-local install has
+              -- no fleet gateway role at all, and naming one there is a 42704 that
+              -- fails every Mac-local startup; the enclosing NOT EXISTS already
+              -- refuses any non-owner EXECUTE grantee, so an absent role is accepted
+              -- only when nobody outside the schema owner can call the function.
+              AND COALESCE((SELECT has_function_privilege(g.oid,p.oid,'EXECUTE') FROM pg_roles g
+                WHERE g.rolname='control_room_fleet_gateway'),true)
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
                   OR pg_get_userbyid(a.grantee)<>'control_room_fleet_gateway')))
@@ -531,8 +547,17 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
       // coordinator's incident rows): listed columns must carry INSERT, unlisted must not.
       const scopedInserts = kind === "web" ? privateWebInsertColumns : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
-      if (!columns.length || columns.some(c => c.extra
-        || c.read !== (reads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))
+      if (!columns.length) fail();
+      // Fleet tables are granted to the web login by fleet_gateway_roles.sql, which the
+      // Mac-local install never runs, so where the fleet gateway is absent the web login
+      // must hold nothing on any fleet table. The expectation follows the install; the
+      // comparison does not soften, so a stray grant is still refused.
+      const effectiveReads = new Set(reads);
+      if (kind === "web" && (await tx.query<{ present: boolean }>(
+        "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') AS present")
+      ).rows[0]?.present !== true) for (const table of privateWebFleetReadTables) effectiveReads.delete(table);
+      if (columns.some(c => c.extra
+        || c.read !== (effectiveReads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))
         || c.insert !== (allowedInserts.has(c.table_name) || !!scopedInserts[c.table_name]?.includes(c.column_name))
         || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name)
         || c.remove !== allowedDeletes.has(c.table_name))) fail();
