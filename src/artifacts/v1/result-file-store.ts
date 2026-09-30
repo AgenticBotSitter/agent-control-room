@@ -185,10 +185,14 @@ function currentBootIdentity(): string | undefined {
   return bootIdentity;
 }
 
-/** Test seam: the boot identity a lock is judged against. Replaced by the S1
- * tests, which need to judge a lock written under a DIFFERENT boot. */
-let bootIdentityForTest: (() => string | undefined) | undefined;
-const bootOf = () => (bootIdentityForTest ?? currentBootIdentity)();
+/** This boot's identity, for the stamp a human reads out of a leftover. Nothing
+ * DECIDES on it: the kernel lock answers liveness, and a kernel lock does not
+ * survive the reboot that would recycle a pid -- which is the whole reason the
+ * previous boot/pid/start-second arithmetic existed and the whole reason it is
+ * gone. The seam that let a test judge a lock as though it came from another boot
+ * goes with that decision, so the next reader does not assume there is a boot
+ * comparison somewhere. */
+const bootOf = () => currentBootIdentity();
 
 /** When THIS process started, in whole seconds, or `undefined` if it cannot ask.
  * Read once, because a process's start time never changes.
@@ -420,7 +424,7 @@ export class ResultFileStoreV1 {
    *     instant that process dies — a crash, a signal, a power cut, a login
    *     window closing. Nothing in the file is parsed, no pid is signalled and no
    *     clock is compared, which is what removed the two ways the previous build
-   *     could delete a live writer's work (see `namedHolderIsAlive`).
+   *     could delete a live writer's work (see `takeOverAbandonedName`).
    *
    * The rules, in the order they are applied:
    *
@@ -543,66 +547,42 @@ export class ResultFileStoreV1 {
   }
 
   /**
-   * True when one of the store's own bookkeeping files is HELD — right now, by
-   * the kernel — and false only when the kernel says nobody holds it.
-   *
-   * There is no stamp to interpret, no pid to signal, no boot to compare and no
-   * timer to wait on. The whole question is one `open`, and the kernel answers
-   * it in one of two ways:
-   *
-   *   * `EAGAIN` (with `O_EXLOCK | O_NONBLOCK`) — a live process holds this file
-   *     locked. That is a live writer, whether it is mid-upload, between its
-   *     create and its first write, or a writer whose process has been alive for
-   *     a week. Nothing distinguishes those cases, and nothing has to.
-   *   * success — nobody holds it, so the holder is GONE. Not assumed: the kernel
-   *     dropped the lock at the moment the process died, so the only reader that
-   *     can get this answer is a reader that would have got `EAGAIN` a
-   *     millisecond earlier.
-   *
-   * The two cases the old stamp-based rule got wrong, and what replaces each:
-   *
-   *   * a live writer that had been up for more than a second was read as a
-   *     recycled pid, so a second opener deleted its lock AND its half-written
-   *     file (the review's B1, live, with a raw `ENOENT` escaping the store).
-   *     Now: `EAGAIN`, left alone.
-   *   * an EMPTY lock was a writer in a window of microseconds, so the rule
-   *     re-examined it after 150 ms and deleted it if still empty — which
-   *     deleted a live writer that stalled for longer than the window (the
-   *     review's S-new-4), and, because the timer was `unref`'d, could also
-   *     end the process mid-`create` (B2). Now: the lock is taken by the same
-   *     `open` that creates the name, so an empty lock with a live writer IS a
-   *     live lock and there is no window to wait out.
-   *
-   * What is still decided before the lock is touched, because it is about
-   * WHOSE FILE this is rather than about who is alive: the name must be a plain
-   * private regular file with link count 1. A directory, a symlink or a
-   * multi-linked name at a bookkeeping name is not this store's file, and the
-   * store refuses rather than removing something it does not own.
-   *
-   * `takingOver` is not a flag but a separate method: `takeOverAbandonedName`
-   * holds the probe's descriptor across the unlink. That closes the only window
-   * a kernel lock leaves — between "nobody holds it" and "I unlink it", a writer
-   * could otherwise create and lock the same name and have it deleted from under
-   * itself. A read-only check closes its descriptor immediately, because a check
-   * that held the lock would make every second opener the reason a legitimate
-   * write is refused.
-   */
-  private async namedHolderIsAlive(operation: Operation, name: string): Promise<boolean> {
-    const path = join(this.root, name);
-    const listed = await this.lstatOrAbsent(operation, path);
-    if (!listed) return false;
-    if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1)) return true;
-    return this.kernelLockIsHeld(operation, path);
-  }
-
-  /**
    * Removes one bookkeeping name that nobody holds, atomically with the proof.
    *
+   * This is the ONLY place in the store that asks whether a writer is alive, and
+   * the question is one `open`: `O_EXLOCK | O_NONBLOCK` returns `EAGAIN` when a
+   * live process holds this name locked, and succeeds when nobody holds it. There
+   * is no stamp to interpret, no pid to signal, no boot to compare and no timer
+   * to wait on, which is what removed the two ways the previous build could
+   * delete a live writer's work:
+   *
+   *   * a writer older than about a second was read as a recycled pid, so a
+   *     second opener deleted its lock AND its half-written file (the review's
+   *     B1, live, with a raw `ENOENT` escaping the store);
+   *   * an EMPTY lock was a writer in a window of microseconds, so the rule
+   *     re-examined it after 150 ms and deleted it if still empty -- which
+   *     deleted a writer that stalled longer than the window, and, because that
+   *     timer was `unref`'d, could end the process mid-`create` (B2).
+   *
+   * Neither case exists any more: the kernel lock is taken by the same `open`
+   * that creates the name, so an empty lock with a live writer IS a live lock,
+   * and a lock the kernel released belongs to a process that is gone -- not
+   * assumed, released.
+   *
    * The descriptor that proved the name free IS the lock on it, so it is held
-   * from the proof until after the unlink. Without that, a writer that created
-   * the name in the gap would be looking at a file the store then deletes — the
-   * exact failure the kernel lock was adopted to remove, in the one place the
-   * store deletes rather than refuses.
+   * from the proof until after the unlink. That closes the one window a kernel
+   * lock leaves: between "nobody holds it" and "I unlink it", a writer could
+   * otherwise create the name and have it deleted from under itself. Measured
+   * against a real writer child: a take-over cannot unlink a HELD lock in
+   * either order, so this narrows a microsecond race rather than preventing a
+   * data loss -- and it costs one open, which is cheaper than the bug.
+   *
+   * The shape test above the probe is about WHOSE FILE the name is, not about
+   * who is alive: a directory, a symlink or a multi-linked name at a bookkeeping
+   * name is not this store's own file, and the store refuses rather than
+   * removing something it does not own. `ENOENT` and `ELOOP` from the probe are
+   * refusals for the same reason, and any other errno is re-thrown rather than
+   * read as "free" -- a store that cannot ASK must not answer.
    *
    * Returns false (and removes nothing) when the name is held, and throws
    * `store_ambiguous` when the name is not this store's own file to remove,
@@ -638,50 +618,6 @@ export class ResultFileStoreV1 {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
     }
-  }
-
-  /**
-   * Whether the kernel has this path locked, and the ONLY liveness test in this
-   * class.
-   *
-   * `O_EXLOCK | O_NONBLOCK` is a probe rather than a wait: the store must answer
-   * now, and a blocking open would park an opener behind a writer that is
-   * allowed to take the whole operation timeout.
-   *
-   * `takingOver` keeps the descriptor open and hands it to the caller, which is
-   * the only caller that is about to unlink the name. That is what makes a
-   * take-over race-free: the moment this store proves a lock is free it OWNS it,
-   * so a writer that appears in the next few milliseconds finds `EAGAIN` on its
-   * own `O_EXCL` create rather than a name that is deleted from under it. A
-   * read-only check closes its descriptor immediately, because a check that held
-   * the lock would make every second opener the reason a legitimate write is
-   * refused.
-   *
-   * Every answer is either "held", "free", or a refusal. `ENOENT` and `ELOOP` are
-   * refusals because they mean the name is not the plain private file checked
-   * above — the caller removes nothing on a refusal — and any other errno is
-   * re-thrown rather than read as "free", because a store that cannot ASK must
-   * not answer.
-   *
-   * The probe opens `O_RDWR` because `O_EXLOCK` on a read-only descriptor is
-   * advisory in the BSD sense: measured on this host, a read-only `O_EXLOCK`
-   * open of a file another process holds with a write lock succeeds. Writing is
-   * therefore the only mode that reliably contends, and it changes no bytes
-   * because this descriptor is only ever opened, never written to.
-   */
-  private async kernelLockIsHeld(operation: Operation, path: string): Promise<boolean> {
-    let handle: FileHandle;
-    try {
-      handle = await bounded(operation,
-        () => open(path, constants.O_RDWR | exclusiveLock | nonBlock | noFollow), () => {});
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "EAGAIN" || code === "EWOULDBLOCK") return true;
-      if (code === "ENOENT" || code === "ELOOP") return true;   // not the file we judged: hold
-      throw error;
-    }
-    await handle.close().catch(() => {});
-    return false;
   }
 
   /** Unlinks one name the recovery has already proved is this store's own
