@@ -330,9 +330,9 @@
   },
   {
     "file": "src/web/v1/fleet-owner-http.ts",
-    "find": "&& node \"$d/${release.file}\" join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`",
-    "replace": "&& node \"$d/${release.file}\" join --server ${gatewayOrigin} --code ${code}`",
-    "test": "node --import tsx --test --test-name-pattern \"owner's join command\" tests/fleet-connector.test.ts",
+    "find": "&& node \"$d/${release.file}\" install --server ${gatewayOrigin} --code ${code} --bot ${workerKind}",
+    "replace": "&& node \"$d/${release.file}\" install --server ${gatewayOrigin} --code ${code}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"owner's install command\" tests/fleet-connector.test.ts",
     "why": "the verified-release owner command still declares the worker kind bound into its one-time code"
   }
 ]
