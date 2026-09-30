@@ -1,0 +1,100 @@
+[
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NEW.owner_session_digest !~ '^sha256:[a-f0-9]{64}$'\n    OR NOT updater.owner_session_is_live(NEW.owner_session_digest) THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "an approval, a registration and a phone request must all be refused without a live owner session (R16, design §5.4)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "CREATE OR REPLACE FUNCTION updater.guard_owner_session() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER",
+    "replace": "CREATE OR REPLACE FUNCTION updater.guard_owner_session() RETURNS trigger\nLANGUAGE plpgsql",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "the session guard must run as the table's owner, or it calls a revoked function as the web login and every insert is refused"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF TG_OP = 'UPDATE' AND OLD.finished_at IS NULL AND NEW.lease_token IS DISTINCT FROM OLD.lease_token THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "a live run's lease must not be reassigned, or a second updater process inherits it (design §7.2, SI-06)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NOT EXISTS (SELECT 1 FROM updater.plans p WHERE p.plan_id = NEW.plan_id\n      AND p.state = 'approved' AND p.expires_at > pg_catalog.now()) THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "a run must be bound to an approved, unexpired plan, or a refused or superseded plan can still install something"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "    (OLD.state = 'draining' AND NEW.state IN ('quiesced','switched','rollback_started','refused')) OR",
+    "replace": "    (OLD.state = 'draining' AND NEW.state IN ('quiesced','rollback_started','refused')) OR",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "a code-only run goes draining -> switched without quiescing the database (design §8.1, §8.3)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF OLD.state IN ('succeeded','rolled_back','needs_attention','refused') THEN\n    RAISE EXCEPTION 'updater run % is terminal', OLD.state USING ERRCODE = '23514';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'updater run % is terminal', OLD.state USING ERRCODE = '23514';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "a succeeded, rolled-back, refused or needs-attention run must never be reopened"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF (to_jsonb(NEW) - ARRAY['state','superseded_by_plan_id']) IS DISTINCT FROM\n     (to_jsonb(OLD) - ARRAY['state','superseded_by_plan_id']) THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "a plan's content is fixed once written, so the owner's Face ID binds one plan and not a later edit of it"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF EXISTS (SELECT 1 FROM updater.plans p\n      WHERE p.plan_id <> NEW.plan_id\n        AND p.state IN ('building','ready_for_approval','approved','approval_required')) THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "one open plan at a time, or the owner is asked to approve two candidates (design §5.5, SI-24)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NEW.template LIKE 'control-room-updater%' THEN\n    RAISE EXCEPTION 'only the updater may use its own push template' USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  IF false THEN\n    RAISE EXCEPTION 'only the updater may use its own push template' USING ERRCODE = '42501';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "the web may queue a push but never speak in the updater's name (R12, design §12)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "CREATE OR REPLACE TRIGGER plans_immutable_guard BEFORE UPDATE ON updater.plans\n  FOR EACH ROW EXECUTE FUNCTION updater.guard_plan_immutable();",
+    "replace": "-- mutation removes the plan-content immutability trigger",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "the immutability guard must be attached to the table, not merely defined"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "CREATE UNIQUE INDEX IF NOT EXISTS runs_one_live ON updater.runs((true)) WHERE finished_at IS NULL;",
+    "replace": "-- mutation removes the one-live-run index",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "at most one live run, enforced by the database so twenty updater processes cannot all claim one (P6)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "REVOKE UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA updater FROM control_room_private_web;",
+    "replace": "-- mutation grants the web login write access to the updater's tables",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "the web login queues and asserts; it changes nothing it or the updater wrote (design §9.1)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0001_deployer_role.sql",
+    "find": "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'control_room_deployer'\n      AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole\n      AND NOT rolreplication AND NOT rolbypassrls) THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "the deployer role must never become SUPERUSER, CREATEROLE or BYPASSRLS, and the check must be non-vacuous"
+  },
+  {
+    "file": "db/roles/updater_release_reader_roles.sql",
+    "find": "  EXECUTE 'GRANT SELECT (tenant_id, token_digest, identity_id, expires_at, revoked_at)'\n    || ' ON public.control_web_sessions TO control_room_deployer';",
+    "replace": "  -- mutation removes the deployer's read of the owner session table",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
+    "why": "the owner-session guard is SECURITY DEFINER and needs exactly this read, and the loader asserts the reach is exactly three tables"
+  }
+]
