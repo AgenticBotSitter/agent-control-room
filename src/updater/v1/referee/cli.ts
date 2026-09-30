@@ -2,7 +2,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { classifyUpdaterCandidateV1, parseUpdaterRawDiffV1 } from "./index";
+import { classifyUpdaterCandidateV1, parseUpdaterCandidateTreeV1, parseUpdaterRawDiffV1,
+  UpdaterRefereePlanTimeBudgetV1 } from "./index";
 
 function usage(): never {
   process.stderr.write("usage: referee-cli --policy-dir DIR [--repo DIR] FROM_COMMIT CANDIDATE_COMMIT\n");
@@ -28,11 +29,17 @@ const git = (...gitArgs: string[]) => execFileSync("git", ["-C", repository, ...
 });
 
 try {
+  const budget = new UpdaterRefereePlanTimeBudgetV1();
   const raw = git("-c", "core.quotepath=off", "-c", "diff.renames=copies", "-c", "diff.renameLimit=0",
-    "diff", "--raw", "-z", "--find-renames", "--find-copies", "--no-ext-diff", "--no-textconv",
+    "diff", "--raw", "-z", "--find-renames", "--find-copies", "--find-copies-harder", "--no-ext-diff", "--no-textconv",
     "--ignore-submodules=none", "--no-relative", revisions[0]!, revisions[1]!, "--");
+  const treeRaw = git("ls-tree", "-r", "-z", revisions[1]!);
   const records = parseUpdaterRawDiffV1(raw);
+  const treeEntries = parseUpdaterCandidateTreeV1(treeRaw);
+  const treeSymlinks = treeEntries.filter(entry => entry.mode === "120000");
+  if (treeSymlinks.length > 1024) throw new Error("tree_unreadable");
   const blobs: Record<string, Uint8Array> = Object.create(null);
+  for (const entry of treeSymlinks) blobs[entry.oid] = git("cat-file", "blob", entry.oid);
   for (const record of records) {
     const paths = [record.oldPath, record.newPath].filter((path): path is string => path !== null);
     const needsManifest = paths.some(path => path.toLowerCase() === "package.json" || path.toLowerCase().endsWith("/package.json"));
@@ -48,7 +55,7 @@ try {
   const result = classifyUpdaterCandidateV1({
     protectedJson: readFileSync(resolve(directory, "protected.json"), "utf8"),
     classesJson: readFileSync(resolve(directory, "classes.json"), "utf8"),
-  }, { raw, blobs });
+  }, { raw, treeRaw, blobs }, budget);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (result.refused) process.exitCode = 1;
 } catch {

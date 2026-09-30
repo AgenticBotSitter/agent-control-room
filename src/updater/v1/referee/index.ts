@@ -1,7 +1,12 @@
 import { posix as pathPosix } from "node:path";
+import { performance } from "node:perf_hooks";
 
 export const UPDATER_REFEREE_MAX_RAW_DIFF_BYTES_V1 = 8 * 1024 * 1024;
 export const UPDATER_REFEREE_MAX_DIFF_RECORDS_V1 = 100_000;
+export const UPDATER_REFEREE_MAX_RAW_TREE_BYTES_V1 = 16 * 1024 * 1024;
+export const UPDATER_REFEREE_MAX_TREE_RECORDS_V1 = 100_000;
+export const UPDATER_REFEREE_PLAN_TIME_BUDGET_MS_V1 = 30_000;
+export const UPDATER_REFEREE_PLAN_DIFF_RECORD_BUDGET_V1 = 100_000;
 
 export type UpdaterRefereeClassV1 = "code" | "database" | "dependency" | "protected" | "updater";
 export type UpdaterPlanClassV1 = "code-only" | "database" | "dependency" | "updater" | "setting";
@@ -13,8 +18,43 @@ export interface RunningUpdaterPolicyFilesV1 {
 
 export interface CandidateDiffV1 {
   raw: Uint8Array;
+  /** `git ls-tree -r -z` output for the candidate commit. */
+  treeRaw: Uint8Array;
   /** Blob contents keyed by the object id printed by `git diff --raw`. */
   blobs?: Readonly<Record<string, Uint8Array | string>>;
+}
+
+export interface CandidateTreeEntryV1 {
+  mode: "100644" | "100755" | "120000" | "160000";
+  type: "blob" | "commit";
+  oid: string;
+  path: string;
+}
+
+/**
+ * One instance is shared by the candidate classification and all five
+ * rule-loosening history probes. The overlay is a later slice, but it cannot
+ * accidentally turn the per-diff cap into six independent allowances.
+ */
+export class UpdaterRefereePlanTimeBudgetV1 {
+  readonly #startedAt: number;
+  #diffRecordsRemaining = UPDATER_REFEREE_PLAN_DIFF_RECORD_BUDGET_V1;
+
+  constructor(private readonly now: () => number = () => performance.now()) {
+    this.#startedAt = this.now();
+  }
+
+  chargeDiffRecords(count: number): void {
+    if (!Number.isSafeInteger(count) || count < 0 || count > this.#diffRecordsRemaining)
+      throw new Error("classification_budget_exceeded");
+    this.#diffRecordsRemaining -= count;
+    this.checkpoint();
+  }
+
+  checkpoint(): void {
+    if (this.now() - this.#startedAt > UPDATER_REFEREE_PLAN_TIME_BUDGET_MS_V1)
+      throw new Error("classification_budget_exceeded");
+  }
 }
 
 export interface RawDiffRecordV1 {
@@ -63,6 +103,8 @@ interface ProtectedEntry {
   id: string;
   patterns: string[];
   exclude: string[];
+  patternMatchers: CompiledGlobPattern[];
+  excludeMatchers: CompiledGlobPattern[];
   onChange: "protected" | "updater" | "refuse_reinstall";
   reason: string;
 }
@@ -70,7 +112,11 @@ interface ProtectedEntry {
 interface DetectionRule {
   patterns: string[];
   exclude: string[];
+  patternMatchers: CompiledGlobPattern[];
+  excludeMatchers: CompiledGlobPattern[];
 }
+
+type CompiledGlobPattern = Array<RegExp | null>;
 
 interface PackageRules {
   dependency: Set<string>;
@@ -93,6 +139,7 @@ const modePattern = /^(?:000000|100644|100755|120000|160000)$/u;
 // updater accepts Git's unambiguous abbreviation and the full SHA-1/SHA-256 id.
 const oidPattern = /^[0-9a-f]{7,64}$/u;
 const statusPattern = /^([AMDT])$|^([RC])(\d{1,3})$/u;
+const treeHeaderPattern = /^(100644|100755|120000) blob ([0-9a-f]{7,64})$|^(160000) commit ([0-9a-f]{7,64})$/u;
 
 class JsonReader {
   #index = 0;
@@ -240,6 +287,7 @@ function parsePolicies(policyFiles: RunningUpdaterPolicyFilesV1): ParsedPolicies
     if (patterns.length === 0 || [...patterns, ...exclude].some(pattern => pattern.length === 0)) throw new Error("policy_invalid");
     for (const pattern of [...patterns, ...exclude]) validateGlobPattern(pattern);
     return { id: value.id, patterns, exclude,
+      patternMatchers: patterns.map(compileGlobPattern), excludeMatchers: exclude.map(compileGlobPattern),
       onChange: value.onChange as ProtectedEntry["onChange"], reason: value.reason };
   });
   if (!Array.isArray(classesPolicy.classes) || !Array.isArray(classesPolicy.refusals)) throw new Error("policy_invalid");
@@ -253,7 +301,8 @@ function parsePolicies(policyFiles: RunningUpdaterPolicyFilesV1): ParsedPolicies
     const value = record(byId.get(id)?.detection);
     const patterns = strings(value.patterns), exclude = value.exclude === undefined ? [] : strings(value.exclude);
     for (const pattern of [...patterns, ...exclude]) validateGlobPattern(pattern);
-    return { patterns, exclude };
+    return { patterns, exclude,
+      patternMatchers: patterns.map(compileGlobPattern), excludeMatchers: exclude.map(compileGlobPattern) };
   };
   const dependencyValue = record(byId.get("dependency")?.detection);
   const packageValue = record(dependencyValue.packageJsonKeys);
@@ -300,6 +349,73 @@ function segmentSource(pattern: string): string {
   return source;
 }
 
+function compileGlobPattern(pattern: string): CompiledGlobPattern {
+  const rawSegments = pattern.toLowerCase().split("/");
+  const segments = rawSegments.filter((segment, index) => segment !== "**" || rawSegments[index - 1] !== "**");
+  return segments.map(segment => segment === "**" ? null : new RegExp(`^${segmentSourceWithBraces(segment)}$`, "u"));
+}
+
+function segmentSourceWithBraces(pattern: string): string {
+  let source = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index]!;
+    if (character === "*") source += "[^/]*";
+    else if (character === "?") source += "[^/]";
+    else if (character === "{") {
+      const close = pattern.indexOf("}", index + 1);
+      const alternatives = pattern.slice(index + 1, close).split(",");
+      source += `(?:${alternatives.map(wildcardSegmentSource).join("|")})`;
+      index = close;
+    } else source += character.replace(/[\\^$.[\]|()+{}]/u, "\\$&");
+  }
+  return source;
+}
+
+function wildcardSegmentSource(pattern: string): string {
+  let source = "";
+  for (const character of pattern) {
+    if (character === "*") source += "[^/]*";
+    else if (character === "?") source += "[^/]";
+    else source += character.replace(/[\\^$.[\]|()+{}]/u, "\\$&");
+  }
+  return source;
+}
+
+function compiledGlobMatches(pattern: CompiledGlobPattern, path: string): boolean {
+  const paths = path.toLowerCase().split("/");
+  const stars = pattern.reduce<number[]>((output, segment, index) => {
+    if (segment === null) output.push(index);
+    return output;
+  }, []);
+  if (stars.length === 0)
+    return pattern.length === paths.length && pattern.every((segment, index) => segment!.test(paths[index]!));
+  if (stars.length === 1) {
+    const star = stars[0]!;
+    const suffix = pattern.length - star - 1;
+    if (paths.length < pattern.length - 1) return false;
+    for (let index = 0; index < star; index += 1)
+      if (!pattern[index]!.test(paths[index]!)) return false;
+    for (let index = 1; index <= suffix; index += 1)
+      if (!pattern[pattern.length - index]!.test(paths[paths.length - index]!)) return false;
+    return true;
+  }
+  const memo = new Map<string, boolean>();
+  const visit = (patternIndex: number, pathIndex: number): boolean => {
+    const key = `${patternIndex}:${pathIndex}`;
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    let matched: boolean;
+    if (patternIndex === pattern.length) matched = pathIndex === paths.length;
+    else if (pattern[patternIndex] === null) matched = visit(patternIndex + 1, pathIndex) ||
+      (pathIndex < paths.length && visit(patternIndex, pathIndex + 1));
+    else matched = pathIndex < paths.length && pattern[patternIndex]!.test(paths[pathIndex]!) &&
+      visit(patternIndex + 1, pathIndex + 1);
+    memo.set(key, matched);
+    return matched;
+  };
+  return visit(0, 0);
+}
+
 export function updaterPolicyGlobMatchesV1(pattern: string, path: string): boolean {
   const patterns = pattern.toLowerCase().split("/");
   const paths = path.toLowerCase().split("/");
@@ -321,15 +437,27 @@ export function updaterPolicyGlobMatchesV1(pattern: string, path: string): boole
 }
 
 function matches(rule: DetectionRule, path: string): boolean {
-  return rule.patterns.some(pattern => updaterPolicyGlobMatchesV1(pattern, path)) &&
-    !rule.exclude.some(pattern => updaterPolicyGlobMatchesV1(pattern, path));
+  return rule.patternMatchers.some(pattern => compiledGlobMatches(pattern, path)) &&
+    !rule.excludeMatchers.some(pattern => compiledGlobMatches(pattern, path));
 }
 
 function safePath(path: string): boolean {
   if (path.length === 0 || path.startsWith("/") || path.includes("\\")) return false;
   if ([...encoder.encode(path)].some(byte => byte < 0x21 || byte > 0x7e)) return false;
   const segments = path.split("/");
-  return segments.every(segment => segment.length > 0 && segment !== ".." && segment.toLowerCase() !== ".git");
+  return segments.every(segment => segment.length > 0 && segment !== ".." && !isDotGitSegment(segment));
+}
+
+function asciiCaseFold(value: string): string {
+  return value.replace(/[A-Z]/gu, character => character.toLowerCase());
+}
+
+function isDotGitSegment(segment: string): boolean {
+  return asciiCaseFold(segment) === ".git";
+}
+
+function containsDotGitSegment(path: string): boolean {
+  return path.split("/").some(isDotGitSegment);
 }
 
 function ascii(buffer: Uint8Array): string {
@@ -378,6 +506,43 @@ export function parseUpdaterRawDiffV1(raw: Uint8Array): RawDiffRecordV1[] {
   return output;
 }
 
+export function parseUpdaterCandidateTreeV1(raw: Uint8Array): CandidateTreeEntryV1[] {
+  if (!(raw instanceof Uint8Array) || raw.byteLength > UPDATER_REFEREE_MAX_RAW_TREE_BYTES_V1)
+    throw new Error("tree_unreadable");
+  if (raw.byteLength === 0) return [];
+  const output: CandidateTreeEntryV1[] = [];
+  let start = 0;
+  for (let index = 0; index < raw.byteLength; index += 1) {
+    if (raw[index] !== 0) continue;
+    if (output.length >= UPDATER_REFEREE_MAX_TREE_RECORDS_V1 || index === start) throw new Error("tree_unreadable");
+    const record = raw.subarray(start, index);
+    const tab = record.indexOf(0x09);
+    if (tab <= 0 || tab === record.byteLength - 1) throw new Error("tree_unreadable");
+    const header = ascii(record.subarray(0, tab));
+    const matched = treeHeaderPattern.exec(header);
+    if (matched === null) throw new Error("tree_unreadable");
+    const mode = (matched[1] ?? matched[3]) as CandidateTreeEntryV1["mode"];
+    const type = mode === "160000" ? "commit" : "blob";
+    const oid = (matched[2] ?? matched[4])!;
+    const path = utf8.decode(record.subarray(tab + 1));
+    if (path.length === 0) throw new Error("tree_unreadable");
+    output.push({ mode, type, oid, path });
+    start = index + 1;
+  }
+  if (start !== raw.byteLength) throw new Error("tree_unreadable");
+  return output;
+}
+
+function candidateTreeHasCaseCollision(entries: readonly CandidateTreeEntryV1[]): boolean {
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const folded = asciiCaseFold(entry.path.normalize("NFC"));
+    if (seen.has(folded)) return true;
+    seen.add(folded);
+  }
+  return false;
+}
+
 function stable(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
@@ -407,6 +572,38 @@ function lexicalSymlinkTarget(path: string, target: string): { escaped: boolean;
   return { escaped: false, path: segments.join("/") };
 }
 
+function resolveCandidateSymlinkChain(
+  path: string,
+  target: string,
+  treeByPath: ReadonlyMap<string, CandidateTreeEntryV1>,
+  diff: CandidateDiffV1,
+): { escaped: boolean; path: string | null; containsDotGit: boolean } {
+  let resolved = lexicalSymlinkTarget(path, target);
+  const visited = new Set<string>();
+  for (let depth = 0; depth < 64 && !resolved.escaped && resolved.path !== null; depth += 1) {
+    if (containsDotGitSegment(resolved.path)) return { ...resolved, containsDotGit: true };
+    const segments = resolved.path.split("/");
+    let link: CandidateTreeEntryV1 | undefined;
+    let linkSegments = 0;
+    for (let count = 1; count <= segments.length; count += 1) {
+      const entry = treeByPath.get(segments.slice(0, count).join("/"));
+      if (entry?.mode !== "120000") continue;
+      link = entry;
+      linkSegments = count;
+      break;
+    }
+    if (link === undefined) return { ...resolved, containsDotGit: false };
+    const cycleKey = `${link.path}\0${resolved.path}`;
+    if (visited.has(cycleKey)) return { ...resolved, containsDotGit: false };
+    visited.add(cycleKey);
+    const suffix = segments.slice(linkSegments).join("/");
+    const linkTarget = blobText(diff, link.oid, 4096);
+    resolved = lexicalSymlinkTarget(link.path, suffix === "" ? linkTarget : `${linkTarget}/${suffix}`);
+  }
+  if (!resolved.escaped && resolved.path !== null) throw new Error("diff_unreadable");
+  return { ...resolved, containsDotGit: resolved.path !== null && containsDotGitSegment(resolved.path) };
+}
+
 function archiveAttributesUnsafe(text: string): boolean {
   for (const rawLine of text.split(/\r?\n/u)) {
     const line = rawLine.trim();
@@ -433,12 +630,16 @@ function failure(id: string, text: string): UpdaterRefereeResultV1 {
 export function classifyUpdaterCandidateV1(
   policyFiles: RunningUpdaterPolicyFilesV1,
   diff: CandidateDiffV1,
+  budget: UpdaterRefereePlanTimeBudgetV1 = new UpdaterRefereePlanTimeBudgetV1(),
 ): UpdaterRefereeResultV1 {
   let policy: ParsedPolicies;
   let records: RawDiffRecordV1[];
+  let treeEntries: CandidateTreeEntryV1[];
   try {
     policy = parsePolicies(policyFiles);
     records = parseUpdaterRawDiffV1(diff.raw);
+    treeEntries = parseUpdaterCandidateTreeV1(diff.treeRaw);
+    budget.chargeDiffRecords(records.length);
   } catch {
     return failure("diff_unreadable", "Control Room couldn't read what this update changes.");
   }
@@ -448,6 +649,9 @@ export function classifyUpdaterCandidateV1(
   const changedPaths = new Set<string>();
   const refusal = (id: string, fallback: string) => refusals.set(id,
     { id, text: policy.refusalText.get(id) ?? fallback });
+  const treeByPath = new Map(treeEntries.map(entry => [entry.path, entry]));
+  if (candidateTreeHasCaseCollision(treeEntries))
+    refusal("case_collision", "Two files in this update would overwrite each other on this Mac.");
   const hit = (path: string, entryId: string, reason: string, onChange: ProtectedPathHitV1["onChange"]) => {
     hits.set(`${path}\0${entryId}`, { path, entryId, reason, onChange });
     classes.add("protected");
@@ -458,8 +662,8 @@ export function classifyUpdaterCandidateV1(
     changedPaths.add(path);
     if (!safePath(path)) { refusal("path_not_allowed", "This update has a file name Control Room can't check safely."); return; }
     for (const entry of policy.entries) {
-      if (entry.patterns.some(pattern => updaterPolicyGlobMatchesV1(pattern, path)) &&
-          !entry.exclude.some(pattern => updaterPolicyGlobMatchesV1(pattern, path)))
+      if (entry.patternMatchers.some(pattern => compiledGlobMatches(pattern, path)) &&
+          !entry.excludeMatchers.some(pattern => compiledGlobMatches(pattern, path)))
         hit(path, entry.id, entry.reason, entry.onChange);
     }
     if (matches(policy.database, path)) classes.add("database");
@@ -468,7 +672,8 @@ export function classifyUpdaterCandidateV1(
   };
   let filesAdded = 0, filesDeleted = 0;
   try {
-    for (const entry of records) {
+    for (const [recordIndex, entry] of records.entries()) {
+      if ((recordIndex & 0xff) === 0) budget.checkpoint();
       const paths = [...new Set([entry.oldPath, entry.newPath].filter((path): path is string => path !== null))];
       for (const path of paths) classifyPath(path);
       if (entry.status === "A") filesAdded += 1;
@@ -485,12 +690,14 @@ export function classifyUpdaterCandidateV1(
         if (entry.newMode === "120000" && entry.newPath !== null) links.push([entry.newPath, entry.newOid, "new"]);
         for (const [path, oid] of links) {
           const target = blobText(diff, oid, 4096);
-          const resolved = lexicalSymlinkTarget(path!, target);
+          const resolved = resolveCandidateSymlinkChain(path!, target, treeByPath, diff);
           if (resolved.escaped) refusal("symlink_escape", "This update has a link pointing outside Control Room.");
           if (resolved.path !== null) {
+            if (resolved.containsDotGit)
+              refusal("path_not_allowed", "This update has a file name Control Room can't check safely.");
             for (const protectedEntry of policy.entries) {
-              if (!protectedEntry.patterns.some(pattern => updaterPolicyGlobMatchesV1(pattern, resolved.path!)) ||
-                  protectedEntry.exclude.some(pattern => updaterPolicyGlobMatchesV1(pattern, resolved.path!))) continue;
+              if (!protectedEntry.patternMatchers.some(pattern => compiledGlobMatches(pattern, resolved.path!)) ||
+                  protectedEntry.excludeMatchers.some(pattern => compiledGlobMatches(pattern, resolved.path!))) continue;
               hit(path!, `symlink-target:${protectedEntry.id}`, `The link targets ${resolved.path}: ${protectedEntry.reason}`,
                 protectedEntry.onChange);
             }
