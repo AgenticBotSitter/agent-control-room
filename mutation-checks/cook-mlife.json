@@ -1,0 +1,51 @@
+[
+  {
+    "file": "src/web/v1/private-database-preflight.ts",
+    "find": "              AND (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway')\n                OR has_function_privilege('control_room_fleet_gateway',p.oid,'EXECUTE'))",
+    "replace": "              AND has_function_privilege('control_room_fleet_gateway',p.oid,'EXECUTE')",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern \"S5 agent-review\" tests/postgres-production-lifecycle.test.mjs",
+    "why": "a cluster with no fleet gateway is correct; has_function_privilege on a missing role raises 42704 and fails every preflight on it"
+  },
+  {
+    "file": "src/web/v1/private-database-preflight.ts",
+    "find": "        `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') AS present`)).rows[0]?.present)",
+    "replace": "        `SELECT true AS present`)).rows[0]?.present)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-web-role-preflight-declaration.test.ts",
+    "why": "the fleet read tables are demanded only when the gateway role exists, which is what fleet_gateway_roles.sql creates"
+  },
+  {
+    "file": "tests/postgres-production-lifecycle.test.mjs",
+    "find": "    if (kept.length === 0 || survivors.length === 0) continue;\n    rebuilt.push(`${matched[1]} ${kept.join(\", \")} ON ${survivors.join(\", \")}`",
+    "replace": "    if (kept.length === 0 || survivors.length === 0) continue;\n    continue;\n    rebuilt.push(`${matched[1]} ${kept.join(\", \")} ON ${survivors.join(\", \")}`",
+    "test": "node --import tsx --test --test-name-pattern \"staged grants keep\" tests/postgres-production-lifecycle.test.mjs",
+    "why": "the staged grants file keeps the revoke on the relations the staged release still has"
+  },
+  {
+    "file": "tests/postgres-production-lifecycle.test.mjs",
+    "find": "  assert.ok(rewritten.length > 0,\n    \"no production_table_grants.sql statement named a withheld object; the staged grants would be wrong\");",
+    "replace": "  void rewritten;",
+    "test": "node --import tsx --test --test-name-pattern \"staged grants keep\" tests/postgres-production-lifecycle.test.mjs",
+    "why": "a grants file no withheld object is named in would be passed through unfixed, and the applier would report deferred_partial_schema"
+  },
+  {
+    "file": "tests/postgres-production-lifecycle.test.mjs",
+    "find": "  const logins=Object.keys(macRolePlan);",
+    "replace": "  const logins=[\"control_room_web\",\"control_room_coordinator\",\"control_room_results\",\"control_room_publisher\",\"control_room_agent_reviewer_login\",\"control_room_queue_worker\"];",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern \"S5 agent-review\" tests/postgres-production-lifecycle.test.mjs",
+    "why": "the installer refuses any login set that is not exactly the role plan's"
+  },
+  {
+    "file": "tests/postgres-production-lifecycle.test.mjs",
+    "find": "  for (const file of intakeBindingDeps) await query(db, await readFile(join(ROOT, \"db/down\", file), \"utf8\"));",
+    "replace": "  for (const file of []) await query(db, await readFile(join(ROOT, \"db/down\", file), \"utf8\"));",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern \"work-intake login cannot read\" tests/postgres-production-lifecycle.test.mjs",
+    "why": "every migration whose policy reads work_intake_tenant_binding is rolled back before 0093 drops the table"
+  },
+  {
+    "file": "tests/postgres-production-lifecycle.test.mjs",
+    "find": "const MAC_ROLE_GROUPS = [...new Set([...Object.values(macRolePlan), \"control_room_private_web\"])];",
+    "replace": "const MAC_ROLE_GROUPS = [...new Set(Object.values(macRolePlan))];",
+    "test": "node --import tsx --test --test-concurrency=1 --test-name-pattern \"0109 down returns\" tests/postgres-production-lifecycle.test.mjs",
+    "why": "the web role's read-only fleet SELECTs come from the fleet role file and are part of the desired grants"
+  }
+]
