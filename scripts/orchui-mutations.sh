@@ -68,11 +68,11 @@ mutate M8-prefill-deep-clone "$OWNER" \
   'return deepFreeze(projectOrchestrationSuggestionPrefillSchemaV1.parse(await options.coordinator.ownerPrefill({' \
   'return projectOrchestrationSuggestionPrefillSchemaV1.parse(await options.coordinator.ownerPrefill({'
 
-# M8b: listSuggestions hands the browser its store's live objects instead of a
-# frozen copy (F9's finding).
+# M8b: the PAGE-level freeze is removed, so a store that hands back its own live
+# objects passes them straight to the browser client. This is F9's finding.
 mutate M8b-list-freezes-out "$OWNER" \
-  'projectId, batchId, baseRevision: value.baseRevision, proposal: deepFreeze(cloneProposal(value.proposal)),' \
-  'projectId, batchId, baseRevision: value.baseRevision, proposal: value.proposal,'
+  '      return deepFreeze(page);' \
+  '      return page;'
 
 # M9: the coordinator principal may be a human.
 mutate M9-principal-must-be-agent "$OWNER" \
