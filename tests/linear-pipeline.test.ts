@@ -410,6 +410,15 @@ test("0109, 0108 and 0105 down migrations refuse retained policy/history and rem
   const down = await readFile("db/down/0105_linear_pipeline_runs.sql", "utf8");
   const agentReviewDown = await readFile("db/down/0106_agent_review_plans.sql", "utf8");
   const publicationDown = await readFile("db/down/0108_pipeline_build_publications.sql", "utf8");
+  // S7b's 0151 and 0153 build append-only triggers on the history guard 0109 owns,
+  // so 0109's down refuses while they exist. Reverse the later slice first, which is the
+  // real order a down path has to be taken in.
+  const s7bDowns = ["0154_pipeline_advance_round_receipts.sql", "0153_pipeline_machine_capacity_observations.sql",
+    "0152_pipeline_advance_unknown_cost.sql", "0151_pipeline_stage_loop_counts.sql",
+    "0150_pipeline_installation_allowances.sql"];
+  // S7b's tables exist in this fixture too, so 0109's down refuses while they
+  // do. Reverse S7b first, exactly as an operator would, then 0109 runs.
+  for (const file of s7bDowns) await populated.db.exec(await readFile(`db/down/${file}`, "utf8"));
   await populated.db.exec(unattendedDown);
   await assert.rejects(populated.db.exec(publicationDown), /0108 down migration refused/u);
   await populated.db.exec("ROLLBACK");
@@ -419,6 +428,9 @@ test("0109, 0108 and 0105 down migrations refuse retained policy/history and rem
   await populated.db.exec(publicationDown);
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
+  await assert.rejects(empty.db.exec(unattendedDown), /a later migration depends on its history guard/u);
+  await empty.db.exec("ROLLBACK");
+  for (const file of s7bDowns) await empty.db.exec(await readFile(`db/down/${file}`, "utf8"));
   await empty.db.exec(unattendedDown);
   await empty.db.exec(publicationDown);
   await empty.db.exec(agentReviewDown);
@@ -428,6 +440,15 @@ test("0109, 0108 and 0105 down migrations refuse retained policy/history and rem
     to_regclass('pipeline_stage_runs')::text stages`)).rows[0], { templates: null, runs: null, stages: null });
   assert.deepEqual((await empty.db.query<{ guard: string | null }>(
     "SELECT to_regproc('guard_control_job_pipeline_lineage')::text guard")).rows[0], { guard: null });
+  // S7b's own tables went with their own down files, and the guard 0109 owned
+  // is gone because nothing was left pointing at it.
+  assert.deepEqual((await empty.db.query<{ allowance: string | null; loops: string | null; observed: string | null }>(
+    `SELECT to_regclass('pipeline_installation_allowances')::text allowance,
+      to_regclass('pipeline_stage_loop_counts')::text loops,
+      to_regclass('pipeline_machine_capacity_observations')::text observed`)).rows[0],
+  { allowance: null, loops: null, observed: null });
+  assert.deepEqual((await empty.db.query<{ history: string | null }>(
+    "SELECT to_regproc('reject_pipeline_unattended_history_mutation')::text history")).rows[0], { history: null });
 });
 
 /** Stage zero planned through the real planner with a coordinator that holds the
