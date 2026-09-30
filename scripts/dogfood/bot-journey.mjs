@@ -37,6 +37,7 @@ export const BOT_JOURNEY_EXPECTED_REFUSALS_V1 = Object.freeze([
   "no_mcp_tool_to_describe_a_job",
   "no_mcp_tool_to_split_a_job",
   "no_result_without_a_claim",
+  "no_result_file_from_outside_its_workspace",
   "proposal_replay_with_different_work",
   "proposal_outside_its_projects",
   "proposal_malformed",
@@ -426,13 +427,19 @@ export async function runBotJourneyV1(env) {
   const progress = await bot.call("post_progress", { claimId: claim.value?.claimId, message: "Working on it.",
     idempotencyKey: "dogfood-progress-001" });
   record({ who: "bot", what: "post progress", outcome: "allowed", detail: progress.value?.kind ?? "" });
-  await bot.write("notes.md", "# done\n");
-  const escaped = await bot.write("notes.md", "ok");
+  // Attach a file from inside the bot's own workspace. `bot.write` refuses a
+  // path that escapes it, so this is the only way a result can carry a file.
+  const file = await bot.write("notes.md", "# done\n");
+  let escaped;
+  try { await bot.write("../outside.md", "nope"); escaped = "allowed"; }
+  catch { escaped = "refused"; }
+  record({ who: "bot", what: "attach a file from outside its own workspace", outcome: "refused",
+    refusal: "no_result_file_from_outside_its_workspace", detail: `path escape ${escaped}` });
   const result = await bot.call("submit_result", { claimId: claim.value?.claimId, answer: "Built it; see notes.",
-    files: [escaped], idempotencyKey: "dogfood-result-0001" });
+    files: [file], idempotencyKey: "dogfood-result-0001" });
+  if (result.refused) throw new Error(`bot_journey_submit_result_refused:${result.text}`);
   record({ who: "bot", what: "hand back a result with a file", outcome: "allowed",
     detail: `resultId=${result.value?.resultId}` });
-  if (!result.value?.resultId) throw new Error(`bot_journey_no_result_id:${result.text}`);
   const accepted = await env.acceptResult(result.value.resultId);
   record({ who: "owner", what: "accept the result", outcome: "observed", detail: accepted });
 
