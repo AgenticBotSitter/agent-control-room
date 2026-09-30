@@ -98,16 +98,9 @@ import { deliverOwnerPushV1 } from "./delivery";
  * one is wrong because the moment the owner subscribes the item should be
  * offered, not left waiting out a four-hour step.
  *
- * An earlier version of this path released the head with `next_attempt_at=now`,
- * which meant it was re-claimed on literally the next tick. Eight ticks at the
- * 30s production interval burned the whole attempt budget in about four
- * minutes -- and because 0225's guard refuses to decrement attempt_count, the
- * increments stuck. The item then sat at 'pending', attempt_count=8, with
- * nothing claimable and no path to a terminal state: not a retry, not a
- * failure, and never delivered even after the owner subscribed. That is a
- * third, undocumented stuck state, and it is the one the most likely
- * population hits -- a fresh install has no subscriptions until Settings is
- * opened.
+ * What the earlier `next_attempt_at=now` cost is told once, in the class
+ * comment above: it re-claimed the item on the next tick, and eight of those
+ * spent the whole budget in about four minutes.
  */
 const NO_SUBSCRIPTION_RECHECK_MS_V1 = 5 * 60_000;
 

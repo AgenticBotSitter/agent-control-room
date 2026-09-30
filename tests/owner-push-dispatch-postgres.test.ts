@@ -288,6 +288,62 @@ test("real PostgreSQL: 50 Needs-you items with NO subscribed phone, then the own
   }, { port: PORT + 7, allowedPorts: PORTS, database: "control_room", boundMs: 240_000 });
 });
 
+test("real PostgreSQL: many dispatchers racing a tenant with no subscription spend no attempts",
+  required ? undefined : { skip: realPostgresSkipMessage() }, async () => {
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin()); await admin.connect();
+    try {
+      // The pre-claim gate adds a read that the old path did not have, and a
+      // read is where two dispatchers can agree about something that is no
+      // longer true. Twenty dispatchers on INDEPENDENT connections, all seeing
+      // no subscription, must leave every item exactly as it was: no attempt
+      // spent, nothing reserved, and the reason recorded once.
+      await admin.query("INSERT INTO tenants(id,display_name) VALUES($1,'Push race nobody')", [TENANT]);
+      const db = asClient(postgres.connection("web"));
+      let millis = Date.now();
+      const channel: OwnerNotificationChannelV1 = { kind: "web-push",
+        async send() { throw new Error("must not be called with no subscription"); } };
+      for (let index = 0; index < 20; index++) await openAttention(admin, `attention:supervisor:racenobody-${index}`);
+      const before = Date.now();
+      const runs = await Promise.all(Array.from({ length: 20 }, () => {
+        const own = asClient(postgres.connection("web"));
+        return new OwnerPushDispatcherV1({ db: own, tenantId: TENANT, store: new PostgresOwnerPushStoreV1(own),
+          channel, clock: () => millis }).dispatch();
+      }));
+      assert.ok(Date.now() - before < 60_000, "twenty concurrent dispatchers finish promptly: the gate is one read, not a queue");
+      // Every dispatcher reports the same deferral, and between them they
+      // report each of the 20 items -- the gate's UPDATE is idempotent, so a
+      // second dispatcher over the same rows simply takes none.
+      const reported = runs.flat();
+      assert.ok(reported.every(outcome => outcome.result === "no_subscription"));
+      assert.equal(new Set(reported.map(outcome => outcome.actionInboxId)).size, 20,
+        "and every item is accounted for across the twenty racing dispatchers");
+      const after = (await heads(admin)).rows;
+      assert.equal(after.length, 20);
+      assert.ok(after.every(row => row.state === "pending"));
+      assert.ok(after.every(row => Number(row.attempt_count) === 0),
+        `twenty racing dispatchers must spend no attempt; found ${
+          [...new Set(after.map(row => Number(row.attempt_count)))].join(",")}`);
+      assert.ok(after.every(row => row.reserved_at === null), "and none is left reserved by the stampede");
+      // Now the owner subscribes, and one tick delivers all 20 exactly once.
+      await subscribe(admin, `push:${"5".repeat(64)}`);
+      millis += 6 * 60_000;
+      const tags: string[] = [];
+      const live: OwnerNotificationChannelV1 = { kind: "web-push",
+        async send(_subscription, payload) { tags.push(payload.tag); return { statusCode: 201 }; } };
+      const healed = await Promise.all([0, 1, 2].map(() => {
+        const own = asClient(postgres.connection("web"));
+        return new OwnerPushDispatcherV1({ db: own, tenantId: TENANT, store: new PostgresOwnerPushStoreV1(own),
+          channel: live, clock: () => millis }).dispatch();
+      }));
+      assert.equal(healed.flat().filter(outcome => outcome.result === "delivered").length, 20,
+        "every waiting item is delivered once the owner subscribes");
+      assert.equal(tags.length, 20, "and no item is pushed twice");
+      assert.equal(new Set(tags).size, 20, "no tag was delivered twice");
+    } finally { await admin.end(); }
+  }, { port: PORT + 9, allowedPorts: PORTS, database: "control_room", boundMs: 240_000 });
+});
+
 test("real PostgreSQL: a subscription that vanishes mid-batch spends one attempt, then stops visibly",
   required ? undefined : { skip: realPostgresSkipMessage() }, async () => {
   await withRealPostgres(async postgres => {
