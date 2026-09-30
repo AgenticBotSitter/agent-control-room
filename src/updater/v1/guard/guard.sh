@@ -153,6 +153,11 @@ rescue() {
   temp="$STATE/.rescued.json.$$"
   /usr/bin/printf '%s\n' "{\"schema\":\"control-room.rescued/v1\",\"at\":\"$at\",\"from\":{\"releaseId\":\"$current_release\",\"pgDataId\":\"$current_pg\",\"schemaDigest\":$current_digest_json},\"to\":{\"releaseId\":\"$release\",\"pgDataId\":\"$pg\",\"schemaDigest\":\"$digest\"}}" >"$temp"
   /bin/chmod 600 "$temp"; /bin/mv -f "$temp" "$STATE/rescued.json"
+  # The rescue is authoritative. Retain any interrupted switch as evidence,
+  # but move it out of the startup recovery path before services are restarted.
+  if [ -e "$STATE/link-switch.json" ] || [ -L "$STATE/link-switch.json" ]; then
+    /bin/mv -f "$STATE/link-switch.json" "$STATE/link-switch.rescued.json"
+  fi
   bootstrap_all
 }
 

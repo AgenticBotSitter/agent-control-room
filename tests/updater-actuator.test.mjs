@@ -228,6 +228,57 @@ test("code-only recovery completes with pg/current absent and never asks for sto
   assert.equal(await readlink(join(root, "pg/current")), "data-p2");
 });
 
+test("code-only recovery treats a present drifted pg/current as a real database move", async t => {
+  const root = await fixtureV1(t, { data: ["p0", "p1", "p2", "p3", "p9"] }); let armed = true, proofs = 0;
+  await assert.rejects(switchPairLinksV1({ root, operationId: "recover-code-drift", from: pair("r2", "p2", 2),
+    to: pair("r3", "p2", 2), fault: step => { if (armed && step === "after_previous_done") {
+      armed = false; throw Object.assign(new Error("killed"), { code: "simulated_kill" });
+    } } }), /killed/u);
+  await unlink(join(root, "pg/current")); await symlink("data-p9", join(root, "pg/current"));
+  await writeFile(join(root, "pg/data-p9/postmaster.pid"), "live");
+  await assert.rejects(recoverPairLinksV1(root, { databaseStopped: async () => { proofs += 1; return true; } }),
+    /updater_database_not_stopped/u);
+  assert.equal(proofs, 0, "probe I: a live postmaster refuses before an external stop proof is consulted");
+  assert.equal(await readlink(join(root, "pg/current")), "data-p9");
+  await unlink(join(root, "pg/data-p9/postmaster.pid"));
+  await assert.rejects(recoverPairLinksV1(root, { databaseStopped: async move => {
+    proofs += 1; assert.deepEqual(move, { operationId: "recover-code-drift", direction: "forward",
+      fromPgDataId: "p9", toPgDataId: "p2" }); return false;
+  } }), /updater_database_not_stopped/u);
+  assert.equal(await readlink(join(root, "pg/current")), "data-p9", "a refused proof leaves the drift intact");
+  assert.equal((await recoverPairLinksV1(root, { databaseStopped: async () => true })).status, "completed",
+    "a retry can complete only after affirmative stop proof");
+  assert.equal(await readlink(join(root, "pg/current")), "data-p2");
+});
+
+test("a rescue marker makes stale pair recovery uncertain and keeps the rescued links", async t => {
+  const root = await fixtureV1(t); let armed = true, proofs = 0;
+  await assert.rejects(switchPairLinksV1({ root, operationId: "pre-rescue-switch", from: pair("r2", "p2", 2),
+    to: pair("r3", "p2", 2), fault: step => { if (armed && step === "after_previous_done") {
+      armed = false; throw Object.assign(new Error("killed"), { code: "simulated_kill" });
+    } } }), /killed/u);
+  await unlink(join(root, "current")); await symlink("releases/r1", join(root, "current"));
+  await unlink(join(root, "pg/current")); await symlink("data-p1", join(root, "pg/current"));
+  await writeFile(join(root, "pg/data-p1/postmaster.pid"), "live");
+  await writeFile(join(root, "updater-state/rescued.json"), `${JSON.stringify({
+    schema: "control-room.rescued/v1", from: pair("r2", "p2", 2), to: pair("r1", "p1", 1),
+  })}\n`);
+  const outcomes = await Promise.all(Array.from({ length: 25 }, () => recoverPairLinksV1(root, {
+    databaseStopped: async () => { proofs += 1; return true; },
+  })));
+  assert.ok(outcomes.every(outcome => outcome.status === "uncertain" && outcome.reason === "rescue_marker"));
+  assert.equal(proofs, 0, "recovery never tries to prove or move a pre-rescue database link");
+  assert.equal(await readlink(join(root, "current")), "releases/r1");
+  assert.equal(await readlink(join(root, "pg/current")), "data-p1");
+  await unlink(join(root, "updater-state/rescued.json"));
+  await writeFile(join(root, "outside-rescue-marker"), "untrusted");
+  await symlink(join(root, "outside-rescue-marker"), join(root, "updater-state/rescued.json"));
+  await assert.rejects(recoverPairLinksV1(root), /updater_symlink_refused/u,
+    "an untrusted rescue-marker symlink fails closed without resuming the stale record");
+  assert.equal(await readlink(join(root, "current")), "releases/r1");
+  assert.equal(await readlink(join(root, "pg/current")), "data-p1");
+});
+
 test("recovery refuses a malformed pg/current target before a database move", async t => {
   const root = await fixtureV1(t); let armed = true, proofs = 0;
   await assert.rejects(switchPairLinksV1({ root, operationId: "recover-malformed-pg", from: pair("r2", "p2", 2),

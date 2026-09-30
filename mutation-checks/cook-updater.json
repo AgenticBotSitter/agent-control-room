@@ -253,6 +253,27 @@
   },
   {
     "file": "src/updater/v1/release-layout.mjs",
+    "find": "async function assertRecoveryDatabaseStoppedV1(root, record, nextPgDataId, direction, databaseStopped) {\n  let currentPgDataId;",
+    "replace": "async function assertRecoveryDatabaseStoppedV1(root, record, nextPgDataId, direction, databaseStopped) {\n  if (record.from.pgDataId === record.to.pgDataId) return;\n  let currentPgDataId;",
+    "test": "node --test --test-name-pattern='present drifted pg/current' tests/updater-actuator.test.mjs",
+    "why": "a code-only record cannot bypass the real stop check when the on-disk database link has drifted"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "await readFileNoFollowV1(root, \"updater-state/rescued.json\", { maxBytes: 16_384 });",
+    "replace": "await readFileNoFollowV1(root, \"updater-state/rescue-ignored.json\", { maxBytes: 16_384 });",
+    "test": "node --test --test-name-pattern='rescue marker makes' tests/updater-actuator.test.mjs",
+    "why": "startup recovery must defer to an operator rescue instead of replaying a pre-rescue switch record"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "if [ -e \"$STATE/link-switch.json\" ] || [ -L \"$STATE/link-switch.json\" ]; then",
+    "replace": "if false; then",
+    "test": "node --test --test-name-pattern='rescue tombstones' tests/updater-guard.test.mjs",
+    "why": "rescue must tombstone a stale switch record before restarting services"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
     "find": "await lstat(pidPath);\n    throw updaterRefuseV1(\"updater_database_not_stopped\");",
     "replace": "await lstat(pidPath);\n    return;",
     "test": "node --test --test-name-pattern='stop proof before database moves' tests/updater-actuator.test.mjs",
@@ -281,10 +302,10 @@
   },
   {
     "file": "src/updater/v1/release-layout.mjs",
-    "find": "if (record.from.pgDataId === record.to.pgDataId) return;",
-    "replace": "if (false) return;",
+    "find": "catch (error) { if (error?.code !== \"ENOENT\") throw error; return; }",
+    "replace": "catch (error) { throw error; }",
     "test": "node --test --test-name-pattern='code-only recovery completes' tests/updater-actuator.test.mjs",
-    "why": "code-only recovery must not read or require a pre-existing pg/current link"
+    "why": "an absent pg/current link is a no-op recovery case and must not wedge a code-only switch"
   },
   {
     "file": "src/updater/v1/actuator.mjs",

@@ -142,8 +142,9 @@ async function readCurrentPgDataIdV1(root) {
 }
 
 async function assertRecoveryDatabaseStoppedV1(root, record, nextPgDataId, direction, databaseStopped) {
-  if (record.from.pgDataId === record.to.pgDataId) return;
-  const currentPgDataId = await readCurrentPgDataIdV1(root);
+  let currentPgDataId;
+  try { currentPgDataId = await readCurrentPgDataIdV1(root); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; return; }
   if (currentPgDataId === nextPgDataId) return;
   try {
     const pidPath = await assertNoSymlinkBelowV1(root, `pg/data-${currentPgDataId}/postmaster.pid`,
@@ -190,6 +191,10 @@ export async function switchPairLinksV1({ root, operationId, from, to, previousR
 /** On startup, an incomplete record resumes only while both target members are
  * still valid. A missing/corrupt target restores the recorded source pair. */
 export async function recoverPairLinksV1(root, { fault, databaseStopped } = {}) {
+  try {
+    await readFileNoFollowV1(root, "updater-state/rescued.json", { maxBytes: 16_384 });
+    return { status: "uncertain", reason: "rescue_marker" };
+  } catch (error) { if (error?.code !== "ENOENT") throw error; }
   const record = await readSwitchV1(root);
   if (!record) return { status: "none" };
   if (["completed", "rolled_back"].includes(record.phase)) {
