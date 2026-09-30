@@ -29,6 +29,7 @@ const manifests: readonly unknown[] = [
         { resource: "control_idea_qualification_spend_events", access: ["read", "write"] },
         { resource: "control_idea_canonical_task_sessions", access: ["read", "write"] },
         { resource: "control_idea_canonical_task_links", access: ["read", "write"] },
+        { resource: "control_idea_promotion_task_links", access: ["read", "write"] },
       ],
       taskTemplates: ["idea.panel-participant", "idea.synthesis"],
       pipelineTemplates: ["idea.panel"],
