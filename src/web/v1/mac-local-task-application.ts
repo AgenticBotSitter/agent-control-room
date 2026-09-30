@@ -1,5 +1,5 @@
 import type { PrivateWebProcessOptions } from "./private-process";
-import type { WebTaskKeys } from "./task-service";
+import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { WebTaskReviewService } from "./task-review-service";
 import { WebTaskVerificationService } from "./task-verification-service";
 import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration, type TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
@@ -19,6 +19,10 @@ import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, type ProjectEven
  */
 export type MacLocalTaskApplicationV1 = Readonly<{
   operations: MacLocalCanonicalTaskOperationsV1;
+  /** The one ordinary web task service shared with the loopback process.  Owner
+   * reviews use its in-session proposal port for accepted exceptions, so those
+   * follow-ups and the review commit atomically on the web connection. */
+  taskService: WebTaskService;
   taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "manualVerificationScenarios" | "usagePriceTable">
     & Pick<WebTaskKeys, "taskPlanIntegrityKey">;
   projectEvents?: ProjectEventReadSourceV1;
@@ -65,10 +69,17 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
   try {
     lifecycle = createTaskCoordinatorLifecycle(coordinator);
     const clock = input.clock ?? Date.now;
+    // Keep one web-task service for this installation. The loopback process
+    // receives this same instance below; constructing another one there would
+    // leave accepted-with-exceptions without its ordinary follow-up port.
+    const taskService = new WebTaskService(web.database.client,
+      { tenantId: web.tenantId, workspaceId: web.workspaceId }, clock,
+      tasks ? { ...tasks, ideaIntegrityKey: web.ideaProjects?.integrityKey } : undefined);
     const ownerReviews = tasks?.ownerReviews ? new WebTaskReviewService(web.database.client,
       { tenantId: web.tenantId, workspaceId: web.workspaceId }, {
         ...tasks.ownerReviews, harnessIntegrityKey: tasks.harnessIntegrityKey!, results: tasks.results!,
         ideaIntegrityKey: web.ideaProjects?.integrityKey,
+        followUps: taskService,
       }, clock) : undefined;
     const ownerVerifications = tasks?.manualVerificationScenarios ? new WebTaskVerificationService(web.database.client,
       { tenantId: web.tenantId, workspaceId: web.workspaceId }, {
@@ -98,6 +109,7 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
     } });
     return Object.freeze({
       operations,
+      taskService,
       actionInboxSource,
       ...(tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
         deriveProjectEventIntegrityKeyV1(tasks.harnessIntegrityKey), () => new Date(clock()).toISOString()) } : {}),
