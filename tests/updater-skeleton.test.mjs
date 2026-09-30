@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -51,10 +51,16 @@ test("R-FS helpers refuse symlink and hardlink swaps and atomically publish boun
 test("R-FS reads refuse a planted FIFO without waiting for a writer", async t => {
   const root = await temporaryRoot(t), path = join(root, "updater-state/self-update");
   await execFileAsync("/usr/bin/mkfifo", [path]);
-  await assert.rejects(Promise.race([
-    readFileNoFollowV1(root, "updater-state/self-update", { maxBytes: 16 }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("fifo_read_blocked")), 250)),
-  ]), error => error?.code === "updater_file_refused", "a FIFO is rejected rather than blocking the updater");
+  let timer, unblock = Promise.resolve();
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => {
+    reject(new Error("fifo_read_blocked"));
+    unblock = open(path, constants.O_WRONLY | constants.O_NONBLOCK).then(handle => handle.close()).catch(() => {});
+  }, 250); });
+  try {
+    await assert.rejects(Promise.race([
+      readFileNoFollowV1(root, "updater-state/self-update", { maxBytes: 16 }), timeout,
+    ]), error => error?.code === "updater_file_refused", "a FIFO is rejected rather than blocking the updater");
+  } finally { clearTimeout(timer); await unblock; }
 });
 
 const makeRun = () => ({ run_id: "run:00000000-0000-4000-8000-000000000001", plan_id: "plan-one", state: "approved",
