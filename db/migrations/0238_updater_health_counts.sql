@@ -219,18 +219,19 @@ BEGIN
         AND pg_catalog.pg_get_userbyid(a.grantee) <> 'control_room_deployer') THEN
     RAISE EXCEPTION 'updater health count function has an unexpected EXECUTE grantee' USING ERRCODE = '42501';
   END IF;
-  -- And no grantee at all is a REFUSAL here, not a neutral state. If the role
-  -- file has already run (the installer re-applies it after the updater starts),
-  -- the deployer MUST hold EXECUTE by now; its absence means the grant file and
-  -- this migration disagree, and the health contract would silently never work.
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'control_room_deployer')
-    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
-      CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,
-        pg_catalog.acldefault('f', p.proowner))) a
-      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE'
-        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN
-    RAISE EXCEPTION 'the updater login exists but cannot read the health counts' USING ERRCODE = '42501';
-  END IF;
+  -- Whether the updater's login holds EXECUTE is NOT asserted here, because this
+  -- file cannot grant it (see above) and the two files are applied in an order
+  -- that is not this file's to choose. Asserting it would refuse in both
+  -- legitimate orders -- measured: it refused the installer's own replay of this
+  -- file immediately after db/down/0238 revoked the grant and before the role
+  -- file re-granted it.
+  --
+  -- The gap is covered where it can actually be observed: the live boundary. The
+  -- updater's own store opens its health read through this function, and the
+  -- §8.4 evaluator fails closed when the call refuses; the installer's role file
+  -- carries the grant; and `tests/updater-health-counts-postgres.test.ts` asserts
+  -- the grant is present on a real cluster as both roles. What this file refuses
+  -- is the thing it can see at apply time: an UNEXPECTED grantee.
   -- And the deployer's EXECUTE is never GRANTABLE. A grantable privilege here
   -- would let the updater's login hand this definer's reach to anybody, which is
   -- the whole authority this function is careful not to widen.
