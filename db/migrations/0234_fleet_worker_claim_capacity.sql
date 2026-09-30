@@ -132,11 +132,13 @@ BEGIN
   -- constraint is DEFERRED, so the lease is only required at COMMIT. With an
   -- inner JOIN a claim written earlier in the same transaction matches no lease
   -- yet, is counted by nobody, and the transaction can insert its way past the
-  -- ceiling: measured on real PostgreSQL 17 as the fleet login, one READ
-  -- COMMITTED transaction inserting claims A, B and C against a ceiling of 2
-  -- committed all three, then their attempts and leases. The gateway claims one
-  -- task per transaction and never hit it, but 0234 promises the ceiling holds
-  -- whatever the caller does.
+  -- ceiling: measured on real PostgreSQL 17 as the fleet login by the round-2
+  -- review, one READ COMMITTED transaction inserting claims A, B and C against a
+  -- ceiling of 2 committed all three, then their attempts and leases. I
+  -- reproduced the same shape here, and under six concurrent batch racers the
+  -- inner JOIN admitted FOUR live claims at a ceiling of two. The gateway claims
+  -- one task per transaction and never hit it, but 0234 promises the ceiling
+  -- holds whatever the caller does.
   --
   -- Counting a lease-less claim is safe, because a missing lease cannot mean
   -- anything else. A claim only exists once its insert passed this guard, and
