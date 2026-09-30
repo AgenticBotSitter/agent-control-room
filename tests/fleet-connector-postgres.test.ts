@@ -84,7 +84,7 @@ test("fleet connector end to end and least privilege, as the production logins",
 
       // --- Owner (web login) creates a code; the machine joins (fleet login).
       const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "PG worker", workerKind: "mcp-agent",
-        projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
+        projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 2 });
       const configPath = join(dir, "worker.json");
       const joined = await connector.join({ server: origin, code: code.code, configPath });
       assert.deepEqual(Object.keys(joined.workingAgreement).sort(), ["digest", "grantsAuthority", "startsWork", "text", "version"]);
@@ -186,6 +186,13 @@ test("fleet connector end to end and least privilege, as the production logins",
       const pending = await seedProposedTask(admin.client, PROJECT_A, "pg-2");
       const pendingOffer = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: pending.jobId, capability: "writing" });
       const pendingClaim = await client.claim(pendingOffer.offerId, "pg-claim-key-0003");
+      const overlapping = await seedProposedTask(admin.client, PROJECT_A, "pg-overlapping-scope");
+      const overlappingOffer = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A,
+        jobId: overlapping.jobId, capability: "writing" });
+      await assert.rejects(client.claim(overlappingOffer.offerId, "pg-claim-key-overlap"),
+        (error: any) => error.code === "conflict",
+        "the bounded production pool maps its sqlState 23P01 scope refusal to conflict");
+      await owner.withdrawOffer(ownerIdentity(), overlappingOffer.offerId);
       const leaseBeforeWait = await direct("web", `SELECT l.expires_at FROM control_leases l JOIN fleet_claims c
         ON c.tenant_id=l.tenant_id AND c.lease_id=l.id WHERE c.claim_id=$1`, [pendingClaim.claimId]);
       const presenceBeforeWait = await direct("web", "SELECT last_seen_at FROM fleet_worker_presence WHERE worker_id=$1", [joined.workerId]);

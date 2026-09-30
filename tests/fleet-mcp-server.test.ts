@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import test from "node:test";
+import { join, resolve } from "node:path";
+import test, { type TestContext } from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
 
 const OFFER = `fleet-offer:${"a".repeat(32)}`;
@@ -68,6 +68,112 @@ test("waitForWork uses jittered retry and honours Retry-After", async () => {
     secret: `crf_${"A".repeat(43)}` }, async () => new Response(JSON.stringify({ ok: false, error: "rate_limited" }),
       { status: 429, headers: { "content-type": "application/json", "retry-after": "3" } }));
   await assert.rejects(client.waitForWork(), (error: any) => error.code === "rate_limited" && error.retryAfterMs === 3_000);
+});
+
+test("waitForWork retries DOM timeout and abort errors even when they carry numeric codes", async () => {
+  for (const name of ["TimeoutError", "AbortError"]) {
+    const sleeps: number[] = [];
+    let calls = 0;
+    const result = await connector.waitForWork({ client: { async waitForWork() {
+      calls += 1;
+      if (calls === 1) { const error: any = new Error(name); error.name = name; error.code = 23; throw error; }
+      return { offers: [], operationsMode: "running" };
+    } }, sleep: async (ms: number) => { sleeps.push(ms); }, random: () => 0, baseMs: 400, maxAttempts: 2 });
+    assert.deepEqual(result, { offers: [], operationsMode: "running" });
+    assert.deepEqual(sleeps, [200], name);
+  }
+});
+
+async function runLoopFiles(t: TestContext) {
+  const root = await mkdtemp(join(tmpdir(), "fleet-run-loop-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = join(root, "connector.json"), harnessesPath = join(root, "harnesses.json");
+  await writeFile(configPath, JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: `fleet-worker:${"d".repeat(32)}`, secret: `crf_${"A".repeat(43)}`,
+    credentialExpiresAt: "2099-01-01T00:00:00.000Z" }), { mode: 0o600 });
+  await writeFile(harnessesPath, JSON.stringify({ schema: "control-room.fleet-harnesses/v1",
+    adapterModule: resolve("tests/support/fleet-fake-harness-adapter.mjs"),
+    harnesses: { codex: { enabled: true, deadlineMs: 2_000, fakeBehaviour: "success" } } }), { mode: 0o600 });
+  return { configPath, harnessesPath };
+}
+
+const heartbeatResult = Object.freeze({ workerKind: "codex", displayName: "Loop worker", operationsMode: "running",
+  workingAgreement: { version: connector.WORKING_AGREEMENT.version, digest: connector.WORKING_AGREEMENT.digest,
+    startsWork: false, grantsAuthority: false } });
+const gatewayResponse = (result: unknown, status = 200, headers: Record<string, string> = {}) => new Response(
+  JSON.stringify(status >= 400 ? { ok: false, error: result } : { ok: true, result }),
+  { status, headers: { "content-type": "application/json", ...headers } });
+const yieldRunLoop = () => new Promise<void>(done => setImmediate(done));
+
+test("run loop backs off after every conflicting claim", { timeout: 2_000 }, async t => {
+  const files = await runLoopFiles(t);
+  let claims = 0, waits = 0;
+  const fetcher: typeof fetch = async input => {
+    await yieldRunLoop();
+    const url = String(input);
+    if (url.endsWith("/heartbeat")) return gatewayResponse(heartbeatResult);
+    if (url.endsWith("/work/wait")) { waits += 1; return gatewayResponse({ operationsMode: "running",
+      offers: [{ offerId: `fleet-offer:${"a".repeat(32)}`, jobId: "job:conflict" }] }); }
+    if (url.endsWith("/claims")) { claims += 1; return gatewayResponse("conflict", 409); }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const sleeps: number[] = [];
+  await assert.rejects(connector.runWorker({ ...files, fetcher, pollMs: 100, random: () => 0, log: () => {},
+    sleep: async (ms: number) => { sleeps.push(ms); throw new Error("stop after proved backoff"); } }), /proved backoff/u);
+  assert.deepEqual({ waits, claims, sleeps }, { waits: 1, claims: 1, sleeps: [50] });
+});
+
+test("run loop honours Retry-After from a failed claim", { timeout: 2_000 }, async t => {
+  const files = await runLoopFiles(t);
+  const fetcher: typeof fetch = async input => {
+    await yieldRunLoop();
+    const url = String(input);
+    if (url.endsWith("/heartbeat")) return gatewayResponse(heartbeatResult);
+    if (url.endsWith("/work/wait")) return gatewayResponse({ operationsMode: "running",
+      offers: [{ offerId: `fleet-offer:${"a".repeat(32)}`, jobId: "job:busy" }] });
+    if (url.endsWith("/claims")) return gatewayResponse("unavailable", 503, { "retry-after": "3" });
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const sleeps: number[] = [];
+  await assert.rejects(connector.runWorker({ ...files, fetcher, pollMs: 100, random: () => 0, log: () => {},
+    sleep: async (ms: number) => { sleeps.push(ms); throw new Error("stop after Retry-After"); } }), /Retry-After/u);
+  assert.deepEqual(sleeps, [3_000]);
+});
+
+test("run loop backs off after a non-transient wait refusal", { timeout: 2_000 }, async t => {
+  const files = await runLoopFiles(t);
+  let waits = 0;
+  const fetcher: typeof fetch = async input => {
+    await yieldRunLoop();
+    const url = String(input);
+    if (url.endsWith("/heartbeat")) return gatewayResponse(heartbeatResult);
+    if (url.endsWith("/work/wait")) { waits += 1; return gatewayResponse("refused", 400); }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const sleeps: number[] = [];
+  await assert.rejects(connector.runWorker({ ...files, fetcher, pollMs: 100, random: () => 0, log: () => {},
+    sleep: async (ms: number) => { sleeps.push(ms); throw new Error("stop after proved backoff"); } }), /proved backoff/u);
+  assert.deepEqual({ waits, sleeps }, { waits: 1, sleeps: [50] });
+});
+
+test("stress: 60 virtual seconds of wait-gateway failures stay bounded and honour Retry-After", async t => {
+  const files = await runLoopFiles(t);
+  let waits = 0, heartbeats = 0, elapsedMs = 0;
+  const fetcher: typeof fetch = async input => {
+    const url = String(input);
+    if (url.endsWith("/heartbeat")) { heartbeats += 1; return gatewayResponse(heartbeatResult); }
+    if (url.endsWith("/work/wait")) { waits += 1; return gatewayResponse("unavailable", 503, { "retry-after": "2" }); }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const sleeps: number[] = [];
+  await assert.rejects(connector.runWorker({ ...files, fetcher, pollMs: 1_000, random: () => 0, log: () => {},
+    sleep: async (ms: number) => {
+      sleeps.push(ms); elapsedMs += ms;
+      if (elapsedMs >= 60_000) throw new Error("virtual outage complete");
+    } }), /virtual outage complete/u);
+  assert.equal(elapsedMs, 60_000);
+  assert.deepEqual(new Set(sleeps), new Set([2_000]), "server Retry-After governs both inner and outer retries");
+  assert.deepEqual({ waits, heartbeats }, { waits: 30, heartbeats: 10 });
 });
 
 test("MCP protocol delegates each of the six tools and audits every call first", async t => {

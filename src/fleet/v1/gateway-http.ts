@@ -386,12 +386,13 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     if (method === "GET" && path === "/fleet/v1/me") return send(response, 200, { ok: true, result: options.store.me(principal) });
     if (method === "GET" && path === "/fleet/v1/work") return send(response, 200, { ok: true, result: await options.store.listWork(principal) });
     if (method === "GET" && path === "/fleet/v1/work/wait") {
-      await options.store.recordWaitPresence(principal);
       const controller = new AbortController();
       const abort = () => controller.abort();
       request.once("aborted", abort); response.once("close", abort);
+      if (request.destroyed || response.destroyed || request.socket.destroyed) abort();
       try {
-        const result = await waitRegistry.wait(principal.workerId, () => options.store.waitWork(principal), controller.signal);
+        const result = await waitRegistry.wait(principal.workerId, () => options.store.waitWork(principal), controller.signal,
+          () => options.store.recordWaitPresence(principal));
         if (!controller.signal.aborted && !response.destroyed)
           return send(response, 200, { ok: true, result });
         return;
@@ -400,7 +401,10 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
         if (error instanceof FleetWaitCapacityErrorV1)
           return send(response, 429, { ok: false, error: "rate_limited" },
             { "retry-after": String(error.retryAfterSeconds) });
-        throw error;
+        if (error instanceof FleetErrorV1) throw error;
+        options.onUnexpectedError?.(error);
+        return send(response, 503, { ok: false, error: "unavailable" },
+          { "retry-after": "1" });
       } finally {
         request.off("aborted", abort); response.off("close", abort);
       }

@@ -22,7 +22,9 @@ import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycl
 import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 
 export const FLEET_GATEWAY_CONFIGURATION_V1 = "control-room.fleet-gateway/v1";
-export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 35_000, headersTimeout: 5_000,
+// requestTimeout limits receipt of a request body; it does not limit how long
+// a body-less long-poll response may remain open.
+export const FLEET_GATEWAY_SERVER_OPTIONS_V1 = Object.freeze({ requestTimeout: 15_000, headersTimeout: 5_000,
   connectionsCheckingInterval: 1_000, maxHeaderSize: 8192, highWaterMark: 8 * 1024 });
 type Configuration = Readonly<{ schema: typeof FLEET_GATEWAY_CONFIGURATION_V1; tenantId: string; port: number;
   database: PrivatePostgresConfiguration; workIntake?: Readonly<{ database: PrivatePostgresConfiguration; integrityKey: string }>;

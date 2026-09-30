@@ -3,7 +3,7 @@ import { z } from "zod";
 import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema, nodeRecordSchema,
   requestRecordSchema, workflowRecordSchema, type AttemptRecord, type JobRecord, type LeaseRecord } from "../../domain/v1";
 import { CanonicalStore } from "../../persistence/canonical-store";
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { MAX_NATIVE_UNSENT_RECOVERIES, nativeTaskSubmissionReferenceSchema, type NativeTaskSubmissionReference, type NativeTaskSubmission } from "../../persistence/native-task-submission";
 import { FleetSignalStore } from "../../node-fleet/v1/fleet-signal-store";
 import { evaluateFleetEligibility } from "../../node-fleet/v1/eligibility";
@@ -2300,7 +2300,7 @@ export class TaskAssignmentCoordinator {
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.scope.tenantId, claimed.lease.id, projectId, jobId,
           claimed.attempt.id, nodeId, declared.scope_kind, declared.path_fold]);
       } catch (error) {
-        if (["23P01", "23514"].includes((error as { code?: string }).code ?? "")) conflict();
+        if (["23P01", "23514"].includes(databaseSqlStateV1(error) ?? "")) conflict();
         throw error;
       }
       await appendAuditWith(tx, { id: ids.auditId, tenantId: this.scope.tenantId, projectId,

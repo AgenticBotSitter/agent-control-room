@@ -106,7 +106,8 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
       assert.equal(shown.length, 1);
       assert.equal(shown[0]!.jobId, task.jobId);
       assert.equal(shown[0]!.workerName, "PG Codex box");
-      assert.match(shown[0]!.summary, /^Done by fake codex: Task handoff-pg/u);
+      assert.match(shown[0]!.summary,
+        /^Done by fake codex: <<<CONTROL_ROOM_TASK_DATA_V1>>>\n\{"title":"Task handoff-pg"/u);
       assert.equal(shown[0]!.taskState, "waiting_approval");
       assert.equal(shown[0]!.decision, null);
       // What the owner's pages read with the private web login agrees.

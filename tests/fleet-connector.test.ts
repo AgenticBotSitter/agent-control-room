@@ -13,7 +13,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
+import { adaptPglite, databaseSqlStateV1, type DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, fleetGatewayClientAddressV1,
   fleetGatewayClientNetworkV1, FleetGatewayStoreV1, FleetOwnerServiceV1, FleetWaitRegistryV1,
   type FleetGatewayAdmissionV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
@@ -59,7 +59,7 @@ test("gateway unauthenticated identities use IPv4 /24 and IPv6 /64 networks", ()
 });
 
 test("fleet gateway checks slow request timeouts every second", () => {
-  assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.requestTimeout, 35_000);
+  assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.requestTimeout, 15_000);
   assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.headersTimeout, 5_000);
   assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.connectionsCheckingInterval, 1_000);
 });
@@ -232,6 +232,29 @@ async function waitUntil(predicate: () => boolean, message: string) {
   }
 }
 
+function fakePrincipal(workerId = `fleet-worker:${"a".repeat(32)}`) {
+  return { tenantId: FLEET_TENANT, workerId, nodeId: `node:${workerId.slice(-32)}`,
+    identityId: `identity:${workerId.slice(-32)}`, workerKind: "codex", displayName: "Fake worker",
+    projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1,
+    credentialId: `fleet-credential:${workerId.slice(-32)}`, credentialExpiresAt: "2099-01-01T00:00:00.000Z" };
+}
+
+function nodeJsonRequest(url: string, options: { method?: string; headers?: Record<string, string>; body?: string } = {}) {
+  return new Promise<{ status: number; headers: IncomingMessage["headers"]; body: any }>((resolve, reject) => {
+    const request = httpRequest(url, { method: options.method ?? "GET", headers: options.headers }, response => {
+      const chunks: Buffer[] = [];
+      response.on("data", chunk => { chunks.push(Buffer.from(chunk)); });
+      response.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, body: text ? JSON.parse(text) : null });
+      });
+    });
+    request.once("error", reject);
+    if (options.body !== undefined) request.write(options.body);
+    request.end();
+  });
+}
+
 test("one-command join: a single-use code enrolls a machine whose secret never leaves it", async t => {
   const f = await fixture(); t.after(() => f.close());
   const worker = await joinWorker(f, "Laptop");
@@ -278,7 +301,18 @@ test("connector-owned welcome rules refuse mismatched server metadata without sh
   });
   assert.throws(() => connector.localWorkingAgreement({ version: connector.WORKING_AGREEMENT.version,
     digest: connector.WORKING_AGREEMENT.digest, startsWork: true, grantsAuthority: false }), /no work was taken/u);
-  assert.throws(() => connector.taskDataEnvelope(`bad ${connector.TASK_DATA_OPEN}`, "objective"), /task_data_envelope_delimiter/u);
+  const reversed = Array.from(connector.TASK_DATA_CLOSE).reverse().join("");
+  for (const lookalike of [connector.TASK_DATA_OPEN, connector.TASK_DATA_CLOSE.toLowerCase(),
+    connector.TASK_DATA_CLOSE.replace("END", "E\u200dND"),
+    "＜＜＜ＥＮＤ＿ＣＯＮＴＲＯＬ＿ＲＯＯＭ＿ＴＡＳＫ＿ＤＡＴＡ＿Ｖ１＞＞＞",
+    connector.TASK_DATA_CLOSE.replace("V1", "V2"), `\u202e${reversed}`, "line\u2028break", "paragraph\u2029break"]) {
+    assert.throws(() => connector.taskDataEnvelope(`bad ${lookalike}`, "objective"), /task_data_envelope_delimiter/u,
+      JSON.stringify(lookalike));
+  }
+  const escaped = connector.taskDataEnvelope("safe <title>", "A & B\u2066");
+  assert.match(escaped, /safe \\u003ctitle\\u003e/u);
+  assert.match(escaped, /A \\u0026 B\\u2066/u);
+  assert.deepEqual(JSON.parse(escaped.split("\n")[1]!), { title: "safe <title>", objective: "A & B\u2066" });
 
   const dir = await mkdtemp(join(tmpdir(), "fleet-welcome-mismatch-")); t.after(() => rm(dir, { recursive: true, force: true }));
   const configPath = join(dir, "connector.json");
@@ -293,6 +327,25 @@ test("connector-owned welcome rules refuse mismatched server metadata without sh
     "mismatched metadata leaves only the retryable pending enrollment and never enables the worker");
 });
 
+test("pending rotation reports agreement drift without trying the pending secret", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "fleet-pending-agreement-")); t.after(() => rm(dir, { recursive: true, force: true }));
+  const configPath = join(dir, "connector.json");
+  const currentSecret = `crf_${"A".repeat(43)}`, pendingSecret = `crf_${"B".repeat(43)}`;
+  await writeFile(configPath, JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: `fleet-worker:${"d".repeat(32)}`, secret: currentSecret, pendingSecret,
+    credentialExpiresAt: "2099-01-01T00:00:00.000Z" }), { mode: 0o600 });
+  const used: string[] = [];
+  const fetcher: typeof fetch = async (_input, init) => {
+    used.push(String((init?.headers as Record<string, string>).authorization));
+    return new Response(JSON.stringify({ ok: true, result: { credentialExpiresAt: "2099-01-01T00:00:00.000Z",
+      workingAgreement: { version: "999", digest: "sha256:bad", startsWork: false, grantsAuthority: false } } }),
+    { status: 200, headers: { "content-type": "application/json" } });
+  };
+  await assert.rejects(connector.recoverPending({ configPath, fetcher }), /update your connector/u);
+  assert.deepEqual(used, [`Bearer ${currentSecret}`], "agreement drift does not masquerade as a stale credential");
+  assert.equal((await connector.loadConfig(configPath)).pendingSecret, pendingSecret);
+});
+
 test("wait presence refuses a principal whose stored worker or credential disappeared", async () => {
   const empty = { query: async () => ({ rows: [] }), transaction: async () => { throw new Error("unused"); },
     transactionWithPreCommitCheck: async () => { throw new Error("unused"); } } as unknown as DatabaseClient;
@@ -303,19 +356,133 @@ test("wait presence refuses a principal whose stored worker or credential disapp
     credentialExpiresAt: "2099-01-01T00:00:00.000Z" }), /unauthenticated/u);
 });
 
-test("wait registry releases a request stopped during its final pre-park re-query", async () => {
+test("wait registry releases a request stopped during presence recording before its first query", async () => {
   const registry = new FleetWaitRegistryV1({ waitMs: 100, pollMs: 10 });
   const controller = new AbortController();
-  let reads = 0, releaseSecond!: () => void;
-  const second = new Promise<void>(done => { releaseSecond = done; });
+  let presenceStarted = false, reads = 0, releasePresence!: () => void;
+  const presence = new Promise<void>(done => { releasePresence = done; });
   const waiting = registry.wait("fleet-worker:test", async () => {
-    reads += 1;
-    if (reads === 2) await second;
-    return { offers: [], operationsMode: "running" as const };
-  }, controller.signal);
-  await waitUntil(() => reads === 2, "wait did not reach the pre-park query");
-  controller.abort(); releaseSecond();
+    reads += 1; return { offers: [], operationsMode: "running" as const };
+  }, controller.signal, async () => { presenceStarted = true; await presence; });
+  await waitUntil(() => presenceStarted, "wait did not reach presence recording");
+  controller.abort(); releasePresence();
   await assert.rejects(waiting, /fleet_wait_aborted/u);
+  assert.equal(reads, 0, "an aborted presence write is never followed by a work query");
+  assert.equal(registry.parkedCount, 0);
+});
+
+test("database refusals read production sqlState before the simulation code", () => {
+  assert.equal(databaseSqlStateV1({ sqlState: "23P01", code: "database_unavailable" }), "23P01");
+  assert.equal(databaseSqlStateV1({ code: "23505" }), "23505");
+  assert.equal(databaseSqlStateV1({ sqlState: 23, code: null }), undefined);
+});
+
+test("a body-less long-poll may outlive requestTimeout and still answer", async t => {
+  const principal = fakePrincipal();
+  const store = {
+    async authenticate() { return principal; },
+    async recordWaitPresence() {},
+    async waitWork() { return { offers: [], operationsMode: "running" as const }; },
+  };
+  const registry = new FleetWaitRegistryV1({ waitMs: 80, pollMs: 20, random: () => 0 });
+  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1, waitRegistry: registry });
+  const server = createServer({ ...FLEET_GATEWAY_SERVER_OPTIONS_V1, requestTimeout: 20, headersTimeout: 10,
+    connectionsCheckingInterval: 5 },
+    (request, response) => { void handler.handle(request, response); });
+  await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => server.close(() => done())));
+  const started = Date.now();
+  const response = await nodeJsonRequest(`http://127.0.0.1:${(server.address() as AddressInfo).port}/fleet/v1/work/wait`,
+    { headers: { authorization: "Bearer fake", "x-control-room-worker": principal.workerId } });
+  assert.equal(response.status, 200);
+  assert.ok(Date.now() - started >= 60, "the response remained open longer than the 20 ms request-body timeout");
+});
+
+test("a duplicate wait is refused before wait-route DB work and an early disconnect releases its slot", async t => {
+  const principal = fakePrincipal();
+  let presenceCalls = 0, workCalls = 0, releasePresence!: () => void;
+  const heldPresence = new Promise<void>(done => { releasePresence = done; });
+  const store = {
+    async authenticate() { return principal; },
+    async recordWaitPresence() { presenceCalls += 1; if (presenceCalls === 1) await heldPresence; },
+    async waitWork() { workCalls += 1; return { offers: [], operationsMode: presenceCalls === 1 ? "running" as const : "paused" as const }; },
+  };
+  const registry = new FleetWaitRegistryV1({ waitMs: 5_000, pollMs: 20 });
+  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1, waitRegistry: registry });
+  const server = createServer((request, response) => { void handler.handle(request, response); });
+  await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+  t.after(() => { releasePresence(); return new Promise<void>(done => server.close(() => done())); });
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/fleet/v1/work/wait`;
+  const headers = { authorization: "Bearer fake", "x-control-room-worker": principal.workerId };
+  const first = httpRequest(url, { headers });
+  first.on("error", () => {}); first.end();
+  await waitUntil(() => presenceCalls === 1, "first wait never reached presence recording");
+  const duplicate = await nodeJsonRequest(url, { headers });
+  assert.deepEqual([duplicate.status, duplicate.body.error], [429, "rate_limited"]);
+  assert.equal(presenceCalls, 1, "the duplicate wait did no presence DB work");
+  assert.equal(workCalls, 0, "the duplicate wait did no work DB query");
+  first.destroy(); releasePresence();
+  await waitUntil(() => registry.parkedCount === 0, "disconnect during presence retained the worker slot");
+  const retry = await nodeJsonRequest(url, { headers });
+  assert.equal(retry.status, 200, "the same worker can wait again after its disconnected request settles");
+});
+
+test("wait query failures are retryable 503 responses with Retry-After", async t => {
+  const principal = fakePrincipal();
+  const store = {
+    async authenticate() { return principal; }, async recordWaitPresence() {},
+    async waitWork() { throw new Error("simulated bounded database pressure"); },
+  };
+  const unexpected: unknown[] = [];
+  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
+    waitRegistry: new FleetWaitRegistryV1({ waitMs: 100, pollMs: 20 }), onUnexpectedError: error => unexpected.push(error) });
+  const server = createServer((request, response) => { void handler.handle(request, response); });
+  await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => server.close(() => done())));
+  const response = await nodeJsonRequest(`http://127.0.0.1:${(server.address() as AddressInfo).port}/fleet/v1/work/wait`,
+    { headers: { authorization: "Bearer fake", "x-control-room-worker": principal.workerId } });
+  assert.deepEqual([response.status, response.body.error, response.headers["retry-after"]], [503, "unavailable", "1"]);
+  assert.equal(unexpected.length, 1);
+});
+
+test("stress: 80 parked waits cap and jitter DB polling while a burst of claims completes", { timeout: 10_000 }, async t => {
+  let activeWaitQueries = 0, maxWaitQueries = 0, jitterCalls = 0, claimCalls = 0;
+  const waitDatabase = async <T>(value: T) => {
+    activeWaitQueries += 1; maxWaitQueries = Math.max(maxWaitQueries, activeWaitQueries);
+    await new Promise(done => setTimeout(done, 4));
+    activeWaitQueries -= 1; return value;
+  };
+  const store = {
+    async authenticate(input: { declaredWorkerId?: string }) { return fakePrincipal(input.declaredWorkerId); },
+    async recordWaitPresence() { await waitDatabase(undefined); },
+    async waitWork() { return waitDatabase({ offers: [], operationsMode: "running" as const }); },
+    async claim() { claimCalls += 1; await new Promise(done => setTimeout(done, 2));
+      return { claimId: `fleet-claim:${"c".repeat(32)}`, replayed: false }; },
+  };
+  const registry = new FleetWaitRegistryV1({ waitMs: 220, pollMs: 40, globalMax: 80, maxConcurrentPolls: 4,
+    random: () => { jitterCalls += 1; return (jitterCalls % 5) / 4; } });
+  const admission = createFleetGatewayAdmissionV1({ authenticatePerIp: 1_000, authenticateGlobal: 1_000,
+    authenticatedPerWorker: 1_000, authenticatedGlobal: 1_000, maxConcurrent: 200,
+    maxConcurrentKnown: 200, maxConcurrentKnownPerWorker: 4, maxTrackedWorkers: 200 });
+  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1, waitRegistry: registry, admission });
+  const server = createServer((request, response) => { void handler.handle(request, response); });
+  await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => server.close(() => done())));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const worker = (index: number) => `fleet-worker:${index.toString(16).padStart(32, "0")}`;
+  const headers = (index: number) => ({ authorization: `Bearer fake-${index}`, "x-control-room-worker": worker(index) });
+  const waits = Array.from({ length: 80 }, (_, index) => nodeJsonRequest(`${origin}/fleet/v1/work/wait`, { headers: headers(index) }));
+  await waitUntil(() => registry.parkedCount === 80, "all 80 waits did not reserve their slots");
+  const claimBody = JSON.stringify({ offerId: `fleet-offer:${"a".repeat(32)}`, idempotencyKey: "stress-claim-key-0001" });
+  const claims = await Promise.all(Array.from({ length: 40 }, (_, index) => nodeJsonRequest(`${origin}/fleet/v1/claims`, {
+    method: "POST", headers: { ...headers(index), "content-type": "application/json" }, body: claimBody,
+  })));
+  assert.ok(claims.every(response => response.status === 201));
+  assert.equal(claimCalls, 40);
+  const finished = await Promise.all(waits);
+  assert.ok(finished.every(response => response.status === 200));
+  assert.ok(maxWaitQueries <= 4, `wait-route DB concurrency reached ${maxWaitQueries}`);
+  assert.ok(jitterCalls >= 80, "every parked wait scheduled at least one jittered poll");
   assert.equal(registry.parkedCount, 0);
 });
 
