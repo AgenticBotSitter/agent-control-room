@@ -116,6 +116,9 @@ async function main(path: string | undefined) {
     fleetDatabase.client, deriveProjectEventIntegrityKeyV1(Buffer.from(config.harnessIntegrityKey, "base64url")),
     () => new Date().toISOString())) : undefined;
   const store = createFleetGatewayStoreFromConfigurationV1(fleetDatabase.client, config, projectEvents);
+  // An unreadable mode refuses every claim; say why once so the owner is not left guessing.
+  if (await store.operationsMode() === "unknown")
+    process.stderr.write("fleet gateway: operations mode unreadable, so no new claims: check workIntake.integrityKey\n");
   const proposals = intakeDatabase && config.workIntake ? new WorkBatchServiceV1(new WorkBatchStoreV1(intakeDatabase.client,
     new Uint8Array(Buffer.from(config.workIntake.integrityKey, "base64url")))) : undefined;
   const script = await readFile(join(dirname(fileURLToPath(import.meta.url)), "fleet", "connector.mjs"), "utf8");

@@ -356,6 +356,10 @@ export class FleetGatewayStoreV1 {
   async claim(principal: FleetWorkerPrincipalV1, input: Readonly<{ offerId: unknown; idempotencyKey: unknown }>) {
     const offerId = entityId(input.offerId, "offer"), idempotencyKey = key(input.idempotencyKey);
     const now = this.#now();
+    // Read the mode before the transaction: the provider uses its own pool
+    // connection, and reading it inside would hold two per claim. The 0156
+    // trigger still decides inside the transaction, so a race costs nothing.
+    const mode = await this.operationsMode();
     return this.db.transaction(async tx => {
       const prior = (await tx.query<ClaimRow>(`SELECT * FROM fleet_claims WHERE tenant_id=$1 AND worker_id=$2
         AND idempotency_key=$3`, [this.#tenantId, principal.workerId, idempotencyKey])).rows[0];
@@ -364,7 +368,7 @@ export class FleetGatewayStoreV1 {
         return this.#claimView(tx, prior, true);
       }
       // Pause, Drain and Stop all stop new claims; a replay above is not new.
-      if (await this.operationsMode() !== "running") return fleetFail("paused");
+      if (mode !== "running") return fleetFail("paused");
       await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.#tenantId]);
       const offer = (await tx.query<{ project_id: string; job_id: string; capability: string; state: string;
         allowed_worker_ids: string[] | null }>(`SELECT project_id,job_id,capability,state,allowed_worker_ids

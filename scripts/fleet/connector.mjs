@@ -462,7 +462,7 @@ async function report(send, attempts = 3) {
  *   secrets?: string[] }} options
  * @returns {Promise<RunPass>}
  */
-export async function runClaimedTask({ client, claim, adapter, progressIntervalMs = 60_000, readMode = async () => "running",
+export async function runClaimedTask({ client, claim, adapter, progressIntervalMs = 60_000, readMode = async () => "unknown",
   log = () => {}, watchdogGraceMs = WATCHDOG_GRACE_MS, secrets = [] }) {
   const label = HARNESS_LABELS[adapter.harness] ?? adapter.harness;
   const keyBase = `handoff-${claim.claimId.slice("fleet-claim:".length)}`;
