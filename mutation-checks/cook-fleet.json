@@ -7,11 +7,11 @@
     "why": "the database clock refuses an expired enrollment code"
   },
   {
-    "file": "src/fleet/v1/gateway-store.ts",
-    "find": "if (!row || row.state !== \"issued\" || row.expired) return fleetFail(\"unauthenticated\");",
-    "replace": "if (!row) return fleetFail(\"unauthenticated\");",
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "  IF NOT FOUND OR enrollment.state<>'issued' OR enrollment.expires_at<=pg_catalog.statement_timestamp()\n    OR enrollment.expires_at<=p_redeemed_at THEN RETURN; END IF;",
+    "replace": "  IF NOT FOUND THEN RETURN; END IF;",
     "test": "node --import tsx --test --test-name-pattern \"one-command join|expired or cancelled\" tests/fleet-connector.test.ts",
-    "why": "an enrollment code is single use and expires"
+    "why": "an enrollment code is single use and expires, and the redemption is refused in the database, not by a caller's clock"
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
