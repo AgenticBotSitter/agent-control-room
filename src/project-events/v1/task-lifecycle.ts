@@ -5,7 +5,7 @@ import type { ProjectEventStoreV1 } from "./store";
 
 export const taskProjectEventActionsV1 = [
   "task_created", "task_started", "task_finished", "task_failed", "task_review_ready",
-  "task_accepted", "task_changes_requested", "task_revised", "task_completed",
+  "task_accepted", "task_accepted_with_exceptions", "task_changes_requested", "task_revised", "task_completed",
   "project_completed", "project_archived",
 ] as const;
 export type TaskProjectEventActionV1 = typeof taskProjectEventActionsV1[number];
@@ -23,6 +23,7 @@ const presentation: Record<TaskProjectEventActionV1, Pick<ProjectEventInputV1,"e
   task_failed: { eventKind: "attention", safeSummary: "Task run failed", tone: "bad" },
   task_review_ready: { eventKind: "review", safeSummary: "Task result ready for review", tone: "neutral" },
   task_accepted: { eventKind: "review", safeSummary: "Task result accepted", tone: "good" },
+  task_accepted_with_exceptions: { eventKind: "review", safeSummary: "Task result accepted with exceptions", tone: "warn" },
   task_changes_requested: { eventKind: "review", safeSummary: "Task changes requested", tone: "warn" },
   task_revised: { eventKind: "work", safeSummary: "Task revision created", tone: "neutral" },
   task_completed: { eventKind: "work", safeSummary: "Task completed", tone: "good" },
