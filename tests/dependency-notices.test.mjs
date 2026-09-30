@@ -10,6 +10,9 @@ const notices = {
   jsdom: ['LICENSE.txt', 'jsdom/LICENSE'],
   jsonwebtoken: ['LICENSE', 'jsonwebtoken/LICENSE'],
   luxon: ['LICENSE.md', 'luxon/LICENSE.md'],
+  'mdast-util-from-markdown': ['license', 'mdast-util-from-markdown/LICENSE'],
+  'mdast-util-gfm': ['license', 'mdast-util-gfm/LICENSE'],
+  'micromark-extension-gfm': ['license', 'micromark-extension-gfm/LICENSE'],
   pg: ['LICENSE', 'pg/LICENSE'],
   'pg-boss': ['LICENSE', 'pg-boss/LICENSE'],
   react: ['LICENSE', 'react/LICENSE'],
@@ -17,6 +20,7 @@ const notices = {
   'react-markdown': ['license', 'react-markdown/LICENSE'],
   'remark-gfm': ['license', 'remark-gfm/LICENSE'],
   'rss-parser': ['LICENSE', 'rss-parser/LICENSE'],
+  'web-push': ['LICENSE', 'web-push/LICENSE'],
   zod: ['LICENSE', 'zod/LICENSE'],
 };
 test('every direct runtime dependency retains its exact installed license and pinned version', async () => {

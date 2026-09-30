@@ -1,6 +1,11 @@
 import { createHash, createPublicKey, sign, verify, type KeyObject } from "node:crypto";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { gfm } from "micromark-extension-gfm";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
-import { PORTABLE_PRINTABLE_TEXT_V1, assertNoPortablePrototypePollutionV1 } from "../../security/inert-portable-input";
+import {
+  PORTABLE_PRINTABLE_TEXT_V1, assertNoHiddenTextV1, assertNoPortablePrototypePollutionV1,
+} from "../../security/inert-portable-input";
 import { isModuleSemverV1, parseModuleManifestV1, type ModuleManifestV1 } from "./manifest";
 
 /**
@@ -34,31 +39,73 @@ const DECLARATIVE_EXTENSIONS = new Set(["json", "md", "txt"]);
 /** Windows device names, reserved with or without an extension. */
 const RESERVED_SEGMENT = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/;
 /**
- * Invisible and direction-changing characters: bidi embeddings, overrides and
- * isolates ("trojan source"), zero-width characters, the byte order mark,
- * Unicode tag characters (invisible text an agent still reads), and any lone
- * surrogate a JSON escape could produce. A reviewer must see every character
- * a prompt consumer will read.
+ * Declarative `.md`/`.txt` content is markdown, and markdown never needs raw
+ * HTML: any `<` immediately followed by a letter, `/`, `!` or `?` is refused
+ * outright, unparsed. This alone defeats every quote- or attribute-context
+ * evasion (an event handler hidden behind a stray `>` inside a quoted
+ * attribute, `<portal>`, `<button formaction=https://...>`, a `style` attribute, a
+ * remote-beacon `<img>`), because none of those tricks work without an
+ * opening `<letter`. Ordinary prose such as "a < b" is untouched.
  */
-const HIDDEN_TEXT = /[\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFB\u{E0000}-\u{E007F}]|\p{Cs}/u;
+const RAW_HTML_V1 = /<[A-Za-z/!?]/;
 /**
- * Markup or shell that would execute if any later renderer or consumer failed
- * to escape it. Renderers must still escape: this is a second line, so it is
- * deliberately broad about markup (entity-obfuscated URLs, whitespace inside
- * `javascript:`, active tags). It follows the shared portable-input
- * executable guard, except that `on*=` counts only inside a tag or straight
- * after a quote, so prose such as "once = twice" stays shareable.
+ * A run of bare `<` characters (none followed by a letter, so none match
+ * RAW_HTML_V1) still costs the markdown parser far more than linear time:
+ * measured, a 1MB file of nothing else takes over a second. No legitimate
+ * declarative file needs anywhere near this many, so a file this dense with
+ * `<` is refused before it ever reaches the parser.
  */
-const DECLARATIVE_EXECUTABLE_PATTERNS: readonly RegExp[] = [
-  /<\s*\/?\s*(script|iframe|frame|frameset|object|embed|applet|base|meta|link|style|form|svg|math|template)\b/i,
-  /j\s*a\s*v\s*a\s*s\s*c\s*r\s*i\s*p\s*t\s*:/i,
-  /v\s*b\s*s\s*c\s*r\s*i\s*p\s*t\s*:/i,
-  /data\s*:\s*text\/html/i,
-  /&#x?[0-9a-f]+|&(colon|tab|newline);/i,
-  /["'`][\s/]*on[a-z]+\s*=/i,
-  /\$\(/,
-];
-const EVENT_HANDLER = /[\s/"'`]on[a-z]+\s*=/i;
+const MAX_RAW_LESS_THAN_V1 = 10_000;
+/**
+ * mdast node types a declarative file may contain. Notably absent: `html`
+ * (raw markup, already refused above as defence in depth) and anything this
+ * parser configuration does not itself produce, such as frontmatter.
+ */
+const SAFE_MARKDOWN_NODE_TYPES_V1 = new Set([
+  "root", "paragraph", "heading", "thematicBreak", "blockquote", "list", "listItem",
+  "code", "inlineCode", "definition", "table", "tableRow", "tableCell",
+  "footnoteDefinition", "footnoteReference", "text", "emphasis", "strong",
+  "delete", "break", "link", "image", "linkReference", "imageReference",
+]);
+/** A URI scheme prefix, so a destination with none of these is a relative reference. */
+const URI_SCHEME_V1 = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
+/** react-markdown's own external-link test (see private-app/app/result-text.tsx): http(s), relative, or an anchor. */
+const SAFE_LINK_SCHEME_V1 = /^https?$/i;
+
+interface MarkdownNodeV1 { readonly type: string; readonly url?: unknown; readonly children?: readonly MarkdownNodeV1[] }
+
+function assertSafeLinkDestinationV1(url: string, code: string): void {
+  if (url === "" || url.startsWith("#")) return;
+  const scheme = URI_SCHEME_V1.exec(url);
+  if (scheme && !SAFE_LINK_SCHEME_V1.test(scheme[1]!)) fail(code);
+}
+
+function assertSafeMarkdownTreeV1(node: MarkdownNodeV1, code: string): void {
+  if (!SAFE_MARKDOWN_NODE_TYPES_V1.has(node.type)) fail(code);
+  if ((node.type === "link" || node.type === "image" || node.type === "definition") && typeof node.url === "string") {
+    assertSafeLinkDestinationV1(node.url, code);
+  }
+  for (const child of node.children ?? []) assertSafeMarkdownTreeV1(child, code);
+}
+
+/**
+ * Declarative markdown/text: every character must be one a reviewer can see
+ * (the shared hidden-text allowlist), no raw HTML may appear anywhere, and
+ * what remains is parsed with the same CommonMark+GFM parser react-markdown
+ * uses (see private-app/app/result-text.tsx) so link, image and reference
+ * destinations are decoded exactly as that renderer would decode them before
+ * their scheme is checked. This replaces guessing at obfuscation patterns
+ * with reading the bytes the way the one real renderer reads them.
+ */
+function assertMarkdownTextSafeV1(text: string): void {
+  // C0 and C1 controls (tab, LF and CR aside) are Cc, not Cf, so this is a separate check.
+  if (!PORTABLE_PRINTABLE_TEXT_V1.test(text)) fail("module_bundle_declarative_file_not_text");
+  assertNoHiddenTextV1(text, "module_bundle_declarative_file_not_text");
+  if (RAW_HTML_V1.test(text)) fail("module_bundle_declarative_file_executable_content");
+  if (text.split("<").length - 1 > MAX_RAW_LESS_THAN_V1) fail("module_bundle_declarative_file_executable_content");
+  const tree = fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
+  assertSafeMarkdownTreeV1(tree, "module_bundle_declarative_file_executable_content");
+}
 
 export interface ModuleBundleFileInputV1 { readonly path: string; readonly contentBase64: string }
 export interface ModuleBundleInputV1 {
@@ -165,15 +212,12 @@ function extensionOf(path: string): string {
   return dot <= 0 ? "" : name.slice(dot + 1);
 }
 
-function assertInertText(text: string): void {
-  // C0 and C1 controls (tab, LF and CR aside), then invisible or direction-changing characters.
-  if (!PORTABLE_PRINTABLE_TEXT_V1.test(text) || HIDDEN_TEXT.test(text)) fail("module_bundle_declarative_file_not_text");
-  if (DECLARATIVE_EXECUTABLE_PATTERNS.some(pattern => pattern.test(text))
-    // An event handler inside a still-open tag: the text after the last `<` of each `>`-separated piece.
-    // One linear pass, so a megabyte of `<` cannot make the check slow.
-    || text.split(">").some(piece => { const open = piece.lastIndexOf("<"); return open >= 0 && EVENT_HANDLER.test(piece.slice(open)); })) {
-    fail("module_bundle_declarative_file_executable_content");
-  }
+/** A JSON key or string value: the same character allowlist as markdown text, and no raw HTML. */
+function assertJsonStringSafeV1(text: string): void {
+  // C0 and C1 controls (tab, LF and CR aside), then every character the hidden-text allowlist refuses.
+  if (!PORTABLE_PRINTABLE_TEXT_V1.test(text)) fail("module_bundle_declarative_file_not_text");
+  assertNoHiddenTextV1(text, "module_bundle_declarative_file_not_text");
+  if (RAW_HTML_V1.test(text)) fail("module_bundle_declarative_file_executable_content");
 }
 
 /**
@@ -205,19 +249,21 @@ function assertNoDuplicateJsonKeys(text: string): void {
 }
 
 function assertInertJsonValue(value: unknown): void {
-  if (typeof value === "string") { assertInertText(value); return; }
+  if (typeof value === "string") { assertJsonStringSafeV1(value); return; }
   if (Array.isArray(value)) { for (const item of value) assertInertJsonValue(item); return; }
   if (value !== null && typeof value === "object") {
-    for (const [key, item] of Object.entries(value)) { assertInertText(key); assertInertJsonValue(item); }
+    for (const [key, item] of Object.entries(value)) { assertJsonStringSafeV1(key); assertInertJsonValue(item); }
   }
 }
 
 /**
  * DECLARATIVE means inert and shareable by anyone, so every file is checked as
- * a reviewer would read it: an allowed extension, strict UTF-8, no control,
- * invisible or direction-changing characters, and no embedded script or shell.
- * `.json` files must also be strict JSON with no duplicate keys or prototype
- * keys, and their decoded strings and keys get the same text checks, so a
+ * a reviewer, and anything reading the raw bytes, would read it: an allowed
+ * extension and strict UTF-8, then an allowlist rather than a blocklist --
+ * only safe characters, only safe markdown, only safe link/image schemes, and
+ * no raw HTML anywhere. `.json` files must also be strict JSON with no
+ * duplicate keys or prototype keys, and their decoded keys and string values
+ * get the same character and no-raw-HTML rules, so a
  * `\u003c` escape cannot hide a tag. Credential- and authority-shaped wording
  * is not refused here: prompt prose legitimately says "role: reviewer".
  */
@@ -226,8 +272,7 @@ function assertDeclarativeFile(path: string, bytes: Buffer): void {
   if (!DECLARATIVE_EXTENSIONS.has(extension)) fail("module_bundle_declarative_file_not_allowed");
   let text: string;
   try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return fail("module_bundle_declarative_file_not_text"); }
-  assertInertText(text);
-  if (extension !== "json") return;
+  if (extension !== "json") { assertMarkdownTextSafeV1(text); return; }
   let value: unknown;
   try { value = JSON.parse(text); } catch { return fail("module_bundle_declarative_json_invalid"); }
   assertNoDuplicateJsonKeys(text);
