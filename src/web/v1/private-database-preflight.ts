@@ -51,7 +51,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", ...privateWebFleetReadTables, "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
   "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -74,7 +74,6 @@ privateWebInsertTables.add("control_news_task_proposal_links");
 privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
-
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -185,12 +184,21 @@ coordinatorInserts.add("pipeline_advance_receipts");
 coordinatorInserts.add("control_update_candidates");
 // Supervisor (0177-0179 and the 0017 incident tables): reconciliation heads,
 // health, loop heads and provider waits; incidents are column-scoped writes.
+// The supervisor reconciler, the loop watchdog and the provider-wait tracker all
+// run on the coordinator login's own pool (see mac-local-default-task-provider's
+// `readPool`), so the grants db/roles/task_coordinator_roles.sql confers on them
+// are part of this login's reviewed profile. Settings stay read-only: assignment
+// enforces them, only an owner-gated web action writes them.
 coordinatorReads.push("control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits", "control_service_incident_heads", "control_service_incidents");
 for (const table of ["control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits"]) coordinatorInserts.add(table);
+/** Column-scoped INSERT grants the coordinator login holds, as
+ * db/roles/task_coordinator_roles.sql confers them. A table listed here must
+ * NOT be in `coordinatorInserts`: the grant covers only the named columns, and
+ * a table-wide entry would demand INSERT on every column. */
 const coordinatorInsertColumns: Record<string, readonly string[]> = {
   control_service_incident_heads: ["tenant_id", "correlation_key"],
   control_service_incidents: ["id", "tenant_id", "correlation_key", "generation", "service_id", "severity",
@@ -219,10 +227,15 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
     "unattended_last_swept_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
+  // The supervisor's own mutable fields: a lapsed task head, an agent's health
+  // verdict, the loop's last run, and a provider wait's release. Everything
+  // else on those tables stays append-only history.
   control_supervisor_task_heads: ["lapse_count", "last_attempt_id", "state", "updated_at"],
   control_supervisor_agent_health: ["node_id", "state", "safe_reason_code", "last_heartbeat_at", "observed_at"],
   control_supervisor_loop_heads: ["version", "last_started_at", "last_completed_at", "state"],
   control_provider_waits: ["state", "released_at"],
+  // An incident is opened with a bounded column set and then corrected in
+  // place; the head's generation counter is the only service-registry write.
   control_service_incident_heads: ["next_generation"],
   control_service_incidents: ["severity", "safe_reason_code", "safe_remedy_code", "state", "last_observed_at", "resolved_at"],
 };
@@ -495,14 +508,17 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-              -- Where the fleet gateway is installed, this function is its boundary
-              -- and must stay executable by that role alone. The Mac-local install has
-              -- no fleet gateway role at all, and naming one there is a 42704 that
-              -- fails every Mac-local startup; the enclosing NOT EXISTS already
-              -- refuses any non-owner EXECUTE grantee, so an absent role is accepted
-              -- only when nobody outside the schema owner can call the function.
-              AND COALESCE((SELECT has_function_privilege(g.oid,p.oid,'EXECUTE') FROM pg_roles g
-                WHERE g.rolname='control_room_fleet_gateway'),true)
+              -- The gateway is the only role allowed to call this, so when it
+              -- exists it must hold EXECUTE. It may legitimately be ABSENT: a
+              -- Mac-local cluster never installs db/roles/fleet_gateway_roles.sql,
+              -- and has_function_privilege on a missing role raises 42704
+              -- rather than answering false, which would fail every Mac-local
+              -- preflight on a database that is in fact correct. When the role
+              -- is absent the ACL check below is the whole proof: no grantee can
+              -- be named control_room_fleet_gateway if it does not exist, so
+              -- any surviving non-owner EXECUTE grantee still fails here.
+              AND (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway')
+                OR has_function_privilege('control_room_fleet_gateway',p.oid,'EXECUTE'))
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
                   OR pg_get_userbyid(a.grantee)<>'control_room_fleet_gateway')))
@@ -551,10 +567,23 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           OR has_table_privilege(c.oid,'TRIGGER') OR has_table_privilege(c.oid,'MAINTAIN') AS extra
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
-      const reads: ReadonlySet<string> = new Set(allowedReads);
-      // Column-scoped INSERT grants (the web role's idempotency ledger, the
-      // coordinator's incident rows): listed columns must carry INSERT, unlisted must not.
-      const scopedInserts = kind === "web" ? privateWebInsertColumns : kind === "coordinator" ? coordinatorInsertColumns : {};
+      const reads: Set<string> = new Set(allowedReads);
+      // The web login's read-only fleet tables exist only where
+      // db/roles/fleet_gateway_roles.sql was applied, which is exactly when
+      // control_room_fleet_gateway is in the cluster. See
+      // `privateWebFleetReadTables`: demanding them unconditionally made every
+      // correct Mac-local database fail this preflight, and dropping them
+      // unconditionally would under-check a full production install. Nothing is
+      // granted by this: the live ACL is still read from the server, only the
+      // expected set follows the role file that was applied.
+      if (kind === "web" && (await tx.query<{ present: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_fleet_gateway') AS present`)).rows[0]?.present)
+        for (const table of privateWebFleetReadTables) reads.add(table);
+      // Column-scoped INSERT grants (the web role's idempotency ledger and the
+      // coordinator's incident appends): listed columns must carry INSERT,
+      // unlisted must not.
+      const scopedInserts = kind === "web" ? privateWebInsertColumns
+        : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
       if (!columns.length) fail();
       // Fleet tables are granted to the web login by fleet_gateway_roles.sql, which the

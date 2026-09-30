@@ -18,7 +18,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { privateWebReadTables, privateWebInsertColumns, privateWebReadColumns,
-  privateWebInsertTables, privateWebUpdateColumns } from "../src/web/v1/private-database-preflight";
+  privateWebInsertTables, privateWebUpdateColumns, privateWebFleetReadTables }
+  from "../src/web/v1/private-database-preflight";
 
 const ROLE_DIRECTORY = join(process.cwd(), "db/roles");
 const PREFLIGHT_SOURCE = join(process.cwd(), "src/web/v1/private-database-preflight.ts");
@@ -109,9 +110,18 @@ async function appliedGrants(): Promise<Grants> {
  * table in BOTH sets is expected to be entirely readable, which is what the
  * role files' two overlapping grants on `control_job_dependencies` — a
  * table-wide one and a three-column one — actually produce.
+ *
+ * The conditional read set is the fully-applied one: `privateWebFleetReadTables`
+ * is folded in unconditionally here because this comparison is static and
+ * asserts the declaration a FULL production install must hold. A Mac-local
+ * cluster does not apply `fleet_gateway_roles.sql`, so it legitimately holds
+ * none of them — the preflight asks for them only when
+ * `control_room_fleet_gateway` exists, which the real-PostgreSQL lanes prove.
+ * What matters statically is that the tables are declared at all, and declared
+ * exactly, so they are added here.
  */
 function acceptedGrants(): Grants {
-  const wideReads = new Set<string>(privateWebReadTables);
+  const wideReads = new Set<string>([...privateWebReadTables, ...privateWebFleetReadTables]);
   const selectable = new Map<string, Columns>();
   for (const table of new Set([...wideReads, ...Object.keys(privateWebReadColumns)])) {
     if (wideReads.has(table)) { selectable.set(table, null); continue; }
@@ -202,6 +212,41 @@ test("the web DELETE declaration is read from the preflight, not restated here",
   // preflight no longer holds, so the read is asserted against the source it
   // parses, and the single grant it returns is the one the role files give.
   assert.deepEqual(declaredDeletes(), ["owner_web_push_subscriptions"]);
+});
+
+test("the fleet read tables come only from the fleet role file, and the preflight gates them on that role", async () => {
+  // The eleven fleet tables are declared separately precisely because
+  // db/roles/fleet_gateway_roles.sql is the ONLY file granting them to the web
+  // role, and a Mac-local cluster never applies it. Two things have to stay
+  // true together, or the preflight is wrong on some cluster:
+  //   1. every one of them really is granted by the fleet file and by nothing
+  //      else, so a Mac-local cluster holds none of them;
+  //   2. the preflight still demands them whenever the fleet gateway role is
+  //      present, so a full production install stays fully checked.
+  const fleetFile = await readFile(join(ROLE_DIRECTORY, "fleet_gateway_roles.sql"), "utf8");
+  const others = (await readdir(ROLE_DIRECTORY)).filter(file => file.endsWith(".sql") && file !== "fleet_gateway_roles.sql");
+  for (const table of privateWebFleetReadTables) {
+    assert.ok(parseGrants(fleetFile, ROLE).get("SELECT")?.has(table), `${table} is not granted by the fleet file`);
+    // No non-fleet role file may also grant it: if one did, the conditional
+    // would be wrong in the other direction, dropping the demand on a
+    // Mac-local cluster that does hold the privilege. `parseGrants` returns
+    // undefined for a role the file never grants to, which is the case here.
+    for (const file of others) {
+      const granted = parseGrants(await readFile(join(ROLE_DIRECTORY, file), "utf8"), ROLE).get("SELECT");
+      assert.ok(granted === undefined || !granted.has(table),
+        `${file} also grants ${table}; the conditional demand would be wrong`);
+    }
+  }
+  // The gate is the role's existence, and it is the fleet file that creates it.
+  assert.match(fleetFile, /CREATE ROLE control_room_fleet_gateway\b/);
+  const source = readFileSync(PREFLIGHT_SOURCE, "utf8");
+  assert.ok(source.includes("rolname='control_room_fleet_gateway'"),
+    "the preflight no longer gates the fleet read tables on the gateway role's existence");
+  // And the tables must not have crept back into the unconditional set, which
+  // is what broke every Mac-local preflight in the first place.
+  for (const table of privateWebFleetReadTables)
+    assert.ok(!(privateWebReadTables as readonly string[]).includes(table),
+      `${table} is back in the unconditional read set`);
 });
 
 test("the comparison above reads role files it has to be able to read", () => {
