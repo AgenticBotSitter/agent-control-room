@@ -23,7 +23,7 @@
 -- PostgreSQL has no URL parser in a CHECK, so the host is extracted textually
 -- below. That extraction is the delicate part, so it is written to fail CLOSED:
 -- anything whose authority is not exactly `host` or `host:443`, with no
--- credential, no query and no fragment, yields NULL, and NULL is refused. A
+-- credential and no fragment, yields NULL, and NULL is refused. A
 -- representation the extraction does not understand is therefore refused rather
 -- than admitted with a host the extraction guessed. `owner_push_endpoint_host`
 -- is exercised directly, with these exact strings, in

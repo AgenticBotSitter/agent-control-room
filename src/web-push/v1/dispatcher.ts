@@ -409,7 +409,7 @@ export class OwnerPushDispatcherV1 {
     // `deliverOwnerPushV1` has already removed it. Retrying would reach nothing,
     // so the item stops here as permanently undeliverable rather than as a stall
     // that keeps spending attempts.
-    if (false) return this.#settle(id, "failed", spent, now, "owner_push_subscription_gone");
+    if (sendFailure.removed) return this.#settle(id, "failed", spent, now, "owner_push_subscription_gone");
     return this.#settle(id, "retry", spent, backoffUntil, "owner_push_endpoint_unavailable");
   }
 

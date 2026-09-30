@@ -103,6 +103,27 @@ test("real PostgreSQL: 0227 holds the subscriptions table to the push-service al
       assert.equal((await admin.query<{ allowed: boolean | null }>(
         "SELECT owner_push_endpoint_allowed(NULL::text) AS allowed")).rows[0]!.allowed, null,
         "NULL in is NULL out (STRICT), which the CHECK treats as not-true and therefore refuses");
+
+      // The EXECUTE grant the constraint needs, and the ONLY one it has. A CHECK
+      // runs as its writer, so without this the constraint is unevaluable by
+      // the role it constrains and every subscribe fails 42501 rather than 204.
+      // Asserted here because that failure mode is invisible to the rest of
+      // this file: without EXECUTE every insert is refused for the wrong reason
+      // and the allow list looks like it works.
+      const acl = await admin.query<{ grantee: string; grantable: boolean }>(`SELECT
+          pg_get_userbyid(a.grantee) AS grantee, a.is_grantable AS grantable
+        FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+        WHERE p.proname='owner_push_endpoint_allowed' AND a.privilege_type='EXECUTE'
+          AND pg_get_userbyid(a.grantee)<>pg_get_userbyid(p.proowner)
+        ORDER BY grantee`);
+      assert.deepEqual(acl.rows, [{ grantee: "control_room_private_web", grantable: false }],
+        "exactly one non-owner role may EXECUTE the allow list, without being able to pass it on");
+      assert.equal((await admin.query<{ ok: boolean }>(
+        "SELECT has_function_privilege('control_room_private_web','public.owner_push_endpoint_allowed(text)','EXECUTE') AS ok"
+      )).rows[0]!.ok, true, "and the login that inserts subscriptions can actually evaluate the CHECK");
+      assert.equal((await admin.query<{ ok: boolean }>(
+        "SELECT has_function_privilege('public','public.owner_push_endpoint_allowed(text)','EXECUTE') AS ok"
+      )).rows[0]!.ok, false, "while PUBLIC cannot -- 0227 revokes it, and both role files revoke it again after the migrations");
     } finally { await admin.end(); }
   }, { port: PORT + 2, allowedPorts: PORTS, database: "control_room", boundMs: 180_000 });
 });
