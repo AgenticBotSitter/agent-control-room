@@ -1,4 +1,4 @@
--- Down for 0209 only: the two retention-window rules it granted, and nothing
+-- Down for 0230 only: the two retention-window rules it granted, and nothing
 -- else. 0207's guard is REPLACED with 0207's own text, so rolling this back
 -- restores the previous refusal exactly rather than dropping the guard — the
 -- function is not removed, because 0207 created it and 0208's down file does

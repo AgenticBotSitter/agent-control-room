@@ -622,11 +622,11 @@ test("the real download path, the grant it writes, two sessions one file, the qu
           WHERE tenant_id=$1 AND set_id=$2`, [TENANT, storedSet]),
         (error: unknown) => ["42501", "23514", "42501"].includes(stateOf(error)),
           "the publisher cannot trash a set either");
-        // A superuser is refused too, and the reason is the important one: 0209's
+        // A superuser is refused too, and the reason is the important one: 0230's
         // rejection arm needs a LIVE OWNER GRANT, and being a superuser is not
         // one. `postgres` has every privilege on the table and still cannot do
         // this, which is what makes the guard a guard rather than a grants
-        // arrangement. (Before 0209 the superuser was refused because an
+        // arrangement. (Before 0230 the superuser was refused because an
         // unaccepted set had no identity at all, which is the review's S3 and is
         // now a deliberate hole rather than an accident — proved further down.)
         await assert.rejects(admin(`UPDATE control_result_file_sets SET retention_state='trash'
@@ -774,7 +774,7 @@ test("the real download path, the grant it writes, two sessions one file, the qu
         (error: unknown) => ["42501", "23514", "23503"].includes(stateOf(error)),
           "S3: a rejection naming an identity with no owner grant over this project is refused");
         // And a rejection with NO named identity, inside the window, is refused
-        // too — that is the case 0209 deliberately opened and must not leave
+        // too — that is the case 0230 deliberately opened and must not leave
         // open.
         await assert.rejects(web(`UPDATE control_result_file_sets SET retention_state='trash'
           WHERE tenant_id=$1 AND set_id=$2`, [TENANT, misnamed]),
@@ -839,7 +839,7 @@ test("the real download path, the grant it writes, two sessions one file, the qu
           WHERE tenant_id=$1 AND set_id=$2`, [TENANT, acceptedButOld, new Date().toISOString(), OWNER]);
         // The sweep cannot reach it: it names an ACCEPTOR, so `OLD.accepted_at IS
         // NULL` is false and neither new arm can apply however old it is. What is
-        // left is 0207's own rule, and that is the point — 0209 is additive, so
+        // left is 0207's own rule, and that is the point — 0230 is additive, so
         // the pre-existing behaviour for an accepted set is exactly what it was.
         //
         // That rule is: the identity named as the ACCEPTOR may discard it. The
@@ -857,7 +857,7 @@ test("the real download path, the grant it writes, two sessions one file, the qu
           WHERE tenant_id=$1 AND set_id=$2`, [TENANT, acceptedButOld]);
         assert.equal((await admin<{ retention_state: string }>("SELECT retention_state FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
         [TENANT, acceptedButOld]))[0]!.retention_state, "trash",
-        "S3: 0209 did not change anything for an accepted set — its own acceptor may still discard it");
+        "S3: 0230 did not change anything for an accepted set — its own acceptor may still discard it");
         assert.equal((await admin<{ retention_state: string }>("SELECT retention_state FROM control_result_file_sets WHERE tenant_id=$1 AND set_id=$2",
         [TENANT, acceptedButOld]))[0]!.retention_state,
         "trash", "S3: and the identity that accepted it may still throw it away");

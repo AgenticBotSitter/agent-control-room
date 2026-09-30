@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "7f63f7376a646b2ff7e41b2eef4a9bc55f50dbbda3a6ba8dc28f3430b4ccc273",
+  "digest": "c33c540bdaac5323edace2ef09e89cd4a818276160a1226e5f91def9be004335",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -807,7 +807,7 @@
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0209_result_file_retention_sweeper.sql",
+      "file": "db/migrations/0230_result_file_retention_sweeper.sql",
       "order": 135,
       "sha256": "2b72fc4ae2c668bc7553373c2d942b349c0e384ccd4a2ce66d2a67a2e13756a1",
       "kind": "migrate"
