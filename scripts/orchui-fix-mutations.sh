@@ -69,13 +69,18 @@ mutate() {
     --lane) lane="$2"; shift 2;;
     --pattern) pattern="$2"; shift 2;;
     *) shift;; esac; done
-  if ! grep -qF -- "$old" "$file"; then
+  if ! grep -qF -- "${old//@TICK@/$(printf "\140")}" "$file"; then
     echo "SETUP-ERROR $id: anchor not found in $file" | tee "$RESULTS_DIR/$id.log"
     fail=$((fail+1)); failures="$failures $id(setup)"; return
   fi
   python3 - "$file" "$old" "$new" <<'PY'
 import sys
 path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+# @TICK@ is a literal backtick. The store anchors end in one and the shell cannot be
+# trusted to carry it through a word-split argument, so it travels as a placeholder
+# and is restored here.
+old = old.replace("@TICK@", chr(96))
+new = new.replace("@TICK@", chr(96))
 text = open(path, encoding="utf8").read()
 assert text.count(old) == 1, f"anchor is not unique ({text.count(old)})"
 open(path, "w", encoding="utf8").write(text.replace(old, new))
@@ -168,8 +173,8 @@ mutate B2b-lookup-always-null "$STORE" \
 # Round 3 added N8's refusal, so this anchor moved: the SELECT now names
 # `request_digest` as well, and the status filter is on the next line.
 mutate B2c-lookup-ignores-status "$STORE" \
-  " WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3 AND status='completed'\`," \
-  " WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3\`," \
+  " WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3 AND status='completed'\@TICK@," \
+  " WHERE tenant_id=\$1 AND operation_scope=\$2 AND idempotency_key=\$3@TICK@," \
   --lane coord --pattern "B2:"
 
 # ---------------------------------------------------------------------------
@@ -207,10 +212,10 @@ mutate B3c-success-clears-one-scope "$COORD" \
 # impossible to record.
 mutate B3d-scope-is-readable-again "$COORD" \
   "export function intakeRequestScopeV1(kind: \"initial\" | \"resplit\", tenantId: string, projectId: string, requestKey: string) {
-  return \`\${kind}:\${sha256Digest({ tenantId, projectId, requestKey }).slice(7)}\`;
+  return @TICK@\${kind}:\${sha256Digest({ tenantId, projectId, requestKey }).slice(7)}@TICK@;
 }" \
   "export function intakeRequestScopeV1(kind: \"initial\" | \"resplit\", tenantId: string, projectId: string, requestKey: string) {
-  return \`\${kind}:\${tenantId}:\${projectId}:\${requestKey}\`;
+  return @TICK@\${kind}:\${tenantId}:\${projectId}:\${requestKey}@TICK@;
 }" \
   --lane unit --pattern "B3:"
 
@@ -430,8 +435,8 @@ mutate F4c-any-store-is-treated-as-having-a-grant "$COORD" \
 # 20 concurrent raises of one description fail with a primary-key violation -- the
 # de-duplication holding only in sequence.
 mutate F5b-needs-you-conflict-target-names-one-index "$STORE" \\
-  '      ON CONFLICT DO NOTHING`,' \\
-  '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING`,' \\
+  '      ON CONFLICT DO NOTHING@TICK@,' \\
+  '      ON CONFLICT (tenant_id,project_id,scope_key) DO NOTHING@TICK@,' \\
   --lane coord --pattern "STRESS: 20 concurrent presses"
 
 # The CONFLICT TARGET, which is the whole de-duplication. Naming the REQUEST-KEY
@@ -439,8 +444,8 @@ mutate F5b-needs-you-conflict-target-names-one-index "$STORE" \\
 # same request, which is already deduped, and leaves a second press -- a fresh key,
 # the same description -- free to write a second row.
 mutate F5a-adapter-keys-the-item-on-the-request-key "$STORE" \
-  '      ON CONFLICT DO NOTHING`,' \
-  '      ON CONFLICT (tenant_id,project_id,request_key) DO NOTHING`,' \
+  '      ON CONFLICT DO NOTHING@TICK@,' \
+  '      ON CONFLICT (tenant_id,project_id,request_key) DO NOTHING@TICK@,' \
   --lane db --pattern "$RETRY_PATTERN"
 
 # The completion lookup's N8 refusal, and the status predicate that round 3 dropped
@@ -451,8 +456,8 @@ mutate F6a-completion-lookup-answers-a-different-description "$STORE" \
   --lane coord --pattern "completion lookup answers only a COMPLETED request"
 
 mutate F6b-completion-lookup-answers-an-unfinished-request "$STORE" \
-  " AND status='completed'\`," \
-  " \`," \
+  " AND status='completed'\@TICK@," \
+  " @TICK@," \
   --lane coord --pattern "completion lookup answers only a COMPLETED request"
 
 echo
