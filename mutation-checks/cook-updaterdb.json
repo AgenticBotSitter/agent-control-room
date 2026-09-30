@@ -1,10 +1,10 @@
 [
   {
     "file": "src/updater/v1/ddl/0002_schema.sql",
-    "find": "GRANT SELECT ON updater.plans, updater.plan_approval_outcomes, updater.runs,\n  updater.run_events, updater.heartbeat TO control_room_private_web;",
-    "replace": "GRANT SELECT, UPDATE, DELETE ON updater.plans, updater.plan_approval_outcomes, updater.runs,\n  updater.run_events, updater.heartbeat TO control_room_private_web;",
+    "find": "REVOKE UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA updater FROM control_room_private_web;",
+    "replace": "GRANT UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA updater TO control_room_private_web;",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
-    "why": "the web login may read the display tables and change nothing: removing the REVOKE is a no-op because the grants were never made, so the mutation grants UPDATE and DELETE outright"
+    "why": "the web login may read the display tables and change nothing: the mutation must target the REVOKE itself, because replacing an earlier GRANT is undone by this very line"
   },
   {
     "file": "src/updater/v1/ddl/0001_deployer_role.sql",
