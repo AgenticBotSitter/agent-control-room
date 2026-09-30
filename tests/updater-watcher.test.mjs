@@ -1,18 +1,30 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { createServer } from "node:https";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { once } from "node:events";
 import test from "node:test";
 import { FilePlanAuthorityV1, GitMirrorSourceV1, RefereeGitClassifierV1, UpdaterWatcherV1,
-  runGitCredentialHelperV1 } from "../src/updater/v1/watcher.mjs";
+} from "../src/updater/v1/watcher.mjs";
 
 const run = promisify(execFile);
 const SHA = /^[0-9a-f]{40,64}$/u;
 
 async function git(args, cwd) { return run("git", args, { cwd, encoding: "utf8" }); }
+
+function httpBackend(env, input) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", ["http-backend"], { env, stdio: ["pipe", "pipe", "pipe"] }), chunks = [], errors = [];
+    child.stdout.on("data", chunk => chunks.push(chunk)); child.stderr.on("data", chunk => errors.push(chunk));
+    child.once("error", reject); child.once("close", code => code === 0 ? resolve(Buffer.concat(chunks))
+      : reject(new Error(`git_http_backend_failed:${code}:${Buffer.concat(errors).toString("utf8")}`)));
+    child.stdin.end(input);
+  });
+}
 
 async function repository(t) {
   const root = await mkdtemp(join(tmpdir(), "updater-watcher-"));
@@ -32,6 +44,43 @@ async function commit(work, path, contents, message = path, push = true) {
   await mkdir(join(work, path, ".."), { recursive: true }); await writeFile(join(work, path), contents);
   await git(["add", path], work); await git(["commit", "-m", message], work); if (push) await git(["push", "origin", "main"], work);
   return (await git(["rev-parse", "HEAD"], work)).stdout.trim();
+}
+
+async function credentialHttpsOrigin(t, fixture, token) {
+  const key = join(fixture.root, "test.key"), certificate = join(fixture.root, "test.crt");
+  await run("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", certificate,
+    "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1", "-days", "1"], { encoding: "utf8" });
+  const expected = `Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+  let authenticated = 0, rejected = 0;
+  const server = createServer({ key: await readFile(key), cert: await readFile(certificate) }, async (request, response) => {
+    if (request.headers.authorization !== expected) {
+      rejected += 1; response.writeHead(401, { "www-authenticate": "Basic realm=control-room" }); response.end(); return;
+    }
+    authenticated += 1;
+    const url = new URL(request.url, "https://127.0.0.1"), chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = Buffer.concat(chunks);
+    let output;
+    try {
+      output = await httpBackend({ PATH: process.env.PATH ?? "/usr/bin:/bin", GIT_HTTP_EXPORT_ALL: "1", GIT_PROJECT_ROOT: fixture.root,
+        PATH_INFO: url.pathname, QUERY_STRING: url.search.slice(1), REQUEST_METHOD: request.method ?? "GET",
+        CONTENT_TYPE: request.headers["content-type"] ?? "", CONTENT_LENGTH: String(body.length) }, body);
+    } catch (error) { response.writeHead(500); response.end(error.message); return; }
+    const separator = output.indexOf(Buffer.from("\r\n\r\n"));
+    assert.notEqual(separator, -1, "git http-backend returned CGI headers");
+    const headers = output.subarray(0, separator).toString("utf8").split("\r\n"), values = {};
+    let status = 200;
+    for (const header of headers) {
+      const index = header.indexOf(":"); if (index < 0) continue;
+      const name = header.slice(0, index), value = header.slice(index + 1).trim();
+      if (name.toLowerCase() === "status") status = Number(value.slice(0, 3)); else values[name] = value;
+    }
+    response.writeHead(status, values); response.end(output.subarray(separator + 4));
+  });
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  return { origin: `https://127.0.0.1:${address.port}/origin.git`, counts: () => ({ authenticated, rejected }) };
 }
 
 class Plans {
@@ -86,7 +135,8 @@ test("red, pending, and status-for-another-sha are refused before classification
   const candidate = await commit(fixture.work, "change.txt", "candidate\n");
   const extraFailure = green(candidate); extraFailure.checkRuns.push({ commit: candidate, name: "extra", appSlug: "github-actions",
     conclusion: "failure", id: "fake-ci-2" });
-  for (const status of [green(candidate, "failure"), green(candidate, "pending"), green(candidate, "success", "f".repeat(40)), extraFailure]) {
+  const wrongCheckSha = green(candidate); wrongCheckSha.checkRuns[0].commit = "f".repeat(40);
+  for (const status of [green(candidate, "failure"), green(candidate, "pending"), green(candidate, "success", "f".repeat(40)), wrongCheckSha, extraFailure]) {
     const source = new GitMirrorSourceV1({ root: fixture.updaterRoot, origin: fixture.origin, fromCommit: fixture.fromCommit, testing: true });
     const ci = { async statusForCommit() { return status; } };
     await assert.rejects(watcher({ source, plans, root: fixture.updaterRoot, ci }).tick(), /watcher_ci_(?:not_green|status_refused)/u);
@@ -145,16 +195,26 @@ test("the running referee, not candidate metadata, classifies a candidate that e
   assert.equal(plans.open.plan.kind, "updater"); assert.equal(plans.open.plan.updaterDerived.changesUpdater, true);
 });
 
-test("oversized mirrors and malformed credential files fail closed without exposing the token", async t => {
+test("oversized mirrors fail closed", async t => {
   const fixture = await repository(t), plans = new Plans();
   await commit(fixture.work, "large.bin", randomBytes(16 * 1024));
   const huge = new GitMirrorSourceV1({ root: fixture.updaterRoot, origin: fixture.origin, fromCommit: fixture.fromCommit,
     testing: true, maxRepositoryKiB: 1 });
   await assert.rejects(watcher({ source: huge, plans, root: fixture.updaterRoot, ci: { async statusForCommit(sha) { return green(sha); } } }).tick(),
     /watcher_repository_too_large/u);
-  await writeFile(join(fixture.updaterRoot, "updater-state", "github-read.token"), "fake-read-token");
-  const reply = await runGitCredentialHelperV1(fixture.updaterRoot, "get\nprotocol=https\nhost=example.invalid\n\n");
-  assert.equal(reply, "username=x-access-token\npassword=fake-read-token\n\n");
-  await writeFile(join(fixture.updaterRoot, "updater-state", "github-read.token"), "bad\nvalue");
-  await assert.rejects(runGitCredentialHelperV1(fixture.updaterRoot, "get\n\n"), /watcher_credential_refused/u);
+});
+
+test("real Git invokes the shared helper with argv get for an authenticated local HTTPS smart-HTTP origin", async t => {
+  const fixture = await repository(t), token = "fake-read-token";
+  const apostropheRoot = `${fixture.updaterRoot}'quoted`;
+  await mkdir(join(apostropheRoot, "updater-state", "plans"), { recursive: true });
+  await writeFile(join(apostropheRoot, "updater-state", "github-read.token"), `${token}\n`, { mode: 0o600 });
+  const https = await credentialHttpsOrigin(t, fixture, token);
+  const source = new GitMirrorSourceV1({ root: apostropheRoot, origin: https.origin, fromCommit: fixture.fromCommit, testing: true });
+  let fetched;
+  try { fetched = await source.fetchMain(); }
+  catch (error) { assert.fail(`${error.message}; server=${JSON.stringify(https.counts())}`); }
+  assert.equal(fetched.commit, fixture.fromCommit);
+  assert.ok(https.counts().rejected >= 1, "the server required basic authentication before serving Git");
+  assert.ok(https.counts().authenticated >= 1, "real Git retried with the shared helper's token response");
 });

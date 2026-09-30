@@ -1,0 +1,37 @@
+[
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "if (flag === \"On\" && this.watcher) await this.watcher.tick();",
+    "replace": "if (this.watcher) await this.watcher.tick();",
+    "test": "node --test --test-name-pattern='main loop does not poll' tests/updater-skeleton.test.mjs",
+    "why": "the source watcher must remain inert while self-update is Off"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "if (!check || check.commit !== commit || typeof check.name !== \"string\" || check.appSlug !== \"github-actions\"",
+    "replace": "if (!check || typeof check.name !== \"string\" || check.appSlug !== \"github-actions\"",
+    "test": "node --test --test-name-pattern='status-for-another-sha' tests/updater-watcher.test.mjs",
+    "why": "the CI summary itself must name the exact candidate commit"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "[\"fetch\", \"--no-tags\", \"origin\", \"refs/heads/main:refs/updater/main\"]",
+    "replace": "[\"fetch\", \"--no-tags\", \"origin\", \"+refs/heads/main:refs/updater/main\"]",
+    "test": "node --test --test-name-pattern='forced/re-written main' tests/updater-watcher.test.mjs",
+    "why": "a remote history rewrite must not replace the trusted mirror ref"
+  },
+  {
+    "file": "src/updater/v1/watcher.mjs",
+    "find": "if (kib > this.maxRepositoryKiB) throw updaterRefuseV1(\"watcher_repository_too_large\");",
+    "replace": "if (false) throw updaterRefuseV1(\"watcher_repository_too_large\");",
+    "test": "node --test --test-name-pattern='oversized mirrors' tests/updater-watcher.test.mjs",
+    "why": "the watcher refuses a mirror larger than its configured byte budget"
+  },
+  {
+    "file": "src/updater/v1/bin/git-credential-control-room",
+    "find": "[ \"$OPERATION\" = get ] || exit 0",
+    "replace": "[ \"$OPERATION\" = store ] || exit 0",
+    "test": "node --test --test-name-pattern='real Git invokes the shared helper' tests/updater-watcher.test.mjs",
+    "why": "the shared helper responds only when real Git passes get as its argv operation"
+  }
+]

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ const execFileAsync = promisify(execFile);
 const OPEN_PLAN_STATES_V1 = Object.freeze(["building", "ready_for_approval", "approved", "approval_required"]);
 const SHA_V1 = /^[0-9a-f]{40,64}$/u;
 const MAX_REPOSITORY_KIB_V1 = 256 * 1024;
+const CREDENTIAL_HELPER_V1 = fileURLToPath(new URL("./bin/git-credential-control-room", import.meta.url));
 
 function sha256V1(value) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -21,7 +22,7 @@ function shellQuoteV1(value) {
   // This string is interpreted only by Git when it invokes its credential
   // helper. Quote every byte that could turn the fixed helper invocation into
   // another command; credentials themselves are never interpolated here.
-  return `'${String(value).replaceAll("'", "'\\\"'\\\"'")}'`;
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
 function validCommitV1(value, code = "watcher_commit_refused") {
@@ -51,13 +52,19 @@ function parseGitSizeV1(output) {
  * itself; neither Git's argv/environment nor our logs contain the token.
  */
 export class GitMirrorSourceV1 {
-  constructor({ root, origin, fromCommit, testing = false, git = "git", maxRepositoryKiB = MAX_REPOSITORY_KIB_V1 }) {
+  constructor({ root, origin, fromCommit, testing = false, git = "git", maxRepositoryKiB = MAX_REPOSITORY_KIB_V1,
+    credentialHelper = CREDENTIAL_HELPER_V1 }) {
     this.root = root; this.origin = origin; this.fromCommit = validCommitV1(fromCommit);
     this.testing = testing; this.git = git; this.maxRepositoryKiB = maxRepositoryKiB;
+    this.credentialHelper = credentialHelper;
+    this.credentialPath = join(root, "updater-state", "github-read.token");
     if (typeof origin !== "string" || (testing ? !/^(?:https:|file:)/u.test(origin) : !origin.startsWith("https://")))
       throw updaterRefuseV1("watcher_origin_refused");
     if (!Number.isSafeInteger(maxRepositoryKiB) || maxRepositoryKiB < 1)
       throw updaterRefuseV1("watcher_repository_limit_refused");
+    if (typeof credentialHelper !== "string" || credentialHelper.length < 1
+      || !testing && credentialHelper !== CREDENTIAL_HELPER_V1)
+      throw updaterRefuseV1("watcher_credential_helper_refused");
   }
 
   get mirror() { return join(this.root, "updater-state", "mirror.git"); }
@@ -65,17 +72,17 @@ export class GitMirrorSourceV1 {
   async #git(args, { credential = false } = {}) {
     const config = ["-c", "core.hooksPath=/dev/null", "-c", "transfer.fsckObjects=true",
       "-c", "protocol.allow=never", "-c", "protocol.https.allow=always"];
-    if (this.testing) config.push("-c", "protocol.file.allow=always");
+    if (this.testing) config.push("-c", "protocol.file.allow=always", "-c", "http.sslVerify=false");
     if (credential) {
-      const helper = `!${shellQuoteV1(process.execPath)} ${shellQuoteV1(fileURLToPath(import.meta.url))}`
-        + ` --credential-helper --root ${shellQuoteV1(this.root)}`;
+      const helper = `!${shellQuoteV1(this.credentialHelper)} ${shellQuoteV1(this.credentialPath)}`;
       config.push("-c", `credential.helper=${helper}`, "-c", "credential.useHttpPath=true");
     }
     try {
       return await execFileAsync(this.git, [...config, "--git-dir", this.mirror, ...args], {
         encoding: "utf8", maxBuffer: 4 * 1024 * 1024,
         env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: "/var/empty", GIT_CONFIG_NOSYSTEM: "1",
-          GIT_CONFIG_GLOBAL: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1", LC_ALL: "C" },
+          GIT_CONFIG_GLOBAL: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1", LC_ALL: "C",
+          ...(credential && this.testing ? { CONTROL_ROOM_TEST_CREDENTIAL_UID: String(process.getuid()) } : {}) },
       });
     } catch (error) { throw updaterRefuseV1("watcher_source_fetch_refused"); }
   }
@@ -121,21 +128,6 @@ export class GitMirrorSourceV1 {
     validCommitV1(ancestor); validCommitV1(descendant);
     return this.#isAncestor(ancestor, descendant);
   }
-}
-
-/** Git's credential-helper protocol endpoint. It is intentionally exportable
- * for the no-secret-in-argv test, but normal watcher code only reaches it
- * through Git. */
-export async function runGitCredentialHelperV1(root, input = "") {
-  if (!/^(?:get|erase|store)\n/u.test(input)) return "";
-  if (!input.startsWith("get\n")) return "";
-  const path = join(root, "updater-state", "github-read.token");
-  let entry, token;
-  try { entry = await lstat(path); token = await readFile(path, "utf8"); }
-  catch { throw updaterRefuseV1("watcher_credential_refused"); }
-  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1 || entry.size < 1 || entry.size > 8192
-      || /[\0\r\n]/u.test(token)) throw updaterRefuseV1("watcher_credential_refused");
-  return `username=x-access-token\npassword=${token}\n\n`;
 }
 
 export class RefereeGitClassifierV1 {
@@ -246,16 +238,5 @@ export class UpdaterWatcherV1 {
     if (this.ticking) return { status: "busy" };
     this.ticking = true;
     try { return await this.#tick(); } finally { this.ticking = false; }
-  }
-}
-
-if (process.argv.includes("--credential-helper")) {
-  const index = process.argv.indexOf("--root"), root = index < 0 ? null : process.argv[index + 1];
-  if (!root) process.exitCode = 1;
-  else {
-    const chunks = [];
-    process.stdin.on("data", chunk => chunks.push(chunk));
-    process.stdin.on("end", () => void runGitCredentialHelperV1(root, Buffer.concat(chunks).toString("utf8"))
-      .then(value => process.stdout.write(value)).catch(() => { process.exitCode = 1; }));
   }
 }
