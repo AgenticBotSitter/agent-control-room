@@ -935,15 +935,23 @@ test("STRESS: 20 concurrent presses and owner retries of ONE description stay on
         "SELECT count(*)::text AS n FROM control_action_inbox WHERE kind='failure'");
       assert.equal(inbox.rows[0]!.n, "1", "and ONE open inbox item, not twenty");
 
-      // TWENTY CONCURRENT OWNER RETRIES. The grant is one-shot IN THE DATABASE,
-      // and this is the only place that can be shown: twenty callers race the
-      // same row, and the trigger plus the function's own WHERE must leave at
-      // most one latch standing.
-      const granted = await Promise.all(coordinators.map(async client => {
-        const retry = new PostgresIntakeOwnerRetryStoreV1(database(client));
-        try { return await retry.grant({ tenantId: scope.tenantId, projectId: scope.projectId,
-          requestKey: `orchestrator:retry-${randomUUID()}`, ownerRequest: description }); }
-        catch { return 0; }
+      // TWENTY CONCURRENT OWNER RETRIES, raced on the OWNER'S OWN LOGIN because
+      // that is the only login holding EXECUTE on
+      // `control_room_planner_grant_owner_retry` after round 4's REVOKE -- and
+      // because a `catch { return 0 }` here would have turned twenty permission
+      // errors into "nobody was granted", which is exactly the reading this
+      // assertion exists to rule out. Twenty callers now race the same row, and
+      // the trigger plus the function's own WHERE must leave at most one latch.
+      // Twenty SEPARATE connections, because that is what twenty real callers
+      // have and a shared one would serialise them into a queue and prove nothing.
+      // Each is closed in its own finally: a connection still open when the
+      // harness stops the cluster surfaces as an uncaught 57P01 on an idle socket.
+      const granted = await Promise.all(Array.from({ length: 20 }, async () => {
+        const client = new Client(postgres.connection("web")); await client.connect();
+        try {
+          return await new PostgresIntakeOwnerRetryStoreV1(database(client)).grant({ tenantId: scope.tenantId,
+            projectId: scope.projectId, requestKey: `orchestrator:retry-${randomUUID()}`, ownerRequest: description });
+        } finally { await client.end(); }
       }));
       const total = granted.reduce((sum, value) => sum + value, 0);
       assert.equal(total, 1, `exactly one of twenty concurrent retries may be granted, got ${total}`);

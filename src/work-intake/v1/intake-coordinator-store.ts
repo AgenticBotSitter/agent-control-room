@@ -315,6 +315,16 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
    * really escalated), and the row is on this tenant/project/scope. `version+1`
    * and `GREATEST(updated_at, ...)` are 0205's guard's own requirements.
    *
+   * WHAT IS NOT PROVED BY THE TWENTY-PRESS TEST, so it is written down here
+   * rather than left to be rediscovered. Mutating `cleared_at IS NULL` or
+   * `failure_count>=2` out of the WHERE above does NOT fail that test -- both are
+   * already enforced by 0205's table CHECK (`owner_retry_cleared_at IS NULL OR
+   * (cleared_at IS NULL AND failure_count >= 2)`), so a latch can only ever stand
+   * on a live counter that really escalated. They are kept because the comment
+   * above promises this predicate is the same one 0205 admits on, and that promise
+   * should hold in the query as well as in the schema. Dropping
+   * `owner_retry_cleared_at IS NOT NULL`, or the atomic `RETURNING`, DOES fail it.
+   *
    * Returns false rather than throwing when nothing was spent, because "another
    * press spent it first" is the ordinary outcome under concurrency and the
    * coordinator's answer to it is `needs_you`, not a 500. */
