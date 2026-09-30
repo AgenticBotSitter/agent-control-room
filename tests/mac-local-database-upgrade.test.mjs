@@ -168,13 +168,75 @@ test("grant convergence applies only the pinned function boundaries", async () =
   const catalogQuery = macGrantCatalogSqlV1.replace(/--[^\n]*/gu, " ");
   assert.match(catalogQuery, /pg_type t ON t\.oid = u\.oid/u,
     "catalog signatures use the compact type name the role files spell");
-  assert.match(catalogQuery, /string_agg\(\s*pg_catalog\.quote_ident\(t\.typname\), ', ' ORDER BY u\.ord\)/u,
-    "argument types keep their declared order and quoting");
+  // The aggregation keeps its declared order and its quoting; what changed is that
+  // each argument type goes through a CASE, because an array argument is rendered
+  // from its ELEMENT rather than from its own catalog name (see the array arm
+  // below). Both are pinned: dropping the ORDER BY would let the catalog spell a
+  // signature in an order no grant ever uses, and dropping quote_ident would break
+  // every type whose name needs it.
+  assert.match(catalogQuery, /string_agg\(\s*\n?\s*CASE WHEN t\.typelem <> 0 AND t\.typlen = -1/u,
+    "argument types are aggregated in declared order, through the array-aware CASE");
+  assert.match(catalogQuery, /ELSE pg_catalog\.quote_ident\(t\.typname\) END, ', ' ORDER BY u\.ord\)/u,
+    "a non-array argument keeps its compact catalog name and its quoting, in order");
   assert.match(catalogQuery, /COALESCE\(\(SELECT string_agg/u,
     "a zero-argument function still renders an empty argument list");
   assert.doesNotMatch(catalogQuery, /oidvectortypes/u,
     "oidvectortypes expands type aliases and would never match the role files");
   assert.doesNotMatch(macGrantCatalogSqlV1, /pg_get_function_identity_arguments/u);
+  // AN ARRAY ARGUMENT, and the reason it needs its own arm. An array type's
+  // catalog NAME is its element's with a leading underscore -- `text[]` is stored
+  // as `_text` -- so spelling the catalog name verbatim makes every array-typed
+  // signature read as a DIFFERENT function from the one the role file grants.
+  // 0205's `control_room_planner_grant_owner_retry(text, text, text[])` is the
+  // only grant this touches, and the symptom was the backup verifier reporting the
+  // same grant as extra AND missing at once: `database_backup_mac_grants_refused`,
+  // with a diff whose two sides differed only by `text[]` against `_text`.
+  //
+  // The array is recognised by its catalog SHAPE (`typelem <> 0 AND typlen = -1`,
+  // the varlena marker every array type carries) rather than by its name, and the
+  // brackets are appended after `quote_ident` rather than taken from the regtype
+  // rendering -- because quote_ident on a bracketed string quotes the BRACKETS TOO
+  // and produces '"text[]"', which is a third spelling of the same function. Two of
+  // those three mistakes were made and caught on a live cluster during this work.
+  assert.doesNotMatch(catalogQuery, /typkind/u,
+    "pg_type has no typkind column; naming it raises 42703 at run time");
+  assert.match(catalogQuery, /t\.typelem <> 0 AND t\.typlen = -1/u,
+    "an array argument is not recognised by its catalog shape");
+  assert.match(catalogQuery, /quote_ident\(t\.typelem::regtype::text\) \|\| '\[\]'/u,
+    "an array argument does not render as the element type plus brackets");
+
+  // The three chief-of-staff function grants converge, and each is refused for
+  // every role the role file does not name it for. 0203's predicate is the
+  // function a VIEW's WHERE clause calls, so both logins that read that view need
+  // EXECUTE on it; 0204's digest helper is what the SECURITY DEFINER guard calls,
+  // and PostgreSQL checks EXECUTE for the INSERTing role too; 0205's latch is the
+  // owner's, alone, since the coordinator's grant was revoked.
+  // Only the ROLES A MAC-LOCAL INSTALL HAS appear here. `control_room_work_intake`
+  // is deliberately absent: the Mac-local plan has no intake login, so the 0203
+  // predicate converges for the web login alone on this platform, and the intake
+  // login's grant is refused by `grantSql` rather than applied. That asymmetry is
+  // the product's, not a gap in the list -- a Mac-local cluster has no agent login
+  // to bind.
+  for (const [signature, role] of [
+    ["public.work_intake_split_suggestion_visible(text, text, text)", "control_room_private_web"],
+    ["public.planner_failure_scope_key(text, jsonb)", "control_room_task_coordinator"],
+    ["public.control_room_planner_grant_owner_retry(text, text, text[])", "control_room_private_web"],
+  ]) {
+    await applyMacGrantDiffV1(client, { extra: [], missing: [`${role}|function|${signature}||EXECUTE|plain`] });
+    assert.equal(calls.at(-1), `GRANT EXECUTE ON FUNCTION ${signature} TO ${role}`);
+  }
+  // ...and the intake login's grant of the same predicate is refused outright,
+  // because a Mac-local install has no such role.
+  await assert.rejects(applyMacGrantDiffV1(client, { extra: [], missing: [
+    "control_room_work_intake|function|public.work_intake_split_suggestion_visible(text, text, text)||EXECUTE|plain",
+  ] }), /upgrade_grant_catalog_refused/u,
+  "the Mac-local install has no intake login, so its grant cannot be converged");
+  // The coordinator does NOT hold the latch -- the revocation round 4 measured, and
+  // the convergence path has to refuse to put it back.
+  await assert.rejects(applyMacGrantDiffV1(client, { extra: [], missing: [
+    "control_room_task_coordinator|function|public.control_room_planner_grant_owner_retry(text, text, text[])||EXECUTE|plain",
+  ] }), /upgrade_unexpected_function_grant/u,
+  "the coordinator login must not converge to a grant on the owner's retry latch");
 });
 
 test("a database already at main plans exactly the migrations this branch adds beyond main", async () => {

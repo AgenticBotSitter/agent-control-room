@@ -206,8 +206,13 @@ UNION ALL
 -- after its grant had in fact been applied. quote_ident covers a type that has
 -- to be quoted; COALESCE keeps the zero-argument case rendering as empty.
 SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || COALESCE((SELECT string_agg(
-  CASE WHEN t.typelem <> 0 AND t.typkind = 'b' AND t.typlen = -1
-    -- AN ARRAY TYPE'S CATALOG NAME IS ITS ELEMENT'S WITH A LEADING UNDERSCORE:
+  CASE WHEN t.typelem <> 0 AND t.typlen = -1
+    -- AN ARRAY TYPE IS RECOGNISED BY ITS CATALOG SHAPE, NOT BY ITS NAME:
+    -- 'typelem' points at the element type and 'typlen = -1' is the varlena marker
+    -- every array type carries. ('typkind' is not a pg_type column and naming it
+    -- raised 42703 on the first real run -- checked against the live catalog
+    -- rather than recalled.)
+    -- Its catalog NAME is the element's with a leading underscore:
     -- 'text[]' is stored as '_text', so spelling the catalog name verbatim makes
     -- every array-typed signature read as a DIFFERENT function from the one the
     -- role file grants. 0205's 'control_room_planner_grant_owner_retry(text, text,
@@ -215,7 +220,7 @@ SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || COALESCE((
     -- verifier reporting the same grant as both extra and missing at once:
     -- 'database_backup_mac_grants_refused' with a diff whose two sides differ only
     -- by 'text[]' against '_text'. The element type is what a GRANT spells.
-    THEN pg_catalog.quote_ident(t.typelem::regtype::text)
+    THEN pg_catalog.quote_ident(t.typelem::regtype::text) || '[]'
     ELSE pg_catalog.quote_ident(t.typname) END, ', ' ORDER BY u.ord)
   FROM unnest(p.proargtypes) WITH ORDINALITY AS u(oid, ord)
   JOIN pg_type t ON t.oid = u.oid), '') || ')', '', a.privilege_type, a.is_grantable
@@ -248,6 +253,15 @@ function grantSql(item, verb) {
     if (!knownFunctionGrant(object) || verb === "GRANT" && !allowedFunctionGrant(role, object)
       || column || right !== "EXECUTE")
       throw new Error("upgrade_unexpected_function_grant");
+    // The signature is re-validated before it is interpolated into a GRANT. A
+    // function's argument list is types, and a type may be an array -- `text[]` --
+    // which `name()` refuses because it is not an identifier. The same
+    // `argumentType` the reader uses accepts it and nothing else, and the check is
+    // here rather than only in the reader because this string becomes SQL.
+    const signature = /^([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)\((.*)\)$/u.exec(object);
+    if (!signature) throw new Error("upgrade_grant_catalog_refused");
+    signature[1].split(".").map(name);
+    if (signature[2].trim() !== "") splitCommas(signature[2]).map(argumentType);
     return `${verb} EXECUTE ON FUNCTION ${object} ${verb === "GRANT" ? "TO" : "FROM"} ${role}`;
   }
   if (kind === "database") {
