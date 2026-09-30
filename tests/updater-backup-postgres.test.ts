@@ -60,8 +60,6 @@ const PG = requiresRealPostgres();
 const PG_BIN = process.env.PG_BIN ?? "/opt/homebrew/opt/postgresql@17/bin";
 let required = 0, ran = 0;
 const needsPg = () => { if (PG) { required += 1; return undefined; } return { skip: realPostgresSkipMessage() }; };
-const TEST_COUNT = 7;
-
 /** Every child gets the stripped environment the design §4 requires: absolute
  * path, no HOME, no PG* inherited, LC_ALL=C so the cluster starts at all (the
  * lead's item-3b amendment 3). */
@@ -1516,7 +1514,11 @@ test("a backup root outside the install root is sealed, and a failed seal refuse
 });
 
 test("the backup lane ran on a real cluster, not a skip", () => {
-  assert.equal(PG ? required : 0, TEST_COUNT, "every backup test declares that it needs PostgreSQL");
-  assert.equal(ran, TEST_COUNT, "and every one of them ran rather than skipping");
+  // `required` is read HERE, inside the test body, and not hoisted into a constant
+  // at module scope: `needsPg()` runs as each test is registered, so a constant
+  // captured at import time would freeze the count at zero and this assertion
+  // would pass for the wrong reason — vacuously, having compared 0 to 0.
+  assert.ok(required >= 8, `the lane declares a real number of PostgreSQL tests (${required}), not a token pair`);
+  assert.equal(ran, required, "and every one of them ran rather than skipping");
   void updaterDdlFilesV1;
 });
