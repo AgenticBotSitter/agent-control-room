@@ -247,9 +247,15 @@ export function createResultFileServiceV1(db: DatabaseClient, authority: ResultF
         if (!bytes || bytes.byteLength !== Number(grant.size_bytes)) {
           throw new WebAccessError("not_found");
         }
-        // The spend is a conditional UPDATE whose result is read back, so two
-        // concurrent downloads of one link cannot both succeed: exactly one
-        // sees the row it just wrote. A second sees none and is refused.
+        // The spend is a conditional UPDATE whose result is read back. It is
+        // belt to the grant lookup's braces: the lookup above already refuses a
+        // row that is spent, but that check and this UPDATE are not one
+        // transaction on a real database, so two downloads that both read an
+        // unspent row would both proceed without it. `RETURNING` means exactly
+        // one of them sees a row; the other sees none and is refused here.
+        //
+        // The assertion that follows is the honest one: the COUNT of spends,
+        // not which guard answered.
         const spent = (await db.query<{ grant_id: string }>(
           `UPDATE control_result_file_download_grants SET spent_at=$2
            WHERE tenant_id=$1 AND grant_id=$3 AND spent_at IS NULL RETURNING grant_id`,
