@@ -395,6 +395,33 @@ test("ten concurrent rotations make exactly one server rotation and stale locks 
   await rm(stale);
 });
 
+test("a published credential lock is complete before a competing caller can read it", async t => {
+  const homeDir = await temporary(t, "connector-lock-publication-"), path = join(homeDir, "bot.json");
+  const secret = `crf_${"D".repeat(43)}`;
+  await writeFile(path, `${JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
+    workerId: WORKER_ID, secret, credentialExpiresAt: "2026-01-01T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  const gateway = fakeGateway(); gateway.state.digest = connector.sha256(secret);
+  let publishedResolve, continueResolve, competingResolve, observedPublicationError;
+  const published = new Promise(resolve => { publishedResolve = resolve; });
+  const continueFirst = new Promise(resolve => { continueResolve = resolve; });
+  const competing = new Promise(resolve => { competingResolve = resolve; });
+  const first = connector.rotate({ configPath: path, fetcher: gateway.fetcher,
+    lock: { afterPublish: async () => { publishedResolve(); await continueFirst; } } });
+  await published;
+  const second = connector.rotate({ configPath: path, fetcher: gateway.fetcher,
+    lock: { beforeReadExisting: async () => {
+      try { JSON.parse(await readFile(`${path}.rotate.lock`, "utf8")); }
+      catch (error) { observedPublicationError = error; }
+      competingResolve();
+  } } });
+  await competing;
+  continueResolve();
+  assert.equal(observedPublicationError, undefined, "the public lock is complete before a competitor can observe it");
+  const values = await Promise.all([first, second]);
+  assert.equal(gateway.state.rotations, 1);
+  assert.equal(values.filter(value => value.coalesced === true).length, 1);
+});
+
 test("twenty concurrent installs of one profile serialize and all succeed", async t => {
   const homeDir = await temporary(t, "connector-install-race-"), gateway = fakeGateway(), commands = recorder();
   let activeRegistrations = 0, maximumRegistrations = 0;

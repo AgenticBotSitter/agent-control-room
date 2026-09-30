@@ -16,7 +16,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { copyFile, mkdir, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
+import { copyFile, link, mkdir, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join as joinPath, resolve, sep } from "node:path";
@@ -204,24 +204,45 @@ export async function join({ server, code, configPath, fetcher, writeConfig = wr
 
 async function acquireRotationLock(lockPath, { staleMs = ROTATION_LOCK_STALE_MS, waitMs = 25,
   deadlineMs = 10_000, clock = Date.now, sleep = ms => new Promise(done => setTimeout(done, ms)),
+  afterPublish = async () => {}, beforeReadExisting = async () => {},
   isPidAlive = pid => {
     try { process.kill(pid, 0); return true; }
     catch (error) { return error?.code !== "ESRCH"; }
   } } = {}) {
   const started = clock();
   for (;;) {
+    const temporary = `${lockPath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+    let handle;
     try {
-      const handle = await open(lockPath, "wx", 0o600);
+      // Publish a complete lock in one atomic link. Creating the public path
+      // and filling it in two operations exposes an empty JSON file to every
+      // losing installer in the middle of an otherwise legitimate race.
+      handle = await open(temporary, "wx", 0o600);
       await handle.writeFile(`${JSON.stringify({ pid: process.pid, acquiredAt: new Date(clock()).toISOString() })}\n`);
+      await handle.sync();
+      await link(temporary, lockPath);
+      await afterPublish();
+      await unlink(temporary);
       return async () => {
-        try { await handle.close(); } finally {
-          try { await unlink(lockPath); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+        try {
+          // Never unlink a successor's lock if a stale-lock recovery replaced
+          // this directory entry while the original owner was still winding
+          // down.
+          const [owned, published] = await Promise.all([handle.stat(), stat(lockPath)]);
+          if (owned.dev === published.dev && owned.ino === published.ino) await unlink(lockPath);
+        } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+        } finally {
+          await handle.close();
         }
       };
     } catch (error) {
+      try { await handle?.close(); } catch {}
+      try { await unlink(temporary); } catch (cleanupError) { if (cleanupError?.code !== "ENOENT") throw cleanupError; }
       if (error?.code !== "EEXIST") throw error;
       let age = 0, ownerPid = null;
       try {
+        await beforeReadExisting();
         const [info, raw] = await Promise.all([stat(lockPath), readFile(lockPath, "utf8")]);
         age = clock() - info.mtimeMs;
         const parsed = JSON.parse(raw);

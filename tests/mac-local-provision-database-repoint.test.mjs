@@ -104,7 +104,7 @@ test("repoint CLI accepts the package-manager separator and refuses extra argume
 
 test("mac:up and mac:down runtime state no longer includes a local database tunnel", () => {
   assert.deepEqual(Object.keys(runtimePaths("/protected")).sort(),
-    ["hostLog", "hostPid", "hostState", "provider", "runtime", "upgradePrevious"]);
+    ["fleetGatewayLog", "fleetGatewayPid", "hostLog", "hostPid", "hostState", "provider", "runtime", "upgradePrevious"]);
 });
 
 test("mac:up reports the exact one-time Hermes settings command without embedding secrets", () => {

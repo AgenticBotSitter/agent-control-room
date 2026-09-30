@@ -14,7 +14,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
+import { adaptPglite, databaseSqlStateV1, type DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, fleetGatewayClientAddressV1,
   fleetGatewayClientNetworkV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetGatewayAdmissionV1,
   type FleetOperationsModeV1 } from "../src/fleet/v1";
@@ -58,6 +58,12 @@ test("gateway unauthenticated identities use IPv4 /24 and IPv6 /64 networks", ()
   assert.equal(fleetGatewayClientNetworkV1("2001:0db8:0001:0002::99"), "2001:db8:1:2::/64");
   assert.equal(fleetGatewayClientNetworkV1("2001:db8:1:2:ffff::1"), "2001:db8:1:2::/64");
   assert.equal(fleetGatewayClientNetworkV1("unknown"), "unknown");
+});
+
+test("database refusals prefer the production wrapper SQLSTATE over its public availability code", () => {
+  assert.equal(databaseSqlStateV1({ sqlState: "23P01", code: "database_unavailable" }), "23P01");
+  assert.equal(databaseSqlStateV1({ code: "23P01" }), "23P01", "PGlite exposes the same refusal through code");
+  assert.equal(databaseSqlStateV1({ sqlState: 23, code: null }), undefined);
 });
 
 test("fleet gateway checks slow request timeouts every second", () => {

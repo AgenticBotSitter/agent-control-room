@@ -1,6 +1,10 @@
 // Real Mac-local composition proof: the connector-only website owns the owner
 // routes, a separate loopback gateway owns worker routes, and only a fake
-// harness is run.
+// harness is run. Run directly with:
+//   PG_BIN=/path/to/postgresql-17/bin pnpm test:mac-local-fleet-postgres
+// The attack kit creates, migrates and destroys its own cluster on
+// CONTROL_ROOM_PG_TEST_PORT_BASE (59600 by default); no existing database,
+// protected root, bot CLI or LaunchAgent is required.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -19,6 +23,7 @@ import { MAC_LOCAL_DATABASE_ROLES_V1, type MacLocalDatabaseRolesV1 } from "../sr
 import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1, captureMacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalProtectedHostV1 } from "../src/web/v1/mac-local-host";
+import { handlePrivateWebRequest } from "../src/web/v1/private-process";
 import { prepareMacLocalFleetGatewayV1, prepareMacLocalFleetOwnerV1 } from "../src/fleet/v1/mac-local-composition";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
 import { FLEET_TENANT, FLEET_WORKSPACE, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
@@ -61,12 +66,16 @@ test("real Mac-local host plus gateway completes code, install, claim, fake run,
         localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: `http://127.0.0.1:${webPort}`,
           tenantId: FLEET_TENANT, provider: "test", subject: "identity:fleet-owner",
           ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 }, database: web.configuration,
-        enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-test",
+        enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1",
           workers: [{ workerId: "worker:codex", kind: "codex", executablePath: "/fixture/codex", recordedVersion: "fake" }] } });
       const roleConfig = (role: string) => database(postgres, role).configuration;
       const roles: MacLocalDatabaseRolesV1 = Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: web.configuration,
         coordinator: roleConfig("coordinator"), results: roleConfig("results"), publisher: roleConfig("publisher"),
-        agentReviewer: roleConfig("agentReviewer"), queueWorker: roleConfig("queueWorker"),
+        // The connector-only host never opens the reviewer connection. The
+        // attack kit's production application login supplies the required
+        // distinct, valid connection shape without inventing a nonexistent
+        // test-only role alias.
+        agentReviewer: roleConfig("app"), queueWorker: roleConfig("queueWorker"),
         fleetGateway: gatewayRole.configuration, fleetOwner: owner.configuration });
       const openDatabase = (value: typeof web.configuration) => value.username === web.configuration.username ? web.open()
         : value.username === owner.configuration.username ? owner.open()
@@ -78,7 +87,8 @@ test("real Mac-local host plus gateway completes code, install, claim, fake run,
       fleetOwner = prepareMacLocalFleetOwnerV1({ configuration, databaseRoles: roles, gatewayOrigin: gateway.origin, openDatabase });
       const protectedHost = createMacLocalProtectedHostV1({ connectorOnly: true, async loadConfiguration() { return configuration; },
         openDatabase, fleet: fleetOwner.fleet, assets: { count: 0, digest: "test", respond() { return undefined; } },
-        render() { return new Response("local"); }, listenerTiming: { bindMs: 10_000, closeMs: 10_000 } });
+        render: request => handlePrivateWebRequest(request, () => new Response("local")),
+        listenerTiming: { bindMs: 5_000, closeMs: 10_000 } });
       host = await protectedHost.start();
       const origin = configuration.localOwnerSession.origin;
       const signedIn = await fetch(`${origin}/api/v1/local-owner-session`, { method: "POST", headers: {
