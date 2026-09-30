@@ -424,6 +424,30 @@ test("a repeatable read claimer is refused, and a serializable one is not", asyn
             // claims whose attempt and lease the STORE wrote, so it cannot follow
             // the other file's hand-built races or its hand-aged expiry.
             assert.equal(await liveCounts(), 0, "the multi-claim transaction starts with nothing live");
+
+        // The count below treats a lease-less claim as a slot, and that is only
+        // safe because a lease can never go missing behind a committed claim.
+        // So read the two facts that make it safe from the INSTALLED schema,
+        // where they are true, rather than from the migration text, where they
+        // are only a claim: control_leases is granted to no production login with
+        // DELETE, and fleet_claims refuses DELETE as well as UPDATE.
+        const leaseDeletors = (await admin.query<{ rolname: string }>(`SELECT r.rolname
+          FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+          CROSS JOIN LATERAL aclexplode(c.relacl) acl
+          JOIN pg_roles r ON r.oid = acl.grantee
+          WHERE n.nspname='public' AND c.relname='control_leases' AND acl.grantee=0 AND acl.is_grantable
+            AND acl.privilege_type='DELETE'`)).rows.map(row => row.rolname);
+        assert.deepEqual(leaseDeletors, [],
+          `no production login may DELETE a lease, or a committed claim would be left holding nothing (${leaseDeletors.join(", ")})`);
+        const claimAppendOnly = (await admin.query<{ definition: string }>(`SELECT pg_get_triggerdef(t.oid) AS definition
+          FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+          WHERE c.relname='fleet_claims' AND NOT t.tgisinternal AND t.tgname='fleet_claims_append_only'`))
+          .rows[0]?.definition ?? "";
+        // PostgreSQL prints the trigger events in its own canonical order, not
+        // the order 0140 wrote them, so this matches the events, not the spelling.
+        assert.match(claimAppendOnly, /BEFORE (?:UPDATE OR DELETE|DELETE OR UPDATE) ON (?:public\.)?fleet_claims/u,
+          `fleet_claims must refuse DELETE as well as UPDATE (${claimAppendOnly})`);
+
             const multiOffers = await seedIsolationOffers("iso-multi");
             const multi = await as(postgres, "fleet");
             try {
