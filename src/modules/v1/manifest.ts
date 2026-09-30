@@ -6,7 +6,16 @@ import {
   assertPortableGuardedTextV1,
   assertPortableInputSizeV1,
 } from "../../security/inert-portable-input";
-import { sha256Digest } from "../../security";
+// The barrel (`../../security`) re-exports digest.ts and rollback-checkpoint.ts,
+// which import host-value.ts, which reads node:util intrinsics at import time and
+// throws `host intrinsics unavailable` in a browser — blanking the page. The
+// module registry is reachable from the client graph through
+// src/config/v1/product-configuration, so importing the barrel here pulled that
+// code into every browser chunk. sha256Digest itself lives in
+// canonical-digest.ts, which only needs node:crypto's createHash and is
+// browser-safe, so import it directly. See also the same split in
+// src/modules/v1/install-approvals.ts, which is not in the client graph.
+import { sha256Digest } from "../../security/canonical-digest";
 
 /** Portable, inert module declaration. It contains data only and grants nothing by itself. */
 export const MODULE_MANIFEST_SCHEMA_V1 = "control-room.module-manifest/v1" as const;
