@@ -187,6 +187,7 @@ export async function recordTextCopyDerivation(
   const uniqueViolation = (error: unknown): boolean =>
     (error as { code?: string })?.code === "23505";
 
+
   let inserted = { rows: [] as Array<{ derivation_id: string }> };
   try {
     inserted = await db.query<{ derivation_id: string }>(`
@@ -206,6 +207,16 @@ export async function recordTextCopyDerivation(
       now.toISOString()]);
   } catch (error) {
     if (!uniqueViolation(error)) throw error;
+    // A unique violation aborts the enclosing transaction, so this re-read is
+    // correct only where each statement is its own transaction — a POOL, which is
+    // how this call is used in production and what the 20-concurrent-writer test
+    // exercises. A caller that wraps this in an explicit transaction must retry
+    // it there, because the abort follows the statement; that is a property of
+    // PostgreSQL, not something this adapter can undo from a broken connection.
+    //
+    // A probe for it was tried and removed: it cannot distinguish the two cases,
+    // because the client is still in the failed transaction when it runs, so it
+    // also fired on the successful retry path and failed 2 of 8 tests.
   }
 
   if (inserted.rows.length > 0) {

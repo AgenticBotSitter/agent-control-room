@@ -405,6 +405,33 @@ test("the refusals are refused, each for its own reason", { skip }, async () => 
       await refused("derivation_status_invalid",
         { tenantId: tenant, source, derived, result: { ...ok, status: "maybe" as never } });
 
+      // A row naming a REAL catalog file with the WRONG digest is refused. This
+      // is the guard's whole purpose — a derivation that describes one file's
+      // conversion while citing another's identity — and it is only reachable by
+      // bypassing the adapter, which refuses the same mismatch first. Mutation
+      // D1 (removing the digest comparison from the trigger) survived until this
+      // test existed, because the adapter was the only thing testing the rule and
+      // the adapter is not the database.
+      await assert.rejects(() => publisher.query(`
+        INSERT INTO control_text_copy_derivations
+          (tenant_id,derivation_id,source_file_id,source_set_id,source_content_digest,source_size_bytes,
+           converter_id,converter_version,status,diagnostic_category,created_at,completed_at)
+        VALUES ($1,$2,$3,$4,$5,$6,'control-room.test','1.0.0','no_text_copy','timeout',$7,$7)`,
+        [tenant, `derivation:${"d".repeat(32)}`, seeded.source.fileId, seeded.source.setId,
+          sha("a different document entirely"), seeded.source.sizeBytes, new Date().toISOString()]),
+        (error: unknown) => /text copy derivation rejected/u.test((error as Error).message));
+
+      // The same for the SIZE: a real file with a plausible digest but a size that
+      // is not the file's, which the same guard refuses.
+      await assert.rejects(() => publisher.query(`
+        INSERT INTO control_text_copy_derivations
+          (tenant_id,derivation_id,source_file_id,source_set_id,source_content_digest,source_size_bytes,
+           converter_id,converter_version,status,diagnostic_category,created_at,completed_at)
+        VALUES ($1,$2,$3,$4,$5,999999,'control-room.test','1.0.0','no_text_copy','timeout',$6,$6)`,
+        [tenant, `derivation:${"e".repeat(32)}`, seeded.source.fileId, seeded.source.setId,
+          seeded.source.contentDigest, new Date().toISOString()]),
+        (error: unknown) => /text copy derivation rejected/u.test((error as Error).message));
+
       // And the database refuses what the adapter cannot check: a source that
       // does not exist at all. The adapter has no way to know, so this is the
       // guard's own proof.

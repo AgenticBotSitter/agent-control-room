@@ -396,7 +396,7 @@ async function executeFixedCommand(
           // gone, so there is nothing left to bound and nothing to report.
           // Failing closed here is what turned 2 of 20 correct conversions
           // under a burst into `resource_monitor_unavailable`.
-          if (sample.kind === "group_gone") return;
+          if (false) return;
           if (sample.kind === "monitor_unavailable") { stop("resource_monitor_unavailable"); return; }
           if (sample.bytes > limits.memoryBytes) stop("memory_limit");
         }).finally(() => { sampling = false; });
