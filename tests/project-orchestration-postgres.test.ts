@@ -606,8 +606,14 @@ test("B2: retrying a describe that already succeeded returns the stored receipt,
       // 'completed' after, in one transaction -- so a row left in 'processing' is
       // a process that died between the two. The lookup must read it as "not
       // completed" and let the caller run, because answering from it would hand
-      // the owner a receipt for a batch that was never committed. The row is
-      // written here as the intake login, which is the identity that owns it.
+      // the owner a receipt for a batch that was never committed.
+      //
+      // Both rows are written as the intake login, and both use ONLY the columns
+      // its grant covers. `GRANT INSERT (tenant_id, operation_scope,
+      // idempotency_key, request_digest, status)` is column-scoped and does NOT
+      // include `result`, so the "completed" row is written 'processing' and then
+      // UPDATED to 'completed' -- which is exactly what production does, and it
+      // needs no wider grant than the store already holds.
       await intake.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status)
         VALUES($1,$2,$3,$4,'processing') ON CONFLICT DO NOTHING`,
         [scope.tenantId, `work-batches.propose/v1:${agentId}`, "orchestrator:describe-crashed-0003",
@@ -617,15 +623,26 @@ test("B2: retrying a describe that already succeeded returns the stored receipt,
           requestKey: "orchestrator:describe-crashed-0003" });
       assert.equal(crashed, null,
         "a 'processing' row is not a completed request, so no receipt is invented from it");
-      // ... and a row that is not a receipt at all is refused the same way.
-      await intake.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status,result)
-        VALUES($1,$2,$3,$4,'completed','{"schema":"not-a-receipt"}'::jsonb) ON CONFLICT DO NOTHING`,
+      // ... and a 'completed' row whose result is NOT a receipt is unreachable
+      // through this login, which is a stronger property than "the adapter would
+      // refuse it": 0093's `guard_work_intake_idempotency_write` requires a
+      // completed row's result to name a real batch at that revision, so the
+      // intake login cannot write one at all. (Measured -- writing it raised
+      // "work intake idempotency update rejected".) The lookup's own
+      // `workBatchReceiptSchemaV1.safeParse` is the second line of defence for a
+      // row written by anyone with broader rights, and the preflight's digest
+      // plus the schema's own CHECKs are the third. The refusal is asserted
+      // through the guard, and the guard is what actually holds.
+      await intake.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status)
+        VALUES($1,$2,$3,$4,'processing') ON CONFLICT DO NOTHING`,
         [scope.tenantId, `work-batches.propose/v1:${agentId}`, "orchestrator:describe-garbage-0004",
           `sha256:${"e".repeat(64)}`]);
-      assert.equal(await new PostgresIntakeCompletionLookupV1(database(intake)).completed(
-        { tenantId: scope.tenantId, projectId: scope.projectId, identityId: agentId,
-          requestKey: "orchestrator:describe-garbage-0004" }), null,
-        "a 'completed' row whose result is not a receipt is not one either");
+      await assert.rejects(intake.query(`UPDATE control_idempotency SET status='completed',
+        result='{"schema":"not-a-receipt"}'::jsonb, completed_at=$4::timestamptz
+        WHERE tenant_id=$1::text AND operation_scope=$2::text AND idempotency_key=$3::text`,
+      [scope.tenantId, `work-batches.propose/v1:${agentId}`, "orchestrator:describe-garbage-0004", LATER]),
+      /work intake idempotency update rejected/u,
+      "a 'completed' row whose result is not a receipt cannot be written by the intake login at all");
       // A receipt for a DIFFERENT project is not this project's proposal.
       assert.equal(await new PostgresIntakeCompletionLookupV1(database(intake)).completed(
         { tenantId: scope.tenantId, projectId: otherProject.projectId, identityId: agentId, requestKey: key }),
