@@ -99,8 +99,8 @@
   },
   {
     "file": "scripts/updater/vendor-trusted-runtime.mjs",
-    "find": "    await rename(staging, destination);",
-    "replace": "",
+    "find": "    try { await rename(staging, destination); }",
+    "replace": "    try { await Promise.resolve(); }",
     "test": "node --test --test-name-pattern='vendor step verifies bytes' tests/updater-trusted-runtime.test.mjs",
     "why": "a fully verified runtime must publish in one atomic rename"
   },
@@ -180,5 +180,75 @@
     "replace": "(allow file-write*",
     "test": "node --test --test-name-pattern='every service profile' tests/updater-trusted-runtime.test.mjs",
     "why": "the upgrader write boundary must stay deny-by-default"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "  await verifyInstalledFileInventory(root, installed.files);",
+    "replace": "  void installed.files;",
+    "test": "node --test --test-name-pattern='installation checker verifies' tests/updater-trusted-runtime.test.mjs",
+    "why": "the checker must verify the complete installed file inventory before using the runtime"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "      await verifyPinnedFile(path, item.sha256).catch(error => {",
+    "replace": "      await Promise.resolve().catch(error => {",
+    "test": "node --test --test-name-pattern='installation checker verifies' tests/updater-trusted-runtime.test.mjs",
+    "why": "every inventoried regular file must match its recorded sha256"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "    if (!typeMatches || entryMode(entry) !== item.mode) refuse(\"trusted_runtime_inventory_mismatch\");",
+    "replace": "    if (!typeMatches) refuse(\"trusted_runtime_inventory_mismatch\");",
+    "test": "node --test --test-name-pattern='installation checker verifies' tests/updater-trusted-runtime.test.mjs",
+    "why": "inventory verification must reject mode drift"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "      if (entry.size !== item.bytes) refuse(\"trusted_runtime_inventory_mismatch\");",
+    "replace": "      void item.bytes;",
+    "test": "node --test --test-name-pattern='installation checker verifies' tests/updater-trusted-runtime.test.mjs",
+    "why": "inventory verification must reject file size drift"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "  if (root !== suppliedRoot) refuse(\"trusted_spawn_profile_parameter_invalid\");",
+    "replace": "  if (false) refuse(\"trusted_spawn_profile_parameter_invalid\");",
+    "test": "node --test --test-name-pattern='service profile parameters' tests/updater-trusted-runtime.test.mjs",
+    "why": "profile write paths must never be minted from a symlinked root"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "  if (!plainRecord(environmentInput) || !Array.isArray(explicitlySet)) refuse(\"trusted_spawn_environment_invalid\");",
+    "replace": "  if (false) refuse(\"trusted_spawn_environment_invalid\");",
+    "test": "node --test --test-name-pattern='spawn helper drops' tests/updater-trusted-runtime.test.mjs",
+    "why": "builder environment wiring must not normalize malformed caller containers into accepted input"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "    environmentInput = { ...environmentInput, TMPDIR: temp };",
+    "replace": "    environmentInput = { ...environmentInput };",
+    "test": "node --test --test-name-pattern='spawn helper drops' tests/updater-trusted-runtime.test.mjs",
+    "why": "the builder child must receive the same private TMPDIR granted by its profile"
+  },
+  {
+    "file": "src/updater/v1/trusted-runtime.mjs",
+    "find": "  if (!/^\\S.*:$/u.test(rows[0] ?? \"\")) refuse(\"t1_otool_output_invalid\");",
+    "replace": "  if (false) refuse(\"t1_otool_output_invalid\");",
+    "test": "node --test --test-name-pattern='otool parser' tests/updater-trusted-runtime.test.mjs",
+    "why": "garbage otool library output must not be accepted as an empty dependency closure"
+  },
+  {
+    "file": "scripts/updater/vendor-trusted-runtime.mjs",
+    "find": "      if (destinationExists) refuse(\"runtime_vendor_destination_exists\");",
+    "replace": "      if (false) refuse(\"runtime_vendor_destination_exists\");",
+    "test": "node --test --test-name-pattern='vendor step is fail-closed' tests/updater-trusted-runtime.test.mjs",
+    "why": "concurrent vendor losers must fail with the named destination refusal"
+  },
+  {
+    "file": "docs/UPDATER_TRUSTED_RUNTIME_OWNER_HOME_AUDIT.md",
+    "find": "`scripts/qualify-local-workers.ts`",
+    "replace": "`scripts/qualify-local-workers-owner-side.ts`",
+    "test": "node --test --test-name-pattern='owner-home audit' tests/updater-trusted-runtime.test.mjs",
+    "why": "every production owner-home read must remain listed in the enforced audit"
   }
 ]

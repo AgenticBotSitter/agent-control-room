@@ -76,13 +76,15 @@ async function inventory(root) {
         await visit(path);
       } else if (entry.isFile()) {
         const executable = (entry.mode & 0o111) !== 0;
-        entries.push({ path: local, type: "file", mode: executable ? "0555" : "0444", sha256: await sha256File(path) });
+        entries.push({ path: local, type: "file", mode: executable ? "0555" : "0444", bytes: entry.size,
+          sha256: await sha256File(path) });
       } else if (entry.isSymbolicLink()) {
         const target = await readlink(path);
         if (isAbsolute(target) || !inside(root, resolve(dirname(path), target))) refuse("runtime_vendor_symlink_invalid");
         const canonical = await realpath(path).catch(() => refuse("runtime_vendor_symlink_invalid"));
         if (!inside(canonicalRoot, canonical)) refuse("runtime_vendor_symlink_invalid");
-        entries.push({ path: local, type: "symlink", mode: "0777", target });
+        entries.push({ path: local, type: "symlink", mode: (entry.mode & 0o7777).toString(8).padStart(4, "0"),
+          bytes: entry.size, target });
       } else refuse("runtime_vendor_file_type_invalid");
     }
   };
@@ -144,7 +146,13 @@ export async function vendorTrustedRuntime({ sourceDirectory, runtimeDirectory, 
     }, null, 2)}\n`, { mode: 0o444, flag: "wx" });
     const withManifest = await inventory(staging);
     await seal(staging, withManifest);
-    await rename(staging, destination);
+    try { await rename(staging, destination); }
+    catch (error) {
+      const destinationExists = await lstat(destination).then(() => true,
+        failure => failure?.code === "ENOENT" ? false : Promise.reject(failure));
+      if (destinationExists) refuse("runtime_vendor_destination_exists");
+      throw error;
+    }
     return Object.freeze({ runtimeDirectory: destination, fileCount: withManifest.length });
   } catch (error) {
     await makeWritableForCleanup(staging);

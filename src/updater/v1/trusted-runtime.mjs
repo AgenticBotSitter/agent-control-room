@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { createReadStream, realpathSync } from "node:fs";
+import { lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export const TRUSTED_RUNTIME_MANIFEST_SCHEMA = "control-room.trusted-runtime/v1";
@@ -106,6 +106,100 @@ export async function verifyPinnedFile(path, expectedSha256) {
   return actual;
 }
 
+function installedInventoryPath(root, value) {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0") || value.includes("\\")
+    || value.startsWith("/") || value.split("/").some(part => part === "" || part === "." || part === "..")) {
+    refuse("trusted_runtime_inventory_invalid");
+  }
+  const path = join(root, ...value.split("/"));
+  if (!inside(root, path) || path === root || value === "manifest.json") refuse("trusted_runtime_inventory_invalid");
+  return path;
+}
+
+const entryMode = entry => (entry.mode & 0o7777).toString(8).padStart(4, "0");
+
+async function assertInstalledManifestEntry(root) {
+  const entry = await lstat(join(root, "manifest.json")).catch(() => refuse("trusted_runtime_inventory_mismatch"));
+  if (!entry.isFile() || entry.isSymbolicLink() || entryMode(entry) !== "0444") {
+    refuse("trusted_runtime_inventory_mismatch");
+  }
+}
+
+/** Verifies the sealed vendor inventory before any executable from the runtime is used. */
+export async function verifyInstalledFileInventory(rootValue, files) {
+  const root = absolute(rootValue, "trusted_runtime_installation_invalid");
+  if (!Array.isArray(files) || files.length === 0 || files.length > 100_000) {
+    refuse("trusted_runtime_inventory_invalid");
+  }
+  await assertInstalledManifestEntry(root);
+
+  const expected = new Map();
+  for (const item of files) {
+    if (!plainRecord(item) || !["directory", "file", "symlink"].includes(item.type)
+      || typeof item.mode !== "string" || !/^[0-7]{4}$/u.test(item.mode)) {
+      refuse("trusted_runtime_inventory_invalid");
+    }
+    const path = installedInventoryPath(root, item.path);
+    if (expected.has(item.path)) refuse("trusted_runtime_inventory_invalid");
+    if (item.type === "directory") {
+      if (item.mode !== "0555" || Object.keys(item).some(key => !["path", "type", "mode"].includes(key))) {
+        refuse("trusted_runtime_inventory_invalid");
+      }
+    } else if (item.type === "file") {
+      if (!["0444", "0555"].includes(item.mode) || !Number.isSafeInteger(item.bytes) || item.bytes < 0
+        || !/^[a-f0-9]{64}$/u.test(item.sha256 ?? "")
+        || Object.keys(item).some(key => !["path", "type", "mode", "bytes", "sha256"].includes(key))) {
+        refuse("trusted_runtime_inventory_invalid");
+      }
+    } else if (!Number.isSafeInteger(item.bytes) || item.bytes < 0
+      || typeof item.target !== "string" || item.target.length === 0 || item.target.includes("\0") || isAbsolute(item.target)
+      || !inside(root, resolve(dirname(path), item.target))
+      || Object.keys(item).some(key => !["path", "type", "mode", "bytes", "target"].includes(key))) {
+      refuse("trusted_runtime_inventory_invalid");
+    }
+    expected.set(item.path, { item, path });
+  }
+
+  const actual = [];
+  const visit = async directory => {
+    for (const name of (await readdir(directory)).sort()) {
+      const path = join(directory, name);
+      if (path === join(root, "manifest.json")) continue;
+      const local = relative(root, path).split(sep).join("/");
+      const entry = await lstat(path).catch(() => refuse("trusted_runtime_inventory_mismatch"));
+      actual.push(local);
+      if (entry.isDirectory() && !entry.isSymbolicLink()) await visit(path);
+    }
+  };
+  await visit(root).catch(error => {
+    if (error instanceof TrustedRuntimeRefusal) throw error;
+    refuse("trusted_runtime_inventory_mismatch");
+  });
+  if (actual.length !== expected.size || actual.some(path => !expected.has(path))) {
+    refuse("trusted_runtime_inventory_mismatch");
+  }
+
+  for (const { item, path } of expected.values()) {
+    const entry = await lstat(path).catch(() => refuse("trusted_runtime_inventory_mismatch"));
+    const typeMatches = item.type === "directory" ? entry.isDirectory() && !entry.isSymbolicLink()
+      : item.type === "file" ? entry.isFile() && !entry.isSymbolicLink() : entry.isSymbolicLink();
+    if (!typeMatches || entryMode(entry) !== item.mode) refuse("trusted_runtime_inventory_mismatch");
+    if (item.type === "file") {
+      if (entry.size !== item.bytes) refuse("trusted_runtime_inventory_mismatch");
+      await verifyPinnedFile(path, item.sha256).catch(error => {
+        if (error instanceof TrustedRuntimeRefusal && error.code === "trusted_runtime_digest_mismatch") {
+          refuse("trusted_runtime_inventory_mismatch");
+        }
+        throw error;
+      });
+    } else if (item.type === "symlink") {
+      const target = await readlink(path).catch(() => refuse("trusted_runtime_inventory_mismatch"));
+      if (target !== item.target || entry.size !== item.bytes) refuse("trusted_runtime_inventory_mismatch");
+    }
+  }
+  return Object.freeze({ fileCount: files.length });
+}
+
 function assertManifestArtifact(artifact) {
   if (!plainRecord(artifact) || !TRUSTED_RUNTIME_TOOLS.includes(artifact.tool)
     || typeof artifact.version !== "string" || !/^[0-9]+(?:\.[0-9]+){1,2}$/u.test(artifact.version)
@@ -175,7 +269,9 @@ export async function assertT1Path(path, { allowedRoots = [], executable = false
 
 export function parseOtoolLibraries(output) {
   if (typeof output !== "string" || output.includes("\0")) refuse("t1_otool_output_invalid");
-  const lines = output.split(/\r?\n/u).slice(1).filter(line => line.trim().length > 0);
+  const rows = output.split(/\r?\n/u);
+  if (!/^\S.*:$/u.test(rows[0] ?? "")) refuse("t1_otool_output_invalid");
+  const lines = rows.slice(1).filter(line => line.trim().length > 0);
   return Object.freeze(lines.map(line => {
     const match = /^\s+(.+?) \(compatibility version [^)]+\)$/u.exec(line);
     if (!match) refuse("t1_otool_output_invalid");
@@ -186,7 +282,8 @@ export function parseOtoolLibraries(output) {
 export function parseOtoolRpaths(output) {
   if (typeof output !== "string" || output.includes("\0")) refuse("t1_otool_output_invalid");
   const lines = output.split(/\r?\n/u), paths = [];
-  for (let index = 0; index < lines.length; index += 1) {
+  if (!/^\S.*:$/u.test(lines[0] ?? "")) refuse("t1_otool_output_invalid");
+  for (let index = 1; index < lines.length; index += 1) {
     if (lines[index].trim() !== "cmd LC_RPATH") continue;
     const match = /^\s*path (.+) \(offset \d+\)$/u.exec(lines[index + 2] ?? "");
     if (!match) refuse("t1_otool_output_invalid");
@@ -338,10 +435,12 @@ export async function verifyTrustedRuntimeInstallation({ runtimeDirectory, manif
   const policy = validateTrustedRuntimeManifest(manifestPolicy);
   if (!plainRecord(initPolicy) || initPolicy.schema !== "control-room.trusted-runtime-init-config/v1"
     || !plainRecord(initPolicy.tools)) refuse("trusted_runtime_init_policy_invalid");
+  await assertInstalledManifestEntry(root);
   const installed = JSON.parse(await readFile(join(root, "manifest.json"), "utf8"));
   if (!plainRecord(installed) || installed.schema !== "control-room.installed-trusted-runtime/v1"
     || installed.platform !== policy.platform || installed.architecture !== policy.architecture
     || !plainRecord(installed.installed)) refuse("trusted_runtime_installation_invalid");
+  await verifyInstalledFileInventory(root, installed.files);
   const developer = await resolveDeveloperTools({ runtime });
   const inspectLibraries = createOtoolInspector(developer.tools.otool, runtime);
   const checked = {};
@@ -368,7 +467,10 @@ function servicePath(root, suffix) {
 
 export function buildServiceProfileParameters(role, input) {
   if (!SERVICE_PROFILE_ROLES.includes(role) || !plainRecord(input)) refuse("trusted_spawn_profile_parameter_invalid");
-  const root = absolute(input.installRoot, "trusted_spawn_profile_parameter_invalid");
+  const suppliedRoot = absolute(input.installRoot, "trusted_spawn_profile_parameter_invalid");
+  let root;
+  try { root = realpathSync(suppliedRoot); } catch { refuse("trusted_spawn_profile_parameter_invalid"); }
+  if (root !== suppliedRoot) refuse("trusted_spawn_profile_parameter_invalid");
   if (root === "/" || ["/Users", "/opt/homebrew", "/usr/local"].some(path => inside(path, root))) {
     refuse("trusted_spawn_profile_parameter_invalid");
   }
@@ -415,7 +517,17 @@ export async function spawnTrusted(options, runtime = {}) {
   })).executable;
   const profile = await assertT1Path(options.profile, { allowedRoots: options.allowedRoots ?? [], runtime });
   const sandbox = await assertT1Path("/usr/bin/sandbox-exec", { executable: true, runtime });
-  const environment = buildTrustedEnvironment(options.environment ?? {}, { explicitlySet: options.explicitlySet ?? [] });
+  let environmentInput = options.environment ?? {};
+  let explicitlySet = options.explicitlySet ?? [];
+  if (!plainRecord(environmentInput) || !Array.isArray(explicitlySet)) refuse("trusted_spawn_environment_invalid");
+  if (options.role === "builder") {
+    const temp = options.profileParameters.find(([name]) => name === "TMPDIR")?.[1];
+    if (typeof temp !== "string" || plainRecord(environmentInput) && Object.hasOwn(environmentInput, "TMPDIR")
+      && environmentInput.TMPDIR !== temp) refuse("trusted_spawn_environment_refused");
+    environmentInput = { ...environmentInput, TMPDIR: temp };
+    explicitlySet = [...explicitlySet, "TMPDIR"];
+  }
+  const environment = buildTrustedEnvironment(environmentInput, { explicitlySet });
   const childSpawn = runtime.spawn ?? spawn;
   return childSpawn(sandbox, ["-f", profile, ...(options.profileParameters ?? []).flatMap(([name, value]) => {
     if (!/^[A-Z][A-Z0-9_]*$/u.test(name) || typeof value !== "string" || value.includes("\0")) {

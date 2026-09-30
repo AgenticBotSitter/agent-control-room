@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile,
+  chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -23,6 +23,8 @@ import {
   spawnTrusted,
   trustedToolEnvironment,
   validateTrustedRuntimeManifest,
+  verifyInstalledFileInventory,
+  verifyTrustedRuntimeInstallation,
 } from "../src/updater/v1/trusted-runtime.mjs";
 import { vendorTrustedRuntime } from "../scripts/updater/vendor-trusted-runtime.mjs";
 
@@ -149,9 +151,13 @@ test("otool parser accepts exact dependency rows and refuses ambiguous output", 
   assert.deepEqual(parseOtoolLibraries("/runtime/node:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\n"),
     ["/usr/lib/libSystem.B.dylib"]);
   assert.throws(() => parseOtoolLibraries("image:\n  hostile\n"), /t1_otool_output_invalid/u);
-  assert.deepEqual(parseOtoolRpaths("Load command 1\n          cmd LC_RPATH\n      cmdsize 40\n         path @executable_path/../lib (offset 12)\n"),
+  assert.deepEqual(parseOtoolRpaths("/runtime/node:\nLoad command 1\n          cmd LC_RPATH\n      cmdsize 40\n         path @executable_path/../lib (offset 12)\n"),
     ["@executable_path/../lib"]);
   assert.throws(() => parseOtoolRpaths("cmd LC_RPATH\nmissing\n"), /t1_otool_output_invalid/u);
+  for (const garbage of ["", "garbage", "warning: unexpected output\n", "not a mach-o\n"]) {
+    assert.throws(() => parseOtoolLibraries(garbage), /t1_otool_output_invalid/u);
+    assert.throws(() => parseOtoolRpaths(garbage), /t1_otool_output_invalid/u);
+  }
 });
 
 test("xcrun resolution uses a clean environment and T1-checks every resolved tool and ancestor", async () => {
@@ -183,10 +189,12 @@ test("the current Mac resolves every xcrun shim to a root-owned developer tool",
   for (const path of Object.values(result.tools)) assert.equal(path.startsWith(result.developerDirectory) || path.startsWith("/usr/bin/"), true);
 });
 
-test("spawn helper drops uid before sandbox-exec and cannot inherit a hostile environment", async () => {
+test("spawn helper drops uid before sandbox-exec and cannot inherit a hostile environment", async t => {
+  const createdRoot = await mkdtemp(join(tmpdir(), "acr-trusted-spawn-"));
+  const installRoot = await realpath(createdRoot); t.after(() => cleanupRoot(installRoot));
   let observed;
   const runtime = { ...fakeRuntime(), spawn: (...args) => { observed = args; return { pid: 42 }; } };
-  const profileParameters = buildServiceProfileParameters("builder", { installRoot: "/install", jobId: "one" });
+  const profileParameters = buildServiceProfileParameters("builder", { installRoot, jobId: "one" });
   process.env.DEVELOPER_DIR = "/untrusted/Xcode.app";
   try {
     const child = await spawnTrusted({ role: "builder", executable: "/runtime/node/bin/node", args: ["--version"],
@@ -197,7 +205,8 @@ test("spawn helper drops uid before sandbox-exec and cannot inherit a hostile en
   assert.equal(observed[0], "/usr/bin/sandbox-exec");
   assert.deepEqual(observed[1].slice(-3), ["--", "/runtime/node/bin/node", "--version"]);
   assert.equal(observed[2].uid, 301); assert.equal(observed[2].gid, 301); assert.equal(observed[2].shell, false);
-  assert.deepEqual(observed[2].env, { LANG: "C", LC_ALL: "C", NODE_ENV: "production" });
+  assert.deepEqual(observed[2].env, { LANG: "C", LC_ALL: "C", NODE_ENV: "production",
+    TMPDIR: join(installRoot, "build/job-one/tmp") });
   await assert.rejects(spawnTrusted({ role: "builder", executable: "/runtime/node/bin/node", args: [],
     profile: "/updater/policy/service-builder.sb", allowedRoots: ["/runtime", "/updater"], uid: 301, gid: 301,
     environment: { NODE_OPTIONS: "--require=/bad" }, profileParameters, inspectLibraries: async () => [] }, runtime),
@@ -206,19 +215,34 @@ test("spawn helper drops uid before sandbox-exec and cannot inherit a hostile en
     profile: "/updater/policy/service-builder.sb", allowedRoots: ["/runtime", "/updater"], uid: 301, gid: 301,
     profileParameters: [["JOB_ROOT", "/"]], inspectLibraries: async () => [] }, runtime),
   /trusted_spawn_input_invalid/u);
+  await assert.rejects(spawnTrusted({ role: "builder", executable: "/runtime/node/bin/node", args: [],
+    profile: "/updater/policy/service-builder.sb", allowedRoots: ["/runtime", "/updater"], uid: 301, gid: 301,
+    environment: { TMPDIR: "/untrusted" }, profileParameters, inspectLibraries: async () => [] }, runtime),
+  /trusted_spawn_environment_refused/u);
+  for (const invalid of [{ environment: [] }, { explicitlySet: "TMPDIR" }]) {
+    await assert.rejects(spawnTrusted({ role: "builder", executable: "/runtime/node/bin/node", args: [],
+      profile: "/updater/policy/service-builder.sb", allowedRoots: ["/runtime", "/updater"], uid: 301, gid: 301,
+      profileParameters, inspectLibraries: async () => [], ...invalid }, runtime), /trusted_spawn_environment_invalid/u);
+  }
 });
 
-test("service profile parameters are role-bound and cannot widen writes to owner or global roots", () => {
-  assert.deepEqual(buildServiceProfileParameters("postgres", { installRoot: "/install", dataId: "blue" }), [
-    ["DATA_ROOT", "/install/pg/data-blue"], ["SOCKET_ROOT", "/install/pg/socket"],
-    ["OUT_LOG", "/install/logs/postgres/out.log"], ["ERR_LOG", "/install/logs/postgres/err.log"],
+test("service profile parameters are role-bound and refuse non-canonical or global roots", async t => {
+  const createdRoot = await mkdtemp(join(tmpdir(), "acr-profile-root-"));
+  const installRoot = await realpath(createdRoot); t.after(() => cleanupRoot(installRoot));
+  assert.deepEqual(buildServiceProfileParameters("postgres", { installRoot, dataId: "blue" }), [
+    ["DATA_ROOT", join(installRoot, "pg/data-blue")], ["SOCKET_ROOT", join(installRoot, "pg/socket")],
+    ["OUT_LOG", join(installRoot, "logs/postgres/out.log")], ["ERR_LOG", join(installRoot, "logs/postgres/err.log")],
   ]);
   for (const installRoot of ["/", "/Users/owner/runtime", "/opt/homebrew/runtime", "/usr/local/runtime"])
     assert.throws(() => buildServiceProfileParameters("builder", { installRoot, jobId: "one" }),
       /trusted_spawn_profile_parameter_invalid/u);
   for (const jobId of ["", "../escape", "UPPER", "x".repeat(65)])
-    assert.throws(() => buildServiceProfileParameters("builder", { installRoot: "/install", jobId }),
+    assert.throws(() => buildServiceProfileParameters("builder", { installRoot, jobId }),
       /trusted_spawn_profile_parameter_invalid/u);
+  const alias = join(dirname(installRoot), `${installRoot.split("/").at(-1)}-alias`);
+  await symlink(installRoot, alias); t.after(() => rm(alias, { force: true }));
+  assert.throws(() => buildServiceProfileParameters("builder", { installRoot: alias, jobId: "one" }),
+    /trusted_spawn_profile_parameter_invalid/u);
 });
 
 const parametersFor = (role, root) => ({
@@ -244,7 +268,7 @@ test("macOS loads every service profile and denied trees fail closed at run time
   const probe = spawnSync("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"],
     { encoding: "utf8", env: {} });
   const nestedProfilesBlocked = probe.status === 71 && probe.stderr.includes("sandbox_apply: Operation not permitted");
-  const root = await mkdtemp(join(tmpdir(), "acr-service-profiles-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "acr-service-profiles-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const role of SERVICE_PROFILE_ROLES) {
     const parameters = parametersFor(role, root);
@@ -287,6 +311,11 @@ async function fixtureArchives(root) {
     await mkdir(dirname(file), { recursive: true });
     const body = `#!/bin/sh\nprintf '${definition.tool} 1.2.3\\n'\n`;
     await writeFile(file, body, { mode: 0o755 }); await chmod(file, 0o755);
+    if (definition.tool === "node") {
+      await mkdir(join(tree, "node-v1.2.3/lib"), { recursive: true });
+      await writeFile(join(tree, "node-v1.2.3/lib/config.json"), "{\"trusted\":true}\n");
+      await symlink("config.json", join(tree, "node-v1.2.3/lib/config-link"));
+    }
     const archive = join(source, definition.archiveName);
     const tarArgs = definition.archiveRoot === "." ? ["-czf", archive, "-C", tree, definition.archiveFile.split("/")[0]]
       : ["-czf", archive, "-C", tree, definition.archiveRoot];
@@ -307,12 +336,46 @@ test("vendor step verifies bytes, emits a per-file manifest and seals the comple
   const installed = JSON.parse(await readFile(join(destination, "manifest.json"), "utf8"));
   assert.equal(installed.schema, "control-room.installed-trusted-runtime/v1");
   assert.deepEqual(Object.keys(installed.installed), ["node", "pnpm", "esbuild"]);
+  await verifyInstalledFileInventory(destination, installed.files);
   for (const tool of ["node", "pnpm", "esbuild"]) {
     const executable = join(destination, installed.installed[tool].executable);
     assert.equal((await lstat(executable)).mode & 0o777, 0o555);
     assert.equal(spawnSync(executable, [], { encoding: "utf8", env: {} }).stdout.trim(), `${tool} 1.2.3`);
   }
   assert.equal((await lstat(destination)).mode & 0o777, 0o555);
+});
+
+test("the installation checker verifies every inventoried byte, size, mode and path before runtime use", async t => {
+  const root = await mkdtemp(join(tmpdir(), "acr-runtime-inventory-")); t.after(() => cleanupRoot(root));
+  const fixture = await fixtureArchives(root), destination = join(root, "install/runtime");
+  await vendorTrustedRuntime({ ...fixture, sourceDirectory: fixture.source, runtimeDirectory: destination });
+  const installed = JSON.parse(await readFile(join(destination, "manifest.json"), "utf8"));
+  const config = join(destination, "node-1.2.3/lib/config.json");
+  const wrongSize = structuredClone(installed.files);
+  wrongSize.find(entry => entry.path === "node-1.2.3/lib/config.json").bytes += 1;
+  await assert.rejects(verifyInstalledFileInventory(destination, wrongSize), /trusted_runtime_inventory_mismatch/u);
+
+  await chmod(config, 0o644);
+  await assert.rejects(verifyInstalledFileInventory(destination, installed.files), /trusted_runtime_inventory_mismatch/u);
+  await writeFile(config, "{\"trusted\":null}\n"); await chmod(config, 0o444);
+  await assert.rejects(verifyInstalledFileInventory(destination, installed.files), /trusted_runtime_inventory_mismatch/u);
+  await assert.rejects(verifyTrustedRuntimeInstallation({ runtimeDirectory: destination,
+    manifestPolicy: fixture.manifest,
+    initPolicy: { schema: "control-room.trusted-runtime-init-config/v1", tools: {
+      node: { files: [] }, pnpm: { files: [] }, esbuild: { files: [] },
+    } },
+  }), /trusted_runtime_inventory_mismatch/u);
+
+  await chmod(config, 0o644); await writeFile(config, "larger attacker-controlled content\n"); await chmod(config, 0o444);
+  await assert.rejects(verifyInstalledFileInventory(destination, installed.files), /trusted_runtime_inventory_mismatch/u);
+  await chmod(config, 0o644); await writeFile(config, "{\"trusted\":true}\n"); await chmod(config, 0o444);
+  const library = dirname(config); await chmod(library, 0o755);
+  const configLink = join(library, "config-link"); await rm(configLink); await symlink("../bin/node", configLink);
+  await chmod(library, 0o555);
+  await assert.rejects(verifyInstalledFileInventory(destination, installed.files), /trusted_runtime_inventory_mismatch/u);
+  await chmod(library, 0o755); await rm(configLink); await symlink("config.json", configLink);
+  await writeFile(join(library, "unlisted.js"), "untrusted\n", { mode: 0o444 }); await chmod(library, 0o555);
+  await assert.rejects(verifyInstalledFileInventory(destination, installed.files), /trusted_runtime_inventory_mismatch/u);
 });
 
 test("vendor step is fail-closed for corruption, interruption, retry and concurrent callers", async t => {
@@ -338,8 +401,12 @@ test("vendor step is fail-closed for corruption, interruption, retry and concurr
   }), /injected_stop/u);
   await assert.rejects(lstat(halfway), error => error?.code === "ENOENT");
   await vendorTrustedRuntime({ ...restored, sourceDirectory: restored.source, runtimeDirectory: halfway });
-  await assert.rejects(vendorTrustedRuntime({ ...restored, sourceDirectory: restored.source, runtimeDirectory: halfway }),
+  let existingDestinationWork = false;
+  await assert.rejects(vendorTrustedRuntime({ ...restored, sourceDirectory: restored.source, runtimeDirectory: halfway }, {
+    afterArtifact: () => { existingDestinationWork = true; },
+  }),
     /runtime_vendor_destination_exists/u);
+  assert.equal(existingDestinationWork, false);
 
   const destinations = Array.from({ length: 20 }, (_, index) => join(root, `parallel-${index}`));
   await Promise.all(destinations.map(runtimeDirectory => vendorTrustedRuntime({ ...restored,
@@ -349,5 +416,26 @@ test("vendor step is fail-closed for corruption, interruption, retry and concurr
     sourceDirectory: restored.source, runtimeDirectory: one })));
   assert.equal(burst.filter(result => result.status === "fulfilled").length, 1);
   assert.equal(burst.filter(result => result.status === "rejected").length, 19);
+  for (const result of burst.filter(result => result.status === "rejected")) {
+    assert.match(String(result.reason), /runtime_vendor_destination_exists/u);
+  }
   assert.deepEqual((await readdir(root)).filter(name => name.startsWith(".runtime-stage-")), []);
+});
+
+test("the owner-home audit lists every production source that reads an owner home", async () => {
+  const roots = ["src", "scripts"], productionFiles = [];
+  const visit = async localDirectory => {
+    for (const entry of await readdir(join(repositoryRoot, localDirectory), { withFileTypes: true })) {
+      const local = `${localDirectory}/${entry.name}`;
+      if (entry.isDirectory()) await visit(local);
+      else if (/\.(?:[cm]?[jt]sx?|mjs)$/u.test(entry.name)) {
+        const source = await readFile(join(repositoryRoot, local), "utf8");
+        if (/process\.env\.HOME|\bhomedir\s*\(|\bos\.homedir\s*\(/u.test(source)) productionFiles.push(local);
+      }
+    }
+  };
+  for (const root of roots) await visit(root);
+  const audit = await readFile(join(repositoryRoot, "docs/UPDATER_TRUSTED_RUNTIME_OWNER_HOME_AUDIT.md"), "utf8");
+  const missing = productionFiles.sort().filter(path => !audit.includes(`\`${path}\``));
+  assert.deepEqual(missing, [], `owner-home audit is missing: ${missing.join(", ")}`);
 });
