@@ -28,7 +28,14 @@ SET LOCAL statement_timeout = '5s';
 CREATE TABLE control_planner_failure_counters (
   tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
   project_id text NOT NULL,
-  scope_key text NOT NULL CHECK (scope_key ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{11,299}$'),
+  -- The bound is 179, not 299: PostgreSQL's POSIX regex compiler refuses a
+  -- repetition count above 255, so a wider bound is not expressible in a CHECK
+  -- and would make the constraint itself a 2201B error at write time. 179 matches
+  -- every other identifier in this schema (0093's request keys, 0110's
+  -- dismissals) and is comfortably longer than any scope key the coordinator
+  -- builds, which is `initial:` or `resplit:` plus a tenant, a project and the
+  -- caller's own request key.
+  scope_key text NOT NULL CHECK (scope_key ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$'),
   failure_count bigint NOT NULL CHECK (failure_count >= 0),
   last_failure_at timestamptz,
   cleared_at timestamptz,

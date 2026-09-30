@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "b9c3e50a263cd958105b95b794c312feae19bd0f05d2230d47a3128ad2bd1662",
+  "digest": "6d62aefb23da1a81302099eb0d247da0f120d4460edc6dc91801b30daaa9e6a8",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -773,7 +773,7 @@
     {
       "file": "db/migrations/0202_planner_failure_and_needs_you.sql",
       "order": 129,
-      "sha256": "ba331e522386831f2025ba78665a566e01af817641d8c3b847363a32aee762ea",
+      "sha256": "5f9fc53b4641cdb0462817a114de8af4c31bebfd43f0b986edf44f8b2b69932a",
       "kind": "migrate"
     },
     {
