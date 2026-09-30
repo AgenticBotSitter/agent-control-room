@@ -3,7 +3,7 @@
     "file": "db/migrations/0141_fleet_owner_authority.sql",
     "find": "    OR NOT EXISTS (SELECT 1 FROM public.fleet_enrollment_codes c\n      WHERE c.tenant_id=NEW.tenant_id AND c.id=NEW.code_id AND c.worker_id=NEW.worker_id\n        AND c.state='issued' AND c.expires_at>pg_catalog.statement_timestamp()",
     "replace": "    OR NOT EXISTS (SELECT 1 FROM public.fleet_enrollment_codes c\n      WHERE c.tenant_id=NEW.tenant_id AND c.id=NEW.code_id AND c.worker_id=NEW.worker_id\n        AND c.state='issued' AND c.expires_at>'2000-01-01'::timestamptz",
-    "test": "node --import tsx --test --test-name-pattern \"one-command join|expired or cancelled\" tests/fleet-connector.test.ts",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && node --import tsx --test tests/fleet-connector-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "the database clock refuses an expired enrollment code"
   },
   {
@@ -80,7 +80,7 @@
     "file": "db/migrations/0141_fleet_owner_authority.sql",
     "find": "      OR worker.project_ids<>NEW.project_ids OR worker.capabilities<>NEW.capabilities\n      OR worker.max_concurrent<>NEW.max_concurrent)) THEN",
     "replace": "      OR worker.max_concurrent<>NEW.max_concurrent)) THEN",
-    "test": "node --import tsx --test --test-name-pattern \"codes cannot be widened\" tests/fleet-connector.test.ts",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && node --import tsx --test tests/fleet-connector-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "a re-key code cannot widen a worker's project scope"
   },
   {
