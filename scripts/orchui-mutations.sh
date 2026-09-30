@@ -135,9 +135,19 @@ mutate F3-allowance-refusal-copy "$OWNER" \
   'const describeRefusedMessage = (_reasonCode: string) => "The chief of staff could not turn that description into a safe proposal. Check the wording or settings and try again.";'
 
 # F3b: the allowance refusal is no longer its own announced status.
+#
+# The anchor was rewritten for B3. `announced` used to be
+# `result.status === "failed" || (result.status === "refused" && result.allowanceRefused)`;
+# it is now `(result.status === "failed" && result.needsYou) || (...)`, because a
+# first planner failure raises no Needs-you item and must not be announced as one.
+# The mutation below removes the ALLOWANCE arm, which is the property F3b is
+# about, and leaves the failed/Needs-you arm alone. It used to report a
+# SETUP-ERROR here (anchor not found) rather than ESCAPED, which is why the tally
+# showed 21/22 with a setup error instead of a clean run.
 mutate F3b-allowance-not-announced "$UI" \
-  'result.status === "failed" || (result.status === "refused" && result.allowanceRefused);' \
-  'result.status === "failed";'
+  '  (result.status === "failed" && result.needsYou)
+  || (result.status === "refused" && result.allowanceRefused);' \
+  '  result.status === "failed" && result.needsYou;'
 
 # F4: a stale stored choice is reported as available.
 mutate F4-stale-choice-hidden "$OWNER" \
