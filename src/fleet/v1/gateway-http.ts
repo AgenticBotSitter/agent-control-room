@@ -10,22 +10,26 @@ import { FLEET_DIGEST_PATTERN_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_P
   plainSha256V1 } from "./identifiers";
 
 /**
- * The S1 proposal service reports its designed refusals with its own safe codes.
- * They are refusals, not failures: a bot that reuses one idempotency key for
- * different work must be told `conflict`, and a credential the intake login will
- * not act for must be told `forbidden`, exactly as every other fleet refusal is.
- * Without this translation they escape as an untyped 400 and the gateway's own
- * operator log records a perfectly ordinary client mistake as a server fault.
- * `integrity_failed` deliberately has no mapping: it is never a client error and
- * must keep reaching the operator log.
+ * The S1 proposal service reports its designed refusals with its own safe
+ * codes. They are refusals, not failures: a bot that reuses one idempotency key
+ * for different work must be told `conflict`, and a credential the intake login
+ * will not act for must be told `forbidden`, exactly as every other fleet
+ * refusal is. Without this translation they escape as an untyped 400 and the
+ * gateway's own operator log records a perfectly ordinary client mistake as a
+ * server fault. `integrity_failed` is deliberately absent: it is never a client
+ * error and must keep reaching the operator log.
+ *
+ * A null-prototype map, so a lookup can never find `Object.prototype` and treat
+ * an inherited member as a refusal code.
  */
-const WORK_INTAKE_REFUSALS_V1: Readonly<Record<string, FleetErrorCodeV1>> = Object.freeze({
-  credential_inactive: "forbidden",
-  no_matching_grant: "forbidden",
-  replay_conflict: "conflict",
-  batch_not_found: "not_found",
-  invalid_input: "invalid",
-});
+const WORK_INTAKE_REFUSALS_V1: Readonly<Record<string, FleetErrorCodeV1>> = Object.assign(
+  Object.create(null) as Record<string, FleetErrorCodeV1>, Object.freeze({
+    credential_inactive: "forbidden",
+    no_matching_grant: "forbidden",
+    replay_conflict: "conflict",
+    batch_not_found: "not_found",
+    invalid_input: "invalid",
+  }));
 
 /**
  * The connector-facing API. Every route except enrollment and the connector
