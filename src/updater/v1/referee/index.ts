@@ -363,6 +363,7 @@ function segmentSourceWithBraces(pattern: string): string {
     else if (character === "?") source += "[^/]";
     else if (character === "{") {
       const close = pattern.indexOf("}", index + 1);
+      if (close < 0) { source += "\\{"; continue; }
       const alternatives = pattern.slice(index + 1, close).split(",");
       source += `(?:${alternatives.map(wildcardSegmentSource).join("|")})`;
       index = close;

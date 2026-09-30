@@ -8,8 +8,8 @@
   },
   {
     "file": "src/updater/v1/referee/index.ts",
-    "find": "  const patterns = pattern.toLowerCase().split(\"/\");\n  const paths = path.toLowerCase().split(\"/\");",
-    "replace": "  const patterns = pattern.toLowerCase().split(\"/\");\n  const paths = path.split(\"/\");",
+    "find": "function compiledGlobMatches(pattern: CompiledGlobPattern, path: string): boolean {\n  const paths = path.toLowerCase().split(\"/\");",
+    "replace": "function compiledGlobMatches(pattern: CompiledGlobPattern, path: string): boolean {\n  const paths = path.split(\"/\");",
     "test": "node --import tsx --test --test-name-pattern='supplemental examples' tests/updater-referee.test.ts",
     "why": "case folding is required because differently-cased candidate paths land on the same APFS path and must retain the running policy class"
   },
