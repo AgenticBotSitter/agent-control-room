@@ -31,6 +31,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
+import { securityDefinerAuditLive } from "./support/attack-kit/search-path-audit";
 import { applyUpdaterSchemaV1 } from "../src/updater/v1/schema-installer";
 import { PasskeyStoreV1, PasskeyWebStoreV1 } from "../src/updater/v1/passkey-store.mjs";
 import { comparisonCodeV1 } from "../src/updater/v1/passkey.mjs";
@@ -1382,6 +1383,90 @@ test("the web insert path validates the response shape before it reaches the tab
         /updater_registration_row_refused/u,
         "a malformed idempotency key is refused by the port's own shape check");
     } finally { await web.client.end(); await client.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("every routine in schema updater pins its search_path with pg_temp last", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    const { client } = await deployerStore(postgres);
+    try {
+      // THE GATE IS THE CATALOG, not the DDL text. `assertSearchPathPinned` is the
+      // repository's own audit: it reads `pg_proc.prosecdef` and the EFFECTIVE
+      // `proconfig` after every CREATE and later ALTER/RESET, so a routine whose
+      // path was changed afterwards counts as unpinned, and it parses the GUC list
+      // with PostgreSQL's own rules rather than by splitting on commas.
+      //
+      // It is asserted HERE rather than only by the file-scanning hint in
+      // `updater-schema-ddl.test.ts` for one reason: item 10a adds four
+      // SECURITY DEFINER routines (the refusal aggregation and the cooling-off
+      // enqueue among them), and a SECURITY DEFINER routine that resolves a name
+      // in an attacker-writable schema executes the attacker's function as the
+      // deployer. The offline hint cannot see that; this can.
+      const result = await securityDefinerAuditLive(
+        async (sql, params) => ({ rows: (await client.query(sql, [...params] as never[])).rows }),
+        // No allowlist. The release ledger's waiver file is about the release
+        // schema's routines; schema `updater` is the updater's own DDL, where a
+        // waiver would defeat the point. Passing the release allowlist here would
+        // report every one of ITS entries as stale (an entry that matches no
+        // current violation is itself a failure) and fail a lane that has nothing
+        // to do with the release schema.
+        { schemas: ["updater"], allowlist: { entries: [], active: new Map(), expired: [] } },
+      );
+      // The gate, once the reading is in hand. `assertSearchPathPinned` throws
+      // with the whole result attached, which is right for a CI job and wrong for
+      // a test that wants to say WHICH check failed — so the reading comes first
+      // and the assertion names the list.
+      assert.deepEqual(result.unpinned, [], "every privileged routine in schema updater pins its path");
+      assert.deepEqual(result.expiredAllowlistEntries, []);
+      assert.deepEqual(result.staleAllowlistEntries, []);
+      assert.deepEqual(result.unpinned, [], "every privileged routine in schema updater pins its path");
+      // `securityDefinerAuditLive` reports every schema present in pg_proc but
+      // outside the requested set as UNCLASSIFIED, which is its way of refusing to
+      // let a narrowed audit pass quietly. Here the only other schema is `public`
+      // — the release ledger's, audited by `scripts/check-migration-search-path.mjs`
+      // against its own waiver file, and nothing to do with the updater's fixed
+      // DDL. So it is named and asserted rather than ignored, and a THIRD schema
+      // appearing would fail.
+      assert.deepEqual([...result.unclassifiedSchemas].sort(), ["control_room_queue", "public"],
+        `the schemas outside this audit must be exactly the ones it is not about,`
+        + ` found ${JSON.stringify(result.unclassifiedSchemas)}`);
+      // The EXACT count, not a floor. Item 7 shipped 13 functions; item 10a adds
+            // eight (two bound helpers, four guards, the refusal aggregation and the
+            // cooling-off enqueue), and the audit counts only the PRIVILEGED ones —
+            // SECURITY DEFINER or returning a trigger. A count that drifts is a routine
+            // that changed its privilege without anybody deciding to, and a floor would
+            // hide a routine that stopped being privileged while leaving the count high.
+            assert.equal(result.findings.length, 19,
+              `expected 19 privileged routines, found ${result.findings.length}`);
+      // Both new SECURITY DEFINER functions are in the set that was audited, by
+      // name — a routine that stopped being privileged would otherwise shrink the
+      // audited set and pass unnoticed.
+      //
+      // Matched on the routine NAME, not its full identity: `pg_get_function_identity_arguments`
+      // reports the parameter names (`p_credential_id text, ...`), so spelling the
+      // whole identity here would make the assertion depend on how the parameters
+      // happen to be named in the DDL rather than on the fact that the routine is
+      // privileged. The name is the part that matters for this claim.
+      const audited = result.findings.map(finding => finding.routine);
+      for (const name of ["updater.enqueue_cooling_off_notices", "updater.record_approval_refusal",
+        "updater.guard_passkey_registration_open", "updater.guard_open_registration",
+        "updater.guard_refusal_bucket", "updater.guard_push_schedule"])
+        assert.ok(audited.some(routine => routine.startsWith(`${name}(`)),
+          `${name} must be in the audited set (privileged), otherwise it changed privilege silently`);
+      // And the pinned path is one of the DESIGN's two, not merely a path that ends in
+      // `pg_temp`. Both are legitimate and item 7's own choice: `owner_session_is_live`
+      // reads `public.control_web_sessions`, so it needs `public` in its path;
+      // every other routine needs only `pg_catalog, updater, pg_temp`. A third
+      // shape would be a routine that gained a schema nobody reviewed.
+      for (const finding of result.findings)
+        assert.match(finding.searchPath ?? "",
+          /^pg_catalog, (updater|public, updater), pg_temp$/u,
+          `${finding.routine} pins ${finding.searchPath}, which is neither of the design's two paths (R10b)`);
+    } finally { await client.end(); }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 

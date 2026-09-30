@@ -4,7 +4,7 @@
     "find": "  IF NEW.owner_session_digest !~ '^sha256:[a-f0-9]{64}$'\n    OR NOT updater.owner_session_is_live(NEW.owner_session_digest) THEN",
     "replace": "  IF false THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
-    "why": "an approval, a registration and a phone request must all be refused without a live owner session (R16, design \u00a75.4)"
+    "why": "an approval, a registration and a phone request must all be refused without a live owner session (R16, design §5.4)"
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
@@ -18,7 +18,7 @@
     "find": "  IF TG_OP = 'UPDATE' AND OLD.finished_at IS NULL AND NEW.lease_token IS DISTINCT FROM OLD.lease_token THEN",
     "replace": "  IF false THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
-    "why": "a live run's lease must not be reassigned, or a second updater process inherits it (design \u00a77.2, SI-06)"
+    "why": "a live run's lease must not be reassigned, or a second updater process inherits it (design §7.2, SI-06)"
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
@@ -32,7 +32,7 @@
     "find": "    (OLD.state = 'draining' AND NEW.state IN ('quiesced','switched','rollback_started','refused')) OR",
     "replace": "    (OLD.state = 'draining' AND NEW.state IN ('quiesced','rollback_started','refused')) OR",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
-    "why": "a code-only run goes draining -> switched without quiescing the database (design \u00a78.1, \u00a78.3)"
+    "why": "a code-only run goes draining -> switched without quiescing the database (design §8.1, §8.3)"
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
@@ -53,14 +53,14 @@
     "find": "  IF EXISTS (SELECT 1 FROM updater.plans p\n      WHERE p.plan_id <> NEW.plan_id\n        AND p.state IN ('building','ready_for_approval','approved','approval_required')) THEN",
     "replace": "  IF false THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
-    "why": "one open plan at a time, or the owner is asked to approve two candidates (design \u00a75.5, SI-24)"
+    "why": "one open plan at a time, or the owner is asked to approve two candidates (design §5.5, SI-24)"
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
-    "find": "  IF NEW.template LIKE 'control-room-updater%' THEN\n    RAISE EXCEPTION 'only the updater may use its own push template' USING ERRCODE = '42501';\n  END IF;",
+    "find": "  IF NEW.template LIKE 'control-room-updater%' AND current_user <> 'control_room_deployer' THEN\n    RAISE EXCEPTION 'only the updater may use its own push template' USING ERRCODE = '42501';\n  END IF;",
     "replace": "  IF false THEN\n    RAISE EXCEPTION 'only the updater may use its own push template' USING ERRCODE = '42501';\n  END IF;",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
-    "why": "the web may queue a push but never speak in the updater's name (R12, design \u00a712)"
+    "why": "the web may queue a push but never speak in the updater's name (R12, design §12). The condition is about the INSERTING ROLE as well as the string: an earlier version tested the template alone, which refused the updater too and made the reserved prefix a namespace nothing could reach."
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
