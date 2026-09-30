@@ -1,5 +1,5 @@
 import { appendAuditWith } from "../../audit/audit-store";
-import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { databaseSqlStateV1, type DatabaseClient, type DatabaseSession } from "../../persistence/database";
 import { WebSessionAuthority, type WebActor } from "../../web/v1/session-authority";
 import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { fleetFail } from "./errors";
@@ -220,7 +220,7 @@ export class FleetOwnerServiceV1 {
           offered_by_identity_id,state,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'open',$8)`,
         [this.#tenantId, offerId, projectId, jobId, capability, allowed, actor.id, actor.now]);
       } catch (error) {
-        if (["P0001", "23503", "23505"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        if (["P0001", "23503", "23505"].includes(databaseSqlStateV1(error) ?? "")) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-offer:${offerId.slice(12)}`, tenantId: this.#tenantId, projectId,
@@ -333,7 +333,7 @@ export class FleetOwnerServiceV1 {
         await tx.query(`INSERT INTO fleet_result_reviews(tenant_id,review_id,result_id,decision,note,reviewed_by_identity_id,reviewed_at)
           VALUES($1,$2,$3,$4,$5,$6,$7)`, [this.#tenantId, reviewId, resultId, decision, note, actor.id, actor.now]);
       } catch (error) {
-        if (["P0001", "23505"].includes((error as { code?: string }).code ?? "")) return fleetFail("conflict");
+        if (["P0001", "23505"].includes(databaseSqlStateV1(error) ?? "")) return fleetFail("conflict");
         throw error;
       }
       await appendAuditWith(tx, { id: `audit:fleet-review:${reviewId.slice(13)}`, tenantId: this.#tenantId,
