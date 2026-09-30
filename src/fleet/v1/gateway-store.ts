@@ -365,6 +365,25 @@ export class FleetGatewayStoreV1 {
     // connection, and reading it inside would hold two per claim. The 0156
     // trigger still decides inside the transaction, so a race costs nothing.
     const mode = await this.operationsMode();
+    try {
+      return await this.#claimInTransaction(principal, offerId, idempotencyKey, mode, now);
+    } catch (error) {
+      // A deadlock (40P01) or a serialization failure (40001) is a
+      // CLAIM-LEVEL collision, not an outage: some other claim transaction on
+      // this project won, and this one rolled back entirely. The bounded
+      // database pool already proved the lease reusable by rolling back
+      // cleanly, so the correct answer is the same ordinary 409 a worker
+      // already knows to handle by moving to its next offer. Without this the
+      // refusal travels as `400 refused`, which the connector reads as
+      // terminal and ends the whole pass, stranding the job it had begun.
+      if (databaseSqlStateV1(error) === "40P01" || databaseSqlStateV1(error) === "40001")
+        return fleetFail("conflict");
+      throw error;
+    }
+  }
+
+  async #claimInTransaction(principal: FleetWorkerPrincipalV1, offerId: string, idempotencyKey: string,
+    mode: string, now: string) {
     return this.db.transaction(async tx => {
       const prior = (await tx.query<ClaimRow>(`SELECT * FROM fleet_claims WHERE tenant_id=$1 AND worker_id=$2
         AND idempotency_key=$3`, [this.#tenantId, principal.workerId, idempotencyKey])).rows[0];

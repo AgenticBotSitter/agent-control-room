@@ -159,8 +159,14 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         // PostgreSQL has already aborted the transaction for these statement-time failures.
         // The successful ROLLBACK above proves this lease is reusable; keep the pool serving
         // other requests while returning one sanitized, retryable refusal to this caller.
+        //
+        // The SQLSTATE travels with the refusal. It is the only thing that lets a
+        // caller tell a claim-level collision (40P01/40001 — another transaction
+        // won, move on to the next offer) apart from a genuine outage, and
+        // discarding it here is what turned a five-bot deadlock into a terminal
+        // refusal that ended the worker's whole pass.
         if (error instanceof PrivateDatabaseError && error.rollbackSqlState)
-          throw new PrivateDatabaseError("database_unavailable");
+          throw new PrivateDatabaseError("database_unavailable", error.rollbackSqlState);
         throw error;
       } finally { valid = false; lease.release(); }
     });

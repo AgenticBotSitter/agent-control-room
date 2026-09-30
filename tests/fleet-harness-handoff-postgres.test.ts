@@ -172,10 +172,17 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
       for (let round = 0; round < 10; round += 1) passes.push(...await Promise.all(bots.map(configPath =>
         connector.runWorker({ configPath, harnessesPath: burstSettings, fetcher, once: true,
           log: () => {}, progressIntervalMs: 25 }))));
-      assert.equal(passes.filter(pass => pass.outcome === "submitted").length, 10, JSON.stringify(passes));
+      const burstIds = burstTasks.map(taskRow => taskRow.jobId);
+      // The failing-harness task above is released back to `ready` with an open
+      // offer in the SAME project, so a burst bot legitimately claims and runs
+      // it. Counting every submitted pass therefore sees that eleventh job, so
+      // the count is scoped to the burst ids exactly as the three assertions
+      // below it already are.
+      const burstSubmits = passes.filter(pass => pass.outcome === "submitted" && burstIds.includes(pass.jobId));
+      assert.equal(burstSubmits.length, 10, JSON.stringify(passes));
+      assert.equal(new Set(burstSubmits.map(pass => pass.jobId)).size, 10, "each burst job is submitted exactly once");
       assert.equal(passes.filter(pass => pass.state === "unreachable" || pass.outcome === "abandoned").length, 0,
         `no bot abandons its pass: ${JSON.stringify(passes)}`);
-      const burstIds = burstTasks.map(taskRow => taskRow.jobId);
       const doubled = await asWeb(`SELECT job_id,count(*)::int AS claims FROM fleet_claims
         WHERE job_id=ANY($1::text[]) GROUP BY job_id HAVING count(*) > 1`, [burstIds]);
       assert.deepEqual(doubled, [], "the burst creates zero double claims");
