@@ -71,6 +71,12 @@ test("grant plan covers the source role files and detects additions and extras e
     assert.ok(desired.has(`${role}|function|public.is_work_intake_session()||EXECUTE|plain`));
   assert.ok(desired.has("control_room_agent_reviewer|function|public.commit_agent_review(text, jsonb, jsonb, bytea)||EXECUTE|plain"));
   assert.ok(desired.has("control_room_fleet_gateway|function|public.redeem_fleet_enrollment(text, text, text, text, timestamptz)||EXECUTE|plain"));
+  // MIG-I's allow-list pair, for the reason the allow-list itself records: a
+  // CHECK runs as its writer, so without EXECUTE here every subscribe on the
+  // role the constraint constrains fails 42501 instead of 204. Named rather
+  // than left implicit so a change to either role shows up in this diff.
+  assert.ok(desired.has("control_room_private_web|function|public.owner_push_endpoint_host(text)||EXECUTE|plain"));
+  assert.ok(desired.has("control_room_private_web|function|public.owner_push_endpoint_allowed(text)||EXECUTE|plain"));
   assert.ok(desired.has("control_room_fleet_owner_authority|table|public.fleet_result_reviews||INSERT|plain"));
   for (const item of [
     "control_room_private_web|table|public.control_leases||SELECT|plain",
@@ -131,6 +137,27 @@ test("grant convergence applies only the pinned function boundaries", async () =
   await assert.rejects(applyMacGrantDiffV1(client, {
     extra: ["control_room_private_web|function|public.other_function(text)||EXECUTE|plain"], missing: [],
   }), /upgrade_unexpected_function_grant/u);
+  // MIG-I's pair converges to exactly one role, and the convergence path is
+  // refused for any other. The REFUSAL is the part that matters: a blanket rule
+  // would have let a wider role hold EXECUTE on the function a CHECK runs as,
+  // which is how a grant meant to make a constraint readable turns into a
+  // callable authority. Asserted on the generator, and proved end to end on a
+  // live cluster in the lifecycle lane.
+  await applyMacGrantDiffV1(client, { extra: [],
+    missing: ["control_room_private_web|function|public.owner_push_endpoint_allowed(text)||EXECUTE|plain"] });
+  assert.equal(calls.at(-1),
+    "GRANT EXECUTE ON FUNCTION public.owner_push_endpoint_allowed(text) TO control_room_private_web");
+  for (const role of ["control_room_agent_reviewer", "control_room_fleet_gateway", "control_room_queue_worker"])
+    await assert.rejects(applyMacGrantDiffV1(client, { extra: [],
+      missing: [`${role}|function|public.owner_push_endpoint_allowed(text)||EXECUTE|plain`] }),
+    /upgrade_unexpected_function_grant/u,
+    `${role} must not be granted EXECUTE on the push-endpoint allow list`);
+  // A revoke of a role's grant is always allowed: convergence has to be able to
+  // take a privilege back, or a once-widened grant could never be undone.
+  await applyMacGrantDiffV1(client, { extra: [
+    "control_room_agent_reviewer|function|public.owner_push_endpoint_allowed(text)||EXECUTE|grantable"], missing: [] });
+  assert.equal(calls.at(-1),
+    "REVOKE EXECUTE ON FUNCTION public.owner_push_endpoint_allowed(text) FROM control_room_agent_reviewer");
   // The catalog must spell argument types the way db/roles/*.sql spells them
   // (pg_type.typname, e.g. timestamptz). oidvectortypes() expands to the
   // SQL-standard form (timestamp with time zone), which can never equal the
@@ -922,7 +949,7 @@ async function startWebHostOnRoster(t, protectedRoot) {
     const name = path.split("/").at(-1);
     if (name === "macLocalProtectedLoader.js") return macLocalProtectedLoader;
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() {
-      return { async start() { return { async close() {} }; } };
+      return { async start() { return { isReady: () => true, async close() {} }; } };
     } };
     if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {
       return { async start() {}, async close() {} };

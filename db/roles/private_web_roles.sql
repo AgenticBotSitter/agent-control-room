@@ -56,6 +56,25 @@ GRANT SELECT ON control_durable_result_write_reservations TO control_room_privat
 GRANT SELECT, INSERT, DELETE ON owner_web_push_subscriptions TO control_room_private_web;
 GRANT SELECT, INSERT ON owner_web_push_deliveries TO control_room_private_web;
 GRANT UPDATE (state, status_code, completed_at) ON owner_web_push_deliveries TO control_room_private_web;
+-- EXECUTE on 0227's two functions, because a CHECK constraint runs as the
+-- writer: without this the push-endpoint allow list is unevaluable by the very
+-- role that inserts subscriptions, and every subscribe fails 42501 instead of
+-- 204. This has to live HERE, not only in 0227, because both this file and
+-- production_table_grants.sql run `REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public
+-- FROM PUBLIC` AFTER the migrations, and a privilege granted by a migration
+-- alone does not survive that.
+--
+-- EXECUTE is the whole of it. The functions are pure, reveal nothing, and grant
+-- no authority over any table.
+GRANT EXECUTE ON FUNCTION owner_push_endpoint_host(text) TO control_room_private_web;
+GRANT EXECUTE ON FUNCTION owner_push_endpoint_allowed(text) TO control_room_private_web;
+-- The dispatcher's bounded-retry head, one row per owner attention item. This
+-- is delivery bookkeeping, not attention authority: the link is written once
+-- and never repointed, there is no DELETE, and a delivered head cannot return
+-- to a sendable state (0225's guard).
+GRANT SELECT, INSERT ON control_owner_push_attempt_heads TO control_room_private_web;
+GRANT UPDATE (state, attempt_count, next_attempt_at, reserved_at, last_attempt_at, completed_at,
+  safe_reason_code, updated_at) ON control_owner_push_attempt_heads TO control_room_private_web;
 -- Per-project settings (eligible worker kinds, concurrency cap, defaults): the
 -- web role reads them both for the owner-facing Settings tab and to enforce
 -- eligibility/concurrency during assignment, and writes them only through the

@@ -123,7 +123,7 @@ function host(client: DatabaseClient, options: Readonly<{ key?: Uint8Array }> = 
     // database-backed one, so the session is the installation's own.
     localOwnerSessionStore: createPostgresLocalOwnerSessionStoreV1(client, PROFILE),
     initialLocalOwnerSessions: [{ tokenDigest: LOCAL_TOKEN_DIGEST, issuedAt: ISSUED_AT, expiresAt: EXPIRES_AT }],
-    database: { client, close: async () => {} },
+    database: { client, close: async () => {}, isAvailable: () => true },
     ...(options.key ? { operationsModeIntegrityKey: options.key } : {}),
     taskWorkersStarted: false });
 }
@@ -185,7 +185,7 @@ function productionHost(client: DatabaseClient, options: Readonly<{ key?: Uint8A
         workers: [{ workerId: "worker:test", kind: "codex",
           executablePath: "/opt/homebrew/bin/codex", recordedVersion: "1.0.0" }] } }) as never,
     readVersion: async () => "1.0.0",
-    openDatabase: () => ({ client, close: async () => {} }),
+    openDatabase: () => ({ client, close: async () => {}, isAvailable: () => true }),
     assets: { count: 1, digest: `sha256:${"c".repeat(64)}`, respond: () => new Response("asset") },
     // The production renderer is the Next.js middleware, which forwards every
     // request to the installed private application. A stub that answers "page"

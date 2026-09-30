@@ -9,7 +9,7 @@ import { fleetFail, FleetErrorV1 } from "./errors";
 import { bytesSha256V1, fleetDerivedIdV1, fleetWorkerLinkedIdsV1, FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_PATTERN_V1,
   FLEET_CREDENTIAL_LIFETIME_MS_V1, FLEET_DIGEST_PATTERN_V1, FLEET_ENTITY_ID_PATTERN_V1, FLEET_IDEMPOTENCY_PATTERN_V1,
   FLEET_LEASE_MS_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_SECRET_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
-  plainSha256V1, randomHexV1 } from "./identifiers";
+  FLEET_WORKER_KINDS_V1, plainSha256V1, randomHexV1 } from "./identifiers";
 import type { TaskProjectEventWriterV1 } from "../../project-events/v1/task-lifecycle";
 
 /** Authenticated machine principal. It is derived from the credential digest
@@ -154,11 +154,13 @@ export class FleetGatewayStoreV1 {
 
   /** Redeems one enrollment code. The machine generated its credential locally
    * and sends only the digest, so no secret travels back in the response. */
-  async enroll(input: Readonly<{ code: unknown; credentialDigest: unknown; platform: unknown; architecture: unknown;
+  async enroll(input: Readonly<{ code: unknown; workerKind: unknown; credentialDigest: unknown; platform: unknown; architecture: unknown;
     connectorVersion: unknown; clientNonce: unknown }>) {
     const code = typeof input.code === "string" && FLEET_CODE_PATTERN_V1.test(input.code) ? input.code : fleetFail("unauthenticated");
     const credentialDigest = typeof input.credentialDigest === "string" && FLEET_DIGEST_PATTERN_V1.test(input.credentialDigest)
       ? input.credentialDigest : fleetFail("invalid");
+    const workerKind = typeof input.workerKind === "string" && FLEET_WORKER_KINDS_V1.includes(input.workerKind as never)
+      ? input.workerKind : fleetFail("invalid");
     const platform = platforms[input.platform as keyof typeof platforms] ?? fleetFail("invalid");
     const architecture = typeof input.architecture === "string" && /^[a-z0-9_]{2,16}$/u.test(input.architecture)
       ? input.architecture : fleetFail("invalid");
@@ -176,6 +178,9 @@ export class FleetGatewayStoreV1 {
       // One refusal for unknown, cancelled and expired codes. A committed
       // redemption remains replayable only by the same pending connector.
       if (!row) return fleetFail("unauthenticated");
+      // This check is in the redemption transaction, so a mismatch consumes
+      // nothing and creates no worker or credential.
+      if (row.worker_kind !== workerKind) return fleetFail("worker_kind_mismatch");
       const linked = fleetWorkerLinkedIdsV1(row.worker_id);
       if (row.replayed) {
         const credential = (await tx.query<{ expires_at: string | Date }>(`SELECT expires_at FROM fleet_worker_credentials
