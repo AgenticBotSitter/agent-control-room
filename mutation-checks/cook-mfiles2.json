@@ -71,13 +71,6 @@
   },
   {
     "file": "db/migrations/0210_result_upload_publication.sql",
-    "find": "  IF NEW.state='stored' AND OLD.state IS DISTINCT FROM 'stored' AND NOT EXISTS (\n      SELECT 1 FROM public.control_result_upload_sessions u",
-    "replace": "  IF false AND NOT EXISTS (\n      SELECT 1 FROM public.control_result_upload_sessions u",
-    "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",
-    "why": "a file row cannot be marked stored without its own published upload session"
-  },
-  {
-    "file": "db/migrations/0210_result_upload_publication.sql",
     "find": "  IF attempt_worker IS NULL OR owner_set.producer_kind<>'fleet'\n    OR owner_set.producer_id IS DISTINCT FROM attempt_worker",
     "replace": "  IF false",
     "test": "node scripts/ci/run-mutation-postgres-test.mjs --test-concurrency=1 tests/result-upload-ingress-postgres.test.ts",

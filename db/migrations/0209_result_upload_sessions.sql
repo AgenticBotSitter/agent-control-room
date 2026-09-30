@@ -69,6 +69,25 @@ SET LOCAL statement_timeout = '5s';
 -- "the connector uploads only files listed in the part's declared outputs", and
 -- it is why a worker cannot widen what it uploads by editing a request.
 
+-- VOLATILITY, for every trigger function in 0209-0211.
+--
+-- Each of these guards is a BEFORE trigger that reads rows the guarding
+-- statement's OWN transaction may have just written: a chunk row inserted by the
+-- same transaction that marks its session received, a publication row the same
+-- transaction that marks a file stored, a binding the same transaction that
+-- moves a job to ready. A STABLE function takes its snapshot at the start of the
+-- statement that called it and is trusted to see a consistent view, so it cannot
+-- see those writes - and a guard written that way does not fail loudly. It
+-- answers "no such row" for a row that exists, and the protection it was written
+-- to provide is simply absent.
+--
+-- 0210's per-file guard is the case that proved it. Marked STABLE, it never
+-- fired at all: not for the fleet gateway, and not for the schema owner either,
+-- so the "a file cannot be stored without a published upload" refusal was being
+-- asserted by a test that was passing for an unrelated reason. VOLATILE is the
+-- honest volatility for a BEFORE trigger, and the cost is one indexed existence
+-- check per guarded row.
+--
 CREATE TABLE control_task_declared_outputs (
   tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
   project_id text NOT NULL,
@@ -303,7 +322,7 @@ CREATE TRIGGER control_result_upload_sessions_guard BEFORE INSERT ON control_res
 -- and the claim still live at that moment. It is checked here rather than in the
 -- application because the application is the thing being checked.
 CREATE FUNCTION guard_result_upload_session_update() RETURNS trigger
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE mode text;
 BEGIN
   IF ROW(NEW.tenant_id,NEW.upload_id,NEW.project_id,NEW.job_id,NEW.attempt_id,NEW.set_id,NEW.ordinal,
@@ -419,7 +438,7 @@ CREATE INDEX control_result_upload_chunks_session
 -- by reading the row back and comparing the two digests, so a substitution is
 -- reported as a conflict rather than silently accepted.
 CREATE FUNCTION guard_result_upload_chunk_insert() RETURNS trigger
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE session public.control_result_upload_sessions%ROWTYPE;
 BEGIN
   SELECT * INTO session FROM public.control_result_upload_sessions s

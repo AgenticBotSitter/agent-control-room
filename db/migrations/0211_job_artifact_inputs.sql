@@ -185,7 +185,7 @@ CREATE INDEX control_job_artifact_inputs_producer
 -- binding of the same ordinal is refused by the primary key rather than
 -- silently choosing a different file.
 CREATE FUNCTION guard_job_artifact_input_insert() RETURNS trigger
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE declared public.control_task_declared_inputs%ROWTYPE; source_set text; source_file text;
   source_project text; source_name text; source_size bigint; source_digest text;
 BEGIN
@@ -264,7 +264,7 @@ CREATE TRIGGER control_job_artifact_inputs_no_truncate BEFORE TRUNCATE ON contro
 -- sweep has since run would be a worse failure than the one this guard exists
 -- to prevent.
 CREATE FUNCTION guard_job_artifact_inputs_complete() RETURNS trigger
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE declared integer; bound integer;
 BEGIN
   IF NEW.state NOT IN ('ready','running')

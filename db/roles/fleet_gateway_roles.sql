@@ -127,7 +127,10 @@ GRANT UPDATE (state, received_at, published_at, voided_at, void_reason)
 -- A file becomes 'stored' only through its own published upload (0210's guard),
 -- and a set becomes 'stored' only with its publication receipt. Two columns each,
 -- and no DELETE anywhere: the catalog is append-only and this role cannot write
--- a name, a digest, a size, a storage key or a producer.
+-- a name, a digest, a size, a storage key or a producer. A column grant is enough
+-- to run the UPDATE - the role may read the tenant, set and ordinal columns it
+-- filters on, and a BEFORE trigger still fires under a column grant, which is
+-- proved rather than assumed in tests/result-upload-ingress-postgres.test.ts.
 GRANT UPDATE (state, stored_at) ON control_result_files TO control_room_fleet_gateway;
 GRANT UPDATE (state, stored_at, manifest_digest) ON control_result_file_sets TO control_room_fleet_gateway;
 -- The owner-facing declarations, bindings, upload sessions and publication

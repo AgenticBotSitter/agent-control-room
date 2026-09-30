@@ -96,7 +96,7 @@ CREATE INDEX control_result_publications_project
 -- satisfy, and one that would otherwise be resolved by giving up one of the
 -- two rules.
 CREATE FUNCTION guard_result_publication_insert() RETURNS trigger
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE owner_set public.control_result_file_sets%ROWTYPE; attempt_worker text; stored_files integer;
 BEGIN
   SELECT * INTO owner_set FROM public.control_result_file_sets s
@@ -161,7 +161,7 @@ CREATE TRIGGER control_result_publications_guard BEFORE INSERT ON control_result
 -- about it changes: not the digest, not the count, not the bytes, not the time.
 -- A retraction is a new set, never an edit to this one.
 CREATE FUNCTION guard_result_publication_update() RETURNS trigger
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   RAISE EXCEPTION 'result publication update rejected' USING ERRCODE = '23514';
 END $$;
@@ -185,7 +185,7 @@ CREATE TRIGGER control_result_publications_no_truncate BEFORE TRUNCATE ON contro
 -- is excluded, as it is in the insert guard: it was published by its own receipt
 -- in 0206 and carries no store bytes.
 CREATE FUNCTION enforce_result_set_published() RETURNS trigger
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF NEW.state='stored' AND OLD.state IS DISTINCT FROM 'stored' AND NEW.source_kind='file-store'
     AND NOT EXISTS (SELECT 1 FROM public.control_result_publications p
@@ -217,7 +217,7 @@ CREATE CONSTRAINT TRIGGER control_result_file_sets_published
 -- set has no fleet producer and is untouched by this guard, which is exactly
 -- right: it never has a worker in the story.
 CREATE FUNCTION guard_result_file_producer_state() RETURNS trigger
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE producer_id text;
 BEGIN
   IF NEW.state IS NOT DISTINCT FROM OLD.state THEN RETURN NEW; END IF;
@@ -237,10 +237,35 @@ CREATE TRIGGER control_result_files_producer_state_guard BEFORE UPDATE ON contro
 -- the file's own UPDATE, so the guarantee holds whichever order a publisher
 -- chooses to write in: it cannot mark one file stored and rely on the set's
 -- later update to notice.
+-- VOLATILE, not STABLE, and that is load-bearing rather than a default.
+--
+-- This guard is a BEFORE UPDATE trigger that reads the upload sessions table to
+-- decide whether the row it is guarding may become 'stored'. A STABLE function
+-- takes its snapshot at the start of the STATEMENT that called it, so a session
+-- published moments earlier in the SAME transaction is invisible to it - and
+-- worse, a STABLE function's plan is trusted to be consistent, so the guard
+-- silently answered "no published session" for a row that was being published in
+-- that very transaction, and the first version of this guard never fired at all,
+-- for the superuser or for the gateway.
+--
+-- VOLATILE is the honest volatility for a BEFORE trigger: it must see the
+-- transaction's own writes. It is still a per-row guard on a single UPDATE, so
+-- the cost is one indexed existence check per stored file.
 CREATE FUNCTION guard_result_file_upload_stored() RETURNS trigger
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE producer_kind text;
 BEGIN
-  IF NEW.state='stored' AND OLD.state IS DISTINCT FROM 'stored' AND NOT EXISTS (
+  IF NEW.state<>'stored' OR OLD.state IS DISTINCT FROM 'stored' THEN RETURN NEW; END IF;
+  -- Only a FLEET set's file gets here through an upload session. A native-text
+  -- set, a restore and a republish all store bytes by their own path and have no
+  -- chunked upload behind them, and requiring one of those would refuse the
+  -- ordinary results path rather than harden it - which is what happened the
+  -- first time this guard ran against the catalog lane, where the results login
+  -- could not even read the upload table.
+  SELECT s.producer_kind INTO producer_kind FROM public.control_result_file_sets s
+    WHERE s.tenant_id=NEW.tenant_id AND s.set_id=NEW.set_id;
+  IF producer_kind IS DISTINCT FROM 'fleet' THEN RETURN NEW; END IF;
+  IF NOT EXISTS (
       SELECT 1 FROM public.control_result_upload_sessions u
       WHERE u.tenant_id=NEW.tenant_id AND u.set_id=NEW.set_id AND u.ordinal=NEW.ordinal
         AND u.state='published' AND u.expected_size_bytes=NEW.size_bytes
