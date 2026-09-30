@@ -52,7 +52,6 @@ test("a stored file offers one obvious download and hides its details behind a t
   // The storage key, a filesystem path and the word "locator" are never rendered.
   assert.doesNotMatch(markup, /crbf1|\/Users\/|storage[_ ]?key|\.crbf/u);
 });
-
 test("a file that is not on the Mac says so in plain words and offers nothing", () => {
   for (const [state, heading] of [["missing", "Missing"], ["quarantined", "Held back"],
     ["declared", "Still arriving"]] as const) {
@@ -166,4 +165,37 @@ test("the browser client only accepts a link to this project's own route", async
     await assert.rejects(requestResultFileDownload(PROJECT, setId, fileId, never),
       (error: unknown) => error instanceof BrowserRequestError);
   assert.equal(reached, false);
+});
+
+test("a trashed set is listed, says why, and offers no button", () => {
+  // The review's S2, in the place a reviewer can actually check: what the owner
+  // is told. A trashed set is still LISTED — the owner may want to see what they
+  // are about to lose — but the service refuses both the mint and the spend, so
+  // a Download button here would be a promise the server cannot keep. And
+  // "No download available" alone would read as a fault rather than a decision,
+  // which is why the panel says which it is.
+  const markup = html(catalog({ sets: [set({ retentionState: "trash" })] }));
+  assert.match(markup, /report\.txt/, "a trashed set is still listed");
+  assert.match(markup, /In the trash\./, "and the panel says so in plain words");
+  assert.match(markup, /no longer downloadable/u, "including that the bytes are out of reach");
+  const buttons = [...markup.matchAll(/<button[^>]*>([^<]*)</gu)].map(match => match[1]);
+  assert.deepEqual(buttons, [], "no action at all: there is nothing the server would let it do");
+  // A retained set is the ordinary case and is unaffected.
+  const kept = html(catalog({ sets: [set({ retentionState: "retained" })] }));
+  assert.deepEqual([...kept.matchAll(/<button[^>]*>([^<]*)</gu)].map(match => match[1]), ["Download"],
+    "an accepted set still offers its download");
+  assert.doesNotMatch(kept, /In the trash/u);
+  // And a provisional set — the common case — is untouched.
+  assert.deepEqual([...html(catalog()).matchAll(/<button[^>]*>([^<]*)</gu)].map(match => match[1]), ["Download"],
+    "a provisional set still offers its download");
+});
+
+test("a purged set is not in the catalog at all, so the panel never mentions it", () => {
+  // The service filters purged sets out before they reach the wire, so this
+  // asserts the two agree: if a purged set ever DID arrive, the panel must not
+  // offer a download for it either. The service-side filter is proved in
+  // `tests/result-file-service.test.ts`; this is the defence in depth.
+  const markup = html(catalog({ sets: [set({ retentionState: "purged" })] }));
+  const buttons = [...markup.matchAll(/<button[^>]*>([^<]*)</gu)].map(match => match[1]);
+  assert.deepEqual(buttons, [], "a purged set never offers a download, however it arrived");
 });

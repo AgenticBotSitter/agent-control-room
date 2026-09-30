@@ -27,6 +27,13 @@ export function composeResultFileService(input: Readonly<{
   return createResultFileServiceV1(input.database, {
     readScopedResult: (identity, projectId, jobId, read) =>
       input.tasks.readScopedResult(identity, projectId, jobId, read),
+    // The mint needs a writable transaction on the SAME connection as its own
+    // authorisation, and that is the whole reason this second boundary exists.
+    // See the note on `ResultFileAuthorityV1.writeScopedResult`; in one line: a
+    // second pool connection inside a held transaction exhausted the eight-wide
+    // production pool and closed the database client for good.
+    writeScopedResult: (identity, projectId, jobId, write) =>
+      input.tasks.writeScopedResult(identity, projectId, jobId, write),
     authorizeProject: (identity, projectId) => input.tasks.authorize(identity, projectId),
     // `tasks.authorize` refuses a project the identity may not view, so reaching
     // here already means the project is visible. The catalog is therefore

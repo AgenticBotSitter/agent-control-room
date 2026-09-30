@@ -12,6 +12,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_task_coordinator;
+-- This GRANT is kept as one contiguous block with no comment inside it: the
+-- down-migration lane rewrites role files by exact text match
+-- (tests/postgres-production-lifecycle.test.mjs), and a comment in the middle of
+-- the table list makes the whole statement stop matching.
 GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, control_web_sessions,
   projects, control_manual_project_heads, control_requests, control_workflows, control_jobs,
   control_attempts, control_leases, control_task_execution_plans, control_nodes, control_node_keys,
@@ -29,6 +33,7 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   work_batches, work_batch_items, work_batch_effective_queue_admissions,
   pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs, control_agent_review_plans,
   control_pipeline_build_publications, pipeline_unattended_transitions, pipeline_advance_receipts,
+  pipeline_installation_allowances, pipeline_machine_capacity_observations, pipeline_stage_loop_counts,
   control_improvement_requests, control_update_candidates,
   control_installation_transition_revisions,
   control_supervisor_task_heads, control_supervisor_reconciliation_events, control_supervisor_agent_health,
@@ -38,6 +43,14 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   TO control_room_task_coordinator;
 GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
   control_recurring_rules, control_recurring_proposals TO control_room_task_coordinator;
+-- Read-only, and only for the supervisor's stall decision: reconciling a stalled
+-- attempt asks whether an effect intent is still executing, confirmed or
+-- ambiguous, which is what separates "requeue it" from "the outcome is
+-- uncertain, a human must look". Postgres checks the privilege on every
+-- relation the statement names, so without this the reconciliation query fails
+-- for every eligible candidate. No INSERT, UPDATE or DELETE: intents are
+-- written by the owning paths alone.
+GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
 -- Read-only: the coordinator enforces a project's eligible-worker-kinds and
@@ -69,6 +82,13 @@ GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
   control_action_inbox TO control_room_task_coordinator;
 GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator;
+-- The counted fix rounds. The coordinator appends a round against the receipt
+-- that opened it; it can never rewrite or delete one.
+GRANT INSERT ON pipeline_stage_loop_counts TO control_room_task_coordinator;
+-- The installation ceilings are read-only here, and the only updatable column
+-- is the false-valued lock the row lock needs.
+GRANT UPDATE (coordinator_lock) ON pipeline_installation_allowances, pipeline_stage_loop_counts
+  TO control_room_task_coordinator;
 GRANT INSERT ON control_supervisor_task_heads, control_supervisor_reconciliation_events,
   control_supervisor_agent_health, control_supervisor_loop_heads, control_supervisor_health_observations,
   control_provider_waits TO control_room_task_coordinator;

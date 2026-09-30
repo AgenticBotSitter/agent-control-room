@@ -399,6 +399,215 @@ test("a symlinked derived file is refused rather than followed", async () => {
   }
 });
 
+test("the profile denies process-fork, so a converter cannot outlive its group", async () => {
+  // THE containment property. Cleanup signals the worker's process GROUP and
+  // the memory monitor samples only that pgid, so a `detached` child the
+  // converter started would survive both and run outside every bound this
+  // service advertises. `(allow process-fork)` was the grant that made that
+  // possible; it is gone, and this asserts the sandbox enforces the denial on
+  // the REAL profile rather than trusting the profile text.
+  let profile = "";
+  const capture = ((file: string, args: readonly string[], options: Parameters<typeof spawn>[2]) => {
+    if (file === "/usr/bin/sandbox-exec" && args[0] === "-p") profile = args[1]!;
+    return spawn(file, args, options);
+  }) as typeof spawn;
+  const service = new SandboxedTextCopyService({ repositoryRoot: root },
+    { spawnProcess: capture, skipMemoryLimitProbe: true });
+
+  // The conversion must still work with fork denied — that is the whole claim:
+  // the worker needs no fork, so denying it costs nothing.
+  const converted = await service.convert({ format: "html", sourceBytes: bytes(ARTICLE) });
+  assert.equal(converted.status, "succeeded", `category was ${converted.diagnosticCategory}`);
+  assert.match(text(converted.markdownBytes), /The real sandbox admitted this body text/u);
+
+  // The profile itself must not carry the grant, under any spelling.
+  assert.doesNotMatch(profile, /\(allow process-fork\)/u);
+
+  // And enforcement, not just intent: a spawn from INSIDE the real sandbox
+  // must be refused. Without this assertion the profile could lose the rule and
+  // still pass every other test here, because the worker never forks.
+  const probeOut = await runInProfile(profile,
+    'const { spawnSync } = require("child_process");'
+    + 'const r = spawnSync(process.execPath, ["-e", "0"]);'
+    + 'process.stdout.write("SPAWN:" + (r.error ? String(r.error.code) : "status " + r.status));');
+  assert.match(probeOut, /^SPAWN:EPERM/u,
+    `a converter could still fork inside the sandbox: ${JSON.stringify(probeOut)}`);
+});
+
+test("a converter cannot spawn a surviving process through the service", async () => {
+  // The same denial, asserted through the service's own path rather than a
+  // captured profile string: a stand-in converter that tries to leave a
+  // detached child behind must see the fork refused, so there is nothing left
+  // running when the service returns. The stand-in writes a marker only if the
+  // spawn SUCCEEDED, so a returned text copy containing the marker would mean a
+  // child outlived the worker.
+  const foreign = join(CONVERTER_SCRIPTS, "test-fork-converter.mjs");
+  await writeFile(foreign, [
+    "import { spawn } from 'node:child_process';",
+    "import { writeFile } from 'node:fs/promises';",
+    // detached: its own session, so neither the group kill nor the memory
+    // monitor would ever see it. This is the shape the denial must stop.
+    "let escaped = 'CHILD-ESCAPED';",
+    "try {",
+    "  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'],",
+    "    { detached: true, stdio: 'ignore' });",
+    "  child.unref();",
+    "} catch { escaped = 'CHILD-REFUSED'; }",
+    "await writeFile(process.argv.at(-1), escaped);",
+  ].join("\n"));
+  try {
+    const converted = await productionService({
+      pdfExecutable: process.execPath,
+      pdfPrefixArguments: [foreign],
+    }).convert({ format: "pdf", sourceBytes: bytes("%PDF-1.4 fork") });
+    assert.equal(converted.status, "succeeded", `category was ${converted.diagnosticCategory}`);
+    // Node reports a denied fork asynchronously as an 'error' event, and an
+    // unhandled one kills the process; spawnSync-style failure surfaces as a
+    // throw. Either way no child exists, so neither marker may appear.
+    assert.doesNotMatch(text(converted.markdownBytes), /CHILD-ESCAPED/u,
+      "a converter forked a process that would outlive the worker's process group");
+  } finally {
+    await rm(foreign, { force: true });
+  }
+});
+
+test("an output swapped for a symlink is refused, not followed", async () => {
+  // The TOCTOU half of the fix, and it is defence in depth: the profile already
+  // denies fork, so no surviving process can race the output. This asserts the
+  // SECOND, independent guard — the output is opened O_NOFOLLOW and its type and
+  // size are read from the open descriptor, so even a racing writer cannot make
+  // the service return another file's bytes.
+  //
+  // The service never saw a moment at which the output was a valid file here:
+  // the converter only ever creates the symlink. That is the O_NOFOLLOW
+  // guarantee in isolation — the open itself fails with ELOOP.
+  const foreign = join(CONVERTER_SCRIPTS, "test-output-symlink-converter.mjs");
+  const target = join(CONVERTER_SCRIPTS, "test-output-symlink-target.txt");
+  await writeFile(target, "SECRET-BEHIND-AN-OUTPUT-SYMLINK");
+  await writeFile(foreign, [
+    "import { symlink } from 'node:fs/promises';",
+    `await symlink(${JSON.stringify(target)}, process.argv.at(-1));`,
+  ].join("\n"));
+  try {
+    const converted = await productionService({
+      pdfExecutable: process.execPath,
+      pdfPrefixArguments: [foreign],
+    }).convert({ format: "pdf", sourceBytes: bytes("%PDF-1.4 output symlink") });
+    assert.equal(converted.status, "no_text_copy");
+    assert.equal(converted.diagnosticCategory, "conversion_failed");
+    assert.doesNotMatch(text(converted.markdownBytes), /SECRET-BEHIND-AN-OUTPUT-SYMLINK/u);
+  } finally {
+    await rm(foreign, { force: true });
+    await rm(target, { force: true });
+  }
+});
+
+test("an output swapped AFTER a valid file was written is still refused", async () => {
+  // The realistic race, not the trivial one. The converter writes a REAL file
+  // first (so a lstat-based check would pass), then replaces it with a symlink
+  // to a file the sandbox denies the worker. The pre-fix code did
+  // `lstat` (passes: a regular file) and then `readFile` (follows the link), so
+  // it returned the secret. The O_NOFOLLOW open plus fstat cannot: whichever
+  // version of the name the open resolved, the descriptor it yields is either
+  // the real file or refused with ELOOP, never the link's target.
+  //
+  // Repeated because it is a race: a single attempt could pass by timing.
+  const foreign = join(CONVERTER_SCRIPTS, "test-output-swap-converter.mjs");
+  const target = join(CONVERTER_SCRIPTS, "test-output-swap-target.txt");
+  await writeFile(target, "SECRET-BEHIND-A-RACED-SWAP");
+  await writeFile(foreign, [
+    "import { writeFile, symlink, rename, rm } from 'node:fs/promises';",
+    "const output = process.argv.at(-1);",
+    // A real, valid markdown file at the output path first.
+    "await writeFile(output, '# honest\\n\\nreal converter output\\n');",
+    // Then swap it for a link to a file outside the sandbox's content allow.
+    `const link = output + '.link';`,
+    `await symlink(${JSON.stringify(target)}, link);`,
+    "await rm(output);",
+    "await rename(link, output);",
+  ].join("\n"));
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const converted = await productionService({
+        pdfExecutable: process.execPath,
+        pdfPrefixArguments: [foreign],
+      }).convert({ format: "pdf", sourceBytes: bytes(`%PDF-1.4 swap ${attempt}`) });
+      assert.doesNotMatch(text(converted.markdownBytes), /SECRET-BEHIND-A-RACED-SWAP/u,
+        `attempt ${attempt}: a raced output symlink was followed and an outside file was returned`);
+      // Either the honest bytes (opened before the swap) or a typed refusal
+      // (the link was there at open time) are acceptable; the secret never is.
+      if (converted.status === "succeeded") {
+        assert.match(text(converted.markdownBytes), /honest|real converter output/u);
+      } else {
+        assert.equal(converted.diagnosticCategory, "conversion_failed");
+      }
+    }
+  } finally {
+    await rm(foreign, { force: true });
+    await rm(target, { force: true });
+  }
+});
+
+test("the output is validated on an open descriptor, never resolved twice", async () => {
+  // The property the fix actually establishes, asserted deterministically.
+  //
+  // The old code asked the filesystem two questions about the same NAME at two
+  // different moments: `lstat(path)` (does not follow links) and then
+  // `readFile(path)` (does). Any rename in between is a TOCTOU. That window was
+  // measured at ~0.285 ms, so a test that races a background flipper against it
+  // is a coin flip, not a regression test: it passed 200/200 against the
+  // ORIGINAL buggy code in this worktree. A probabilistic racer would have
+  // shipped false assurance, so this asserts the invariant instead.
+  //
+  // The invariant: between resolving the output name and reading its bytes there
+  // is no second resolution of that name. It holds if and only if the read
+  // happens on the descriptor the open returned.
+  //
+  // Proven two ways, because either alone is satisfiable by the wrong code:
+  //   1. A symlinked output is refused by the OPEN (ELOOP), so no symlink target
+  //      is ever read — asserted end to end through the real service.
+  //   2. The service issues exactly one path-based lookup for the output and no
+  //      readFile/lstat pair on it, checked on the real source: a future change
+  //      that reintroduces a second name resolution fails here immediately.
+  const source = await readFile(join(root, "src", "converter", "v1", "text-copy-service.ts"), "utf8");
+  // The output is consumed by exactly one helper, and that helper opens once.
+  const outputReads = source.match(/readVerifiedOutput\(command\.outputPath/gu) ?? [];
+  assert.equal(outputReads.length, 1,
+    `the output path must reach readVerifiedOutput from exactly one call site (saw ${outputReads.length}); `
+    + "a second resolution of the output name is the TOCTOU back");
+  assert.match(source, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/u,
+    "the output must be opened O_NOFOLLOW so the kernel, not a second lookup, resolves the name");
+  assert.match(source, /await handle\.stat\(\)/u,
+    "the output's type and size must come from fstat on the opened descriptor");
+  // And the old pair must be gone from the conversion path entirely.
+  assert.doesNotMatch(source, /await lstat\(command\.outputPath\)/u,
+    "the lstat-then-readFile check/use pair is what this fix removed");
+  assert.doesNotMatch(source, /await readFile\(command\.outputPath\)/u,
+    "readFile on the output path follows symlinks; the read must come off the descriptor");
+
+  // Behavioural half, through the REAL service: a symlink standing where the
+  // output should be is refused, and its target's bytes never come back.
+  const foreign = join(CONVERTER_SCRIPTS, "test-descriptor-output-converter.mjs");
+  const target = join(CONVERTER_SCRIPTS, "test-descriptor-output-target.txt");
+  await writeFile(target, "SECRET-BEHIND-A-DESCRIPTOR-SYMLINK");
+  await writeFile(foreign, [
+    "import { symlink } from 'node:fs/promises';",
+    `await symlink(${JSON.stringify(target)}, process.argv.at(-1));`,
+  ].join("\n"));
+  try {
+    const converted = await productionService({
+      pdfExecutable: process.execPath,
+      pdfPrefixArguments: [foreign],
+    }).convert({ format: "pdf", sourceBytes: bytes("%PDF-1.4 descriptor") });
+    assert.equal(converted.status, "no_text_copy");
+    assert.equal(converted.diagnosticCategory, "conversion_failed");
+    assert.doesNotMatch(text(converted.markdownBytes), /SECRET-BEHIND-A-DESCRIPTOR-SYMLINK/u);
+  } finally {
+    await rm(foreign, { force: true });
+    await rm(target, { force: true });
+  }
+});
+
 /**
  * A directory the sandbox profile admits a converter script from.
  *
@@ -411,6 +620,32 @@ test("a symlinked derived file is refused rather than followed", async () => {
  * temporary converter scripts below are written into the admitted directory.
  */
 const CONVERTER_SCRIPTS = join(root, "scripts", "converter");
+
+/**
+ * Run a short program under the REAL sandbox with the REAL profile, and return
+ * what it printed.
+ *
+ * The profile embeds the temp directory of the conversion that produced it, so
+ * it is replayed exactly as built — writing it to a file and passing that path
+ * would not work at all (`-p` takes the profile text, and a relative path is
+ * resolved against the working directory, which is how the earlier probe
+ * attempt produced "unbound variable").
+ */
+async function runInProfile(profile: string, source: string): Promise<string> {
+  const probeOptions: SpawnOptions = {
+    cwd: root, detached: true, shell: false,
+    env: { HOME: root, TMPDIR: root, PATH: "/usr/bin:/bin", NODE_ENV: "test" },
+    stdio: ["ignore", "pipe", "pipe"],
+  };
+  const probe = spawn("/usr/bin/sandbox-exec", ["-p", profile, process.execPath, "-e", source], probeOptions);
+  let output = "";
+  const stdout = probe.stdout as NodeJS.ReadableStream | null;
+  const stderr = probe.stderr as NodeJS.ReadableStream | null;
+  if (stdout) stdout.on("data", (chunk: Buffer | string) => { output += chunk.toString(); });
+  if (stderr) stderr.on("data", (chunk: Buffer | string) => { output += chunk.toString(); });
+  await new Promise<void>(resolve => { probe.on("close", () => { resolve(); }); });
+  return output.trim();
+}
 
 /** Run one real sandboxed conversion and return the child's environment. */
 async function runWorkerCapturingEnvironment(): Promise<NodeJS.ProcessEnv> {

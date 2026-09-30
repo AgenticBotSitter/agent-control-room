@@ -65,13 +65,6 @@
       "issue": "421"
     },
     {
-      "routine": "public.guard_private_web_quality_insert()",
-      "searchPath": "pg_catalog, public",
-      "added": "2026-09-28",
-      "expires": "2027-03-01",
-      "issue": "421"
-    },
-    {
       "routine": "public.guard_project_coordinator_head_update()",
       "searchPath": null,
       "added": "2026-09-28",
@@ -87,13 +80,6 @@
     },
     {
       "routine": "public.guard_task_coordinator_fleet_signal()",
-      "searchPath": "pg_catalog, public",
-      "added": "2026-09-28",
-      "expires": "2027-03-01",
-      "issue": "421"
-    },
-    {
-      "routine": "public.guard_task_coordinator_outbox_insert()",
       "searchPath": "pg_catalog, public",
       "added": "2026-09-28",
       "expires": "2027-03-01",

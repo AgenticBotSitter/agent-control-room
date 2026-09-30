@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, lstat, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, type FileHandle } from "node:fs/promises";
+import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -256,6 +258,65 @@ async function groupRssBytes(pid: number, spawnProcess: typeof spawn): Promise<G
   });
 }
 
+/**
+ * The converter's output, validated on the OPEN FILE DESCRIPTOR, not on a path.
+ *
+ * The previous shape was `lstat(path)` then `readFile(path)`, which is a
+ * check/use pair on a name another process can rename: `lstat` does not follow
+ * symlinks and `readFile` does, so anything that could rewrite the output
+ * between the two calls won the race and made the service return the bytes of a
+ * file the converter had no right to read. Measured through the real service
+ * against a forked child swapping the output for a symlink to a file the
+ * sandbox denies the worker itself.
+ *
+ * Now the name is resolved ONCE, by the kernel, at open time, with O_NOFOLLOW:
+ *
+ *   * O_NOFOLLOW makes the open itself fail with ELOOP if the final component
+ *     is a symlink, so no later rename or swap can change what was opened.
+ *   * `fstat` then describes the file this descriptor actually refers to, not
+ *     whatever the path pointed at a moment ago — the type check and the size
+ *     ceiling are both answered from the descriptor.
+ *   * the read comes off that same descriptor.
+ *
+ * There is no window in which the service decides about one file and reads
+ * another. This holds regardless of whether any process survives the worker,
+ * which is why it is kept alongside (and not instead of) denying `process-fork`
+ * in the profile.
+ *
+ * Returns the bytes, `null` when the output is absent, is not a regular file,
+ * is a symlink, or cannot be read, or a zero-length-but-valid result otherwise.
+ * An oversize file returns the sentinel `OVERSIZE` so the caller can report
+ * `output_too_large` rather than `conversion_failed`.
+ */
+const OVERSIZE = Symbol("text_copy_output_oversize");
+
+async function readVerifiedOutput(path: string, maximumBytes: number): Promise<Buffer | typeof OVERSIZE | null> {
+  let handle: FileHandle | undefined;
+  try {
+    // O_RDONLY | O_NOFOLLOW: the open refuses a symlinked final component
+    // (ELOOP) instead of following it, and it is the only point at which the
+    // name is resolved.
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stats = await handle.stat();
+    // The descriptor's own type, never the path's. A FIFO or a device here
+    // would block forever in read() and is not text either way.
+    if (!stats.isFile()) return null;
+    if (stats.size > maximumBytes) return OVERSIZE;
+    // Read one byte past the ceiling: a file can grow between the stat and the
+    // read, and an unbounded read would be the converter choosing its own limit.
+    const bytes = await handle.read(Buffer.alloc(maximumBytes + 1), 0, maximumBytes + 1, 0);
+    const buffer = bytes.buffer.subarray(0, bytes.bytesRead);
+    return buffer.byteLength > maximumBytes ? OVERSIZE : Buffer.from(buffer);
+  } catch {
+    // ELOOP (symlink), ENOENT (never written), ENOENT/EACCES from the sandbox,
+    // EISDIR — all refusals, and all refusals are the same typed outcome: the
+    // conversion produced no trusted output.
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
 class BoundedDiagnostic {
   readonly #maximum: number;
   #bytes = 0;
@@ -286,7 +347,30 @@ function buildSandboxProfile(repositoryRoot: string, tempDirectory: string, node
     "(version 1)",
     "(deny default)",
     '(import "system.sb")',
-    "(allow process-fork)",
+    // NO `(allow process-fork)`. The worker's whole job is one Node process that
+    // reads the input and writes the output, and it was measured converting
+    // correctly with fork denied: same status, same markdown, and a `spawnSync`
+    // from inside this profile returns EPERM where the fork-granting profile
+    // returned status 0. `probe: converter sandbox fork containment` and the
+    // real-enforcement suite both assert that.
+    //
+    // Why the denial is the containment, not a nicety. Cleanup signals the
+    // worker's PROCESS GROUP (`process.kill(-pid)`) and the memory monitor
+    // samples only that pgid (`ps -g`). A child the worker started `detached`
+    // lands in its own session and therefore in neither: it survives the
+    // SIGTERM/SIGKILL sweep and is never counted against the memory budget. A
+    // compromised converter (an RCE in jsdom/Readability via hostile HTML —
+    // the exact case the sandbox exists for) could leave an unbounded number of
+    // uncounted, unkilled processes running — each still unable to reach the
+    // network or write outside its temp dir, but outside every bound the
+    // service advertises.
+    //
+    // Denying fork also closes the output TOCTOU the fork granted: with no
+    // surviving process, nothing can swap the output between the lstat that
+    // validates it and the read that consumes it. Both were measured against a
+    // forked child racing a symlink swap at the output path; with fork denied
+    // the racing writer cannot exist. The O_NOFOLLOW read below is the
+    // defence-in-depth half of the same property, and it holds independently.
     `(allow process-exec (literal "${node}") (literal "${converter}"))`,
     "(allow signal (target same-sandbox))",
     "(deny process-info*)",
@@ -433,15 +517,15 @@ async function executeFixedCommand(
     if (/output_too_large/u.test(diagnosticText)) return { category: "output_too_large" };
     if (/html_has_no_readable_text|input_not_utf8/u.test(diagnosticText)) return { category: "invalid_input" };
     if (completed.code !== 0) return { category: "conversion_failed" };
-    let details;
-    try { details = await lstat(command.outputPath); } catch { return { category: "conversion_failed" }; }
-    if (details.isSymbolicLink() || !details.isFile()) return { category: "conversion_failed" };
-    if (details.size > limits.markdownBytes) return { category: "output_too_large" };
-    const output = await readFile(command.outputPath);
-    if (output.includes(0)) return { category: "conversion_failed" };
-    try { new TextDecoder("utf-8", { fatal: true }).decode(output); }
+    const verified = await readVerifiedOutput(command.outputPath, limits.markdownBytes);
+    if (verified === OVERSIZE) return { category: "output_too_large" };
+    // A symlinked output, a missing output and a non-regular file are all the
+    // same typed refusal: the conversion produced no trusted text.
+    if (verified === null) return { category: "conversion_failed" };
+    if (verified.includes(0)) return { category: "conversion_failed" };
+    try { new TextDecoder("utf-8", { fatal: true }).decode(verified); }
     catch { return { category: "conversion_failed" }; }
-    return { category: "none", output };
+    return { category: "none", output: verified };
   } finally {
     clearTimeout(timeoutTimer);
     clearTimeout(stopTimer);

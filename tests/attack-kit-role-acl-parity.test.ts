@@ -23,12 +23,13 @@
 // open decision. The two known gaps are recorded here as evidence, not as
 // expectations, so this file stays honest about what it does and does not prove.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { DEFAULT_ROLE_FILES } from "./support/attack-kit/real-postgres.ts";
+import { privilegeClassMarkerTables, revokeMarkerClassesSql } from "./support/privilege-class-markers";
 import { macRolePlan } from "../scripts/mac-local/database-upgrade-grants.mjs";
 
 const ROLE_DIRECTORY = join(process.cwd(), "db/roles");
@@ -161,4 +162,63 @@ test("the comparison above reads the exact queue ACL the preflight checks", () =
     assert.equal(kit.has(`${COORDINATOR}|table|${QUEUE_SCHEMA}.job|${column}|UPDATE`), false,
       `the coordinator unexpectedly holds UPDATE on job.${column}`);
   }
+});
+
+test("privilege-class markers are discovered from the schema, and production grants each to one role", async () => {
+  // A marker table is granted, not inherited: the guards ask whether the
+  // session login holds SELECT on it, so holding SELECT IS the class. That is
+  // what makes `GRANT ALL ON ALL TABLES` dangerous in a fixture -- it promotes
+  // the fixture login into the fleet gateway, and the fleet guards then refuse
+  // the fixture's own writes. Two lanes failed exactly that way, so the list of
+  // markers is derived from db/migrations rather than pinned here, and this test
+  // proves the derivation is finding the real ones instead of nothing.
+  const markers = await privilegeClassMarkerTables(process.cwd());
+  assert.ok(markers.length > 0, "no privilege-class marker tables were discovered");
+  for (const expected of ["fleet_gateway_role_anchor", "work_intake_role_anchor"]) {
+    assert.ok(markers.includes(expected),
+      `the marker ${expected} is not discovered; a fixture would silently join that class`);
+  }
+  // The derivation is name-based, so it must not start sweeping in ordinary
+  // tables -- every marker it returns has to be a real marker in the migrations.
+  for (const marker of markers) assert.match(marker, /_role_anchor$/);
+
+  // And each marker is granted to exactly one role, by a shipped role file.
+  // Two grantees is not a privilege class, it is a bug waiting to happen.
+  for (const marker of markers) {
+    const grantees = new Set<string>();
+    for (const file of readdirSync(ROLE_DIRECTORY).filter(name => name.endsWith(".sql"))) {
+      const source = readFileSync(join(ROLE_DIRECTORY, file), "utf8").replace(/--[^\n]*/g, "");
+      for (const match of source.matchAll(
+        new RegExp(`GRANT\\s+[^;]*?\\bON\\s+${marker}\\b[^;]*?\\bTO\\s+([^;]+);`, "gi"))) {
+        for (const role of match[1]!.split(",").map((name: string) => name.trim()).filter(Boolean)) grantees.add(role);
+      }
+    }
+    assert.equal(grantees.size, 1,
+      `${marker} is granted to ${[...grantees].join(", ") || "no role"}; a privilege class needs exactly one`);
+  }
+});
+
+test("a marker class is not reachable by a login that only inherits nothing", () => {
+  // The shape of the guard, pinned offline. The discriminator requires a grant
+  // to a role the login is a member of, and excludes the owner and PUBLIC --
+  // so an unrelated login, even one holding every table privilege in the
+  // schema, is only in the class if it also holds the marker itself.
+  const source = readFileSync(join(process.cwd(), "db/migrations/0140_fleet_worker_connector.sql"), "utf8");
+  const guard = /CREATE FUNCTION guard_fleet_gateway_identity_write\(\)[\s\S]*?\$\$;/u.exec(source)?.[0];
+  assert.ok(guard, "guard_fleet_gateway_identity_write is no longer in 0140 where this test reads it");
+  assert.match(guard, /acl\.privilege_type='SELECT'/u, "the class must be SELECT on the marker");
+  assert.match(guard, /acl\.grantee<>0\s+AND acl\.grantee<>anchor\.relowner/u,
+    "the class must exclude PUBLIC and the owner");
+  assert.match(guard, /pg_catalog\.pg_has_role\(login\.oid,acl\.grantee,'member'\)/u,
+    "membership must be derived from the granted role, not from the session's own name");
+  // The intake class is built the same way, which is why one helper covers both.
+  const intake = readFileSync(join(process.cwd(), "db/migrations/0093_work_batch_intake.sql"), "utf8");
+  assert.match(intake, /CREATE FUNCTION is_work_intake_session\(\)[\s\S]*?privilege_type='SELECT'/u);
+});
+
+test("the generated marker revocation is well-formed SQL for every marker", () => {
+  const sql = revokeMarkerClassesSql("cc_writer", ["fleet_gateway_role_anchor", "work_intake_role_anchor"]);
+  assert.equal(sql,
+    "REVOKE ALL ON fleet_gateway_role_anchor FROM cc_writer;\nREVOKE ALL ON work_intake_role_anchor FROM cc_writer;");
+  assert.equal(revokeMarkerClassesSql("x", []), "", "no markers must mean no statements, not a broken query");
 });

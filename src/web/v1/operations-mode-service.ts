@@ -65,6 +65,27 @@ async function journal(tx: DatabaseSession, key: Uint8Array, tenantId: string) {
 
 const DEFAULT_VIEW = Object.freeze({ mode: "running" as const, revision: 0, reason: "",
   setByIdentityId: "", setAt: "" });
+type InstallationOperationsModeViewV1 = OperationsModeRecordV1 | typeof DEFAULT_VIEW;
+const isRecordedModeV1 = (value: InstallationOperationsModeViewV1): value is OperationsModeRecordV1 =>
+  value.revision > 0;
+
+/** The automatic recovery authority is intentionally narrower than “paused”.
+ * It belongs only to the exact recorded auto-pause, never a human decision. */
+export function machineHealthAutoResumeAllowedV1(current: Pick<OperationsModeRecordV1, "mode" | "reason"> | undefined,
+  pauseReason: string): boolean {
+  return current?.mode === "paused" && current.reason === pauseReason;
+}
+
+/**
+ * Reads the installation's authenticated, server-owned mode. The Mac host,
+ * supervisor and fleet gateway all use this reader so they cannot derive
+ * different answers from the same revision journal.
+ */
+export async function readInstallationOperationsModeV1(tx: DatabaseSession, tenantId: string,
+  integrityKey: Uint8Array) {
+  if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) fail();
+  return (await journal(tx, integrityKey, tenantId)).at(-1) ?? DEFAULT_VIEW;
+}
 
 /**
  * The installation-wide Pause / Drain / Stop switch, server-side.
@@ -122,7 +143,7 @@ export class WebOperationsModeServiceV1 {
       // Reading the mode is an owner-visible read of an already-recorded fact.
       // It schedules, assigns, reserves and authorizes nothing.
       actor.require("operations.read", undefined, true);
-      const current = (await journal(tx, this.#key, this.scope.tenantId)).at(-1) ?? DEFAULT_VIEW;
+      const current = await readInstallationOperationsModeV1(tx, this.scope.tenantId, this.#key);
       return operationsModeViewSchemaV1.parse({ schema: "control-room.installation-operations-mode-view/v1",
         mode: current.mode, reason: current.reason, setByIdentityId: current.setByIdentityId ?? "",
         setAt: current.setAt, revision: current.revision, replayed: false,
@@ -138,6 +159,7 @@ export class WebOperationsModeServiceV1 {
       // not enough and 0155's trigger refuses anything but a live human owner.
       actor.require("operations.read", undefined, true);
       actor.require("operations.set_mode", undefined, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       return this.#decide(tx, { id: actor.id, now: actor.now }, value);
     });
     return this.#finish(decided);
@@ -175,7 +197,7 @@ export class WebOperationsModeServiceV1 {
       // Same first lock as every other installation-wide decision and as
       // assignment, so this cannot deadlock and cannot interleave with an
       // owner pressing the button at the same moment.
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
       const owner = await this.#liveOwnerInSession(tx, now);
       // Only pause a running installation, so a health check on a timer does
       // not append a revision every cycle and bury the owner's own decisions in
@@ -185,8 +207,32 @@ export class WebOperationsModeServiceV1 {
       if (owner.modes.current !== "running" && owner.modes.record) {
         return { record: owner.modes.record, replayed: true };
       }
-      return this.#decide(tx, { id: owner.identityId, now }, value.data);
+      return this.#decide(tx, { id: owner.identityId, now }, value.data, "machine_health_pause");
     });
+    return this.#finish(decided);
+  }
+
+  /** Resume only the exact automatic pause that is still the latest revision.
+   * A later owner Pause, Drain, Stop, or manual resume is a different record,
+   * so it is a no-op even if the machine is otherwise healthy. Three automatic
+   * pauses in the last hour convert the current one into an owner-required
+   * pause instead of starting work again. */
+  async resumeAfterMachineHealth(input: Readonly<{ pauseReason: string; resumeReason: string; capReason: string }>) {
+    const parsed = z.object({ pauseReason: z.string().min(1).max(240), resumeReason: z.string().min(1).max(240),
+      capReason: z.string().min(1).max(240) }).strict().safeParse(input);
+    if (!parsed.success) throw new WebAccessError("invalid_request");
+    const now = new Date(this.#clock()).toISOString();
+    const decided = await this.db.transaction(async tx => {
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE", [this.scope.tenantId]);
+      const owner = await this.#liveOwnerInSession(tx, now);
+      const current = owner.modes.record;
+      if (!machineHealthAutoResumeAllowedV1(current, parsed.data.pauseReason))
+        return undefined;
+      const count = await this.#automaticPauseCount(tx, parsed.data.pauseReason, now);
+      if (count >= 3) return this.#decide(tx, { id: owner.identityId, now }, { mode: "paused", reason: parsed.data.capReason }, "machine_health_cap");
+      return this.#decide(tx, { id: owner.identityId, now }, { mode: "running", reason: parsed.data.resumeReason }, "machine_health_resume");
+    });
+    if (!decided) return Object.freeze({ skipped: true as const });
     return this.#finish(decided);
   }
 
@@ -204,31 +250,42 @@ export class WebOperationsModeServiceV1 {
         AND (g.expires_at IS NULL OR g.expires_at > $2::timestamptz)
       ORDER BY i.id LIMIT 2`, [this.scope.tenantId, at])).rows;
     if (rows.length !== 1) throw new Error("operations_mode_owner_unavailable");
-    const revisions = await journal(tx, this.#key, this.scope.tenantId);
+    const current = await readInstallationOperationsModeV1(tx, this.scope.tenantId, this.#key);
     return Object.freeze({ identityId: rows[0]!.id,
-      modes: Object.freeze({ current: revisions.at(-1)?.mode ?? "running", record: revisions.at(-1) }) });
+      modes: Object.freeze({ current: current.mode, record: isRecordedModeV1(current) ? current : undefined }) });
+  }
+
+  async #automaticPauseCount(tx: DatabaseSession, pauseReason: string, at: string): Promise<number> {
+    const hourAgo = new Date(Date.parse(at) - 60 * 60_000).toISOString();
+    const row = (await tx.query<{ count: number | string }>(`SELECT count(*) AS count
+      FROM installation_operations_mode_revisions WHERE tenant_id=$1 AND mode='paused' AND reason=$2 AND set_at>$3`,
+    [this.scope.tenantId, pauseReason, hourAgo])).rows[0];
+    return Number(row?.count ?? 0);
   }
 
   /** The decision itself, shared by both entry points so the owner session and
    * the installation's own health check cannot drift apart: the same lock
    * order, the same replay rule, the same record, the same audit event. */
-  async #decide(tx: DatabaseSession, actor: { id: string; now: string }, value: unknown) {
+  async #decide(tx: DatabaseSession, actor: { id: string; now: string }, value: unknown,
+    automaticAction?: "machine_health_pause" | "machine_health_resume" | "machine_health_cap") {
     const parsed = z.object({ mode: operationsModeV1, reason: z.string().max(240) }).strict().safeParse(value);
     if (!parsed.success) throw new WebAccessError("invalid_request");
     const mode = parsed.data.mode, reason = parsed.data.reason.trim();
     {
-      const current = (await journal(tx, this.#key, this.scope.tenantId)).at(-1);
+      const current = await readInstallationOperationsModeV1(tx, this.scope.tenantId, this.#key);
       // An exact repeat is a replay, not a second decision. The same mode with a
       // different reason is a new recorded decision, which is what the owner
       // means by pressing the button again with new words.
-      if (current && current.mode === mode && current.reason === reason) return { record: current, replayed: true };
+      if (isRecordedModeV1(current) && current.mode === mode && current.reason === reason)
+        return { record: current, replayed: true };
       // The tenant row is the existing lock order for an installation-wide
       // decision, so this cannot deadlock against assignment (which takes the
       // same first lock), and it serializes two owners setting the mode at once.
-      const latest = (await journal(tx, this.#key, this.scope.tenantId)).at(-1);
-      if (latest && latest.mode === mode && latest.reason === reason) return { record: latest, replayed: true };
+      const latest = await readInstallationOperationsModeV1(tx, this.scope.tenantId, this.#key);
+      if (isRecordedModeV1(latest) && latest.mode === mode && latest.reason === reason)
+        return { record: latest, replayed: true };
       const record: OperationsModeRecordV1 = { schema: "control-room.installation-operations-mode/v1",
-        tenantId: this.scope.tenantId, revision: (latest?.revision ?? 0) + 1, mode, reason,
+        tenantId: this.scope.tenantId, revision: latest.revision + 1, mode, reason,
         setByIdentityId: actor.id, setAt: actor.now };
       assertNoSecretMaterial(record, "operations mode record");
       const inserted = await tx.query(`INSERT INTO installation_operations_mode_revisions
@@ -237,10 +294,12 @@ export class WebOperationsModeServiceV1 {
       [this.scope.tenantId, record.revision, record.mode, record.reason, record.setByIdentityId,
         record.setAt, JSON.stringify(record), tag(this.#key, this.scope.tenantId, record)]);
       if (!inserted.rows.length) throw new WebAccessError("conflict");
-      await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope, actorId: actor.id, actorType: "human",
+      await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope,
+        actorId: automaticAction ? "service:supervisor:v1" : actor.id, actorType: automaticAction ? "service" : "human",
         action: `operations.mode.${record.mode}`, targetType: "installation", targetId: this.scope.tenantId,
         occurredAt: record.setAt, safeMetadata: { revision: record.revision, mode: record.mode,
-          previousMode: latest?.mode ?? "running", reason, admitsNewWork: record.mode === "running" } });
+          previousMode: latest.mode, reason, admitsNewWork: record.mode === "running",
+          ...(automaticAction ? { automaticAction } : {}) } });
       return { record, replayed: false };
     }
   }

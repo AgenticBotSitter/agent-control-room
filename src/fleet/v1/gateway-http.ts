@@ -1,10 +1,36 @@
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { captureFleetConnectorReleaseManifestV1, type FleetConnectorReleaseManifestV1 } from "./connector-release";
 import { isIP } from "node:net";
 import type { WorkBatchServiceV1 } from "../../work-intake/v1/service";
-import { FleetErrorV1, fleetFail } from "./errors";
+import { WorkIntakeErrorV1 } from "../../work-intake/v1/errors";
+import { FleetErrorV1, fleetFail, type FleetErrorCodeV1 } from "./errors";
 import type { FleetGatewayStoreV1, FleetWorkerPrincipalV1 } from "./gateway-store";
 import { FLEET_DIGEST_PATTERN_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1 } from "./identifiers";
+import { FleetWaitAbortedErrorV1, FleetWaitCapacityErrorV1, FleetWaitRegistryV1 } from "./wait-registry";
+
+/**
+ * The S1 proposal service reports its designed refusals with its own safe
+ * codes. They are refusals, not failures: a bot that reuses one idempotency key
+ * for different work must be told `conflict`, and a credential the intake login
+ * will not act for must be told `forbidden`, exactly as every other fleet
+ * refusal is. Without this translation they escape as an untyped 400 and the
+ * gateway's own operator log records a perfectly ordinary client mistake as a
+ * server fault. `integrity_failed` is deliberately absent: it is never a client
+ * error and must keep reaching the operator log.
+ *
+ * A null-prototype map, so a lookup can never find `Object.prototype` and treat
+ * an inherited member as a refusal code.
+ */
+const WORK_INTAKE_REFUSALS_V1: Readonly<Record<string, FleetErrorCodeV1>> = Object.assign(
+  Object.create(null) as Record<string, FleetErrorCodeV1>, Object.freeze({
+    credential_inactive: "forbidden",
+    no_matching_grant: "forbidden",
+    replay_conflict: "conflict",
+    batch_not_found: "not_found",
+    invalid_input: "invalid",
+  }));
 
 /**
  * The connector-facing API. Every route except enrollment and the connector
@@ -255,8 +281,8 @@ export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOpti
   });
 }
 
-function send(response: ServerResponse, status: number, body: unknown) {
-  response.writeHead(status, { ...headers, connection: "close" });
+function send(response: ServerResponse, status: number, body: unknown, extraHeaders: Readonly<Record<string, string>> = {}) {
+  response.writeHead(status, { ...headers, ...extraHeaders, connection: "close" });
   response.end(JSON.stringify(body));
 }
 function header(request: IncomingMessage, name: string): string | undefined {
@@ -306,16 +332,35 @@ function decodeFiles(value: unknown) {
 }
 
 export type FleetGatewayHttpOptionsV1 = Readonly<{ store: FleetGatewayStoreV1; proposals?: WorkBatchServiceV1;
-  connectorScript?: Readonly<{ body: string; digest: string }>; now?: () => string;
+  connectorRelease?: Readonly<{ bundle: Uint8Array; manifest: FleetConnectorReleaseManifestV1; manifestBody: string }>;
+  now?: () => string;
   admission?: FleetGatewayAdmissionV1;
+  waitRegistry?: FleetWaitRegistryV1;
   /** Operator log for failures that are not a fixed refusal. Never sent to the caller. */
   onUnexpectedError?: (error: unknown) => void }>;
 
 export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) {
   const now = options.now ?? (() => new Date().toISOString());
   const admission = options.admission ?? createFleetGatewayAdmissionV1();
+  const waitRegistry = options.waitRegistry ?? new FleetWaitRegistryV1();
+  let connectorRelease = options.connectorRelease;
+  if (connectorRelease) {
+    let manifest: FleetConnectorReleaseManifestV1, declared: FleetConnectorReleaseManifestV1;
+    try {
+      manifest = captureFleetConnectorReleaseManifestV1(JSON.parse(connectorRelease.manifestBody));
+      declared = captureFleetConnectorReleaseManifestV1(connectorRelease.manifest);
+    }
+    catch { throw new Error("fleet_connector_release_refused"); }
+    if (JSON.stringify(manifest) !== JSON.stringify(declared)
+      || connectorRelease.bundle.length !== manifest.size
+      || createHash("sha256").update(connectorRelease.bundle).digest("hex") !== manifest.sha256)
+      throw new Error("fleet_connector_release_refused");
+    connectorRelease = Object.freeze({ bundle: connectorRelease.bundle, manifest, manifestBody: connectorRelease.manifestBody });
+  }
   const claimRoute = /^\/fleet\/v1\/claims\/(fleet-claim:[a-f0-9]{32})\/(progress|blocker|result)$/u;
   const proposalRoute = /^\/fleet\/v1\/projects\/([^/]+)\/proposals$/u;
+  const databaseUnavailable = (error: unknown) => !(error instanceof FleetErrorV1) && error instanceof Error
+    && (error.message === "database_unavailable" || (error as Error & { code?: unknown }).code === "database_unavailable");
 
   async function authenticated(request: IncomingMessage): Promise<FleetWorkerPrincipalV1> {
     const lease = admission.enter(request, "authenticate");
@@ -345,16 +390,26 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     try { url = new URL(request.url ?? "/", "http://gateway.invalid"); } catch { return fleetFail("not_found"); }
     if (url.search || url.hash) return fleetFail("not_found");
     const path = url.pathname, method = request.method;
-    if (method === "GET" && path === "/fleet/v1/connector.mjs" && options.connectorScript) {
+    const release = connectorRelease;
+    if (method === "GET" && release && (path === "/fleet/v1/connector.mjs"
+      || path === `/fleet/v1/${release.manifest.file}`)) {
       response.writeHead(200, { "cache-control": "no-store", "content-type": "text/javascript; charset=utf-8",
-        "x-content-type-options": "nosniff", "x-control-room-connector-sha256": options.connectorScript.digest,
+        "content-length": String(release.manifest.size), "x-content-type-options": "nosniff",
+        "x-control-room-connector-sha256": `sha256:${release.manifest.sha256}`,
         connection: "close" });
-      response.end(options.connectorScript.body);
+      response.end(release.bundle);
+      return;
+    }
+    if (method === "GET" && path === "/fleet/v1/connector-manifest.json" && release) {
+      response.writeHead(200, { "cache-control": "no-store", "content-type": "application/json; charset=utf-8",
+        "content-length": String(Buffer.byteLength(release.manifestBody)), "x-content-type-options": "nosniff",
+        connection: "close" });
+      response.end(release.manifestBody);
       return;
     }
     if (method === "POST" && path === "/fleet/v1/enroll") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),
-        ["code", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"]);
+        ["code", "workerKind", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"], ["adapterCapabilities"]);
       const lease = admission.enter(request, "enroll");
       try {
         const result = await options.store.enroll(body as never);
@@ -364,7 +419,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     // Every other route: authenticate first, then read the body.
     const known = path === "/fleet/v1/me" || path === "/fleet/v1/heartbeat" || path === "/fleet/v1/rotate"
-      || path === "/fleet/v1/work" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
+      || path === "/fleet/v1/work" || path === "/fleet/v1/work/wait" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
       || claimRoute.test(path) || proposalRoute.test(path);
     if (!known) return fleetFail("not_found");
     let principal: FleetWorkerPrincipalV1;
@@ -382,6 +437,30 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     if (method === "GET" && path === "/fleet/v1/me") return send(response, 200, { ok: true, result: options.store.me(principal) });
     if (method === "GET" && path === "/fleet/v1/work") return send(response, 200, { ok: true, result: await options.store.listWork(principal) });
+    if (method === "GET" && path === "/fleet/v1/work/wait") {
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      request.once("aborted", abort); response.once("close", abort);
+      if (request.destroyed || response.destroyed || request.socket.destroyed) abort();
+      try {
+        const result = await waitRegistry.wait(principal.workerId, () => options.store.waitWork(principal), controller.signal,
+          () => options.store.recordWaitPresence(principal));
+        if (!controller.signal.aborted && !response.destroyed)
+          return send(response, 200, { ok: true, result });
+        return;
+      } catch (error) {
+        if (error instanceof FleetWaitAbortedErrorV1) return;
+        if (error instanceof FleetWaitCapacityErrorV1)
+          return send(response, 429, { ok: false, error: "rate_limited" },
+            { "retry-after": String(error.retryAfterSeconds) });
+        if (error instanceof FleetErrorV1) throw error;
+        options.onUnexpectedError?.(error);
+        return send(response, 503, { ok: false, error: "unavailable" },
+          { "retry-after": "1" });
+      } finally {
+        request.off("aborted", abort); response.off("close", abort);
+      }
+    }
     if (method === "GET" && path === "/fleet/v1/claims") return send(response, 200, { ok: true, result: await options.store.myClaims(principal) });
     if (method !== "POST") return fleetFail("not_found");
     if (path === "/fleet/v1/mcp/calls") {
@@ -389,7 +468,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       return send(response, 201, { ok: true, result: await options.store.recordMcpCall(principal, body as never) });
     }
     if (path === "/fleet/v1/heartbeat") {
-      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"]);
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"], ["adapterCapabilities"]);
       return send(response, 200, { ok: true, result: await options.store.heartbeat(principal, body as never) });
     }
     if (path === "/fleet/v1/rotate") {
@@ -432,9 +511,17 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       const at = now();
       // The same S1 proposal service as the website intake: a proposal starts
       // no work and grants no authority until the owner approves it.
-      const result = await options.proposals.submit({ principal: { tenantId: principal.tenantId,
-        identityId: principal.identityId, actorType: "agent", authenticatedAt: at, expiresAt: principal.credentialExpiresAt },
-      projectId, rawProposal: JSON.stringify(body.proposal), idempotencyKey: body.idempotencyKey, now: at });
+      let result;
+      try {
+        result = await options.proposals.submit({ principal: { tenantId: principal.tenantId,
+          identityId: principal.identityId, actorType: "agent", authenticatedAt: at,
+          expiresAt: principal.credentialExpiresAt },
+        projectId, rawProposal: JSON.stringify(body.proposal), idempotencyKey: body.idempotencyKey, now: at });
+      } catch (error) {
+        if (error instanceof WorkIntakeErrorV1 && WORK_INTAKE_REFUSALS_V1[error.safeCode])
+          return fleetFail(WORK_INTAKE_REFUSALS_V1[error.safeCode]!);
+        throw error;
+      }
       return send(response, "accepted" in result && result.accepted === false ? 422 : 202, { ok: true, result });
     }
     return fleetFail("not_found");
@@ -445,6 +532,11 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       try { await route(request, response); }
       catch (error) {
         if (response.headersSent) { response.destroy(); return; }
+        if (databaseUnavailable(error)) {
+          options.onUnexpectedError?.(error);
+          send(response, 503, { ok: false, error: "unavailable" }, { "retry-after": "1" });
+          return;
+        }
         if (!(error instanceof FleetErrorV1)) options.onUnexpectedError?.(error);
         const code = error instanceof FleetErrorV1 ? error.code : "refused";
         const status = error instanceof FleetErrorV1 ? error.status : 400;

@@ -35,9 +35,17 @@ test("loads then verifies workers before it opens the authority database", async
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { trace.push("load"); return configuration; },
     async readVersion() { trace.push("version"); return "codex test"; },
-    openDatabase() { trace.push("database"); return { client: {} as never, async close() { trace.push("database-close"); } }; },
+    openDatabase() { trace.push("database"); return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("database-close"); } }; },
     assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
+    // A pid, a probe key, a release and a start time travel together: the web
+    // process refuses a pid with no key behind it rather than serving a readiness
+    // route that `mac:up` could not verify. Before the host forwarded the pid
+    // this test passed with the pid alone, which meant the combination was never
+    // exercised at all.
+    hostProcessId: 4_243, healthProbeKey: new Uint8Array(32).fill(11),
+    healthReleaseId: "test-release", healthStartedAt: "2026-09-30T00:00:00.000Z",
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
   });
   // Construction itself has no filesystem, database, listener, or worker effect.
@@ -58,6 +66,33 @@ test("does not open the database when the pinned worker changes", async () => {
   assert.equal(opened, false);
 });
 
+test("connector-only host refuses direct task factories and starts without bot executable inspection", async () => {
+  assert.throws(() => createMacLocalProtectedHostV1({ connectorOnly: true,
+    async loadConfiguration() { return configuration; },
+    openDatabase() { return {} as never; },
+    async loadDatabaseRoles() { return {} as never; },
+    createTaskApplication: async () => ({ operations: {}, isReady: () => true, async close() {} }),
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+  }), /mac_local_host_configuration_invalid/);
+
+  const trace: string[] = [];
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const host = createMacLocalProtectedHostV1({ connectorOnly: true,
+    async loadConfiguration() { trace.push("load"); return configuration; },
+    async readVersion() { assert.fail("connector-only host must not inspect a bot CLI"); },
+    openDatabase() { trace.push("database"); return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("close"); } }; },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+  });
+  const running = await host.start();
+  assert.deepEqual(trace, ["load", "database"]);
+  await running.close();
+});
+
 test("protected Mac startup creates the shared task lifecycle only after worker verification and owns its shutdown", async () => {
   const trace: string[] = [];
   const server = new EventEmitter() as Server;
@@ -67,7 +102,8 @@ test("protected Mac startup creates the shared task lifecycle only after worker 
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { trace.push("load"); return configuration; },
     async readVersion() { trace.push("version"); return "codex test"; },
-    openDatabase() { trace.push("web-database"); return { client: {} as never, async close() { trace.push("web-close"); } }; },
+    openDatabase() { trace.push("web-database"); return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("web-close"); } }; },
     async loadDatabaseRoles() { trace.push("database-roles"); return databaseRoles; },
     async createTaskApplication({ configuration: received, workerReadiness, databaseRoles: receivedRoles }) {
       trace.push("task-application");
@@ -82,7 +118,7 @@ test("protected Mac startup creates the shared task lifecycle only after worker 
   const running = await host.start();
   assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application"]);
   await running.close();
-  assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application", "web-close", "task-close"]);
+  assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application", "task-close", "web-close"]);
 });
 
 test("protected host captures one batch key, catalog and exact-selection authority for the task application", async () => {
@@ -91,7 +127,7 @@ test("protected host captures one batch key, catalog and exact-selection authori
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
     async loadDatabaseRoles() { return databaseRoles; },
-    openDatabase() { return { client: {} as never, async close() { closed = true; } }; },
+    openDatabase() { return { client: {} as never, isAvailable: () => true, async close() { closed = true; } }; },
     workBatchIntegrityKey: key,
     async createTaskApplication({ workBatches }) {
       assert.ok(workBatches);
@@ -130,7 +166,7 @@ test("a Mac-local host owns the shared task composition and fails ready when tha
   server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
   const service = createMacLocalWebServiceFromConfigurationV1({
     configuration,
-    database: { client: {} as never, async close() { databaseCloses++; } },
+    database: { client: {} as never, isAvailable: () => true, async close() { databaseCloses++; } },
     assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
@@ -148,9 +184,43 @@ test("a Mac-local host owns the shared task composition and fails ready when tha
   assert.equal(taskCloses, 1);
 });
 
+test("a failed task drain still closes the site database and remains failed on retry", async () => {
+  const trace: string[] = [];
+  let releaseTaskClose!: () => void, taskCloseStarted = false;
+  const taskCloseMayFinish = new Promise<void>(resolve => { releaseTaskClose = resolve; });
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { trace.push("site-close"); queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const service = createMacLocalWebServiceFromConfigurationV1({
+    configuration,
+    database: { client: {} as never, isAvailable: () => true, async close() { trace.push("database-close"); } },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+    taskApplication: { operations: {}, isReady: () => true, async close() {
+      taskCloseStarted = true; trace.push("task-close-start");
+      await taskCloseMayFinish;
+      trace.push("task-close"); throw new Error("injected_task_drain_failure");
+    } },
+  });
+  await service.start();
+  const closing = service.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(taskCloseStarted, true);
+  assert.deepEqual(trace, ["task-close-start"], "the site close cannot race a blocked task drain");
+  releaseTaskClose();
+  await assert.rejects(closing, /mac_local_host_cleanup_uncertain/);
+  await assert.rejects(service.close(), /mac_local_host_cleanup_uncertain/);
+  assert.deepEqual(trace, ["task-close-start", "task-close", "site-close", "database-close"]);
+});
+
 test("a Mac-local host refuses operations from a different controller lifecycle", () => {
+  assert.throws(() => createMacLocalWebServiceFromConfigurationV1({ configuration,
+    database: { client: {} as never, async close() {} } as never,
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); } }),
+  /mac_local_host_configuration_invalid/);
   assert.throws(() => createMacLocalWebServiceFromConfigurationV1({
-    configuration, database: { client: {} as never, async close() {} },
+    configuration, database: { client: {} as never, isAvailable: () => true, async close() {} },
     assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     operations: {}, taskApplication: { operations: {}, isReady: () => true, async close() {} },
   }), /mac_local_host_configuration_invalid/);
@@ -164,7 +234,7 @@ test("a protected Mac host refuses bare operations mixed with a task-application
   }), /mac_local_host_configuration_invalid/);
 });
 
-test("starts the existing queue worker only after the loopback site is listening and closes both together", async () => {
+test("starts the existing queue worker only after the loopback site is listening and drains writers before databases", async () => {
   const trace: string[] = [];
   const server = new EventEmitter() as Server;
   server.listen = ((_options: object, callback: () => void) => { trace.push("site-start"); queueMicrotask(callback); return server; }) as Server["listen"];
@@ -172,7 +242,8 @@ test("starts the existing queue worker only after the loopback site is listening
   server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
-    openDatabase() { return { client: {} as never, async close() { trace.push("database-close"); } }; },
+    openDatabase() { return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("database-close"); } }; },
     async loadDatabaseRoles() { return databaseRoles; },
     async createTaskApplication() { return { operations: {}, isReady: () => true, async close() { trace.push("task-close"); },
       async queueDelivery() { return { disposition: "delivered" as const }; } }; },
@@ -189,7 +260,48 @@ test("starts the existing queue worker only after the loopback site is listening
   const running = await host.start();
   assert.deepEqual(trace.slice(0, 2), ["site-start", "queue-start"]);
   await running.close();
-  assert.deepEqual(trace.slice(-4), ["queue-close", "site-close", "database-close", "task-close"]);
+  assert.deepEqual(trace.slice(-4), ["queue-close", "task-close", "site-close", "database-close"]);
+});
+
+test("a readiness quarantine drains a mid-write task before either owned database closes", async () => {
+  const trace: string[] = [];
+  let databaseAvailable = true, databaseClosed = false, releaseWrite!: () => void;
+  const writeMayFinish = new Promise<void>(resolve => { releaseWrite = resolve; });
+  const results: string[] = [];
+  const activeWrite = (async () => {
+    trace.push("write-start");
+    await writeMayFinish;
+    assert.equal(databaseClosed, false, "an in-flight result must never write after the host database closes");
+    results.push("saved"); trace.push("write-recorded");
+  })();
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { trace.push("site-start"); queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { trace.push("site-close"); queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const service = createMacLocalWebServiceFromConfigurationV1({
+    configuration,
+    database: { client: {} as never, isAvailable: () => databaseAvailable,
+      async close() { databaseClosed = true; trace.push("web-database-close"); } },
+    taskApplication: { operations: {}, isReady: () => true, async close() {
+      trace.push("task-drain-start");
+      await activeWrite;
+      assert.deepEqual(results, ["saved"], "the task drain must retain the completed result");
+      trace.push("task-close");
+    } },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+  });
+  await service.start();
+  databaseAvailable = false;
+  assert.equal(service.isReady(), false, "database quarantine must make the host unavailable before restart");
+  const closes = Array.from({ length: 32 }, () => service.close());
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(databaseClosed, false, "shutdown must keep the database open while the result write is blocked");
+  assert.equal(trace.includes("task-close"), false, "task resources must remain open until the active write finishes");
+  releaseWrite();
+  await Promise.all(closes);
+  assert.deepEqual(results, ["saved"]);
+  assert.deepEqual(trace, ["write-start", "site-start", "task-drain-start", "write-recorded", "task-close", "site-close", "web-database-close"]);
 });
 
 test("refuses a queue-worker factory without the task lifecycle it delivers", () => {
@@ -208,7 +320,7 @@ test("closes a rejected queue worker before it closes the local site", async () 
   server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
-    openDatabase() { return { client: {} as never, async close() {} }; },
+    openDatabase() { return { client: {} as never, isAvailable: () => true, async close() {} }; },
     async loadDatabaseRoles() { return databaseRoles; },
     async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {}, async queueDelivery() { return { disposition: "delivered" as const }; } }; },
     async startQueueWorker() { return { status: () => ({ accepting: false }), async close() { trace.push("worker-close"); } }; },

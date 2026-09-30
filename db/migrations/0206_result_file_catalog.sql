@@ -232,6 +232,29 @@ BEGIN
     -- The installation quota is 10 GiB across every provisional or retained set
     -- in the tenant. It refuses a new publication; it never evicts an accepted
     -- file, and it never rewrites a set that is already stored.
+    --
+    -- The SUM ITSELF IS NOT ENOUGH, and this is the fix for a quota overrun the
+    -- review reproduced: two publications running at the same time both read the
+    -- occupied total, both see room for their own set, and both commit — the
+    -- tenant ends up over the limit. READ COMMITTED gives each transaction its
+    -- own view, so a bare SELECT cannot serialise anything.
+    --
+    -- The serialisation is a PER-TENANT ADVISORY TRANSACTION LOCK, taken before
+    -- the sum and held to COMMIT. Every publication of the same tenant now
+    -- queues behind the one in front of it, so the second one sums the bytes the
+    -- first one just committed. It is keyed on the tenant and on a fixed
+    -- two-int space, so it cannot collide with another subsystem's lock by
+    -- accident, and it is released automatically by COMMIT or ROLLBACK — a
+    -- crashed publisher cannot wedge the quota, and a rolled-back one cannot
+    -- leave the tenant over the limit.
+    --
+    -- An advisory lock rather than `SELECT ... FROM tenants ... FOR UPDATE`,
+    -- because locking a row needs a privilege on that table: the publisher login
+    -- holds no grant at all on `tenants`, and giving it one to enforce a quota
+    -- would be a far larger grant than the job requires. An advisory lock needs
+    -- no privilege on anything.
+    PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('control-room.result-file-quota/v1'),
+      pg_catalog.hashtext(NEW.tenant_id));
     SELECT coalesce(sum(s.total_bytes),0) INTO occupied FROM public.control_result_file_sets s
       WHERE s.tenant_id=NEW.tenant_id AND s.retention_state IN ('provisional','retained')
         AND s.set_id<>NEW.set_id;

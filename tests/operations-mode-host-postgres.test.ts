@@ -9,7 +9,8 @@
 // through the Mac-local web process's own route table, as the production
 // login, so a regression in the wiring fails here.
 //
-// Reserved disposable-cluster lane for this file: 58710-58719.
+// The reserved disposable-cluster lane for this file is 58710-58719 by
+// default and moves with CONTROL_ROOM_PG_TEST_PORT_BASE.
 import assert from "node:assert/strict";
 import { Client, Pool } from "pg";
 import test from "node:test";
@@ -23,12 +24,14 @@ import { LOCAL_OWNER_SESSION_PROFILE_V1, type LocalOwnerSessionProfileV1 } from 
 import { handlePrivateWebRequest } from "../src/web/v1/private-process";
 import { WebOperationsModeServiceV1 } from "../src/web/v1/operations-mode-service";
 import { createOperationsModeSupervisorPortV1,
-  OPERATIONS_MODE_MACHINE_HEALTH_REASON_V1 } from "../src/web/v1/operations-mode-supervisor-port";
+  OPERATIONS_MODE_MACHINE_HEALTH_CAP_REASON_V1, OPERATIONS_MODE_MACHINE_HEALTH_REASON_V1,
+  OPERATIONS_MODE_MACHINE_HEALTH_RESUME_REASON_V1 } from "../src/web/v1/operations-mode-supervisor-port";
 import type { DatabaseClient } from "../src/persistence/database";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { sha256Digest } from "../src/security";
 
-const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) => 58710 + index));
+const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) =>
+  Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58710) + index));
 const PG = requiresRealPostgres();
 const needsPg = () => (PG ? undefined : { skip: realPostgresSkipMessage() });
 
@@ -44,8 +47,8 @@ const OWNER = "identity:operations-host-owner";
 /** Two tests bind a real listener, so each takes its own port on the reserved
  * disposable lane. The origin is derived from the port because the local owner
  * session's token digest binds to its own profile origin. */
-const PORT = 58715;
-const SUPERVISOR_PORT = 58716;
+const PORT = PORTS[5];
+const SUPERVISOR_PORT = PORTS[6];
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const OWNER_CODE_DIGEST = `sha256:${"b".repeat(64)}`;
 const TOKEN = "a".repeat(43);
@@ -123,7 +126,7 @@ function host(client: DatabaseClient, options: Readonly<{ key?: Uint8Array }> = 
     // database-backed one, so the session is the installation's own.
     localOwnerSessionStore: createPostgresLocalOwnerSessionStoreV1(client, PROFILE),
     initialLocalOwnerSessions: [{ tokenDigest: LOCAL_TOKEN_DIGEST, issuedAt: ISSUED_AT, expiresAt: EXPIRES_AT }],
-    database: { client, close: async () => {} },
+    database: { client, close: async () => {}, isAvailable: () => true },
     ...(options.key ? { operationsModeIntegrityKey: options.key } : {}),
     taskWorkersStarted: false });
 }
@@ -185,7 +188,7 @@ function productionHost(client: DatabaseClient, options: Readonly<{ key?: Uint8A
         workers: [{ workerId: "worker:test", kind: "codex",
           executablePath: "/opt/homebrew/bin/codex", recordedVersion: "1.0.0" }] } }) as never,
     readVersion: async () => "1.0.0",
-    openDatabase: () => ({ client, close: async () => {} }),
+    openDatabase: () => ({ client, close: async () => {}, isAvailable: () => true }),
     assets: { count: 1, digest: `sha256:${"c".repeat(64)}`, respond: () => new Response("asset") },
     // The production renderer is the Next.js middleware, which forwards every
     // request to the installed private application. A stub that answers "page"
@@ -385,7 +388,7 @@ test("a host with no operations mode leaves the endpoint absent rather than show
   }, { port: PORTS[1], allowedPorts: PORTS, boundMs: 180_000 });
 });
 
-test("a failed health check pauses through the same recorded decision, and only pauses",
+test("automatic health pauses resume only their own revision, record activity, and cap at three per hour",
   { timeout: 600_000 }, async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
@@ -417,9 +420,53 @@ test("a failed health check pauses through the same recorded decision, and only 
       assert.equal((await admin.query(
         "SELECT count(*)::int AS n FROM installation_operations_mode_revisions")).rows[0]!.n, 1);
 
-      // The port cannot escalate. It has no resume and no stop: only the owner
-      // can move this switch off `paused`.
-      assert.deepEqual(Object.keys(port), ["pauseNewStarts"]);
+      // A burst of recovery calls (retries or two overlapping supervisor
+      // cycles) serializes at the tenant lock: exactly one may append running.
+      // 12 stays inside the private web pool's 8 active + 8 queued admission bound,
+      // so every call reaches the lock instead of being refused at admission.
+      const burst = await Promise.all(Array.from({ length: 12 }, () => port.resumeAfterMachineHealth({
+        reasonCode: "machine_health_recovered", observedAt: new Date().toISOString() })));
+      assert.equal(burst.filter(item => item.state === "resumed").length, 1);
+      assert.equal(burst.filter(item => item.state === "not_automatic").length, 11);
+      assert.equal((await service.read(ownerIdentity())).reason, OPERATIONS_MODE_MACHINE_HEALTH_RESUME_REASON_V1);
+
+      // A second automatic recovery is permitted. The third automatic pause
+      // in the hour stays paused and tells the owner to resume it, rather than
+      // creating an endless busy/calm start loop.
+      assert.equal((await port.pauseNewStarts({ reasonCode: "machine_health_failed",
+        observedAt: new Date().toISOString() })).state, "paused");
+      const second = await port.resumeAfterMachineHealth({ reasonCode: "machine_health_recovered",
+        observedAt: new Date().toISOString() });
+      assert.equal(second.state, "resumed");
+      assert.equal((await port.pauseNewStarts({ reasonCode: "machine_health_failed",
+        observedAt: new Date().toISOString() })).state, "paused");
+      const capped = await port.resumeAfterMachineHealth({ reasonCode: "machine_health_recovered",
+        observedAt: new Date().toISOString() });
+      assert.equal(capped.state, "pause_limit_reached");
+      const capView = await service.read(ownerIdentity());
+      assert.equal(capView.mode, "paused");
+      assert.equal(capView.reason, OPERATIONS_MODE_MACHINE_HEALTH_CAP_REASON_V1);
+      const activity = await admin.query<{ actor_type: string; safe_metadata: { automaticAction?: string } }>(
+        "SELECT actor_type,safe_metadata FROM audit_events WHERE tenant_id=$1 AND target_type='installation' ORDER BY occurred_at,chain_sequence",
+        [TENANT]);
+      assert.equal(activity.rows.filter(row => row.actor_type === "service").length, 6,
+        "every automatic pause, resume, and cap is saved as service activity");
+      assert.deepEqual(activity.rows.map(row => row.safe_metadata.automaticAction), [
+        "machine_health_pause", "machine_health_resume", "machine_health_pause", "machine_health_resume",
+        "machine_health_pause", "machine_health_cap",
+      ]);
+
+      // A later owner action is a newer revision and cannot be restarted by a
+      // healthy supervisor. This covers an owner Pause during an auto-pause.
+      await service.set(ownerIdentity(), { mode: "paused", reason: "owner is checking the Mac" });
+      const ownerPause = await service.read(ownerIdentity());
+      const skipped = await port.resumeAfterMachineHealth({ reasonCode: "machine_health_recovered",
+        observedAt: new Date().toISOString() });
+      assert.equal(skipped.state, "not_automatic");
+      const afterOwnerPause = await service.read(ownerIdentity());
+      assert.equal(afterOwnerPause.revision, ownerPause.revision);
+      assert.equal(afterOwnerPause.reason, "owner is checking the Mac");
+      assert.deepEqual(Object.keys(port), ["pauseNewStarts", "resumeAfterMachineHealth"]);
     } finally { await close(); await admin.end(); }
   }, { port: PORTS[2], allowedPorts: PORTS, boundMs: 180_000 });
 });
@@ -528,7 +575,7 @@ test("an owner grant without operations.set_mode does not authorize a pause",
       assert.equal((await admin.query(
         "SELECT count(*)::int AS n FROM installation_operations_mode_revisions")).rows[0]!.n, 0);
     } finally { await close(); await admin.end(); }
-  }, { port: 58712, allowedPorts: PORTS, boundMs: 180_000 });
+  }, { port: PORTS[2], allowedPorts: PORTS, boundMs: 180_000 });
 });
 
 test("two live owners refuse the installation pause rather than choosing one",

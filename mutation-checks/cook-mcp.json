@@ -1,6 +1,146 @@
 [
   {
     "file": "scripts/fleet/connector.mjs",
+    "find": "  if (platform === \"darwin\" && pathContains(dataVolume, workspaceRoot))\n    throw new Error(\"The workspace cannot be inside the macOS data-volume alias.\");",
+    "replace": "  if (false)\n    throw new Error(\"The workspace cannot be inside the macOS data-volume alias.\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"one identity boundary\" tests/fleet-mcp-server.test.ts",
+    "why": "the macOS data-volume alias can never become an attachment workspace"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  if (homeChain.some(info => sameFilesystemIdentity(workspaceChain[0], info)))\n    throw new Error(\"The workspace cannot be the filesystem root, your home folder, or an ancestor of your home folder.\");",
+    "replace": "  if (false)\n    throw new Error(\"The workspace cannot be the filesystem root, your home folder, or an ancestor of your home folder.\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"one identity boundary\" tests/fleet-mcp-server.test.ts",
+    "why": "filesystem identity refuses root home and every ancestor of home"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      if (configChain.some(info => sameFilesystemIdentity(workspaceChain[0], info))\n        || workspaceChain.some(info => sameFilesystemIdentity(configChain[0], info)))",
+    "replace": "      if (false)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"one identity boundary\" tests/fleet-mcp-server.test.ts",
+    "why": "workspace and credential-folder ancestry stay separate by filesystem identity"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  try { await validateWorkspaceTarget(paths, homeDir, platform); }",
+    "replace": "  try { await Promise.resolve(); }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --test --test-name-pattern \"install refuses unsafe workspace roots\" tests/fleet-connector-install.test.mjs",
+    "why": "connector installation applies the shared workspace boundary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const base = await validateWorkspaceBoundary(root, { configPath });",
+    "replace": "  const base = await realpath(root);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"dedicated explicit workspace\" tests/fleet-mcp-server.test.ts",
+    "why": "every attachment applies the shared workspace boundary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  await validateWorkspaceBoundary(workspaceRoot, { configPath });",
+    "replace": "  await Promise.resolve();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"one identity boundary\" tests/fleet-mcp-server.test.ts",
+    "why": "MCP startup fails before serving an unsafe workspace"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK",
+    "replace": "fsConstants.O_RDONLY | fsConstants.O_NONBLOCK",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"forced swaps\" tests/fleet-mcp-server.test.ts",
+    "why": "the opened attachment never follows a swapped final symlink"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK",
+    "replace": "fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"forced swaps\" tests/fleet-mcp-server.test.ts",
+    "why": "opening a swapped FIFO cannot block the MCP server"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (!openedInfo.isFile() || openedInfo.nlink !== 1 || openedInfo.size > MAX_FILE_BYTES)\n      throw new Error(\"Attached files must be single-link regular files of at most 256 KiB.\");",
+    "replace": "    if (false)\n      throw new Error(\"Attached files must be single-link regular files of at most 256 KiB.\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"forced swaps\" tests/fleet-mcp-server.test.ts",
+    "why": "fstat rejects non-files hard links and oversized files before reading"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (length > MAX_FILE_BYTES) throw new Error(\"Attached files must be single-link regular files of at most 256 KiB.\");",
+    "replace": "    if (false) throw new Error(\"Attached files must be single-link regular files of at most 256 KiB.\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"forced swaps\" tests/fleet-mcp-server.test.ts",
+    "why": "a file that grows after fstat is refused at the bounded-read limit"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  return confirmedPath === expectedPath && openedInfo.dev === expectedInfo.dev && openedInfo.ino === expectedInfo.ino\n    && confirmedInfo.dev === openedInfo.dev && confirmedInfo.ino === openedInfo.ino;",
+    "replace": "  return true;",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"identity check refuses\" tests/fleet-mcp-server.test.ts",
+    "why": "attachment identity changes between checks are refused"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (current.depth > depthLimit) throw new Error(\"Attachment JSON nesting is too deep.\");",
+    "replace": "    if (false) throw new Error(\"Attachment JSON nesting is too deep.\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"credential-like paths\" tests/fleet-mcp-server.test.ts",
+    "why": "deep attachment JSON is refused without recursive stack exhaustion"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    if (!(error instanceof SyntaxError)) throw new Error(\"The attachment appears to contain unsafe JSON and was refused.\");",
+    "replace": "    if (false) throw new Error(\"The attachment appears to contain unsafe JSON and was refused.\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"credential-like paths\" tests/fleet-mcp-server.test.ts",
+    "why": "only JSON syntax errors are treated as non-JSON and scanner errors fail closed"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    || [\".credentials.json\", \"service-account.json\", \"application_default_credentials.json\", \"token.json\",\n      \"secrets.json\"].includes(name);",
+    "replace": "    || false;",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"credential-like paths\" tests/fleet-mcp-server.test.ts",
+    "why": "known credential filenames are refused even when their fixture content is ordinary"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "/\\b(?:gh[opsu]_|github_pat_|sk_(?:live|test)_|sk-(?:ant-)?|xox[abprs]-|npm_)[a-z0-9_-]{12,}/iu,",
+    "replace": "/\\b(?:ghp_|github_pat_|sk_(?:live|test)_)[a-z0-9_-]{12,}/iu,",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"shared redaction patterns\" tests/fleet-mcp-server.test.ts",
+    "why": "connector attachment scanning refuses common provider token prefixes"
+  },
+  {
+    "file": "src/security/redaction.ts",
+    "find": "/\\b(?:gh[opsu]_|github_pat_|sk_(?:live|test)_|sk-(?:ant-)?|xox[abprs]-|npm_)[a-z0-9_-]{12,}/i,",
+    "replace": "/\\b(?:ghp_|github_pat_|sk_(?:live|test)_)[a-z0-9_-]{12,}/i,",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"shared redaction patterns\" tests/fleet-mcp-server.test.ts",
+    "why": "shared redaction refuses the same common provider token prefixes"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "|session[_-]?cookie|(?:^|[_-])(?:token|auth|credential)(?:$|[_-]))/iu;",
+    "replace": "|session[_-]?cookie)/iu;",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"shared redaction patterns\" tests/fleet-mcp-server.test.ts",
+    "why": "connector JSON scanning treats token auth and credential keys as secret-bearing"
+  },
+  {
+    "file": "src/security/redaction.ts",
+    "find": "|session[_-]?cookie|(?:^|[_-])(?:token|auth|credential)(?:$|[_-]))/i;",
+    "replace": "|session[_-]?cookie)/i;",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"shared redaction patterns\" tests/fleet-mcp-server.test.ts",
+    "why": "shared redaction treats token auth and credential keys as secret-bearing"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  try { target = await realpath(resolve(base, relativePath)); }\n  catch { throw attachmentCheckError(); }",
+    "replace": "  try { target = await realpath(resolve(base, relativePath)); }\n  catch (error) { throw error; }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"credential-like paths\" tests/fleet-mcp-server.test.ts",
+    "why": "filesystem errors returned to agents never disclose absolute paths"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "      for (const path of paths) files.push(await workspaceFile(currentDirectory, path, { configPath }));",
+    "replace": "      for (const path of paths) files.push(await workspaceFile(currentDirectory, path));",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"CLI result --file\" tests/fleet-mcp-server.test.ts",
+    "why": "human CLI attachments enforce separation from the selected credential folder"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
     "find": "          await client.mcpCall(callId, tool ? name : \"unsupported\");",
     "replace": "          await Promise.resolve();",
     "test": "node --import tsx --test --test-name-pattern \"audits every call first\" tests/fleet-mcp-server.test.ts",
@@ -22,15 +162,15 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "if (target !== base && !target.startsWith(base + sep)) throw",
+    "find": "if (!inside(base, target)) throw",
     "replace": "if (false) throw",
     "test": "node --import tsx --test --test-name-pattern \"cannot traverse\" tests/fleet-mcp-server.test.ts",
     "why": "an MCP result file cannot escape the configured workspace"
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": " || path === \"/fleet/v1/mcp/calls\"\n      || claimRoute.test(path)",
-    "replace": "\n      || claimRoute.test(path)",
+    "find": " || path === \"/fleet/v1/mcp/calls\"\n      || claimRoute.test(path) || proposalRoute.test(path)",
+    "replace": "\n      || claimRoute.test(path) || proposalRoute.test(path)",
     "test": "node --import tsx --test --test-name-pattern \"MCP server: exposes\" tests/fleet-connector.test.ts",
     "why": "the authenticated gateway audit route remains reachable"
   },
@@ -64,8 +204,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": "if (active >= maxConcurrent || !tick(state, now, perIp[kind]) || !tick(global[kind], now, globalLimit[kind]))",
-    "replace": "if (!tick(global[kind], now, globalLimit[kind]) || !tick(state, now, perIp[kind]) || active >= maxConcurrent)",
+    "find": "if (!charge(sourceBudgets(kind, address, network, now), now)) return fleetFail(\"rate_limited\");",
+    "replace": "if (!charge([{ state: global[kind], limit: globalLimit[kind] }], now)) return fleetFail(\"rate_limited\");",
     "test": "node --import tsx --test --test-name-pattern \"one noisy\" tests/fleet-connector.test.ts",
     "why": "source-local refusals cannot consume the shared enrollment or authentication budget"
   },

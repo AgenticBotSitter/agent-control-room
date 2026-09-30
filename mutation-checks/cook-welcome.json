@@ -1,0 +1,44 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "          try { await checkWorkingAgreement(); }",
+    "replace": "          try { await Promise.resolve(); }",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"MCP checks welcome rules lazily\" tests/fleet-mcp-server.test.ts",
+    "why": "the first MCP tool call checks connector-owned welcome rules before any gateway operation"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "        if (databaseUnavailable(error)) {",
+    "replace": "        if (false) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"database pressure during authentication\" tests/fleet-connector.test.ts",
+    "why": "bounded database pressure is returned as retryable unavailable even during authentication"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "            && now() - waitStartedAt >= MIN_LONG_POLL_MS;",
+    "replace": "            && true;",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"implausibly fast empty wait\" tests/fleet-mcp-server.test.ts",
+    "why": "an immediate empty wait cannot make the connector spin without a local sleep"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    const ceiling = Math.min(MAX_RUN_FAILURE_BACKOFF_MS, pollMs * (2 ** Math.min(Math.max(0, failures - 1), 8)));",
+    "replace": "    const ceiling = pollMs;",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"exponentially backs off\" tests/fleet-mcp-server.test.ts",
+    "why": "consecutive run-loop failures back off exponentially and stop growing at sixty seconds"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "const TRANSIENT_CODES = new Set([\"rate_limited\", \"unavailable\", \"http_502\", \"http_503\", \"http_504\"]);",
+    "replace": "const TRANSIENT_CODES = new Set([\"rate_limited\", \"http_502\", \"http_503\", \"http_504\"]);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"result reporting retries\" tests/fleet-mcp-server.test.ts",
+    "why": "a 503 unavailable result report is retried with the same idempotency key after backoff"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const client = lazyRecoveredMcpClient({ configPath, fetcher });",
+    "replace": "  const client = createClient(await recoverPending({ configPath, fetcher }), fetcher);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"pending credential rotation\" tests/fleet-mcp-server.test.ts",
+    "why": "MCP initialize performs no gateway request even when credential recovery is pending"
+  }
+]

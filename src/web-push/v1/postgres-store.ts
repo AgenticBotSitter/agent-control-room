@@ -26,9 +26,34 @@ export class PostgresOwnerPushStoreV1 implements OwnerPushStoreV1 {
       p256dh: row.p256dh, auth: row.auth, expiresAt: iso(row.expires_at) }));
   }
   async reserve(tenantId: string, subscriptionId: string, dedupeKey: string, now: string) {
-    return (await this.db.query(`INSERT INTO owner_web_push_deliveries(tenant_id,subscription_id,dedupe_key,state,attempted_at)
-      VALUES($1,$2,$3,'reserved',$4) ON CONFLICT(tenant_id,subscription_id,dedupe_key) DO NOTHING RETURNING subscription_id`,
-    [tenantId, subscriptionId, dedupeKey, now])).rows.length === 1;
+    // The three outcomes in one statement, so the answer is a single atomic
+    // decision rather than a read-then-write that a concurrent sender could
+    // interleave with. A prior 'failed' row is RE-SENDABLE: it records that a
+    // send was attempted, not that one landed, and treating it as delivered is
+    // how a broken push endpoint reports success while the owner hears nothing.
+    //
+    // The upsert touches ONLY `state`, `status_code` and `completed_at` -- the
+    // three columns 0174's private-web UPDATE grant covers. An earlier version
+    // also rewrote `attempted_at`, which that role cannot UPDATE, so every send
+    // failed with 42501 and the phone was never rung at all. The grant, not the
+    // code, is the authority here, and this statement is written to fit inside
+    // it exactly.
+    const result = await this.db.query<{ state: string }>(`INSERT INTO owner_web_push_deliveries
+        (tenant_id,subscription_id,dedupe_key,state,attempted_at)
+      VALUES($1,$2,$3,'reserved',$4)
+      ON CONFLICT(tenant_id,subscription_id,dedupe_key) DO UPDATE
+        SET state='reserved',status_code=NULL,completed_at=NULL
+        WHERE owner_web_push_deliveries.state='failed'
+      RETURNING state`,
+    [tenantId, subscriptionId, dedupeKey, now]);
+    if (result.rows.length === 1) return "reserved" as const;
+    // No row was taken and none was upgraded: the existing row is a terminal
+    // 'delivered', so this event is already on this browser.
+    const existing = (await this.db.query<{ state: string }>(
+      "SELECT state FROM owner_web_push_deliveries WHERE tenant_id=$1 AND subscription_id=$2 AND dedupe_key=$3",
+      [tenantId, subscriptionId, dedupeKey])).rows[0];
+    if (existing?.state === "delivered") return "already_delivered" as const;
+    return "previous_attempt_failed" as const;
   }
   async delivered(tenantId: string, subscriptionId: string, dedupeKey: string, now: string) {
     await this.db.query(`UPDATE owner_web_push_deliveries SET state='delivered',completed_at=$4,status_code=201

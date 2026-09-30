@@ -25,9 +25,13 @@ import { verifyPrivateDatabase } from "../src/web/v1/private-database-preflight"
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { ResultFileStoreV1, resultFileStorageKeyV1 } from "../src/artifacts/v1/result-file-store";
 
-// The assigned lane: 59310-59319. Any other port is refused by the kit.
-const PORTS = Array.from({ length: 10 }, (_, index) => 59310 + index);
+// This file's assigned lane, ten ports wide. It follows the env override rather
+// than a separate literal, so a lane that moves the base (as this fix round
+// does) moves the WHOLE block with it. With a hardcoded block and an overridden
+// base, the kit refused the run as `attack_kit_port_outside_block` — a
+// misleading failure that looked like a code defect and was a lane bug.
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59310);
+const PORTS = Array.from({ length: 10 }, (_, index) => PORT + index);
 const PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => { if (PG) { required += 1; return undefined; } return { skip: realPostgresSkipMessage() }; };
