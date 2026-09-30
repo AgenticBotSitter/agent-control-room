@@ -40,7 +40,10 @@ import { now as webNow, request as webRequest, trust as webTrust } from "./helpe
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BIN = process.env.PG_BIN ?? "/opt/homebrew/opt/postgresql@17/bin";
-const PORT = Number(process.env.S7B_PG_PORT ?? 58700);
+// The shared disposable-cluster port, as the other real-PostgreSQL lanes use
+// (linear-pipeline-postgres, project-coordination-web-grants-postgres). A
+// dedicated override stays for running this lane on its own.
+const PORT = Number(process.env.S7B_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58700);
 const exec = promisify(execFile);
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (set PG_BIN)" };
