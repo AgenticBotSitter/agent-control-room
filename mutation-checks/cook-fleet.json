@@ -1,9 +1,9 @@
 [
   {
-    "file": "db/migrations/0140_fleet_worker_connector.sql",
-    "find": "IF NEW.state='consumed' AND (pg_catalog.statement_timestamp()>=OLD.expires_at",
-    "replace": "IF NEW.state='consumed' AND (false",
-    "test": "node --import tsx --test --test-name-pattern \"expired or cancelled\" tests/fleet-connector.test.ts",
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "    OR NOT EXISTS (SELECT 1 FROM public.fleet_enrollment_codes c\n      WHERE c.tenant_id=NEW.tenant_id AND c.id=NEW.code_id AND c.worker_id=NEW.worker_id\n        AND c.state='issued' AND c.expires_at>pg_catalog.statement_timestamp()",
+    "replace": "    OR NOT EXISTS (SELECT 1 FROM public.fleet_enrollment_codes c\n      WHERE c.tenant_id=NEW.tenant_id AND c.id=NEW.code_id AND c.worker_id=NEW.worker_id\n        AND c.state='issued' AND c.expires_at>'2000-01-01'::timestamptz",
+    "test": "node --import tsx --test --test-name-pattern \"one-command join|expired or cancelled\" tests/fleet-connector.test.ts",
     "why": "the database clock refuses an expired enrollment code"
   },
   {
@@ -77,9 +77,9 @@
     "why": "result files over the 1 MiB total are refused"
   },
   {
-    "file": "db/migrations/0140_fleet_worker_connector.sql",
-    "find": "OR worker.project_ids<>NEW.project_ids",
-    "replace": "",
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "      OR worker.project_ids<>NEW.project_ids OR worker.capabilities<>NEW.capabilities\n      OR worker.max_concurrent<>NEW.max_concurrent)) THEN",
+    "replace": "      OR worker.max_concurrent<>NEW.max_concurrent)) THEN",
     "test": "node --import tsx --test --test-name-pattern \"codes cannot be widened\" tests/fleet-connector.test.ts",
     "why": "a re-key code cannot widen a worker's project scope"
   },
