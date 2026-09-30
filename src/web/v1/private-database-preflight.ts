@@ -210,7 +210,12 @@ const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
   "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",
   "control_job_dependencies", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents",
-  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
+  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding",
+  // 0211's combine-readiness guard is a BEFORE UPDATE trigger on control_jobs
+  // that runs as the INVOKER, and this role holds UPDATE on control_jobs.state,
+  // so without these two reads the guard is unevaluable and every news job is
+  // refused 42501 as it starts. Granted by db/migrations/0238.
+  "control_task_declared_inputs", "control_job_artifact_inputs"];
 const newsCoordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts",
   "control_leases", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents", "control_approval_consumptions",
   "control_policy_decisions", "control_news_feed_plans", "audit_events", "control_audit_chain_heads"]);
@@ -234,7 +239,13 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_project_coordination_operation_jobs", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_task_model_selections",
   "control_task_declared_scopes", "control_assignment_lease_scopes", "work_batches", "work_batch_items",
-  "work_batch_effective_queue_admissions", "control_project_event_stream_heads", "control_project_events"];
+  "work_batch_effective_queue_admissions", "control_project_event_stream_heads", "control_project_events",
+  // 0211's combine-readiness guard is a BEFORE UPDATE trigger on control_jobs
+  // that runs as the INVOKER. The coordinator holds UPDATE on control_jobs.state
+  // -- it is the supervisor's own lease-expiry move -- so without these two
+  // reads reconcileStalled fails 42501 and every stalled task is stranded.
+  // Granted by db/migrations/0238.
+  "control_task_declared_inputs", "control_job_artifact_inputs"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",

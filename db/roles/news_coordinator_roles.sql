@@ -29,4 +29,13 @@ GRANT SELECT ON work_intake_tenant_binding TO control_room_news_coordinator;
 -- The 0156 claim guard reads the installation operations mode as the inserting
 -- login; without this every news attempt is refused, running included.
 GRANT SELECT ON installation_operations_mode_revisions TO control_room_news_coordinator;
+-- Read-only, and only so 0211's combine-readiness guard on control_jobs is
+-- satisfiable. That guard is a BEFORE UPDATE trigger running as the INVOKER,
+-- and this role holds `UPDATE (state, version, payload, updated_at) ON
+-- control_jobs`, so without this read every news job would be refused 42501 on
+-- its own start transition. 0238 converges an already-provisioned installation
+-- onto the same ACL. A declared input is the owner's at approval and a binding
+-- is the accept path's; a feed runner writes neither.
+GRANT SELECT ON control_task_declared_inputs, control_job_artifact_inputs
+  TO control_room_news_coordinator;
 COMMIT;
