@@ -188,9 +188,12 @@ test("the executable down migration refuses records and removes every owned obje
   // Every policy that reads the intake binding must be dropped first, newest
   // migration first: 0155's operations-mode tenant policy, then the
   // unattended-advance one from 0109, then the build-publication one from 0108.
+  // 0110 adds a table with a foreign key onto work_batches, so its down must
+  // run before 0093's down can drop that table.
   await empty.exec(await readFile("db/down/0155_installation_operations_modes.sql", "utf8"));
   await empty.exec(await readFile("db/down/0109_pipeline_unattended_advance.sql", "utf8"));
   await empty.exec(await readFile("db/down/0108_pipeline_build_publications.sql", "utf8"));
+  await empty.exec(await readFile("db/down/0110_work_batch_intake_flag_dismissals.sql", "utf8"));
   await empty.exec(queueDown); await empty.exec(ownerDown); await empty.exec(down);
   const objects = await empty.query<{ batches: string | null; revisions: string | null; first_guard: string | null; second_guard: string | null }>(
     `SELECT to_regclass('work_batches')::text batches,to_regclass('work_batch_revisions')::text revisions,
