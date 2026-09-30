@@ -121,6 +121,39 @@ const noFollow = constants.O_NOFOLLOW ?? 0;
 const nonBlock = constants.O_NONBLOCK ?? 0;
 
 /**
+ * `O_EXLOCK` — an advisory lock the KERNEL takes as part of the open and
+ * releases when the descriptor is closed or, crucially, when the holding
+ * process dies: a crash, a `SIGKILL`, a power cut, a login window closing.
+ *
+ * Node's `fs.constants` does not export it and neither does `node:constants`, so
+ * the value is spelled out. It is `O_EXLOCK` in `<sys/fcntl.h>` and 0x20 on every
+ * BSD this build targets; the Mac is the only supported host for this store
+ * (`validPrivateMode` and `kern.boottime` say the same thing).
+ *
+ * THIS IS WHAT MAKES THE LOCK MEAN, and it is the review's B1. The previous
+ * build decided whether a leftover lock was abandoned by comparing the stamp
+ * inside it with `ps -o lstart=`, which is a guess: it has to get the writer's
+ * start second right, and for any writer that had been alive for more than a
+ * second the stamp recorded the time of the WRITE rather than the start of the
+ * PROCESS, so every live writer read as a recycled pid and a second opener
+ * deleted its lock and its half-written file mid-upload. A kernel lock has no
+ * such arithmetic: the kernel either hands it over (nobody holds it, so the
+ * holder is gone — not assumed, released) or it does not (`EAGAIN`, a live
+ * process holds it). Measured on this host before it was used: same process
+ * `EAGAIN` (so a second store instance in one process cannot steal its own
+ * live writer's lock), another live process `EAGAIN`, `EAGAIN` after that
+ * process is `SIGKILL`ed, and `ELOOP` still refusing a symlink under
+ * `O_NOFOLLOW`.
+ *
+ * The consequence the reviewer asked for follows directly: a takeover needs no
+ * stamp at all, so a lock is cleared ONLY when the kernel released it. There is
+ * no empty-lock window to re-examine either — a writer that has created the
+ * name but not yet written to it already holds the kernel lock, from the same
+ * `open` call, so an EMPTY lock with a live writer is a live lock.
+ */
+const exclusiveLock = 0x20;
+
+/**
  * This BOOT's identity, read once per process.
  *
  * The review's S1, third case, and it is the one that matters on a real Mac. A
@@ -157,76 +190,48 @@ function currentBootIdentity(): string | undefined {
 let bootIdentityForTest: (() => string | undefined) | undefined;
 const bootOf = () => (bootIdentityForTest ?? currentBootIdentity)();
 
-/** The stamp a live writer leaves in its own lock: the boot identity when this
- * process can read one, then its pid, then the first second of its own life.
- * The third line is what makes a RECYCLED pid distinguishable from the original
- * — see `processStartedAtSeconds` below. */
+/** When THIS process started, in whole seconds, or `undefined` if it cannot ask.
+ * Read once, because a process's start time never changes.
+ *
+ * The review's B1, and the line is worth keeping honest rather than deleting:
+ * the previous build wrote `Math.floor(Date.now() / 1000)` here, which is the
+ * second the lock was TAKEN, while the reader compared it with `ps -o lstart=`,
+ * the second the process STARTED. Any writer older than a second therefore read
+ * as a recycled pid, and a second opener deleted a live writer's lock and its
+ * half-written file. `ps` is asked about this process's own pid, so the two
+ * numbers are the same question asked of the same kernel.
+ */
+let ownStartSecond: number | undefined;
+let ownStartSecondRead = false;
+function thisProcessStartedAtSeconds(): number | undefined {
+  if (!ownStartSecondRead) {
+    ownStartSecondRead = true;
+    try {
+      const printed = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(process.pid)], {
+        encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      const at = printed ? Date.parse(printed.replace(/\s+/gu, " ")) : Number.NaN;
+      ownStartSecond = Number.isFinite(at) ? Math.floor(at / 1000) : undefined;
+    } catch { ownStartSecond = undefined; }
+  }
+  return ownStartSecond;
+}
+
+/** What a live writer leaves in its own lock: the boot identity, its pid, and
+ * the second its PROCESS started, for whoever reads the file by hand.
+ *
+ * NOTHING DECIDES ON THESE LINES ANY MORE — the kernel lock does, because the
+ * kernel is the only party that cannot be wrong about who is alive. So
+ * `start:unknown` (a `ps` that would not answer) is written as what it is
+ * rather than filled in with `Date.now()`, which is how the old stamp came to
+ * mean the wrong second. The lines are kept because a leftover on a Mac mini is
+ * something a person may have to read, and "which process was this" is a better
+ * question answered honestly than answered wrongly.
+ */
 function holderStamp(): string {
-  return [bootOf() ?? "boot:unknown", String(process.pid), String(Math.floor(Date.now() / 1000))]
-    .join("\n").trim();
-}
-
-/** A stamp from BEFORE the boot-identity line existed: the part-1 format was
- * `<header>\n<pid>` and nothing more, so a lock carrying only that cannot be
- * attributed to a boot or a start time. It is recognised and judged by liveness
- * alone, which is a strict improvement on treating it as live for ever and never
- * a weakening: a pid that IS running still keeps its lock. */
-function isBarePidStamp(recorded: string): boolean {
-  return recorded.trim().split("\n").filter(part => part.trim().length > 0).length === 2;
-}
-
-/** Liveness, and only liveness. `ESRCH` is the sole proof of death: `EPERM`
- * means the pid exists and belongs to another user, which is as alive as this
- * store needs to know, and which is why the review's pid-1 case read as a live
- * holder.
- *
- * The `EPERM` branch cannot be reached from inside a test process — nothing here
- * can make `process.kill` genuinely return `EPERM`, because that needs a process
- * owned by another user — so the rule it applies is `pidSignalMeansAliveV1`,
- * which is exported and proved directly. Collapsing the two would be a fail-open:
- * a lock held by another user's process cleared, and its staging file with it.
- */
-function pidIsRunning(pid: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return true;  // unparsable: never proven dead
-  try { process.kill(pid, 0); return true; }
-  catch (error) { return pidSignalMeansAliveV1((error as NodeJS.ErrnoException).code); }
-}
-
-/** Whether a failed `process.kill(pid, 0)` still means the process is ALIVE.
- *
- * `ESRCH` is the only code that proves death. `EPERM` means the pid exists and
- * belongs to another user — a live process, and the exact case the review hit
- * from the other side: a lock naming pid 1 read as held for ever because
- * signalling it gives EPERM. Split out and exported so the rule is a proved
- * property rather than an untested line: no test running as this user can make
- * `process.kill` genuinely return EPERM, so without this seam a fail-open that
- * collapsed the two would pass the whole lane.
- */
-export function pidSignalMeansAliveV1(code: string | undefined): boolean {
-  return code !== "ESRCH";
-}
-
-/** When the given pid started, in whole seconds, or `undefined` if this process
- * cannot ask. On macOS that is `ps -o lstart=`, which is the only per-process
- * start time available without a native module — and it is what makes a
- * RECYCLED pid provable: a pid inside one boot is reused only after its original
- * process is reaped, and the new process's start time cannot be the old one. */
-const processStartTimes: { pid: number; second: number }[] = [];
-function processStartedAtSeconds(pid: number): number | undefined {
-  const remembered = processStartTimes.find(entry => entry.pid === pid);
-  if (remembered) return remembered.second;
-  if (processStartTimes.length >= 64) processStartTimes.length = 0;
-  try {
-    const printed = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
-      encoding: "utf8", timeout: 2_000,
-    }).trim();
-    if (!printed) return undefined;
-    const at = Date.parse(`${printed}`.replace(/\s+/gu, " "));
-    if (!Number.isFinite(at)) return undefined;
-    const second = Math.floor(at / 1000);
-    processStartTimes.push({ pid, second });
-    return second;
-  } catch { return undefined; }
+  const started = thisProcessStartedAtSeconds();
+  return [bootOf() ?? "boot:unknown", String(process.pid),
+    started === undefined ? "start:unknown" : String(started)].join("\n").trim();
 }
 
 /** This boot's identity, for a caller that has to stamp a lock the way a writer
@@ -235,12 +240,6 @@ function processStartedAtSeconds(pid: number): number | undefined {
 export function resultFileStoreBootIdentityV1(): string { return bootOf() ?? "boot:unknown"; }
 
 class DeadlineError extends Error {}
-
-/** How long an EMPTY lock is re-examined before it is called abandoned. Long
- * enough that a writer stalled for a scheduling quantum still stamps inside the
- * window, short enough that the owner is not left waiting to find out whether
- * their Mac still works. */
-const emptyLockRecheckMs = 150;
 
 /**
  * The one derivation of a result file's storage key.
@@ -415,39 +414,44 @@ export class ResultFileStoreV1 {
    *     mistaken for a stored file. Deleting one destroys no complete file: a
    *     `link()` that succeeded left a complete target whose digest re-proves,
    *     and one that did not left nothing to keep.
-   *   * The lock records the writer's PROCESS ID while it is held, and a pid is
-   *     proof of liveness that does not depend on this process. `kill(pid, 0)`
-   *     succeeds for a live process and fails with ESRCH for a dead one, and a
-   *     recycled pid is the conservative direction: the store reports
-   *     `store_ambiguous` (a refusal, never a wrong delete) rather than clearing.
+   *   * The write lock is an `O_EXLOCK` lock, so the KERNEL is what answers
+   *     "is anybody still writing?". The store opened it and the kernel holds it
+   *     for exactly as long as the writing process lives, and releases it at the
+   *     instant that process dies — a crash, a signal, a power cut, a login
+   *     window closing. Nothing in the file is parsed, no pid is signalled and no
+   *     clock is compared, which is what removed the two ways the previous build
+   *     could delete a live writer's work (see `namedHolderIsAlive`).
    *
    * The rules, in the order they are applied:
    *
-   *   1. A lock file whose recorded pid is ALIVE is left exactly as it is, and
-   *      the store still opens — a second process publishing through another
-   *      store instance while this one starts must not stop this one starting.
-   *      Every write that process attempts already fails on its own O_EXCL
-   *      create, which is the store's existing mutual exclusion and is not
-   *      weakened by a second reader of the lock.
-   *   2. A lock file whose recorded pid is DEAD is removed: the writer cannot
-   *      return, and the file has no other purpose than the exclusion it no
-   *      longer provides.
+   *   1. A lock the kernel still has LOCKED is left exactly as it is, and the
+   *      store still opens — a second process publishing through another store
+   *      instance while this one starts must not stop this one starting. Every
+   *      write that process attempts already fails on its own O_EXCL create,
+   *      which is the store's existing mutual exclusion and is not weakened by a
+   *      second reader of the lock.
+   *   2. A lock the kernel has RELEASED is provably, not presumably, abandoned:
+   *      the writer cannot come back, and the file has no other purpose than the
+   *      exclusion it no longer provides. The descriptor that proved it is HELD
+   *      across the removal, so a writer that appears in that window finds a
+   *      locked name and a refusal rather than a name it may claim.
    *   3. Once no live writer holds the lock, the lock is removed FIRST and the
    *      `pending-*` files after it, so the directory a staging file is judged in
    *      genuinely has no lock in it. A staging file seen while a live lock
    *      exists belongs to that writer and is left alone.
-   *   4. A lock file this store cannot classify — no pid recorded, a pid that is
-   *      not a number, a lock that is a directory or a symlink or multi-linked —
-   *      is a refusal, and nothing is removed. So is a name that is neither a
-   *      bookkeeping name nor a result name, which is unchanged behaviour.
+   *   4. A bookkeeping name this store cannot account for — a directory, a
+   *      symlink, a multi-linked file, a world-writable one, or one this store
+   *      cannot open to ask the kernel about — is a refusal, and nothing is
+   *      removed. So is a name that is neither a bookkeeping name nor a result
+   *      name, which is unchanged behaviour.
    *
    * Recovery is itself serialised by an O_EXCL recovery lock, so two openers
    * cannot both decide about the same leftovers, and it deletes only names this
-   * store itself created. That lock is subject to the SAME liveness test as the
+   * store itself created. That lock is subject to the SAME kernel test as the
    * write lock: a leftover from a recovery that was itself interrupted is
    * removed and the recovery proceeds, because a permanent lock-out is the one
-   * outcome this function must never produce. A recovery lock with a LIVE holder
-   * is a concurrent recovery and is left alone. It never repairs, never
+   * outcome this function must never produce. A recovery lock the kernel still
+   * holds is a concurrent recovery and is left alone. It never repairs, never
    * overwrites and never touches a `<hex>.crbf` result file.
    */
   private async recoverAbandonedWriterEntries(operation: Operation): Promise<void> {
@@ -456,21 +460,38 @@ export class ResultFileStoreV1 {
     let recovery: FileHandle | undefined;
     try {
       recovery = await bounded(operation, () => open(recoveryPathOf(this.root),
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), () => {});
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | exclusiveLock | noFollow, 0o600),
+      () => {});
     } catch (error) {
-      // A recovery lock already exists. If its holder is DEAD this is a recovery
+      // A recovery lock already exists. If nobody holds it, this is a recovery
       // that was itself interrupted, and refusing here would reproduce exactly
       // the permanent lock-out this function exists to end: the owner could
       // never start a task again, because the only thing standing in the way
-      // would be this function. So the same liveness test that governs the write
-      // lock governs this one: a dead holder's name is removed and the recovery
-      // proceeds; a LIVE holder is a concurrent recovery, which is left alone.
+      // would be this function. So the same kernel test that governs the write
+      // lock governs this one: a name the kernel has released is removed and the
+      // recovery proceeds; a name the kernel still has locked is a concurrent
+      // recovery, which is left alone.
+      //
+      // Taking it over is two steps and both are needed: the name is removed, and
+      // then the SAME open that creates it takes the lock again. Between the two,
+      // another opener can win the create — and then this one gets EEXIST back
+      // and refuses, which is the correct answer for two recoveries and not a
+      // silent double cleanup.
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (await this.namedHolderIsAlive(operation, recoveryName))
+      if (!await this.takeOverAbandonedName(operation, recoveryName))
         throw new ResultFileStoreError("store_ambiguous");
-      await this.removeProvenAbandoned(operation, recoveryName);
-      recovery = await bounded(operation, () => open(recoveryPathOf(this.root),
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), () => {});
+      try {
+        recovery = await bounded(operation, () => open(recoveryPathOf(this.root),
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | exclusiveLock | noFollow, 0o600),
+        () => {});
+      } catch (raced) {
+        // Another opener took the recovery between the removal and this create.
+        // That is a concurrent recovery, and the honest answer to it is the same
+        // one a live holder gets: leave it to whoever is doing the work.
+        if ((raced as NodeJS.ErrnoException).code === "EEXIST")
+          throw new ResultFileStoreError("store_ambiguous");
+        throw raced;
+      }
     }
     try {
       await bounded(operation, async () => {
@@ -482,8 +503,8 @@ export class ResultFileStoreV1 {
       if (current.includes(lockName) && await this.namedHolderIsAlive(operation, lockName)) {
         // A live writer is publishing through this same directory. Its lock and
         // its pending file are its own, and this store opens anyway: the write
-        // path is already mutually excluded by O_EXCL, and refusing to open here
-        // would reintroduce the lock-out this recovery exists to remove.
+        // path is already mutually excluded by the kernel, and refusing to open
+        // here would reintroduce the lock-out this recovery exists to remove.
         return;
       }
       // No live writer. Everything this store wrote for its own bookkeeping and
@@ -492,11 +513,25 @@ export class ResultFileStoreV1 {
       // lock in it. The ordering matters: a reader of this function's rule 3
       // ("a pending file is removed only when no lock exists") would be reading
       // a stale flag if the lock were removed after.
+      //
+      // The lock is taken over with the proof, not after it: `takeOverAbandonedName`
+      // holds the descriptor that proved it free until the name is unlinked, so
+      // the writer whose lock this is cannot appear between the two and lose it.
+      // That is the review's B1, and this is the line that used to do the deleting.
+      if (current.includes(lockName) && !await this.takeOverAbandonedName(operation, lockName))
+        return;                                   // a writer claimed it in between
       for (const entry of current) {
+        if (entry === lockName) continue;          // already taken over above
         if (isStoreBookkeeping(entry)) await this.removeProvenAbandoned(operation, entry);
       }
       await this.syncRoot(operation);
     } finally {
+      // The recovery's OWN lock is retired the same way it was taken: the
+      // descriptor that holds it is still open, so nothing can create the name
+      // and lock it in the gap between the close and the unlink, and nothing can
+      // be unlinked by somebody else in the gap either. Close first, then unlink
+      // the now-unlocked name — there is no other opener inside this critical
+      // section, because the recovery lock is what kept them out.
       await recovery.close().catch(() => {});
       await bounded(operation, () => unlink(recoveryPathOf(this.root)).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;
@@ -505,122 +540,145 @@ export class ResultFileStoreV1 {
   }
 
   /**
-   * True when one of the store's own bookkeeping files records a process that is
-   * STILL running, and false only when this store can PROVE otherwise.
+   * True when one of the store's own bookkeeping files is HELD — right now, by
+   * the kernel — and false only when the kernel says nobody holds it.
    *
-   * The proof, in order, and every step of it is evidence rather than a guess:
+   * There is no stamp to interpret, no pid to signal, no boot to compare and no
+   * timer to wait on. The whole question is one `open`, and the kernel answers
+   * it in one of two ways:
    *
-   *   * the file is gone (ENOENT) -> false. Nothing holds it.
-   *   * it is not a plain private regular file -> true. A directory or a symlink
-   *     at this name is not this store's file, and the store refuses rather than
-   *     removing something it does not own.
-   *   * it records a BOOT identity and that boot is not this boot -> false. This
-   *     is the review's S1: a pid from a previous boot is not a live process
-   *     now, however plausible it looks, and no amount of restarting the app
-   *     would ever clear it.
-   *   * it records a pid and a START TIME, and either the boot differs or the
-   *     start time differs from that pid's real start time -> false. This is the
-   *     recycled-pid case within one boot: the pid is alive but it is somebody
-   *     else's process, and the lock is a dead writer's.
-   *   * it records a pid and that pid is running -> true.
-   *   * it records a bare pid with no boot and no start time -> the part-1 format
-   *     (S1's second case). Judged by liveness alone, and repaired when the pid
-   *     is dead; see below.
-   *   * anything else -> true. An EMPTY lock is a writer between the O_EXCL
-   *     create and the stamp write, a window of microseconds that is real.
+   *   * `EAGAIN` (with `O_EXLOCK | O_NONBLOCK`) — a live process holds this file
+   *     locked. That is a live writer, whether it is mid-upload, between its
+   *     create and its first write, or a writer whose process has been alive for
+   *     a week. Nothing distinguishes those cases, and nothing has to.
+   *   * success — nobody holds it, so the holder is GONE. Not assumed: the kernel
+   *     dropped the lock at the moment the process died, so the only reader that
+   *     can get this answer is a reader that would have got `EAGAIN` a
+   *     millisecond earlier.
    *
-   * The two repaired cases are the ones that used to lock the owner out for
-   * good, and they are repaired by the SAME rule: a lock whose holder cannot be
-   * proven alive is not proof of a live writer, and a lock that cannot be
-   * classified at all is re-examined once the opener has been running a moment,
-   * which is long past any writer's stamp window and long before a writer that
-   * is genuinely alive would have stopped. See `isProvenAbandoned`.
+   * The two cases the old stamp-based rule got wrong, and what replaces each:
+   *
+   *   * a live writer that had been up for more than a second was read as a
+   *     recycled pid, so a second opener deleted its lock AND its half-written
+   *     file (the review's B1, live, with a raw `ENOENT` escaping the store).
+   *     Now: `EAGAIN`, left alone.
+   *   * an EMPTY lock was a writer in a window of microseconds, so the rule
+   *     re-examined it after 150 ms and deleted it if still empty — which
+   *     deleted a live writer that stalled for longer than the window (the
+   *     review's S-new-4), and, because the timer was `unref`'d, could also
+   *     end the process mid-`create` (B2). Now: the lock is taken by the same
+   *     `open` that creates the name, so an empty lock with a live writer IS a
+   *     live lock and there is no window to wait out.
+   *
+   * What is still decided before the lock is touched, because it is about
+   * WHOSE FILE this is rather than about who is alive: the name must be a plain
+   * private regular file with link count 1. A directory, a symlink or a
+   * multi-linked name at a bookkeeping name is not this store's file, and the
+   * store refuses rather than removing something it does not own.
+   *
+   * `takingOver` is not a flag but a separate method: `takeOverAbandonedName`
+   * holds the probe's descriptor across the unlink. That closes the only window
+   * a kernel lock leaves — between "nobody holds it" and "I unlink it", a writer
+   * could otherwise create and lock the same name and have it deleted from under
+   * itself. A read-only check closes its descriptor immediately, because a check
+   * that held the lock would make every second opener the reason a legitimate
+   * write is refused.
    */
   private async namedHolderIsAlive(operation: Operation, name: string): Promise<boolean> {
     const path = join(this.root, name);
-    let listed: BigIntStats;
-    try { listed = await bounded(operation, () => lstat(path, { bigint: true }), () => {}); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw error;
-    }
+    const listed = await this.lstatOrAbsent(operation, path);
+    if (!listed) return false;
     if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1)) return true;
-    // An EMPTY lock is a writer between the O_EXCL create and the stamp write, or
-    // a crash in exactly that window. It is re-examined ONCE after a short,
-    // bounded wait, which separates the two by observation rather than by
-    // assumption: a live writer stamps within microseconds, so a lock that is
-    // still empty a moment later belongs to a writer that is not coming back.
-    //
-    // The review's S1, first case: an empty lock used to be "assume live" for
-    // ever, and every write was refused `store_ambiguous` — still, after a
-    // restart, because nothing in the app could ever clear it. The wait is
-    // bounded by the caller's own operation deadline, so it cannot outlive the
-    // request, and it is the only wait this class performs.
-    if (listed.size === BigInt(0)) {
-      await new Promise<void>(resolve => {
-        const timer = setTimeout(resolve, emptyLockRecheckMs);
-        if (typeof timer.unref === "function") timer.unref();
-      });
-      return this.emptyLockIsNowStamped(operation, name);
-    }
-    // Read the stamp `O_NOFOLLOW`. A name that passed the shape test above and
-    // is nonetheless a symlink now — a swap between the two — fails here with
-    // ELOOP, and ELOOP is answered as a LIVE holder rather than allowed to
-    // escape as a raw errno. That is the same decision the shape test makes,
-    // made twice on purpose: the second one covers the race the first one
-    // cannot, and a refusal is the only answer either may give.
-    let handle: FileHandle;
-    try {
-      handle = await bounded(operation, () => open(path, constants.O_RDONLY | noFollow), () => {});
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ELOOP") return true;
-      throw error;
-    }
-    let recorded: string;
-    try { recorded = (await bounded(operation, () => handle.readFile("utf8"), () => {})).trim(); }
-    finally { await handle.close().catch(() => {}); }
-    if (isBarePidStamp(recorded)) {
-      const bare = recorded.trim().split("\n").map(part => part.trim())
-        .filter(part => part.length > 0).at(-1)!;
-      return pidIsRunning(Number(bare));
-    }
-    // The stamp is `<header>\n<boot identity>\n<pid>\n<start second>`, and both
-    // the header and the boot identity contain spaces, so nothing is read by
-    // LINE POSITION except the two trailing numbers. The boot identity is
-    // everything between the first newline and the pid, which is why it is
-    // rejoined rather than taken as `lines[0]`.
-    const parts = recorded.split("\n").map(part => part.trim()).filter(part => part.length > 0);
-    if (parts.length < 3) return true;   // a shape this store never wrote: refuse
-    const startedSecond = Number(parts[parts.length - 1]);
-    const pid = Number(parts[parts.length - 2]);
-    const boot = parts.slice(1, parts.length - 2).join("\n");
-    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(startedSecond) || startedSecond <= 0)
-      return true;
-    // A lock from an earlier boot names a different boot, and that alone is proof
-    // its writer is gone. Checked FIRST because it is free and it is the case
-    // that survives every restart.
-    if (boot !== (bootOf() ?? "boot:unknown")) return false;
-    // Same boot. A live writer's start time matches; a recycled pid's does not.
-    const real = processStartedAtSeconds(pid);
-    if (real !== undefined && real > 0 && real !== startedSecond) return false;
-    return pidIsRunning(pid);
+    return this.kernelLockIsHeld(operation, path);
   }
 
-  /** Whether a lock that was EMPTY has since been stamped, which is the proof
-   * that a writer really did hold it. Re-reads the same file rather than
-   * trusting the earlier `lstat`, and a file that has since been removed counts
-   * as "not a live writer" — the holder finished and cleaned up. */
-  private async emptyLockIsNowStamped(operation: Operation, name: string): Promise<boolean> {
+  /**
+   * Removes one bookkeeping name that nobody holds, atomically with the proof.
+   *
+   * The descriptor that proved the name free IS the lock on it, so it is held
+   * from the proof until after the unlink. Without that, a writer that created
+   * the name in the gap would be looking at a file the store then deletes — the
+   * exact failure the kernel lock was adopted to remove, in the one place the
+   * store deletes rather than refuses.
+   *
+   * Returns false (and removes nothing) when the name is held, and throws
+   * `store_ambiguous` when the name is not this store's own file to remove,
+   * which is `removeProvenAbandoned`'s own rule and is deliberately not softened.
+   */
+  private async takeOverAbandonedName(operation: Operation, name: string): Promise<boolean> {
     const path = join(this.root, name);
-    let listed: BigIntStats;
-    try { listed = await bounded(operation, () => lstat(path, { bigint: true }), () => {}); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    const listed = await this.lstatOrAbsent(operation, path);
+    if (!listed) return true;                       // already gone: nothing to do
+    if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1)) return false;
+    let handle: FileHandle;
+    try {
+      handle = await bounded(operation,
+        () => open(path, constants.O_RDWR | exclusiveLock | nonBlock | noFollow), () => {});
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EAGAIN" || code === "EWOULDBLOCK") return false;   // a live holder
+      if (code === "ENOENT" || code === "ELOOP") return false;          // not the file judged
       throw error;
     }
-    if (!listed.isFile() || listed.isSymbolicLink() || listed.nlink !== BigInt(1)) return true;
-    if (listed.size === BigInt(0)) return false;   // still empty: no writer claimed it
-    return this.namedHolderIsAlive(operation, name);
+    // The name is proven free AND this descriptor now owns it. Every later step
+    // happens under that ownership, including the unlink and the re-create.
+    try { await this.removeProvenAbandoned(operation, name); }
+    finally { await handle.close().catch(() => {}); }
+    return true;
+  }
+
+  /** `lstat` as this class judges one of its own names: `undefined` for a name
+   * that is not there, and a refusal for anything that is not a plain file. */
+  private async lstatOrAbsent(operation: Operation, path: string): Promise<BigIntStats | undefined> {
+    try { return await bounded(operation, () => lstat(path, { bigint: true }), () => {}); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  }
+
+  /**
+   * Whether the kernel has this path locked, and the ONLY liveness test in this
+   * class.
+   *
+   * `O_EXLOCK | O_NONBLOCK` is a probe rather than a wait: the store must answer
+   * now, and a blocking open would park an opener behind a writer that is
+   * allowed to take the whole operation timeout.
+   *
+   * `takingOver` keeps the descriptor open and hands it to the caller, which is
+   * the only caller that is about to unlink the name. That is what makes a
+   * take-over race-free: the moment this store proves a lock is free it OWNS it,
+   * so a writer that appears in the next few milliseconds finds `EAGAIN` on its
+   * own `O_EXCL` create rather than a name that is deleted from under it. A
+   * read-only check closes its descriptor immediately, because a check that held
+   * the lock would make every second opener the reason a legitimate write is
+   * refused.
+   *
+   * Every answer is either "held", "free", or a refusal. `ENOENT` and `ELOOP` are
+   * refusals because they mean the name is not the plain private file checked
+   * above — the caller removes nothing on a refusal — and any other errno is
+   * re-thrown rather than read as "free", because a store that cannot ASK must
+   * not answer.
+   *
+   * The probe opens `O_RDWR` because `O_EXLOCK` on a read-only descriptor is
+   * advisory in the BSD sense: measured on this host, a read-only `O_EXLOCK`
+   * open of a file another process holds with a write lock succeeds. Writing is
+   * therefore the only mode that reliably contends, and it changes no bytes
+   * because this descriptor is only ever opened, never written to.
+   */
+  private async kernelLockIsHeld(operation: Operation, path: string): Promise<boolean> {
+    let handle: FileHandle;
+    try {
+      handle = await bounded(operation,
+        () => open(path, constants.O_RDWR | exclusiveLock | nonBlock | noFollow), () => {});
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EAGAIN" || code === "EWOULDBLOCK") return true;
+      if (code === "ENOENT" || code === "ELOOP") return true;   // not the file we judged: hold
+      throw error;
+    }
+    await handle.close().catch(() => {});
+    return false;
   }
 
   /** Unlinks one name the recovery has already proved is this store's own
@@ -713,30 +771,33 @@ export class ResultFileStoreV1 {
     try {
       this.usable(operation);
       await this.assertRootIdentity(operation);
-      // The lock is created O_EXCL, so a second writer cannot proceed. The
-      // create is a MUTUAL EXCLUSION and the store serialises its own writes
-      // behind `this.queue`, so reaching here with the lock present means the
-      // holder is a crashed writer or a live writer in another process. Either
-      // way this operation cannot proceed, and the answer is a store refusal
-      // with a fixed code — never a raw EEXIST, which would leak an errno out
-      // of the store and past its own error contract. The lock is NOT removed
-      // here: clearing it is the opener's job, and only after it has proved no
-      // writer holds it.
+      // The lock is created O_EXCL, so a second writer cannot proceed, and it is
+      // created with `O_EXLOCK`, so the exclusion is the KERNEL's from this
+      // instant — including the window before the stamp below is written, which
+      // is the window the old empty-lock recheck had to guess about and could
+      // get wrong in both directions. Reaching here with the name present means
+      // the holder is a live writer or a name nobody has released yet; either
+      // way this operation cannot proceed, and the answer is a store refusal with
+      // a fixed code — never a raw EEXIST or EAGAIN, which would leak an errno
+      // out of the store and past its own error contract. The lock is NOT
+      // removed here: clearing it is the opener's job, and only after the kernel
+      // has said nobody holds it.
       try {
-        lock = await bounded(operation,
-          () => open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600),
-          mutating);
+        lock = await bounded(operation, () => open(lockPath,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | exclusiveLock | noFollow, 0o600),
+        mutating);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EEXIST")
+        if ((error as NodeJS.ErrnoException).code === "EEXIST"
+          || (error as NodeJS.ErrnoException).code === "EAGAIN")
           throw new ResultFileStoreError("store_ambiguous");
         throw error;
       }
       ownedLock = true;
       mutationStarted = true;
-      // The lock records the writer's process id. That is what lets a later
-      // open prove a leftover is ABANDONED rather than merely old: a pid is
-      // liveness evidence this process does not have to take on trust, and
-      // `kill(pid, 0)` answers it without disturbing the process.
+      // The stamp is for whoever READS this file by hand — on a Mac mini, that
+      // is a person looking at a leftover in Finder. It records this PROCESS's
+      // own start second, and no decision anywhere depends on it: the kernel
+      // holds the exclusion and releases it when this process dies.
       await bounded(operation, async () => {
         await lock!.writeFile(`control-room-result-file-store-write\n${holderStamp()}\n`, "utf8");
       }, mutating);
