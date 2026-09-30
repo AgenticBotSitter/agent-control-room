@@ -76,6 +76,15 @@ function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentO
   if(overrides.tamperStage)stages[1]!.model="tampered";
   return{template,run,stages};
 }
+/** The stage ordinal a pipeline job id names. A pipeline job id is
+ * `job:<source|reentry>:<ordinal>[:<seq>]` for the stage's own job -- a fix
+ * round mints a new one -- or `job:execution:<ordinal>` for the execution job
+ * the planner derives from it. The stage ordinal is the number after the
+ * first kind segment, so the number after the LAST segment only works for the
+ * execution job; that asymmetry is the whole of review finding B1. */
+function ordinalOfJobId(id:string){const segments=id.split(":");
+  const kind=["source","reentry"].includes(segments[1]!)?segments[1]!:"execution";
+  return Number(segments[segments.indexOf(kind)+1]);}
 function job(id:string){const authority:any={projectId:"project:test",allowedExecutor:"worker:one",allowedOperations:["task.execute"],
   credentialRefs:[],filesystemRoots:["/synthetic"],networkPolicy:"none",allowedNetworkDestinations:[],effectPolicy:"none",
   maxRisk:"low",maxDurationSeconds:3600,maxConcurrentEffects:0,expiresAt:iso(3600000),digest:""};authority.digest=computeAuthorityDigest(authority);
@@ -116,10 +125,11 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       :hmacSha256Tag(key,{purpose:"pipeline-installation-allowance/v1",record:allowanceMaterial})};
   const clusters=overrides.dbClusters===undefined?0:overrides.dbClusters;
   const receipts=new Map<string,any>(),loops:any[]=[];
-  // The job chain is the loop count: one row per job a stage has run, including
-  // the job the current advance is about to run (the planner created it first).
-  // The current stage therefore starts with one row, and every re-entry adds one.
-  const loopJobs:any[]=[{stage_ordinal:0}];
+  // The receipt chain is the loop count, as it is in production: one durable
+  // receipt per fix round, and nothing before the first one. A stage therefore
+  // starts with NO receipts (its first attempt is round 0), and every re-entry
+  // adds exactly one.
+  const loopRounds:any[]=[];
   let enabled=true,effects=0,chain=Promise.resolve();
   const consentMaterial={id:"transition:test",tenantId:"tenant:test",projectId:"project:test",pipelineRunId:"pipeline-run:test",
     pipelineTemplateId:rows.template.id,templateVersion:Number(rows.template.version),templateDigest:rows.template.record_digest,
@@ -160,21 +170,33 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     if(sql.includes("active_agent_processes"))return result([{runs_this_hour:String(overrides.runsThisHour??loops.length),
       agent_runs_today:String(overrides.agentRunsToday??0),
       active_agent_processes:String(overrides.activeProcesses??0),spent_microusd:String(overrides.spentMicroUsd??0)}] as T[]);
-    // The exact-receipt replay read, identified by its own predicate. The usage
-    // and history reads name the same tables and are matched above or below.
+    // The receipt reads, most specific first: they share a table, so the order
+    // is what tells them apart. `#stageRound`'s replay read names
+    // `source_job_id`, and the count read is a COUNT -- both would otherwise be
+    // swallowed by the per-stage/per-round lookup below.
+    if(sql.includes("SELECT id FROM pipeline_advance_receipts"))return result([] as T[]);
+    // A REPLAY is resolved by the round that job's own receipt carries, so a
+    // lost response replays rather than opening the next fix round.
+    if(sql.includes("SELECT loop_index FROM pipeline_advance_receipts")&&sql.includes("AND source_job_id=$4")){
+      const prior=loopRounds.find(row=>Number(row.stage_ordinal)===Number(params[2])
+        &&row.source_job_id===String(params[3]));
+      return result((prior?[{loop_index:prior.loop_index}]:[]) as T[]);}
+    // The round a stage is on, as a count of that stage's own receipts.
+    if(sql.includes("COUNT(*)::text count FROM pipeline_advance_receipts")){
+      const ordinal=Number(params[2]);
+      return result([{count:String(loopRounds.filter(row=>Number(row.stage_ordinal)===ordinal).length)}] as T[]);}
+    // The fix rounds that already exist, as the receipt rows the service reads.
+    // `#claimLoopRound` names only the ordinal (it needs the run's whole count)
+    // and `#loopRounds` names the ordinal, the round and the source job, so both
+    // shapes are answered from the same list.
+    if(sql.includes("SELECT stage_ordinal,loop_index,source_job_id FROM pipeline_advance_receipts")
+      ||(/SELECT stage_ordinal\s+FROM pipeline_advance_receipts/.test(sql)
+        &&!sql.includes("FROM pipeline_advance_receipts r")))
+      return result(loopRounds as T[]);
     if(sql.includes("FROM pipeline_advance_receipts")&&sql.includes("AND stage_ordinal=$3")){
       const key=`${Number(params[2])}:${Number(params[3])}`;
       return result((receipts.has(key)?[receipts.get(key)]:[]) as T[]);}
-    if(sql.includes("FROM pipeline_advance_receipts")&&sql.startsWith("SELECT id FROM"))
-      return result([] as T[]);
     if(sql.includes("FROM pipeline_stage_loop_counts"))return result(loops as T[]);
-    // The loop count is the distinct pipeline jobs carrying each stage ordinal.
-      if(sql.includes("FROM control_jobs")&&sql.includes("stage_ordinal IS NOT NULL")){
-      return result(loopJobs as T[]);}
-    // The round a stage is on, as a count: the same chain, counted.
-    if(sql.includes("COUNT(*)::text count FROM control_jobs")&&sql.includes("stage_ordinal=$3")){
-      const ordinal=Number(params[2]);
-      return result([{count:String(loopJobs.filter(job=>job.stage_ordinal===ordinal).length||1)}] as T[]);}
     if(sql.includes("FROM pipeline_machine_capacity_observations"))
       return result((clusters===null?[]:[{db_clusters:clusters,observed_at:iso(overrides.clusterObservedAt??0)}]) as T[]);
     if(sql.includes("FROM pipeline_installation_allowances"))
@@ -193,11 +215,6 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       const found=(overrides.attentions??[]).find(item=>item.id===id);
       return result((found?[{payload:found}]:[]) as T[]);}
     if(sql.includes("SELECT id FROM pipeline_advance_receipts"))return result([] as T[]);
-    if(sql.startsWith("INSERT INTO pipeline_advance_receipts")){
-      // A newly planned stage's job joins the chain the next ceiling check reads.
-      const stage=Number(params[4]);
-      if (!loopJobs.some(job=>job.stage_ordinal===stage)) loopJobs.push({stage_ordinal:stage});
-    }
     if(sql.startsWith("INSERT INTO pipeline_stage_loop_counts")){
       // Column order: id,tenant,project,run,stage,worker,loop_index,max_loops,
       // max_total_loops,run_total_loops,reason_code,receipt_id,receipt_digest,
@@ -216,12 +233,21 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
         reason_code:params[10],receipt_id:params[11],receipt_digest:params[12],request_digest:params[13],
         auth_tag:hmacSha256Tag(key,{purpose:"pipeline-stage-loop-count/v1",record:material}),recorded_at:params[15]});
       return result([] as T[]);}
-    if(sql.includes("FROM control_jobs")){const id=String(params[2]),ordinal=Number(id.split(":").at(-1)),stage=rows.stages[ordinal]!;
-      const value=job(id);value.authority.allowedExecutor=stage.worker_id;value.authority.digest=computeAuthorityDigest(value.authority);
+    if(sql.includes("FROM control_jobs")){
+      // A pipeline job id names its stage: `job:source:<n>` is the stage's own
+      // job, `job:reentry:<n>:<seq>` is a fix round the planner minted, and
+      // `job:execution:<n>` is the execution job for stage n.
+      const ordinal=ordinalOfJobId(String(params[2])),stage=rows.stages[ordinal]!;
+      const value=job(String(params[2]));value.authority.allowedExecutor=stage.worker_id;
+      value.authority.digest=computeAuthorityDigest(value.authority);
       return result([{payload:value,project_id:"project:test",workflow_id:"workflow:test",pipeline_run_id:"pipeline-run:test",
         stage_kind:stage.stage_kind,stage_ordinal:ordinal}] as T[]);}
-    if(sql.includes("FROM control_task_execution_plans")){const ordinal=Number(String(params[2]).split(":").at(-1));
-      return result([{source_job_id:`job:source:${ordinal}`}] as T[]);}
+    if(sql.includes("FROM control_task_execution_plans")){
+      // The plan row names the SOURCE job it was planned from, which is the
+      // stage's own CURRENT job -- including after a fix round, where the
+      // planner mints a new source job and plans the execution job from it.
+      const stage=rows.stages[ordinalOfJobId(String(params[2]))]!;
+      return result([{source_job_id:stage.current_job_id}] as T[]);}
     if(sql.includes("FROM control_project_delegation_policies"))return result([policy] as T[]);
     if(sql.startsWith("UPDATE pipeline_runs")&&sql.includes("SET current_stage_ordinal=")){
       rows.run.current_stage_ordinal=Number(params[0]);rows.run.updated_at=String(params[1]);rows.run.version=Number(params[2]);
@@ -232,14 +258,22 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       rows.run.updated_at=String(params[0]);rows.run.version=Number(params[1]);rows.run.record_digest=String(params[2]);
       rows.run.auth_tag=String(params[3]);return result([{version:rows.run.version,record_digest:rows.run.record_digest,
         auth_tag:rows.run.auth_tag}] as T[]);}
-    if(sql.startsWith("INSERT INTO pipeline_advance_receipts")){const receipt={id:params[0],project_id:params[2],pipeline_run_id:params[3],
-      stage_ordinal:params[4],loop_index:params[5],source_job_id:params[6],execution_job_id:params[7],attempt_id:params[8],
-      queue_id:params[9],selection_digest:params[10],template_version:params[11],template_digest:params[12],run_version:params[13],
-      run_digest:params[14],policy_id:params[15],policy_version:params[16],policy_digest:params[17],delegation_receipt_id:params[18],
-      delegation_receipt_digest:params[19],delegation_task_units:params[20],delegation_cost_state:params[21],
-      delegation_cost_microusd:params[22],delegation_cost_evidence_digest:params[23],request_digest:params[24],
-      receipt_digest:params[25],auth_tag:params[26],advanced_at:params[27]};
+    if(sql.startsWith("INSERT INTO pipeline_advance_receipts")){
+      // Column order: id,tenant,project,run,stage,loop_index,source,execution,attempt,
+      // queue,selection_digest,template_version,template_digest,run_version,run_digest,
+      // policy_id,policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,
+      // task_units,cost_state,cost_microusd,cost_evidence_digest,request_digest,receipt_digest,
+      // auth_tag,advanced_at.
+      const receipt={id:params[0],project_id:params[2],pipeline_run_id:params[3],
+        stage_ordinal:params[4],loop_index:params[5],source_job_id:params[6],execution_job_id:params[7],attempt_id:params[8],
+        queue_id:params[9],selection_digest:params[10],template_version:params[11],template_digest:params[12],run_version:params[13],
+        run_digest:params[14],policy_id:params[15],policy_version:params[16],policy_digest:params[17],delegation_receipt_id:params[18],
+        delegation_receipt_digest:params[19],delegation_task_units:params[20],delegation_cost_state:params[21],
+        delegation_cost_microusd:params[22],delegation_cost_evidence_digest:params[23],request_digest:params[24],
+        receipt_digest:params[25],auth_tag:params[26],advanced_at:params[27]};
       receipts.set(`${Number(params[4])}:${Number(params[5])}`,receipt);
+      // The durable receipt is what the next ceiling check counts: one per fix round.
+      loopRounds.push({stage_ordinal:Number(params[4]),loop_index:Number(params[5]),source_job_id:String(params[6])});
       return result([] as T[]);}
     if(sql.includes("SELECT event_digest,event_hash FROM audit_events"))return result([] as T[]);
     if(sql.includes("INSERT INTO control_audit_chain_heads")||sql.includes("INSERT INTO audit_events"))return result([] as T[]);
@@ -269,14 +303,31 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
   return{service,setStates(value:PipelineStageResolutionV1["state"][]){states=value;},get currentOrdinal(){return rows.run.current_stage_ordinal;},
     get runVersion(){return rows.run.version;},get effects(){return effects;},get receipts(){return receipts;},
     get loops(){return loops;},get attentions(){return overrides.attentions??[];},
-    /** One more job on a stage: the planner's shape for a fix round. The
-     * previous round's receipt belongs to the job that already ran, so it is
-     * replaced rather than replayed. */
-    reenterStage(ordinal:number){loopJobs.push({stage_ordinal:ordinal});
-      for(const key of [...receipts.keys()]) if(key.startsWith(`${ordinal}:`)) receipts.delete(key);},
-    /** The planner materialises a not-yet-started stage's job. */
-    planStage(ordinal:number){if(!loopJobs.some(job=>job.stage_ordinal===ordinal))
-      loopJobs.push({stage_ordinal:ordinal});}};
+    /** One more fix round for a stage: the planner's shape. A re-entry mints a NEW
+     * source job and the stage row's `current_job_id` moves to it, so the round
+     * count -- the stage's own receipts -- grows by exactly one and the next
+     * advance is the next round rather than a replay of the last. The stage row
+     * is signed over that column, so it is re-signed with the service's own key:
+     * an unsigned rewind would fail the run's integrity check instead of
+     * reaching the loop ceiling. */
+    reenterStage(ordinal:number){const stage=rows.stages[ordinal]!;
+      stage.current_job_id=`job:reentry:${ordinal}:${loopRounds.length}`;
+      const material={id:`pipeline-run:test:stage:${ordinal}`,tenantId:"tenant:test",projectId:"project:test",
+        pipelineRunId:"pipeline-run:test",stageOrdinal:ordinal,stageKind:stage.stage_kind,role:stage.role,
+        workerId:stage.worker_id,workerKind:stage.worker_kind,nodeId:stage.node_id,selectionKey:stage.selection_key,
+        model:stage.model,effort:stage.effort,provider:stage.provider,profile:stage.profile,
+        currentJobId:stage.current_job_id,currentAttemptId:stage.current_attempt_id,currentLeaseId:stage.current_lease_id,
+        state:stage.state,maxLoops:Number(stage.max_loops),handoffFromResultDigest:stage.handoff_from_result_digest,
+        allowedPaths:stage.allowed_paths,maximumChangedFiles:stage.maximum_changed_files,
+        maximumChangedBytes:stage.maximum_changed_bytes,signoffReviewId:stage.signoff_review_id,
+        startedAt:stage.started_at===null?null:iso(stage.started_at),
+        finishedAt:stage.finished_at===null?null:iso(stage.finished_at),version:Number(stage.version)};
+      stage.record_digest=sha256Digest(material);
+      stage.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-stage-run/v1",record:material});},
+    /** The planner materialises a not-yet-started stage's job. Nothing enters the
+     * receipt chain: a planned job is not a started round, which is the whole
+     * point of counting receipts rather than jobs. */
+    planStage(_ordinal:number){}};
 }
 
 test("durable advance replays with a stable timestamp after a lost response or restart",async()=>{const f=fixture();
@@ -789,10 +840,20 @@ test("production authority derives policy usage and cost from canonical records 
     accepted,{currentCost:()=>({kind:"unknown"})},()=>at);
   const unknownReceipt=await unknown.authorizeDelegationInSession(tx,selection,"policy:test");
   assert.deepEqual(unknownReceipt.nextCost,{kind:"unknown"});
-  // A malformed "known" is also unknown, never a fabricated number.
-  const forged=new ProductionPipelineAdvanceAuthorityV1({tenantId:"tenant:test",workspaceId:"workspace:test"},current,
-    accepted,{currentCost:()=>({kind:"known",admittedCostMicroUsd:-5,evidenceDigest:digest("e")})},()=>at);
-  assert.deepEqual((await forged.authorizeDelegationInSession(tx,selection,"policy:test")).nextCost,{kind:"unknown"});
+  // A cost port that CLAIMS to know the cost and returns something impossible is
+  // an integrity failure, not an honest unknown: demoting it to `unknown` let it
+  // slip past every dollar ceiling, so it now refuses before anything is queued.
+  for (const forged of [
+    { kind: "known" as const, admittedCostMicroUsd: -5, evidenceDigest: digest("e") },
+    { kind: "known" as const, admittedCostMicroUsd: 1.5, evidenceDigest: digest("e") },
+    { kind: "known" as const, admittedCostMicroUsd: 10, evidenceDigest: "not-a-digest" },
+  ]) {
+    const lying=new ProductionPipelineAdvanceAuthorityV1({tenantId:"tenant:test",workspaceId:"workspace:test"},current,
+      accepted,{currentCost:()=>forged as never},()=>at);
+    await assert.rejects(lying.authorizeDelegationInSession(tx,selection,"policy:test"),
+      (error:unknown)=>(error as {safeReason?:string}).safeReason==="advance_conflict",
+      `a malformed known cost must refuse, got ${JSON.stringify(forged)}`);
+  }
 });
 
 test("installed advance cycle is default-off, non-overlapping, and drains before close",async()=>{
