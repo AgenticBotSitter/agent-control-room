@@ -6,6 +6,7 @@ import { adaptPglite, type DatabaseSession } from "../src/persistence/database";
 import { buildProjectEventV1, encodeProjectEventCursorV1, formatProjectEventSseV1, PROJECT_EVENT_INPUT_V1,
   ProjectEventStoreV1, TaskProjectEventWriterV1, taskProjectEventActionsV1, type ProjectEventInputV1 } from "../src/project-events/v1";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
+import { splitSqlStatements } from "./support/attack-kit";
 import { mergeProjectActivityEventsV1 } from "../src/web/v1/project-activity-browser-client";
 
 const scope = { tenantId: "tenant:timeline", workspaceId: "workspace:timeline", projectId: "project:timeline" };
@@ -220,6 +221,10 @@ test("B-093 refuses a lifecycle event whose workspace is not the project's own",
 test("task and project lifecycle actions append exactly once, roll back atomically, and resume in order", async () => {
   const { raw, db, store } = await setup();
   try {
+    // The page size this test pages with. Kept below the action count so the
+    // read really has to page rather than return the whole stream in one call.
+    const LIMIT = 6;
+    assert.ok(LIMIT < taskProjectEventActionsV1.length, "the page limit must be smaller than the stream");
     const writer = new TaskProjectEventWriterV1(store);
     const privateSentinel = "PRIVATE-PROMPT-MUST-NOT-APPEAR";
     for (const [index, action] of taskProjectEventActionsV1.entries()) {
@@ -229,11 +234,27 @@ test("task and project lifecycle actions append exactly once, roll back atomical
         ...(index === 0 ? { privateText: privateSentinel } : {}) };
       await db.transaction(tx => writer.appendInSession(tx, lifecycle));
     }
-    const snapshot = await store.read({ ...scope, limit: 6 });
-    assert.deepEqual(snapshot.events.map(event => event.sequence), [6, 7, 8, 9, 10, 11]);
-    assert.equal(snapshot.events.length, 6);
-    const older = await store.read({ ...scope, beforeCursor: encodeProjectEventCursorV1(snapshot.events[0]!), limit: 10 });
-    assert.deepEqual(older.events.map(event => event.sequence), [1, 2, 3, 4, 5]);
+    // The page boundary and the expected sequences are derived from the action
+    // list rather than restated. The list grew (task_accepted_with_exceptions,
+    // task_changes_requested, task_revised, task_handed_off), and a hard-coded
+    // 11 made every new lifecycle action fail this lane instead of adding to it.
+    // What the assertion is actually for is the PAGE SPLIT -- the newest `limit`
+    // events and the remainder before them, with no gap and no overlap -- so the
+    // numbers are computed from the count and the limit, and the contiguity
+    // across both pages is what is pinned.
+    const total = taskProjectEventActionsV1.length;
+    const newest = total - LIMIT + 1;
+    const snapshot = await store.read({ ...scope, limit: LIMIT });
+    assert.deepEqual(snapshot.events.map(event => event.sequence),
+      Array.from({ length: LIMIT }, (_, index) => newest + index));
+    assert.equal(snapshot.events.length, LIMIT);
+    const older = await store.read({ ...scope, beforeCursor: encodeProjectEventCursorV1(snapshot.events[0]!), limit: total });
+    assert.deepEqual(older.events.map(event => event.sequence), Array.from({ length: newest - 1 }, (_, index) => index + 1));
+    // The two pages must tile 1..total exactly once each: that is the
+    // "appends exactly once" half of this test's name, and it is what a
+    // duplicate or a hole in the stream would break.
+    assert.deepEqual([...older.events, ...snapshot.events].map(event => event.sequence),
+      Array.from({ length: total }, (_, index) => index + 1));
     assert.doesNotMatch(JSON.stringify([...older.events, ...snapshot.events]), new RegExp(privateSentinel));
     assert.ok([...older.events, ...snapshot.events].every(event => event.presentationOnly
       && !event.grantsApproval && !event.grantsCommandAuthority && !event.grantsExecutionAuthority));
@@ -289,4 +310,41 @@ test("B-093 keeps only the grants a staged migration prefix can actually run", a
   // Nothing kept may still name an absent object, or the server refuses it.
   for (const statement of kept)
     for (const name of absent) assert.doesNotMatch(statement, new RegExp(`\\b${name}\\b`, "u"));
+
+  // A routine grant is a second shape: one target, introduced by a keyword, and
+  // written with an argument list. `ON FUNCTION f(text) TO x` has to be DROPPED
+  // when f is absent -- the argument list is not a column list, so trimming it
+  // into a relation grant would produce `ON FUNCTION f TO x` for a function that
+  // does not exist and 42883 on the server. A present function is kept verbatim,
+  // argument list and all, because that form is legal.
+  const routines = [
+    "GRANT EXECUTE ON FUNCTION owner_push_endpoint_host(text) TO control_room_private_web",
+    "GRANT EXECUTE ON FUNCTION fleet_claim_is_live(text,text,text) TO control_room_fleet_gateway",
+  ];
+  assert.deepEqual(applicableStatements(routines, new Set(["owner_push_endpoint_host"])), [routines[1]!],
+    "a grant on an absent function must be dropped whole, argument list and keyword intact");
+  assert.deepEqual(applicableStatements(routines, new Set()), routines,
+    "with nothing absent, routine grants pass through unchanged");
+  // Both together absent, and neither survives: a half-kept routine grant is the
+  // failure this guards.
+  assert.deepEqual(applicableStatements(routines,
+    new Set(["owner_push_endpoint_host", "fleet_claim_is_live"])), []);
+
+  // A grant preceded by a comment is still a grant. The splitter keeps a
+  // statement's leading comment attached to it, and a `--` comment containing an
+  // apostrophe makes the splitter read the rest of the line as a string
+  // literal, so the comment ends up carrying the start of the next statement
+  // with it. That is how `GRANT SELECT, INSERT ON control_project_event_stream_heads,
+  // control_project_events` went missing from a role-file replay while looking,
+  // in the file, completely present. The grant survives because the comment is
+  // stripped before the statement is classified.
+  const commented = splitSqlStatements([
+    "-- 0111: a hand-off's required note is presented on the owner's task timeline,",
+    "-- exactly like the other lifecycle writers granted in 0107.",
+    "GRANT SELECT, INSERT ON control_project_event_stream_heads TO control_room_fleet_gateway;",
+  ].join("\n"));
+  const cleaned = commented.map(statement => statement.replace(/--[^\n]*/gu, " ").trim())
+    .filter(statement => /^(?:GRANT|REVOKE|ALTER\s+DEFAULT\s+PRIVILEGES)\b/i.test(statement));
+  assert.equal(cleaned.length, 1, "a commented grant must still be classified as a grant");
+  assert.match(cleaned[0]!, /GRANT SELECT, INSERT ON control_project_event_stream_heads/);
 });

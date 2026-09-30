@@ -29,6 +29,7 @@ import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 import { isPrivilegeDenied, requiresRealPostgres, realPostgresSkipMessage, splitSqlStatements, withRealPostgres,
   type RealPostgres } from "./support/attack-kit";
+import { DEFAULT_ROLE_FILES } from "./support/attack-kit/real-postgres.ts";
 
 const REPOSITORY_ROOT = new URL("..", import.meta.url).pathname;
 // The ports this job is authorized for. The kit REFUSES any port outside it
@@ -162,13 +163,40 @@ export function applicableStatements(statements: readonly string[], absent: Read
       if (remaining.length === 0) { usable = false; return ""; }
       return `(${remaining.join(", ")})`;
     });
-    if (usable) text = text.replace(/\bON\s+([^;]*?)\s+TO\b/giu, (whole, list: string) => {
-      const parts = list.split(",").map(part => part.trim()).filter(Boolean);
-      const remaining = parts.filter(part => !mentions(part.replace(/\(.*$/u, "").trim()));
-      if (remaining.length === parts.length) return whole;
-      if (remaining.length === 0) { usable = false; return ""; }
-      return `ON ${remaining.join(", ")} TO`;
-    });
+    if (usable) text = text.replace(/\bON\s+(SCHEMA\s+)?(ALL\s+\w+\s+IN\s+SCHEMA\s+)?(FUNCTION\s+|PROCEDURE\s+)?([^;]*?)\s+(TO|FROM)\b/giu,
+      (whole, schema: string | undefined, allIn: string | undefined,
+        routine: string | undefined, list: string, direction: string) => {
+        // `ON SCHEMA x TO/FROM y` names a schema, and `ON ALL ... IN SCHEMA x`
+        // names that schema too. Both are dropped whole when the schema is absent,
+        // since neither has a partial form: there is no list to trim. The keywords
+        // are captured so the rewrite cannot turn `ON ALL TABLES IN SCHEMA x` into
+        // a grant on a relation that happens to share the name.
+        //
+        // `public` is the exception: it is what the blanket grants on every
+        // table are written against, and a staged prefix always has it, so
+        // naming it absent would drop the previous release's own authority.
+        const schemaName = (schema ? list : allIn ? allIn.replace(/^ALL\s+\w+\s+IN\s+SCHEMA\s+/i, "") : "").trim();
+        if (schemaName && schemaName !== "public" && mentions(schemaName)) { usable = false; return ""; }
+        if (schema || allIn) return whole;
+        // The routine keyword is captured separately: `ON FUNCTION f(text) TO x`
+        // must be rewritten to `ON FUNCTION f TO x`, not to a name of
+        // "FUNCTION f". A routine grant has exactly one target, and its argument
+        // list may itself contain commas -- `f(text,text,text)` splits into three
+        // bogus "relations" if the list is comma-split, so a routine target is
+        // never split: it is either wholly present and kept verbatim, or wholly
+        // absent and takes the statement with it. A partially-kept routine grant
+        // is meaningless and would raise 42883 anyway.
+        if (routine) {
+          const name = list.replace(/\(.*$/u, "").trim();
+          if (mentions(name)) { usable = false; return ""; }
+          return whole;
+        }
+        const parts = list.split(",").map(part => part.trim()).filter(Boolean);
+        const remaining = parts.filter(part => !mentions(part.replace(/\(.*$/u, "").trim()));
+        if (remaining.length === parts.length) return whole;
+        if (remaining.length === 0) { usable = false; return ""; }
+        return `ON ${remaining.join(", ")} ${direction}`;
+      });
     // Dropped: a list emptied out, or a statement that still names something the
     // prefix does not have. Everything else is kept verbatim, including
     // statements with no relation list at all (ALTER DEFAULT PRIVILEGES, and
@@ -195,14 +223,100 @@ export function applicableStatements(statements: readonly string[], absent: Read
  * nothing is skipped on a guess.
  */
 async function applyStagedGrants(client: Client, root: string): Promise<void> {
-  const file = await readFile(join(root, "db/roles/production_table_grants.sql"), "utf8");
   const absent = await objectsAbsentFrom(client);
-  const statements = applicableStatements(splitSqlStatements(file), absent);
-  assert.ok(statements.length > 0, "the grants file must contribute at least one applicable statement");
-  await client.query("SET ROLE control_room_schema_owner");
-  try {
-    for (const statement of statements) await client.query(statement);
-  } finally { await client.query("RESET ROLE"); }
+  // `production_table_grants.sql` is the file the applier defers on, and it is
+  // the one that carries the blanket `ON ALL TABLES` grants. The fleet gateway
+  // file is added because the kit applies it to the database under test and the
+  // applier never runs it -- it is not a ledger entry -- so the baseline had
+  // control_room_fleet_gateway holding nothing on the activity tables while the
+  // head database held SELECT/INSERT and a column UPDATE on them, and the
+  // equality below failed on a grant this head's down file has no opinion
+  // about. That is exactly the class of difference the comparison exists to
+  // exclude.
+  //
+  // Only this one extra file. The other kit role files grant the activity stream
+  // too -- `local_result_publisher_roles.sql`, `task_coordinator_roles.sql` and
+  // `private_web_roles.sql` each INSERT into it -- but those grants were ADDED by
+  // 0107 itself, so a database that predates 0107 must not have them. Replaying
+  // them would hand the baseline the very authority the test below asserts it
+  // does not have. The fleet gateway's grant came from a later migration, and
+  // the down file leaves it in place, so it must be present on both sides.
+  const files = ["production_table_grants.sql", "fleet_gateway_roles.sql"];
+  const applied: string[] = [];
+  for (const name of files) {
+    const file = await readFile(join(root, "db/roles", name), "utf8");
+    // CREATE ROLE and ALTER ROLE ... <attributes> are cluster-global. The kit
+    // has already created every one of these roles on this cluster for the
+    // database under test, and the schema owner can neither create a role nor
+    // change one -- and must not be able to. The role already exists with the
+    // right attributes, which is the whole point of replaying the file, so those
+    // statements are not replayed. Ownership transfers, memberships and every
+    // GRANT are still applied: those are per-database or cluster-wide but do
+    // belong to the schema owner.
+    //
+    // Matched on the whole statement, not its first keyword: the role files wrap
+    // both in a `DO $$ ... IF NOT EXISTS (SELECT 1 FROM pg_roles ...) ... $$`
+    // guard, so a statement beginning with CREATE ROLE or ALTER ROLE is not what
+    // actually reaches the server.
+    //
+    // Only statements that GRANT or REVOKE, or that set default privileges, are
+    // replayed. A role file's other statements are either cluster-global (the
+    // role DDL above) or an operator preflight -- a `DO` block that RAISEs when
+    // a pg-boss queue row is not provisioned exactly as the file documents. The
+    // baseline database is a migration prefix, not an operator install, so those
+    // preflights would refuse for a reason that has nothing to do with the
+    // privileges being compared.
+    //
+    // `ALTER DEFAULT PRIVILEGES` counts: it is how the blanket grants on every
+    // future table are made, and the pre-0107 baseline's reads on `projects` and
+    // the audit tables come from exactly these lines. Filtering them out empties
+    // the baseline of the previous release's own authority.
+    const clusterGlobalRoleDdl = /\b(?:CREATE|ALTER|DROP)\s+ROLE\s+[a-z_]/i;
+    const statements = splitSqlStatements(file)
+      // Comments come off first. The splitter keeps a statement's leading
+      // comment attached to it, and a `--` comment containing an apostrophe
+      // ("a hand-off's required note") makes the splitter treat the rest of the
+      // line as a string literal, so the comment can swallow text that belongs
+      // to the NEXT statement. A `^\s*GRANT` filter over splitter output
+      // therefore silently dropped `GRANT SELECT, INSERT ON
+      // control_project_event_stream_heads, control_project_events` -- the exact
+      // grant the baseline needed -- because it arrived wearing a comment.
+      .map(statement => statement.replace(/--[^\n]*/gu, " ").trim())
+      .filter(statement => /^(?:GRANT|REVOKE|ALTER\s+DEFAULT\s+PRIVILEGES)\b/i.test(statement))
+      .filter(statement => !clusterGlobalRoleDdl.test(statement))
+      .flatMap(statement => applicableStatements([statement], absent));
+    if (statements.length === 0) continue;
+    try {
+      for (const statement of statements) {
+        // Each statement is its own transaction, and the role is set INSIDE it.
+        //
+        // SET ROLE is transaction-scoped in PostgreSQL: a COMMIT discards it, so
+        // setting it once outside the loop -- the way the applier does, where each
+        // migration is its own transaction and the role is re-set every time --
+        // would leave every statement after the first running as the wrong role.
+        // The applier's own loop is the model: `SET ROLE`, BEGIN, work, COMMIT,
+        // then SET ROLE again.
+        //
+        // The per-statement transaction is also what makes a failure legible: a
+        // role file mixes conditional and plain DDL, and one error inside a
+        // single batch transaction aborts everything after it and reports 25P02
+        // instead of the statement that actually failed.
+        await client.query("BEGIN");
+        try {
+          await client.query("SET LOCAL ROLE control_room_schema_owner");
+          await client.query(statement);
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw new Error(`staged grant from ${name} failed: ${statement.slice(0, 160)}`, { cause: error });
+        }
+        applied.push(statement);
+      }
+    } finally { await client.query("RESET ROLE").catch(() => {}); }
+  }
+  assert.ok(applied.length > 0, "the role files must contribute at least one applicable statement");
+  assert.ok(applied.some(statement => /fleet_gateway/.test(statement)),
+    "the baseline must apply the fleet gateway's grants, or the equality below compares two different installations");
 }
 
 /**
@@ -231,24 +345,78 @@ async function objectsAbsentFrom(client: Client): Promise<Set<string>> {
     `SELECT a.attname AS name FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
      JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = 'public' AND a.attnum > 0 AND NOT a.attisdropped`)).rows.map(row => row.name);
-  const present = new Set([...tables, ...columns]);
+  // Functions and procedures too. Role files grant EXECUTE on named functions as
+  // well as privileges on relations, and a function introduced by a migration
+  // above the cut (0227's owner_push_endpoint_host) makes the replay fail with
+  // 42883 -- the same class of problem as the missing table, and the same fix:
+  // read the answer from the catalog instead of guessing which identifiers the
+  // prefix has.
+  const routines = (await client.query<{ name: string }>(
+    `SELECT p.proname AS name FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public'`)).rows.map(row => row.name);
+  // The queue schema and its tables are created by the kit, not by a migration,
+  // so a staged main-state prefix does not have them and they are named as
+  // absent here whatever this particular cluster's catalog says. Without that,
+  // `REVOKE ALL ON SCHEMA control_room_queue FROM PUBLIC` reaches the server and
+  // fails with 3F000.
+  const present = new Set([...tables, ...columns, ...routines]);
+  for (const table of ["queue", "version", "job", "job_common"]) present.delete(table);
+  present.delete("control_room_queue");
   // Everything the shipped role files could possibly name, so the caller can
   // tell "names something the prefix lacks" from "names something it has".
   // Only identifiers in GRANT position -- a relation after ON, or a column
   // inside the (...) that follows GRANT UPDATE/INSERT. Matching every lowercase
   // word in the file would sweep in SQL keywords (select, insert, default) and
   // filter out statements that are perfectly applicable.
+  //
+  // The object-kind keywords are excluded by name. `ON ALL TABLES IN SCHEMA
+  // public` is the blanket grant every role relies on, and after the
+  // normalisation below it contributes TABLES and public -- neither of which is
+  // an object the prefix can lack. Left in, `TABLES` alone made
+  // `mentions()` true for the blanket grant and dropped it, which emptied the
+  // baseline of the previous release's own authority and made the equality below
+  // fail with twenty missing grants and no explanation.
+  const objectKindWords = new Set(["table", "tables", "sequence", "sequences", "function", "functions",
+    "routine", "routines", "procedure", "procedures", "schema", "schemas", "type", "types",
+    "domain", "domains", "all", "public"]);
   const named = new Set<string>();
+  // Derived from the same list the replay uses, so a role file added to the kit
+  // is covered here without a second edit.
   const files = ["native_evidence_roles.sql", "private_web_roles.sql", "task_coordinator_roles.sql",
-    "local_result_publisher_roles.sql"];
-  for (const file of files) {
+    "local_result_publisher_roles.sql", ...DEFAULT_ROLE_FILES];
+  for (const file of new Set(files)) {
+    // Comments come out first. A GRANT line can be preceded by an explanatory
+    // comment, and the statement splitter's output keeps the leading comment
+    // attached, so the `ON ... TO` pattern below was matching against prose
+    // and the named function never reached the absent set.
     const text = (await readFile(join(REPOSITORY_ROOT, "db/roles", file), "utf8"))
+      .replace(/--[^\n]*/gu, " ")
       .replace(/\s+/gu, " ");
-    for (const match of text.matchAll(/\bON\s+([a-z_][a-z0-9_.,\s]*?)(?=\s+TO\b)/giu)) {
-      const list = match[1]!;
-      // Strip a column list, if the statement is a column-level GRANT.
-      for (const name of list.split(",").map(part => part.replace(/\(.*$/u, "").trim()))
-        if (/^[a-z_][a-z0-9_]*$/iu.test(name)) named.add(name);
+    // The ON target list. Two details, both load-bearing:
+    //
+    //  - The character class EXCLUDES a semicolon, so the match cannot span
+    //    statements. Without it a role file's own `;` is just another character
+    //    to a lazy quantifier and one GRANT's ON list runs on into the next
+    //    statement's -- which is how `owner_push_endpoint_host` was missed
+    //    entirely and a grant on a function the prefix lacks reached the server.
+    //  - The direction is TO *or* FROM. A REVOKE names its target after ON and
+    //    its role after FROM, so a TO-only pattern never saw
+    //    `REVOKE ALL ON SCHEMA control_room_queue FROM PUBLIC` and the schema
+    //    stayed out of the absent set.
+    for (const match of text.matchAll(/\bON\s+(?:FUNCTION\s+|PROCEDURE\s+)?([^;]*?)\s+(?:TO|FROM)\b/giu)) {
+      // A leading SCHEMA, or an ALL-...-IN-SCHEMA, names the schema itself, so
+      // `ON SCHEMA control_room_queue` contributes `control_room_queue` and not
+      // a relation called `SCHEMA`.
+      const list = match[1]!
+        .replace(/^SCHEMA\s+/iu, "")
+        .replace(/^ALL\s+\w+\s+IN\s+SCHEMA\s+/iu, "");
+      // Strip a column list, if the statement is a column-level GRANT, and the
+      // argument list of a routine grant: `ON owner_push_endpoint_host(text) TO`
+      // names the function `owner_push_endpoint_host`, not a relation called
+      // that with a column called `text`. A schema-qualified target contributes
+      // its last segment, so `control_room_queue.queue` names `queue`.
+      for (const name of list.split(",").map(part => part.replace(/\(.*$/u, "").trim().split(".").pop() ?? ""))
+        if (/^[a-z_][a-z0-9_]*$/iu.test(name) && !objectKindWords.has(name.toLowerCase())) named.add(name);
     }
     for (const match of text.matchAll(/GRANT\s+(?:UPDATE|INSERT|DELETE|REFERENCES|TRIGGER)\s*\(([^)]*)\)/giu))
       for (const name of match[1]!.split(",").map(part => part.trim()))
@@ -498,6 +666,20 @@ async function stageMainState(): Promise<{ root: string; mainMigrations: string[
   for (const entry of await collectLedgerEntries(REPOSITORY_ROOT))
     if (entry.file.startsWith("db/roles/") || entry.file.startsWith("db/setup/"))
       await cp(join(REPOSITORY_ROOT, entry.file), join(root, entry.file));
+  // Plus the role files the real-PostgreSQL kit applies that the LEDGER does not
+  // carry. `fleet_gateway_roles.sql` is one of them, and it grants
+  // control_room_fleet_gateway SELECT/INSERT on both activity tables plus a
+  // column UPDATE on the stream head. The kit applies it to the database under
+  // test, so a baseline built from ledger entries alone had the fleet gateway
+  // holding nothing, and the down-migration equality below failed on a grant
+  // this head's down file has no opinion about -- exactly the class of
+  // difference the comparison is meant to exclude. The baseline has to stand
+  // for the SAME installation the head database is, so it gets the same role
+  // files, read from the kit's own list rather than restated here.
+  for (const file of DEFAULT_ROLE_FILES) {
+    const destination = join(root, "db/roles", file);
+    await cp(join(REPOSITORY_ROOT, "db/roles", file), destination);
+  }
   await cp(join(REPOSITORY_ROOT, "db/setup/production_migration_ledger.sql"),
     join(root, "db/setup/production_migration_ledger.sql"));
   const entries = await collectLedgerEntries(root);
