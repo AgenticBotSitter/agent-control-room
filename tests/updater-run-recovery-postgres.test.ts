@@ -595,9 +595,19 @@ test("B4: the run row and its journal mirror move in one statement", async t => 
       assert.deepEqual(await eventStates(client, repeatRun), ["prechecked", "staged"],
         "the next real step took ordinal 2, so the repeats did not poison the chain");
 
-      // The lease is re-checked inside the statement. A second caller that does
+      // The lease is re-checked INSIDE the statement. A second caller that does
       // not hold the token moves nothing AND writes nothing: the ownership check
       // and the move are one fact, not a read followed by a write.
+      //
+      // This is asserted against BOTH filters the function has, because either
+      // one alone is not the guard. With the token dropped from the row lock
+      // (which is what reads the prior state) the call still moves nothing —
+      // because the UPDATE below also filters on the token — so a test that
+      // asserts only the outcome passes with the lock's ownership check deleted.
+      // What must be true is that a caller without the token is refused at the
+      // FIRST read, before it has learned anything about the row: it must not
+      // even get as far as seeing which state the run is in. That is asserted by
+      // calling the function directly and by reading what the refusal says.
       await quiesceInstall(store, client);
       const planId2 = "plan-b4-b", leaseToken2 = "lease-b4-b";
       const runId2 = await liveRun(store, client, planId2, leaseToken2);
@@ -605,6 +615,28 @@ test("B4: the run row and its journal mirror move in one statement", async t => 
         /updater_run_lease_lost/u);
       assert.equal((await runRow(client, runId2)).state, "approved", "the row did not move");
       assert.deepEqual(await eventStates(client, runId2), [], "and no mirror row was written for it");
+      // The refusal is ownership, checked inside the statement — and it is checked in
+      // BOTH places that filter on it. The UPDATE's filter is what refuses
+      // outright (measured: with the row lock's copy removed alone, the impostor's
+      // call still refuses here). The lock's copy is what makes ownership the
+      // FIRST thing decided, before the function has read anything about the
+      // row. Both are asserted, because a comment claiming two guards where only
+      // one exists is a comment that will outlive the code it describes.
+      //
+      // From `approved`, asking for `prechecked` is a legal step, so the ONLY
+      // thing that can refuse an impostor here is ownership. That is what makes
+      // this case able to tell the two filters apart at all.
+      assert.match(await refuses(client,
+        "SELECT updater.record_run_step($1,'not-my-lease','prechecked','{}'::jsonb,false)",
+        [runId2]), /updater run lease lost/u,
+      "an impostor cannot take a step that would otherwise be legal: ownership, not the state machine");
+      // The lock's copy: a caller without the token must not even be told the
+      // run's state. A function that read the row before checking ownership would
+      // answer this with `succeeded` and the prior state.
+      assert.match(await refuses(client,
+        "SELECT updater.record_run_step($1,'not-my-lease','approved','{}'::jsonb,false)",
+        [runId2]), /updater run lease lost/u,
+      "and a repeat is refused on ownership too, so no path reports a row to a caller without the token");
       // The rightful holder still works afterwards: a failed attempt is not a
       // poisoned run.
       assert.equal((await store.transition(runId2, leaseToken2, "prechecked", {})).state, "prechecked");

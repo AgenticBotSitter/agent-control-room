@@ -797,11 +797,15 @@ CREATE OR REPLACE TRIGGER run_events_insert_guard BEFORE INSERT ON updater.run_e
 -- was doing and would commit the row alone if the caller's next statement failed
 -- — the same wedge with a new name.
 --
--- THE CALLER OWNS NOTHING ELSE. The function re-checks the lease token inside
--- the statement (`WHERE ... lease_token = p_lease_token`), so the ownership check
--- and the move are one fact about one row rather than a read followed by a write
--- somebody could interleave. A caller without the token updates zero rows and is
--- refused.
+-- THE CALLER OWNS NOTHING ELSE. The lease token is checked inside the statement,
+-- and it is checked in BOTH places that filter on it: the row lock below and the
+-- UPDATE that follows. The second is what makes the guard load-bearing on its
+-- own — measured, with the token removed from the lock alone, the impostor's
+-- call is still refused, because the UPDATE refuses it too. The lock's copy is
+-- defence in depth and it is what makes ownership the FIRST thing decided,
+-- before the function has read anything about the row; both must hold, because a
+-- statement that filtered on the token only after reading the row would have
+-- consulted a run it had no business reading.
 --
 -- The return value is `jsonb` of the row rather than the composite type, on
 -- purpose: a composite return arrives at a client driver as an unparsed string,
