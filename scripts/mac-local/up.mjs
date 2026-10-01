@@ -6,7 +6,6 @@
 // Usage: pnpm mac:up -- --protected-root ABS_PATH [--install-service]   (or CONTROL_ROOM_PROTECTED_ROOT)
 import { spawn } from "node:child_process";
 import { connect } from "node:net";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { lstat, mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
@@ -117,7 +116,8 @@ async function requestAuthenticatedHostHealth(port, healthProbeKey, timeoutMs = 
       || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.tag !== "string") return undefined;
     const signed = { schema: value.schema, nonce: value.nonce, ready: value.ready, pid: value.pid,
       releaseId: value.releaseId, startedAt: value.startedAt };
-    if (!healthResponseTagMatchesV1(healthProbeKey, LOCAL_HOST_HEALTH_ENDPOINT_V1, signed, value.tag)) return undefined;    return value.pid;
+    if (!healthResponseTagMatchesV1(healthProbeKey, LOCAL_HOST_HEALTH_ENDPOINT_V1, signed, value.tag)) return undefined;
+    return value.pid;
   } catch { return undefined; }
 }
 

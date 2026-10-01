@@ -35,7 +35,8 @@ const ACK_SERVER_SOURCE = `const server = createServer(socket => { socket.on("er
 function fakeHealthResponse(healthProbeKey, nonce, pid) {
   const releaseId = "dev", startedAt = "2026-09-30T00:00:00.000Z";
   const response = { schema: "control-room.local-host-health/v1", nonce, ready: true, pid, releaseId, startedAt };
-  return { ...response, tag: healthResponseTagV1(healthProbeKey, LOCAL_HOST_HEALTH_ENDPOINT_V1, response) };}
+  return { ...response, tag: healthResponseTagV1(healthProbeKey, LOCAL_HOST_HEALTH_ENDPOINT_V1, response) };
+}
 
 const ownedPids = new Map();
 
