@@ -29,8 +29,12 @@ test("heartbeat stores adapter names as evidence without widening the authentica
   const evidence = new InMemoryFleetToolCapabilityEvidenceV1();
   const store = new FleetGatewayStoreV1(database(), { tenantId: principal.tenantId, toolCapabilityEvidence: evidence,
     operationsMode: async () => "running", clock: () => Date.parse("2026-09-29T12:00:00.000Z") });
+  // `sessionId` is required by 0215: presence is session-fenced, so a check-in
+  // with no session cannot declare a state. This test is about the CAPABILITY
+  // evidence and the ceiling it must not widen, and it sends a well-formed
+  // session alongside the capabilities so it is exercising that, not the refusal.
   const result = await store.heartbeat(principal, { connectorVersion: "0.3.0", platform: "macos",
-    adapterCapabilities: ["tool.whisper", "gpu.metal"] });
+    sessionId: `fleet-session:${"a".repeat(32)}`, adapterCapabilities: ["tool.whisper", "gpu.metal"] });
   assert.deepEqual(result.capabilities, ["owner.approved"]);
   assert.equal(result.claimsAllowed, true);
   assert.deepEqual(evidence.latest(principal.workerId), {
@@ -47,8 +51,12 @@ test("heartbeat stores adapter names as evidence without widening the authentica
 test("malformed or duplicate observed capabilities are refused", async () => {
   const store = new FleetGatewayStoreV1(database(), { tenantId: principal.tenantId,
     operationsMode: async () => "running" });
+  // Each carries a valid sessionId, so the ONLY reason these can be refused is
+  // the capability list itself. Without one they would be refused earlier for a
+  // missing session and would pass while testing nothing about capabilities.
   await assert.rejects(store.heartbeat(principal, { connectorVersion: "0.3.0", platform: "macos",
-    adapterCapabilities: ["tool.whisper", "tool.whisper"] }), /fleet_invalid/u);
+    sessionId: `fleet-session:${"b".repeat(32)}`, adapterCapabilities: ["tool.whisper", "tool.whisper"] }),
+  /fleet_invalid/u);
   await assert.rejects(store.heartbeat(principal, { connectorVersion: "0.3.0", platform: "macos",
-    adapterCapabilities: ["/bin/sh"] }), /fleet_invalid/u);
+    sessionId: `fleet-session:${"c".repeat(32)}`, adapterCapabilities: ["/bin/sh"] }), /fleet_invalid/u);
 });
