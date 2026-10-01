@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+export { FLEET_WORKER_KINDS_V1 } from "./catalog";
 
 /** Opaque secrets are 43 base64url characters behind a short type prefix. The
  * code is shown to the owner once; the credential is generated on the worker

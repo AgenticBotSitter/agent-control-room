@@ -1,16 +1,71 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
+import { hmacSha256Tag, InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
+import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
+import { createPrivatePgDriver } from "../src/web/v1/private-pg-driver";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 import { nodeExchange } from "./helpers/web-node";
 
 after(closePrivateOwnerBootstrapConformanceDatabase);
 
+test("an uncertain write makes health unready and a supervised replacement serves later requests", async () => {
+  const statements: string[] = [], releases: boolean[] = [];
+  let commitAttempts = 0, poolEnds = 0;
+  const failed = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) {
+      statements.push(statement);
+      if (statement === "COMMIT") { commitAttempts += 1; throw new Error("lost acknowledgement"); }
+      return { rows: [] };
+    },
+    release(destroy) { releases.push(!!destroy); },
+  }; }, async end() { poolEnds += 1; } }));
+  const origin = "http://127.0.0.1:3210", startedAt = "2026-09-30T00:00:00.000Z";
+  const key = new Uint8Array(32).fill(8), pid = 4_244;
+  const createApp = (database: typeof failed) => createMacLocalWebProcessV1({ origin, workspaceId: "workspace:dbready",
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: "tenant:dbready", provider: "local",
+      subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode: "dbready-owner-code-long-enough" }), sessionSeconds: 900 },
+    database, hostProcessId: pid, healthProbeKey: key, healthReleaseId: "dev", healthStartedAt: startedAt });
+  const app = createApp(failed);
+  assert.equal(app.isReady(), true);
+  await assert.rejects(failed.client.transaction(session => session.query("INSERT INTO synthetic VALUES (1)")),
+    { message: "database_outcome_uncertain" });
+  assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "COMMIT"],
+    "an uncertain write is attempted once and is never rolled back or replayed");
+  assert.equal(commitAttempts, 1); assert.deepEqual(releases, [true]); assert.equal(poolEnds, 1);
+  assert.equal(app.isReady(), false, "the application must become unready with its quarantined database binding");
+  const refusedRetries = await Promise.allSettled(Array.from({ length: 20 }, () => failed.client.query("SELECT retry")));
+  assert.equal(refusedRetries.every(result => result.status === "rejected"
+    && result.reason instanceof Error && result.reason.message === "database_unavailable"), true,
+  "concurrent callers after the uncertain write must fail closed without reaching the old pool");
+  assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "COMMIT"]);
+
+  const nonces = Array.from({ length: 50 }, (_, index) => Buffer.alloc(32, index + 1).toString("base64url"));
+  const health = await Promise.all(nonces.map(nonce => app.handle(new Request(`${origin}/api/v1/local-host-health`, {
+    method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }),
+  }), () => new Response("unused"))));
+  assert.equal(health.every(response => response.status === 200), true);
+  const bodies = await Promise.all(health.map(response => response.json())) as Array<Record<string, unknown>>;
+  assert.equal(bodies.every(body => body.ready === false), true, "a health-probe burst must expose the outage");
+  assert.equal(bodies[0]?.tag, hmacSha256Tag(key,
+    { purpose: "local-host-health/v1", nonce: nonces[0], pid, ready: false, releaseId: "dev", startedAt }));
+  await app.close();
+
+  let laterQueries = 0;
+  const replacement = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) { laterQueries += 1; return { rows: statement === "SELECT later" ? [{ ok: true }] : [] }; },
+    release() {},
+  }; }, async end() {} }));
+  const restarted = createApp(replacement);
+  assert.deepEqual(await replacement.client.query("SELECT later"), { rows: [{ ok: true }] });
+  assert.equal(laterQueries, 1); assert.equal(restarted.isReady(), true,
+    "a restarted host owns a fresh binding and can serve a later request");
+  await restarted.close();
+});
 test("the real Mac-local wrapper signs in locally and reaches the existing project service", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-web" }); t.after(fixture.close);
   await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
@@ -18,25 +73,35 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   });
   const origin = "http://127.0.0.1:3210", trustedOrigin = "https://control-room-mac.example.ts.net";
   const ownerCode = "mac-local-owner-code-long-enough";
-  let actionInboxReads = 0;
+  let actionInboxReads = 0; const passkeyCalls: unknown[] = [];
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
       trustedOrigin },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
+    hostProcessId: 4_243,
+    healthProbeKey: new Uint8Array(32).fill(9), healthReleaseId: "dev", healthStartedAt: "2026-09-30T00:00:00.000Z",
     workBatchIntegrityKey: new Uint8Array(32).fill(7),
     taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(1),
       results: { integrityKey: new Uint8Array(32).fill(2), storageClass: "local", storage: { read: async () => undefined } } },
     workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
     taskWorkersStarted: true,
     actionInboxSource: { read: async () => { actionInboxReads += 1; return {
-      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } } });
+      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } },
+    passkeyRegistration: {
+      options: async input => { passkeyCalls.push(input); return { publicKey: { challenge: "A".repeat(43) } }; },
+      insert: async input => { passkeyCalls.push(input); return { accepted: true }; },
+    } });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedOutApi = await app.handle(request("/api/v1/projects"), () => new Response("unused"));
   assert.equal(signedOutApi.status, 401);
   assert.deepEqual(await signedOutApi.json(), { error: "authentication_required" });
   const signedOutInbox = await app.handle(request("/api/v1/needs-me/action-items"), () => new Response("unused"));
   assert.equal(signedOutInbox.status, 401);
+  const signedOutPasskey = await app.handle(request("/api/v1/passkeys/registration/options", { method: "POST",
+    headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ registrationSecret: "A".repeat(43) }) }),
+  () => new Response("unused"));
+  assert.equal(signedOutPasskey.status, 401);
   const signedOutFile = await app.handle(request("/api/v1/projects/project:test/tasks/job:test/files/artifact:test?disposition=preview&token=untrusted"),
     () => new Response("unused"));
   assert.equal(signedOutFile.status, 401, "file preview requires an authenticated owner session before a ticket is considered");
@@ -48,10 +113,45 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   }
   const signedOutWrite = await app.handle(request("/projects", { method: "POST" }), () => new Response("unused"));
   assert.equal(signedOutWrite.status, 401);
+  const nonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const wrongHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce: "short" }) }),
+  () => new Response("unused"));
+  assert.equal(wrongHealth.status, 400); assert.equal(wrongHealth.headers.get("set-cookie"), null);
+  const unsignedHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(unsignedHealth.status, 403, "even the correct code needs the exact loopback Origin");
+  const remoteHealth = await app.handle(new Request(`${trustedOrigin}/api/v1/local-host-health`, { method: "POST", headers: {
+    origin: trustedOrigin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(remoteHealth.status, 403, "the readiness oracle exists only on the loopback origin");
+  const health = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
+  assert.equal(health.status, 200); assert.equal(health.headers.get("set-cookie"), null);
+  assert.deepEqual(await health.json(), { schema: "control-room.local-host-health/v1", ready: true, pid: 4_243, nonce,
+    releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z", tag: hmacSha256Tag(new Uint8Array(32).fill(9),
+      { purpose: "local-host-health/v1", nonce, pid: 4_243, ready: true,
+        releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });
+  const healthRead = await app.handle(request("/api/v1/local-host-health"), () => new Response("unused"));
+  assert.equal(healthRead.status, 404, "health is an authenticated POST, not a public read");
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);
   const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const passkeyHeaders = { cookie: cookie!, origin, "content-type": "application/json" };
+  const passkeyOptions = await app.handle(request("/api/v1/passkeys/registration/options", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43) }) }), () => new Response("unused"));
+  assert.equal(passkeyOptions.status, 200);
+  const passkeyResponse = { id: "B".repeat(43), rawId: "B".repeat(43), type: "public-key", response: {} };
+  const passkeyInsert = await app.handle(request("/api/v1/passkeys/registration", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43), comparisonCode: "ABC234",
+      response: passkeyResponse, authorizationAssertion: null }) }), () => new Response("unused"));
+  assert.equal(passkeyInsert.status, 201); assert.deepEqual(await passkeyInsert.json(), { accepted: true });
+  assert.equal(passkeyCalls.length, 2);
+  assert.match((passkeyCalls[0] as { ownerSessionDigest: string }).ownerSessionDigest, /^sha256:[a-f0-9]{64}$/);
+  const oversizedPasskey = await app.handle(request("/api/v1/passkeys/registration", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43), comparisonCode: "ABC234",
+      response: { value: "x".repeat(21_000) }, authorizationAssertion: null }) }), () => new Response("unused"));
+  assert.equal(oversizedPasskey.status, 400); assert.equal(passkeyCalls.length, 2);
   const actionInboxResponse = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(actionInboxResponse.status, 200, await actionInboxResponse.clone().text());
   assert.deepEqual(await actionInboxResponse.json(), { observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false });
@@ -74,6 +174,14 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     "idempotency-key": "mac-local-project-foreign-port-001" }, body: JSON.stringify({ title: "Foreign port", summary: "Must be refused" }) }),
   () => new Response("unused"));
   assert.equal(foreignPort.status, 403);
+  // The push subscribe route is only mounted when push is configured, so
+  // without it the route is a 404 -- which is itself worth asserting, because a
+  // push install must not silently accept a subscribe it cannot honour.
+  const pushWithoutConfig = await app.handle(request("/api/v1/owner-web-push", { method: "POST", headers: {
+    cookie: cookie!, origin, "content-type": "application/json" },
+  body: JSON.stringify({ endpoint: "https://fcm.googleapis.com/fcm/send/x", expirationTime: null,
+    keys: { p256dh: "A".repeat(87), auth: "B".repeat(22) } }) }), () => new Response("unused"));
+  assert.equal(pushWithoutConfig.status, 404, "an install with no push configuration does not accept subscriptions");
   const created = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin, "content-type": "application/json",
     "idempotency-key": "mac-local-project-create-001" }, body: JSON.stringify({ title: "Local wrapper project", summary: "Disposable route proof" }) }),
   () => new Response("unused"));
@@ -306,7 +414,7 @@ test("the Mac-local needs-me route composes saved-plan verification into the tas
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
     taskReadKeys: { taskPlanIntegrityKey: new Uint8Array(32).fill(3), reviews: {
       integrityKey: new Uint8Array(32).fill(4), checkpoints: new InMemoryRollbackCheckpointStoreV1({ testOnly: true }) } } });
   t.after(() => app.close());
@@ -327,7 +435,7 @@ test("the Mac-local wrapper does not accept a forwarded or foreign request", asy
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow });
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow });
   const response = await app.handle(new Request(`${origin}/api/v1/local-owner-session`, { method: "POST", headers: {
     origin, forwarded: "for=192.0.2.1", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(response.status, 403);
@@ -347,7 +455,7 @@ test("the Mac-local wrapper forwards the existing assignment operation through l
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    database: { client: fixture.client, close: async () => {}, isAvailable: () => true }, clock: () => conformanceNow,
     assignment: { tenantId: fixture.configuration.tenantId, workspaceId: fixture.configuration.workspaceId,
       async projectOptions(...input) {
         projectReads.push(input);
@@ -438,4 +546,53 @@ test("the Mac-local transport stays loopback-only and admits only one configured
   const foreignDone = new Promise<void>((resolve, reject) => { foreign.output.once("finish", resolve); foreign.output.once("error", reject); });
   void handler.handle(foreign.input, foreign.output); await foreignDone;
   assert.equal(foreign.output.statusCode, 403);
+});
+
+// ---------------------------------------------------------------------------
+// Readiness must fold in the database. This is the review's N1 follow-up: the
+// process reported ready for the whole life of a database client that had been
+// closed underneath it, so the host never restarted it and every page failed.
+// ---------------------------------------------------------------------------
+
+test("a closed database client makes the process NOT ready", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-readiness" }); t.after(fixture.close);
+  const origin = "http://127.0.0.1:3210";
+  const ownerCode = "mac-local-owner-code-long-enough";
+  const build = (database: { client: typeof fixture.client; close: () => Promise<void>; isAvailable: () => boolean }) =>
+    createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
+      localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
+        provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }),
+        sessionSeconds: 900 },
+      database, clock: () => conformanceNow, hostProcessId: 4_243,
+      healthProbeKey: new Uint8Array(32).fill(9), healthReleaseId: "dev",
+      healthStartedAt: "2026-09-30T00:00:00.000Z" });
+
+  // A live client: ready.
+  let available = true;
+  const live = build({ client: fixture.client, close: async () => {}, isAvailable: () => available });
+  assert.equal(live.isReady(), true, "a live database client is ready");
+
+  // The same client, closed underneath the process — which is exactly what
+  // `bindPrivatePgPool` does permanently on an uncertain outcome.
+  available = false;
+  assert.equal(live.isReady(), false,
+    "N1: a process whose database client has been closed is NOT ready, so something restarts it");
+
+  // Back to live, and back to not: the answer tracks the client rather than
+  // latching.
+  available = true;
+  assert.equal(live.isReady(), true, "and it recovers when the client is available again");
+
+  // `isAvailable` is REQUIRED, not optional. This test used to assert the
+  // opposite — that a host supplying no `isAvailable` kept the old answer — and
+  // the strict type is the better contract: a host that cannot say whether its
+  // database is alive cannot be told apart from a host whose database is gone,
+  // which is the review's N1 in its original shape. The case is now that a host
+  // MUST provide it, proved by the type rather than by a runtime branch, and the
+  // runtime half is the `isReady` assertions above.
+  //
+  // An explicit close still reports not-ready, which is the older half of the
+  // rule and must not have been lost.
+  await live.close();
+  assert.equal(live.isReady(), false, "an explicitly closed process is still not ready");
 });

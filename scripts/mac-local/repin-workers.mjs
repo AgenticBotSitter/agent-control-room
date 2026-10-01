@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { captureMacLocalProtectedConfigurationV1 } from "../../src/web/v1/mac-local-protected-configuration";
-import { readPinnedMacExecutableVersion } from "./start-web-host.mjs";
+import { readPinnedMacExecutableVersion } from "./bot-executable-inspection.mjs";
 
 // Any unexpected failure is exit 2 (do not start), never exit 1 (start with a worker unavailable).
 for (const event of ["uncaughtException", "unhandledRejection"])

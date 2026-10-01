@@ -37,4 +37,28 @@ GRANT UPDATE (web_lock, revision, record_count, state_digest, state_auth_tag)
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_native_results;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_native_results;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_native_results;
+-- Result-file catalog (0206-0208). This login publishes results, so it records
+-- the catalog row for the attempt it just published: one declared set, then its
+-- file, then the set stored. It cannot accept, quarantine or delete anything,
+-- and 0207's producer trigger refuses any native set without a matching
+-- published receipt, so this is "record what I published", not "claim I did".
+-- SELECT as well as INSERT: 0206's deferred completeness trigger runs as the
+-- invoker and counts this login's own files when the set commits, so without
+-- the read every publication would fail 42501 at COMMIT rather than publish.
+GRANT SELECT ON control_result_file_sets, control_result_files TO control_room_native_results;
+GRANT INSERT ON control_result_file_sets, control_result_files TO control_room_native_results;
+-- The two state moves a publisher makes: a file's bytes are on disk, and the set
+-- now matches them. `stored_at` is CHECK-pinned to the state column, so this
+-- cannot write a timestamp that disagrees with the state it accompanies.
+GRANT UPDATE (state, stored_at) ON control_result_files TO control_room_native_results;
+GRANT UPDATE (state, stored_at, manifest_digest) ON control_result_file_sets TO control_room_native_results;
+-- Text-copy derivations (0212-0213). This login records what it converted: one
+-- finished row per attempt, carrying the source digest the converter actually
+-- hashed and a reference to the catalog file it produced. 0212's insert guard
+-- refuses any row whose source is not a real catalog file with that digest, and
+-- refuses a 'succeeded' row that does not name a STORED derived file in the
+-- same set, so this INSERT is permission to record a conversion, not to claim
+-- one. No UPDATE — a derivation is never rewritten — and no DELETE.
+GRANT SELECT, INSERT ON control_text_copy_derivations TO control_room_native_results;
+
 COMMIT;

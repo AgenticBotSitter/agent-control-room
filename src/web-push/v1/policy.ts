@@ -1,4 +1,5 @@
 import type { OwnerPushEventKindV1, OwnerPushPayloadV1, WebPushSubscriptionV1 } from "./types";
+import { ownerPushEndpointAllowedV1 as sharedOwnerPushEndpointAllowedV1 } from "../../updater/v1/push-policy.mjs";
 
 const eventTitles: Record<OwnerPushEventKindV1, string> = {
   needs_you: "Control Room needs you",
@@ -10,13 +11,45 @@ const eventTitles: Record<OwnerPushEventKindV1, string> = {
   test: "Control Room test notification",
 };
 
-const endpoint = /^https:\/\/[^\s]{1,1900}$/;
 const base64url = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The push services a browser subscription can legitimately point at.
+ *
+ * Without this the web process is an SSRF primitive: the subscribe route stores
+ * whatever endpoint it is given and the channel later makes a VAPID-signed
+ * outbound POST to exactly that URL, on the dispatcher's own schedule, with the
+ * private key already resident on the web process. UPDATE_SAFETY_DESIGN §12/R12
+ * calls for the allow list, and the migration of the VAPID key to the updater is
+ * not what makes it necessary -- the web process is already making
+ * attacker-reachable requests today.
+ *
+ * Matched on the PARSED host, never on a substring of the URL. A substring test
+ * accepts `https://evil.invalid/?x=web.push.apple.com` and
+ * `https://web.push.apple.com.evil.invalid/`; a hostname test does not.
+ *
+ * Exact hosts, plus the one wildcard the brief names. Adding a browser vendor is
+ * a one-line change here and a matching expression in 0227.
+ */
+/**
+ * True when this endpoint is an HTTPS URL on a known push service.
+ *
+ * A predicate rather than a boolean so `parseWebPushSubscriptionV1` cannot
+ * build a subscription from a value the allow list refused: a plain boolean
+ * would leave the endpoint typed `string` while the check that guards it
+ * returns false for exactly the non-string cases.
+ */
+export function ownerPushEndpointAllowedV1(endpoint: unknown): endpoint is string {
+  return sharedOwnerPushEndpointAllowedV1(endpoint);
+}
 
 export function parseWebPushSubscriptionV1(value: unknown): WebPushSubscriptionV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("web_push_subscription_invalid");
   const input = value as Record<string, unknown>, keys = input.keys;
-  if (typeof input.endpoint !== "string" || !endpoint.test(input.endpoint) || input.endpoint.length > 2048
+  // The allow list is enforced HERE, at the earliest and cheapest point, rather
+  // than only at send time. A refused subscribe never reaches the database, so
+  // there is nothing to clean up and nothing to filter later.
+  if (!ownerPushEndpointAllowedV1(input.endpoint)
     || input.expirationTime !== null && (typeof input.expirationTime !== "number" || !Number.isFinite(input.expirationTime) || input.expirationTime < 0)
     || !keys || typeof keys !== "object" || Array.isArray(keys)
     || typeof (keys as Record<string, unknown>).p256dh !== "string" || !base64url.test((keys as Record<string, string>).p256dh)

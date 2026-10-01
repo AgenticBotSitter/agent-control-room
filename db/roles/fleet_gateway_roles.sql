@@ -69,6 +69,14 @@ GRANT UPDATE (coordinator_lock) ON tenants, control_manual_project_heads, projec
 -- operations mode as whoever inserts the attempt, so a claim login must be able
 -- to read the mode or every claim it makes is refused, running included.
 GRANT SELECT ON installation_operations_mode_revisions TO control_room_fleet_gateway;
+-- Project Settings `eligible_worker_kinds` is a POLICY the claim path enforces,
+-- so the gateway must be able to read it to refuse an ineligible worker kind.
+-- SELECT only, on the three columns the policy read needs -- the two key
+-- columns it filters on plus the list itself -- so the gateway can read which
+-- kinds a project admits and can never widen that list or reach any other
+-- setting (the owner's default model / effort / concurrency cap).
+GRANT SELECT (tenant_id, project_id, eligible_worker_kinds)
+  ON control_project_settings TO control_room_fleet_gateway;
 
 -- The ordinary web login can present fleet data but cannot write any owner
 -- decision. A separate protected login inherits only the owner-authority role
@@ -77,6 +85,77 @@ GRANT SELECT ON fleet_enrollment_codes, fleet_workers, fleet_worker_credentials,
   fleet_worker_agents, fleet_presence_transitions, fleet_enrollment_redemptions, fleet_work_offers, fleet_claims,
   fleet_worker_events, fleet_results, fleet_result_files,
   fleet_result_reviews TO control_room_private_web;
+
+-- 0209-0211: the chunked upload path and the combine-input bindings.
+--
+-- The gateway may RESERVE an upload, send its chunks, finalise it and publish
+-- the set's receipt — the four verbs one claim needs to get its files onto the
+-- Mac. Every one of those writes is bounded by 0209/0210's own guards, which
+-- re-check 0140's `fleet_claim_is_live` on each call, so a claim that has died
+-- cannot keep filling an upload.
+--
+-- ON THE CATALOG: the gateway does hold SELECT on `control_result_file_sets`
+-- and `control_result_files`, and the reason is that 0209's reservation guard
+-- is SECURITY INVOKER and reads both to pin the promise to the owner-approved
+-- row. A guard that could not read them would fail closed on every reservation,
+-- which is not a safer installation, it is a broken one.
+--
+-- That does not weaken §2.6 H2, and it is worth saying exactly why, because
+-- "the gateway can read the catalog" sounds like the hole H2 describes and is
+-- not. H2 is about a worker being able to NAME another project's file, or to
+-- learn from an answer whether a digest already exists. Three things prevent
+-- both here, and none of them is the absence of a grant:
+--
+--   * Every query the gateway makes carries its own claim's project, job and
+--     attempt, and 0209's guard re-checks all three against `fleet_claims`
+--     before it writes anything. A row about a file that is not this claim's
+--     promised output is not addressable.
+--   * The storage key is still DERIVED, by 0206, from the tenant, the project,
+--     the file's own id and its digest. The gateway can read the key but cannot
+--     choose one, so reading it reveals nothing it could not already compute.
+--   * There is still no "do you already have that" answer anywhere: no column,
+--     no index and no query. A gateway that reads the whole catalog learns the
+--     same fact a second copy of this project would — a digest and a name — and
+--     cannot turn either into a cross-project read, because every read the byte
+--     store answers is keyed on the caller's own project.
+GRANT SELECT ON control_result_file_sets, control_result_files TO control_room_fleet_gateway;
+GRANT SELECT, INSERT ON control_result_upload_sessions, control_result_upload_chunks
+  TO control_room_fleet_gateway;
+-- It reads the declarations and bindings, and writes neither. A declared output
+-- or input is the OWNER's approval artefact, bound by 0209/0211's guards to a
+-- live owner grant, and the binding is written on the same path that accepts the
+-- producer's result. A machine that could write either could promise itself
+-- somewhere to send files, or hand itself a file to combine.
+GRANT SELECT ON control_task_declared_outputs, control_task_declared_inputs, control_job_artifact_inputs
+  TO control_room_fleet_gateway;
+-- The set's publication receipt, written by the same claim. A gateway may not
+-- publish a native-text set (it is not the native path) and 0210's guard
+-- refuses any set whose every file lacks a published upload session.
+GRANT SELECT, INSERT ON control_result_publications TO control_room_fleet_gateway;
+-- Finalise moves a session between its states, and Stop voids one. Both are
+-- UPDATE, both on three columns, and both re-checked by 0209's guard: no other
+-- column of a session is mutable by any role.
+GRANT UPDATE (state, received_at, published_at, voided_at, void_reason)
+  ON control_result_upload_sessions TO control_room_fleet_gateway;
+-- A file becomes 'stored' only through its own published upload (0210's guard),
+-- and a set becomes 'stored' only with its publication receipt. A column grant
+-- cannot say "only fleet, only forward", so 0210's two producer-state guards
+-- confine THIS role to the single edge declared -> stored on a fleet set and its
+-- files; every other catalog move (quarantine, missing, a re-stamp) is refused
+-- to it, and db/down/0210 revokes these grants with those guards. Two columns each,
+-- and no DELETE anywhere: the catalog is append-only and this role cannot write
+-- a name, a digest, a size, a storage key or a producer. A column grant is enough
+-- to run the UPDATE - the role may read the tenant, set and ordinal columns it
+-- filters on, and a BEFORE trigger still fires under a column grant, which is
+-- proved rather than assumed in tests/result-upload-ingress-postgres.test.ts.
+GRANT UPDATE (state, stored_at) ON control_result_files TO control_room_fleet_gateway;
+GRANT UPDATE (state, stored_at, manifest_digest) ON control_result_file_sets TO control_room_fleet_gateway;
+-- The owner-facing declarations, bindings, upload sessions and publication
+-- receipts the gateway reaches above are the same rows the web login reads for
+-- the owner's approval screen and Project Files. That grant is in
+-- private_web_roles.sql and is deliberately NOT repeated here: the upgrade
+-- grant reader treats one (role, object, column, privilege) tuple granted by
+-- two role files as a duplicate and refuses the whole batch.
 
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_fleet_owner_authority;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_fleet_owner_authority;

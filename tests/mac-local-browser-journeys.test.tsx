@@ -154,7 +154,7 @@ async function journeyFixture(t: TestContext, fresh: string, extra: Partial<MacL
     origin, workspaceId: configuration.workspaceId, clock: () => nowMs,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: configuration.tenantId,
       provider: trust.issuer, subject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
-    database: { client: opened.client, close: async () => {} },
+    database: { client: opened.client, close: async () => {}, isAvailable: () => true },
     ...extra,
   });
   t.after(async () => { await app.close(); await opened.close(); await database.drop(); });
@@ -278,7 +278,7 @@ describe("W5 journey steps that are reachable as shipped", { skip: needsPg }, ()
     const workers = await f.request("/api/v1/local-workers", { headers: f.auth });
     assert.deepEqual(await readJson(workers, 200, "worker status"),
       { taskWorkersStarted: false, instruction: "create your first project, then run mac:down && mac:up",
-        projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "settings"],
+        projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "automations", "settings"],
         workers: [{ kind: "hermes-021", state: "unavailable", proof: "not_proven" }] });
   });
 });

@@ -1,0 +1,11 @@
+#!/bin/sh -p
+set -eu
+R='/Library/Application Support/Control Room'
+cd / || exit 1
+case "${1-}" in
+  rescue)
+    exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/var/root /bin/sh -p "$R/guard/guard.sh" rescue
+    ;;
+esac
+exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/var/root \
+  "$R/runtime/node-current/bin/node" "$R/updater/current/bin/control-room.mjs" "$@"

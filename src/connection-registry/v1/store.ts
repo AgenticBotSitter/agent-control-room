@@ -228,7 +228,7 @@ export class ConnectionRegistryStoreV1 {
 
   async #persist(tx: DatabaseSession, value: IdeaLabHermes021ConnectionSafeResultV1,
     recordedAt: string): Promise<{ replayed: boolean; revision: number }> {
-    const tenants = await safeQuery(tx, `SELECT id FROM tenants WHERE id=$1 FOR UPDATE`, [value.tenantId], 1);
+    const tenants = await safeQuery(tx, `SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE`, [value.tenantId], 1);
     const tenant = exactHostDataSnapshotV1(tenants[0], ["id"]);
     if (!tenant || tenant.id !== value.tenantId) throw new ConnectionRegistryErrorV1("scope_mismatch");
     const origin: Omit<RegistryHeadRowV1, "head_auth_tag"> = { tenant_id: value.tenantId, last_sequence: 0,

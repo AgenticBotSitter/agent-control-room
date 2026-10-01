@@ -71,6 +71,12 @@ test("grant plan covers the source role files and detects additions and extras e
     assert.ok(desired.has(`${role}|function|public.is_work_intake_session()||EXECUTE|plain`));
   assert.ok(desired.has("control_room_agent_reviewer|function|public.commit_agent_review(text, jsonb, jsonb, bytea)||EXECUTE|plain"));
   assert.ok(desired.has("control_room_fleet_gateway|function|public.redeem_fleet_enrollment(text, text, text, text, timestamptz)||EXECUTE|plain"));
+  // MIG-I's allow-list pair, for the reason the allow-list itself records: a
+  // CHECK runs as its writer, so without EXECUTE here every subscribe on the
+  // role the constraint constrains fails 42501 instead of 204. Named rather
+  // than left implicit so a change to either role shows up in this diff.
+  assert.ok(desired.has("control_room_private_web|function|public.owner_push_endpoint_host(text)||EXECUTE|plain"));
+  assert.ok(desired.has("control_room_private_web|function|public.owner_push_endpoint_allowed(text)||EXECUTE|plain"));
   assert.ok(desired.has("control_room_fleet_owner_authority|table|public.fleet_result_reviews||INSERT|plain"));
   for (const item of [
     "control_room_private_web|table|public.control_leases||SELECT|plain",
@@ -131,6 +137,27 @@ test("grant convergence applies only the pinned function boundaries", async () =
   await assert.rejects(applyMacGrantDiffV1(client, {
     extra: ["control_room_private_web|function|public.other_function(text)||EXECUTE|plain"], missing: [],
   }), /upgrade_unexpected_function_grant/u);
+  // MIG-I's pair converges to exactly one role, and the convergence path is
+  // refused for any other. The REFUSAL is the part that matters: a blanket rule
+  // would have let a wider role hold EXECUTE on the function a CHECK runs as,
+  // which is how a grant meant to make a constraint readable turns into a
+  // callable authority. Asserted on the generator, and proved end to end on a
+  // live cluster in the lifecycle lane.
+  await applyMacGrantDiffV1(client, { extra: [],
+    missing: ["control_room_private_web|function|public.owner_push_endpoint_allowed(text)||EXECUTE|plain"] });
+  assert.equal(calls.at(-1),
+    "GRANT EXECUTE ON FUNCTION public.owner_push_endpoint_allowed(text) TO control_room_private_web");
+  for (const role of ["control_room_agent_reviewer", "control_room_fleet_gateway", "control_room_queue_worker"])
+    await assert.rejects(applyMacGrantDiffV1(client, { extra: [],
+      missing: [`${role}|function|public.owner_push_endpoint_allowed(text)||EXECUTE|plain`] }),
+    /upgrade_unexpected_function_grant/u,
+    `${role} must not be granted EXECUTE on the push-endpoint allow list`);
+  // A revoke of a role's grant is always allowed: convergence has to be able to
+  // take a privilege back, or a once-widened grant could never be undone.
+  await applyMacGrantDiffV1(client, { extra: [
+    "control_room_agent_reviewer|function|public.owner_push_endpoint_allowed(text)||EXECUTE|grantable"], missing: [] });
+  assert.equal(calls.at(-1),
+    "REVOKE EXECUTE ON FUNCTION public.owner_push_endpoint_allowed(text) FROM control_room_agent_reviewer");
   // The catalog must spell argument types the way db/roles/*.sql spells them
   // (pg_type.typname, e.g. timestamptz). oidvectortypes() expands to the
   // SQL-standard form (timestamp with time zone), which can never equal the
@@ -398,9 +425,17 @@ test("queue fingerprint ignores which UTC days have queue_stats partitions but n
 
 test("the role manifest names every role the migrations, down files and schema files touch, with no dangerous attribute", async t => {
   const { databaseRoleManifestV1: manifest, databaseRoleAttributesV1, databaseRoleNamesInSqlV1,
-    unknownDatabaseRoleNamesV1 } = await import("../scripts/mac-local/database-role-manifest.mjs");
-  const logins = Object.keys(manifest.logins), known = new Set([...manifest.groups, ...logins]);
-  assert.equal(known.size, manifest.groups.length + logins.length, "a name is either a group or a login");
+    databaseKnownRoleNamesV1, unknownDatabaseRoleNamesV1 } =
+    await import("../scripts/mac-local/database-role-manifest.mjs");
+  const logins = Object.keys(manifest.logins), known = new Set(databaseKnownRoleNamesV1);
+  // A name is owned by exactly one list, and the two Mac-owned lists do not
+  // overlap. A vpsOnlyGroup is a third category -- a role a migration may name
+  // that a Mac install neither creates nor grants to -- so it is counted
+  // separately rather than folded into "a group or a login".
+  assert.equal(known.size, manifest.groups.length + manifest.vpsOnlyGroups.length + logins.length,
+    "a name belongs to exactly one list: a Mac group, a VPS-only group, or a login");
+  assert.deepEqual([...known].filter(role => role.startsWith("control_room_")).sort(), [...known].sort(),
+    "every manifest name is a control_room role");
   for (const [login, { group }] of Object.entries(manifest.logins)) assert.ok(manifest.groups.includes(group), login);
   const named = new Set();
   for (const file of ["production_provision.sql", "production_roles.sql", "production_table_grants.sql",
@@ -443,9 +478,37 @@ test("the role manifest names every role the migrations, down files and schema f
   }
   assert.ok(onDisk.length > 100, "the scan sees the whole migration and down set");
   assert.deepEqual([...touched.keys()].filter(role => !known.has(role)).sort(), [], "no role is named outside the manifest");
+  // 0206-0208 added the five shared roles to this list, and deliberately: 0206's
+  // edit to db/roles/production_table_grants.sql is a REVOKE that takes the
+  // blanket grants back off the result-file tables, so the down file has to
+  // reverse exactly that by naming the same roles. A down file that dropped them
+  // would leave a database whose shared roles still held the blanket grants the
+  // up migration removed, which is exactly what a down migration must never do.
+  // 0238 added control_room_news_coordinator, and for the same reason 0206-0208
+  // added the five shared roles: 0211 hangs a combine-readiness guard off
+  // control_jobs that runs as the INVOKER, so every role holding UPDATE on
+  // control_jobs.state must be able to read the two tables that guard reads, and
+  // the news coordinator holds exactly those four columns. Its up and down files
+  // both name it, so the role has to be in the manifest and here -- a migration
+  // that names a role the upgrade never creates leaves the owner with a live
+  // role no tool reasons about. It is a VPS-only role and not a Mac login, which
+  // is why nothing failed until 0211 and 0238 met.
+  //
+  // 0213 (the text-copy read views) added the last two, for the same reason and
+  // in both directions: it grants SELECT on `control_worker_text_copy_derivations`
+  // to `control_room_native_queue_worker` and ALTERs both of its views to
+  // `control_room_schema_owner`, so its DOWN file must name both roles to revoke
+  // and un-own exactly what the up file conferred, leaving nothing behind. Both
+  // new names are already asserted above to be manifest GROUPS, so naming them
+  // here introduces no live role the upgrade cannot reason about, and the
+  // `vpsOnlyGroups` count assertion above still holds: a Mac install creates
+  // them, it just never had a migration that mentioned them.
   assert.deepEqual([...touched.keys()].sort(),
-    ["control_room_agent_reviewer", "control_room_fleet_gateway", "control_room_local_result_publisher",
-      "control_room_native_results", "control_room_private_web", "control_room_task_coordinator", "control_room_work_intake"],
+    ["control_room_agent_reviewer", "control_room_application", "control_room_backup",
+      "control_room_fleet_gateway", "control_room_github_broker", "control_room_local_result_publisher",
+      "control_room_native_queue_worker", "control_room_native_results", "control_room_news_coordinator",
+      "control_room_private_web", "control_room_reader", "control_room_schedule_admissions",
+      "control_room_schema_owner", "control_room_task_coordinator", "control_room_work_intake"],
   "the migrations name these manifest roles and no others");
 
   // The scanner reads what SQL actually means, so prove it on a temp copy of
@@ -914,8 +977,11 @@ async function startWebHostOnRoster(t, protectedRoot) {
     const name = path.split("/").at(-1);
     if (name === "macLocalProtectedLoader.js") return macLocalProtectedLoader;
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() {
-      return { async start() { return { async close() {} }; } };
+      return { async start() { return { isReady: () => true, async close() {} }; } };
     } };
+    if (name === "macLocalFleet.js") return { async loadMacLocalFleetReleaseTrustV1() { return {}; },
+      async loadMacLocalFleetConnectorReleaseV1() { return undefined; },
+      prepareMacLocalFleetOwnerV1() { return { fleet: { ownerAuthority: {} }, async close() {} }; } };
     if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {
       return { async start() {}, async close() {} };
     } };
@@ -924,7 +990,9 @@ async function startWebHostOnRoster(t, protectedRoot) {
     if (name === "index.js") return { default() {} };
     throw new Error(`unexpected ${name}`);
   };
-  const active = await startMacLocalWebHost({ protectedRoot }, { load });
+  const active = await startMacLocalWebHost({ protectedRoot }, {
+    load, loadHealthProbeKey: async () => Buffer.alloc(32, 8), hostReleaseIdentity: async () => "dev",
+  });
   await active.close();
   t.diagnostic("the real roster check accepted the intake record");
 }

@@ -27,4 +27,11 @@ GRANT SELECT ON control_room_queue.version,control_room_queue.queue
 -- authorize operational-row maintenance, not execution of the described task.
 GRANT SELECT,INSERT,UPDATE,DELETE ON control_room_queue.job,control_room_queue.job_common
   TO control_room_native_queue_worker;
+-- Text-copy derivations (0212-0213). The VIEW only, never the table. A SELECT
+-- on control_text_copy_derivations would be a tenant-wide read of every
+-- project's text copies; the view narrows it to the files of the jobs this
+-- login was admitted to, and a login with no admission sees no rows at all.
+-- It is SECURITY INVOKER, so a grant this login does not hold stays a grant it
+-- does not get — the view can only ever remove rows, never add authority.
+GRANT SELECT ON control_worker_text_copy_derivations TO control_room_native_queue_worker;
 COMMIT;

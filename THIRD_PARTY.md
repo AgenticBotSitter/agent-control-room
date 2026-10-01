@@ -1,6 +1,6 @@
 # Third-party notices and distribution manifest
 
-Inventory digest: `c10974ff0ba36626f55c45b7bc77309a96806b2669d80311cccaac8e6bd7d621`
+Inventory digest: `a57376b660d33ddc1baf83441486172f53ba819960cb9305b4e6fab97fe210c3`
 
 This notice index is generated from the exact declared artifact inputs. It binds retained notice files and their SHA-256 hashes; the release assembler independently verifies the final archive against this digest.
 
@@ -12,8 +12,26 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `@csstools/css-color-parser@3.1.0` — installed_root_text; `LICENSE.md` (d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665)
 - `@csstools/css-parser-algorithms@3.0.5` — installed_root_text; `LICENSE.md` (d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665)
 - `@csstools/css-tokenizer@3.0.4` — installed_root_text; `LICENSE.md` (d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665)
+- `@hexagon/base64@1.1.28` — installed_root_text; `LICENSE` (b9c657e3785c8b54b6165808e2a2744dfa33251f5bb8f2324ac5f70ff0d9af57)
+- `@levischuck/tiny-cbor@0.2.11` — installed_root_text; `LICENSE` (5871de52772b5b8e6a7054616a4b59f3f7a7949adb588af7eddcf825c8db86b8)
 - `@mozilla/readability@0.6.0` — installed_root_text; `LICENSE.md` (a5b1e8181751ce05b85b7bfaa832b785e87086250a5148e679d17ca9bdcfa958)
 - `@nodable/entities@3.0.0` — pinned_npm_release_integrity; retained upstream binding recorded in the manifest
+- `@peculiar/asn1-android@2.10.0` — installed_root_text; `LICENSE` (3ee7c4b649b783688f1186c9aa0da50e331027514c9bfa143f27983e23783c71)
+- `@peculiar/asn1-asym-key@2.10.0` — installed_root_text; `LICENSE` (1a00d37fb9fca78a7f792fa6c8fd13f0123388756d81b471bcec11484316ff73)
+- `@peculiar/asn1-cms@2.10.0` — installed_root_text; `LICENSE` (1ecdd8e8977af83c07c5f97bec87b47d27059b7ea323ca3160fbfa2314f5d99c)
+- `@peculiar/asn1-csr@2.10.0` — installed_root_text; `LICENSE` (031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a)
+- `@peculiar/asn1-ecc@2.10.0` — installed_root_text; `LICENSE` (031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a)
+- `@peculiar/asn1-pfx@2.10.0` — installed_root_text; `LICENSE` (031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a)
+- `@peculiar/asn1-pkcs8@2.10.0` — installed_root_text; `LICENSE` (031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a)
+- `@peculiar/asn1-pkcs9@2.10.0` — installed_root_text; `LICENSE` (3ee7c4b649b783688f1186c9aa0da50e331027514c9bfa143f27983e23783c71)
+- `@peculiar/asn1-rsa@2.10.0` — installed_root_text; `LICENSE` (031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a)
+- `@peculiar/asn1-schema@2.10.0` — installed_root_text; `LICENSE` (1ecdd8e8977af83c07c5f97bec87b47d27059b7ea323ca3160fbfa2314f5d99c)
+- `@peculiar/asn1-x509@2.10.0` — installed_root_text; `LICENSE` (1ecdd8e8977af83c07c5f97bec87b47d27059b7ea323ca3160fbfa2314f5d99c)
+- `@peculiar/asn1-x509-attr@2.10.0` — installed_root_text; `LICENSE` (031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a)
+- `@peculiar/asn1-x509-post-quantum@2.10.0` — installed_root_text; `LICENSE` (1a00d37fb9fca78a7f792fa6c8fd13f0123388756d81b471bcec11484316ff73)
+- `@peculiar/utils@2.0.3` — installed_root_text; `LICENSE` (ce2ae0f0066d1be56ab4ec851cc611805bb95cdc8dd858b301e22ee54b351d43)
+- `@peculiar/x509@2.1.0` — installed_root_text; `LICENSE` (3d5d1b1150b1fc25144d342daaba3875899b8dc2fcb172ea4810cc69affbe4d3)
+- `@simplewebauthn/server@14.0.3` — installed_root_text; `LICENSE.md` (bd9e3f45696472076c7160c7f66e54b2d62d38bc2646c812d19be83ee4400c63)
 - `@types/debug@4.1.13` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
 - `@types/estree@1.0.9` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
 - `@types/estree-jsx@1.0.5` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
@@ -27,6 +45,7 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `agent-base@7.1.4` — installed_root_text; `LICENSE` (8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a)
 - `anynum@1.0.1` — installed_root_text; `LICENSE` (8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07)
 - `asn1.js@5.4.1` — installed_root_text; `LICENSE` (251ecdcdb2bafa7b106187a8cce96f322d0074c66e557c3c94cb49c769970408)
+- `asn1js@3.0.10` — installed_root_text; `LICENSE` (ebe5d98519d0dfcbcb80e20b22a56e7321e8557cd14355760434bbd4c1f4f683)
 - `bail@2.0.2` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
 - `bn.js@4.12.5` — installed_root_text; `LICENSE` (445739f5b5eb63e5aeff5aeb0f35a45080a421615dce0d97f9939aeea498acdd)
 - `buffer-equal-constant-time@1.0.1` — installed_root_text; `LICENSE.txt` (751d0e80fb5c828f8c3de198cc760e1e05377e47c8263ab6ee2f10cdc19ba658)
@@ -151,9 +170,12 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `postgres-interval@1.2.0` — installed_root_text; `license` (f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393)
 - `property-information@7.2.0` — installed_root_text; `license` (5d0698266086f217bb11ea0499d33453e401fe479fb9126ad04e625e63d3557b)
 - `punycode@2.3.1` — installed_root_text; `LICENSE-MIT.txt` (483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a)
+- `pvtsutils@1.3.6` — installed_root_text; `LICENSE` (c620c1d08a47c93ce242914a4269b86e41df5a97845325725a5f83d5d6f9d7fd)
+- `pvutils@1.2.0` — installed_root_text; `LICENSE` (15c88630f1e778db64a446cb31b67362cc9eb7a048fdf5ac7ab51905b74464cd)
 - `react@19.2.6` — installed_root_text; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
 - `react-dom@19.2.6` — installed_root_text; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
 - `react-markdown@10.1.0` — installed_root_text; `license` (f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef)
+- `reflect-metadata@0.2.2` — installed_root_text; `LICENSE` (c5217b0544ea9c91d010863582d6f6b35ec50e4146c34dee085ddcec5dd92def)
 - `remark-gfm@4.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
 - `remark-parse@11.0.0` — installed_root_text; `license` (413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4)
 - `remark-rehype@11.1.2` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
@@ -182,6 +204,9 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `tr46@5.1.1` — installed_root_text; `LICENSE.md` (499d6d466d064e0460427967a344e2a32fcb86ea8c6cd1a285ec4f1fa03fba67)
 - `trim-lines@3.0.1` — installed_root_text; `license` (9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10)
 - `trough@2.2.0` — installed_root_text; `license` (6c03fd41cfd7c92d8aa8a2fa521b94b2683f059123281dcf921ddea9216b6254)
+- `tslib@1.14.1` — installed_root_text; `LICENSE.txt` (210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751)
+- `tslib@2.8.1` — installed_root_text; `LICENSE.txt` (210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751)
+- `tsyringe@4.10.0` — installed_root_text; `LICENSE` (27ebda9d51f0a56b7e281ccd8230a27236dcb51c05f64b07869ecf6e965d68b0)
 - `type-fest@5.9.0` — installed_root_text; `license-cc0` (a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499), `license-mit` (5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3)
 - `unified@11.0.5` — installed_root_text; `license` (05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d)
 - `unist-util-is@6.0.1` — installed_root_text; `license` (82974dbf2639d13edab95c32ed9cb6c0867ede272cd2e07ce47ce8548fe55c05)

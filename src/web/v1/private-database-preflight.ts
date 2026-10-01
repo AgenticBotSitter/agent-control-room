@@ -15,10 +15,32 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0220 (filename order, including assigned gaps, 0110-0111, 0155-0157, 0160-0162 and 0215-0220),
-// including generic external-content migrations 0025/0026, by the controlled
-// PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "14564ba1572ba97ca74760356e8fd60e00e8b830cbfe331cc60d065014ebc866";
+// Generated from the full public migration ledger of THIS tree, in filename order
+// including the assigned gaps, by the controlled digest script and cross-checked
+// against a real PostgreSQL 17 cluster installed the production way.
+//
+// History of this constant, in the order the rounds happened:
+//  - through 0196, plus the owner-push migrations 0224-0227 (MIG-I);
+//  - through 0230, whose acceptance guard gained a NAMED rejection arm and whose
+//    90-day sweep made an unaccepted set disposable. The pre-0230 digest was
+//    re-derived with 0230 removed and matched the previous value exactly, so that
+//    change was 0230's and only 0230's;
+//  - through 0237 with 0209-0211 (the upload sessions, the publication receipt
+//    and the combine-input bindings) merged onto that ledger, then once more after
+//    0210's stored-set guard was corrected to key on `producer_kind` rather than
+//    `source_kind`;
+//  - THIS merge round, for the text-copy derivations: cook/v1 at 0238 plus 0212
+//    (the derivation record) and 0213 (its two read views).
+//
+// Neither side's value survived the merge and neither could have. cook/v1's value
+// was derived from a tree with no 0212/0213; this branch's pre-merge value was
+// derived from a 0213-era tree with none of cook/v1's 0209-0211 or 0224-0238, so
+// it was wrong here by construction and could not be carried across. The value
+// below is the merged tree's and only the merged tree's; neither pre-merge value
+// is expected to appear anywhere.
+//
+// Catalog query below; not a mutable database marker.
+export const privateWebSchemaDigest = "MERGED_TREE_DIGEST_PENDING";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -52,9 +74,46 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
+  // MIG-I: the per-item push retry head. The dispatcher reads its own rows to
+  // notice, claim and settle, and holds nothing else on it. Listed here because
+  // 0226 grants SELECT on it, and the column audit compares the live grant
+  // against this list -- a grant the preflight does not know about is a
+  // preflight failure, not a lenient pass.
+  "control_owner_push_attempt_heads",
+  // 0155-0157: the operations-mode revisions and the mode they resolve to. The
+  // web login reads them and inserts its own revision, which is why the table is
+  // in the read list AND `privateWebInsertTables`; an audit that listed only one
+  // side would refuse a correct database.
   "installation_operations_mode_revisions", "installation_effective_operations_mode", "control_module_install_approvals",
+  // 0206-0208: the result-file catalog and its download grants. Read only; the
+  // preflight's column audit is what proves the web login cannot write a
+  // catalog row, cannot quarantine a file and cannot rewrite a producer.
+  "control_result_file_sets", "control_result_files", "control_result_file_download_grants",
+  // 0209-0211: the owner's approval artefacts for the upload path. Read plus
+  // INSERT on the three the owner actually declares and binds; the upload
+  // sessions, their chunks and the publication receipt are read only, so the
+  // owner's Stop decision about an upload is the 0209 guard's to check and not
+  // a column this login can simply set.
+  "control_task_declared_outputs", "control_task_declared_inputs", "control_job_artifact_inputs",
+  "control_result_upload_sessions", "control_result_upload_chunks", "control_result_publications",
+  // 0213 (MIG-E part 2): the owner's per-project read of text-copy derivations.
+  //
+  // The VIEW, never `control_text_copy_derivations` itself, and the difference
+  // is the whole security property. The web login holds no privilege on the
+  // table — it holds SELECT on a schema-owner-owned view whose WHERE clause
+  // re-checks the caller's own live owner grant and live web session inline.
+  // Naming the table here instead of the view would make this preflight demand
+  // a tenant-wide SELECT on every project's derivations, which is exactly the
+  // cross-project read the view exists to prevent; a future migration that
+  // granted the table to the web login therefore fails the preflight rather than
+  // silently widening the owner.
+  "control_project_text_copy_derivations",
+  // 0218 (cursor): the "since you last looked" boundary, one row per
+  // (tenant, identity, surface). The web login selects its own row and inserts
+  // it on first read; it never deletes one, so the boundary only moves forward.
   "owner_surface_cursors"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -72,15 +131,34 @@ privateWebInsertTables.add("control_job_dependencies");
 privateWebInsertTables.add("control_project_settings"); privateWebInsertTables.add("pipeline_unattended_transitions");
 privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
+// MIG-I: the dispatcher writes the FIRST head for a newly noticed item and
+// nothing else. Every later change is an UPDATE over the retry bookkeeping, so
+// INSERT here is the only way a new row appears.
+privateWebInsertTables.add("control_owner_push_attempt_heads");
 // 0190: a task proposal may cite a retained news story (append-only provenance).
 privateWebInsertTables.add("control_news_task_proposal_links");
+// S7b: the owner sets the installation's caps and reports the machine's cluster count.
+privateWebInsertTables.add("pipeline_installation_allowances"); privateWebInsertTables.add("pipeline_machine_capacity_observations");
 privateWebInsertTables.add("installation_operations_mode_revisions");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
-privateWebInsertTables.add("owner_surface_cursors");
+// 0208: the owner-facing download grant for one exact file. Insert and spend
+// only; the catalog itself is never written by the web login.
+privateWebInsertTables.add("control_result_file_download_grants");
+// cook/v1 (recurring + skills): the owner's rules and reusable skills.
 for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
   privateWebInsertTables.add(table);
-
+// 0209-0211: the owner approves what a part may produce and what it needs, and
+// binds an accepted file to the consumer that declared it. Each insert is
+// guarded by a live-owner check in the database (0209/0211), so this is
+// permission to ask, not permission to declare.
+privateWebInsertTables.add("control_task_declared_outputs");
+privateWebInsertTables.add("control_task_declared_inputs");
+privateWebInsertTables.add("control_job_artifact_inputs");
+// 0218 (cursor): the owner marks a surface seen. Insert-only, and the 0219
+// guard refuses any UPDATE that would lower seen_through, so acknowledging
+// cannot rewind the boundary and hide work that already finished.
+privateWebInsertTables.add("owner_surface_cursors");
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -112,10 +190,20 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   control_idempotency: ["status", "result", "completed_at"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
   control_action_inbox: ["state", "payload"],
+  // MIG-I: exactly the eight retry-bookkeeping columns 0226 grants, and NOT the
+  // link -- a phone's destination is written once and never repointed. This list
+  // is the preflight's copy of that grant, and it is deliberately identical: a
+  // column here that 0226 does not grant, or one missing that it does, is
+  // refused by the column audit rather than tolerated.
+  control_owner_push_attempt_heads: ["state", "attempt_count", "next_attempt_at", "reserved_at", "last_attempt_at",
+    "completed_at", "safe_reason_code", "updated_at"],
   work_batches: ["state", "approval_identity_id", "approved_at", "decision_reason_code", "decision_digest",
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
   pipeline_templates: ["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"],
+  pipeline_installation_allowances: ["runs_per_hour", "runs_per_agent_per_day", "machine_max_agent_processes",
+    "machine_max_db_clusters", "dollar_cap_microusd", "owner_identity_id", "version", "record_digest", "auth_tag",
+    "updated_at"],
   pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
     "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
@@ -123,6 +211,12 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
   control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
+  // 0206-0208: the owner's two retention decisions and the one-time spend of a
+  // download grant. Every other catalog column is read-only to the web login,
+  // which is what makes "a worker or a reader cannot mark bytes stored" a
+  // statement about the live ACL rather than about application code.
+  control_result_file_sets: ["retention_state", "accepted_at", "accepted_by_identity_id", "retained_until"],
+  control_result_file_download_grants: ["spent_at"],
   control_skills: ["current_version", "state", "updated_at"],
   control_recurring_rules: ["state", "plain_schedule", "cron_expression", "timezone", "task_template", "version",
     "updated_by_identity_id", "updated_at"],
@@ -146,7 +240,12 @@ const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
   "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",
   "control_job_dependencies", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents",
-  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
+  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding",
+  // 0211's combine-readiness guard is a BEFORE UPDATE trigger on control_jobs
+  // that runs as the INVOKER, and this role holds UPDATE on control_jobs.state,
+  // so without these two reads the guard is unevaluable and every news job is
+  // refused 42501 as it starts. Granted by db/migrations/0238.
+  "control_task_declared_inputs", "control_job_artifact_inputs"];
 const newsCoordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts",
   "control_leases", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents", "control_approval_consumptions",
   "control_policy_decisions", "control_news_feed_plans", "audit_events", "control_audit_chain_heads"]);
@@ -170,7 +269,13 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_project_coordination_operation_jobs", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_task_model_selections",
   "control_task_declared_scopes", "control_assignment_lease_scopes", "work_batches", "work_batch_items",
-  "work_batch_effective_queue_admissions", "control_project_event_stream_heads", "control_project_events"];
+  "work_batch_effective_queue_admissions", "control_project_event_stream_heads", "control_project_events",
+  // 0211's combine-readiness guard is a BEFORE UPDATE trigger on control_jobs
+  // that runs as the INVOKER. The coordinator holds UPDATE on control_jobs.state
+  // -- it is the supervisor's own lease-expiry move -- so without these two
+  // reads reconcileStalled fails 42501 and every stalled task is stranded.
+  // Granted by db/migrations/0238.
+  "control_task_declared_inputs", "control_job_artifact_inputs"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
@@ -184,6 +289,7 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_project_event_stream_heads", "control_project_events"]);
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions", "pipeline_advance_receipts",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations", "pipeline_stage_loop_counts",
   "control_agent_review_plans", "control_pipeline_build_publications");
 coordinatorReads.push("control_improvement_requests", "control_update_candidates");
 // Scheduling reads each project's worker and concurrency settings (0135).
@@ -197,6 +303,7 @@ coordinatorInserts.add("control_recurring_proposals");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
+coordinatorInserts.add("pipeline_stage_loop_counts");
 coordinatorInserts.add("control_update_candidates");
 // Supervisor (0177-0179 and the 0017 incident tables): reconciliation heads,
 // health, loop heads and provider waits; incidents are column-scoped writes.
@@ -208,6 +315,10 @@ coordinatorInserts.add("control_update_candidates");
 coordinatorReads.push("control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits", "control_service_incident_heads", "control_service_incidents");
+// The stall decision's outcome-uncertainty test reads effect intents. This is a
+// read, never a write: an intent is created and moved only by the path that
+// owns the external effect.
+coordinatorReads.push("control_effect_intents");
 for (const table of ["control_supervisor_task_heads", "control_supervisor_reconciliation_events",
   "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
   "control_provider_waits"]) coordinatorInserts.add(table);
@@ -243,6 +354,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_attempt_resource_scopes: ["coordinator_lock"],
   pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag",
     "unattended_last_swept_at"],
+  ...Object.fromEntries(["pipeline_installation_allowances", "pipeline_stage_loop_counts"]
+    .map(table => [table, ["coordinator_lock"]])),
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
   // The supervisor's own mutable fields: a lapsed task head, an agent's health
@@ -272,15 +385,27 @@ const resultReads = ["workspaces", "control_identities", "control_role_grants", 
   "control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_native_review_plans",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records",
   "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding", "control_idea_sessions",
-  "control_idea_canonical_task_links", "control_idea_contributions", "control_idea_decisions"];
+  "control_idea_canonical_task_links", "control_idea_contributions", "control_idea_decisions",
+  // 0206: the publisher records the catalog for the attempt it just published,
+  // and 0206's deferred completeness trigger counts its own rows as the invoker.
+  "control_result_file_sets", "control_result_files"];
 const resultInserts = new Set(["control_native_review_plans", "control_completion_gate_records", "audit_events", "control_audit_chain_heads",
   "control_idea_contributions"]);
+// 0206-0208: the publisher may record a set and its files, and may move them
+// to stored once the bytes are on disk. It may NOT accept, quarantine, delete,
+// or touch a download grant — the web login alone mints those.
+resultInserts.add("control_result_file_sets"); resultInserts.add("control_result_files");
 const resultUpdates: Record<string, readonly string[]> = {
   control_jobs: ["result_lock"], control_harness_runs: ["coordinator_lock"], projects: ["coordinator_lock"],
   control_completion_gate_records: ["web_lock"],
   control_native_review_plans: ["results_lock"], control_native_artifact_receipts: ["results_lock"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+  // The publisher's two catalog state moves. `manifest_digest` is listed because
+  // 0206 refuses a set that does not match the digest it recomputes, so the
+  // publisher must be able to write the one it computed — and nothing else.
+  control_result_files: ["state", "stored_at"],
+  control_result_file_sets: ["state", "stored_at", "manifest_digest"],
 };
 const evidenceReads = ["workspaces", "control_identities", "control_role_grants", "projects", "control_manual_project_heads",
   "control_jobs", "control_attempts", "control_leases", "control_nodes", "control_node_keys", "control_harness_runs", "control_harness_run_events",
@@ -549,9 +674,44 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
                   OR pg_get_userbyid(a.grantee)<>'control_room_fleet_gateway')))
-            OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
+            /* MIG-I's push-endpoint allow list (0227). A CHECK constraint runs as
+               its WRITER, so the login that inserts subscriptions must hold
+               EXECUTE on these two or the constraint is unevaluable and every
+               subscribe fails 42501 instead of 204. That makes them the one
+               documented exception to "the web login holds no EXECUTE": both are
+               pure and immutable, own no object, and are pinned to the same
+               search_path as every other function here. The ACL test is the
+               point -- exactly one non-owner grantee, and it must be
+               control_room_private_web. */
+            OR (p.oid IN ('owner_push_endpoint_host(text)'::regprocedure,
+                'owner_push_endpoint_allowed(text)'::regprocedure)
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND NOT p.prosecdef AND NOT p.proleakproof AND p.prokind='f'
+              AND p.provolatile='i' AND p.proparallel='s'
+              AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
-              AND (($2 AND p.prosecdef AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND has_function_privilege('control_room_private_web',p.oid,'EXECUTE')
+              AND NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee)<>'control_room_private_web')))
+            /* The owner is checked for EVERY kind, not only the reviewer. The
+               rest of this branch (SECURITY DEFINER, the pinned search_path, the
+               volatility of each signature) describes what these two functions
+               must be on a correct database; none of it says who may own them.
+               Leaving the owner test inside the $2 disjunct made the whole shape
+               conditional, so on a database where the functions exist with the
+               right properties but are owned by anyone other than
+               control_room_schema_owner, every non-reviewer kind exempted them on
+               the strength of the web login merely lacking EXECUTE - which is
+               exactly the state a SECURITY DEFINER function an operator can
+               re-create, or a fixture that replays migrations without SET ROLE,
+               is in. redeem_fleet_enrollment above checks its owner
+               unconditionally for the same reason. */
+            OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND (($2 AND p.prosecdef
                 AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
                 AND NOT p.proleakproof AND p.proparallel='u'
                 AND p.provolatile=CASE WHEN p.oid='read_agent_review_plan(text)'::regprocedure THEN 's' ELSE 'v' END)

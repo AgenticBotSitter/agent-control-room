@@ -1,13 +1,34 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFile, readdir } from "node:fs/promises";
-import type { Server, ServerOptions } from "node:http";
+import type { IncomingMessage, Server, ServerOptions, ServerResponse } from "node:http";
 import type { ListenOptions } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 import ts from "typescript";
 import { createContributorDemoService, createPrivateNodeService } from "../src/web/v1/private-serving.ts";
 import { privateResponseHeaders } from "../src/web/v1/http-common.ts";
+
+function drainingFixture(handle: () => Promise<void>, closeMs = 40, closeError = false) {
+  let databaseClosed = false, refused = 0, forced = 0;
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: ListenOptions, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.(closeError ? new Error("synthetic close failure") : undefined)); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {};
+  server.closeAllConnections = () => { forced++; };
+  const service = createContributorDemoService({ origin: "http://127.0.0.1:3000", isReady: () => true,
+    handle, close: async () => { databaseClosed = true; },
+  }, { createServer: () => server, listenerTiming: { bindMs: 20, closeMs } });
+  function request() {
+    const input = new EventEmitter() as IncomingMessage;
+    const output = new EventEmitter() as ServerResponse;
+    output.writeHead = ((status: number) => { if (status === 503) refused++; return output; }) as ServerResponse["writeHead"];
+    output.end = (() => { output.emit("close"); return output; }) as ServerResponse["end"];
+    output.destroy = (() => { output.emit("close"); return output; }) as ServerResponse["destroy"];
+    server.emit("request", input, output);
+  }
+  return { service, request, databaseClosed: () => databaseClosed, refused: () => refused, forced: () => forced };
+}
 
 function fixture(mode: "normal" | "bind_stalls" | "bind_error" | "close_stalls" | "close_error" = "normal",
   applicationClose?: () => Promise<void>, demo = false) {
@@ -80,6 +101,64 @@ test("private service is inert, starts only the fixed loopback profile and close
   await close; assert.deepEqual(f.counts(), { created: 1, closes: 1, dbCloses: 1, forceCloses: 0 });
   await assert.rejects(f.service.start(), /already_attempted/);
 });
+test("shutdown drains an admitted owner review before it closes its shared database, and refuses a later review", async () => {
+  let release!: () => void, started!: () => void, saved = 0;
+  const startedReview = new Promise<void>(resolve => { started = resolve; });
+  const maySave = new Promise<void>(resolve => { release = resolve; });
+  const f = drainingFixture(async () => {
+    started(); await maySave;
+    assert.equal(f.databaseClosed(), false, "an admitted owner review saves before database closure");
+    saved++;
+  });
+  await f.service.start(); f.request(); await startedReview;
+  const closing = f.service.close();
+  f.request();
+  await new Promise(resolve => setImmediate(resolve));
+  try {
+    assert.equal(f.refused(), 1, "a review arriving after shutdown is refused before its handler runs");
+    assert.equal(f.databaseClosed(), false);
+  } finally { release(); await closing; }
+  assert.equal(saved, 1); assert.equal(f.databaseClosed(), true);
+});
+test("a listener-close error still drains an admitted verification before shared database closure", async () => {
+  let release!: () => void, started!: () => void, saved = 0;
+  const entered = new Promise<void>(resolve => { started = resolve; });
+  const maySave = new Promise<void>(resolve => { release = resolve; });
+  const f = drainingFixture(async () => {
+    started(); await maySave;
+    assert.equal(f.databaseClosed(), false, "a verification already admitted survives listener-close uncertainty");
+    saved++;
+  }, 40, true);
+  await f.service.start(); f.request(); await entered;
+  const closing = f.service.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.databaseClosed(), false);
+  release(); await assert.rejects(closing, /private_listener_close_uncertain/);
+  assert.equal(saved, 1); assert.equal(f.databaseClosed(), true);
+});
+test("shutdown's shared request drain covers a burst of fifty active task operations", async () => {
+  let release!: () => void, started = 0;
+  const mayFinish = new Promise<void>(resolve => { release = resolve; });
+  const f = drainingFixture(async () => { started++; await mayFinish; });
+  await f.service.start();
+  for (let index = 0; index < 50; index++) f.request();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(started, 50);
+  const closing = f.service.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.databaseClosed(), false, "all fifty admitted task calls are ahead of database closure");
+  release(); await closing;
+  assert.equal(f.databaseClosed(), true); assert.equal(f.forced(), 0);
+});
+test("a hung request is aborted at the listener bound and cannot hold shutdown forever", async () => {
+  const f = drainingFixture(() => new Promise<void>(() => {}), 20);
+  await f.service.start(); f.request();
+  const began = Date.now();
+  await assert.rejects(f.service.close(), /private_listener_close_uncertain/);
+  assert.ok(Date.now() - began < 250, "the close returns at its bounded listener deadline");
+  assert.equal(f.databaseClosed(), true, "the bridge closes only after the hung request is aborted");
+  assert.equal(f.forced(), 1);
+});
 test("successful factory construction owns close-before-start without creating a server", async () => {
   const f = fixture(); await f.service.close();
   assert.deepEqual(f.counts(), { created: 0, closes: 0, dbCloses: 1, forceCloses: 0 });
@@ -139,7 +218,8 @@ test("reviewed HTTP listener and outbound request imports stay separate; legacy 
     }
     visit(tree); if (ownsHttp) owners.push(path.replaceAll("\\", "/"));
   }
-  assert.deepEqual(owners.sort(), ["src/vendor/control-center/pinned-fetch.ts", "src/web/v1/private-serving.ts"]);
+  assert.deepEqual(owners.sort(), ["src/fleet/v1/mac-local-composition.ts",
+    "src/vendor/control-center/pinned-fetch.ts", "src/web/v1/private-serving.ts"]);
   // The reviewed task host, Mac-local host, bootstrap-only host, first-run setup host,
   // proposal-only intake service and separately reviewed GitHub broker explicitly compose serving.
   // No other consumer or additional native HTTP owner is admitted by this inventory.

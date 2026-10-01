@@ -1,4 +1,5 @@
 import type { DatabaseClient } from "../../persistence/database";
+import { createHash } from "node:crypto";
 import type { Server, ServerOptions } from "node:http";
 import type { PrivateClientAssets } from "./private-assets";
 import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-configuration";
@@ -18,6 +19,11 @@ import { captureWorkBatchQueueCatalogV1, createWorkBatchQueueSelectionAuthorityV
 import { WebOperationsModeServiceV1, operationsModeStopAuthorityV1 } from "./operations-mode-service";
 import { createOperationsModeSupervisorPortV1 } from "./operations-mode-supervisor-port";
 import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
+import { createUpdaterHomeStatusReaderV1, type UpdaterHomeStatusReaderV1 } from "./updater-home-status";
+import type { UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
+import { PasskeyWebStoreV1 } from "../../updater/v1/passkey-store.mjs";
+import { updaterRefuseV1 } from "../../updater/v1/contracts.mjs";
+import { canonicalJsonV1 } from "../../updater/v1/canonical-json.mjs";
 
 /** The installation's one supervisor identity. The Mac-local host runs a single
  * supervisor loop, so this is fixed rather than configurable: a second id would
@@ -25,11 +31,60 @@ import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
  * own incident. */
 export const MAC_LOCAL_SUPERVISOR_ID_V1 = "supervisor:mac-local";
 
-type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
+type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void>; isAvailable(): boolean }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
-type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">
+type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "resultFileStore" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">
   & Partial<Pick<MacLocalTaskApplicationV1, "taskService">>;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
+
+function passkeyRegistrationDigestV1(secret: string): string {
+  const bytes = Buffer.from(secret, "base64url");
+  if (bytes.length !== 32 || bytes.toString("base64url") !== secret)
+    throw updaterRefuseV1("updater_registration_secret_refused");
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+/** A stable idempotency key for one exact browser response. A lost HTTP reply
+ * can therefore be retried without creating the second row that the updater
+ * must treat as a registration race. A changed response gets a different key,
+ * stays visible as a second row, and is refused by the updater's one-row rule. */
+function passkeyRegistrationRowIdV1(value: Readonly<Record<string, unknown>>): string {
+  const hex = createHash("sha256").update(canonicalJsonV1({
+    schema: "control-room.passkey-registration-row/v1", ...value,
+  })).digest("hex");
+  const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+  return `passkey-registration:${uuid}`;
+}
+
+/** The ordinary web-login side of item 10a. It is lazy so host construction
+ * stays inert, but the first registration request asserts the production role
+ * before reading or writing a ceremony row. */
+export function createMacLocalPasskeyRegistrationPortV1(client: DatabaseClient):
+  NonNullable<MacLocalWebProcessOptionsV1["passkeyRegistration"]> {
+  const store = new PasskeyWebStoreV1(client);
+  let initializing: Promise<void> | undefined;
+  const ready = () => initializing ??= Promise.resolve(store.initialize()).catch((error: unknown) => {
+    initializing = undefined; throw error;
+  });
+  return Object.freeze({
+    async options(input) {
+      await ready();
+      const registration = await store.options(passkeyRegistrationDigestV1(input.registrationSecret));
+      return registration.options;
+    },
+    async insert(input) {
+      await ready();
+      const response = input.response as { id?: unknown } | null;
+      const registrationDigest = passkeyRegistrationDigestV1(input.registrationSecret);
+      const material = { ownerSessionDigest: input.ownerSessionDigest, registrationDigest,
+        credentialId: response?.id, comparisonCode: input.comparisonCode, response: input.response,
+        authorizationAssertion: input.authorizationAssertion ?? null };
+      await (store.insert as unknown as (value: Record<string, unknown>) => Promise<unknown>)({
+        id: passkeyRegistrationRowIdV1(material), ...material });
+      return Object.freeze({ accepted: true });
+    },
+  });
+}
 
 /** The protected enablement is the only Mac-local source of exact worker and
  * model identities. Historical Hermes 0.21 evidence is deliberately not an
@@ -70,6 +125,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   workBatchQueueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
   ownerWebPush?: OwnerWebPushConfigV1;
+  hostProcessId?: number;
+  healthProbeKey?: Uint8Array;
+  healthReleaseId?: string;
+  healthStartedAt?: string;
   /** Remote-worker owner section, present only when the host also runs the
    * fleet gateway on its own database login. */
   fleet?: MacLocalWebProcessOptionsV1["fleet"];
@@ -77,9 +136,15 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
    * already built, so the endpoint and the supervisor's health port are two
    * callers of one service rather than two services over one state. */
   operationsMode?: WebOperationsModeServiceV1;
+  /** Test/deployment seam for the updater's public, display-only status file. */
+  updaterHomeStatus?: UpdaterHomeStatusReaderV1;
+  /** Root-updater-owned read/request/passkey port. It is intentionally not
+   * built from the normal web database connection. */
+  updaterOwnerUi?: UpdaterOwnerUiPortV1;
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
+    || typeof input.database.isAvailable !== "function"
     || !input.assets || typeof input.assets.respond !== "function" || typeof input.render !== "function")
     throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.taskApplication) throw new Error("mac_local_host_configuration_invalid");
@@ -98,6 +163,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
     ...(taskApplication?.taskService ? { taskService: taskApplication.taskService } : {}),
     ...(taskApplication?.taskReadKeys ? { taskReadKeys: taskApplication.taskReadKeys } : {}),
+    // "Save to my Mac" (plan v4.3 2.6). Without this the download route does
+    // not exist on a real installation, which is the exact failure mode the
+    // operations-mode forwarding below was written to prevent.
+    ...(taskApplication?.resultFileStore ? { resultFileStore: taskApplication.resultFileStore } : {}),
     ...(taskApplication?.actionInboxSource ? { actionInboxSource: taskApplication.actionInboxSource } : {}),
     ...(taskApplication?.projectEvents ? { projectEvents: taskApplication.projectEvents } : {}),
     ...(input.workerReadiness ? { workerReadiness: input.workerReadiness } : {}),
@@ -107,11 +176,22 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
       ?? createMacLocalWorkBatchQueueCatalogV1(configuration) } : {}),
     ...(input.workBatchQueueAdmissionAuthority ? { workBatchQueueAdmissionAuthority: input.workBatchQueueAdmissionAuthority } : {}),
     ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+    // The host's own pid, for the authenticated readiness route. Without this
+    // forwarding the route is absent in this composition and answers 404, so
+    // `mac:up` can never prove a started host is ready -- exactly the failure
+    // `operationsMode` above documents, and for the same reason: the option
+    // exists on the web process but is never mounted here.
+    ...(input.hostProcessId ? { hostProcessId: input.hostProcessId } : {}),
+    ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
+      healthStartedAt: input.healthStartedAt } : {}),
     ...(input.fleet ? { fleet: input.fleet } : {}),
     // The installation-wide mode. This forwarding is the whole fix: without it
     // the endpoint exists in the web process but is never mounted, and it 404s
     // on a real installation while every service-level test passes.
     ...(input.operationsMode ? { operationsMode: input.operationsMode } : {}),
+    updaterHomeStatus: input.updaterHomeStatus ?? createUpdaterHomeStatusReaderV1(),
+    ...(input.updaterOwnerUi ? { updaterOwnerUi: input.updaterOwnerUi } : {}),
+    passkeyRegistration: createMacLocalPasskeyRegistrationPortV1(input.database.client),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -123,20 +203,26 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     start: service.start.bind(service),
     isReady: () => service.isReady() && taskApplication.isReady(),
     close: () => close ??= (async () => {
-      const results = await Promise.allSettled([service.close(), taskApplication.close()]);
-      if (results.some(result => result.status === "rejected")) throw new Error("mac_local_host_cleanup_uncertain");
+      // The task application owns the restricted controller/result pools. It
+      // first refuses new operations and drains active saves, so it must finish
+      // before the web composition closes the database beneath the host. Keep
+      // the later close best-effort even when the drain reports uncertainty.
+      const task = await Promise.allSettled([taskApplication.close()]);
+      const site = await Promise.allSettled([service.close()]);
+      if ([...task, ...site].some(result => result.status === "rejected"))
+        throw new Error("mac_local_host_cleanup_uncertain");
     })(),
   });
 }
 
-/** The fixed Mac-local startup order: load protected configuration, verify the
- * owner-pinned executable versions, then and only then open the one authority
- * database and assemble the loopback website. It starts neither worker nor
- * listener until its explicit start() call. */
+/** The fixed Mac-local startup order. Connector-only service mode loads no bot
+ * adapter and performs no bot executable inspection; the legacy direct mode
+ * remains available only to explicitly composed non-service callers. */
 export function createMacLocalProtectedHostV1(input: Readonly<{
   loadConfiguration(): Promise<MacLocalProtectedConfigurationV1>;
-  readVersion(executablePath: string): Promise<string>;
+  readVersion?: (executablePath: string) => Promise<string>;
   verifyModelPolicy?: Parameters<typeof createMacLocalStartupV1>[0]["verifyModelPolicy"];
+  connectorOnly?: boolean;
   openDatabase(configuration: MacLocalProtectedConfigurationV1["database"]): OpenedDatabase;
   assets: PrivateClientAssets;
   render(request: Request): Promise<Response> | Response;
@@ -164,22 +250,34 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   listenerTiming?: { bindMs?: number; closeMs?: number };
   workBatchIntegrityKey?: Uint8Array;
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** Owner fleet routes backed by the separately opened fleet-owner login.
+   * The connector gateway itself is a different process. */
+  fleet?: MacLocalWebProcessOptionsV1["fleet"];
   /** The identity the health loop reports under. Defaults to the one fixed
    * Mac-local supervisor; supplied only where a distinct id is needed. */
   supervisorId?: string;
+  hostProcessId?: number;
+  healthProbeKey?: Uint8Array;
+  healthReleaseId?: string;
+  healthStartedAt?: string;
+  updaterHomeStatus?: UpdaterHomeStatusReaderV1;
+  updaterOwnerUi?: UpdaterOwnerUiPortV1;
 }>) {
-  if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
+  if (!input || typeof input.loadConfiguration !== "function"
+    || (input.connectorOnly !== true && typeof input.readVersion !== "function")
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
     || typeof input.render !== "function") throw new Error("mac_local_host_configuration_invalid");
+  if (input.hostProcessId !== undefined
+    && (!Number.isSafeInteger(input.hostProcessId) || input.hostProcessId <= 1))
+    throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.createTaskApplication) throw new Error("mac_local_host_configuration_invalid");
+  if (input.connectorOnly === true && (input.createTaskApplication || input.startQueueWorker || input.loadDatabaseRoles))
+    throw new Error("mac_local_host_configuration_invalid");
   if (input.createTaskApplication && typeof input.loadDatabaseRoles !== "function") throw new Error("mac_local_host_configuration_invalid");
   if (input.startQueueWorker && (!input.createTaskApplication || typeof input.startQueueWorker !== "function"))
     throw new Error("mac_local_host_configuration_invalid");
-  const startup = createMacLocalStartupV1({
-    readVersion: input.readVersion,
-    ...(input.verifyModelPolicy ? { verifyModelPolicy: input.verifyModelPolicy } : {}),
-    openDatabase: input.openDatabase,
-    createService: async ({ configuration, database, workerReadiness, databaseRoles }) => {
+  const createService = async ({ configuration, database, workerReadiness, databaseRoles }:
+    Parameters<NonNullable<Parameters<typeof createMacLocalStartupV1>[0]["createService"]>>[0]) => {
       let taskApplication: HostedTaskApplication | undefined;
       try {
         if (input.createTaskApplication && !databaseRoles) throw new Error("mac_local_host_configuration_invalid");
@@ -188,7 +286,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             throw new Error("mac_local_host_configuration_invalid");
           const queueCatalog = createMacLocalWorkBatchQueueCatalogV1(configuration);
           return Object.freeze({ integrityKey: Uint8Array.from(input.workBatchIntegrityKey), queueCatalog,
-            selectionAuthority: createWorkBatchQueueSelectionAuthorityV1(queueCatalog, workerReadiness) });
+            ...(workerReadiness ? { selectionAuthority: createWorkBatchQueueSelectionAuthorityV1(queueCatalog, workerReadiness) } : {}) });
         })() : undefined;
         // The server-side operations mode for this installation. It exists
         // before the web process so the supervisor's machine-health port and
@@ -209,8 +307,8 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             key, Date.now);
         }
         taskApplication = input.createTaskApplication
-          ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles!,
-            ...(workBatches ? { workBatches } : {}),
+          ? await input.createTaskApplication({ configuration, database, workerReadiness: workerReadiness!, databaseRoles: databaseRoles!,
+            ...(workBatches ? { workBatches: { ...workBatches, selectionAuthority: workBatches.selectionAuthority! } } : {}),
             // The supervisor's machine-health pause goes to the server-owned
             // operations mode, never to a private copy of it. The port is only
             // offered once the mode exists, because a supervisor that could not
@@ -221,7 +319,8 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             // type-checks and then silently never arrives, which is exactly how
             // this wiring stayed invisible for a whole stream.
             ...(service ? { supervisor: { operations: createOperationsModeSupervisorPortV1(
-              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason) } }),
+              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason),
+                resumeAfterMachineHealth: request => service!.resumeAfterMachineHealth(request) } }),
               supervisorId: input.supervisorId ?? MAC_LOCAL_SUPERVISOR_ID_V1 } } : {}) }) : undefined;
         if (workBatches && input.createTaskApplication
           && (!taskApplication?.workBatchAuthority || !taskApplication.workBatchView))
@@ -248,11 +347,17 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             workBatchQueueAdmissionAuthority: taskApplication?.workBatchView } : {}),
           ...(localOwnerSessionStore ? { localOwnerSessionStore } : {}), initialLocalOwnerSessions,
           ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
-          workerReadiness,
+          ...(workerReadiness ? { workerReadiness } : {}),
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
           ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+          ...(input.fleet ? { fleet: input.fleet } : {}),
+          ...(input.hostProcessId ? { hostProcessId: input.hostProcessId } : {}),
+          ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
+            healthStartedAt: input.healthStartedAt } : {}),
           ...(service ? { operationsMode: service } : {}),
+          ...(input.updaterHomeStatus ? { updaterHomeStatus: input.updaterHomeStatus } : {}),
+          ...(input.updaterOwnerUi ? { updaterOwnerUi: input.updaterOwnerUi } : {}),
         });
         if (!input.startQueueWorker) return web;
         if (!taskApplication?.queueDelivery || !databaseRoles) throw new Error("mac_local_host_configuration_invalid");
@@ -302,8 +407,12 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
         }
         throw error;
       }
-    },
-  });
+    };
+  const startupCommon = { openDatabase: input.openDatabase, createService,
+    ...(input.verifyModelPolicy ? { verifyModelPolicy: input.verifyModelPolicy } : {}) };
+  const startup = input.connectorOnly === true
+    ? createMacLocalStartupV1({ ...startupCommon, connectorOnly: true })
+    : createMacLocalStartupV1({ ...startupCommon, readVersion: input.readVersion! });
   const sameWebConnection = (configuration: MacLocalProtectedConfigurationV1, roles: MacLocalDatabaseRolesV1) => {
     const a = configuration.database, b = roles.web;
     return a.host === b.host && a.port === b.port && a.database === b.database && a.username === b.username

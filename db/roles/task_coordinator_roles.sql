@@ -12,6 +12,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_task_coordinator;
+-- This GRANT is kept as one contiguous block with no comment inside it: the
+-- down-migration lane rewrites role files by exact text match
+-- (tests/postgres-production-lifecycle.test.mjs), and a comment in the middle of
+-- the table list makes the whole statement stop matching.
 GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, control_web_sessions,
   projects, control_manual_project_heads, control_requests, control_workflows, control_jobs,
   control_attempts, control_leases, control_task_execution_plans, control_nodes, control_node_keys,
@@ -29,6 +33,7 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   work_batches, work_batch_items, work_batch_effective_queue_admissions,
   pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs, control_agent_review_plans,
   control_pipeline_build_publications, pipeline_unattended_transitions, pipeline_advance_receipts,
+  pipeline_installation_allowances, pipeline_machine_capacity_observations, pipeline_stage_loop_counts,
   control_improvement_requests, control_update_candidates,
   control_installation_transition_revisions,
   control_supervisor_task_heads, control_supervisor_reconciliation_events, control_supervisor_agent_health,
@@ -38,6 +43,24 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   TO control_room_task_coordinator;
 GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
   control_recurring_rules, control_recurring_proposals TO control_room_task_coordinator;
+-- Read-only, and only for the supervisor's stall decision: reconciling a stalled
+-- attempt asks whether an effect intent is still executing, confirmed or
+-- ambiguous, which is what separates "requeue it" from "the outcome is
+-- uncertain, a human must look". Postgres checks the privilege on every
+-- relation the statement names, so without this the reconciliation query fails
+-- for every eligible candidate. No INSERT, UPDATE or DELETE: intents are
+-- written by the owning paths alone.
+GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;
+-- Read-only, and only so 0211's combine-readiness guard on control_jobs is
+-- satisfiable. That guard is a BEFORE UPDATE trigger and it runs as the
+-- INVOKER, so the coordinator's own reconcile UPDATE (running -> ready, the
+-- supervisor's lease-expiry move) fails 42501 without this read and every
+-- stalled task stays stranded. 0238 converges an already-provisioned
+-- installation onto the same ACL. No INSERT, UPDATE or DELETE: a declaration
+-- is the owner's at approval and a binding is the accept path's; neither is
+-- the scheduler's to write.
+GRANT SELECT ON control_task_declared_inputs, control_job_artifact_inputs
+  TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
 -- Read-only: the coordinator enforces a project's eligible-worker-kinds and
@@ -69,6 +92,13 @@ GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
   control_action_inbox TO control_room_task_coordinator;
 GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator;
+-- The counted fix rounds. The coordinator appends a round against the receipt
+-- that opened it; it can never rewrite or delete one.
+GRANT INSERT ON pipeline_stage_loop_counts TO control_room_task_coordinator;
+-- The installation ceilings are read-only here, and the only updatable column
+-- is the false-valued lock the row lock needs.
+GRANT UPDATE (coordinator_lock) ON pipeline_installation_allowances, pipeline_stage_loop_counts
+  TO control_room_task_coordinator;
 GRANT INSERT ON control_supervisor_task_heads, control_supervisor_reconciliation_events,
   control_supervisor_agent_health, control_supervisor_loop_heads, control_supervisor_health_observations,
   control_provider_waits TO control_room_task_coordinator;
@@ -79,15 +109,25 @@ GRANT UPDATE (node_id,state,safe_reason_code,last_heartbeat_at,observed_at)
 GRANT UPDATE (version,last_started_at,last_completed_at,state)
   ON control_supervisor_loop_heads TO control_room_task_coordinator;
 GRANT UPDATE (state,released_at) ON control_provider_waits TO control_room_task_coordinator;
+-- The fleet lights the coordinator reports: presence is read for every worker
+-- and bot, the transition history is append-only, and only presence_state and
+-- state_changed_at move. Only the coordinator's own supervisor sweep and the
+-- connector's own fenced gracefulOffline() ever write presence; a connector
+-- cannot grant itself a state, and nothing here deletes history.
 GRANT SELECT ON fleet_workers, fleet_worker_presence, fleet_worker_agents, fleet_presence_transitions
   TO control_room_task_coordinator;
 GRANT INSERT ON fleet_presence_transitions TO control_room_task_coordinator;
 GRANT UPDATE (presence_state,state_changed_at) ON fleet_worker_presence TO control_room_task_coordinator;
 GRANT UPDATE (presence_state,state_changed_at) ON fleet_worker_agents TO control_room_task_coordinator;
-GRANT INSERT (tenant_id,correlation_key), UPDATE (next_generation)
-  ON control_service_incident_heads TO control_room_task_coordinator;
-GRANT INSERT (id,tenant_id,correlation_key,generation,service_id,severity,safe_reason_code,safe_remedy_code,state,opened_at,last_observed_at),
-  UPDATE (severity,safe_reason_code,safe_remedy_code,state,last_observed_at,resolved_at)
+-- One privilege per statement: the static preflight-declaration check in
+-- tests/private-web-role-preflight-declaration.test.ts parses this file as text
+-- and must see every grant individually to detect preflight drift without a
+-- database. Do not merge these into a comma-separated privilege list.
+GRANT INSERT (tenant_id,correlation_key) ON control_service_incident_heads TO control_room_task_coordinator;
+GRANT UPDATE (next_generation) ON control_service_incident_heads TO control_room_task_coordinator;
+GRANT INSERT (id,tenant_id,correlation_key,generation,service_id,severity,safe_reason_code,safe_remedy_code,state,opened_at,last_observed_at)
+  ON control_service_incidents TO control_room_task_coordinator;
+GRANT UPDATE (severity,safe_reason_code,safe_remedy_code,state,last_observed_at,resolved_at)
   ON control_service_incidents TO control_room_task_coordinator;
 GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at)
   ON pipeline_runs TO control_room_task_coordinator;

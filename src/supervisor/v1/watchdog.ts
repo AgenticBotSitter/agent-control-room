@@ -3,17 +3,22 @@ import type { DatabaseClient } from "../../persistence/database";
 import { actionInboxItemSchemaV1 } from "../../operator-surfaces/v1/validators";
 import { ServiceIncidentStore } from "../../services/v1/incident-store";
 import { evaluateSupervisorMachineHealthV1, type SupervisorMachineHealthV1,
+  isSupervisorMachineRecoveryHealthyV1, supervisorMachineHealthConfigV1, type SupervisorMachineHealthConfigV1,
   type SupervisorMachineProbeV1 } from "./machine-health";
 import type { SupervisorOperationsModePortV1 } from "./operations-mode";
 import { SupervisorReconcilerV1 } from "./reconciler";
 
 const LOOP_LIVENESS_MS = 120_000;
+const AUTO_RESUME_HEALTHY_CYCLES = 5;
+const AUTO_RESUME_HEALTHY_MS = 5 * 60_000;
 
 export class SupervisorWatchdogV1 {
   readonly #incidents:ServiceIncidentStore;
+  #recovery: { firstHealthyAt: number; cycles: number; attempted: boolean } | undefined;
   constructor(private readonly db:DatabaseClient,private readonly tenantId:string,private readonly supervisorId:string,
     private readonly machine:SupervisorMachineProbeV1,private readonly operations:SupervisorOperationsModePortV1,
-    private readonly clock:()=>number=Date.now){this.#incidents=new ServiceIncidentStore(db);}
+    private readonly clock:()=>number=Date.now,private readonly healthConfig:SupervisorMachineHealthConfigV1=supervisorMachineHealthConfigV1()){
+    this.#incidents=new ServiceIncidentStore(db);}
 
   async cycle():Promise<SupervisorMachineHealthV1>{
     const millis=this.clock();if(!Number.isSafeInteger(millis)||millis<0)throw new Error("supervisor_clock_invalid");
@@ -30,7 +35,7 @@ export class SupervisorWatchdogV1 {
       return{version,lastCompletedAt:prior?.last_completed_at?new Date(prior.last_completed_at).toISOString():null};});
     const sample=await this.machine.sample();
     const loopAlive=started.lastCompletedAt===null||millis-Date.parse(started.lastCompletedAt)<=LOOP_LIVENESS_MS;
-    const health=evaluateSupervisorMachineHealthV1(sample,loopAlive);
+    const health=evaluateSupervisorMachineHealthV1(sample,loopAlive,this.healthConfig);
     await this.db.transaction(async tx=>{
       await tx.query(`INSERT INTO control_supervisor_health_observations
         (id,tenant_id,supervisor_id,loop_version,host_alive,loop_alive,shared_memory_segments,load_one_minute,
@@ -41,6 +46,7 @@ export class SupervisorWatchdogV1 {
         WHERE tenant_id=$1 AND supervisor_id=$2 AND version=$5`,
       [this.tenantId,this.supervisorId,at,health.healthy?"healthy":"unhealthy",started.version]);});
     if(!health.healthy){
+      this.#recovery=undefined;
       let pauseFailed=false;
       try{await this.operations.pauseNewStarts({reasonCode:"machine_health_failed",observedAt:at});}catch{pauseFailed=true;}
       // Recording an incident is best-effort from here down: the pause above
@@ -74,6 +80,19 @@ export class SupervisorWatchdogV1 {
           safeReasonCode:"operations_pause_unavailable",safeRemedyCode:"inspect_operations_mode"});}
         catch{process.stderr.write("supervisor_incident_record_unavailable operations_pause_unavailable\n");}
       }
+    }else if(isSupervisorMachineRecoveryHealthyV1(health,this.healthConfig)){
+      const recovery=this.#recovery ?? {firstHealthyAt:millis,cycles:0,attempted:false};
+      recovery.cycles+=1;this.#recovery=recovery;
+      if(!recovery.attempted && recovery.cycles>=AUTO_RESUME_HEALTHY_CYCLES
+        && millis-recovery.firstHealthyAt>=AUTO_RESUME_HEALTHY_MS){
+        try{await this.operations.resumeAfterMachineHealth({reasonCode:"machine_health_recovered",observedAt:at});
+          recovery.attempted=true;
+        }catch{/* Preserve the recovery window and retry the server-owned decision next cycle. */}
+      }
+    }else{
+      // This is healthy enough not to pause, but not calm enough to resume.
+      // Start the sustained window over rather than letting a flap accumulate.
+      this.#recovery=undefined;
     }
     return health;
   }
@@ -82,9 +101,9 @@ export class SupervisorWatchdogV1 {
 export class SupervisorServiceV1 {
   readonly #watchdog:SupervisorWatchdogV1;readonly #reconciler:SupervisorReconcilerV1;
   constructor(input:Readonly<{db:DatabaseClient;tenantId:string;supervisorId:string;machine:SupervisorMachineProbeV1;
-    operations:SupervisorOperationsModePortV1;clock?:()=>number}>){
+    operations:SupervisorOperationsModePortV1;clock?:()=>number;healthConfig?:SupervisorMachineHealthConfigV1}>){
     const clock=input.clock??Date.now;this.#watchdog=new SupervisorWatchdogV1(input.db,input.tenantId,input.supervisorId,
-      input.machine,input.operations,clock);this.#reconciler=new SupervisorReconcilerV1(input.db,input.tenantId,clock);}
+      input.machine,input.operations,clock,input.healthConfig);this.#reconciler=new SupervisorReconcilerV1(input.db,input.tenantId,clock);}
   async cycle(){const health=await this.#watchdog.cycle();const unreachablePresence=await this.#reconciler.markFleetPresenceUnreachable();
     const suspectAgents=await this.#reconciler.refreshAgentHeartbeatHealth();
     const waits=await this.#reconciler.releaseDueProviderWaits();const reconciled=await this.#reconciler.reconcileStalled();

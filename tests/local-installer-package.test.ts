@@ -29,9 +29,12 @@ async function release(t: import("node:test").TestContext) {
     "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
     "RELEASE_MANIFEST.json": "{\"schema\":\"fixture\"}\n",
     "scripts/prepare-local-installation.mjs": await readFile("scripts/prepare-local-installation.mjs", "utf8"),
+    "scripts/release-signing.mjs": await readFile("scripts/release-signing.mjs", "utf8"),
+    "scripts/verify-signed-release.mjs": await readFile("scripts/verify-signed-release.mjs", "utf8"),
     "scripts/run-private-vps.mjs": "export {};\n",
     "scripts/run-private-local-installation-operator.mjs": fixtureOperatorRunner,
     "src/installer/v1/local-installation-release.mjs": await readFile("src/installer/v1/local-installation-release.mjs", "utf8"),
+    "src/installer/v1/signed-release-verifier.mjs": await readFile("src/installer/v1/signed-release-verifier.mjs", "utf8"),
   };
   await mkdir(join(root, "src/installer/v1"), { recursive: true });
   await Promise.all(Object.entries(files).map(([path, contents]) => writeFile(join(root, path), contents)));

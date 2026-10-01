@@ -61,7 +61,11 @@ test("presence sessions, the bot roster and the supervisor's unreachable sweep, 
         const owner = new FleetOwnerServiceV1(fleetOwner.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE });
         const code = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "Presence machine",
           workerKind: "mcp-agent", projectIds: ["project:fleet-alpha"], capabilities: ["writing"] });
-        const enrolled = await gateway.enroll({ code: code.code, credentialDigest: `sha256:${"1".repeat(64)}`,
+        // `workerKind` must match the kind the code was created for: the code
+        // declares it, and enrollment refuses a mismatch rather than letting a
+        // redeemed code decide its own kind.
+        const enrolled = await gateway.enroll({ code: code.code, workerKind: "mcp-agent",
+          credentialDigest: `sha256:${"1".repeat(64)}`,
           platform: "macos", architecture: "arm64", connectorVersion: "0.3.0", clientNonce: `crn_${"n".repeat(43)}` });
         const workerId = enrolled.workerId;
 
@@ -132,7 +136,8 @@ test("presence sessions, the bot roster and the supervisor's unreachable sweep, 
         const reconciler = new SupervisorReconcilerV1(coordinator.client, FLEET_TENANT);
         const freshCode = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "Fresh machine",
           workerKind: "mcp-agent", projectIds: ["project:fleet-alpha"], capabilities: ["writing"] });
-        const freshWorker = (await gateway.enroll({ code: freshCode.code, credentialDigest: `sha256:${"2".repeat(64)}`,
+        const freshWorker = (await gateway.enroll({ code: freshCode.code, workerKind: "mcp-agent",
+          credentialDigest: `sha256:${"2".repeat(64)}`,
           platform: "macos", architecture: "arm64", connectorVersion: "0.3.0", clientNonce: `crn_${"m".repeat(43)}` })).workerId;
         await gateway.heartbeat({ workerId: freshWorker, nodeId: `node:fleet:${freshWorker.slice(13)}`,
           displayName: "Fresh machine", workerKind: "mcp-agent", projectIds: ["project:fleet-alpha"],

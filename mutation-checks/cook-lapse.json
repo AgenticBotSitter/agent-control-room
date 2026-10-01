@@ -1,0 +1,72 @@
+[
+  {
+    "file": "db/roles/task_coordinator_roles.sql",
+    "find": "GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;",
+    "replace": "-- MUTATED: the coordinator's effect-intent read is removed",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
+    "why": "reconcileStalled reads effect intents to decide whether an outcome is uncertain; without the grant it fails 42501 for every eligible candidate on real PostgreSQL"
+  },
+  {
+    "file": "src/web/v1/private-database-preflight.ts",
+    "find": "coordinatorReads.push(\"control_effect_intents\");",
+    "replace": "// MUTATED: the effect-intent read is undeclared, so the preflight and the role file disagree",
+    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/private-web-role-preflight-declaration.test.ts",
+    "why": "the startup preflight declares exactly the coordinator grants the role files confer; dropping the declaration makes a correctly installed database fail its own preflight"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "        applied.leaseRevocations += await this.#revokeWorkerLeases(tx, worker, now);",
+    "replace": "        applied.leaseRevocations += 0;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
+    "why": "a worker's in-flight lease leaves the active set at revocation, so the supervisor never sweeps it as a stall"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      const leaseMoved = await this.#moveOrAlready(tx, lease, \"revoked\", base);",
+    "replace": "      void lease;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
+    "why": "the revoked lease really leaves state 'active'"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      await this.#moveOrAlready(tx, attempt, \"cancelled\",\n        { ...base, patch: { finishedAt: now, safeFailureCode: \"worker_revoked\" } }, \"waiting\");",
+    "replace": "      void attempt;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
+    "why": "the withdrawn attempt is cancelled rather than left leased"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      await tx.query(\"DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2\",\n        [this.#tenantId, lease.id]);",
+    "replace": "      void lease;",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
+    "why": "the revoked lease releases its derived ownership scope, so later work in that project is not blocked"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "      WHERE fc.tenant_id=$1 AND fc.worker_id=$2 AND l.state='active' ORDER BY fc.claimed_at LIMIT 50`,",
+    "replace": "      WHERE fc.tenant_id=$1 AND fc.worker_id=$2 ORDER BY fc.claimed_at LIMIT 50`,",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
+    "why": "a revocation pass only considers leases that are still active, so an already-terminal lease is never re-moved on a repeated or racing reconcile"
+  },
+  {
+    "file": "src/supervisor/v1/reconciler.ts",
+    "find": "        WHERE a.tenant_id=$1 AND a.id=$2 AND a.state IN ('leased','running','waiting')\n          AND j.state IN ('leased','running') AND l.state='active' AND l.expires_at<=$3",
+    "replace": "        WHERE a.tenant_id=$1 AND a.id=$2 AND a.state IN ('leased','running','waiting','cancelled')\n          AND j.state IN ('leased','running','orphaned') AND l.state='active' AND l.expires_at<=$3",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector-postgres.test.ts",
+    "why": "reconcileAttempt re-checks the attempt and job states under FOR UPDATE, so a concurrent sweep cannot reconcile an attempt a revocation already cancelled"
+  },
+  {
+    "file": "src/persistence/database.ts",
+    "find": "  for (const key of [\"sqlState\", \"code\"] as const) {",
+    "replace": "  for (const key of [\"code\"] as const) {",
+    "test": "pnpm run test:fleet:lapse-stress",
+    "why": "the production driver sanitizes the SQLSTATE onto sqlState, so reading only code turns a scope collision into an opaque refusal"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "        if (databaseSqlStateIsAnyV1(error, FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1)) return fleetFail(\"conflict\");",
+    "replace": "        throw error;",
+    "test": "pnpm run test:fleet:lapse-stress",
+    "why": "a claim overlapping a live ownership lease is the clean conflict it always was, not a crash"
+  }
+]
