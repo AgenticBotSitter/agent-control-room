@@ -8,17 +8,10 @@
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
-    "find": "        AND a.grantee <> 0 AND a.grantee <> p.proowner\n        AND pg_catalog.pg_get_userbyid(a.grantee) <> 'control_room_deployer') THEN",
-    "replace": "        AND a.grantee <> 0 AND a.grantee <> p.proowner\n        AND true) THEN",
+    "find": "  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc\n      WHERE proname = 'updater_health_counts'\n        AND pg_catalog.pg_get_function_identity_arguments(oid) <> '') THEN\n    RAISE EXCEPTION 'another signature of updater_health_counts already exists' USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  -- mutation: a competing overload would no longer be refused",
     "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
-    "why": "an EXECUTE grantee the design does not name must be refused at apply time, not discovered later; the mutation tolerates any non-owner grantee, which is what widening the grant by hand actually produces"
-  },
-  {
-    "file": "db/migrations/0238_updater_health_counts.sql",
-    "find": "      AND p.prosecdef AND p.provolatile = 's' AND p.prokind = 'f' AND p.pronargs = 0",
-    "replace": "      AND p.prokind = 'f'",
-    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
-    "why": "the boundary must stay SECURITY DEFINER, STABLE and zero-argument; a VOLATILE or arg-taking function would be a proxy for an arbitrary SELECT through the definer"
+    "why": "the boundary must be the only updater_health_counts on the cluster: PostgreSQL installs the zero-argument form ALONGSIDE an overload rather than replacing it (measured), and every later check resolves the zero-argument signature, so an overload displaces the boundary without any of them noticing"
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",

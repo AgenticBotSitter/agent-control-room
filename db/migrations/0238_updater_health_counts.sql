@@ -35,6 +35,38 @@
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
 
+-- WHAT MUST BE TRUE BEFORE THE FUNCTION IS CREATED, not after. Plain
+-- `CREATE FUNCTION` refuses with 42723 when a function of the same name and
+-- argument list already exists, so any check placed after it never runs on exactly
+-- the case it exists for: a pre-existing same-named function (measured -- applying
+-- this file over a same-signature non-SECURITY-DEFINER impostor raised 42723 and
+-- left the impostor installed with `prosecdef = false`). These two therefore run
+-- FIRST, on the catalog as it stands.
+DO $$
+BEGIN
+  -- A competing OVERLOAD. PostgreSQL treats each argument list as a distinct
+  -- function, so the zero-argument form would install ALONGSIDE a one-argument
+  -- `updater_health_counts(text)` instead of replacing it (measured on PostgreSQL
+  -- 17). Every check below resolves the zero-argument signature, so with an overload
+  -- present they inspect the wrong function and the boundary would be displaced
+  -- without complaint.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc
+      WHERE proname = 'updater_health_counts'
+        AND pg_catalog.pg_get_function_identity_arguments(oid) <> '') THEN
+    RAISE EXCEPTION 'another signature of updater_health_counts already exists' USING ERRCODE = '42501';
+  END IF;
+  -- A same-signature impostor: anything already named updater_health_counts() is
+  -- refused outright. The boundary this file installs is not negotiable with a
+  -- pre-existing object of the same identity, and CREATE FUNCTION's own 42723 is a
+  -- confusing way to learn that.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc
+      WHERE proname = 'updater_health_counts'
+        AND pg_catalog.pg_get_function_identity_arguments(oid) = '') THEN
+    RAISE EXCEPTION 'updater_health_counts already exists; refusing to replace it' USING ERRCODE = '42501';
+  END IF;
+END;
+$$;
+
 CREATE FUNCTION updater_health_counts()
 RETURNS TABLE(home_summary_count bigint, project_count bigint, updates_panel_count bigint)
 LANGUAGE sql
@@ -191,19 +223,6 @@ DO $$
 DECLARE
   fn regprocedure := 'public.updater_health_counts()'::regprocedure;
 BEGIN
-  -- A COMPETING SIGNATURE IS A REFUSAL, not a skip. PostgreSQL treats each argument
-  -- list as a distinct function, so `CREATE OR REPLACE FUNCTION updater_health_counts()`
-  -- installs alongside a one-argument `updater_health_counts(text)` instead of
-  -- replacing it (measured on PostgreSQL 17). The boundary checks below all resolve
-  -- `fn` by the ZERO-argument signature, so with an impostor present they inspect the
-  -- wrong function and a displaced boundary would install without complaint. Checked
-  -- FIRST, before anything reads `fn`.
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc
-      WHERE proname = 'updater_health_counts'
-        AND pg_catalog.pg_get_function_identity_arguments(oid) <> '') THEN
-    RAISE EXCEPTION 'another signature of updater_health_counts already exists' USING ERRCODE = '42501';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE oid = fn) THEN RETURN; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p WHERE p.oid = fn
       AND p.prosecdef AND p.provolatile = 's' AND p.prokind = 'f' AND p.pronargs = 0
       AND p.proparallel = 'u' AND NOT p.proleakproof

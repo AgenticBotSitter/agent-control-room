@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "f29eaa4ce864d1fad245ae2dbc499cc0c461f0bc54c5bd511d794a386e07d0c0",
+  "digest": "3cd553b53bff0af96583ac005807b236ba50a91224847dfcdfee05982829f6d5",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -821,7 +821,7 @@
     {
       "file": "db/migrations/0238_updater_health_counts.sql",
       "order": 137,
-      "sha256": "170f516cb11cd242ca84ce85ec3b301bd8f3722f8f0b15674573ad5d7ffa1bf9",
+      "sha256": "2b0f652f8f984675457031f21beace1dcdc9ebb68cc3789f26f3a5a62201ac43",
       "kind": "migrate"
     },
     {

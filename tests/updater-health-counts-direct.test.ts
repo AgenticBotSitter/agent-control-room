@@ -168,13 +168,17 @@ test("the migration REFUSES a boundary that is already wrong, at apply time", as
       // confound: the only statement left that can refuse is its own guard.
       const migration = (await readFile(MIGRATION, "utf8"))
         .replace("CREATE FUNCTION updater_health_counts()", "CREATE OR REPLACE FUNCTION updater_health_counts()");
-      const refusesBoundary = async (why: string) => {
+      const refusesBoundary = async (why: string, expected?: RegExp) => {
         await assert.rejects(
           async () => { await owner.query(migration); },
           (error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
-            assert.match(message, /updater health count function|another signature of/u,
-              `refused by the migration's own guard, not by an unrelated DDL error: ${message}`);
+            // When a specific guard is named, ONLY that guard's message counts.
+            // Without this the ACL cases pass for the wrong reason: with the ACL
+            // check removed, the pre-CREATE same-signature guard refuses first and
+            // the test is satisfied by a different guard doing the work.
+            if (expected) assert.match(message, expected,
+              `refused by the named guard, not another one: ${message}`);
             // 42723's message is `function "..." already exists with same argument
             // types` -- distinguished from the guard's own wording by the trailing
             // "with same argument types", since the guard's text also says "already
@@ -186,19 +190,56 @@ test("the migration REFUSES a boundary that is already wrong, at apply time", as
           `the migration must refuse when there is ${why}`);
       };
 
-      // A second, unexpected EXECUTE grantee: the definer's reach in someone else's hands.
+      // The pre-CREATE guards decide whether a displaced boundary is installed at
+      // all, so they are the ones this phase can isolate: the file refuses to create
+      // anything while a same-signature or overloaded function already exists.
+      // The post-CREATE ACL checks CANNOT be isolated here -- the pre-CREATE guard
+      // fires first in exactly the state they would need -- so they are not claimed
+      // by this lane. They are covered on the full cluster lane instead, where the
+      // function is created by the ledger and then examined directly.
       await dropEverySignature(owner);
-      await owner.query(migration);
-      await owner.query(`REVOKE EXECUTE ON FUNCTION ${FUNCTION} FROM control_room_deployer`);
+      await owner.query("CREATE FUNCTION updater_health_counts() RETURNS TABLE(home_summary_count bigint,"
+        + " project_count bigint, updates_panel_count bigint) LANGUAGE sql STABLE SECURITY DEFINER"
+        + " SET search_path = pg_catalog, public, pg_temp"
+        + " AS $b$ SELECT 0::bigint, 0::bigint, 0::bigint $b$");
       await owner.query(`GRANT EXECUTE ON FUNCTION ${FUNCTION} TO health_counts_extra_grantee`);
-      await refusesBoundary("an EXECUTE grantee the design does not name");
+      await assert.rejects(
+        async () => { await owner.query(await readFile(MIGRATION, "utf8")); },
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          assert.match(message, /updater_health_counts already exists/u, `refused by name: ${message}`);
+          assert.doesNotMatch(message, /with same argument types/u, "a bare 42723 would mask the guard");
+          return true;
+        },
+        "the migration must refuse to install over a same-signature impostor, whatever its ACL");
 
-      // An EXECUTE the updater's login may hand onward: exactly the authority growth
-      // this function exists not to permit.
+      // The SAME NAME, the SAME signature, but not SECURITY DEFINER: this is the case
+      // the shape check exists for and the only one that isolates it. An OVERLOAD
+      // (the next case) is refused by the competing-signature guard FIRST, so with
+      // the shape check removed the overload still refused and this test stayed
+      // green -- a test that cannot fail for the reason it was written.
       await dropEverySignature(owner);
-      await owner.query(migration);
-      await owner.query(`GRANT EXECUTE ON FUNCTION ${FUNCTION} TO control_room_deployer WITH GRANT OPTION`);
-      await refusesBoundary("a GRANTABLE EXECUTE");
+      // The return type is spelled EXACTLY as the migration's, because a different
+      // one is refused by PostgreSQL itself ("cannot change return type of existing
+      // function") -- which would make this case refuse for a reason that has nothing
+      // to do with SECURITY DEFINER.
+      await owner.query("CREATE FUNCTION updater_health_counts() RETURNS TABLE(home_summary_count bigint,"
+        + " project_count bigint, updates_panel_count bigint) LANGUAGE sql STABLE"
+        + " SET search_path = pg_catalog, public, pg_temp"
+        + " AS $b$ SELECT 0::bigint, 0::bigint, 0::bigint $b$");
+      // The migration refuses a pre-existing same-signature object before it ever
+      // creates anything, so this case is checked against the file AS WRITTEN -- not
+      // the CREATE-OR-REPLACE form, which would have replaced the impostor and
+      // tested nothing.
+      await assert.rejects(
+        async () => { await owner.query(await readFile(MIGRATION, "utf8")); },
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          assert.match(message, /updater_health_counts already exists/u, `refused by name: ${message}`);
+          assert.doesNotMatch(message, /with same argument types/u, "a bare 42723 would mask the guard");
+          return true;
+        },
+        "the migration must refuse a pre-existing same-signature impostor");
 
       // A competing OVERLOAD. PostgreSQL installs the zero-argument form alongside a
       // one-argument one rather than replacing it (measured on PostgreSQL 17), so
@@ -209,7 +250,8 @@ test("the migration REFUSES a boundary that is already wrong, at apply time", as
       await owner.query("CREATE FUNCTION updater_health_counts(p_tenant text)"
         + " RETURNS TABLE(out_home bigint, out_projects bigint, out_panel bigint)"
         + " LANGUAGE sql STABLE AS $b$ SELECT 0::bigint, 0::bigint, 0::bigint $b$");
-      await refusesBoundary("a competing overload that could displace the boundary");
+      await refusesBoundary("a competing overload that could displace the boundary",
+        /another signature of updater_health_counts/u);
 
       // LEFT IN PLACE FOR NOTHING FURTHER: the boundary exactly as it should be, and
       // re-applying it proves the refusals above were the boundary's own doing.
