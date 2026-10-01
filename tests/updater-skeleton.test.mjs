@@ -71,12 +71,20 @@ class MemoryStore {
   constructor(run = makeRun()) { this.run = run; this.eventRows = []; this.heartbeats = []; this.requests = []; }
   async liveRun() { return this.run; }
   async events() { return this.eventRows; }
+  // The mirror row is written BY the transition, in the same step, because that
+  // is the store's contract since B4: `updater.record_run_step` moves the row and
+  // its journal mirror in one statement, and the runner asks for it by naming the
+  // state it is moving to. A fake that appended separately would model the OLD
+  // two-statement contract, and the runner's `#nextOrdinal` reads `events()` — so
+  // the journal's intent/done lines would all carry ordinal 1, which is
+  // `updater_journal_ordinal_refused` on the next read.
   async transition(_id, lease, state, detail, options = {}) {
     if (lease !== this.run.lease_token || options.terminal && !["succeeded", "rolled_back", "needs_attention", "refused"].includes(state))
       throw new Error("bad transition");
-    this.run = { ...this.run, state, detail }; return this.run;
+    this.run = { ...this.run, state, detail };
+    if (!options.terminal) this.eventRows.push({ ordinal: this.eventRows.length + 1, state, detail });
+    return this.run;
   }
-  async appendEvent(_id, ordinal, state, detail) { this.eventRows.push({ ordinal, state, detail }); }
   async heartbeat(value) { this.heartbeats.push(value); }
   async unhandledOwnerRequests() { return [...this.requests]; }
   async finishOwnerRequest(id, outcome) { this.requests = this.requests.filter(row => row.id !== id); this.finished = [id, outcome]; }

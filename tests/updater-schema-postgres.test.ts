@@ -653,7 +653,13 @@ test("the plan, run and journal state machines refuse what the design refuses", 
       // `uncertain` is reachable from anywhere: it is a measurement, not a step.
       await deployer.query("UPDATE updater.runs SET state='uncertain' WHERE run_id=$1", [second]);
       // And out of `uncertain` the design permits only a measured settle or a
-      // rollback, which the state machine refuses to guess at.
+      // rollback, which the state machine refuses to guess at. `healthy` is a
+      // forward step, so it stays refused: a run that measured "I don't know" must
+      // not then decide to try the next one. That the two MEASURED exits are
+      // themselves expressible — they were not, and the owner's only recovery
+      // button refused against the real database — is proved in
+      // tests/updater-run-recovery-postgres.test.ts, where each of the three is
+      // taken end to end rather than listed here as an absence.
       assert.match(await refuses(deployer, "UPDATE updater.runs SET state='healthy' WHERE run_id=$1",
       [second]), /updater run transition refused/u);
     } finally { await deployer.end(); }
@@ -873,17 +879,30 @@ test("the item-8 store runs every query as the production deployer login", async
       await store.initialize();
       await store.heartbeat({ bootId: "boot-item8", leaseToken: "lease-item8", state: "running", step: "precheck" });
       assert.equal((await store.liveRun())?.run_id, runId);
+      // One `transition` call moves the row AND writes its journal mirror row. The
+      // two statements used to be a caller's job, and the window between them was
+      // B4: a kill there left the row at the new state with the last event still
+      // on the old one, which `guard_run_state` then refused every later move
+      // through — the run wedged after the switch with no way back.
       await store.transition(runId, "lease-item8", "prechecked", { source: "item8-test" });
-      await store.appendEvent(runId, 1, "prechecked", { source: "item8-test" });
       assert.deepEqual((await store.events(runId)).map((row: { state: string }) => row.state), ["prechecked"]);
-      // Round-trip: the next ordinal is computed from what the REAL store returns (bigint → number).
+      // Round-trip: the next ordinal is computed by the database from the run's
+      // own last event, and returned as a number rather than node-pg's int8
+      // string — `"1" + 1` would be `"11"`, so a caller that trusted it would
+      // write the wrong mirror row.
       const [first] = await store.events(runId);
       assert.equal(typeof first.ordinal, "number", "events() must return ordinal as a number, not node-pg's int8 string");
       await store.transition(runId, "lease-item8", "staged", { source: "item8-test" });
-      await store.appendEvent(runId, first.ordinal + 1, "staged", { source: "item8-test" });
       assert.deepEqual((await store.events(runId)).map((row: { ordinal: number }) => row.ordinal), [1, 2]);
+      assert.deepEqual((await store.events(runId)).map((row: { state: string }) => row.state),
+        ["prechecked", "staged"]);
       await assert.rejects(store.transition(runId, "wrong-lease", "staged"), /updater_run_lease_lost/u,
         "a second caller cannot take over the production row");
+      // The failed takeover wrote nothing: the row is still where the rightful
+      // holder left it and the mirror did not grow an event for a move that
+      // never happened.
+      assert.deepEqual((await store.events(runId)).map((row: { state: string }) => row.state),
+        ["prechecked", "staged"]);
 
       const requestId = `owner-request:${randomUUID()}`;
       const web = as(postgres, "web"); await web.connect();

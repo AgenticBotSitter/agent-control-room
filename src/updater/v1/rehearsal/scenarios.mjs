@@ -100,12 +100,16 @@ class MemoryStore {
   }
   async liveRun() { return this.run; }
   async events() { return this.eventRows; }
+  // The mirror row is written BY the transition (B4: the row and its journal
+  // mirror move in one statement). A fake that appended separately modelled the
+  // old two-statement contract, which left `events()` empty, so the runner's
+  // intent/done journal lines all carried ordinal 1.
   async transition(_id, lease, state, detail, options = {}) {
     if (lease !== this.run.lease_token) throw Object.assign(new Error("lease"), { code: "updater_run_lease_lost" });
     this.run = { ...this.run, state, detail, finished_at: options.terminal ? new Date().toISOString() : null };
+    if (!options.terminal) this.eventRows.push({ ordinal: this.eventRows.length + 1, state, detail });
     return this.run;
   }
-  async appendEvent(_id, ordinal, state, detail) { this.eventRows.push({ ordinal, state, detail }); }
 }
 class MemoryJournal {
   rows = [];
