@@ -494,9 +494,9 @@ test("policy generator emits the minimal grant and fail-closed tests", async () 
     assert.match(result.stdout, new RegExp(denied.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
   }
   assert.match(result.stdout, /"sshTests"/u);
-  const johnny5 = await run(process.execPath, [policyScript, "--front-door-port", "9443", "--web-port", "3210", "--gateway-port", "8444", "--johnny5"]);
-  assert.equal(johnny5.code, 0, johnny5.stderr);
-  assert.match(johnny5.stdout, /"ip": \["tcp:443"\]/u);
+  const allowClient443 = await run(process.execPath, [policyScript, "--front-door-port", "9443", "--web-port", "3210", "--gateway-port", "8444", "--allow-client-443"]);
+  assert.equal(allowClient443.code, 0, allowClient443.stderr);
+  assert.match(allowClient443.stdout, /"ip": \["tcp:443"\]/u);
   const collision = await run(process.execPath, [policyScript, "--front-door-port", "443", "--web-port", "3210", "--gateway-port", "8444"]);
   assert.notEqual(collision.code, 0);
   assert.match(collision.stderr, /must not collide/u);

@@ -29,7 +29,7 @@ export function parseArguments(args) {
     vpsTag: "tag:control-room-vps",
     clientTag: "tag:control-room-client",
     generalTag: "tag:general",
-    johnny5: false,
+    allowClient443: false,
   };
   for (let index = 0; index < args.length; index += 1) {
     switch (args[index]) {
@@ -39,7 +39,7 @@ export function parseArguments(args) {
       case "--vps-tag": options.vpsTag = validTag(valueAfter(args, index), args[index]); index += 1; break;
       case "--client-tag": options.clientTag = validTag(valueAfter(args, index), args[index]); index += 1; break;
       case "--general-tag": options.generalTag = validTag(valueAfter(args, index), args[index]); index += 1; break;
-      case "--johnny5": options.johnny5 = true; break;
+      case "--allow-client-443": options.allowClient443 = true; break;
       case "--help": options.help = true; break;
       default: refuse(`unknown argument: ${args[index]}`);
     }
@@ -60,7 +60,7 @@ export function renderPolicy(options) {
   const accept = [`${options.clientTag}:${options.frontDoorPort}`];
   const denyClient = [
     `${options.clientTag}:22`,
-    ...(options.johnny5 ? [] : [`${options.clientTag}:443`]),
+    ...(options.allowClient443 ? [] : [`${options.clientTag}:443`]),
     `${options.clientTag}:${options.webPort}`,
     `${options.clientTag}:${options.gatewayPort}`,
     `${options.clientTag}:5432`,
@@ -68,7 +68,7 @@ export function renderPolicy(options) {
   ];
   const grants = [
     `  { "src": [${JSON.stringify(options.vpsTag)}], "dst": [${JSON.stringify(options.clientTag)}], "ip": [${JSON.stringify(`tcp:${options.frontDoorPort}`)}] },`,
-    ...(options.johnny5 ? [`  { "src": [${JSON.stringify(options.vpsTag)}], "dst": [${JSON.stringify(options.clientTag)}], "ip": ["tcp:443"] },`] : []),
+    ...(options.allowClient443 ? [`  { "src": [${JSON.stringify(options.vpsTag)}], "dst": [${JSON.stringify(options.clientTag)}], "ip": ["tcp:443"] },`] : []),
   ];
   return `// Merge these entries into the matching top-level HuJSON objects and arrays.\n` +
 `"tagOwners": {\n` +
@@ -93,7 +93,7 @@ export function main(args = process.argv.slice(2)) {
   try {
     const options = parseArguments(args);
     if (options.help) {
-      console.log("Usage: tailnet-policy-snippet.mjs --front-door-port PORT --web-port PORT --gateway-port PORT [--johnny5] [--vps-tag TAG --client-tag TAG --general-tag TAG]");
+      console.log("Usage: tailnet-policy-snippet.mjs --front-door-port PORT --web-port PORT --gateway-port PORT [--allow-client-443] [--vps-tag TAG --client-tag TAG --general-tag TAG]");
       return 0;
     }
     process.stdout.write(renderPolicy(options));

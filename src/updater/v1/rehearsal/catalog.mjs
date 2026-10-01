@@ -26,7 +26,7 @@ export const REHEARSAL_CASES_V1 = Object.freeze([
   phase("P2", "Crash at every step", [
     runnable("P2.code-journal-points", "kill the updater after every code intent and done record", "code_crash_points"),
     runnable("P2.torn-pair-switch", "tear each pair-link switch and recover old or new as one pair", "torn_switch"),
-    pending("P2.database-journal-points", "kill at every DB and restore journal point", "item 18 and Marvin DB phase"),
+    pending("P2.database-journal-points", "kill at every DB and restore journal point", "item 18 and database-worker DB phase"),
     pending("P2.daemon-kills", "immediate DB stop and five daemon kill points", "item 18 and real-root services"),
     pending("P2.real-reboot", "owner-approved reboot during DB upgrade", "item 18 and install-night quiet window"),
   ]),
@@ -38,7 +38,7 @@ export const REHEARSAL_CASES_V1 = Object.freeze([
   phase("P4", "Disk", [
     runnable("P4.preflight-full", "insufficient space refuses before staging", "disk_preflight"),
     runnable("P4.enospc-recovery", "reserve is released once and rebuilt after a retry", "disk_reserve_retry"),
-    pending("P4.database-full-points", "disk full during dump, after preimage and mid-migrate", "item 18 and Marvin DB phase"),
+    pending("P4.database-full-points", "disk full during dump, after preimage and mid-migrate", "item 18 and database-worker DB phase"),
   ]),
   phase("P5", "Network", [
     pending("P5.fetch-cut", "network loss during fetch", "items 11 and 17"),
@@ -47,8 +47,8 @@ export const REHEARSAL_CASES_V1 = Object.freeze([
   phase("P6", "Concurrency", [
     runnable("P6.lease-burst", "twenty concurrent in-process calls admit one updater runner", "runner_lease_burst"),
     pending("P6.production-process-lease", "twenty OS processes contend through the production-role store",
-      "item 10a production-role store and Marvin DB phase"),
-    pending("P6.approval-burst", "twenty approvals for two plans yield one run", "item 10a and Marvin DB phase"),
+      "item 10a production-role store and database-worker DB phase"),
+    pending("P6.approval-burst", "twenty approvals for two plans yield one run", "item 10a and database-worker DB phase"),
     runnable("P6.latest-merge", "two nearby merges choose the latest", "latest_merge"),
     pending("P6.gateway-quiesce", "gateway writer gets 503 and retries consistently", "item 18"),
   ]),
@@ -98,18 +98,18 @@ export const REHEARSAL_CASES_V1 = Object.freeze([
   ]),
   phase("P10", "Journal and restore", [
     runnable("P10.poisoned-journal", "duplicate ordinal becomes uncertain", "poisoned_journal"),
-    pending("P10.db-behind", "display refreshes when DB is behind the file", "item 15 and Marvin DB phase"),
-    pending("P10.db-ahead", "check-and-continue settles DB ahead of file", "item 15 and Marvin DB phase"),
-    pending("P10.restore-resume", "killed restore resumes", "item 18 and Marvin DB phase"),
-    pending("P10.backup-verify", "failed verification prevents migrate", "item 18 and Marvin DB phase"),
-    pending("P10.corrupt-preimage", "corrupt preimage restores to scratch as migrator", "item 18 and Marvin DB phase"),
+    pending("P10.db-behind", "display refreshes when DB is behind the file", "item 15 and database-worker DB phase"),
+    pending("P10.db-ahead", "check-and-continue settles DB ahead of file", "item 15 and database-worker DB phase"),
+    pending("P10.restore-resume", "killed restore resumes", "item 18 and database-worker DB phase"),
+    pending("P10.backup-verify", "failed verification prevents migrate", "item 18 and database-worker DB phase"),
+    pending("P10.corrupt-preimage", "corrupt preimage restores to scratch as migrator", "item 18 and database-worker DB phase"),
     pending("P10.rescue-reboot-persistence", "P2/P10 rescue then reboot keeps the rescued pair",
       "item 13 rescue persistence fix and item 25 real-root reboot rehearsal"),
   ]),
   phase("P11", "Owner controls", [
     runnable("P11.pause-stop-code", "pause and stop are checked at every code state", "pause_stop"),
     runnable("P11.rescue-code-points", "rescue at every code kill point returns a pair and leaves uncertain evidence", "guard_rescue_points"),
-    pending("P11.rescue-db-points", "rescue at every DB kill point does not re-advance", "item 18 and Marvin DB phase"),
+    pending("P11.rescue-db-points", "rescue at every DB kill point does not re-advance", "item 18 and database-worker DB phase"),
     runnable("P11.failed-heartbeat-links", "stale heartbeat rescue reverts updater and runtime links", "guard_all_links"),
   ]),
   phase("P12", "Load", [
@@ -120,12 +120,12 @@ export const REHEARSAL_CASES_V1 = Object.freeze([
     runnable("P13.profile-shape", "every service profile denies untrusted program roots", "profile_shape"),
     pending("P13.running-identities", "each running service identity is denied read and exec",
       "item 25 real-root identity run on the owners-enabled rehearsal image"),
-    pending("P13.provider-module", "database runtime does not load a planted provider module", "item 3b and Marvin DB phase"),
+    pending("P13.provider-module", "database runtime does not load a planted provider module", "item 3b and database-worker DB phase"),
     pending("P13.static-process-scan", "process, open-file and loaded-library scan is clean",
       "item 25 real-root service run on the rehearsal image"),
   ]),
   phase("DB-R8", "DB stop race", [
-    pending("DB-R8.preimage", "lingering client cannot race launchd during preimage", "item 18 and Marvin DB phase"),
-    pending("DB-R8.restore", "lingering client cannot race launchd during restore", "item 18 and Marvin DB phase"),
+    pending("DB-R8.preimage", "lingering client cannot race launchd during preimage", "item 18 and database-worker DB phase"),
+    pending("DB-R8.restore", "lingering client cannot race launchd during restore", "item 18 and database-worker DB phase"),
   ]),
 ]);
