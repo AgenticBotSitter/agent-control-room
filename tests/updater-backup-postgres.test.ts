@@ -1753,12 +1753,31 @@ test("a restore that does not match the source is refused before promote, throug
         spawnChild: (file: string, args: string[], options: Record<string, unknown>) =>
           spawn(file, file.endsWith("/pg_restore") ? [...args, "--schema=public"] : args, options as never) });
       await expectRefused(publicOnly, "updater_backup_shape_digest_mismatch", "a restore that lost the updater schema");
-      // And the control: the same real ports, unmodified, verify.
+      // (3) ONE SNAPSHOT: a write COMMITTED after the evidence was read and
+      // before `pg_dump` starts is in neither — the dump joins the evidence's
+      // exported snapshot. The write is made by a real second session, wedged in
+      // through the process seam just ahead of the real pg_dump. Without
+      // `--snapshot` the dump would carry five rows the evidence never counted,
+      // and the verify would refuse every backup taken while anything writes.
+      const racing = productPortsV1(postgres, scratchRoot, {
+        spawnChild: (file: string, args: string[], options: Record<string, unknown>) => !file.endsWith("/pg_dump")
+          ? spawn(file, args, options as never)
+          : spawn("/bin/sh", ["-c", '"$1" -X -q -h "$2" -p "$3" -U fixture_admin -d "$4" '
+            + '-c "INSERT INTO public.ledger_rows SELECT generate_series(100, 104)" && shift 4 && exec "$@"',
+          "sh", join(PG_BIN, "psql"), postgres.socketDirectory, String(postgres.port), postgres.database,
+          file, ...args], options as never) });
+      const raced = await new UpdaterBackupV1({ store, ports: racing, policy: internalPolicyV1(installRoot, backupRoot) })
+        .runOnce({ manual: true });
+      assert.equal(raced.status, "verified", `a concurrent write does not break the backup (${raced.message})`);
+      const racedCounts = await store.rowCounts(raced.generationId) as { table: string; count: number }[];
+      assert.equal(racedCounts.find(entry => entry.table === "public.ledger_rows")?.count, 9,
+        "the backup is the state at its snapshot: the five rows written after it are in neither half");
+      // And the control: the same real ports, unmodified, verify the new state.
       const good = await new UpdaterBackupV1({ store, ports: real, policy: internalPolicyV1(installRoot, backupRoot) })
         .runOnce({ manual: true });
       assert.equal(good.status, "verified", good.message);
       const counts = await store.rowCounts(good.generationId) as { table: string; count: number }[];
-      assert.equal(counts.find(entry => entry.table === "public.ledger_rows")?.count, 9);
+      assert.equal(counts.find(entry => entry.table === "public.ledger_rows")?.count, 14);
     });
   }, { port: PORT + 1, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
 });

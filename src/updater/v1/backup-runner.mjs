@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, open, opendir, rename, rm, statfs } from "node:fs/
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { updaterRefuseV1 } from "./contracts.mjs";
 import { assertNoSymlinkBelowV1 } from "./fs-safety.mjs";
-import { assertCompletionV1, assertGenerationIdV1, assertRowCountsV1, generationLeafV1 } from "./backup-store.mjs";
+import { assertCompletionV1, assertGenerationIdV1, generationLeafV1 } from "./backup-store.mjs";
 
 /**
  * Item 19a: the minimal nightly backup (design §9.5, R5i, R17a/c).
@@ -159,9 +159,8 @@ export async function assertBackupRootOnDiskV1(backupRoot, { ownerUid = currentU
   } catch { throw updaterRefuseV1("updater_backup_root_unsafe"); }
   try {
     const entry = await handle.stat();
-    if (!entry.isDirectory() || entry.uid !== ownerUid || (entry.mode & 0o077) !== 0)
-      throw updaterRefuseV1("updater_backup_root_unsafe");
-    const root = Object.freeze({ backupRoot, handle, dev: entry.dev, ino: entry.ino });
+    assertPrivateRootV1(entry, ownerUid);
+    const root = Object.freeze({ backupRoot, handle, dev: entry.dev, ino: entry.ino, ownerUid });
     await assertBackupRootUnchangedV1(root);
     return root;
   } catch (error) {
@@ -170,16 +169,30 @@ export async function assertBackupRootOnDiskV1(backupRoot, { ownerUid = currentU
   }
 }
 
+/** The ONE statement of "a private root": a directory, owned by the updater,
+ * with no group or other bits. Both the first check and every re-check use it. */
+function assertPrivateRootV1(entry, ownerUid) {
+  if (!entry.isDirectory() || entry.uid !== ownerUid || (entry.mode & 0o077) !== 0)
+    throw updaterRefuseV1("updater_backup_root_unsafe");
+}
+
 /** The path still names the directory the descriptor was opened on, and that
  * directory is still private. Called before the promote rename and before every
- * removal. */
+ * removal.
+ *
+ * A symlinked root meets THREE fences, deliberately: O_NOFOLLOW on the open,
+ * `isSymbolicLink()` here, and the device/inode comparison (a link's own inode
+ * is not its target's). Any one of them refuses it, so a mutation that removes
+ * only one survives by design; the ancestor walk's symlink check has no such
+ * backup and is the one the mutation manifest pins. */
 export async function assertBackupRootUnchangedV1(root) {
   const byPath = await lstat(root.backupRoot).catch(() => null);
   const byHandle = await root.handle.stat().catch(() => null);
-  if (byPath === null || byHandle === null || byPath.isSymbolicLink() || !byPath.isDirectory()
+  if (byPath === null || byHandle === null || byPath.isSymbolicLink()
       || byPath.dev !== root.dev || byPath.ino !== root.ino
-      || byHandle.dev !== root.dev || byHandle.ino !== root.ino || (byHandle.mode & 0o077) !== 0)
+      || byHandle.dev !== root.dev || byHandle.ino !== root.ino)
     throw updaterRefuseV1("updater_backup_root_unsafe");
+  assertPrivateRootV1(byHandle, root.ownerUid);
 }
 
 function currentUidV1() {
@@ -578,10 +591,6 @@ export class UpdaterBackupV1 {
     if (!source || typeof source.shapeDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(source.shapeDigest)
         || !Array.isArray(source.rowCounts) || source.rowCounts.length < 1)
       throw UpdaterBackupV1.#refuse("updater_backup_evidence_refused");
-    // The row counts' shape is the ledger's, checked NOW rather than at
-    // completion: a shape the ledger refuses must fail the attempt while there
-    // is still nothing promoted (review backup19b H1b).
-    assertRowCountsV1(source.rowCounts);
 
     const verified = await this.ports.restoreVerify({ generationId, dumpPath, scratchId: generationId,
       expectedShapeDigest: source.shapeDigest, expectedRowCounts: source.rowCounts });
@@ -615,7 +624,10 @@ export class UpdaterBackupV1 {
     const completion = { generationId, dumpSha256: dumped.sha256, dumpBytes: dumped.bytes,
       fileSha256: sealedSha256, shapeDigest: source.shapeDigest, rowCounts: source.rowCounts,
       snapshotXid: source.snapshotXid ?? null, encrypted };
-    // Everything the completion UPDATE would refuse, refused BEFORE the rename.
+    // Everything the completion UPDATE would refuse — the row counts' shape
+    // included — refused BEFORE the rename, so such a refusal leaves no promoted
+    // generation beside a failed row (review backup19b H1b: it used to be
+    // raised only by `completeAttempt`, after the rename).
     assertCompletionV1(completion);
     const manifest = backupManifestV1({ generationId, createdAt: this.clock().toISOString(),
       dumpSha256: dumped.sha256, dumpBytes: dumped.bytes, fileSha256: sealedSha256,
@@ -671,11 +683,14 @@ export class UpdaterBackupV1 {
    */
   async sweep({ policy = null } = {}) {
     if (!this.policy.backupRoot) throw updaterRefuseV1("updater_backup_root_unconfigured");
+    // This runner's own attempt holds the lock and is mid-flight: a sweep now
+    // would clear that attempt's `.inprogress-` directory under it.
+    const busy = Object.freeze({ status: "busy", retained: [], removed: [], unsafe: [], damaged: [], unrecorded: [] });
+    if (this.#running) return busy;
     let acquired = false, root = null;
     if (!this.store.holdsBackupLock?.()) {
       const lock = await this.store.acquireBackupLock();
-      if (lock.status !== "acquired") return Object.freeze({ status: "busy", retained: [], removed: [],
-        unsafe: [], damaged: [], unrecorded: [] });
+      if (lock.status !== "acquired") return busy;
       acquired = true;
     }
     try {

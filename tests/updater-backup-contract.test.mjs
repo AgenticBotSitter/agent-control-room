@@ -468,10 +468,64 @@ test("a restore whose shape or rows differ is refused before promote, and record
   }
 });
 
+test("a sweep called while this runner's own attempt is in flight is refused, not run under it", async t => {
+  // The attempt holds the lock, so the store says "held"; a sweep that trusted
+  // that would clear the live attempt's `.inprogress-` directory under it.
+  const base = await mkdtemp(join(await realpath(tmpdir()), "b19-sweep-"));
+  t.after(() => rm(base, { recursive: true, force: true, maxRetries: 2 }));
+  const backupRoot = join(base, "Control Room", "backups");
+  await mkdir(backupRoot, { recursive: true, mode: 0o700 });
+  let release, entered;
+  const inDump = new Promise(resolve => { entered = resolve; });
+  const store = new RecordingStore();
+  const backup = new UpdaterBackupV1({ store, policy: { installRoot: join(base, "Control Room"), backupRoot,
+    seal: false, freeSpaceFloorBytes: 0 }, ports: { ...throwingPorts,
+    dump: async ({ path }) => { await writeFile(path, "partial"); entered(); await new Promise(resolve => { release = resolve; });
+      throw new Error("dump_stopped_by_the_test"); } } });
+  const running = backup.runOnce({ manual: true });
+  await inDump;
+  const swept = await backup.sweep();
+  assert.equal(swept.status, "busy", "the sweep refuses while the attempt is live");
+  assert.equal((await readdir(backupRoot)).filter(name => name.startsWith(".inprogress-")).length, 1,
+    "and the live attempt's work is untouched");
+  release();
+  assert.equal((await running).status, "failed");
+});
+
 test("the badge is plain words and is derived from the freshness predicate", async () => {
   const backup = makeBackup(new RecordingStore());
   assert.deepEqual(await backup.status(), { fresh: false, state: "none", lastSuccessAt: null,
     lastFailureCode: null, lastFailureAt: null, nextDueAt: null, consecutiveFailures: 0,
     badge: "never run" },
   "with nothing ever attempted the badge says so in words rather than showing a number");
+});
+
+test("a completion the ledger would refuse is refused BEFORE the promote rename", async t => {
+  // Review backup19b H1b: the ledger's refusal used to come from
+  // `completeAttempt`, after the rename, so a promoted `gen-` directory sat
+  // beside a `failed` row. Each case below is one the store refuses.
+  const base = await mkdtemp(join(await realpath(tmpdir()), "b19-complete-"));
+  t.after(() => rm(base, { recursive: true, force: true, maxRetries: 2 }));
+  const installRoot = join(base, "Control Room"), backupRoot = join(installRoot, "backups");
+  await mkdir(backupRoot, { recursive: true, mode: 0o700 });
+  const digest = text => `sha256:${createHash("sha256").update(text).digest("hex")}`;
+  for (const [label, evidence] of [
+    ["a negative count", { rowCounts: [{ table: "public.t", count: -1 }] }],
+    ["an empty table name", { rowCounts: [{ table: "", count: 1 }] }],
+    ["more than 4096 tables", { rowCounts: Array.from({ length: 4097 }, (_, index) => ({ table: `public.t${index}`, count: 0 })) }],
+    ["a snapshot id outside the grammar", { snapshotXid: "x'; DROP" }],
+  ]) {
+    const store = new RecordingStore();
+    const source = { shapeDigest: digest("shape"), rowCounts: [{ table: "public.t", count: 1 }], ownership: [], ...evidence };
+    const outcome = await new UpdaterBackupV1({ store, policy: { installRoot, backupRoot, seal: false, freeSpaceFloorBytes: 0 },
+      ports: { ...throwingPorts,
+        dump: async ({ path }) => { await writeFile(path, "DUMP"); return { bytes: 4, sha256: digest("DUMP"), evidence: source }; },
+        restoreVerify: async () => ({ shapeDigest: source.shapeDigest, rowCounts: source.rowCounts }),
+        writeManifest: async ({ path, manifest }) => { await writeFile(path, JSON.stringify(manifest), { mode: 0o400 }); } },
+    }).runOnce({ manual: true });
+    assert.equal(outcome.status, "failed", label);
+    assert.ok(!store.names().includes("completeAttempt"), `${label}: the ledger is never asked`);
+    assert.deepEqual((await readdir(backupRoot)).filter(name => name.startsWith("gen-")), [],
+      `${label}: nothing was promoted`);
+  }
 });

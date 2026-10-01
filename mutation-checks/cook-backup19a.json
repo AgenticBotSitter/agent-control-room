@@ -204,17 +204,17 @@
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
-    "find": "    if (!entry.isDirectory() || entry.uid !== ownerUid || (entry.mode & 0o077) !== 0)\n      throw updaterRefuseV1(\"updater_backup_root_unsafe\");\n    const root",
-    "replace": "    if (!entry.isDirectory())\n      throw updaterRefuseV1(\"updater_backup_root_unsafe\");\n    const root",
+    "find": "  if (!entry.isDirectory() || entry.uid !== ownerUid || (entry.mode & 0o077) !== 0)\n    throw updaterRefuseV1(\"updater_backup_root_unsafe\");\n}",
+    "replace": "  if (!entry.isDirectory())\n    throw updaterRefuseV1(\"updater_backup_root_unsafe\");\n}",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "H2: the backup root itself must be the updater's and private (no group/other bits). Measured before the fix: a 0777 root returned verified"
+    "why": "H2: the backup root itself must be the updater's and private (no group/other bits), in the ONE function both the first check and every re-check use. Measured before the fix: a 0777 root returned verified"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
-    "find": "    handle = await open(backupRoot, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));",
-    "replace": "    handle = await open(backupRoot, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));",
+    "find": "    if (entry === null || entry.isSymbolicLink() || !entry.isDirectory()\n",
+    "replace": "    if (entry === null\n",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "H2: the root is opened without following a symlink. Measured before the fix: a symlinked root returned verified and the dump landed in the link's target"
+    "why": "H2: no ANCESTOR of the backup root may be a symlink (lstat of a link is neither followed nor a directory). This is the single fence for that case (O_NOFOLLOW guards only the last component), so without it a root reached through a symlinked parent is accepted and written into. A symlink AT the root has three fences (O_NOFOLLOW, lstat, inode compare) and is pinned by the test, not by one mutation"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
@@ -232,10 +232,10 @@
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
-    "find": "    assertRowCountsV1(source.rowCounts);\n",
+    "find": "    assertCompletionV1(completion);\n",
     "replace": "",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "H1b: the ledger's row-count shape is checked before the promote rename, so a refusal leaves no promoted generation beside a failed row"
+    "test": "node --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "H1b: everything the ledger's completion would refuse (the row counts' shape included) is refused before the promote rename. Without it a refused completion leaves a promoted gen- directory beside a failed row, which the first version did for every upper-case table name"
   },
   {
     "file": "src/updater/v1/backup-ports.mjs",
