@@ -47,8 +47,8 @@ export async function verifyBundleManifestV1(directory, manifest) {
 /** Attended self-update phases A/C/D. There is deliberately no Phase B here;
  * the two-phase secret-free self-test is item 8b. */
 export class AttendedUpdaterFlipV1 {
-  constructor({ root, operations, clock = () => new Date() }) {
-    this.root = root; this.operations = operations; this.clock = clock;
+  constructor({ root, operations, healthEvaluator, clock = () => new Date() }) {
+    this.root = root; this.operations = operations; this.healthEvaluator = healthEvaluator; this.clock = clock;
   }
 
   async run({ planId, version, bundleDirectory, expectedBundleDigest, links }) {
@@ -100,7 +100,10 @@ export class AttendedUpdaterFlipV1 {
     // Phase D: three complete health samples. Health is the full PG/web/gateway
     // contract supplied by item 14, not merely this process's heartbeat.
     for (let sample = 0; sample < 3; sample += 1) {
-      if (!await this.operations.fullHealth({ sample })) throw updaterRefuseV1("updater_phase_d_health_failed");
+      const healthy = this.healthEvaluator
+        ? await this.healthEvaluator.fullHealth(await this.operations.healthExpectation({ sample, planId, version }))
+        : await this.operations.fullHealth({ sample });
+      if (!healthy) throw updaterRefuseV1("updater_phase_d_health_failed");
       if (sample < 2) await this.operations.waitForNextHeartbeat();
     }
     await atomicWriteNoFollowV1(this.root, "updater-state/selfupgrade.json", `${JSON.stringify({ ...record,

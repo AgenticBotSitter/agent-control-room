@@ -97,6 +97,12 @@ export async function startMacLocalWebHost(input, runtime = {}) {
       ...(ownerWebPush ? { ownerWebPush } : {}),
       fleet: fleetOwner.fleet,
       healthProbeKey, healthReleaseId, healthStartedAt: hostStartedAt,
+      // The updater's health counts (design §8.4 item 2). Optional here and
+      // passed through only when a runtime supplies the port: without it the
+      // host serves the page and the health contract simply has no counts to
+      // compare, which is the honest state. `connectorOnly` forbids the task
+      // provider and queue worker, not this read.
+      ...(runtime.updaterHealthReadPort ? { updaterHealthReadPort: runtime.updaterHealthReadPort } : {}),
       assets, render: rendererModule.default,
     });
   } catch (error) {
@@ -138,14 +144,17 @@ function verifyIntakeRoster(configuration,installed){
     throw new Error("work_intake_roster_binding_refused");
 }
 
-/** Starts the same protected host with the one fixed owner-held task provider.
- * This is intentionally a separate command from `mac:host`: invoking the
- * website does not also activate a queue or a local agent. */
+/** The historical task-host entry point. On cook/v1 it no longer starts a task
+ * provider or a queue worker at all (see below), so this is a launchd-stable
+ * name that starts the same host as `mac:host`. */
 export async function startMacLocalTaskHost(input, runtime = {}) {
   // The historical task-host command remains the stable launchd entry point,
   // but local bot execution has moved to owner LaunchAgents running the same
   // outbound connector as remote workers. Reuse the website/intake host so
   // this service never loads a task provider, queue worker, or bot CLI.
+  //
+  // `runtime` is passed through unchanged, so a caller that supplies
+  // `updaterHealthReadPort` still gets it on the host this launches.
   return startMacLocalWebHost(input, runtime);
 }
 

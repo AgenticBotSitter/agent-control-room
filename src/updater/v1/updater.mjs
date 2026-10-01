@@ -14,6 +14,8 @@ import { PasskeyStoreV1 } from "./passkey-store.mjs";
 // the item-5 lifecycle and item-14 health ports. `startUpdaterV1` accepts that
 // composed instance through `options.effects` and settles it before listening.
 export { DiskReserveV1, PairHistoryV1, UpdaterActuatorV1, collectOldReleasesV1 } from "./actuator.mjs";
+export { UpdaterHealthEvaluatorV1, UpdaterScheduledHealthV1, captureHealthPolicyV1,
+  loadRunningHealthPolicyV1, readUpdaterHealthProbeKeyV1 } from "./health.mjs";
 
 function updaterRootV1(env) {
   const production = "/Library/Application Support/Control Room";
@@ -168,8 +170,20 @@ export async function startUpdaterV1(options = {}) {
       return runner.checkAndContinue({ source: request.source });
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
+  // `watcher` is updaterland's addition and is independent of the health
+  // contract: the main loop in runtime.mjs already accepts it (it merged
+  // cleanly), and the self-update Off flag suppresses its tick. Passing it
+  // here is what keeps that work alive through this merge. `alerts`/`alertFacts`
+  // are cook/v1's item-21 sender, and `onError` is the module-level
+  // `reportError` (declared near the top of this function, and already wired to
+  // the heartbeat below) rather than the `reportTimerError` this branch used to
+  // redeclare at this point -- `heartbeatState` likewise has one declaration,
+  // from the acquisition above, not two.
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, watcher: options.watcher ?? null,
     alerts: alertSender, alertFacts: options.alertFacts, onError: reportError });
+  // The scheduled health contract (design §8.4). Independent of the loop: it
+  // owns its own timer and is stopped on both the success and the failure path.
+  const scheduledHealth = options.scheduledHealth;
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
@@ -214,16 +228,28 @@ export async function startUpdaterV1(options = {}) {
     // Item 13: settle a durable release/database link transaction before any
     // run is observed. The actuator either completes it or restores its source.
     await effects.recover?.();
-    await control.start(); await heartbeat.beat(); await loop.tick(); await heartbeat.beat(); heartbeat.start(); loop.start();
+    // Two beats, not one: the first reports the state the updater woke up in,
+    // and the second reports the state after the first loop tick has observed
+    // (and possibly recovered) a live run. Dropping the second is what made
+    // "startup reports a live run before its first heartbeat" fail after the
+    // merge -- the recovery happened between the beats and nothing re-reported it.
+    await control.start(); await heartbeat.beat(); await loop.tick(); await heartbeat.beat();
+    heartbeat.start(); loop.start();
+    await scheduledHealth?.start();
   } catch (error) {
-    loop.stop(); await heartbeat.stop(); await control.stop();
-    if (store.release) await store.release().catch(() => {});
+    loop.stop(); await scheduledHealth?.stop(); await heartbeat.stop(); await control.stop();
     if (ownsClient) await client.end();
     throw error;
   }
-  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, passkeys, refusalAggregator, alerts: alertSender,
-    setHeartbeatState,
-    async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
+
+  // cook/v1's return (it exposes passkeys/refusalAggregator/alerts and releases
+  // the store on stop) plus this branch's `scheduledHealth`, which owns its own
+  // timer and must be stopped on BOTH the success and the failure path. `setHeartbeatState`
+  // is the single closure declared above, so it is exposed as-is rather than
+  // redefined here.
+  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, scheduledHealth,
+    passkeys, refusalAggregator, alerts: alertSender, setHeartbeatState,
+    async stop() { loop.stop(); await scheduledHealth?.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
       if (ownsClient) await client.end(); } });
 }
 

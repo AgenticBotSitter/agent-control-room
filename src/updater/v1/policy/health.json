@@ -1,0 +1,12 @@
+{
+  "schema": "control-room.health-policy/v1",
+  "windowMs": 180000,
+  "loadedWindowMs": 300000,
+  "loadThreshold": 14,
+  "probeTimeoutMs": 1000,
+  "retryIntervalMs": 2000,
+  "replyMaxBytes": 4096,
+  "startedAtClockSkewMs": 2000,
+  "workerHeartbeatWindowMs": 180000,
+  "scheduleIntervalMs": 30000
+}

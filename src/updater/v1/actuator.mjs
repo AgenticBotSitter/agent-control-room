@@ -240,11 +240,19 @@ export class UpdaterActuatorV1 {
   }
 
   restart(run) { return this.services.restart(run); }
-  health(run) { return this.healthProbe(run, planFromRunV1(run).to); }
+  async health(run) {
+    const pair = planFromRunV1(run).to;
+    return typeof this.healthProbe === "function" ? this.healthProbe(run, pair)
+      : this.healthProbe.fullHealth(await this.healthProbe.expectationForRun(run, pair));
+  }
   async commitKnownGood(run) { return this.history.appendKnownGood(planFromRunV1(run).to); }
   measure(run) { return this.services.measure(run); }
 
   async rollback(run) {
+    // Both sides of the merge survive here. cook/updaterland contributes the
+    // `#exclusive` wrapper (one rollback at a time per installation); item 14
+    // contributes the dual health-probe call, because the evaluator is an
+    // instance while the previous injected-function form is still accepted.
     return this.#exclusive(async () => {
       const plan = planFromRunV1(run), liveDigest = await this.schemaDigest();
       const live = await readLivePairV1(this.root, liveDigest), pairs = [...await this.history.knownGood()].reverse();
@@ -262,7 +270,9 @@ export class UpdaterActuatorV1 {
               to: candidate, previousReleaseId: live.releaseId, fault: this.fault });
             await this.services.restart(run);
           });
-          if (await this.healthProbe(run, candidate)) return candidate;
+          const healthy = typeof this.healthProbe === "function" ? await this.healthProbe(run, candidate)
+            : await this.healthProbe.fullHealth(await this.healthProbe.expectationForRun(run, candidate));
+          if (healthy) return candidate;
           lastCode = "updater_rollback_pair_unhealthy";
         } catch (error) {
           if (isNoSpaceV1(error)) throw error;

@@ -112,13 +112,60 @@ test("the release-reader grant names only the three tables the loader allows", a
     .map(match => match[1]!);
   assert.deepEqual([...new Set(granted)].sort(), [...updaterReleaseReadTablesV1].sort(),
     "the release grant and the loader's allowed set must be the same three tables, in both directions");
-  // Read-only, and the file says so at grant time as well as at startup.
-  for (const match of withoutComments(sql).matchAll(/GRANT\s+([A-Z,\s()\w]+?)\s+ON/giu)) {
-    assert.match(match[1]!, /^SELECT\b/u, `the release grant includes a privilege other than SELECT: ${match[1]}`);
+  // Read-only ON THE TABLES, and the file says so at grant time as well as at
+  // startup. The sweep is over TABLE grants only: this file also grants EXECUTE
+  // on one FUNCTION -- `public.updater_health_counts()`, the §8.4 health read,
+  // which returns three integers and is not a table. That grant is a separate
+  // authority from the table grant and is asserted separately below; folding it
+  // into this sweep would have failed with
+  // "the release grant includes a privilege other than SELECT: EXECUTE" and been
+  // fixed by deleting the grant, which is the wrong fix.
+  for (const match of withoutComments(sql).matchAll(/GRANT\s+([A-Z,\s()\w]+?)\s+ON\s+public\.\w+(?!\s*\()/giu)) {
+    assert.match(match[1]!, /^SELECT\b/u, `the release TABLE grant includes a privilege other than SELECT: ${match[1]}`);
   }
+  // EXACTLY ONE function, named exactly, with EXECUTE and nothing else. A second
+  // would be a second narrow boundary nobody in the design asked for, and a
+  // second privilege on this one would hand the updater's login authority the
+  // design did not give it.
+  //
+  // The grant is issued through `EXECUTE '...'` because the grantor must be the
+  // schema owner, so the sweep has to read the DYNAMIC SQL inside those string
+  // literals -- matching `GRANT ... ON public.x` in the bare text of the file
+  // matches the three table grants and none of this, which is why an earlier
+  // draft of this assertion passed against a file whose function grant had been
+  // widened to `EXECUTE, UPDATE`.
+  const functionGrants = [...withoutComments(sql).matchAll(/GRANT\s+([A-Z,\s]+?)\s+ON\s+FUNCTION\s+public\.(\w+)\(\)/giu)];
+  assert.deepEqual(functionGrants.map(match => [match[2]!, match[1]!.trim()]),
+    [["updater_health_counts", "EXECUTE"]],
+    "the updater's login holds EXECUTE on the health counts and nothing else by function");
   // The role must not be in the live upgrade's manifest, or the upgrade would
   // start managing a role whose authority is that the upgrade cannot reach it.
-  const manifest = await readFile(join(process.cwd(), "scripts/mac-local/database-role-manifest.mjs"), "utf8");
-  assert.doesNotMatch(manifest, /control_room_deployer/u,
-    "the deployer role must stay out of the upgrade's managed role manifest");
+  // The upgrade must never CREATE, ALTER or REVOKE the deployer role -- it is
+  // created by the updater's own DDL at startup, long after the installer and the
+  // release ledger have run. This used to be `assert.doesNotMatch(manifest,
+  // /control_room_deployer/)`, which also refused the role being NAMED anywhere
+  // in the file -- including inside a comment explaining why it must not be
+  // managed, which is the one place the reasoning belongs. The manifest now
+  // carries it in `databaseExternallyCreatedRolesV1`: known to the role scanner
+  // so 0239 may name it, and absent from every list the upgrade acts on.
+  //
+  // So the property is asserted as what it actually is -- absence from each
+  // MANAGED list -- which is both precise and stricter than a text match: it
+  // cannot be satisfied by moving the name somewhere harmless in the file, and
+  // it additionally proves the role is not merely un-managed but still NAMED
+  // (otherwise the known set could drop it and the scanner would silently stop
+  // recognising the role a migration refers to).
+  const { databaseRoleManifestV1: roleManifest, databaseRoleNamesV1: managedRoleNames,
+    databaseExternallyCreatedRolesV1 } =
+    await import("../scripts/mac-local/database-role-manifest.mjs");
+  assert.ok(roleManifest.groups.every(role => role !== "control_room_deployer"),
+    "the deployer role must not be a Mac-managed GROUP");
+  assert.ok(!Object.hasOwn(roleManifest.logins, "control_room_deployer"),
+    "the deployer role must not be a managed LOGIN");
+  assert.ok(!roleManifest.vpsOnlyGroups.includes("control_room_deployer"),
+    "the deployer role must not be a VPS-only group: a Mac install does install VPS-only groups on a VPS");
+  assert.ok(!managedRoleNames.includes("control_room_deployer"),
+    "the upgrade must never create the deployer role");
+  assert.ok(databaseExternallyCreatedRolesV1.includes("control_room_deployer"),
+    "but the role must still be a KNOWN name, so a migration may refer to it");
 });

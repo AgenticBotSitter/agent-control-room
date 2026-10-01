@@ -32,15 +32,28 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 //  - this merge round: cook/v1 at 0238 plus 0212/0213 (text-copy derivations)
 //    and 0215-0220 (fleet presence and the owner surface cursor).
 //
-// Neither side's value survived the merge and neither could have. cook/v1's value
-// was derived from a tree with no 0212/0213; this branch's pre-merge value was
-// derived from a 0213-era tree with none of cook/v1's 0209-0211 or 0224-0238, so
-// it was wrong here by construction and could not be carried across. The value
-// below is the merged tree's and only the merged tree's; neither pre-merge value
-// is expected to appear anywhere.
+// Neither side's value survived that merge and neither could have: cook/v1's
+// value was derived from a tree with no 0212/0213, and this branch's was
+// derived from a 0213-era tree with none of cook/v1's 0209-0211 or 0224-0238.
+// The same is true of THIS round: cook/v1 now carries 0238
+// (0238_artifact_input_completeness_reads) plus cook/upgrade's own 0238-era
+// work, so the updater health counts move to 0239 and the value below is the
+// merged tree's and only the merged tree's. No earlier value is expected to
+// appear anywhere.
+//
+// MEASURED, NOT CARRIED, AND NOT THE LEAD'S PRE-MERGE VALUE. The lead measured
+// this with 0239 present as 23edbb21...; the cook/v1 merge that followed moved
+// the whole ledger (orchestration, planner, run-recovery and more), so that value
+// described a tree that no longer exists. Measured again on the MERGED tree by
+// tests/updater-health-schema-digest-postgres.test.ts on real PostgreSQL 17, which
+// also rolls 0239 back and re-applies it, so a future change to any earlier
+// migration moves this constant and fails there with the measured value in the
+// message rather than leaving it stale. The previous pre-merge value is recorded
+// here only so its absence is expected:
+//   23edbb216b3898a9b59e727d17a7a45107d35d756e5657d5f2105a75297f8777  (pre-merge)
 //
 // Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "cc4c093eeaa7bec08da9604f2c222f802ff6724c9647b712757df857915b58ee";
+export const privateWebSchemaDigest = "013f4a8baa555bc726add9a916a347efbee8d0423912fa4e31590a957f70886e";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -928,6 +941,28 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                re-create, or a fixture that replays migrations without SET ROLE,
                is in. redeem_fleet_enrollment above checks its owner
                unconditionally for the same reason. */
+            /* The updater's health count read (0239, design §8.4 item 2). SECURITY
+               DEFINER because the updater's login holds no SELECT on the release
+               tables it counts -- granting that would fail the updater's own
+               startup assertion and hand candidate-controlled rows to the approval
+               authority (R10a). The preflight exemption is narrow and says exactly
+               what the boundary is: owned by the schema owner, STABLE,
+               zero-argument, pinned to the same search_path as everything else,
+               no PUBLIC EXECUTE, and exactly one non-owner grantee which is
+               control_room_deployer. That last clause is what stops this entry
+               from becoming a hole: a second grantee fails here. */
+            OR (p.oid = 'updater_health_counts()'::regprocedure
+              AND pg_get_userbyid(p.proowner) = 'control_room_schema_owner'
+              AND p.prosecdef AND p.provolatile = 's' AND p.prokind = 'f'
+              AND p.pronargs = 0 AND p.proparallel = 'u' AND NOT p.proleakproof
+              AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND NOT has_function_privilege('public', p.oid, 'EXECUTE')
+              AND (NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_deployer')
+                OR has_function_privilege('control_room_deployer', p.oid, 'EXECUTE'))
+              AND NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+                WHERE a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
+                  AND (a.is_grantable OR a.grantee = 0
+                    OR pg_get_userbyid(a.grantee) <> 'control_room_deployer')))
             OR (p.oid IN ('commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure,'read_agent_review_plan(text)'::regprocedure)
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')

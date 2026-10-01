@@ -1,0 +1,205 @@
+[
+  {
+    "file": "src/updater/v1/health-protocol.mjs",
+    "find": "return timingSafeEqual(padded, expectedBytes) && validShape && supplied.length === expectedBytes.length;",
+    "replace": "return validShape && supplied.length === expectedBytes.length;",
+    "test": "node --test --test-name-pattern='10k fuzz' tests/updater-health.test.mjs",
+    "why": "request HMAC comparison must remain constant-time and must reject a well-shaped forgery"
+  },
+  {
+    "file": "src/updater/v1/health-protocol.mjs",
+    "find": "|| issuedAt < now - maxAgeMs || issuedAt > now + futureSkewMs) refuse(\"health_request_stale\");",
+    "replace": "|| false) refuse(\"health_request_stale\");",
+    "test": "node --test --test-name-pattern='10k fuzz' tests/updater-health.test.mjs",
+    "why": "a correctly tagged nonce outside the fixed clock window must be refused"
+  },
+  {
+    "file": "src/updater/v1/health-protocol.mjs",
+    "find": "if (!(ledger instanceof HealthNonceLedgerV1) || !ledger.accept(nonce, issuedAt, now, maxAgeMs))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='10k fuzz' tests/updater-health.test.mjs",
+    "why": "an already accepted health nonce must never be accepted twice"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "new URL(\"./policy/health.json\", import.meta.url)",
+    "replace": "new URL(\"../../../../candidate/policy/health.json\", import.meta.url)",
+    "test": "node --test --test-name-pattern='scheduled check uses' tests/updater-health.test.mjs",
+    "why": "health policy comes from beside the executing updater rather than from an application candidate"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (size > maximumBytes) throw updaterRefuseV1(\"updater_health_reply_too_large\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_health_reply_too_large\");",
+    "test": "node --test --test-name-pattern='slow and oversized' tests/updater-health.test.mjs",
+    "why": "a hostile web process cannot make the updater buffer an oversized health reply"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes))\n    throw updaterRefuseV1(\"updater_host_health_auth_refused\");",
+    "replace": "if (false)\n    throw updaterRefuseV1(\"updater_host_health_auth_refused\");",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "the evaluator must reject a forged cook/v1 host response, whose tag is purpose-keyed rather than response-keyed"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (!healthResponseTagMatchesV1(key, UPDATER_HEALTH_ENDPOINT_V1, response, value.tag))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "the evaluator must reject forged production-web count evidence"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (host.releaseId !== expectation.releaseId) throw updaterRefuseV1(\"updater_health_release_mismatch\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_health_release_mismatch\");",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "healthy evidence from the wrong served release must fail Phase D"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (startedAt + policy.startedAtClockSkewMs < flippedAt || startedAt > now + policy.startedAtClockSkewMs)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "a response from before the flip or implausibly in the future must not prove the new release"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (!sameCountsV1(web, expectedCounts)) throw updaterRefuseV1(\"updater_health_count_mismatch\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_health_count_mismatch\");",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "the web login counts must equal the updater's independent reads"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (before.generation !== after.generation || before.childPid !== after.childPid || host.pid !== before.childPid)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "one health sample cannot combine evidence from two supervisor generations"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (schemaDigest !== expectation.schemaDigest) throw updaterRefuseV1(\"updater_health_schema_mismatch\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_health_schema_mismatch\");",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "the live schema digest must match the exact pair being evaluated"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "|| !/^[A-Za-z0-9._-]{1,80}$/u.test(value.generation) || value.pidAlive !== true",
+    "replace": "|| !/^[A-Za-z0-9._-]{1,80}$/u.test(value.generation)",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "the task-host child must be proven live rather than merely named by the supervisor"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "url.hostname !== \"127.0.0.1\"",
+    "replace": "url.hostname !== \"127.0.0.1\" && url.hostname !== \"localhost\"",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "health origins must use the literal loopback address from running configuration"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "&& before.logBytes > prior.logBytes;",
+    "replace": "&& before.logBytes >= prior.logBytes;",
+    "test": "node --test --test-name-pattern='starting host is progress' tests/updater-health.test.mjs",
+    "why": "starting counts as progress only when the same live child actually grows its log"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (manifestsHealthy !== true) throw updaterRefuseV1(\"updater_health_manifest_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_health_manifest_refused\");",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "a known-good release whose manifest no longer hashes cannot remain healthy"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "|| gatewayHealth.maintenance !== false) throw updaterRefuseV1(\"updater_health_gateway_refused\");",
+    "replace": "|| false) throw updaterRefuseV1(\"updater_health_gateway_refused\");",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "gateway maintenance mode is unhealthy even when its listener still returns 200"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "|| !Number.isSafeInteger(workerHealth.reconnectedCount) || workerHealth.reconnectedCount < 1))",
+    "replace": "|| false))",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "a release with previously connected workers must see at least one worker reconnect"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (this.#checking) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --test --test-name-pattern='stopping halfway' tests/updater-health.test.mjs",
+    "why": "the scheduled loop must not overlap a slow in-flight health check"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "const loaded = Number(await this.loadAverage()) >= policy.loadThreshold;",
+    "replace": "const loaded = false;",
+    "test": "node --test --test-name-pattern='180-second default' tests/updater-health.test.mjs",
+    "why": "load at the policy threshold must select the 300-second health window"
+  },
+  {
+    "file": "src/updater/v1/health.mjs",
+    "find": "if (!entry.isFile() || entry.nlink !== 1 || entry.size > 64 || (entry.mode & 0o077) !== 0)",
+    "replace": "if (!entry.isFile() || entry.nlink !== 1 || entry.size > 64)",
+    "test": "node --test --test-name-pattern='installed item-1 probe key' tests/updater-health.test.mjs",
+    "why": "the updater must refuse an installation-private probe key readable by other users"
+  },
+  {
+    "file": "src/updater/v1/attended-flip.mjs",
+    "find": "if (!healthy) throw updaterRefuseV1(\"updater_phase_d_health_failed\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_phase_d_health_failed\");",
+    "test": "node --test --test-name-pattern='attended flip refuses' tests/updater-cli-flip.test.mjs",
+    "why": "Phase D cannot finish an updater flip after any full-health sample fails"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "const { nonce } = await authenticateHealthRequest(request, UPDATER_HEALTH_ENDPOINT_V1);",
+    "replace": "const { nonce } = { nonce: \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\" };",
+    "test": "node --import tsx --test --test-name-pattern='updater-health requires a fresh' tests/updater-health-web.test.ts",
+    "why": "the NEW updater-health route must authenticate its request before rendering any response"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "const body = await readBoundedJson(request.body, 256, 1_000);",
+    "replace": "const body = await readBoundedJson(request.body, 256, 5_000);",
+    "test": "node --import tsx --test --test-name-pattern='cuts off a slow body' tests/updater-health-web.test.ts",
+    "why": "a slow request body must hit the fixed one-second health endpoint timeout"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "const body = await readBoundedJson(request.body, 256, 1_000);",
+    "replace": "const body = await readBoundedJson(request.body, 2_048, 1_000);",
+    "test": "node --import tsx --test --test-name-pattern='cuts off a slow body' tests/updater-health-web.test.ts",
+    "why": "the health endpoint must reject an oversized request before authenticating it"
+  },
+  {
+    "file": "src/updater/v1/health-protocol.mjs",
+    "find": "|| counts.homeRenderBytes > 4_194_304 || counts.planApprovalInsertAllowed !== true)",
+    "replace": "|| counts.homeRenderBytes > 4_194_304 || false)",
+    "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
+    "why": "the production web login must prove INSERT privilege on updater plan approvals"
+  },
+  {
+    "file": "src/updater/v1/health-protocol.mjs",
+    "find": "if (endpoint !== UPDATER_HEALTH_ENDPOINT_V1) refuse(\"health_endpoint_refused\");",
+    "replace": "if (false) refuse(\"health_endpoint_refused\");",
+    "test": "node --test --test-name-pattern='10k fuzz' tests/updater-health.test.mjs",
+    "why": "no signed request tag may be minted for the compatibility route /api/v1/local-host-health, or a new caller adopts the wrong protocol"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "const tag = hmacSha256Tag(options.healthProbeKey!,\n          { purpose: \"local-host-health/v1\", nonce, pid, ready, releaseId, startedAt });",
+    "replace": "const tag = hmacSha256Tag(options.healthProbeKey!,\n          { nonce, pid, ready, releaseId, startedAt });",
+    "test": "node --import tsx --test --test-name-pattern='keeps cook/v1' tests/updater-health-web.test.ts",
+    "why": "the compatibility route's response tag must stay keyed on the purpose literal, which is the material mac:up and the installer verify"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (url.pathname === \"/api/v1/updater-health\") {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='updater-health requires a fresh' tests/updater-health-web.test.ts",
+    "why": "the new signed-request route must exist on its own path, separate from the compatibility route"
+  }
+]

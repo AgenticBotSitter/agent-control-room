@@ -585,7 +585,7 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
   // only four were SECURITY DEFINER. And that set must not drift from what
   // PostgreSQL reports, so it is pinned BY NAME below.
   //
-  // So the shipped set below is built by `shippedFunctions()`, which records the
+  // So the shipped set below is built by `shippedSecurityDefinerFunctions()`, which records the
   // per-function definer property AND the per-file one, and the two are used for
   // two different assertions: the pinned definer set comes from the per-function
   // property, and the allowlist comparison runs over every callable function
@@ -600,7 +600,8 @@ test("every SECURITY DEFINER function the preflight exempts is owned by the sche
     .filter(([, record]) => record.securityDefiner).map(([signature]) => signature);
   assert.deepEqual([...definers].map(signature => signature.replace(/\(.*\)/u, "")).sort(),
   ["commit_agent_review", "control_room_planner_grant_owner_retry", "is_work_intake_session",
-    "read_agent_review_plan", "redeem_fleet_enrollment", "work_intake_split_suggestion_visible"],
+    "read_agent_review_plan", "redeem_fleet_enrollment", "updater_health_counts",
+    "work_intake_split_suggestion_visible"],
     "the shipped SECURITY DEFINER function set changed; a login-callable one needs a preflight allowlist entry");
   // The shipped names carry SQL argument NAMES; the preflight carries TYPES, so
   // the two are matched by SHAPE -- the name with its arity. `shapeOf` is the

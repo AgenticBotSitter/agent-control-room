@@ -99,7 +99,7 @@
   },
   {
     "file": "src/updater/v1/attended-flip.mjs",
-    "find": "if (!await this.operations.fullHealth({ sample })) throw updaterRefuseV1(\"updater_phase_d_health_failed\");",
+    "find": "if (!healthy) throw updaterRefuseV1(\"updater_phase_d_health_failed\");",
     "replace": "if (false) throw updaterRefuseV1(\"updater_phase_d_health_failed\");",
     "test": "node --test --test-name-pattern='attended flip refuses' tests/updater-cli-flip.test.mjs",
     "why": "Phase D must not declare a broken updater healthy"

@@ -1,0 +1,93 @@
+[
+  {
+    "file": "db/migrations/0239_updater_health_counts.sql",
+    "find": "REVOKE ALL ON FUNCTION updater_health_counts() FROM PUBLIC;",
+    "replace": "-- mutation: PUBLIC keeps the default EXECUTE",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "PostgreSQL grants EXECUTE to PUBLIC on every new function, so without this REVOKE any login on the socket could ask the definer for the counts (R20d: counts only, to the updater)"
+  },
+  {
+    "file": "db/migrations/0239_updater_health_counts.sql",
+    "find": "  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc\n      WHERE proname = 'updater_health_counts'\n        AND pg_catalog.pg_get_function_identity_arguments(oid) <> '') THEN\n    RAISE EXCEPTION 'another signature of updater_health_counts already exists' USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  -- mutation: a competing overload would no longer be refused",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "the boundary must be the only updater_health_counts on the cluster: PostgreSQL installs the zero-argument form ALONGSIDE an overload rather than replacing it (measured), and every later check resolves the zero-argument signature, so an overload displaces the boundary without any of them noticing"
+  },
+  {
+    "file": "db/migrations/0239_updater_health_counts.sql",
+    "find": "      AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[])\n    THEN\n    RAISE EXCEPTION 'updater health count function must be STABLE SECURITY DEFINER",
+    "replace": "    THEN",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "the pinned search_path is what stops candidate SQL shadowing an object the definer's body names (R10b); dropping it must be caught"
+  },
+  {
+    "file": "db/migrations/0239_updater_health_counts.sql",
+    "find": "      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE' AND a.is_grantable\n        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN",
+    "replace": "      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE' AND false\n        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "a GRANTABLE EXECUTE would let the updater's login hand this definer's reach to anybody, which is the exact authority growth the function exists not to permit"
+  },
+  {
+    "file": "db/migrations/0239_updater_health_counts.sql",
+    "find": "    WHERE b.singleton\n      AND (SELECT count(*) FROM public.workspaces x WHERE x.tenant_id = b.tenant_id) = 1\n  )\n",
+    "replace": "    WHERE b.singleton\n",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "workspaces has no unique constraint on tenant_id alone, so an ambiguous scope would silently DOUBLE every count -- and a health signal that doubles still says healthy"
+  },
+  {
+    "file": "db/roles/updater_release_reader_roles.sql",
+    "find": "    EXECUTE 'GRANT EXECUTE ON FUNCTION public.updater_health_counts() TO control_room_deployer';",
+    "replace": "    -- mutation: the updater's login is never granted the health counts",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "without this grant the updater's independent read cannot run at all and §8.4's count comparison can never be satisfied"
+  },
+  {
+    "file": "src/updater/v1/health-authority-reads.ts",
+    "find": "  if (text === undefined || !/^(?:0|[1-9][0-9]{0,6})$/u.test(text))",
+    "replace": "  if (text === undefined)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
+    "why": "a count arriving from the database must be digits only; accepting any string would let a malformed driver value through the comparison against the signed web response"
+  },
+  {
+    "file": "src/updater/v1/health-authority-reads.ts",
+    "find": "      if (keys.join(\"\\0\") !== [\"home_summary_count\", \"project_count\", \"updates_panel_count\"].join(\"\\0\"))",
+    "replace": "      if (false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
+    "why": "the authority read must return exactly the three counts and nothing else; extra columns from a future migration must refuse here rather than flow into the health response"
+  },
+  {
+    "file": "src/updater/v1/health-authority-reads.ts",
+    "find": "      if (!Array.isArray(rows.rows) || rows.rows.length > 1)",
+    "replace": "      if (false)",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
+    "why": "zero rows means an unbound or ambiguous scope and must fail closed; more than one means this is not the database the adapter was bound to"
+  },
+  {
+    "file": "src/web/v1/updater-health-web-reads.ts",
+    "find": "      if (await sources.privilege.hasPlanApprovalInsert() !== true) refused(\"plan_approval_insert\");",
+    "replace": "      await sources.privilege.hasPlanApprovalInsert();",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
+    "why": "§8.4 requires the web login's INSERT on updater.plan_approvals; a false result is the whole signal that the approval path is broken, so it must refuse health rather than report it"
+  },
+  {
+    "file": "src/web/v1/updater-health-web-reads.ts",
+    "find": "      if (!response || response.status !== 200) refused(\"home_render_status\");",
+    "replace": "      if (!response) refused(\"home_render_status\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
+    "why": "an error page renders perfectly happily; counting its bytes as a healthy Home would make a broken server look healthy"
+  },
+  {
+    "file": "src/web/v1/updater-health-web-reads.ts",
+    "find": "      if (!Number.isSafeInteger(size) || size < 1 || size > 1_000_000) refused(\"home_render_size\");",
+    "replace": "      if (!Number.isSafeInteger(size)) refused(\"home_render_size\");",
+    "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
+    "why": "§8.4 requires a NON-EMPTY render; an empty body must refuse, and an implausibly large one must not be reported as a healthy page"
+  },
+  {
+    "file": "db/down/0239_updater_health_counts.sql",
+    "find": "    DROP FUNCTION updater_health_counts();",
+    "replace": "    -- mutation: the down migration does not drop the function",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "a down migration that does not drop the function leaves the boundary installed after a rollback, and the next apply then refuses with 42723"
+  }
+]

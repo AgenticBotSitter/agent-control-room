@@ -6,6 +6,7 @@ import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-con
 import { createMacLocalControlRoomServiceV1 } from "./mac-local-serving";
 import { createMacLocalStartupV1 } from "./mac-local-startup";
 import type { MacLocalCanonicalTaskOperationsV1, MacLocalWebProcessOptionsV1 } from "./mac-local-web-process";
+import type { UpdaterHealthWebReadPortV1 } from "../../updater/v1/health-ports";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { MacLocalTaskApplicationV1 } from "./mac-local-task-application";
 import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
@@ -129,6 +130,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
+  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;
   /** Remote-worker owner section, present only when the host also runs the
    * fleet gateway on its own database login. */
   fleet?: MacLocalWebProcessOptionsV1["fleet"];
@@ -184,6 +186,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     ...(input.hostProcessId ? { hostProcessId: input.hostProcessId } : {}),
     ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
       healthStartedAt: input.healthStartedAt } : {}),
+    ...(input.updaterHealthReadPort ? { updaterHealthReadPort: input.updaterHealthReadPort } : {}),
     ...(input.fleet ? { fleet: input.fleet } : {}),
     // The installation-wide mode. This forwarding is the whole fix: without it
     // the endpoint exists in the web process but is never mounted, and it 404s
@@ -260,7 +263,10 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
+  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;
+  /** A read-only projection of updater status, for Home copy only. */
   updaterHomeStatus?: UpdaterHomeStatusReaderV1;
+  /** The root updater's bounded owner surface. */
   updaterOwnerUi?: UpdaterOwnerUiPortV1;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function"
@@ -355,6 +361,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           ...(input.hostProcessId ? { hostProcessId: input.hostProcessId } : {}),
           ...(input.healthProbeKey ? { healthProbeKey: input.healthProbeKey, healthReleaseId: input.healthReleaseId,
             healthStartedAt: input.healthStartedAt } : {}),
+          ...(input.updaterHealthReadPort ? { updaterHealthReadPort: input.updaterHealthReadPort } : {}),
           ...(service ? { operationsMode: service } : {}),
           ...(input.updaterHomeStatus ? { updaterHomeStatus: input.updaterHomeStatus } : {}),
           ...(input.updaterOwnerUi ? { updaterOwnerUi: input.updaterOwnerUi } : {}),

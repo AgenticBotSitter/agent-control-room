@@ -148,9 +148,10 @@ test("attended updater phases A/C/D flip every link, retain previous, and requir
   await runUpdaterCliV1(["confirm", ...fixture.words], { root, getuid: () => 0, stdout: () => {} });
   const links = await linksV1(root), calls = [];
   const operations = { async stage() { calls.push("stage"); }, async restart(value) { calls.push(["restart", value]); },
-    async fullHealth({ sample }) { calls.push(["health", sample]); return true; },
+    async healthExpectation({ sample }) { return { sample, releaseId: "r1" }; },
     async waitForNextHeartbeat() { calls.push("wait"); } };
-  const result = await new AttendedUpdaterFlipV1({ root, operations,
+  const healthEvaluator = { async fullHealth(value) { calls.push(["health", value.sample]); return true; } };
+  const result = await new AttendedUpdaterFlipV1({ root, operations, healthEvaluator,
     clock: () => new Date("2026-09-30T12:00:00Z") }).run({ planId: "u2", version: "updater-2",
     bundleDirectory: bundle.directory,
     expectedBundleDigest: bundle.digest, links });
@@ -169,9 +170,11 @@ test("attended flip refuses On, a bad bundle, an unknown link and failed Phase D
   const root = await rootV1(t), fixture = await planFixtureV1(root), bundle = await bundleV1(root);
   await runUpdaterCliV1(["confirm", ...fixture.words], { root, getuid: () => 0, stdout: () => {} });
   const operations = { async stage() {}, async restart() {}, async fullHealth() { return false; },
+    async healthExpectation() { return { releaseId: "r1" }; },
     async waitForNextHeartbeat() {} };
   await writeFile(join(root, "updater-state/self-update"), "On\n");
-  await assert.rejects(new AttendedUpdaterFlipV1({ root, operations }).run({ planId: "u2", version: "updater-2",
+  await assert.rejects(new AttendedUpdaterFlipV1({ root, operations,
+    healthEvaluator: { async fullHealth() { return false; } } }).run({ planId: "u2", version: "updater-2",
     bundleDirectory: bundle.directory, expectedBundleDigest: bundle.digest, links: [] }), /updater_attended_requires_off/u);
   await writeFile(join(root, "updater-state/self-update"), "Off\n");
   const confirmationPath = join(root, "updater-state/confirmations/u2.json");

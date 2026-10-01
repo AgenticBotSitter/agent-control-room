@@ -48,6 +48,14 @@ import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
 import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-owner";
 import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
 import { hmacSha256Tag } from "../../security";
+// The updater's OWN health endpoints. `/api/v1/local-host-health` keeps the
+// cook/v1 protocol EXACTLY (unsigned request, purpose-keyed response tag) and
+// does not use anything from here: `UPDATER_HEALTH_ENDPOINT_V1` and its
+// helpers are imported here only for the NEW route below, and the lead's
+// decision is that the signed-request protocol applies to that route alone.
+import { captureUpdaterHealthCountsV1, HealthNonceLedgerV1, healthResponseTagV1,
+  UPDATER_HEALTH_ENDPOINT_V1, verifyHealthRequestV1 } from "../../updater/v1/health-protocol.mjs";
+import type { UpdaterHealthWebReadPortV1 } from "../../updater/v1/health-ports";
 import type { UpdaterHomeStatusReaderV1 } from "./updater-home-status";
 import { updaterOwnerRequestSchemaV1, type UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
 
@@ -145,6 +153,7 @@ export interface MacLocalWebProcessOptionsV1 {
   healthProbeKey?: Uint8Array;
   healthReleaseId?: string;
   healthStartedAt?: string;
+  updaterHealthReadPort?: UpdaterHealthWebReadPortV1;
   /** A read-only projection of updater status. It exists for Home copy only;
    * the web process receives no updater control or approval authority. */
   updaterHomeStatus?: UpdaterHomeStatusReaderV1;
@@ -195,6 +204,16 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   if (options.cloudflareAccessOrigin !== undefined && !profile.remoteOrigins?.includes(options.cloudflareAccessOrigin))
     throw new Error("mac_local_web_process_config_invalid");
   const sessions = new LocalOwnerSessionServiceV1(profile, options.localOwnerSessionStore, options.initialLocalOwnerSessions);
+  const healthNonces = new HealthNonceLedgerV1();
+  const authenticateHealthRequest = async (request: Request, endpoint: string) => {
+    if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
+      || !request.body) throw new WebAccessError("invalid_request");
+    const body = await readBoundedJson(request.body, 256, 1_000);
+    try {
+      return verifyHealthRequestV1({ key: options.healthProbeKey!, endpoint, value: body,
+        ledger: healthNonces, now: clock() });
+    } catch { throw new WebAccessError("access_denied"); }
+  };
   const productConfiguration = parseProductConfigurationV1({ schema: "control-room.product-configuration/v1",
     displayName: "Control Room", defaultTimezone: "UTC",
     modules: { ideaLab: false, news: false, sessionObservations: false },
@@ -423,12 +442,39 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           || Object.keys(body).length !== 1 || typeof (body as { nonce?: unknown }).nonce !== "string"
           || !/^[A-Za-z0-9_-]{43}$/u.test((body as { nonce: string }).nonce))
           throw new WebAccessError("invalid_request");
+        // cook/v1's protocol, byte for byte, and it is a COMPATIBILITY SURFACE
+        // with three existing callers that were written against it: `mac:up`'s
+        // readiness probe, the installer's `checkWebHealthV1` final health check
+        // on install night, and the updater's own §8.4 evaluator. The request is
+        // an UNSIGNED `{nonce}` and the response tag is keyed on
+        // `{purpose: "local-host-health/v1", nonce, pid, ready, releaseId,
+        // startedAt}`; the signed-request protocol in health-protocol.mjs applies
+        // ONLY to `/api/v1/updater-health` below.
+        //
+        // `ready` is the process's REAL readiness, not a constant true, and that
+        // IS updaterland's change and is kept: an endpoint that always reports
+        // ready cannot report an outage, every one of those three callers refuses
+        // anything but `ready === true`, and `ready` is inside the signed
+        // response, so a proxy cannot forge it.
         const nonce = (body as { nonce: string }).nonce, pid = options.hostProcessId,
           releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!, ready = isReady();
         const tag = hmacSha256Tag(options.healthProbeKey!,
           { purpose: "local-host-health/v1", nonce, pid, ready, releaseId, startedAt });
         return Response.json({ schema: "control-room.local-host-health/v1", ready, pid, nonce, releaseId, startedAt, tag },
           { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/updater-health") {
+        if (request.method !== "POST" || url.search || options.hostProcessId === undefined
+          || !options.updaterHealthReadPort) throw new WebAccessError("not_found");
+        if (url.origin !== options.origin) throw new WebAccessError("access_denied");
+        sessions.assertLocalRequest(request, true);
+        const { nonce } = await authenticateHealthRequest(request, UPDATER_HEALTH_ENDPOINT_V1);
+        const counts = captureUpdaterHealthCountsV1(await options.updaterHealthReadPort.readHealthCounts({
+          tenantId: profile.tenantId, workspaceId: options.workspaceId,
+        }));
+        const response = { schema: "control-room.updater-health/v1", nonce, ready: true, ...counts };
+        const tag = healthResponseTagV1(options.healthProbeKey!, UPDATER_HEALTH_ENDPOINT_V1, response);
+        return Response.json({ ...response, tag }, { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/local-workers") {
         if (request.method !== "GET" || url.search || !options.workerReadiness && !fleetOwner) throw new WebAccessError("not_found");

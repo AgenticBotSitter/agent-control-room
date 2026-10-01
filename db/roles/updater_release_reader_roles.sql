@@ -71,6 +71,7 @@ BEGIN
     || ' ON public.control_identities TO control_room_deployer';
   EXECUTE 'GRANT SELECT (tenant_id, identity_id, role_key, risk_ceiling, allowed_actions, project_ids,'
     || ' expires_at, revoked_at) ON public.control_role_grants TO control_room_deployer';
+
   -- Item 21's addition, and the only reason the updater can SEND rather than
   -- only queue. §15 item 21 makes the updater the process that POSTs to the
   -- owner's push endpoints with the root-only VAPID key (R12); the web cannot
@@ -94,6 +95,24 @@ BEGIN
   -- updater's voice, which is the trigger, not this read.
   EXECUTE 'GRANT SELECT (tenant_id, id, endpoint, p256dh, auth, expires_at)'
     || ' ON public.owner_web_push_subscriptions TO control_room_deployer';
+
+  -- The health count read (design §8.4 item 2). EXECUTE only, and only once
+  -- db/migrations/0239 has created the function -- a GRANT to a missing function
+  -- is an error, and on a cluster where this file is applied before the release
+  -- ledger has run there is nothing to grant to yet. The guarded form keeps this
+  -- file re-appliable in both orders, which is what the file's own header already
+  -- requires of it for the role itself.
+  --
+  -- This is the ONLY authority the updater's login holds that is not a table
+  -- grant, and it is a function that returns three integers. It is here, and not
+  -- in the migration, because the role this grants to is created by the updater's
+  -- own DDL at startup, which is strictly after the ledger runs: a GRANT in the
+  -- migration would be a silent no-op on every fresh install.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+      WHERE p.proname = 'updater_health_counts'
+        AND pg_catalog.pg_get_function_identity_arguments(p.oid) = '') THEN
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.updater_health_counts() TO control_room_deployer';
+  END IF;
 END;
 $$;
 
