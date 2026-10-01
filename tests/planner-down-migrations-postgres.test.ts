@@ -15,7 +15,8 @@
 // Each down file is applied on its OWN freshly-migrated cluster rather than
 // stacked on one cluster, because a stack would let an earlier file's success
 // mask a later one's: 0203 restores the predicate-free view, and if 0205 then
-// dropped that same view the assertions for 0203 would already have run.
+// dropped that same view the assertions for 0203 would already have run. The
+// stack is tested as well, separately and as the migrator, at the bottom.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -121,6 +122,16 @@ const COVERAGE: Record<string, { gone: readonly Expectation[]; back: readonly Ex
       { name: "0205's scope_key still on the owner-facing view",
         sql: `(SELECT count(*)::text FROM information_schema.columns
                  WHERE table_name='control_planner_open_needs_you' AND column_name='scope_key')` },
+      // RESET, not SET false: before 0205 these views carried no reloption at all,
+      // and `{security_barrier=false}` is a difference from a database that never
+      // ran 0205 (review round 5, Q5).
+      { name: "any security_barrier reloption left behind, even =false, in the PUBLIC schema",
+        sql: `(SELECT count(*)::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                 WHERE n.nspname='public' AND c.reloptions::text LIKE '%security_barrier%')` },
+      { name: "0205's Needs-you guard, reading the dropped scope_key column",
+        sql: `(SELECT count(*)::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                 WHERE n.nspname='public' AND p.proname='guard_planner_needs_you_item_insert'
+                   AND prosrc LIKE '%NEW.scope_key%')` },
       { name: "any barrier left switched on, in the PUBLIC schema only",
         // Scoped to nspname='public' on purpose. Counted over all of pg_class it
         // also counts PostgreSQL's OWN catalog views -- pg_stats, pg_stats_ext and
@@ -140,6 +151,9 @@ const COVERAGE: Record<string, { gone: readonly Expectation[]; back: readonly Ex
         sql: `(SELECT count(*)::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
                  WHERE n.nspname='public' AND p.proname='guard_planner_failure_counter_write'
                    AND prosrc NOT LIKE '%owner_retry_cleared_at%')` },
+      // The DROP VIEW discarded 0202's grant on the view; the down re-issues it.
+      { name: "0202's SELECT on the owner-facing view, for the owner's web login",
+        sql: "has_table_privilege('control_room_private_web', 'public.control_planner_open_needs_you', 'SELECT')::int::text" },
     ],
   },
 };
@@ -213,9 +227,62 @@ for (const [index, file] of Object.keys(COVERAGE).entries()) {
         const notRestored = coverage.back.filter(item => value.get(item.name) !== "1");
         assert.deepEqual(notRestored.map(item => item.name), [],
           `${file} did not restore: ${notRestored.map(item => `${item.name}=${value.get(item.name)}`).join(", ")}`);
+        await assertNeedsYouGuardRuns(admin, file);
       } finally { await admin.end(); }
     }, { port: PORT + index, allowedPorts: ALLOWED, boundMs: 240_000 });
   });
+}
+
+// THE ORDER AN OPERATOR WOULD USE, AS THE MIGRATOR (review round 5, R5-L3). The
+// per-file tests above apply each down to a FULL install as the fixture admin --
+// 0204's down runs with 0205 still present -- so they prove each file's own
+// objects but not the stack. Here one cluster is rolled back 0205 -> 0204 -> 0203
+// by the production migrator login in the schema owner's role, the way the
+// applier runs migrations, and every file's `gone` and `back` must hold at the end.
+test("0205 -> 0204 -> 0203 roll back in true reverse order, as the migrator in the schema owner's role",
+  { skip: !PG && realPostgresSkipMessage() }, async () => {
+    await withRealPostgres(async postgres => {
+      const admin = new Client(postgres.admin()); await admin.connect();
+      const migrator = new Client(postgres.connection("migrator")); await migrator.connect();
+      try {
+        const order = Object.keys(COVERAGE).sort().reverse();
+        assert.deepEqual(order.map(file => file.slice(0, 4)), ["0205", "0204", "0203"]);
+        for (const file of order) {
+          await migrator.query("SET ROLE control_room_schema_owner");
+          try { await migrator.query(await readFile(`${DOWNS}/${file}`, "utf8")); }
+          finally { await migrator.query("ROLLBACK").catch(() => {}); await migrator.query("RESET ROLE"); }
+          await assertNeedsYouGuardRuns(admin, `${file} (stacked)`);
+        }
+        // Every claim of every file, at the bottom of the stack. 0204's `back`
+        // (0202's request-key guard) and 0205's (0202's counter guard) are both
+        // 0202 shapes, so they must survive the files below them as well.
+        const all = order.flatMap(file => [
+          ...COVERAGE[file]!.gone.map(item => ({ ...item, want: "gone" as const, file })),
+          ...COVERAGE[file]!.back.map(item => ({ ...item, want: "back" as const, file }))]);
+        const rows = await admin.query<{ name: string; value: string | null }>(
+          `SELECT * FROM (VALUES ${all.map(item => `(${literal(`${item.file}: ${item.name}`)}, ${item.sql})`).join(", ")}) AS t(name, value)`);
+        const value = new Map(rows.rows.map(row => [row.name, row.value]));
+        const wrong = all.filter(item => {
+          const raw = value.get(`${item.file}: ${item.name}`);
+          return item.want === "gone" ? raw !== null && raw !== undefined && raw !== "0" : raw !== "1";
+        }).map(item => `${item.want} ${item.file}: ${item.name}=${value.get(`${item.file}: ${item.name}`)}`);
+        assert.deepEqual(wrong, [], `the stacked rollback is wrong:\n${wrong.join("\n")}`);
+      } finally { await migrator.end(); await admin.end(); }
+    }, { port: PORT + 3, allowedPorts: ALLOWED, boundMs: 240_000 });
+  });
+
+/** A Needs-you insert must reach the guard's OWN refusal after a rollback. A
+ * guard left reading a column the rollback dropped fails instead with "record
+ * "new" has no field ...", which makes every raise fail -- 0205's down did exactly
+ * that until fix round 5. The row is deliberately unlicensed, and the guard is a
+ * BEFORE trigger, so it runs before any constraint and nothing is written. */
+async function assertNeedsYouGuardRuns(admin: Client, label: string) {
+  await assert.rejects(admin.query(`INSERT INTO control_planner_needs_you_items
+      (id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at)
+      VALUES ('planner-needs-you:0000000000000000','tenant:probe','project:probe','probe-request-0001',
+        'orchestrator_failed_twice',2,'identity:probe',now())`),
+  /planner needs-you insert rejected/u,
+  `${label}: the Needs-you guard must run and refuse on its own terms after the rollback`);
 }
 
 /** A SQL string literal with any quote doubled, so a name cannot end it. */

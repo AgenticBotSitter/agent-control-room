@@ -56,4 +56,9 @@ CREATE OR REPLACE VIEW work_batch_current_split_suggestions AS
 
 -- Last, because both objects above still reference it.
 DROP FUNCTION public.work_intake_split_suggestion_visible(text, text, text);
+-- NOT AN OWNER ROLLBACK PATH. Like every down file here it leaves the applier's
+-- ledger rows in place, so the ledger still claims the up file is applied, and
+-- down-then-up does not restore column positions, which both schema digests
+-- include (review round 5, R5-L1). Disposable clusters only; a real rollback is a
+-- restore from backup.
 COMMIT;

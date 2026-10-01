@@ -51,4 +51,9 @@ DROP FUNCTION public.planner_failure_scope_key(text, jsonb);
 -- may be holding a dependency on it that this file cannot see.
 ALTER TABLE public.control_planner_needs_you_items
   DROP COLUMN owner_request_digest;
+-- NOT AN OWNER ROLLBACK PATH. Like every down file here it leaves the applier's
+-- ledger rows in place, so the ledger still claims the up file is applied, and
+-- down-then-up does not restore column positions, which both schema digests
+-- include (review round 5, R5-L1). Disposable clusters only; a real rollback is a
+-- restore from backup.
 COMMIT;

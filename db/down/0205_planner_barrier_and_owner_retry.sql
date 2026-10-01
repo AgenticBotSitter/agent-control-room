@@ -59,9 +59,17 @@ CREATE VIEW public.control_planner_open_needs_you AS
     false AS starts_work, false AS grants_execution_authority
   FROM public.control_planner_needs_you_items s;
 --
--- 0202's SELECT grant on this view survives the DROP/CREATE because the recreated
--- view has the same owner and the same name, so no grant statement is needed -- and
--- none is issued, because this up file never granted it.
+-- THE DROP DISCARDS THE VIEW'S GRANTS: the recreated view is a new relation with a
+-- NULL ACL (measured in review round 5). An earlier draft said 0202's SELECT grant
+-- "survives the DROP/CREATE"; it does not. So 0202's own grant is re-issued here,
+-- in 0202's own guarded form, because restoring 0202's view means restoring the
+-- privilege 0202 gave on it -- and the role files cannot be relied on to do it on
+-- a rolled-back database, since they name 0205's function and fail 42883 there.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_private_web') THEN
+    EXECUTE 'GRANT SELECT ON public.control_planner_open_needs_you TO control_room_private_web';
+  END IF;
+END $$;
 --
 -- 0202's counter guard, verbatim. The scope unique index must go before the column
 -- it is built on, or the DROP COLUMN would cascade into it and the restore below
@@ -100,15 +108,59 @@ BEGIN
   RAISE EXCEPTION 'planner failure counter update rejected';
 END $$;
 
--- 4. The five remaining barriers, each `SET (security_barrier = false)` the exact
---    inverse of its ALTER VIEW in 0205. The sixth, control_planner_open_needs_you,
---    was dropped and recreated in step 3 WITHOUT the barrier, so setting it false
---    here would be a no-op on an option that is already off; leaving the statement
---    out is the honest count, and the six-barrier claim at the top names all six
---    of 0205's.
-ALTER VIEW public.work_batch_current_split_suggestions SET (security_barrier = false);
-ALTER VIEW public.work_batch_effective_queue_admissions SET (security_barrier = false);
-ALTER VIEW public.pipeline_ordered_stage_runs SET (security_barrier = false);
-ALTER VIEW public.installation_effective_operations_mode SET (security_barrier = false);
-ALTER VIEW public.control_project_planner_selections SET (security_barrier = false);
+-- 0204's Needs-you insert guard, verbatim. 0205 replaced it with a body that reads
+-- NEW.scope_key, and the column is dropped above; a plpgsql body is not
+-- dependency-tracked, so without this the rolled-back database kept 0205's guard
+-- and every Needs-you raise failed at run time with "record new has no field
+-- scope_key". Found while adding the stacked rollback test (fix round 5); the
+-- earlier version of this file left it behind.
+CREATE OR REPLACE FUNCTION public.guard_planner_needs_you_item_insert() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE
+  project_key text;
+  request_key_initial text;
+  request_key_resplit text;
+BEGIN
+  project_key := public.planner_failure_scope_key('project', jsonb_build_object(
+    'kind', 'initial', 'tenantId', NEW.tenant_id::text, 'projectId', NEW.project_id::text,
+    'ownerRequest', NEW.owner_request_digest));
+  request_key_initial := public.planner_failure_scope_key('initial', jsonb_build_object(
+    'tenantId', NEW.tenant_id::text, 'projectId', NEW.project_id::text, 'requestKey', NEW.request_key::text));
+  request_key_resplit := public.planner_failure_scope_key('resplit', jsonb_build_object(
+    'tenantId', NEW.tenant_id::text, 'projectId', NEW.project_id::text, 'requestKey', NEW.request_key::text));
+  IF NEW.failure_count<2 OR NEW.reason_code<>'orchestrator_failed_twice'
+    OR NEW.id<>'planner-needs-you:' || substring(pg_catalog.md5(
+      NEW.tenant_id || '/' || NEW.project_id || '/' || NEW.request_key) from 1 for 32)
+    OR NOT EXISTS (SELECT 1 FROM public.control_identities i
+      WHERE i.tenant_id=NEW.tenant_id AND i.id=NEW.raised_by_identity_id
+        AND i.actor_type='agent' AND i.state='active')
+    -- The escalation must still be TRUE: a raise that does not match a live
+    -- counter at or above the count it names is a caller inventing one. The
+    -- counter is matched on the RAISED request, not merely the project, so one
+    -- project's second failure cannot license another request's escalation.
+    OR NOT EXISTS (SELECT 1 FROM public.control_planner_failure_counters c
+      WHERE c.tenant_id=NEW.tenant_id AND c.project_id=NEW.project_id
+        AND c.failure_count>=NEW.failure_count AND c.cleared_at IS NULL
+        AND c.scope_key IN (project_key, request_key_initial, request_key_resplit)) THEN
+    RAISE EXCEPTION 'planner needs-you insert rejected';
+  END IF;
+  RETURN NEW;
+END $$;
+
+-- 4. The five remaining barriers, each RESET -- the exact inverse of its ALTER VIEW
+--    in 0205, because before 0205 these views carried NO reloption at all.
+--    `SET (security_barrier = false)` turned the barrier off but left
+--    `{security_barrier=false}` in reloptions, which a database that never ran 0205
+--    does not have (review round 5, Q5). The sixth, control_planner_open_needs_you,
+--    was dropped and recreated in step 3 without the option, so it needs nothing.
+ALTER VIEW public.work_batch_current_split_suggestions RESET (security_barrier);
+ALTER VIEW public.work_batch_effective_queue_admissions RESET (security_barrier);
+ALTER VIEW public.pipeline_ordered_stage_runs RESET (security_barrier);
+ALTER VIEW public.installation_effective_operations_mode RESET (security_barrier);
+ALTER VIEW public.control_project_planner_selections RESET (security_barrier);
+-- NOT AN OWNER ROLLBACK PATH. Like every down file here it leaves the applier's
+-- ledger rows in place, and down-then-up restores everything except column
+-- positions, which both schema digests include -- so the applier then refuses with
+-- `migration_live_schema_drift` and every login refuses to start (review round 5,
+-- R5-L1). Disposable clusters only; a real rollback is a restore from backup.
 COMMIT;
