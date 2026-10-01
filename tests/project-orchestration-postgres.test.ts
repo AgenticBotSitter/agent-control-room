@@ -975,9 +975,9 @@ test("STRESS: 20 concurrent presses and owner retries of ONE description stay on
           /permission denied/u, "and the owner still holds no UPDATE on the counters");
       } finally { await web.end(); }
 
-      // AND THE GRANT IS SPENT BY THE RUN IT AUTHORISED, so the burst cannot be
-      // repeated: the next press runs the planner, the counter restarts at 1 on a
-      // failure, and a second burst finds no latch.
+      // AND A SUCCESS ENDS IT. The store's clear -- what the granted run's success
+      // performs -- zeroes the count and drops any latch still standing, so the
+      // burst cannot be repeated against it and no further press is exempt.
       await warm.clear(projectScope);
       assert.equal(await warm.count(projectScope), 0);
       assert.equal(await warm.ownerRetryGranted(projectScope), false,

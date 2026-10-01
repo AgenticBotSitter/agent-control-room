@@ -220,11 +220,20 @@ CREATE UNIQUE INDEX control_planner_needs_you_scope_unique
 --     request computed. It refuses a counter that is not live at >= 2, and refuses
 --     one that already holds a latch, so at most ONE retry exists per escalation
 --     and a new escalation (two fresh failures) is what earns the next one.
---   * The coordinator CONSUMES the latch by clearing the counter, which is a
---     transition 0202's guard already admitted. So the run that follows either
---     succeeds (count cleared, latch spent) or fails (counted again from zero).
---     A caller that asks for a retry on every press therefore still gets no more
---     than one extra run per two failures.
+--   * The coordinator SPENDS the latch in one conditional UPDATE that removes the
+--     latch and changes nothing else, before it runs. The count stays at 2 or
+--     more while that run is in flight, so every other press is still refused by
+--     the counter; the run then either succeeds (the counter is cleared and the
+--     description is ordinary again) or fails (the count goes up, the description
+--     is still escalated, and the owner is asked again). So one owner grant is one
+--     run, however the presses arrive.
+--
+--     (Fix round 5 changed this. The first version spent the latch by CLEARING the
+--     counter, so a failed retry restarted at 1 -- but every concurrent press then
+--     read "not escalated" and ran (R5-M1), and the read added to stop them could
+--     not tell a spend from a success, which locked any description that failed
+--     once and then worked (R5-B1). No database has run this file; it is amended
+--     in place rather than followed by a new migration.)
 --
 --   WHAT "ONLY THE OWNER CAN ASK" DOES AND DOES NOT MEAN HERE, corrected after
 --   round 4 measured it. It is true that the ONLY way to SET a latch from SQL is
@@ -235,10 +244,10 @@ CREATE UNIQUE INDEX control_planner_needs_you_scope_unique
 --   holds a six-column UPDATE (0202's five plus `owner_retry_cleared_at`) and has
 --   since 0202, so it can UNSET a latch and can clear an escalated counter with no
 --   success at all. The trigger constrains WHICH transitions are legal, not who
---   asks. The bound "one extra run per two failures" is therefore enforced by the
---   COORDINATOR -- the latch is spent in one conditional UPDATE that only zeroes
---   the counter when it actually spent a latch -- and not by the database against
---   that login. The claims in this file's earlier draft and in the store comment
+--   asks. The bound "one run per owner grant" is therefore enforced by the
+--   COORDINATOR -- the latch is spent in one conditional UPDATE that reports
+--   whether it spent one, and the press runs only then -- and not by the database
+--   against that login. The claims in this file's earlier draft and in the store comment
 --   were false and have been corrected rather than left standing.
 ALTER TABLE control_planner_failure_counters
   ADD COLUMN owner_retry_cleared_at timestamptz;
@@ -260,9 +269,10 @@ CREATE INDEX control_planner_failure_counters_owner_retry
 --     it cannot be used to fake the precondition it then satisfies, and it leaves
 --     the count, the last failure and the clear stamp untouched, so it cannot lower
 --     the evidence or resurrect a counter `clear()` zeroed.
---   * a timestamp -> NULL ONLY as part of a clear (the consumption above), so the
---     latch is spent by the run it authorised and by nothing else.
---   * NULL -> NULL is what `record()` carries forward, and it is unaffected.
+--   * a timestamp -> NULL as the SPEND (nothing else changes: the count stays at
+--     2 or more until the granted run's own outcome), or as part of a clear (the
+--     success that ends the escalation).
+--   * an increment carries the latch unchanged, whatever it is.
 CREATE OR REPLACE FUNCTION guard_planner_failure_counter_write() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
@@ -295,17 +305,36 @@ BEGIN
   END IF;
   -- A latch that CHANGES to a new value is refused, so it can be granted once and
   -- not re-stamped by a later writer. The one remaining legal change is NOT NULL
-  -- -> NULL, and the clear branch below is the only statement that may do it.
+  -- -> NULL, and only the spend and the clear below may make it.
   IF NEW.owner_retry_cleared_at IS DISTINCT FROM OLD.owner_retry_cleared_at
     AND NEW.owner_retry_cleared_at IS NOT NULL THEN
     RAISE EXCEPTION 'planner failure counter update rejected';
   END IF;
-  IF NEW.failure_count=OLD.failure_count+1
-    AND NEW.last_failure_at IS NOT NULL AND NEW.cleared_at IS NULL THEN
+  -- THE SPEND: the latch goes NOT NULL -> NULL and NOTHING ELSE moves. The count
+  -- stays at 2 or more, so while the run the owner granted is in flight the
+  -- description is still escalated and every other press is refused by the
+  -- counter itself; that run's own outcome then clears it (success) or increments
+  -- it (failure). Fix round 5 (R5-B1, R5-M1): the first spend zeroed the count and
+  -- stamped `cleared_at` here, so every peer read "not escalated" and ran, and the
+  -- read added to hold them could not tell a spend from a success, which locked
+  -- any description that failed once and then worked.
+  IF OLD.owner_retry_cleared_at IS NOT NULL AND NEW.owner_retry_cleared_at IS NULL
+    AND NEW.failure_count=OLD.failure_count
+    AND NEW.last_failure_at IS NOT DISTINCT FROM OLD.last_failure_at
+    AND NEW.cleared_at IS NOT DISTINCT FROM OLD.cleared_at THEN
     RETURN NEW;
   END IF;
-  -- The clear. It is also where a spent latch is consumed, so the latch cannot
-  -- outlive the run it authorised and re-authorise a second one.
+  -- An increment carries the latch UNCHANGED. Counting a failure is not a way to
+  -- spend or drop an owner's retry; before round 5 this branch did not compare the
+  -- column, so an increment could silently discard a granted retry.
+  IF NEW.failure_count=OLD.failure_count+1
+    AND NEW.last_failure_at IS NOT NULL AND NEW.cleared_at IS NULL
+    AND NEW.owner_retry_cleared_at IS NOT DISTINCT FROM OLD.owner_retry_cleared_at THEN
+    RETURN NEW;
+  END IF;
+  -- The clear: the success transition, which ends an escalation. A latch still
+  -- standing on the row (one the press did not need to spend) ends with it, so it
+  -- cannot outlive the escalation it belonged to and authorise a later run.
   IF NEW.failure_count=0 AND NEW.cleared_at IS NOT NULL
     AND NEW.last_failure_at IS NOT NULL AND NEW.owner_retry_cleared_at IS NULL THEN
     RETURN NEW;
@@ -392,9 +421,14 @@ CREATE VIEW control_planner_open_needs_you WITH (security_barrier = true) AS
     s.raised_by_identity_id, s.raised_at, s.action_item_id, s.scope_key,
     false AS starts_work, false AS grants_execution_authority
   FROM public.control_planner_needs_you_items s;
--- (0202 already granted SELECT on the view to control_room_private_web; the
--- recreated view keeps the same owner, so that grant survives the DROP/CREATE
--- above and needs no statement here. No new relation, no new privilege class.)
+-- THE DROP DISCARDS THE VIEW'S GRANTS. A recreated view is a new relation with a
+-- NULL ACL, so control_room_private_web loses the SELECT 0202 gave it at this
+-- point (measured in review round 5: the ACL is NULL after this statement on a
+-- database that had the grant). It is restored by db/roles/private_web_roles.sql,
+-- which re-grants SELECT on the view and runs as a `grants` entry after every
+-- migration, so installs and upgrades converge. A cluster that applies this file
+-- by hand must re-run the role files, or the owner's Needs-you read fails 42501.
+-- (An earlier draft said the grant "survives the DROP/CREATE"; it does not.)
 
 -- ---------------------------------------------------------------------------
 -- 6. The owner retry, as a READY-MADE OPERATION.
@@ -467,6 +501,18 @@ COMMENT ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[]) I
 -- A down migration is intentionally operator-authored and data refusing: it
 -- revokes only what this file granted (the function, the two EXECUTE grants, the
 -- two indexes, the added columns' constraints and the latch column), restores
--- 0202's view body and guard, and drops the six barriers. It restores the
+-- 0202's view body and guard, and resets the six barriers. It restores the
 -- cross-tenant error-channel read, the per-press inbox flood and the permanent
 -- lockout this file closed, so the lead runs it only on a disposable cluster.
+--
+-- IT IS NOT AN OWNER ROLLBACK PATH, and two measured reasons say so (review
+-- round 5, R5-L1):
+--   * It leaves the applier's ledger rows in place, as every down file in this
+--     repository does, so the ledger still claims this file is applied.
+--   * Down then up again restores every name, type, default, constraint, index,
+--     trigger, policy, function, ACL and comment -- but NOT column positions: the
+--     re-added `owner_retry_cleared_at` and `scope_key` land one position later,
+--     both schema digests (the applier's and the private-web preflight's) include
+--     positions, and so the next applier run refuses with
+--     `migration_live_schema_drift` and every login refuses to start.
+-- A real rollback is a restore from backup.

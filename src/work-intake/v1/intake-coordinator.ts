@@ -44,29 +44,8 @@ export interface IntakePlannerFailureStoreV1 {
   count(scopeKey: string): Promise<number> | number;
   record(scopeKey: string): Promise<number> | number;
   clear(scopeKey: string): Promise<void> | void;
-  /** Whether the owner has been GRANTED one more run of this scope, which is how
-   * a description that escalated stops being dead.
-   *
-   * It is deliberately a read of a grant and not a reset of the count. The
-   * failure count is the evidence the Needs-you item and the guard both rest on,
-   * so lowering it would erase the fact that this description failed twice. The
-   * grant is instead CONSUMED by the clear that the run performs, so at most one
-   * retry exists per escalation and the next escalation (two fresh failures) is
-   * what earns the next one.
-   *
-   * A READ IS NOT THE DECISION. Round 4 measured twenty concurrent presses after
-   * one grant producing twenty runs: every press read this as true before the
-   * first clear landed. A store that implements `spendOwnerRetry` decides the
-   * question with one conditional UPDATE instead, and the coordinator runs only
-   * when it comes back true -- so `ownerRetryGranted` is a fast path and a hint,
-   * and never the authority.
-   *
-   * A store that does not support the retry returns FALSE, which is the old
-   * behaviour: the escalation check refuses the press, exactly as it did before
-   * this method existed. An unconfigured composition therefore cannot issue a
-   * free run by accident. */
-  ownerRetryGranted?(scopeKey: string): Promise<boolean> | boolean;
-  /** ATOMICALLY spend a granted retry on this scope, and report whether it did.
+  /** ATOMICALLY spend an owner-granted retry on this scope, and report whether it
+   * did. This is the ONLY way a press gets past an escalation.
    *
    * Returns true for exactly one caller per granted retry, however many race.
    * False means either "there was no latch", or "another caller spent it first",
@@ -74,43 +53,43 @@ export interface IntakePlannerFailureStoreV1 {
    * three the same way, with `needs_you`, so a lost race is a normal outcome
    * rather than an error.
    *
-   * A store WITHOUT this method falls back to `ownerRetryGranted()` followed by
-   * `clear()`, which is the round-3 behaviour: correct in sequence, and unbounded
-   * under concurrency. That fallback exists so an in-memory double needs no
-   * rewrite; the real stores implement it, and the production test drives one
-   * grant against twenty concurrent presses through the real coordinator. */
+   * THE SPEND LEAVES THE COUNT WHERE IT IS (R5-B1/R5-M1). It removes the latch and
+   * nothing else, so while the granted run is in flight the description still
+   * reads as escalated to every other press, and they are refused by the counter
+   * itself. The run's own outcome then decides: a success clears the counter, so
+   * the description is an ordinary one again; a failure increments it, so the
+   * description is still escalated and the owner is asked again. Round 4 zeroed
+   * the count here instead, which made every peer read "not escalated" and run --
+   * the hole `open()` was added to close, and the reason `open()` then had to read
+   * a field that a success sets too, which locked the description for good.
+   *
+   * A store WITHOUT this method has no owner retry at all: the escalation stays a
+   * wall, exactly as it was before the retry existed, so an unconfigured
+   * composition cannot issue a free run by accident. */
   spendOwnerRetry?(scopeKey: string): Promise<boolean> | boolean;
 }
 
 export interface IntakePlannerNeedsYouPortV1 {
-  /** Is there an OPEN escalation for this description, whatever the counters say?
-   *
-   * OPTIONAL, and the coordinator answers the same way when it is absent.
-   *
-   * WHY IT EXISTS, and why it is not a detail. The counter is per SCOPE; the
-   * escalation is per DESCRIPTION. 0205's owner retry zeroes the counter in the
-   * same statement that spends the latch, so after the one press that is allowed
-   * to spend it, the counter reads 0 and a concurrent peer reads "not escalated"
-   * -- and runs. Measured on the real coordinator over the real stores: one owner
-   * grant, twenty concurrent presses, TWO runs, with the counter rows afterwards
-   * showing the project scope at 0 and the request scopes at 1.
-   *
-   * The Needs-you ledger is the durable record that this DESCRIPTION escalated, and
-   * it is unique per description (0205's `control_planner_needs_you_scope_unique`),
-   * so it is the one thing that still says "already escalated" after the counter
-   * has been spent. A press may run when it spends a latch; while an item is open
-   * and no latch can be spent, it answers needs_you.
-   *
-   * It is a READ of a ledger the coordinator already WRITES, so it adds no new
-   * authority: the same login, the same rows, one more method. */
-  open?(input: Readonly<{ tenantId: string; projectId: string; ownerRequest: string }>):
-    Promise<boolean> | boolean;
   /** Idempotent by tenant, project, and request key.
    *
    * `ownerRequest` is the description the failing request carried. The port uses
    * it to recompute the project-level failure scope, because the owner's repeat
    * mints a fresh request key and a raise that only knew the key could not tell
-   * whether the counter it was escalating was the one this description reached. */
+   * whether the counter it was escalating was the one this description reached.
+   *
+   * RESOLVING MEANS AN ITEM STANDS. The owner is told "it has raised an item for
+   * you" on the strength of this call, so it must not resolve unless a Needs-you
+   * item for this request's scopes exists afterwards -- written now, or already
+   * there from the same escalation. When the escalation has gone (a concurrent
+   * success cleared the counter between the coordinator's read and this call) and
+   * no item stands, it throws `planner_needs_you_not_escalated`, and the
+   * coordinator answers something other than `needs_you`.
+   *
+   * (Round 4 added an optional `open()` read here. It answered from the counter's
+   * `cleared_at`, which a SUCCESS sets as well as a spend, so any description that
+   * failed once and then succeeded was refused forever with a Needs-you message
+   * whose item was never raised -- R5-B1. It is gone: the spend no longer zeroes
+   * the count, so the counter itself says "escalated" for as long as it is true.) */
   raise(input: Readonly<{ tenantId: string; projectId: string; requestKey: string;
     reasonCode: "orchestrator_failed_twice"; ownerRequest: string; now: string }> ): Promise<void> | void;
 }
@@ -133,7 +112,8 @@ export interface IntakeSuggestionStoreV1 {
 type SubmissionPort = Pick<WorkBatchServiceV1, "submit" | "authorizeBeforeBody">;
 type AcceptedSubmission = Exclude<WorkBatchSubmissionResultV1, { accepted: false }>;
 type RefusalReason = WorkBatchRejectionCodeV1 | "planner_reply_route_invalid" | "planner_reply_capability_invalid"
-  | "coordinator_request_conflict" | "planner_proposer_unauthorized" | "submission_refused";
+  | "coordinator_request_conflict" | "planner_proposer_unauthorized" | "submission_refused"
+  | "planner_escalation_cleared";
 type CommonResult = Readonly<{ startsWork: false; grantsExecutionAuthority: false }>;
 export type IntakeCoordinatorResultV1 =
   | (CommonResult & { status: "manual"; ownerRequestData: string })
@@ -238,33 +218,34 @@ export class InMemoryIntakePlannerFailureStoreV1 implements IntakePlannerFailure
    *
    * The count is the evidence the Needs-you item and the guard both rest on, so
    * it is only ever incremented or cleared -- never lowered, and never reset by a
-   * grant. The "a failed retry is failure 1 of a NEW escalation" rule lives in the
-   * COORDINATOR, which clears the scope before spending a granted run; the first
-   * draft put it here instead, incremented 2 -> 3, and the press after a granted
-   * retry escalated again -- caught by the bounded-retry test. */
+   * grant or by spending one. A granted run that fails therefore lands ABOVE the
+   * escalation point (3, 4, ...), which is what keeps the description escalated
+   * and sends the owner the Needs-you answer again rather than a free run. */
   record(scopeKey: string): number {
     const count = this.count(scopeKey) + 1;
     this.#counts.set(scopeKey, count);
     return count;
   }
-  /** Zero the count and spend any latch, which is the one transition 0205's
-   * guard admits and the one the store's SQL performs in a single statement.
-   * The coordinator calls it after a success and, deliberately, BEFORE a run the
-   * owner was granted -- so a failed retry counts as failure 1 of a new
-   * escalation rather than as a third. */
+  /** Zero the count and drop any latch: the success transition, which is the one
+   * that ends an escalation. The store's SQL performs it in a single statement. */
   clear(scopeKey: string): void { this.#counts.delete(scopeKey); this.#retries.delete(scopeKey); }
+  /** A read for tests and diagnostics. The coordinator never consults it: a read is
+   * not a decision, and `spendOwnerRetry` is. */
   ownerRetryGranted(scopeKey: string): boolean { return this.#retries.has(scopeKey); }
   /** The ATOMIC spend, and it is synchronous inside one turn, which is what makes
    * it a fair double for the real store: there is no await between the check and
    * the removal, so twenty interleaved callers can never both pass the check.
    * A double that read, awaited and then removed would reproduce the very race
    * R4-M1 is about, and the in-memory suite would go green on a bug the database
-   * suite catches. */
+   * suite catches.
+   *
+   * It removes the latch and NOTHING ELSE, like 0205's spend: the count stays at
+   * or above 2 while the granted run is in flight, so every peer is still refused
+   * by the counter. */
   spendOwnerRetry(scopeKey: string): boolean {
     if (!this.#retries.has(scopeKey)) return false;
     if ((this.#counts.get(scopeKey) ?? 0) < 2) return false;
     this.#retries.delete(scopeKey);
-    this.#counts.delete(scopeKey);
     return true;
   }
   /** The owner's deliberate retry, for tests and for an in-process composition.
@@ -509,82 +490,46 @@ export class IntakeCoordinatorV1 {
    * the copy the owner was shown ("try again, or choose another chief of staff")
    * named two things that did not work. A grant -- issued by 0205's
    * `control_room_planner_grant_owner_retry`, on the owner's own web login, for
-   * this request's own scopes -- lets exactly one more press through, and the run
-   * that follows CONSUMES it. So the bound holds: one extra run per escalation,
-   * never a loop, and only for an owner who asked.
+   * this request's own scopes -- lets exactly one more press through, and that
+   * press CONSUMES it before it runs. So the bound holds: one extra run per owner
+   * grant, never a loop, and only for an owner who asked.
    *
    * THE LATCH IS SPENT HERE AND ONLY HERE, AND IT IS SPENT ATOMICALLY (R4-M1).
    * Round 3's version read the count, read the latch, called `clear()` and
    * IGNORED whether `clear()` had cleared anything, then ran. Twenty concurrent
    * presses after one owner grant therefore all read the latch before the first
-   * clear landed and ALL TWENTY ran the planner -- measured on the real
-   * coordinator with the PostgreSQL stores -- and with a working planner five of
-   * them then threw `planner_needs_you_not_escalated`, because a press that saw
-   * the latch already spent had decided "escalated" and raised after a peer's
-   * clear had zeroed the counter.
+   * clear landed and ALL TWENTY ran the planner. So the decision is a SINGLE
+   * conditional UPDATE per scope (`spendOwnerRetry`), which carries every
+   * precondition and reports whether a row came back.
    *
-   * So the decision is a SINGLE conditional UPDATE per scope (`spendOwnerRetry`),
-   * which carries every precondition and reports whether a row came back. The
-   * count is zeroed in the same statement, so a FAILED retry is recorded as
-   * failure 1 of a NEW escalation rather than escalating again immediately. A
-   * store with no `spendOwnerRetry` falls back to the read-then-clear pair, which
-   * is correct in sequence and is the in-memory double's behaviour.
+   * THE SPEND DOES NOT LOWER THE COUNT (R5-B1, R5-M1), and that is the whole of
+   * the concurrency bound. Round 4's spend zeroed the count in the same
+   * statement, so every peer that read the counter after it read "not escalated"
+   * and ran -- measured at up to 20 runs from 20 presses and about 30 from 50 --
+   * and the patch for that, an `open()` read of the counter's `cleared_at`, could
+   * not tell "a retry is being spent" from "a success happened", so every
+   * description that failed once and then succeeded was refused forever. Now the
+   * spend removes the latch and nothing else: while the granted run is in flight
+   * the counter is still at 2 or more, so every peer -- arriving in one wave or
+   * staggered over seconds -- is refused by the counter with no second read. The
+   * run's outcome ends it: a success clears the counter (the description is an
+   * ordinary one again, and its next press runs), a failure increments it (the
+   * description is still escalated, and the owner is asked again).
    *
-   * The grant is checked only when the count HAS escalated, so an unconfigured
-   * store (one with no `ownerRetryGranted`) answers the same way it always did. */
-  async #escalated(input: Readonly<{ projectScope: string; failureScope: string;
-    principal: AuthenticatedPrincipal; projectId: string; ownerRequest: string }>) {
-    // ONE GRANT IS ONE RUN, WHICHEVER SCOPE IT LANDED ON. The loop returns as soon
-    // as a retry is SPENT, not as soon as one fails to be spent, and that return is
-    // the fix for a bound the round-4 test still measured wrong.
-    //
-    // 0205's grant function is given ALL FOUR candidate scope keys and its UPDATE
-    // matches every row among them, so one owner grant latches BOTH the project
-    // scope and the request scope when both are at 2 or more -- which is exactly
-    // what a second failure produces. A loop that spent on each scope in turn
-    // therefore authorised two runs from one grant, and measured 3 under twenty
-    // concurrent presses (the third being the losing press that found the request
-    // scope already spent and the project scope freshly re-escalated).
-    //
-    // The spend zeroes failure_count in the SAME statement, so the row it spent is
-    // at 0 and cannot be spent again; the other scope's row is still latched, and
-    // the press is over. A press that arrives later re-reads the escalation and
-    // finds no latch, so it answers needs_you -- which is the bound.
+   * A store with no `spendOwnerRetry` has no retry: the escalation is a wall, as
+   * it was before the retry existed. */
+  async #escalated(input: Readonly<{ projectScope: string; failureScope: string }>) {
+    // ONE GRANT IS ONE RUN, WHICHEVER SCOPE IT LANDED ON. 0205's grant function is
+    // given ALL FOUR candidate scope keys and latches every row among them that is
+    // live at 2 or more, so one grant can latch the project scope AND a request
+    // scope. The loop therefore makes exactly one decision -- at the first
+    // escalated scope -- and returns, spent or not; it never goes on to spend a
+    // second latch from the same grant.
     for (const scope of [input.projectScope, input.failureScope]) {
       if (await this.failures.count(scope) < 2) continue;
-      const spent = await this.#spendRetry(scope);
-      // Spent or not, this press has had its one decision about a retry.
-      if (spent) return false;
-      return true;
+      return !(await this.failures.spendOwnerRetry?.(scope));
     }
-    // NO COUNTER IS AT 2, and that is NOT the same as "this description has not
-    // escalated". The one press that was allowed to spend the latch zeroed the
-    // counter in the same statement, so its nineteen concurrent peers all read 0
-    // here and would each run. The Needs-you item is the durable record that this
-    // DESCRIPTION escalated, and it is what closes that window -- measured before
-    // this line existed: one owner grant, twenty concurrent presses, two runs.
-    //
-    // Read only when the store offers it, and only for the DESCRIPTION, so a
-    // different description in the same project is unaffected: the counters above
-    // still decide that one on its own evidence.
-    if (await this.needsYou.open?.({ tenantId: input.principal.tenantId, projectId: input.projectId,
-      ownerRequest: input.ownerRequest })) return true;
     return false;
-  }
-
-  /** Spend this scope's owner-retry latch, and report whether this press got it.
-   *
-   * The atomic path first: `spendOwnerRetry` is the only call that can say yes to
-   * more than one caller per grant, and it says yes to exactly one. The fallback is
-   * the round-3 pair, and it is reachable only from a store that does not
-   * implement the atomic form -- an in-memory double, or a composition whose
-   * store predates 0205. */
-  async #spendRetry(scope: string): Promise<boolean> {
-    const atomic = this.failures.spendOwnerRetry?.(scope);
-    if (atomic) return !!await atomic;
-    if (!(await this.failures.ownerRetryGranted?.(scope))) return false;
-    await this.failures.clear(scope);
-    return true;
   }
 
   async #coordinate(input: (InitialInput & { requestKind: "initial"; requestKey: string; failureScope: string; projectScope: string })
@@ -622,7 +567,11 @@ export class IntakeCoordinatorV1 {
     // press mints a fresh idempotency key. The request scope is kept alongside so
     // one stuck request still escalates on its own second attempt, which is the
     // case the counter was originally built for.
-    if (await this.#escalated(input)) return this.#raiseNeedsYou(input);
+    // If the escalation turns out to have been cleared by a concurrent success
+    // before the raise, this press did not run and no item stands for it, so it
+    // is told exactly that rather than "Needs-you".
+    if (await this.#escalated(input)) return this.#raiseNeedsYou(input, Object.freeze({ ...common,
+      status: "refused" as const, reasonCode: "planner_escalation_cleared" as const }));
     if (input.requestKind === "resplit") {
       const authority = await this.submissions.authorizeBeforeBody(input.principal, input.projectId, input.now);
       if (!authority.allowed) return Object.freeze({ ...common, status: "refused" as const,
@@ -724,37 +673,46 @@ export class IntakeCoordinatorV1 {
     const projectCount = input.projectScope === input.failureScope
       ? requestCount : await this.failures.record(input.projectScope);
     if (Math.max(requestCount, projectCount) < 2) return firstFailure;
-    return this.#raiseNeedsYou(input);
+    // Should a concurrent success clear the counter before the raise, this press's
+    // own failure is still a failure -- it is reported as one, not as an item.
+    return this.#raiseNeedsYou(input, firstFailure);
   }
 
   async #raiseNeedsYou(input: { principal: AuthenticatedPrincipal; projectId: string; requestKey: string;
-    ownerRequest: string; now: string }) {
+    ownerRequest: string; now: string }, withoutItem: IntakeCoordinatorResultV1) {
     // The description travels with the raise so the durable adapter can recompute
     // the same project scope the coordinator counted on. Without it the adapter
     // could only match the request scope, and an escalation earned by the project
     // counter (the one the owner's repeat reaches) would be refused.
     //
-    // A LOST RACE IS `needs_you`, NOT A THROW (R4-M1, the second half). The
-    // decision to escalate is made from a count read some statements earlier, and
-    // twenty concurrent presses on one granted retry can interleave like this:
-    // press A spends the latch and zeroes the counter, press B has already read
-    // count 2 and decided "escalated", and by the time B's `raise()` runs the
-    // counter it names is zero -- so the adapter refuses with
-    // `planner_needs_you_not_escalated` and the owner gets a generic failure for a
-    // press that was correctly refused. Measured: five of twenty threw.
+    // A LOST RACE IS NOT A THROW (R4-M1, the second half). The decision to
+    // escalate is made from a count read some statements earlier, and a
+    // concurrent SUCCESS of the same description can clear the counter between
+    // that read and this raise -- so the adapter refuses with
+    // `planner_needs_you_not_escalated`, and round 3 handed the owner a generic
+    // failure for it. Measured then: five of twenty threw. (The spend no longer
+    // zeroes the counter, so a peer's spend can no longer cause this; only a
+    // success can.)
     //
-    // So the refusal that names a counter this request can no longer see is the
-    // ANSWER, not an error: the counter was cleared between the check and the
-    // raise, which is the same state the press was already being refused for. It
-    // is caught by NAME rather than as a blanket try/catch, so a genuinely
-    // unexpected store failure still propagates -- a silent needs_you for an
-    // unrelated database error would be the wrong kind of fail-closed.
+    // So the refusal that names a counter this request can no longer see is an
+    // ANSWER, not an error. It is caught by NAME rather than as a blanket
+    // try/catch, so a genuinely unexpected store failure still propagates -- a
+    // silent answer for an unrelated database error would be the wrong kind of
+    // fail-closed.
+    //
+    // AND IT IS NOT `needs_you` (R5-B1). The owner's copy for `needs_you` says an
+    // item has been raised, and the port only throws this when NO item stands for
+    // the request's scopes: the escalation was cleared by a concurrent success
+    // before any item was written. Round 4 answered `needs_you` here anyway, which
+    // is how the owner came to read "it has raised an item for you" with no item
+    // behind it. The caller supplies what this press actually amounts to.
     try {
       await this.needsYou.raise({ tenantId: input.principal.tenantId, projectId: input.projectId,
         requestKey: input.requestKey, reasonCode: "orchestrator_failed_twice", now: input.now,
         ownerRequest: input.ownerRequest });
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("planner_needs_you_not_escalated")) throw error;
+      return withoutItem;
     }
     return Object.freeze({ ...common, status: "needs_you" as const, reasonCode: "orchestrator_failed_twice" as const });
   }

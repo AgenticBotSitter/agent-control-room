@@ -264,22 +264,19 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
     return row ? Number(row.failure_count) : 0;
   }
 
-  /** Whether 0205's latch is set on this scope. Read-only, and deliberately not a
-   * reset: the count is the evidence the Needs-you item and the guard rest on.
+  /** Whether 0205's latch is set on this scope. Read-only, for tests and
+   * diagnostics: the coordinator never consults it, because a read is not a
+   * decision and `spendOwnerRetry` is.
    *
    * The coordinator DOES hold UPDATE on the column (0202's five-column grant plus
    * 0205's, which `task_coordinator_roles.sql` and the preflight's column audit
-   * both name) -- round 4 measured the earlier comment's claim that it did not,
-   * and the claim was false. What is still true, and is the property this method
-   * relies on, is that it only READS the column: nothing here SETS a latch, and
-   * the only SQL that can is 0205's SECURITY DEFINER function, whose EXECUTE the
-   * owner owns alone. The coordinator can therefore spend a latch (below) and
-   * cannot mint one.
-   *
-   * It is a hint, not the decision. `#escalated` in the coordinator no longer
-   * treats "the latch was set when I looked" as authority to run; it calls
-   * `spendOwnerRetry`, which decides with the same predicate in ONE statement, so
-   * twenty presses that all read this as true still produce one run. */
+   * both name). Nothing here SETS a latch, and the guard admits setting one only
+   * on a live counter at 2 or more without changing the count, the last failure or
+   * the clear stamp -- the grant's exact shape. The only code that issues that
+   * statement is 0205's SECURITY DEFINER function, whose EXECUTE the owner's web
+   * login holds alone; the database does not stop the coordinator login from
+   * issuing the same UPDATE by hand (round 4 measured it), which is why the bound
+   * is stated as the coordinator's, not the database's. */
   async ownerRetryGranted(scopeKey: string): Promise<boolean> {
     const { tenantId, projectId } = this.scope(scopeKey);
     const row = (await this.db.query<{ owner_retry_cleared_at: string | Date | null }>(
@@ -304,9 +301,21 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
    * every precondition, `RETURNING 1` when a row came back, and the coordinator
    * runs only then. PostgreSQL takes the row lock for the duration, so of twenty
    * concurrent callers exactly one re-reads the row as latch-free and the other
-   * nineteen match no row. The count is zeroed in the SAME statement, which is
-   * what makes a FAILED retry count as failure 1 of a new escalation rather than
-   * escalating again immediately.
+   * nineteen match no row.
+   *
+   * THE STATEMENT CHANGES THE LATCH AND NOTHING ELSE (R5-B1, R5-M1). Round 4's
+   * version also zeroed the count and stamped `cleared_at`. That made every peer
+   * that read the counter afterwards see "not escalated" and run (the review
+   * measured up to 20 runs from 20 presses, about 30 from 50, with the follow-up
+   * read removed), and the follow-up read that held it -- `open()`, on
+   * `cleared_at` -- could not tell that state from a SUCCESS, so a description
+   * that failed once and then worked was refused forever. Leaving the count at 2
+   * or more keeps the description escalated for exactly as long as the granted run
+   * is in flight: every peer is refused by the counter, and the run's own outcome
+   * ends it -- `clear()` on a success, `record()` on a failure (which keeps it
+   * escalated, so the owner is asked again). 0205's guard admits this as its own
+   * transition: the latch NOT NULL -> NULL with the count, the last failure and the
+   * clear stamp all unchanged.
    *
    * The predicate is deliberately the same one 0205's grant function admits on and
    * the guard trigger admits as a clear, so "the latch was granted" and "the latch
@@ -332,8 +341,8 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
     const { tenantId, projectId } = this.scope(scopeKey);
     const at = this.now();
     const row = (await this.db.query<{ spent: number }>(
-      `UPDATE control_planner_failure_counters SET failure_count=0, cleared_at=$4::timestamptz,
-        owner_retry_cleared_at=NULL, version=version+1, updated_at=GREATEST(updated_at,$4::timestamptz)
+      `UPDATE control_planner_failure_counters SET owner_retry_cleared_at=NULL,
+        version=version+1, updated_at=GREATEST(updated_at,$4::timestamptz)
        WHERE tenant_id=$1 AND project_id=$2 AND scope_key=$3
          AND owner_retry_cleared_at IS NOT NULL AND cleared_at IS NULL AND failure_count>=2
        RETURNING 1 AS spent`,
@@ -348,12 +357,16 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
     // PostgreSQL cannot infer its type where it is only compared, and raises
     // 42P08 ("could not determine data type of parameter") instead of counting.
     //
-    // The statement does NOT mention `owner_retry_cleared_at`, and that is the
-    // point: 0205's guard requires the latch to be UNCHANGED by an increment, so a
-    // granted retry survives a failed run and is spent only by the `clear()`. The
-    // escalation bound therefore reads exactly as intended -- one extra run per
-    // escalation -- and a retry that fails again lands at count 1 of a new
-    // escalation rather than straight back at 2.
+    // The statement does NOT mention `owner_retry_cleared_at`, and 0205's guard
+    // requires the latch to be UNCHANGED by an increment (round 4's comment said
+    // so while the guard in fact let an increment drop it; the guard now matches).
+    // A latch is spent only by `spendOwnerRetry` or ended by a success's `clear()`,
+    // never as a side effect of counting.
+    //
+    // `cleared_at=NULL` is what makes a counter live again after a success. A
+    // granted run that FAILS reaches here with the count still at 2 or more (the
+    // spend did not lower it), so it lands at 3, 4, ...: still escalated, and the
+    // press answers Needs-you rather than leaving a free run for the next press.
     const row = (await this.db.query<{ failure_count: string | number }>(
       `INSERT INTO control_planner_failure_counters AS c
          (tenant_id,project_id,scope_key,failure_count,last_failure_at,cleared_at,version,updated_at,created_at)
@@ -369,12 +382,18 @@ export class PostgresIntakePlannerFailureStoreV1 implements IntakePlannerFailure
   async clear(scopeKey: string): Promise<void> {
     const { tenantId, projectId } = this.scope(scopeKey);
     const at = this.now();
-    // `owner_retry_cleared_at=NULL` is part of this statement, and it is what
-    // SPENDS an owner-retry latch. That is deliberate: 0205's trigger admits a
-    // clear only when the latch goes to NULL, so a granted retry is consumed by
-    // the run it authorised and cannot authorise a second one. Without the column
-    // in this UPDATE the trigger refuses the clear on a latched counter, which is
-    // how the bound is enforced rather than merely intended.
+    // The SUCCESS transition, and the only one that ends an escalation. A granted
+    // run reaches here with its latch already spent (by `spendOwnerRetry`, which
+    // left the count at 2 or more), so `failure_count<>0` matches and the counter
+    // is cleared -- which is what lets the NEXT press of this description run.
+    // Round 4's spend had already zeroed the count, so this statement matched
+    // nothing after a granted success, and the row looked exactly like one whose
+    // retry was still being spent (R5-B1).
+    //
+    // `owner_retry_cleared_at=NULL` is part of this statement because 0205's
+    // trigger admits a clear only when the latch goes to NULL: a success on a
+    // counter that still carries an unspent latch (a request scope the grant also
+    // latched, say) ends that latch with the escalation it belonged to.
     //
     // The coordinator holds UPDATE on exactly five columns plus this one, so this
     // is a sixth named column in the role grant (task_coordinator_roles.sql) --
@@ -418,44 +437,51 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
     private readonly principal: () => Readonly<{ identityId: string }>,
     private readonly now: () => string) {}
 
-  /** Is this DESCRIPTION still escalated, whatever the counters now say?
-   *
-   * Matched on the PROJECT scope, which is the one 0204's guard derives from the
-   * description DIGEST -- so the answer is about the owner's words and not about a
-   * request key, and a repeat that mints a fresh key still finds the escalation
-   * its description already earned.
-   *
-   * WHY THE COUNTER ROW AND NOT THE LEDGER OR THE INBOX, which is the part worth
-   * getting right. `control_planner_needs_you_items` is APPEND-ONLY: 0202 puts a
-   * trigger on it that rejects UPDATE and DELETE, so an item there never closes.
-   * The inbox row is no better -- 0102's guard only admits `attention:work-batch:%`
-   * ids, so an `attention:planner:` item cannot be resolved at all. Reading either
-   * would make this a PERMANENT refusal for any description that ever escalated: the
-   * owner could never retry again, not even after a successful run, and the owner's
-   * NEXT escalation (two fresh failures) would be unreachable. Measured, not
-   * reasoned: the attempt to resolve one is refused with `work batch notification
-   * update rejected`.
-   *
-   * So the bound reads the counter row's own `cleared_at`, which is the one field
-   * with a real lifecycle. `spendOwnerRetry` sets it while zeroing the count, and the
-   * NEXT failure of this description clears it again -- so:
-   *
-   *   cleared, count below 2  -> a spend is in progress or a run succeeded: no
-   *   live counter at 2        -> this press may run: the description re-escalated
-   *
-   * The press itself already decided about the latch before reaching here, so this
-   * only answers for the peers that arrive after the one spend. */
-  async open(input: Readonly<{ tenantId: string; projectId: string; ownerRequest: string }>): Promise<boolean> {
-    // The PROJECT scopes are the two entries of the shared key list whose digest does
-    // not depend on a request key -- indexed [2] and [3] by construction, so this
-    // does not guess which is which.
-    const projectScopes = plannerNeedsYouScopeKeysV1(input.tenantId, input.projectId, "", input.ownerRequest).slice(2);
-    const row = (await this.db.query<{ blocked: number }>(
-      `SELECT count(*)::int AS blocked FROM public.control_planner_failure_counters
-        WHERE tenant_id=$1 AND project_id=$2 AND scope_key = ANY($3::text[])
-          AND cleared_at IS NOT NULL`,
-    [input.tenantId, input.projectId, projectScopes])).rows[0];
-    return Number(row?.blocked ?? 0) > 0;
+  // THERE IS NO `open()` HERE ANY MORE (R5-B1). Round 4 added one so that the
+  // peers of a press that spent an owner retry would be refused after that spend
+  // had zeroed the counter. It answered from the counter's `cleared_at`, which
+  // every SUCCESS sets as well, and nothing but a failure reset it -- so a
+  // description that failed once and then succeeded was refused before the
+  // planner forever, could therefore never fail again to unblock itself, and the
+  // owner was told "it has raised an item for you" while no item existed. The
+  // spend now leaves the count where it is, so the counter itself keeps the
+  // description escalated for exactly as long as it is, and no second read is
+  // needed. (The ledger and the inbox were never candidates: both are
+  // append-only for these rows, so reading either would be the same lockout.)
+
+  /** Does a Needs-you item stand for any of these scopes? It is what lets
+   * `raise()` resolve -- and the owner be told an item exists -- without writing
+   * one when the escalation has just been cleared. */
+  async #itemStands(tenantId: string, projectId: string, scopes: readonly string[]): Promise<boolean> {
+    const row = (await this.db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM control_planner_needs_you_items
+       WHERE tenant_id=$1 AND project_id=$2 AND scope_key = ANY($3::text[])`,
+    [tenantId, projectId, scopes])).rows[0];
+    return Number(row?.n ?? 0) > 0;
+  }
+
+  /** The counter that licenses a raise for this request, or none. */
+  async #escalatedCounter(tenantId: string, projectId: string, scopes: readonly string[]) {
+    // THE ESCALATING SCOPE ITSELF IS SELECTED, not just its count, because 0205
+    // made the scope the ledger's identity. A single `LIMIT 1` over a count was
+    // not enough to build the row: the id, the action-item id and the ON CONFLICT
+    // target all have to name the scope that earned the escalation, and a second
+    // press of the same description reaches this with a DIFFERENT request key, so
+    // the two candidate scopes are different strings and picking either one
+    // blindly would let a raise be filed against a counter that did not earn it.
+    // The ORDER BY is deterministic on purpose: `failure_count DESC` then
+    // `scope_key` ascending, so two equally-escalated scopes resolve to the same
+    // row every time rather than alternating between presses.
+    //
+    // $3 is the array. The parameters are numbered without a gap so PostgreSQL can
+    // infer every type, and `= ANY($N::text[])` needs the array itself, not a
+    // joined string.
+    return (await this.db.query<CounterRow>(
+      `SELECT failure_count, scope_key FROM control_planner_failure_counters
+       WHERE tenant_id=$1 AND project_id=$2 AND failure_count>=2 AND cleared_at IS NULL
+         AND scope_key = ANY($3::text[])
+       ORDER BY failure_count DESC, scope_key ASC LIMIT 1`,
+    [tenantId, projectId, scopes])).rows[0];
   }
 
   async raise(input: Readonly<{ tenantId: string; projectId: string; requestKey: string;
@@ -481,27 +507,17 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
     // adapter and the migration, and a mismatch fails the raise rather than
     // passing quietly.
     const counters = plannerNeedsYouScopeKeysV1(tenantId, projectId, input.requestKey, input.ownerRequest);
-    // $3 is the array. The parameters are numbered without a gap so PostgreSQL can
-    // infer every type: an unused placeholder is not allowed in a parameter list,
-    // and `= ANY($N::text[])` needs the array itself, not a joined string.
-    //
-    // THE ESCALATING SCOPE ITSELF IS SELECTED, not just its count, because 0205
-    // made the scope the ledger's identity. A single `LIMIT 1` over a count was
-    // not enough to build the row: the id, the action-item id and the ON CONFLICT
-    // target all have to name the scope that earned the escalation, and a second
-    // press of the same description reaches this with a DIFFERENT request key, so
-    // the two candidate scopes are different strings and picking either one
-    // blindly would let a raise be filed against a counter that did not earn it.
-    // The ORDER BY is deterministic on purpose: `failure_count DESC` then
-    // `scope_key` ascending, so two equally-escalated scopes resolve to the same
-    // row every time rather than alternating between presses.
-    const counter = (await this.db.query<CounterRow>(
-      `SELECT failure_count, scope_key FROM control_planner_failure_counters
-       WHERE tenant_id=$1 AND project_id=$2 AND failure_count>=2 AND cleared_at IS NULL
-         AND scope_key = ANY($3::text[])
-       ORDER BY failure_count DESC, scope_key ASC LIMIT 1`,
-    [tenantId, projectId, counters])).rows[0];
-    if (!counter) throw new Error("planner_needs_you_not_escalated");
+    // NO ESCALATION, NO NEW ITEM -- and the caller is told whether one STANDS.
+    // A concurrent success can clear the counter between the coordinator's read
+    // and this call. If an item from this escalation already exists, the press's
+    // Needs-you answer is still true and this resolves; if none does, this throws
+    // and the coordinator says something other than "raised an item for you".
+    const notEscalated = async () => {
+      if (await this.#itemStands(tenantId, projectId, counters)) return;
+      throw new Error("planner_needs_you_not_escalated");
+    };
+    const counter = await this.#escalatedCounter(tenantId, projectId, counters);
+    if (!counter) return notEscalated();
     // The description DIGEST, never the description: 0204's guard recomputes the
     // project scope from it, and the Needs-you ledger stays content-free exactly
     // as 0202's header promised. sha256Digest is the same sha256 over the same
@@ -512,6 +528,12 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
     // hex characters 0202's id CHECK allows, and the trigger recomputes it from
     // the row's own values -- so the digest is a shape both sides derive rather
     // than a string only this adapter can produce.
+    //
+    // The same success can also land between the SELECT above and this INSERT, in
+    // which case 0205's guard -- which re-checks the counter -- refuses the row.
+    // That refusal is the same state as "no counter", so it is answered the same
+    // way; any other refusal, or one while the counter is still escalated, is a
+    // real error and propagates.
     await this.db.query(`INSERT INTO control_planner_needs_you_items
       (id,tenant_id,project_id,request_key,reason_code,failure_count,raised_by_identity_id,raised_at,
         action_item_id,owner_request_digest,scope_key)
@@ -530,7 +552,15 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
       -- sequence.
       ON CONFLICT DO NOTHING`,
     [tenantId, projectId, input.requestKey, String(counter.scope_key),
-      Number(counter.failure_count), id, input.now, sha256Digest({ ownerRequest: input.ownerRequest })]);
+      Number(counter.failure_count), id, input.now, sha256Digest({ ownerRequest: input.ownerRequest })])
+      .catch(async (error: unknown) => {
+        if (!(error instanceof Error) || !error.message.includes("planner needs-you insert rejected")
+          || await this.#escalatedCounter(tenantId, projectId, counters)) throw error;
+        return null;
+      });
+    // Raced out by a success: no row for this scope was written, so only an item
+    // that already stands for the request can make the answer true.
+    if (!await this.#itemStands(tenantId, projectId, [String(counter.scope_key)])) return notEscalated();
     // ONE inbox item per escalating scope, and the id is the SAME digest, so a
     // repeat of the same escalation re-uses the row and the payload below -- which
     // is why `work_item_id` names the request key that FIRST escalated rather

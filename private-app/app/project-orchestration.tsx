@@ -70,9 +70,10 @@ export function ProjectOrchestrationPanel({ projectId, client: suppliedClient }:
     setRetrying(true); setRetryNote(undefined);
     try {
       const value = await client.retryEscalated(projectId, description);
-      // "Nothing was granted" is stated, not swallowed: the description may have
-      // been fixed already, or the grant may already be spent, and in both cases
-      // the owner pressing Prepare proposal is the right next move.
+      // "Nothing was granted" is stated, not swallowed. It means the description
+      // is no longer stopped (a success cleared it), or a retry is already waiting
+      // unspent -- and in both cases Prepare proposal RUNS it, which the database
+      // suite asserts (R5-B1: round 4 sent the owner here and Prepare refused).
       setRetryNote(value.granted ? "Asking the chief of staff to try this description once more. Prepare proposal will run it."
         : "There is nothing to retry now. Press Prepare proposal to try this description again.");
     } catch (reason) {

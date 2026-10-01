@@ -212,6 +212,10 @@ function optionsFor(catalog: WorkBatchQueueCatalogV1): readonly ProjectOrchestra
 export const describeRefusalMessageV1: Readonly<Record<string, string>> = Object.freeze({
   planner_allowance_not_configured: "No planning allowance is configured for this installation yet, so the chief of staff cannot run. This is not about your description.",
   allowance_exhausted: "This project has used its planning allowance for now. The chief of staff cannot run again until the allowance is refilled.",
+  // The press found the description stopped, but another press of it succeeded
+  // before anything was raised: there is no Needs-you item, and the description
+  // runs normally again. Saying "Needs-you" here is what R5-B1 was about.
+  planner_escalation_cleared: "Another request with this description finished while this one was waiting, so this one did not run and nothing was raised. Your description is still here; press Prepare proposal to run it.",
 });
 const describeRefusedMessage = (reasonCode: string) => describeRefusalMessageV1[reasonCode]
   ?? "The chief of staff could not turn that description into a safe proposal. Check the wording or settings and try again.";
@@ -296,6 +300,10 @@ export function createProjectOrchestrationOwnerAdapterV1(options: Readonly<{ ten
       // description). The sentence below says what is actually true and points at
       // the one control that exists. `retryAvailable` is false where no durable
       // retry record is composed, and then the copy does not offer it.
+      //
+      // The item this names EXISTS: the coordinator returns `needs_you` only when
+      // the Needs-you port resolved, and the production port resolves only when an
+      // item stands for the request (R5-B1, where round 4 said this with no item).
       if (result.status === "needs_you") return Object.freeze({ ...common, status: "failed" as const,
         needsYou: true as const, retryAvailable: typeof options.retry?.grant === "function",
         message: typeof options.retry?.grant === "function"
