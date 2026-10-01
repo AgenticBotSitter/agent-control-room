@@ -1,4 +1,4 @@
--- MIG-N part 3: the two tiny owner-level tables behind Home's daily tiles.
+-- MIG-N part 2: the two tiny owner-level tables behind Home's daily tiles.
 -- (Navigation + Home §3a: pins first, then most recently opened pages.)
 --
 -- WHY SERVER-SIDE AND NOT BROWSER STORAGE, stated here because it is the whole

@@ -10,7 +10,7 @@
 // That is the whole isolation model. The web login holds a table-wide SELECT on
 // all three tables (they are declared in privateWebReadTables), so "one owner
 // cannot read another's rows" is a property of the queries in this file, not of
-// the grants — and the database guards in 0241 re-check the live owner grant on
+// the grants — and the database guards in 0242 re-check the live owner grant on
 // every write, so a forged owner_identity_id is refused by the database rather
 // than trusted from here.
 //
@@ -71,19 +71,27 @@ type PinRow = { page_key: string; pinned_at: string | Date };
  * by the pinned-library path in compileCronCalendar).
  *
  * The calendar is COMPILED PER CALL rather than cached, and that is measured
- * rather than assumed: compiling "0 9 * * 1" and stepping it once costs about
+ * rather than assumed: compiling "0 12 * * *" and stepping it once costs about
  * 0.17ms, so 50 chores cost under 10ms and a cache would be a second piece of
  * mutable state to invalidate for no measurable gain.
+ *
+ * THE CAST AT THE SEAM IS LOAD-BEARING. `compileCronCalendar` publishes a narrow
+ * `CronCalendar` whose only method is `includesDate`; the value it actually
+ * returns is an upstream `CronExpression`, whose `next` yields a `CronDate` — NOT
+ * a `Date`, even though `CronDate` extends one. Returning that object directly
+ * worked for `new Date(cronDate)` and silently broke `cronDate.getTime()`, which
+ * cron-parser overrides to return a `CronDate` rather than a number. So the
+ * result is normalized to a real `Date` here, once, and the rest of the file
+ * only ever sees `Date`.
  */
 function nextDueAt(cronExpression: string, timezone: string, from: number): Date | undefined {
   const calendar = compileCronCalendar(cronExpression, timezone);
   if (!calendar) return undefined;
-  // `compileCronCalendar` returns a narrow CronCalendar on its public interface and
-  // the upstream CronExpression it wraps; this is the one call that needs the
-  // wider surface, so the cast is here, at the single seam, with the shape below
-  // asserted rather than assumed.
   const next = (calendar as unknown as { next(date: Date): Date | undefined }).next(new Date(from));
-  return next ?? undefined;
+  // `new Date(cronDate)` is the documented conversion and is what
+  // cron-parser's own typings describe; a plain `?? undefined` would let a null
+  // through if a calendar ever expressed "no next occurrence" that way.
+  return next === undefined || next === null ? undefined : new Date(next as unknown as Date);
 }
 
 /**
@@ -152,11 +160,28 @@ function timezone(value: string): boolean {
   catch { return false; }
 }
 
+/**
+ * Two clocks, and the split is load-bearing.
+ *
+ * `clock` is the SESSION clock: it is what `WebSessionAuthority` uses to decide
+ * whether a web session has expired, and it must therefore be the real wall
+ * clock. Handing it a simulated future instant would make every session look
+ * expired, which is a confusing way to learn that a test injected the wrong thing.
+ *
+ * `dueClock` is the DUE clock: the "now" against which a cadence is evaluated. It
+ * defaults to `clock` in production, and exists as a separate parameter so a test
+ * can ask "would this chore be due a week from now?" without pretending the
+ * database's clock moved. It can therefore move FORWARD relative to `clock` but is
+ * still bounded by the session, and no caller can use it to write a future
+ * `last_done_at` — that stamp is always `actor.now`, which is the real clock.
+ */
 export class OwnerNavigationServiceV1 {
   readonly #authority: WebSessionAuthority;
+  readonly #dueClock: () => number;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    clock: () => number = Date.now) {
+    clock: () => number = Date.now, dueClock: () => number = clock) {
     this.#authority = new WebSessionAuthority(db, scope, clock, "navigation");
+    this.#dueClock = dueClock;
   }
 
   /**
@@ -172,7 +197,7 @@ export class OwnerNavigationServiceV1 {
    * what keeps this from rendering as the first one.
    */
   async dueChores(identity: VerifiedWebIdentity): Promise<z.infer<typeof dueChoresSchemaV1>> {
-    const nowMs = Date.now();
+    const nowMs = this.#dueClock();
     return this.#authority.authenticated(identity, async (tx, actor) => {
       // A chore is owner-level state with no project, so the check is the
       // owner-scoped one (third argument) rather than a per-project require: a
@@ -211,7 +236,7 @@ export class OwnerNavigationServiceV1 {
     if (!parsed.success || !timezone(parsed.data.timezone)) throw new WebAccessError("invalid_request");
     const schedule = parsePlainRecurringScheduleV1(parsed.data.schedule);
     if (!schedule) throw new WebAccessError("invalid_request");
-    const nowMs = Date.now();
+    const nowMs = this.#dueClock();
     try { assertNoSecretMaterial(parsed.data, "recurring chore"); }
     catch { throw new WebAccessError("invalid_request"); }
     return this.#authority.authenticated(identity, async (tx, actor) => {
@@ -237,7 +262,7 @@ export class OwnerNavigationServiceV1 {
    * Done, or Snooze.
    *
    * Both push state forward, which is what makes them retry-safe and what makes
-   * a stale second tab harmless: the database guard refuses a decrease (0241), and
+   * a stale second tab harmless: the database guard refuses a decrease (0242), and
    * the service refuses a non-advance before the query even runs, so a caller
    * cannot be told "done" when the row did not move.
    *
@@ -249,6 +274,10 @@ export class OwnerNavigationServiceV1 {
     const parsed = choreActionSchemaV1.safeParse(value);
     if (!parsed.success) throw new WebAccessError("invalid_request");
     const action = parsed.data;
+    // The SESSION clock, not the due clock: every comparison here is against a
+    // stamp the database wrote or is about to write, all of which are real. Using
+    // the due clock would let a caller snooze to a date that is "in the future" on
+    // one clock and already past on the other.
     const nowMs = Date.now();
     if (action.action === "snooze") {
       const until = Date.parse(action.until);
@@ -297,7 +326,7 @@ export class OwnerNavigationServiceV1 {
    * what it has opened and when — so that is all this returns.
    */
   async shortcuts(identity: VerifiedWebIdentity) {
-    const nowMs = Date.now();
+    const nowMs = this.#dueClock();
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("projects.read", undefined, true);
       try {
@@ -329,7 +358,7 @@ export class OwnerNavigationServiceV1 {
    * header, the one place every page already mounts).
    *
    * Both fields move FORWARD and never back: GREATEST on the upsert, plus the
-   * 0241 guard refusing a decrease outright. That is what makes a retry from a
+ * 0242 guard refusing a decrease outright. That is what makes a retry from a
    * tab whose response was lost harmless — the second write is a no-op rather
    * than a rewind of the owner's own recency order.
    *

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "3dfed9690514d789ddcc36456c398219ad8bf0225f81409500a50249638a1281",
+  "digest": "760d80e3f143ace1c6a2f30f55af98617695408916a06da71b2744e6fb4f1924",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -965,19 +965,19 @@
     {
       "file": "db/migrations/0240_recurring_chores.sql",
       "order": 161,
-      "sha256": "1e372d05f4d0d482cc185584ae5b800ea321c3f5357653dee67c2571b1029a4b",
+      "sha256": "52f2c9867f8c3a70572d39534fb7d7401b1817ec4a154a184ae7b90d8041e7e1",
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0241_navigation_owner_guards_and_grants.sql",
+      "file": "db/migrations/0241_page_visits_and_pins.sql",
       "order": 162,
-      "sha256": "3d54155266f5a0bf90267906142e86a99ebdd76ab0cd96b88e1de1d52a611803",
+      "sha256": "430194a623aad8aabd11c8c896dd7ce87f61946036b79adedef2f32a91467869",
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0242_page_visits_and_pins.sql",
+      "file": "db/migrations/0242_navigation_owner_guards_and_grants.sql",
       "order": 163,
-      "sha256": "be70f7a69567f35f62e41ccc7bd90799941b2b8f4442cbe893696aafbcb37883",
+      "sha256": "dee127ba36362cba9be5d0d3549926cece46af841d91aa2092d0c0c95835264c",
       "kind": "migrate"
     },
     {

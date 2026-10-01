@@ -58,7 +58,7 @@ GRANT UPDATE (seen_through,updated_at) ON owner_surface_cursors TO control_room_
 GRANT SELECT, INSERT ON recurring_chores TO control_room_private_web;
 GRANT UPDATE (last_done_at,snoozed_until,updated_at) ON recurring_chores TO control_room_private_web;
 -- Page visits are an observation, upserted on navigation. GREATEST in the
--- statement and the 0241 guard together make it retry-safe; no DELETE.
+-- statement and the 0242 guard together make it retry-safe; no DELETE.
 GRANT SELECT, INSERT ON page_visits TO control_room_private_web;
 GRANT UPDATE (last_opened_at,open_count,updated_at) ON page_visits TO control_room_private_web;
 -- Pins are the one table here that grants DELETE, because "Pin this page" is a

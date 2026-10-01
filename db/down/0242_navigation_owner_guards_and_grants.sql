@@ -1,4 +1,4 @@
--- Reverses only what 0241 granted, guarded on role existence like 0195 and 0220:
+-- Reverses only what 0242 granted, guarded on role existence like 0195 and 0220:
 -- a bare REVOKE to a role that does not exist yet is a hard error, and this file is
 -- read by the schema-only paths where the web login has not been created.
 BEGIN;

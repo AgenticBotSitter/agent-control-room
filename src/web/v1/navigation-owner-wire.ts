@@ -26,7 +26,14 @@ export const dueChoreSchemaV1 = z.object({
   // The owner's own words, echoed back. This is what §3b's "one line of why" is
   // built from, and it is why plain_schedule is stored beside the cron.
   schedule: z.string().min(1).max(120),
-  cronExpression: z.string().regex(/^[0-9]{1,2} [0-9]{1,2} \* \* [0-6]$/u),
+  // The normalized cadence. Read off `parsePlainRecurringScheduleV1` rather than
+  // guessed, because a first draft asserted a two-digit minute and a bare digit
+  // for day-of-week and a real cluster refused the first row a test inserted. The
+  // parser emits `${minute} ${hour} * * ${dayField}` with both numbers UNPADDED,
+  // and dayField "*" (every day), "1-5" (weekday) or "0".."6" (one named day). The
+  // database CHECK in 0240 is the same shape, so a grammar change has to move
+  // both or the insert is refused.
+  cronExpression: z.string().regex(/^[0-9]{1,2} [0-9]{1,2} \* \* (\*|[1-5]|[0-6])$/u),
   timezone: z.string().min(1).max(80),
   dueAt: z.string().datetime(),
   lastDoneAt: z.string().datetime().nullable(),

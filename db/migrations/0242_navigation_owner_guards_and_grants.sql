@@ -1,5 +1,6 @@
--- MIG-N part 2: what may write a chore, and what may never change one.
--- (Navigation + Home §3b: Done and Snooze.)
+-- MIG-N part 3: what may write a chore, a visit or a pin, what may never change
+-- one, and the exact grants the private-web API needs. (Navigation + Home §3a,
+-- §3b: Done, Snooze, Pin this page.)
 --
 -- The rule this file enforces is narrow on purpose. A chore is the OWNER's own
 -- statement about their own week: it schedules nothing, executes nothing and
@@ -54,7 +55,7 @@ BEGIN
   -- cadence change is a NEW chore, not an edit: recomputing "when was this next
   -- due" from a changed cadence while last_done_at stays put would silently
   -- rewrite the owner's history of when they last did it. There is no update
-  -- path for those columns in the grant (0241) either, so this is the database
+  -- path for those columns in the grant (0242) either, so this is the database
   -- refusing what the grant already withholds.
   IF TG_OP = 'UPDATE' AND (NEW.tenant_id <> OLD.tenant_id OR NEW.chore_id <> OLD.chore_id
     OR NEW.owner_identity_id <> OLD.owner_identity_id OR NEW.title <> OLD.title

@@ -48,13 +48,19 @@ CREATE TABLE recurring_chores (
   -- the owner would be walked somewhere by.
   target_page_key text NOT NULL CHECK (char_length(target_page_key) BETWEEN 1 AND 80),
   -- The same plain vocabulary and the same normalized cron 0186 stores for a
-  -- recurring RULE. The CHECK is the exact shape `parsePlainRecurringScheduleV1`
-  -- produces for that grammar, which is "m h * * d" with single digits: a
-  -- chore's cadence is never a list, a range or a step, because the owner's
-  -- vocabulary (every day / weekday / one named weekday, at one time) cannot
-  -- express any of those.
+  -- recurring RULE. The CHECK is read OFF THE PARSER'S OWN THREE BRANCHES, not
+  -- guessed, because a first draft of this file asserted a two-digit minute and
+  -- a bare digit for day-of-week and the real cluster refused the very first row
+  -- a test inserted. What `parsePlainRecurringScheduleV1` actually emits is
+  -- `${minute} ${hour} * * ${dayField}` with minute UNPADDED, hour UNPADDED, and
+  -- dayField "*" (every day), "1-5" (weekday) or "0".."6" (one named day). A
+  -- CHECK that does not match the parser is not a guard, it is a way to make the
+  -- feature unusable, so the three shapes are named here explicitly.
+  -- A chore's cadence is never a list of days, a range of minutes or a step,
+  -- because the owner's vocabulary (every day / weekday / one named weekday, at
+  -- one time) cannot express any of those.
   plain_schedule text NOT NULL CHECK (char_length(plain_schedule) BETWEEN 1 AND 120),
-  cron_expression text NOT NULL CHECK (cron_expression ~ '^[0-9]{1,2} [0-9]{1,2} \* \* [0-6]$'),
+  cron_expression text NOT NULL CHECK (cron_expression ~ '^[0-9]{1,2} [0-9]{1,2} \* \* (\*|[1-5]|[0-6])$'),
   timezone text NOT NULL CHECK (char_length(timezone) BETWEEN 1 AND 80),
   owner_identity_id text NOT NULL,
   last_done_at timestamptz,
