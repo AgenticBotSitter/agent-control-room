@@ -236,6 +236,42 @@ test("real PostgreSQL: Stage 0 + 0b chores, visits and pins, as the production w
       await assert.rejects(web.query(`DELETE FROM recurring_chores WHERE tenant_id=$1`, [scope.tenantId]),
       /permission denied for table recurring_chores/u,
       "a chore is removed only by its down migration");
+      // A BACKDATED SNOOZE IS REFUSED BY THE DATABASE. The service refuses one too,
+      // but this is the hand-written path: a well-formed UPDATE naming only granted
+      // columns, setting a snooze that has already elapsed. Without the guard's
+      // future-bound this would silently re-arm the chore from the moment it was
+      // written, which is exactly the "stale row that looks like a snooze" state the
+      // column comment says the bound exists to prevent. `updated_at` is a real
+      // "now" so the guard's snooze clause is the only thing that can refuse.
+      const realInstant = new Date().toISOString();
+      await assert.rejects(web.query(`UPDATE recurring_chores SET snoozed_until=$3,updated_at=$4
+        WHERE tenant_id=$1 AND owner_identity_id=$2 AND chore_id=$5`,
+      [scope.tenantId, OWNER_A, new Date(Date.parse(realInstant) - DAY).toISOString(), realInstant,
+        second.chore.choreId]),
+      /recurring chore snooze rejected/u, "a snooze already elapsed is refused by the database, not just the service");
+      // A FUTURE-DATED SNOOZE IS ACCEPTED, so the refusal above is the bound and
+      // not the guard refusing everything.
+      //
+      // `snoozed_until` is the future hold the owner asked for and is legitimately
+      // days away; the guard bounds updated_at against the clock and snoozed_until
+      // only for being in the past. That split is the design, and it is why
+      // `updated_at` does not travel with the snooze.
+      await web.query(`UPDATE recurring_chores SET snoozed_until=$3,updated_at=$4
+        WHERE tenant_id=$1 AND owner_identity_id=$2 AND chore_id=$5`,
+      [scope.tenantId, OWNER_A, new Date(Date.parse(realInstant) + 5 * DAY).toISOString(), realInstant,
+        second.chore.choreId]);
+      assert.equal((await admin.query(`SELECT snoozed_until FROM recurring_chores
+        WHERE tenant_id=$1 AND owner_identity_id=$2 AND chore_id=$3`,
+      [scope.tenantId, OWNER_A, second.chore.choreId])).rows[0]!.snoozed_until instanceof Date, true,
+      "and the future snooze really landed, so the refusal above is the bound");
+      // A FUTURE SNOOZE CANNOT BE PULLED EARLIER BY HAND. This is the second,
+      // independent monotonic clause — a future value is acceptable, a decrease is
+      // not — and it is asserted separately because a guard that only checked
+      // "must be in the future" would let a pull-back through.
+      await assert.rejects(web.query(`UPDATE recurring_chores SET snoozed_until=$3
+        WHERE tenant_id=$1 AND owner_identity_id=$2`,
+      [scope.tenantId, OWNER_A, new Date(NOW + DAY).toISOString()]),
+      /recurring chore rejected/u, "a future snooze cannot be pulled earlier by hand");
 
       // ---- 5. Bad input is refused, and refused with the same error.
       for (const bad of [
@@ -272,24 +308,49 @@ test("real PostgreSQL: Stage 0 + 0b chores, visits and pins, as the production w
       // ---- 7. THE GUARD RE-READS THE LIVE OWNER GRANT. The web login legitimately
       // holds INSERT, and the SQL below is well-formed with in-window stamps, but
       // it names an identity that is not an owner — so the DATABASE refuses it.
+      //
+      // THE FIXTURE IS A HUMAN WITH NO OWNER GRANT, NOT A SERVICE IDENTITY. A
+      // first attempt used an `actor_type='service'` identity, and mutating the
+      // guard's owner check did NOT fail the test — because the guard also
+      // requires `actor_type='human'`, so the service identity was refused by that
+      // clause and the owner-grant clause was never the thing under test. A human
+      // identity that holds no owner grant passes every other clause, so the
+      // refusal below can only be the owner-grant re-read.
       await admin.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
-        VALUES($1,$2,'service','Not an owner','test',$3,'active',$4,$4) ON CONFLICT (id) DO NOTHING`,
-      ["identity:nav-pg-machine", scope.tenantId, sha256Digest("nav-machine"), new Date(NOW).toISOString()]);
+        VALUES($1,$2,'human','A person with no grant','test',$3,'active',$4,$4) ON CONFLICT (id) DO NOTHING`,
+      ["identity:nav-pg-nogrant", scope.tenantId, sha256Digest("nav-nogrant"), new Date(NOW).toISOString()]);
       await assert.rejects(web.query(`INSERT INTO recurring_chores
         (tenant_id,chore_id,title,target_page_key,plain_schedule,cron_expression,timezone,owner_identity_id,created_at,updated_at)
         VALUES($1,'chore:00000000-0000-4000-8000-000000000002','Forged','bot-memory','every day at 12:00',
           '0 12 * * *',$2,$3,$4,$4)`,
-      [scope.tenantId, ZONE, "identity:nav-pg-machine", new Date(NOW).toISOString()]),
+      [scope.tenantId, ZONE, "identity:nav-pg-nogrant", new Date(NOW).toISOString()]),
       /recurring chore needs the owner/u, "only the owner may write their own chore");
-      // Same for a visit and a pin, through the other two guards.
+      // The same fixture through the other two guards. A human with no grant, so
+      // each of these is refused by that guard's own owner re-read and nothing else.
       await assert.rejects(web.query(`INSERT INTO page_visits
         (tenant_id,owner_identity_id,page_key,last_opened_at,open_count,updated_at)
-        VALUES($1,$2,'workers',$3,1,$3)`, [scope.tenantId, "identity:nav-pg-machine", new Date(NOW).toISOString()]),
+        VALUES($1,$2,'workers',$3,1,$3)`, [scope.tenantId, "identity:nav-pg-nogrant", new Date(NOW).toISOString()]),
       /page visit needs the owner/u);
       await assert.rejects(web.query(`INSERT INTO page_pins
         (tenant_id,owner_identity_id,page_key,pinned_at,updated_at) VALUES($1,$2,'workers',$3,$3)`,
-      [scope.tenantId, "identity:nav-pg-machine", new Date(NOW).toISOString()]),
+      [scope.tenantId, "identity:nav-pg-nogrant", new Date(NOW).toISOString()]),
       /page pin needs the owner/u);
+      // And a grant that exists but is NOT an owner grant — an operator — is
+      // refused too, which is the case a `role_key='owner'` check alone catches but
+      // an `allowed_actions` check alone would not, and the reverse.
+      await admin.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+        VALUES($1,$2,'human','An operator','test',$3,'active',$4,$4) ON CONFLICT (id) DO NOTHING`,
+      ["identity:nav-pg-operator", scope.tenantId, sha256Digest("nav-operator"), new Date(NOW).toISOString()]);
+      await admin.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+        risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+        VALUES('grant:nav-pg-operator',$1,$2,'operator','["projects.read"]','["*"]','low',false,false,$3,$3)`,
+      [scope.tenantId, "identity:nav-pg-operator", new Date(NOW).toISOString()]);
+      await assert.rejects(web.query(`INSERT INTO recurring_chores
+        (tenant_id,chore_id,title,target_page_key,plain_schedule,cron_expression,timezone,owner_identity_id,created_at,updated_at)
+        VALUES($1,'chore:00000000-0000-4000-8000-000000000003','Forged','bot-memory','every day at 12:00',
+          '0 12 * * *',$2,$3,$4,$4)`,
+      [scope.tenantId, ZONE, "identity:nav-pg-operator", new Date(NOW).toISOString()]),
+      /recurring chore needs the owner/u, "an operator grant is not an owner grant");
       // And a revoked owner grant stops new writes even though the session itself is
       // still live. The refusal here comes from the POLICY layer (`actor.require`),
       // which is the first of two independent checks — the guard inside the
@@ -318,6 +379,68 @@ test("real PostgreSQL: Stage 0 + 0b chores, visits and pins, as the production w
       await assert.rejects(web.query(`UPDATE recurring_chores SET owner_identity_id=$2 WHERE tenant_id=$1`,
         [scope.tenantId, OWNER_B]), /permission denied for table recurring_chores/u,
         "nor move a chore to another owner");
+
+      // ---- 8b. THE FROZEN COLUMNS ARE FROZEN IN THE DATABASE TOO, NOT ONLY IN
+      // THE GRANT. The assertions above are all refused by the COLUMN grant, which
+      // means they prove nothing about the trigger: the schema owner holds every
+      // column and bypasses every grant, so if the trigger's frozen-column clause
+      // were removed these would still pass. So they are re-run AS THE SCHEMA OWNER,
+      // where only the trigger can refuse. This is the only way to prove the second
+      // mechanism is load-bearing rather than decorative.
+      //
+      // The role switch is ASSERTED rather than assumed: a silent no-op here would
+      // make every assertion below pass for the wrong reason — as the migrator
+      // login, whose UPDATE of `title` is refused by the GRANT, not by the trigger.
+      const owner = new Client(postgres.connection("migrator"));
+      await owner.connect();
+      try {
+        await owner.query("SET ROLE control_room_schema_owner");
+        const role = (await owner.query<{ role: string }>("SELECT current_user AS role")).rows[0]!.role;
+        assert.equal(role, "control_room_schema_owner",
+          "the frozen-column assertions below must run as the schema owner, or they prove nothing");
+        const target = (await admin.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM recurring_chores WHERE tenant_id=$1", [scope.tenantId])).rows[0]!.n;
+        assert.ok(target > 0, "and there is a row to update, so a refusal cannot be a vacuous one");
+        // One parameter for the tenant in every case. The `owner_identity_id` case needs
+        // a second, so it names $2 and gets one; the other five get exactly the one
+        // they use. Passing two to a statement that only reads $1 is a bind error,
+        // which is not a refusal and would have read as one.
+        for (const [column, value, label] of [
+          ["title", "'Renamed by the schema owner'", "a chore's title"],
+          ["target_page_key", "'renamed'", "a chore's target page"],
+          ["cron_expression", "'0 10 * * 2'", "a chore's cadence"],
+          ["plain_schedule", "'every friday at 5'", "a chore's plain schedule"],
+          ["timezone", "'America/Denver'", "a chore's timezone"],
+          ["owner_identity_id", "$2", "a chore's owner"],
+        ] as const) {
+          const parameters = column === "owner_identity_id" ? [scope.tenantId, OWNER_B] : [scope.tenantId];
+          let thrown: unknown;
+          try {
+            await owner.query(`UPDATE recurring_chores SET ${column}=${value} WHERE tenant_id=$1`, parameters);
+          } catch (error) { thrown = error; }
+          assert.ok(thrown !== undefined,
+            `${label} must be refused; an UPDATE that changed nothing and raised nothing proves nothing`);
+          assert.match(String((thrown as Error).message), /recurring chore rejected/u,
+            `${label} is frozen even for the schema owner, who holds every column (got: ${(thrown as Error).message})`);
+        }
+        // And the permitted UPDATE still works as the schema owner, so the guard above is
+        // refusing the frozen COLUMNS and not every write. Scoped to `fresh`, which
+        // has a null snooze: `second` carries the future snooze section 4 gave it,
+        // and a Done on a snoozed chore would trip the table's own
+        // last_done_at <= snoozed_until CHECK — which is that constraint working,
+        // not a reason to widen this UPDATE to every row.
+        await owner.query(`UPDATE recurring_chores SET last_done_at=$2,updated_at=$2
+        WHERE tenant_id=$1 AND owner_identity_id=$3 AND chore_id=$4`,
+        [scope.tenantId, new Date().toISOString(), OWNER_A, fresh.chore.choreId]);
+        assert.equal((await admin.query(`SELECT count(*)::int AS n FROM recurring_chores
+        WHERE tenant_id=$1 AND chore_id=$2 AND last_done_at IS NOT NULL`,
+        [scope.tenantId, fresh.chore.choreId])).rows[0]!.n, 1,
+        "so a Done by the schema owner really landed, and the refusals above were about the frozen columns");
+      } finally {
+        await owner.query("RESET ROLE").catch(() => {});
+        await owner.query("ROLLBACK").catch(() => {});
+        await owner.end();
+      }
 
       // ---- 9. PAGE VISITS move forward only, and a stale retry cannot rewind them.
       // Visits are stamped with the REAL clock (recordVisit compares and writes
