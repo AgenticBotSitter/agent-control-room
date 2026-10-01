@@ -486,6 +486,37 @@ test("the updater's health counts: boundary, contents, closed paths and load", a
         assert.equal(JSON.stringify((await updater.query<Counts>(`SELECT * FROM ${FUNCTION}`)).rows[0]), expected,
           `burst round ${round} drifted`);
 
+      // A SECOND, heavier wave, on top of the 50 above. This is the "burst at the
+      // limit" case, and it is the one that would expose a connection leak or a
+      // lock the single-connection burst cannot see.
+      //
+      // 25, NOT 200. The disposable cluster this lane runs on is started with
+      // `-c max_connections=60` (tests/support/attack-kit/real-postgres.ts), and
+      // roughly a third of those slots are already held by the fixture's own
+      // admin/schema-owner/web/updater clients, so 200 callers would fail at
+      // CONNECT and report a connection limit as a boundary failure. 25 racing
+      // on top of the existing four puts the peak at roughly half the real
+      // ceiling, which is the burst the cluster can actually exercise. Each
+      // caller opens its own backend and closes it, and a failure names the
+      // caller rather than collapsing into one anonymous rejection.
+      const secondWave = await Promise.all(Array.from({ length: 25 }, async (_, index) => {
+        const client = await asUpdater(postgres, sessions);
+        try { return (await client.query<Counts>(`SELECT * FROM ${FUNCTION}`)).rows[0]; }
+        catch (error) {
+          throw new Error(`second-wave caller ${index}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }));
+      for (const [index, countsSeen] of secondWave.entries())
+        assert.equal(JSON.stringify(countsSeen), expected, `second-wave caller ${index} saw different counts`);
+
+      // A hostile caller that abandons its query mid-flight must not leave the
+      // others short: the next wave still has to be able to open its backend.
+      const abandoned = await asUpdater(postgres, sessions);
+      await abandoned.query(`SELECT * FROM ${FUNCTION}`);
+      await abandoned.end();
+      assert.equal(JSON.stringify((await updater.query<Counts>(`SELECT * FROM ${FUNCTION}`)).rows[0]), expected,
+        "an abandoned connection does not starve the next caller");
+
       // The 50 concurrent callers' own connections must all be closed again.
       await sessions.close();
       const survivors = await asSchemaOwner(postgres, sessions).then(async client =>
