@@ -54,6 +54,12 @@ export const dueChoreSchemaV1 = z.object({
  */
 export const dueChoresSchemaV1 = z.object({
   chores: z.array(dueChoreSchemaV1).max(50),
+  /** True when the owner has more due chores than the panel returned. Reported
+   * rather than silently truncated: this app's standing rule is that a missing
+   * signal has to be a real signal, and an invented "that is all of them" is not
+   * one. The panel may still choose to hide itself (§3b) — this is about the API
+   * not lying about how much it read. */
+  additionalChoresOmitted: z.boolean(),
   // The one honest read-state axis this app uses: a load that failed is not a
   // load that found nothing. See LoadingState / EmptyState / UnavailableState in
   // owner-ui.tsx.
@@ -130,6 +136,12 @@ export const ownerPageShortcutsSchemaV1 = z.object({
   pinned: z.array(z.object({ pageKey: pageRegistryKeySchemaV1, pinnedAt: z.string().datetime() }).strict()).max(50),
   recent: z.array(z.object({ pageKey: pageRegistryKeySchemaV1, lastOpenedAt: z.string().datetime(),
     openCount: z.number().int().min(1) }).strict()).max(50),
+  /** Reported rather than silently truncated, for the same reason as
+   * `additionalChoresOmitted`: the tile rule falls back to three fixed defaults
+   * on an empty history, so a client that cannot tell "you have three pins" from
+   * "here are fifty, there may be more" can quietly reorder the owner's Home. */
+  additionalPinsOmitted: z.boolean(),
+  additionalRecentOmitted: z.boolean(),
   // No history at all is a real, different state from a failed read: the first
   // says "fall back to the three defaults", the second says "we do not know".
   source: z.enum(["recorded", "unavailable"]),

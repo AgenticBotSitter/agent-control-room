@@ -25,7 +25,7 @@
 // with the response rather than living only in a comment.
 
 import type { z } from "zod";
-import type { DatabaseClient } from "../../persistence/database";
+import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { compileCronCalendar } from "../../services/v1/cron-calendar";
 import { parsePlainRecurringScheduleV1 } from "../../recurring/v1/plain-schedule";
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
@@ -161,6 +161,22 @@ function timezone(value: string): boolean {
 }
 
 /**
+ * One read, and `undefined` when the READ ITSELF failed.
+ *
+ * The narrowest possible try: the await and nothing else. Its whole purpose is
+ * to let a "we do not know" answer survive a query error without letting a bug in
+ * the code that runs afterwards masquerade as one. A projection bug would
+ * otherwise be reported to the owner as "nothing is due" — which for this feature
+ * is the single most misleading thing the API could say, because the panel then
+ * disappears and the owner concludes they are done.
+ */
+async function readOrUnavailable<Row>(tx: DatabaseSession, statement: string,
+  values: readonly unknown[]): Promise<Row[] | undefined> {
+  try { return (await tx.query<Row>(statement, values as unknown[])).rows; }
+  catch { return undefined; }
+}
+
+/**
  * Two clocks, and the split is load-bearing.
  *
  * `clock` is the SESSION clock: it is what `WebSessionAuthority` uses to decide
@@ -203,22 +219,31 @@ export class OwnerNavigationServiceV1 {
       // owner-scoped one (third argument) rather than a per-project require: a
       // partial project grant must not be able to read another owner's week.
       actor.require("projects.read", undefined, true);
-      try {
-        const rows = (await tx.query<ChoreRow>(`SELECT chore_id,title,target_page_key,plain_schedule,
-            cron_expression,timezone,owner_identity_id,last_done_at,snoozed_until,created_at,updated_at
+      // The QUERY is the only thing whose failure means "we do not know". The
+      // try scope is deliberately narrow: it wraps the two awaits and nothing
+      // else, so a bug in the projection below surfaces as a failure instead of
+      // being reported to the owner as "nothing is due", which is the one answer
+      // that must never be a lie.
+      const rows = await readOrUnavailable<ChoreRow>(tx,
+        `SELECT chore_id,title,target_page_key,plain_schedule,cron_expression,timezone,
+            owner_identity_id,last_done_at,snoozed_until,created_at,updated_at
           FROM recurring_chores WHERE tenant_id=$1 AND owner_identity_id=$2
-          ORDER BY created_at,chore_id LIMIT $3`, [this.scope.tenantId, actor.id, MAX_CHORES + 1])).rows;
-        const due = rows.slice(0, MAX_CHORES).flatMap(row => {
-          if (!isDue(row, nowMs)) return [];
-          const projected = project(row, nowMs);
-          return projected ? [projected] : [];
-        }).sort((left, right) => left.dueAt.localeCompare(right.dueAt) || left.choreId.localeCompare(right.choreId));
-        return dueChoresSchemaV1.parse({ chores: due, source: "recorded", observedAt: actor.now,
-          startsWork: false, grantsExecutionAuthority: false });
-      } catch {
-        return dueChoresSchemaV1.parse({ chores: [], source: "unavailable", observedAt: actor.now,
-          startsWork: false, grantsExecutionAuthority: false });
-      }
+          ORDER BY created_at,chore_id LIMIT $3`,
+        [this.scope.tenantId, actor.id, MAX_CHORES + 1]);
+      if (!rows) return dueChoresSchemaV1.parse({ chores: [], source: "unavailable", observedAt: actor.now,
+        startsWork: false, grantsExecutionAuthority: false });
+      // Truncation is REPORTED, never silent. An owner with 60 due chores is told
+      // there are more, because this app's standing rule is that a missing signal
+      // must be a real signal and an invented "0" or an invented "that's all of
+      // them" is not. The query asks for one row more than the panel shows, which
+      // is how the extra one is known to exist.
+      const due = rows.slice(0, MAX_CHORES).flatMap(row => {
+        if (!isDue(row, nowMs)) return [];
+        const projected = project(row, nowMs);
+        return projected ? [projected] : [];
+      }).sort((left, right) => left.dueAt.localeCompare(right.dueAt) || left.choreId.localeCompare(right.choreId));
+      return dueChoresSchemaV1.parse({ chores: due, additionalChoresOmitted: rows.length > MAX_CHORES,
+        source: "recorded", observedAt: actor.now, startsWork: false, grantsExecutionAuthority: false });
     });
   }
 
@@ -329,27 +354,35 @@ export class OwnerNavigationServiceV1 {
     const nowMs = this.#dueClock();
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("projects.read", undefined, true);
-      try {
-        const pinned = (await tx.query<PinRow>(`SELECT page_key,pinned_at FROM page_pins
+      // Two independent reads, and EITHER failing makes the whole answer
+      // unavailable rather than half of it: returning "your pins, but we could
+      // not read your visits" would let the tile rule silently fall back to the
+      // three defaults and reorder the owner's Home without saying so. One row
+      // more than the panel shows, so a truncation is reported rather than
+      // presented as the whole list.
+      const pinned = await readOrUnavailable<PinRow>(tx,
+        `SELECT page_key,pinned_at FROM page_pins
           WHERE tenant_id=$1 AND owner_identity_id=$2 ORDER BY pinned_at,page_key LIMIT $3`,
-        [this.scope.tenantId, actor.id, MAX_SHORTCUTS])).rows;
-        // The window is applied in the query rather than in the projection, so
-        // the index does the work: a page last opened a year ago is not "recent"
-        // and must not occupy one of the fifty slots a real recent page needs.
-        const recent = (await tx.query<VisitRow>(`SELECT page_key,last_opened_at,open_count FROM page_visits
+        [this.scope.tenantId, actor.id, MAX_SHORTCUTS + 1]);
+      // The window is applied in the query rather than in the projection, so the
+      // index does the work: a page last opened a year ago is not "recent" and
+      // must not occupy one of the fifty slots a real recent page needs.
+      const recent = pinned === undefined ? undefined : await readOrUnavailable<VisitRow>(tx,
+        `SELECT page_key,last_opened_at,open_count FROM page_visits
           WHERE tenant_id=$1 AND owner_identity_id=$2
             AND last_opened_at > $3::timestamptz - make_interval(secs => $4::double precision / 1000)
           ORDER BY last_opened_at DESC,page_key LIMIT $5`,
-        [this.scope.tenantId, actor.id, actor.now, RECENT_WINDOW_MS, MAX_SHORTCUTS])).rows;
-        return ownerPageShortcutsSchemaV1.parse({
-          pinned: pinned.map(row => ({ pageKey: row.page_key, pinnedAt: iso(row.pinned_at) })),
-          recent: recent.map(row => ({ pageKey: row.page_key, lastOpenedAt: iso(row.last_opened_at),
-            openCount: Number(row.open_count) })),
-          source: "recorded", observedAt: actor.now, startsWork: false });
-      } catch {
-        return ownerPageShortcutsSchemaV1.parse({ pinned: [], recent: [], source: "unavailable",
-          observedAt: actor.now, startsWork: false });
-      }
+        [this.scope.tenantId, actor.id, actor.now, RECENT_WINDOW_MS, MAX_SHORTCUTS + 1]);
+      if (!pinned || !recent) return ownerPageShortcutsSchemaV1.parse({ pinned: [], recent: [],
+        additionalPinsOmitted: false, additionalRecentOmitted: false, source: "unavailable",
+        observedAt: actor.now, startsWork: false });
+      return ownerPageShortcutsSchemaV1.parse({
+        pinned: pinned.slice(0, MAX_SHORTCUTS).map(row => ({ pageKey: row.page_key, pinnedAt: iso(row.pinned_at) })),
+        recent: recent.slice(0, MAX_SHORTCUTS).map(row => ({ pageKey: row.page_key,
+          lastOpenedAt: iso(row.last_opened_at), openCount: Number(row.open_count) })),
+        additionalPinsOmitted: pinned.length > MAX_SHORTCUTS,
+        additionalRecentOmitted: recent.length > MAX_SHORTCUTS,
+        source: "recorded", observedAt: actor.now, startsWork: false });
     });
   }
 
@@ -425,17 +458,9 @@ export class OwnerNavigationServiceV1 {
   }
 }
 
-// A digest helper for the "did this change" question the mutation checks ask, kept
-// next to the shapes it covers so a test cannot drift onto a different projection.
-export const ownerNavigationRowDigestV1 = (row: Pick<ChoreRow, "chore_id" | "title" | "target_page_key" |
-  "plain_schedule" | "cron_expression" | "timezone" | "last_done_at" | "snoozed_until">) =>
-  sha256Digest({ schema: "control-room.owner-navigation-row/v1", choreId: row.chore_id, title: row.title,
-    targetPageKey: row.target_page_key, schedule: row.plain_schedule, cron: row.cron_expression,
-    timezone: row.timezone, lastDoneAt: row.last_done_at ? iso(row.last_done_at) : null,
-    snoozedUntil: row.snoozed_until ? iso(row.snoozed_until) : null });
-
-// Re-exported so a test can build a valid id without duplicating the regex, and
-// so the grammar has exactly one definition in the tree.
+// `ownerChoreIdV1` is exported so a test or a future migration tool can build a
+// legal id without duplicating the grammar, and `choreIdSchemaV1` /
+// `pageRegistryKeySchemaV1` are re-exported so there is exactly ONE definition of
+// each shape in the tree rather than a copy in every caller.
 export const ownerChoreIdV1 = (): string => `chore:${crypto.randomUUID()}`;
 export { choreIdSchemaV1, pageRegistryKeySchemaV1 };
-export type { ChoreRow };

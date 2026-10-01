@@ -390,7 +390,43 @@ test("real PostgreSQL: Stage 0 + 0b chores, visits and pins, as the production w
       assert.deepEqual(bShortcuts.pinned, [], "one owner's pins are not another's");
       assert.deepEqual(bShortcuts.recent, [], "nor are their visits");
 
-      // ---- 11. THE DOWN FILES, as real rollbacks on the live cluster. Applied in
+      // ---- 11. THE BOUNDS ARE REPORTED, NOT HIDDEN. Fifty is the panel's limit,
+      // and an owner with more than that is told so — this app's standing rule is
+      // that a missing signal has to be a real signal. The query asks for one row
+      // more than the panel shows, which is how the extra one is known to exist.
+      // Seeded directly as the admin rather than through the service: 51 declares
+      // would take 51 authenticated transactions and prove nothing the INSERT does
+      // not, while the READ is the thing under test here.
+      for (let index = 0; index < 51; index += 1) {
+        await admin.query(`INSERT INTO recurring_chores
+          (tenant_id,chore_id,title,target_page_key,plain_schedule,cron_expression,timezone,owner_identity_id,created_at,updated_at)
+          VALUES($1,$2,$3,'bot-memory','every day at 12:00','0 12 * * *',$4,$5,$6,$6)`,
+        [scope.tenantId, `chore:00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+          `Bulk ${index}`, ZONE, OWNER_A, new Date(NOW).toISOString()]);
+      }
+      const many = await service(web, NOW + DAY).dueChores(ownerA);
+      assert.equal(many.chores.length, 50, "the read is bounded at the panel's own limit");
+      assert.equal(many.additionalChoresOmitted, true, "and it says there are more rather than implying that was all");
+      // A second call with no extra rows says false, so the flag means "there are
+      // more" and not "there are many". Owner B declared one chore earlier with a
+      // TUESDAY cadence, so it is not due at this clock — the point being made here
+      // is the isolation, and the count is asserted against whatever B's own panel
+      // genuinely contains rather than against a number this test chose.
+      const few = await service(web, NOW + DAY).dueChores(ownerB);
+      assert.equal(few.chores.length, 0, "the other owner's panel is unaffected by 51 chores added to A's");
+      assert.equal(few.additionalChoresOmitted, false, "and is told there is nothing else, not that A has many");
+      // The same for the tile inputs, which is where silent truncation would be
+      // worst: the tile rule falls back to three fixed defaults on empty history.
+      for (let index = 0; index < 51; index += 1) {
+        await admin.query(`INSERT INTO page_pins
+          (tenant_id,owner_identity_id,page_key,pinned_at,updated_at) VALUES($1,$2,$3,$4,$4)`,
+        [scope.tenantId, OWNER_A, `page-${index}`, new Date(NOW + index).toISOString()]);
+      }
+      const manyPins = await now.shortcuts(ownerA);
+      assert.equal(manyPins.pinned.length, 50, "pins are bounded too");
+      assert.equal(manyPins.additionalPinsOmitted, true, "and the extra pins are reported");
+
+      // ---- 12. THE DOWN FILES, as real rollbacks on the live cluster. Applied in
       // REVERSE migration order, which is the only order that can work: 0242's
       // guards and triggers hang off tables 0241 and 0240 created, so its down has
       // to run before theirs or the DROP TABLE would cascade the triggers away and
