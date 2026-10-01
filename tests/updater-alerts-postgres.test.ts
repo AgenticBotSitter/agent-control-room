@@ -42,7 +42,9 @@ import { UpdaterAlertSenderV1 } from "../src/updater/v1/alerts.mjs";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 import { applyUpdaterSchemaV1, updaterDdlFilesV1, type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
 
-// 59830 is the block this job was given.
+// The lane owns the port: this file runs inside `test:updater-schema`, which
+// passes `CONTROL_ROOM_PG_TEST_PORT_BASE`, so it takes the same cluster slot
+// rather than hardcoding one of its own and racing a sibling lane for it.
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59830), PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => { if (PG) { required += 1; return undefined; } return { skip: realPostgresSkipMessage() }; };
