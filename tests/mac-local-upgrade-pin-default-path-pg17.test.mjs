@@ -61,9 +61,9 @@ import { PG_BIN, findFreePort, needsPg } from "./helpers/disposable-postgres-clu
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const run = promisify(execFile);
-// This lane owns 59460-59469, so both clusters take a literal port rather than
-// an OS-assigned one: a collision with another job is a loud start failure
-// instead of two jobs silently sharing a database.
+// Every cluster's port is OS-assigned, so this lane is safe to run beside itself;
+// the mutation runner invokes it repeatedly, and a literal port made two
+// concurrent runs collide. See the header note.
 const nodeIds = ["mac-1.hermes", "mac-1.claude", "mac-1.codex"];
 const workers = [
   { workerId: "worker:codex:mac-1", kind: "codex", executablePath: "/opt/codex", recordedVersion: "codex 1.2.3" },
@@ -133,7 +133,6 @@ before(async () => {
   state.pinPasswords = planned;
   const mac = await admin(state.pin.port, state.pin.socket);
   try { await provisionMacLocalNarrowRolesV1(mac, planned); } finally { await mac.end(); }
-
 });
 
 after(async () => {
