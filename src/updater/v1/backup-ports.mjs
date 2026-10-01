@@ -134,14 +134,50 @@ function hashingFileSinkV1(handle) {
 const confQuoteV1 = value => `'${value.replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
 
 /**
+ * Open an evidence-reading `pg` client and, alongside it, a bounded way to
+ * reach that exact backend from the SERVER side on cancellation (see
+ * `withAbortableEvidenceClientV1`). A role can always terminate its OWN other
+ * session regardless of its privileges — PostgreSQL's signal check is
+ * `has_privs_of_role(caller, target)`, which is trivially true when the two
+ * sessions share a login — so the second connection reuses the exact same
+ * `target`, never a more privileged one.
+ */
+async function openEvidenceReaderV1(connect, target) {
+  const reader = await connect(target);
+  reader.on?.("error", () => {});
+  const pid = Number((await reader.query("SELECT pg_catalog.pg_backend_pid() AS pid")).rows[0]?.pid);
+  const terminateBackend = !Number.isSafeInteger(pid) ? async () => {} : async () => {
+    const admin = await connect(target);
+    admin.on?.("error", () => {});
+    try {
+      // The `timeout` argument (PostgreSQL 17) makes this wait for the
+      // backend to actually be gone, not merely for the signal to be sent, so
+      // cancellation cannot return before the server itself agrees the
+      // reader session is closed.
+      await admin.query("SELECT pg_catalog.pg_terminate_backend($1, $2)", [pid, EVIDENCE_CLOSE_TIMEOUT_MS_V1]);
+    } finally { await admin.end().catch(() => {}); }
+  };
+  return { reader, terminateBackend };
+}
+
+/**
  * Own a PostgreSQL evidence client for the duration of one operation.
  * Stop must not merely reject the active query: its backend is a scarce
  * production-reader session too. One shared close promise owns `end()` and an
  * explicit socket destroy, and the operation cannot return until that close
  * has either completed or reached its bounded hard-close fallback.
+ *
+ * `terminateBackend` is the SERVER-side half of that close. Destroying this
+ * process's own socket does nothing for a backend asleep in the lock
+ * manager: PostgreSQL only notices a gone client when the backend next tries
+ * to send or receive, and a blocked lock wait does neither until the lock is
+ * granted. `terminateBackend` is a caller-supplied, best-effort, bounded
+ * callback that reaches the backend from the SERVER side instead (a second
+ * session asking `pg_terminate_backend`), and cancellation awaits it the same
+ * way it awaits `client.end()`.
  */
 export async function withAbortableEvidenceClientV1(client, signal, operation, beforeEnd = async () => {},
-  closeTimeoutMs = EVIDENCE_CLOSE_TIMEOUT_MS_V1) {
+  closeTimeoutMs = EVIDENCE_CLOSE_TIMEOUT_MS_V1, terminateBackend = async () => {}) {
   if (!Number.isSafeInteger(closeTimeoutMs) || closeTimeoutMs < 1)
     throw updaterRefuseV1("updater_backup_ports_refused");
   let cancelled = false;
@@ -157,7 +193,8 @@ export async function withAbortableEvidenceClientV1(client, signal, operation, b
       });
       try {
         const ending = Promise.resolve().then(() => client.end()).catch(() => { destroy(); });
-        await Promise.race([ending, timedOut]);
+        const terminating = force ? Promise.resolve().then(terminateBackend).catch(() => {}) : Promise.resolve();
+        await Promise.race([Promise.all([ending, terminating]), timedOut]);
       } finally { clearTimeout(timer); }
     })();
     return closePromise;
@@ -165,7 +202,8 @@ export async function withAbortableEvidenceClientV1(client, signal, operation, b
   const cancel = () => {
     cancelled = true;
     // Hard-close now so the active SQL rejects; the finally below awaits this
-    // same promise, so returning cancellation also proves cleanup was awaited.
+    // same promise, so returning cancellation also proves cleanup was awaited,
+    // including the server-side termination `close(true)` now also starts.
     void close(true);
   };
   if (signal?.aborted) cancel();
@@ -248,9 +286,8 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
   return Object.freeze({
     sealBound: typeof seal === "function",
     async dump({ path, signal }) {
-      const reader = await connect({ host: source.host, port: source.port, user: BACKUP_READER_ROLE_V1,
-        database: source.database });
-      reader.on?.("error", () => {});
+      const { reader, terminateBackend } = await openEvidenceReaderV1(connect, { host: source.host,
+        port: source.port, user: BACKUP_READER_ROLE_V1, database: source.database });
       return withAbortableEvidenceClientV1(reader, signal, async reader => {
         await pinEvidenceSessionV1(reader);
         await assertEvidenceReaderV1(reader);
@@ -274,7 +311,7 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
           written = result();
         } finally { await handle.close(); }
         return { bytes: written.bytes, sha256: written.sha256, evidence };
-      }, async reader => reader.query("ROLLBACK"));
+      }, async reader => reader.query("ROLLBACK"), EVIDENCE_CLOSE_TIMEOUT_MS_V1, terminateBackend);
     },
 
     async restoreVerify({ generationId, dumpPath, signal }) {
@@ -330,13 +367,12 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
           { timeoutMs: timeouts.restoreMs, stdin: dump.createReadStream({ autoClose: false }),
             code: "updater_backup_verify_failed", signal });
         } finally { await dump.close(); }
-        const reader = await connect({ host: dataDir, port: scratchPort, user: SCRATCH_READER_V1,
-          database: SCRATCH_DATABASE_V1 });
-        reader.on?.("error", () => {});
+        const { reader, terminateBackend } = await openEvidenceReaderV1(connect, { host: dataDir, port: scratchPort,
+          user: SCRATCH_READER_V1, database: SCRATCH_DATABASE_V1 });
         return await withAbortableEvidenceClientV1(reader, signal, async reader => {
           const { shapeDigest, rowCounts } = await readDumpEvidence(reader);
           return { shapeDigest, rowCounts };
-        });
+        }, async () => {}, EVIDENCE_CLOSE_TIMEOUT_MS_V1, terminateBackend);
       } finally {
         if (started) await child(bin("pg_ctl"), ["-D", dataDir, "-m", "immediate", "-w", "-t", "30", "stop"],
           { timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_stop_failed" }).catch(() => {});
