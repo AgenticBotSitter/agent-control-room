@@ -41,12 +41,17 @@ const COORD_MUTEX = process.env.PROBE_COORD_MUTEX ?? "FOR NO KEY UPDATE";
 // "did not provide a valid installation release key" -- and on the merged tree
 // that refusal was raised from inside the body, so every round below was
 // unreachable and the deadlock assertion passed vacuously. The gateway must
-// carry a release signed by the SAME trust it hands the connector.
+// carry a release signed by the SAME trust it hands the connector; the fixture
+// is built in the body's `try` below, next to the handler that serves it.
+// Every bound is an environment override so a slower machine can widen it, and
+// so the owner can shrink it to prove the guards fire (see the report).
+// How long to wait for the hook before declaring the lock order untested.
 const HOOK_WAIT_MS = Number(process.env.PROBE_HOOK_WAIT_MS ?? 10_000);
-// Bounded per-test ceiling. `test:fleet` sets no `--test-timeout`, so without
-// this an unclosed handle here stalls the whole lane indefinitely (observed:
-// 28 minutes before anyone intervened).
+// Per-test ceiling. `test:fleet` sets no `--test-timeout`, so without this an
+// unclosed handle here stalls the whole lane indefinitely (observed: 28
+// minutes before anyone intervened). Kept above HOOK_WAIT_MS x rounds.
 const TEST_TIMEOUT_MS = Number(process.env.PROBE_TEST_TIMEOUT_MS ?? 180_000);
+// Whole-body bound, so a cluster is torn down even if the body overruns.
 const BODY_BOUND_MS = Number(process.env.PROBE_BODY_BOUND_MS ?? 150_000);
 
 function pool(postgres: RealPostgres, role: string) {

@@ -18,6 +18,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { resolve } from "node:path";
 import test from "node:test";
 import { Client, Pool } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
@@ -32,12 +33,11 @@ import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, seedFleetTenant, seedProp
   from "./support/fleet-fixture";
 // The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
-import { createFleetReleaseTrustForTestV1 } from "./support/fleet-release";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
 
 const PORT = Number(process.env.FLEET_CAPACITY_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58643);
 const PG = requiresRealPostgres();
 const sqlState = (error: unknown) => (error as { code?: string }).code;
-const RELEASE_TRUST = createFleetReleaseTrustForTestV1().trust;
 
 /**
  * One project per offer, so 0100's whole-tree lease-scope rule is never what is
@@ -135,7 +135,13 @@ test("a fleet worker never holds more live claims than its maxConcurrent, under 
           afterDecision: () => gateway.reconcile() });
         const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(workIntake.client, new Uint8Array(32).fill(5)));
         const unexpected: string[] = [];
-        const handler = createFleetGatewayHandlerV1({ store: gateway, proposals, releaseTrust: RELEASE_TRUST,
+        // The connector refuses enrollment unless the gateway advertises a
+        // release signed by the trust it hands out, so this gateway must carry
+        // one. It lives in the cluster's run directory, which is removed with it.
+        const release = await buildSignedFleetConnectorReleaseForTestV1({
+          root: resolve(postgres.runDirectory, "fleet-release"), builtFrom: "0".repeat(40) });
+        const handler = createFleetGatewayHandlerV1({ store: gateway, proposals, releaseTrust: release.releaseTrust,
+          connectorRelease: release.connectorRelease,
           onUnexpectedError: error => {
             const failure = error as { sqlState?: string; code?: string; message?: string };
             unexpected.push(`${failure.code ?? "?"}/${failure.sqlState ?? "?"}:${failure.message ?? "?"}`);

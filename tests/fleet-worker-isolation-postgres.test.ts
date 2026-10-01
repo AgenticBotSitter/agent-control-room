@@ -28,6 +28,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { resolve } from "node:path";
 import test from "node:test";
 import { Client, Pool } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
@@ -42,12 +43,11 @@ import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, seedFleetTenant, seedProp
   from "./support/fleet-fixture";
 // The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
-import { createFleetReleaseTrustForTestV1 } from "./support/fleet-release";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
 
 const PORT = Number(process.env.FLEET_ISOLATION_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59660);
 const PG = requiresRealPostgres();
 const sqlState = (error: unknown) => (error as { code?: string }).code;
-const RELEASE_TRUST = createFleetReleaseTrustForTestV1().trust;
 
 /** One project per offer, so 0100's whole-tree lease-scope rule is never what is
  *  measured: two claims in the same project collide by scope by design, and that
@@ -121,7 +121,13 @@ test("a repeatable read claimer is refused, and a serializable one is not", asyn
       const owner = new FleetOwnerServiceV1(fleetOwner.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
         afterDecision: () => gateway.reconcile() });
       const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(workIntake.client, new Uint8Array(32).fill(5)));
-      const handler = createFleetGatewayHandlerV1({ store: gateway, proposals, releaseTrust: RELEASE_TRUST,
+      // The connector refuses enrollment unless the gateway advertises a
+      // release signed by the trust it hands out, so this gateway must carry
+      // one. It lives in the cluster's run directory, which is removed with it.
+      const release = await buildSignedFleetConnectorReleaseForTestV1({
+        root: resolve(postgres.runDirectory, "fleet-release"), builtFrom: "0".repeat(40) });
+      const handler = createFleetGatewayHandlerV1({ store: gateway, proposals, releaseTrust: release.releaseTrust,
+        connectorRelease: release.connectorRelease,
         onUnexpectedError: () => {} });
       const server = createServer((request, response) => { void handler.handle(request, response); });
       await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
