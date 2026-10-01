@@ -82,12 +82,22 @@ const tuple = ({ role, kind, object, column = "", privilege: right, is_grantable
  * `role === "control_room_private_web"`: the updater grants to `postgres` too
  * (owner rights), and a schema can hold grants for any role. The one predicate
  * that is exactly right is on the SCHEMA of the object, and it is applied at BOTH
- * ends — the snapshot the diff reads, and the statements the applier emits — so
- * an `updater` item cannot enter the diff even if it arrived by some other route
- * (a hand-built snapshot, the offline `planMacDatabaseUpgradeSnapshotV1` path,
- * `verify-database-backup.mjs`). Belt and braces on purpose: the applier is the
- * only place a REVOKE can actually reach the database, and it is the last thing
- * between a catalog row and a change on disk.
+ * ends of the pipeline, so an `updater` item cannot reach a GRANT or a REVOKE:
+ *
+ *   1. the ROOT, `macGrantRowsToSetV1` — every path from catalogue rows to
+ *      compared tuples goes through it. Both callers are covered by that one
+ *      placement: the live `readMacGrantCatalogV1`, and
+ *      `planMacDatabaseUpgradeSnapshotV1`, which is handed a captured snapshot's
+ *      rows directly and never calls the live reader. Filtering in either
+ *      caller instead would have left the other one offering `updater` rows to
+ *      `diffMacGrantsV1` as EXTRA — MEASURED, that is what made the whole upgrade
+ *      path answer `upgrade_convergence_refused` while the applier filter was
+ *      already in place.
+ *   2. the STATEMENT, `grantSql` — the last thing between a catalog row and a
+ *      change on disk, reached whenever an `updater` item arrives from a route
+ *      that never built a set at all (a caller assembling a diff by hand).
+ *      REFUSED there, not skipped: skipping one of a pair would report a
+ *      convergence that was not performed.
  */
 export const macUpdaterOwnedSchema = "updater";
 const updaterOwned = item => {
@@ -213,14 +223,17 @@ JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])`;
 export async function readMacGrantCatalogV1(client) {
   const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
   const rows = (await client.query(macGrantCatalogSqlV1, [principals])).rows;
-  // END ONE of the filter: the live snapshot. `updater` rows are dropped HERE,
-  // at the root every caller reads through, so `planMacDatabaseUpgradeSnapshotV1`,
-  // the backup verifier and `applyMacDatabaseUpgradeV1` all stop seeing them.
-  return macGrantRowsToSetV1(rows.filter(row => macReleaseOwnedGrantV1(tuple(row))));
+  return macGrantRowsToSetV1(rows);
 }
 
+/** THE root of the filter. Every path from catalogue rows to compared tuples
+ * goes through here — the live read below, and `planMacDatabaseUpgradeSnapshotV1`,
+ * which is handed a captured snapshot's rows directly and never calls the live
+ * reader. Filtering here rather than in either caller is what makes the
+ * guarantee hold for both, and it is why `updater` rows cannot be offered to
+ * `diffMacGrantsV1` as EXTRA by either route. */
 export function macGrantRowsToSetV1(rows) {
-  return new Set(rows.map(row => tuple(row)));
+  return new Set(rows.map(row => tuple(row)).filter(macReleaseOwnedGrantV1));
 }
 
 export function diffMacGrantsV1(actual, desired) {
@@ -231,14 +244,12 @@ export function diffMacGrantsV1(actual, desired) {
 
 function grantSql(item, verb) {
   const [role, kind, object, column, right, grantable] = item.split("|");
-  // END TWO of the filter: the statement itself. Reached only when an `updater`
-  // item arrives from a route that did not pass `readMacGrantCatalogV1` — a
-  // hand-built snapshot, `planMacDatabaseUpgradeSnapshotV1` fed a captured JSON
-  // file, or a caller that assembles a diff directly. Refusing here is what
-  // makes the guarantee hold for those, rather than only for the happy path.
-  // A REFUSAL and not a skip: the caller passed in a grant set this converger
-  // is not allowed to act on, and silently dropping one of a pair of statements
-  // would report convergence it did not perform.
+  // THE SECOND root of the filter: the statement itself. Reached when an
+  // `updater` item arrives from a route that never built a set through
+  // `macGrantRowsToSetV1` — a caller assembling a diff by hand. A REFUSAL and
+  // not a skip: the caller passed in a grant set this converger is not allowed
+  // to act on, and silently dropping one of a pair of statements would report a
+  // convergence it did not perform.
   if (updaterOwned(item)) throw new Error("upgrade_updater_grant_refused");
   if (![...groups, ...Object.keys(macRolePlan)].includes(role) || !privilege.has(right))
     throw new Error("upgrade_grant_catalog_refused");
