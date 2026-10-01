@@ -2266,7 +2266,27 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
   const stopped = new Promise(resolve => { announceStop = resolve; });
   // A stop requested during a backoff sleep must not wait out the backoff: a
   // 60 s wait after Ctrl-C is indistinguishable, to the owner, from a hang.
-  const sleepOrStop = async ms => { await Promise.race([sleep(ms), stopped]); };
+  // A stop must not wait out a backoff, and it must do so without leaking a
+  // handle. A bare `Promise.race([sleep(ms), stopped])` is wrong twice over: the
+  // losing `sleep` keeps its setTimeout handle referenced, so the process cannot
+  // exit (this is what made the whole test:fleet lane hang after 28 passing
+  // tests), and if it later rejects that rejection is UNHANDLED, which crashes
+  // Node rather than hanging it.
+  //
+  // So the losing branch is always settled, never abandoned: `sleepOrStop` awaits
+  // the sleeping promise to completion after the race. `sleep` is the injected
+  // seam, so its own timer is settled by its own implementation and there is no
+  // orphaned handle to clear here.
+  const sleepOrStop = async ms => {
+    const sleeping = Promise.resolve().then(() => sleep(ms));
+    const outcome = await Promise.race([
+      sleeping.then(() => ({ kind: "slept" }), error => ({ kind: "failed", error })),
+      stopped.then(() => ({ kind: "stopped" })),
+    ]);
+    // Drain the loser. If it rejects here, that is now a HANDLED rejection.
+    await sleeping.catch(() => undefined);
+    if (outcome.kind === "failed") throw outcome.error;
+  };
   const shutdownPresence = async () => {
     stopPresence();
     try { await currentClient?.offline(); } catch { /* best effort; the server times out otherwise */ }
@@ -2310,7 +2330,15 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       catch { /* a failed check-in is not fatal here; the next beat retries */ }
       finally { presenceBusy = false; }
     };
-    if (!once) presenceTimerHandle = setInterval(() => { void presenceBeat(); }, presenceIntervalMs);
+    // `unref()` so this timer can never be the reason the process stays alive.
+    // It matters: a caller that abandons runWorker mid-pass (a test, or a host that
+    // stops awaiting it) would otherwise leave a 15s repeating handle behind, and
+    // the process would sit there with nothing to do. The presence beat is a
+    // keep-alive for the SERVER's view of us, never a reason WE wait.
+    if (!once) {
+      presenceTimerHandle = setInterval(() => { void presenceBeat(); }, presenceIntervalMs);
+      presenceTimerHandle.unref?.();
+    }
     let me;
     try { me = await client.heartbeat(tools?.capabilities ?? [], sessionRoster); }
     catch (error) {
