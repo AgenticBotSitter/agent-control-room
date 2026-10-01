@@ -817,14 +817,52 @@ CREATE OR REPLACE TRIGGER run_events_insert_guard BEFORE INSERT ON updater.run_e
 -- row/journal comparison when the run is becoming terminal) is what keeps that
 -- consistent. Both halves of that decision are in the database, not split
 -- between this function and a caller that has to know.
+-- WHY THE ROW IS LOCKED FIRST, AND WHY THAT IS NOT OPTIONAL. `guard_run_state`
+-- already returns early when `NEW.state = OLD.state` (a no-op move is not a
+-- transition), which means the statement alone cannot tell a REPEAT of the
+-- current state from a real advance. Without the lock below, twenty concurrent
+-- callers all asked for `approved -> prechecked` and all twenty got it: the
+-- measure was twenty `succeeded` rows and ordinals 1 through 20, twenty mirror
+-- events for one step. That is worse than the wedge it replaced, because the
+-- run's journal is the audit trail the recovery path reads — twenty copies of one
+-- step is a journal that lies about how the run got where it is.
+--
+-- So the function is REPEAT-SAFE, which is the runner's own requirement on every
+-- effect it takes (design §8.1): a step that is already recorded is a no-op that
+-- returns the row, and only a genuine advance writes a mirror event. A repeat
+-- therefore costs nothing, writes nothing, and — the part that matters — does not
+-- poison the ordinal chain for every later step.
+--
+-- The lock is `FOR UPDATE` on the run row, taken BEFORE the update and in the
+-- same statement. It is what makes the read of the prior state and the write of
+-- the new one one fact: a second caller blocks on that row until the first has
+-- committed, and then observes the state the first left. Without it the two read
+-- the same `prior_state` and both advance. It is also why twenty callers cannot
+-- deadlock here — they all want the same single row, in the same order.
 CREATE OR REPLACE FUNCTION updater.record_run_step(
   p_run_id text, p_lease_token text, p_state text, p_detail jsonb DEFAULT '{}'::jsonb,
   p_terminal boolean DEFAULT false)
 RETURNS jsonb
 LANGUAGE plpgsql SET search_path = pg_catalog, updater, pg_temp AS $$
 DECLARE
+  prior_state text;
   moved updater.runs;
 BEGIN
+  -- The lock and the read of the prior state, together. `FOR UPDATE` takes the
+  -- row lock and returns the row as it was; everything after this line sees a
+  -- state no other caller can change until this statement ends.
+  SELECT r.state INTO prior_state FROM updater.runs r
+    WHERE r.run_id = p_run_id AND r.lease_token = p_lease_token AND r.finished_at IS NULL
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';
+  END IF;
+  -- Already there: a repeat of the step that is recorded. Return the row as it
+  -- stands and write nothing, so the mirror keeps one row per step.
+  IF prior_state = p_state AND NOT p_terminal THEN
+    SELECT r.* INTO moved FROM updater.runs r WHERE r.run_id = p_run_id;
+    RETURN pg_catalog.to_jsonb(moved);
+  END IF;
   UPDATE updater.runs SET state = p_state, detail = p_detail,
       finished_at = CASE WHEN p_terminal THEN pg_catalog.now() ELSE NULL END
     WHERE run_id = p_run_id AND lease_token = p_lease_token AND finished_at IS NULL
@@ -833,9 +871,11 @@ BEGIN
     RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';
   END IF;
   -- The mirror row, in the same statement. The ordinal is the last one plus one,
-  -- read inside this same snapshot, so two callers racing for the next step get
-  -- one ordinal each and the second is refused by `guard_run_event_insert`'s
-  -- primary key rather than silently overwriting the first.
+  -- read inside this same snapshot while the row lock is still held, so two
+  -- callers racing for the next step serialise on the lock above and each gets
+  -- one ordinal. The second is refused by `guard_run_event_insert`'s primary key
+  -- rather than overwriting the first, which is a visible refusal rather than a
+  -- silent loss.
   IF NOT p_terminal THEN
     INSERT INTO updater.run_events(run_id, ordinal, state, detail)
       SELECT p_run_id,

@@ -570,6 +570,31 @@ test("B4: the run row and its journal mirror move in one statement", async t => 
       assert.deepEqual(await eventStates(client, runId),
         ["prechecked", "staged", "quick_backup", "draining", "switched", "restarted", "healthy"]);
 
+      // A repeated step is a NO-OP, not a second event. Design §8.1 requires every
+      // effect to be repeat-safe, and `guard_run_state` returns early when
+      // `NEW.state = OLD.state` (a no-op move is not a transition), so without an
+      // explicit repeat check the function wrote a mirror row every time it was
+      // asked for a state the row already held. Measured: three repeats produced
+      // ordinals 1, 2, 3 for one step. A run's journal is the audit trail the
+      // recovery path reads, so that is a record that lies about how the run got
+      // where it is — and it consumes the ordinal the NEXT real step needs.
+      //
+      // This is the single-caller shape of the twenty-caller case the load lane
+      // exercises; it is asserted here too because a sequential repeat is the
+      // shape a retried effect actually takes.
+      await quiesceInstall(store, client);
+      const repeatPlan = "plan-b4-repeat";
+      const repeatRun = await liveRun(store, client, repeatPlan, "lease-b4-repeat");
+      for (const _attempt of [1, 2, 3])
+        assert.equal((await store.transition(repeatRun, "lease-b4-repeat", "prechecked", { step: "prechecked" }))
+          .state, "prechecked", "a repeat of the current state succeeds, it is not refused");
+      assert.deepEqual(await eventStates(client, repeatRun), ["prechecked"],
+        "three repeats wrote ONE mirror row: a repeat is a no-op");
+      // And the chain is still usable for the steps that follow.
+      assert.equal((await store.transition(repeatRun, "lease-b4-repeat", "staged", {})).state, "staged");
+      assert.deepEqual(await eventStates(client, repeatRun), ["prechecked", "staged"],
+        "the next real step took ordinal 2, so the repeats did not poison the chain");
+
       // The lease is re-checked inside the statement. A second caller that does
       // not hold the token moves nothing AND writes nothing: the ownership check
       // and the move are one fact, not a read followed by a write.

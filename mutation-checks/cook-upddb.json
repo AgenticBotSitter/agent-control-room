@@ -36,10 +36,10 @@
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
-    "find": "  IF NOT FOUND THEN\n    RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';\n  END IF;",
-    "replace": "  IF NOT FOUND AND false THEN\n    RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';\n  END IF;",
+    "find": "  SELECT r.state INTO prior_state FROM updater.runs r\n    WHERE r.run_id = p_run_id AND r.lease_token = p_lease_token AND r.finished_at IS NULL\n    FOR UPDATE;\n  IF NOT FOUND THEN\n    RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  SELECT r.state INTO prior_state FROM updater.runs r\n    WHERE r.run_id = p_run_id AND r.finished_at IS NULL\n    FOR UPDATE;\n  IF NOT FOUND THEN\n    RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';\n  END IF;",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
-    "why": "B4: the lease token is re-checked INSIDE the atomic statement, so a caller without it moves nothing rather than reading ownership and then writing"
+    "why": "a second updater boot must not transition a run without its exact lease token. The check is the row lock itself, so ownership and the move are one fact; dropping the token from its WHERE clause lets any caller move any run"
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
@@ -75,5 +75,12 @@
     "replace": "    ALTER TABLE updater.owner_requests ADD CONSTRAINT owner_request_passkey_kinds\n      CHECK (true);",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
     "why": "M1: `requires_passkey` is derived from the request KIND, not chosen by the web login; without it a rollback can claim it needs no passkey (review P5a)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF prior_state = p_state AND NOT p_terminal THEN\n    SELECT r.* INTO moved FROM updater.runs r WHERE r.run_id = p_run_id;\n    RETURN pg_catalog.to_jsonb(moved);\n  END IF;",
+    "replace": "  IF false THEN\n    SELECT r.* INTO moved FROM updater.runs r WHERE r.run_id = p_run_id;\n    RETURN pg_catalog.to_jsonb(moved);\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-load-postgres.test.ts",
+    "why": "B4: repeating a step must be a no-op. Without it twenty concurrent callers asking for the same state each wrote a mirror event, so the run's journal carried twenty copies of one step"
   }
 ]
