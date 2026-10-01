@@ -178,6 +178,12 @@ test("the executable down migration refuses records and removes every owned obje
   const queueDown = await readFile("db/down/0104_work_batch_agent_queue.sql", "utf8");
   const ownerDown = await readFile("db/down/0102_work_batch_owner_approval.sql", "utf8");
   const down = await readFile("db/down/0093_work_batch_intake.sql", "utf8");
+  const graph = await readMigrationGraph(".");
+  // 0104's own rung goes first, newest first, exactly as a stacked rollback would
+  // take it: 0213's view reads 0104's admissions table, so 0104's down cannot run
+  // while that view is still there.
+  for (const file of downRungBefore(graph, "0104_work_batch_agent_queue.sql").files)
+    await populated.raw.exec(await readFile(`db/down/${file}`, "utf8"));
   await populated.raw.exec(queueDown);
   await assert.rejects(populated.raw.exec(ownerDown), /down migration refused/u);
   await populated.raw.exec("ROLLBACK");
@@ -193,7 +199,6 @@ test("the executable down migration refuses records and removes every owned obje
   // 0109 owns -- which is why 0109's down refuses to run before them. A
   // hand-maintained list went stale on exactly that last edge and the
   // executable down migration was never tested against a cluster carrying it.
-  const graph = await readMigrationGraph(".");
   const rung = downRungBefore(graph, "0093_work_batch_intake.sql");
   assert.ok(rung.files.includes("0109_pipeline_unattended_advance.sql"),
     "the rung must carry 0109, whose down guards the history guard 0151 and 0153 still build on");
