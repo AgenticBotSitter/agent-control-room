@@ -54,9 +54,12 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   // Before the browser identifies hosted versus Mac-local, server rendering
   // exposes only links shared by both. Hosted links hydrate after the read.
   for (const href of ["/projects", "/workers", "/needs-me"]) assert.match(html, new RegExp(`href="${href}"`));
-  assert.doesNotMatch(html, /href="\/setup"/);
-  assert.doesNotMatch(html, /href="\/settings"/);
-  assert.doesNotMatch(html, /href="\/ideas"/);
+  // The Home-only grouped browser intentionally lists every registry page;
+  // only the header itself keeps the pre-detection shared-route restriction.
+  const header = html.slice(0, html.indexOf("</header>") + "</header>".length);
+  assert.doesNotMatch(header, /href="\/setup"/);
+  assert.doesNotMatch(header, /href="\/settings"/);
+  assert.doesNotMatch(header, /href="\/ideas"/);
   assert.match(html, /aria-controls="private-workspace-navigation"/);
   assert.match(html, /<nav id="private-workspace-navigation" class="private-navigation"/);
   assert.doesNotMatch(html, /<details/);
