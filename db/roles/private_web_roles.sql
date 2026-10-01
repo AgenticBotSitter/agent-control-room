@@ -197,5 +197,12 @@ GRANT SELECT, INSERT ON control_task_declared_outputs, control_task_declared_inp
   control_job_artifact_inputs TO control_room_private_web;
 GRANT SELECT ON control_result_upload_sessions, control_result_upload_chunks,
   control_result_publications TO control_room_private_web;
+-- Text-copy derivations (0212-0213). The owner reads them through the
+-- per-project view rather than the table, so a project-scoped read is the only
+-- shape they get here: the view carries the source file's display name and the
+-- source state, and its own SECURITY INVOKER means the owner's existing
+-- authority still decides which projects it resolves. No INSERT and no UPDATE —
+-- a derivation is written by the publisher and is never rewritten.
+GRANT SELECT ON control_project_text_copy_derivations TO control_room_private_web;
 
 COMMIT;

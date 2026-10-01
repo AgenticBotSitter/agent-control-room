@@ -15,24 +15,32 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-
-// Generated from public migrations through 0237 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
-// including generic external-content migrations 0025/0026, by the controlled
-// PGlite digest script. Recomputed for the fix round after 0206's quota guard
-// gained its per-tenant advisory lock, 0207's producer guard was corrected, and
-// 0207's acceptance guard gained the owner check on discarding a set; then again
-// after 0230 gave the acceptance guard a NAMED rejection arm and the plan's
-// 90-day sweep, which closed the review's S3 (an unaccepted set was previously
-// undisposable by anyone, the superuser included). The pre-0230 digest was
-// re-derived with 0230 removed and matched the previous value exactly, so this
-// change is 0230's and only 0230's. Recomputed once more after 0209-0211 (the
-// upload sessions, the publication receipt and the combine-input bindings) were
-// merged onto the ledger cook/v1 had reached at 0237; catalog query below; not a
-// mutable database marker.
-// Recomputed once more after 0210's stored-set guard was corrected to key on
-// `producer_kind` rather than `source_kind`, so the digest records THAT and not
-// 0209-0211's arrival alone.
-export const privateWebSchemaDigest = "f6be955079d2065915b378ff3c62529da47036412368483c02653a11b604ef45";
+// Generated from the full public migration ledger of THIS tree, in filename order
+// including the assigned gaps, by the controlled digest script and cross-checked
+// against a real PostgreSQL 17 cluster installed the production way.
+//
+// History of this constant, in the order the rounds happened:
+//  - through 0196, plus the owner-push migrations 0224-0227 (MIG-I);
+//  - through 0230, whose acceptance guard gained a NAMED rejection arm and whose
+//    90-day sweep made an unaccepted set disposable. The pre-0230 digest was
+//    re-derived with 0230 removed and matched the previous value exactly, so that
+//    change was 0230's and only 0230's;
+//  - through 0237 with 0209-0211 (the upload sessions, the publication receipt
+//    and the combine-input bindings) merged onto that ledger, then once more after
+//    0210's stored-set guard was corrected to key on `producer_kind` rather than
+//    `source_kind`;
+//  - THIS merge round, for the text-copy derivations: cook/v1 at 0238 plus 0212
+//    (the derivation record) and 0213 (its two read views).
+//
+// Neither side's value survived the merge and neither could have. cook/v1's value
+// was derived from a tree with no 0212/0213; this branch's pre-merge value was
+// derived from a 0213-era tree with none of cook/v1's 0209-0211 or 0224-0238, so
+// it was wrong here by construction and could not be carried across. The value
+// below is the merged tree's and only the merged tree's; neither pre-merge value
+// is expected to appear anywhere.
+//
+// Catalog query below; not a mutable database marker.
+export const privateWebSchemaDigest = "9e8d58708fc41b691e0372a485cb612e1778a63d0eddbbac002dcb09a3da9948";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -89,7 +97,19 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // owner's Stop decision about an upload is the 0209 guard's to check and not
   // a column this login can simply set.
   "control_task_declared_outputs", "control_task_declared_inputs", "control_job_artifact_inputs",
-  "control_result_upload_sessions", "control_result_upload_chunks", "control_result_publications"] as const;
+  "control_result_upload_sessions", "control_result_upload_chunks", "control_result_publications",
+  // 0213 (MIG-E part 2): the owner's per-project read of text-copy derivations.
+  //
+  // The VIEW, never `control_text_copy_derivations` itself, and the difference
+  // is the whole security property. The web login holds no privilege on the
+  // table — it holds SELECT on a schema-owner-owned view whose WHERE clause
+  // re-checks the caller's own live owner grant and live web session inline.
+  // Naming the table here instead of the view would make this preflight demand
+  // a tenant-wide SELECT on every project's derivations, which is exactly the
+  // cross-project read the view exists to prevent; a future migration that
+  // granted the table to the web login therefore fails the preflight rather than
+  // silently widening the owner.
+  "control_project_text_copy_derivations"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",

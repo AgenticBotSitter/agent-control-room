@@ -493,12 +493,22 @@ test("the role manifest names every role the migrations, down files and schema f
   // that names a role the upgrade never creates leaves the owner with a live
   // role no tool reasons about. It is a VPS-only role and not a Mac login, which
   // is why nothing failed until 0211 and 0238 met.
+  //
+  // 0213 (the text-copy read views) added the last two, for the same reason and
+  // in both directions: it grants SELECT on `control_worker_text_copy_derivations`
+  // to `control_room_native_queue_worker` and ALTERs both of its views to
+  // `control_room_schema_owner`, so its DOWN file must name both roles to revoke
+  // and un-own exactly what the up file conferred, leaving nothing behind. Both
+  // new names are already asserted above to be manifest GROUPS, so naming them
+  // here introduces no live role the upgrade cannot reason about, and the
+  // `vpsOnlyGroups` count assertion above still holds: a Mac install creates
+  // them, it just never had a migration that mentioned them.
   assert.deepEqual([...touched.keys()].sort(),
     ["control_room_agent_reviewer", "control_room_application", "control_room_backup",
       "control_room_fleet_gateway", "control_room_github_broker", "control_room_local_result_publisher",
-      "control_room_native_results", "control_room_news_coordinator", "control_room_private_web",
-      "control_room_reader", "control_room_schedule_admissions", "control_room_task_coordinator",
-      "control_room_work_intake"],
+      "control_room_native_queue_worker", "control_room_native_results", "control_room_news_coordinator",
+      "control_room_private_web", "control_room_reader", "control_room_schedule_admissions",
+      "control_room_schema_owner", "control_room_task_coordinator", "control_room_work_intake"],
   "the migrations name these manifest roles and no others");
 
   // The scanner reads what SQL actually means, so prove it on a temp copy of
