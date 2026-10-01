@@ -38,21 +38,21 @@
     "file": "db/migrations/0238_updater_health_counts.sql",
     "find": "    WHERE b.singleton\n      AND (SELECT count(*) FROM public.workspaces x WHERE x.tenant_id = b.tenant_id) = 1\n  )\n",
     "replace": "    WHERE b.singleton\n",
-    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; git checkout -- deploy/postgres/migration-ledger.json",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; git checkout -- deploy/postgres/migration-ledger.json",
     "why": "workspaces has no unique constraint on tenant_id alone, so an ambiguous scope would silently DOUBLE every count -- and a health signal that doubles still says healthy"
   },
   {
     "file": "db/roles/updater_release_reader_roles.sql",
     "find": "    EXECUTE 'GRANT EXECUTE ON FUNCTION public.updater_health_counts() TO control_room_deployer';",
     "replace": "    -- mutation: the updater's login is never granted the health counts",
-    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; git checkout -- deploy/postgres/migration-ledger.json",
     "why": "without this grant the updater's independent read cannot run at all and §8.4's count comparison can never be satisfied"
   },
   {
     "file": "db/down/0238_updater_health_counts.sql",
     "find": "      REVOKE EXECUTE ON FUNCTION updater_health_counts() FROM control_room_deployer;",
     "replace": "      -- mutation: the down migration leaves the grant behind",
-    "test": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; git checkout -- deploy/postgres/migration-ledger.json",
     "why": "a down migration that dropped the function but left a grant behind is not a reversal; it is an upgrade that cannot be rolled back the way it went up"
   },
   {
