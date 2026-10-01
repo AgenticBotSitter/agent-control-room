@@ -21,6 +21,7 @@ import { useVisiblePolling } from "./use-visible-polling";
 import { OperationsControlPanel } from "./operations-control";
 import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount, workerChipToneV1 } from "./owner-ui";
 import { UpdateCandidatesHome } from "./update-candidates-home";
+import { EverythingElseMenu } from "./everything-else-menu";
 
 export type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
 export function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
@@ -304,6 +305,9 @@ export function PrivateHome() {
     {runtime.mode === "hosted" && <PrivateOperatorCapacityWorkspace />}
     {runtime.mode === "hosted" && ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
       <a href="/ideas">Open Idea Lab</a> to compare ideas before promoting an approved one to a project.</aside>}
+    {/* This sits after the attention-first dashboard, so the browse menu never
+        pushes the owner’s urgent work below the fold on a phone. */}
+    <EverythingElseMenu />
     <div className="private-home-lead">
       <p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>

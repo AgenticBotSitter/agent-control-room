@@ -54,6 +54,20 @@
 .private-home-grid p { margin: 0; color: var(--muted); }
 .private-home-grid span { align-self: end; color: var(--green); font-weight: 750; }
 .private-home-note { max-width: 48rem; margin-bottom: 0; }
+.private-everything-else { margin-top: 1rem; min-width: 0; }
+.private-everything-else-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.private-everything-else-heading h2 { margin: 0; }
+.private-everything-else-toggle { display: none; }
+.private-everything-else-pages { margin-top: 1rem; min-width: 0; }
+.private-everything-else-filter { display: block; margin-bottom: .35rem; font-size: .875rem; font-weight: 650; }
+.private-everything-else-pages input { box-sizing: border-box; width: 100%; min-height: 44px; min-width: 0; padding: .65rem; border: 1px solid var(--border-strong); border-radius: .5rem; color: var(--text); background: var(--surface); font: inherit; }
+.private-page-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); gap: 1rem; margin-top: 1rem; }
+.private-page-group { min-width: 0; }
+.private-page-group h3 { margin: 0 0 .5rem; font-size: .9rem; color: var(--muted); }
+.private-page-group ul { display: grid; gap: .25rem; margin: 0; padding: 0; list-style: none; }
+.private-page-group a { display: flex; align-items: center; min-height: 44px; min-width: 0; padding: .45rem .65rem; border-radius: .5rem; color: var(--green); font-weight: 700; overflow-wrap: anywhere; }
+.private-page-group a:hover { background: var(--surface-2); }
+.private-page-filter-empty { margin: 1rem 0 0; color: var(--muted); overflow-wrap: anywhere; }
 .private-dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
 .private-dashboard-grid h2 { margin-top: 0; }
 .private-dashboard-projects { grid-column: 1 / -1; }
@@ -507,6 +521,11 @@
   .private-navigation.is-open { display: grid; }
   .private-header nav a { justify-content: space-between; }
   .private-home-grid { grid-template-columns: 1fr; }
+  .private-everything-else-heading { align-items: start; }
+  .private-everything-else-toggle { display: inline-flex; flex: none; }
+  .private-everything-else-pages { display: none; }
+  .private-everything-else-pages.is-open { display: block; }
+  .private-page-groups { grid-template-columns: 1fr; }
   .private-pipeline-items header, .private-pipeline-heading { display: grid; gap: .35rem; }
   .private-preset-bar, .private-work-graph-grid header { display: grid; gap: .75rem; }
   .private-editor-grid { grid-template-columns: 1fr; }

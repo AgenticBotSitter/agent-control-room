@@ -4,22 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useProductDisplayName, useProductModule } from "./product-configuration";
 import { useLocalRuntime } from "./local-runtime";
 import { readTaskAttention } from "../../src/web/v1/queue-attention-browser-client";
-
-type NavigationItem = { href: string; label: string; optional?: boolean; localOnly?: boolean };
-
-const navigation: readonly NavigationItem[] = [
-  { href: "/", label: "Home" },
-  { href: "/morning", label: "Morning summary" },
-  { href: "/projects", label: "Projects" },
-  { href: "/workers", label: "Workers" },
-  { href: "/session-watch", label: "Session watch" },
-  { href: "/setup", label: "Setup" },
-  { href: "/workboard", label: "Control Room" },
-  { href: "/needs-me", label: "Action Inbox" },
-  { href: "/settings", label: "Settings" },
-  { href: "/ideas", label: "Idea Lab", optional: true },
-  { href: "/sign-out", label: "Sign out", localOnly: true },
-];
+import { headerPageRegistry } from "./page-registry";
 
 function isCurrent(pathname: string | undefined, href: string) {
   return href === "/" ? pathname === href : pathname === href || pathname?.startsWith(`${href}/`);
@@ -113,12 +98,14 @@ export function PrivateHeader() {
       toggle's `aria-expanded` is what conveys the collapsed state. */}
     <nav id="private-workspace-navigation" className={menuOpen ? "private-navigation is-open" : "private-navigation"}
       aria-label="Workspace pages">
-      {navigation.filter(item => runtime.mode === "hosted" ? !item.localOnly && (!item.optional || ideaLab)
-        : ["/", "/morning", "/projects", "/workers", "/session-watch", "/needs-me", "/sign-out"].includes(item.href)).map(item => <a key={item.href} href={item.href}
-        aria-current={isCurrent(pathname, item.href) ? "page" : undefined}>
-        {item.label}{item.optional ? <span className="private-optional">Optional</span> : null}
-        {item.href === "/needs-me" ? <NeedsAttentionBadge enabled={runtime.mode !== "checking"} /> : null}
-      </a>)}
+      {headerPageRegistry.filter(item => runtime.mode === "hosted" ? !item.localOnly && (!item.optional || ideaLab)
+        : ["/", "/morning", "/projects", "/workers", "/session-watch", "/needs-me", "/sign-out"].includes(item.headerHref ?? item.href)).map(item => {
+        const href = item.headerHref ?? item.href;
+        return <a key={item.key} href={href} aria-current={isCurrent(pathname, href) ? "page" : undefined}>
+        {item.headerTitle ?? item.title}{item.optional ? <span className="private-optional">Optional</span> : null}
+        {item.key === "needs-me" ? <NeedsAttentionBadge enabled={runtime.mode !== "checking"} /> : null}
+      </a>;
+      })}
     </nav>
   </header>;
 }
