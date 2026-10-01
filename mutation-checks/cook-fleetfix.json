@@ -8,8 +8,8 @@
   },
   {
     "file": "db/roles/fleet_gateway_roles.sql",
-    "find": "  fleet_worker_credentials, fleet_worker_presence TO control_room_fleet_gateway;",
-    "replace": "  fleet_worker_credentials, fleet_worker_presence, fleet_enrollment_redemptions TO control_room_fleet_gateway;",
+    "find": "  fleet_worker_credentials, fleet_worker_presence, fleet_worker_agents, fleet_presence_transitions TO control_room_fleet_gateway;",
+    "replace": "  fleet_worker_credentials, fleet_worker_presence, fleet_worker_agents, fleet_presence_transitions, fleet_enrollment_redemptions TO control_room_fleet_gateway;",
     "test": "node --import tsx --test --test-name-pattern \"owner decision tables\" tests/fleet-connector.test.ts",
     "why": "the gateway cannot manufacture an enrollment redemption by direct SQL"
   },
