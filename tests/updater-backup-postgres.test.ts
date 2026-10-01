@@ -1936,6 +1936,55 @@ test("a production-login cancellation is recorded and leaves the shared backup l
   }, { port: PORT + 2, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
 });
 
+test("Stop cancels blocked evidence SQL through the production reader session", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await withBackupStoreV1(postgres, async ({ store, superuser }) => {
+      const { base, installRoot, backupRoot } = await backupRootForV1(t);
+      const scratchRoot = join(base, "scratch");
+      await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
+      const release = await as(postgres, "migrator");
+      try {
+        await release.query("CREATE TABLE public.evidence_stop(id bigint PRIMARY KEY)");
+        await release.query("INSERT INTO public.evidence_stop(id) VALUES (1)");
+        await release.query("BEGIN");
+        await release.query("LOCK TABLE public.evidence_stop IN ACCESS EXCLUSIVE MODE");
+
+        const controller = new AbortController();
+        const backup = new UpdaterBackupV1({ store, ports: productPortsV1(postgres, scratchRoot),
+          policy: internalPolicyV1(installRoot, backupRoot) });
+        const running = backup.runOnce({ manual: true, signal: controller.signal });
+        let blocked = false;
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          const result = await superuser.query(`SELECT pg_catalog.count(*)::int AS count FROM pg_catalog.pg_stat_activity
+            WHERE usename='${BACKUP_READER_ROLE_V1}' AND wait_event_type='Lock'`);
+          if (Number(result.rows[0]?.count) === 1) { blocked = true; break; }
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        assert.equal(blocked, true, "the production evidence reader is blocked on the release-held table lock");
+        const stoppedAt = Date.now(); controller.abort();
+        const outcome = await running;
+        assert.equal(outcome.status, "failed"); assert.equal(outcome.code, "updater_backup_cancelled");
+        assert.ok(Date.now() - stoppedAt < 5_000, "Stop does not wait for the 60/600 second SQL timeouts");
+        const readers = await superuser.query(`SELECT pg_catalog.count(*)::int AS count FROM pg_catalog.pg_stat_activity
+          WHERE usename='${BACKUP_READER_ROLE_V1}'`);
+        assert.equal(Number(readers.rows[0]?.count), 0, "the cancelled evidence reader session is closed");
+        assert.deepEqual((await readdir(backupRoot)).filter(name => name.startsWith(".inprogress-")), [],
+          "cancellation removes the unfinished generation");
+        const lock = await store.acquireBackupLock();
+        assert.equal(lock.status, "acquired", "cancellation releases the shared backup lock");
+        await store.releaseBackupLock();
+      } finally {
+        await release.query("ROLLBACK").catch(() => {});
+        await release.end().catch(() => {});
+      }
+    });
+  }, { port: PORT + 2, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
+});
+
 test("the backup lane ran on a real cluster, not a skip", () => {
   // `required` is read HERE, inside the test body, and not hoisted into a constant
   // at module scope: `needsPg()` runs as each test is registered, so a constant

@@ -133,6 +133,35 @@ function hashingFileSinkV1(handle) {
 const confQuoteV1 = value => `'${value.replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
 
 /**
+ * Own a PostgreSQL evidence client for the duration of one operation.
+ * `pg` force-closes a non-pipelined connection with an active query when
+ * `end()` is called, which makes Stop interrupt a blocked evidence statement
+ * immediately instead of waiting for its 60/600 second server timeout.
+ */
+async function withAbortableEvidenceClientV1(client, signal, operation, beforeEnd = async () => {}) {
+  let cancelled = false;
+  const cancel = () => {
+    cancelled = true;
+    // Observe the promise here; the operation's active query is what reports
+    // the disconnect to the main control flow.
+    void client.end().catch(() => {});
+  };
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    if (cancelled) throw updaterRefuseV1("updater_backup_cancelled");
+    return await operation(client);
+  } catch (error) {
+    if (cancelled || signal?.aborted) throw updaterRefuseV1("updater_backup_cancelled");
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    await beforeEnd(client).catch(() => {});
+    await client.end().catch(() => {});
+  }
+}
+
+/**
  * The production ports for `UpdaterBackupV1`.
  *
  * @param {object} options
@@ -190,7 +219,7 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
       const reader = await connect({ host: source.host, port: source.port, user: BACKUP_READER_ROLE_V1,
         database: source.database });
       reader.on?.("error", () => {});
-      try {
+      return withAbortableEvidenceClientV1(reader, signal, async reader => {
         await pinEvidenceSessionV1(reader);
         await assertEvidenceReaderV1(reader);
         await reader.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
@@ -213,10 +242,7 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
           written = result();
         } finally { await handle.close(); }
         return { bytes: written.bytes, sha256: written.sha256, evidence };
-      } finally {
-        await reader.query("ROLLBACK").catch(() => {});
-        await reader.end().catch(() => {});
-      }
+      }, async reader => reader.query("ROLLBACK"));
     },
 
     async restoreVerify({ generationId, dumpPath, signal }) {
@@ -275,10 +301,10 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
         const reader = await connect({ host: dataDir, port: scratchPort, user: SCRATCH_READER_V1,
           database: SCRATCH_DATABASE_V1 });
         reader.on?.("error", () => {});
-        try {
+        return await withAbortableEvidenceClientV1(reader, signal, async reader => {
           const { shapeDigest, rowCounts } = await readDumpEvidence(reader);
           return { shapeDigest, rowCounts };
-        } finally { await reader.end().catch(() => {}); }
+        });
       } finally {
         if (started) await child(bin("pg_ctl"), ["-D", dataDir, "-m", "immediate", "-w", "-t", "30", "stop"],
           { timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_stop_failed" }).catch(() => {});

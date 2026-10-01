@@ -585,15 +585,56 @@ test("the backup worker starts at 02:30, collapses missed nights, and admits one
   await stateFiles.writeBackupSchedule(new Date(now.getTime() - 3 * 86_400_000).toISOString());
   let catchupFinish; backup.runOnce = async () => { runs += 1; await new Promise(resolve => { catchupFinish = resolve; }); return { status: "verified" }; };
   const restarted = new UpdaterBackupWorkerV1({ backup, stateFiles, clock: () => new Date(now), timeoutMs: 10_000 });
-  assert.equal((await restarted.tick()).status, "initialized"); assert.equal(runs, 1,
-    "an overdue marker is rolled forward instead of running during updater startup");
-  const next = await stateFiles.readBackupSchedule(); now = new Date(Date.parse(next.nextWindowAt) + 1);
   const missed = await Promise.all(Array.from({ length: 20 }, () => restarted.tick()));
-  assert.equal(missed.filter(value => value.status === "started").length, 1, "several missed nights collapse to one catch-up");
+  assert.equal(missed.filter(value => value.status === "started").length, 1,
+    "an overdue marker runs once at restart and several missed nights collapse to one catch-up");
   assert.equal(runs, 2); catchupFinish(); await restarted.stop();
   assert.equal(nextBackupWindowV1(new Date(2026, 9, 1, 2, 29, 59)).getHours(), 2);
   assert.equal(nextBackupWindowV1(new Date(2026, 9, 1, 2, 30, 0)).getDate(), 2,
     "02:30 itself advances to tomorrow instead of firing repeatedly");
+});
+
+test("the fixed 02:30 slot runs on seven consecutive nights regardless of completion time", async t => {
+  const root = await temporaryRoot(t), stateFiles = new UpdaterStateFilesV1(root, "lease-one");
+  let now = new Date(2026, 9, 1, 1, 0, 0, 0), lastSuccessAt = null;
+  const durations = [6_000, 65 * 60_000, 1_000, 2 * 60 * 60_000, 45_000, 30 * 60_000, 9_000];
+  const calls = [];
+  const backup = {
+    async status() {
+      const missing = lastSuccessAt === null || now.getTime() - lastSuccessAt > 93_600_000;
+      return { fresh: !missing, state: missing ? "missing" : "verified", badge: missing ? "missing" : "ok" };
+    },
+    async runOnce(options) {
+      calls.push({ at: now.toISOString(), ...options });
+      now = new Date(now.getTime() + (durations[calls.length - 1] ?? 5_000));
+      lastSuccessAt = now.getTime();
+      return { status: "verified" };
+    },
+  };
+  const worker = new UpdaterBackupWorkerV1({ backup, stateFiles, clock: () => new Date(now), timeoutMs: 10_000 });
+  t.after(() => worker.stop());
+  assert.equal((await worker.tick()).status, "initialized");
+  for (let night = 0; night < 7; night += 1) {
+    const schedule = await stateFiles.readBackupSchedule();
+    now = new Date(Date.parse(schedule.nextWindowAt) + 1_000);
+    assert.equal((await worker.tick()).status, "started", `night ${night + 1} starts in its slot`);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((await backup.status()).fresh, true, `night ${night + 1} does not raise a missing alarm`);
+  }
+  assert.equal(calls.length, 7, "all seven nightly slots run exactly once");
+  assert.ok(calls.every(call => call.scheduled === true && call.manual === false),
+    "every slot is explicitly admitted by the worker's one-run claim");
+
+  // Simulate a night asleep. The persisted overdue slot is claimed once by a
+  // fresh worker at startup, and a successful catch-up clears the missing fact.
+  const overdue = await stateFiles.readBackupSchedule();
+  now = new Date(Date.parse(overdue.nextWindowAt) + 27 * 60 * 60_000);
+  const restarted = new UpdaterBackupWorkerV1({ backup, stateFiles, clock: () => new Date(now), timeoutMs: 10_000 });
+  assert.equal((await restarted.tick()).status, "started");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 8, "the missed night catches up once, without a burst");
+  assert.equal((await backup.status()).fresh, true, "the successful catch-up leaves no false missing alarm");
+  await restarted.stop();
 });
 
 test("a malformed backup schedule refuses instead of skipping or running at an invented time", async t => {

@@ -435,9 +435,13 @@ export class UpdaterBackupV1 {
    * runs while self-update is Off) and skips the due-time check. Everything else
    * about it is identical, deliberately: a manual backup that took a different
    * path would be untested by every nightly run.
-   * @param {{manual?: boolean, signal?: AbortSignal | null}} [options]
+   * `scheduled` means the root-held worker has already claimed exactly one
+   * 02:30 slot. That claim, rather than a completion-relative database time,
+   * decides whether the slot runs: a slow backup must not push tomorrow's
+   * fixed slot later.
+   * @param {{manual?: boolean, scheduled?: boolean, signal?: AbortSignal | null}} [options]
    */
-  async runOnce({ manual = false, signal = null } = {}) {
+  async runOnce({ manual = false, scheduled = false, signal = null } = {}) {
     // An in-process second caller is NOT recorded: the first caller is running
     // and will record its own outcome, so this is not a backup that failed.
     if (this.#running) return Object.freeze({ status: "busy", code: "updater_backup_already_running",
@@ -446,7 +450,7 @@ export class UpdaterBackupV1 {
     let generationId = null, lockHeld = false, root = null;
     try {
       if (signal?.aborted) throw UpdaterBackupV1.#refuse("updater_backup_cancelled");
-      if (!manual) {
+      if (!manual && !scheduled) {
         // The due check reads `next_due_at` — written from `pg_catalog.now()` —
         // and compares it with this process's clock. The two are different clocks,
         // and the design says "DB now() everywhere" for a reason: a Mac whose

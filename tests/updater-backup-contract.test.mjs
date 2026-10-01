@@ -25,6 +25,7 @@ import { BACKUP_LOCK_TABLE_V1, BACKUP_MAX_AGE_SECONDS_V1, BACKUP_KEPT_GENERATION
 import { UpdaterBackupV1, assertBackupRootOnDiskV1, assertSafeGenerationV1, backupManifestV1,
   resolveBackupRootPolicyV1 } from "../src/updater/v1/backup-runner.mjs";
 import { isQuotedIdentifierV1, readDumpEvidence } from "../src/updater/v1/backup-evidence.mjs";
+import { postgresBackupPortsV1 } from "../src/updater/v1/backup-ports.mjs";
 
 const DDL_DIRECTORY = join(process.cwd(), "src/updater/v1/ddl");
 const read = async file => readFile(join(DDL_DIRECTORY, file), "utf8");
@@ -369,6 +370,43 @@ test("a backup that is not due is not started, and writes nothing", async () => 
   assert.deepEqual(store.names(), ["freshness"],
     "a not-due tick touches the database once and stops there");
   assert.ok(outcome.nextDueAt);
+});
+
+test("a claimed scheduled slot bypasses the completion-relative due time", async () => {
+  const store = new RecordingStore({ nextDueAt: new Date(Date.now() + 3_600_000).toISOString() });
+  const outcome = await makeBackup(store).runOnce({ scheduled: true });
+  assert.equal(outcome.status, "failed", "the claimed slot reaches the attempt path (the fixture root is absent)");
+  assert.ok(!store.names().includes("freshness"), "completion time cannot veto a worker-claimed 02:30 slot");
+  assert.equal(store.names()[0], "acquireBackupLock");
+});
+
+test("Stop interrupts a blocked source evidence query and reports cancellation", async t => {
+  const base = await mkdtemp(join(await realpath(tmpdir()), "b19-evidence-cancel-"));
+  t.after(() => rm(base, { recursive: true, force: true, maxRetries: 2 }));
+  await mkdir(join(base, "bin")); await mkdir(join(base, "scratch"));
+  let rejectBlocked, entered, ends = 0;
+  const blocked = new Promise((_, reject) => { rejectBlocked = reject; });
+  const inQuery = new Promise(resolve => { entered = resolve; });
+  const client = {
+    on() {},
+    async query(input) {
+      const text = typeof input === "string" ? input : input.text;
+      if (/FROM pg_catalog\.pg_roles r WHERE r\.rolname/u.test(text)) return { rows: [{ rolsuper: false,
+        rolcreaterole: false, rolcreatedb: false, rolreplication: false, inherits_authority: false, can_grant: false }] };
+      if (/pg_export_snapshot/u.test(text)) return { rows: [{ snapshot: "00000003-0000001B-1" }] };
+      if (/AS snapshot/u.test(text)) { entered(); return blocked; }
+      return { rows: [] };
+    },
+    async end() { ends += 1; rejectBlocked?.(new Error("connection closed by Stop")); },
+  };
+  const ports = postgresBackupPortsV1({ pgBin: join(base, "bin"), scratchRoot: join(base, "scratch"),
+    source: { host: base, database: "control_room" }, connect: async () => client,
+    spawnChild() { throw new Error("child_must_not_start_before_evidence_finishes"); } });
+  const controller = new AbortController();
+  const running = ports.dump({ path: join(base, "database.dump"), signal: controller.signal });
+  await inQuery; controller.abort();
+  await assert.rejects(running, /updater_backup_cancelled/u);
+  assert.ok(ends >= 1, "abort closes the exact client holding the blocked SQL statement");
 });
 
 test("a due backup takes the lock, and a held lock is RECORDED as a failed attempt", async () => {

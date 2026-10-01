@@ -260,8 +260,8 @@
   },
   {
     "file": "src/updater/v1/runtime.mjs",
-    "find": "      await this.stateFiles.writeBackupSchedule(nextBackupWindowV1(now).toISOString());\n      return this.#start(false);",
-    "replace": "      return this.#start(false);",
+    "find": "      await this.stateFiles.writeBackupSchedule(nextBackupWindowV1(now).toISOString());\n      return this.#start({ scheduled: true });",
+    "replace": "      return this.#start({ scheduled: true });",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
     "why": "M1: the schedule is advanced before launch as the durable claim, so one missed window cannot start repeatedly and several missed nights collapse to one catch-up"
   },
@@ -337,8 +337,8 @@
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
-    "find": "      if (signal?.aborted) throw UpdaterBackupV1.#refuse(\"updater_backup_cancelled\");\n      if (!manual)",
-    "replace": "      if (false) throw UpdaterBackupV1.#refuse(\"updater_backup_cancelled\");\n      if (!manual)",
+    "find": "      if (signal?.aborted) throw UpdaterBackupV1.#refuse(\"updater_backup_cancelled\");\n      if (!manual && !scheduled)",
+    "replace": "      if (false) throw UpdaterBackupV1.#refuse(\"updater_backup_cancelled\");\n      if (!manual && !scheduled)",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
     "why": "M2: a bounded worker stopped before it begins must not enter the dump path or take the shared backup lock"
   },
@@ -369,5 +369,33 @@
     "replace": "      await mode.set(\"stopped\");",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
     "why": "M2: Stop must immediately signal a long-running backup child instead of merely recording the stopped mode while dump work continues"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      if (!manual && !scheduled) {",
+    "replace": "      if (!manual) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "M1b: the root-held 02:30 slot claim must bypass the completion-relative due time, or a backup finishing seconds late suppresses the next night's fixed slot"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      return this.#start({ scheduled: true });",
+    "replace": "      return this.#start();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1b default path: every claimed worker slot must be identified as scheduled when it reaches the runner"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        if (schedule === null) {",
+    "replace": "        if (schedule === null || Date.parse(schedule.nextWindowAt) <= now.getTime()) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1c: a persisted overdue slot means the Mac missed its night and must catch up once on restart; only a genuinely missing first-install marker is initialization-only"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "    if (cancelled || signal?.aborted) throw updaterRefuseV1(\"updater_backup_cancelled\");",
+    "replace": "    if (false) throw updaterRefuseV1(\"updater_backup_cancelled\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "M2 L8: Stop must translate the forced evidence-session disconnect into cancellation instead of a false backup failure"
   }
 ]

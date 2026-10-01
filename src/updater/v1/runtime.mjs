@@ -119,10 +119,10 @@ export class UpdaterBackupWorkerV1 {
     this.timeoutMs = timeoutMs; this.onError = onError;
   }
   status() { return this.backup.status(); }
-  #start(manual) {
+  #start({ manual = false, scheduled = false } = {}) {
     if (this.#running) return Object.freeze({ status: "busy" });
     const controller = new AbortController(); this.#controller = controller;
-    const work = Promise.resolve().then(() => this.backup.runOnce({ manual, signal: controller.signal }));
+    const work = Promise.resolve().then(() => this.backup.runOnce({ manual, scheduled, signal: controller.signal }));
     // Always observe the underlying work even when the timeout wins the race.
     work.catch(() => {});
     let timer;
@@ -136,7 +136,7 @@ export class UpdaterBackupWorkerV1 {
     this.#running = running;
     return Object.freeze({ status: "started" });
   }
-  runManual() { return this.#start(true); }
+  runManual() { return this.#start({ manual: true }); }
   cancel() { this.#controller?.abort(); }
   tick() {
     const claim = this.#serial.then(async () => {
@@ -144,13 +144,16 @@ export class UpdaterBackupWorkerV1 {
       if (!(now instanceof Date) || !Number.isFinite(now.getTime()))
         throw updaterRefuseV1("updater_backup_schedule_refused");
       const schedule = await this.stateFiles.readBackupSchedule();
-      // Even an overdue marker never launches from startUpdaterV1's initial
-      // tick. Roll it to the next 02:30; that next window performs one run.
+      // A missing marker means first installation, so startup only initializes
+      // it. An existing overdue marker is a missed slot (for example the Mac
+      // was asleep): claim it and run once now, rather than silently throwing
+      // that night away. Several missed slots still collapse to one catch-up.
       if (this.#startup) {
         this.#startup = false;
-        if (schedule === null || Date.parse(schedule.nextWindowAt) <= now.getTime())
+        if (schedule === null) {
           await this.stateFiles.writeBackupSchedule(nextBackupWindowV1(now).toISOString());
-        return Object.freeze({ status: "initialized" });
+          return Object.freeze({ status: "initialized" });
+        }
       }
       if (schedule === null) {
         await this.stateFiles.writeBackupSchedule(nextBackupWindowV1(now).toISOString());
@@ -160,7 +163,7 @@ export class UpdaterBackupWorkerV1 {
       // This write is the one-run-per-window claim. Advance from NOW rather than
       // the old marker so several missed nights collapse to one catch-up run.
       await this.stateFiles.writeBackupSchedule(nextBackupWindowV1(now).toISOString());
-      return this.#start(false);
+      return this.#start({ scheduled: true });
     });
     this.#serial = claim.catch(() => {});
     return claim;
