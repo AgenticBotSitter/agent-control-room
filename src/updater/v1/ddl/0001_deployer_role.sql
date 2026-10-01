@@ -68,3 +68,52 @@ BEGIN
   END IF;
 END;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- control_room_backup_reader — the nightly backup's READ-ONLY login (item 19a)
+-- ---------------------------------------------------------------------------
+-- The nightly backup has to read every row of every table to dump it and to
+-- count it, and the first version did both as a SUPERUSER. That turned a
+-- row-count bug into a database takeover (review backup19b C1): a candidate
+-- release named a table `t1";ALTER ROLE control_room_migrator SUPERUSER;--`, the
+-- count ran it with superuser authority, and the release login became a
+-- superuser. The count is fixed in src/updater/v1/backup-evidence.mjs; this role
+-- is the second half, so that a future bug of the same kind finds no authority
+-- to steal.
+--
+-- What it holds, and why each part:
+--   * LOGIN, no password: peer-mapped like the deployer — `pg_hba.conf` maps
+--     `local all control_room_backup_reader peer map=cr` for root (the evidence
+--     read) and for `_crdb` (the `pg_dump` child). There is no verifier to leak.
+--   * membership in `pg_read_all_data`: SELECT on every table and USAGE on every
+--     schema, including `updater`, so the dump is whole. It grants no write,
+--     no DDL and no function EXECUTE beyond PUBLIC's.
+--   * BYPASSRLS: release tables use row-level security, and a policy's USING
+--     expression is RELEASE CODE that would otherwise run as this login on every
+--     count. With BYPASSRLS no policy is evaluated for it at all, and pg_dump
+--     reads whole tables without `--enable-row-security`.
+--   * NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION, and ADMIN on nothing:
+--     it cannot grant, create or become anything. `assertEvidenceReaderV1`
+--     re-checks this from the inside before every read, and the updater's loader
+--     re-checks it from the outside on every start.
+-- Created by the bootstrap (BYPASSRLS needs it), so the release's CREATEROLE
+-- migrator holds no ADMIN on it and cannot alter it or grant it to itself.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'control_room_backup_reader') THEN
+    CREATE ROLE control_room_backup_reader LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOREPLICATION BYPASSRLS INHERIT;
+  END IF;
+END;
+$$;
+GRANT pg_read_all_data TO control_room_backup_reader;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'control_room_backup_reader'
+      AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+      AND NOT rolreplication AND rolbypassrls) THEN
+    RAISE EXCEPTION 'updater backup reader role attributes refused' USING ERRCODE = '42501';
+  END IF;
+END;
+$$;
