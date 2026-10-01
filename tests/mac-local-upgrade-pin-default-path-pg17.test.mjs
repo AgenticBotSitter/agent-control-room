@@ -259,6 +259,20 @@ test("item 5: the real protected writer refuses a symlinked pin path and leaves 
   assert.equal(JSON.parse(await readFile(decoy, "utf8")).schema, MAC_LOCAL_NODE_KEYS_V1,
     "the link target is the owner's own file and was neither adopted nor rewritten");
 
+  // A pin file that is a regular, correctly-moded file but names the WRONG
+  // fingerprints must be refused rather than adopted. Without this, a decoy any
+  // local process could have written becomes this Mac's own node identity, and
+  // the symlink case above is caught by `isFile()` alone rather than by the
+  // comparison that actually decides whether a pin is this Mac's.
+  await rm(install.pinFile, { recursive: true, force: true });
+  const stranger = { schema: MAC_LOCAL_NODE_KEYS_V1, fingerprints: Object.fromEntries(
+    nodeIds.map(id => [id, `sha256:${"9".repeat(64)}`])) };
+  await writeFile(install.pinFile, `${JSON.stringify(stranger)}\n`, { mode: 0o600 });
+  await assert.rejects(pinMacLocalNodeKeysV1(install.root, install.receiptPath), /mac_local_node_key_pin_mismatch/u,
+    "a pin file naming a stranger's fingerprints is refused");
+  assert.deepEqual(JSON.parse(await readFile(install.pinFile, "utf8")), stranger,
+    "and the refused file is left exactly as it was found");
+
   // A directory in the pin's place is refused, and the refusal writes nothing.
   await rm(install.pinFile, { force: true });
   await mkdir(install.pinFile, { mode: 0o700 });
@@ -593,6 +607,7 @@ test("item 13: the ledger head is read on the pre-upgrade record a real Mac actu
     ["a username the validator refuses", roles => ({ ...roles, web: { ...roles.web, username: "NOT a login" } })],
     ["a record naming no web login at all", roles => ({ ...roles, web: undefined })],
     ["a record of the wrong schema", roles => ({ ...roles, schema: "control-room.something-else/v1" })],
+    ["a record whose web login is a JSON array", roles => ({ ...roles, web: [] })],
   ]) {
     await replace(mutate(good));
     await assert.rejects(readMacUpgradeLedgerHeadV1(install.root), /upgrade_ledger_head_refused/u,
