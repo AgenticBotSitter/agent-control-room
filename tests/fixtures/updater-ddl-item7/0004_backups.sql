@@ -30,7 +30,7 @@
 -- good dump is refused even if the updater's own clock, or its own code, is
 -- wrong.
 --
--- THE CARRY-FORWARD FROM reports/reviews/daemons4.marvin.md ("New finding,
+-- THE CARRY-FORWARD FROM the daemons round-4 review ("New finding,
 -- pre-existing"): a failed run used to leave an empty generation directory,
 -- and name-pattern retention then counted it as a generation and deleted a GOOD
 -- dump to keep the count at 14. Two halves close that here, and both are
