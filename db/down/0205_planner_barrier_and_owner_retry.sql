@@ -24,18 +24,20 @@ END $$;
 -- migration-issued grant is re-revoked by it. Measured, not assumed: the guarded
 -- version of 0205 granted the function and every call failed 42501.
 --
--- So this file revokes no role privilege, and the function's PUBLIC revoke below
--- only restores the state 0205 removed (PUBLIC held EXECUTE on everything by
--- default until then).
+-- So this file revokes no role privilege. PUBLIC's EXECUTE on the three functions
+-- 0205 created is not restored either, because they are all dropped below and a
+-- default privilege is not a grant to bring back.
 
 -- 1. The owner-retry operation goes first: nothing else references it.
 DROP FUNCTION public.control_room_planner_grant_owner_retry(text, text, text[]);
 
--- 2. The latch column goes before the CHECK that constrains it, and the index that
---    reads it goes before the column. The column is NOT NULL-free by design (a
---    spent latch is NULL), so nothing else here is recoverable and nothing else is
---    dropped: the only rollback of a spent retry is that the retry cannot be
---    re-spent, which is the honest state for a database that no longer records it.
+-- 2. The latch column, its CHECK and its index go before the guard function is
+--    restored below, because 0205's guard reads `owner_retry_cleared_at` and
+--    0202's does not: dropping the column first is what lets the restore below be
+--    the pre-0205 body rather than one with a dangling reference. A spent latch is
+--    NULL by design, so there is nothing here to recover -- the honest state after
+--    a rollback is that a retry cannot be re-spent, on a database that no longer
+--    records that it was spent.
 DROP INDEX public.control_planner_failure_counters_owner_retry;
 ALTER TABLE public.control_planner_failure_counters
   DROP CONSTRAINT control_planner_failure_counters_retry_check;
@@ -99,11 +101,11 @@ BEGIN
 END $$;
 
 -- 4. The five remaining barriers, each `SET (security_barrier = false)` the exact
---    inverse of its ALTER VIEW in 0205. The sixth,
---    control_planner_open_needs_you, was dropped and recreated in step 4 already
---    WITHOUT the barrier, so setting it false here would be a no-op on an option
---    that is already off; leaving the statement out is the honest count, and the
---    six-barrier claim in the comment above names all six of 0205's.
+--    inverse of its ALTER VIEW in 0205. The sixth, control_planner_open_needs_you,
+--    was dropped and recreated in step 3 WITHOUT the barrier, so setting it false
+--    here would be a no-op on an option that is already off; leaving the statement
+--    out is the honest count, and the six-barrier claim at the top names all six
+--    of 0205's.
 ALTER VIEW public.work_batch_current_split_suggestions SET (security_barrier = false);
 ALTER VIEW public.work_batch_effective_queue_admissions SET (security_barrier = false);
 ALTER VIEW public.pipeline_ordered_stage_runs SET (security_barrier = false);
