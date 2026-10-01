@@ -23,14 +23,28 @@
 // leaves real work running on a machine that no longer exists. That is a
 // data-integrity failure, not a wasted-work one -- which is why it survived.
 //
-// # 2. The supervisor's FOR UPDATE re-check is a WINNER-LOSER guard.
+// # 2. The supervisor's FOR UPDATE re-check, and an EQUIVALENT mutation.
 //
-// `reconcileStalled` reads a candidate list with no locks, then each candidate
-// is re-read under FOR UPDATE before anything is written. With that re-check
-// widened to admit a `cancelled` attempt and an `orphaned` job, a sweep that
-// loses the lock race proceeds against work a revocation already withdrew: it
-// counts a lapse, writes three transition events, and raises a Needs-you item
-// for something the owner took back on purpose.
+// `reconcileStalled` reads a candidate list with no locks at all, then re-reads
+// each candidate under FOR UPDATE before writing anything. That re-check is
+// what closes the window between the two. The manifest's mutation widens its
+// attempt and job state lists to admit `cancelled` and `orphaned`, and this
+// lane MEASURED that mutation as equivalent against today's state machine:
+// every committed writer that makes an attempt terminal also moves that
+// attempt's lease out of `active` in the same transaction -- the fleet
+// revocation (`revoked`), the fleet blocker release (`released`), the
+// supervisor sweep (`expired`) and CanonicalStore.revokeLease (`revoked`).
+// There is therefore no committed state in which an attempt is `cancelled`
+// while its own lease is still `active`, so `l.state='active'` is the binding
+// predicate and widening the lists changes nothing about which rows match.
+// Even the compound mutation that drops that predicate survives, for the same
+// reason. The guard is KEPT: it states the intent and it is the predicate a
+// future writer that cancels an attempt without releasing its lease would hit,
+// and this repository's mutation manifest exists precisely to refuse deleting a
+// correct guard on the strength of an equivalent mutant.
+//
+// Both facts are asserted in the second test rather than left as prose, so the
+// next reader learns them from a test instead of by re-deriving them.
 //
 // Every statement runs AS the production login that executes it in production:
 // the fleet gateway login for the revocation pass and the coordinator login
