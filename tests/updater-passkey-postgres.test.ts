@@ -1509,11 +1509,14 @@ test("every routine in schema updater pins its search_path with pg_temp last", a
       // The EXACT count, not a floor. Item 7 shipped 13 functions; item 10a adds
             // eight (two bound helpers, four guards, the refusal aggregation and the
             // cooling-off enqueue), and the audit counts only the PRIVILEGED ones —
-            // SECURITY DEFINER or returning a trigger. A count that drifts is a routine
-            // that changed its privilege without anybody deciding to, and a floor would
-            // hide a routine that stopped being privileged while leaving the count high.
-            assert.equal(result.findings.length, 19,
-              `expected 19 privileged routines, found ${result.findings.length}`);
+            // SECURITY DEFINER or returning a trigger. The updater DB round adds
+            // ONE more (`guard_owner_request_approval_kind`, SECURITY DEFINER
+            // because it must read `plans`, which the web login has no privilege
+            // on). A count that drifts is a routine that changed its privilege
+            // without anybody deciding to, and a floor would hide a routine that
+            // stopped being privileged while leaving the count high.
+            assert.equal(result.findings.length, 20,
+              `expected 20 privileged routines, found ${result.findings.length}`);
       // Both new SECURITY DEFINER functions are in the set that was audited, by
       // name — a routine that stopped being privileged would otherwise shrink the
       // audited set and pass unnoticed.
@@ -1526,7 +1529,8 @@ test("every routine in schema updater pins its search_path with pg_temp last", a
       const audited = result.findings.map(finding => finding.routine);
       for (const name of ["updater.enqueue_cooling_off_notices", "updater.record_approval_refusal",
         "updater.guard_passkey_registration_open", "updater.guard_open_registration",
-        "updater.guard_refusal_bucket", "updater.guard_push_schedule"])
+        "updater.guard_refusal_bucket", "updater.guard_push_schedule",
+        "updater.guard_owner_request_approval_kind"])
         assert.ok(audited.some(routine => routine.startsWith(`${name}(`)),
           `${name} must be in the audited set (privileged), otherwise it changed privilege silently`);
       // And the pinned path is one of the DESIGN's two, not merely a path that ends in
