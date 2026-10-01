@@ -488,5 +488,33 @@
     "replace": "journalRecoveryPending = false;",
     "test": "node --test --test-name-pattern='torn live file journal' tests/updater-skeleton.test.mjs",
     "why": "Check and continue only settles a poisoned journal after it is explicitly archived and revalidated"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": ": options.alerts ?? new UpdaterAlertSenderV1({ root, store, ...(options.alertRuntime ?? {}) });",
+    "replace": ": null;",
+    "test": "node --test --test-name-pattern='production call shape starts the REAL alert sender' tests/updater-skeleton.test.mjs",
+    "why": "no `alerts` key must build the real sender: the production call passes no options, so treating the default as null is what left the updater unable to alert"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (error?.code !== \"updater_vapid_unavailable\") throw error;",
+    "replace": "if (false) throw error;",
+    "test": "node --test --test-name-pattern='not root-held, and does not strand the lease' tests/updater-skeleton.test.mjs",
+    "why": "a VAPID key that is not root-held is a custody refusal that stops the updater, not a warning it runs through"
+  },
+  {
+    "file": "src/updater/v1/store.mjs",
+    "find": "const text = updaterPushBodyV1(template);",
+    "replace": "const text = '';",
+    "test": "PG_BIN=/opt/homebrew/opt/postgresql@17/bin node --import tsx --test --test-name-pattern='queues exactly one alert' tests/updater-alerts-postgres.test.ts",
+    "why": "push_queue.body is NOT NULL and CHECKed to 1..400 characters: an empty body is refused by the schema, so no alert could be queued"
+  },
+  {
+    "file": "db/roles/updater_release_reader_roles.sql",
+    "find": "GRANT SELECT (tenant_id, id, endpoint, p256dh, auth, expires_at)",
+    "replace": "GRANT SELECT (tenant_id, id, expires_at)",
+    "test": "PG_BIN=/opt/homebrew/opt/postgresql@17/bin node --import tsx --test --test-name-pattern='can queue its own alerts' tests/updater-alerts-postgres.test.ts",
+    "why": "item 21 makes the updater the process that SENDS the push, so it must be able to read the endpoint; without these three columns the sender is refused permission denied on a real cluster"
   }
 ]
