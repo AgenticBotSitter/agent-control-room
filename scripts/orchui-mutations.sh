@@ -15,7 +15,7 @@ HTTP=src/web/v1/project-orchestration-http.ts
 BROWSER=src/web/v1/project-orchestration-browser-client.ts
 UI=private-app/app/project-orchestration.tsx
 PIPES=private-app/app/project-pipelines-workspace.tsx
-RESULTS_DIR="${RESULTS_DIR:-/Users/alastairfraser/work/acr-private/reports/orchui-mutations}"
+RESULTS_DIR="${RESULTS_DIR:-${TMPDIR:-/tmp}/orchui-mutations}"
 mkdir -p "$RESULTS_DIR"
 
 pass=0; fail=0; failures=""

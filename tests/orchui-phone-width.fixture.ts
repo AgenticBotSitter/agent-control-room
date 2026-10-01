@@ -1,12 +1,14 @@
 // Renders the chief-of-staff panels to static markup with the app's own
 // stylesheets attached, so a real browser can measure layout at phone width.
-// Not a lane: this produces the fixture, tests/orchui-phone-width.measure.mjs
-// does the measuring.
+// Not a lane: this only produces the fixture; open it in a browser at phone
+// width to measure.
 //
 //   node --import tsx tests/orchui-phone-width.fixture.ts
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ChiefOfStaffSuggestionCard, ProjectOrchestrationPanel, ProjectOrchestrationSettings } from
   "../private-app/app/project-orchestration";
 
@@ -52,9 +54,9 @@ const panels: Record<string, string> = {
 const read = (path: string) => { try { return readFileSync(new URL(path, import.meta.url), "utf8"); }
   catch { return ""; } };
 const css = [read("../private-app/app/private.css"), read("../private-app/styles/control-room.css")].join("\n");
-// Under the scratch directory, not the repository: build/ is gitignored and this is
-// a disposable render fixture, not a build product.
-const OUT = process.env.ORCHUI_FIXTURE_DIR ?? "/Users/alastairfraser/work/acr-lander/.mof/orchui-phone-width";
+// Under the temporary directory, not the repository: this is a disposable render
+// fixture, not a build product.
+const OUT = process.env.ORCHUI_FIXTURE_DIR ?? join(tmpdir(), "orchui-phone-width");
 mkdirSync(OUT, { recursive: true });
 writeFileSync(`${OUT}/index.html`,
   `<!doctype html><html lang="en"><head><meta charset="utf-8">
