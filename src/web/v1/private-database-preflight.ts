@@ -30,7 +30,11 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 //    0210's stored-set guard was corrected to key on `producer_kind` rather than
 //    `source_kind`;
 //  - this merge round: cook/v1 at 0238 plus 0212/0213 (text-copy derivations)
-//    and 0215-0220 (fleet presence and the owner surface cursor).
+//    and 0215-0220 (fleet presence and the owner surface cursor);
+//  - navigation Stage 0 + 0b (MIG-N, 0240-0242): recurring_chores, page_visits
+//    and page_pins, plus their three write guards. These sort AFTER every
+//    migration above, so this value is that tree's plus exactly these three
+//    migrations.
 //
 // Neither side's value survived that merge and neither could have: cook/v1's
 // value was derived from a tree with no 0212/0213, and this branch's was
@@ -52,8 +56,17 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // here only so its absence is expected:
 //   23edbb216b3898a9b59e727d17a7a45107d35d756e5657d5f2105a75297f8777  (pre-merge)
 //
+// THIS ROUND, and the method is stated so the next person can check it: derived
+// with the controlled digest script (~/work/acr-private/bin/cook-digest.mts), which
+// applies the whole ledger in filename order and hashes exactly what
+// readPrivateWebSchemaDigest below hashes. That script was validated against the
+// PREVIOUS constant first — run on an unmodified cook/v1 checkout it returns
+// 013f4a8b... byte for byte, which is the committed value there — so this is a
+// measurement of the method agreeing with itself, not a fresh guess.
+//   013f4a8baa555bc726add9a916a347efbee8d0423912fa4e31590a957f70886e  (pre-0240)
+//
 // Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "013f4a8baa555bc726add9a916a347efbee8d0423912fa4e31590a957f70886e";
+export const privateWebSchemaDigest = "4c905d5a30a7bcac0ffdd0cbc1f3aee2a4f083c2f680d487c0736f184c12c084";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -741,12 +754,19 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
   const allowedReads = kind === "agentReviewer" ? agentReviewerReads : kind === "newsCoordinator" ? newsCoordinatorReads : kind === "newsIngestion" ? newsIngestionReads : kind === "ideaRuntime" ? ideaRuntimeReads : kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "publisher" ? publisherReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
   const allowedInserts = kind === "agentReviewer" ? agentReviewerInserts : kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "publisher" ? publisherInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : privateWebInsertTables;
   const allowedUpdates = kind === "agentReviewer" ? agentReviewerUpdates : kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "publisher" ? publisherUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : privateWebUpdateColumns;
+  // The web login's DELETE set: exactly two tables. `owner_web_push_subscriptions`
+  // has been there since 0173, and `page_pins` is the one deletable table in the
+  // navigation group, because "Pin this page" is a toggle and unpinning needs a
+  // spelling — 0220's cursor and 0240's chores deliberately do NOT have one. It
+  // stays owner-scoped: the service deletes by (tenant_id, owner_identity_id,
+  // page_key) and never by page_key alone.
+  //
+  // The declaration test reads this set out of the SOURCE with
+  // /kind === "web"\s*\?\s*new Set\(\[([^\]]*)\]\)/, so nothing may sit between the
+  // `?` and the `new Set`: a comment in that span makes the test report that the
+  // declaration has MOVED rather than that a grant drifted, which is a misleading
+  // failure to leave behind for the next person.
   const allowedDeletes = kind === "coordinator" ? coordinatorDeletes : kind === "web"
-    // page_pins is the one deletable table in the navigation group, and the
-    // reason is the shape of the feature: "Pin this page" is a toggle, so
-    // unpinning needs a DELETE (0220's cursor and 0240's chores deliberately do
-    // NOT have one). It stays owner-scoped: the service deletes by
-    // (tenant_id, owner_identity_id, page_key) and never by page_key alone.
     ? new Set(["owner_web_push_subscriptions", "page_pins"]) : new Set<string>();
   try {
     await db.transaction(async tx => {

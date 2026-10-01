@@ -71,7 +71,19 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 //     and taking 0205..0200's downs off that, newest first, gives the previous
 //     constant (`73ebc791...`) byte for byte -- so the move is 0200-0205 and
 //     nothing else.
-const PRE_0234_DIGEST = "9690e50b4055f6e2188d1b3d1dac3c5e38f3e02ae590030a12d2e907e96124b9"; // + 0215-0220 + 0239; measured: rolling back 0239 gives 30522043…, and 0215-0220 then gives 5c556286…
+//  4. THIS round, navigation Stage 0 + 0b (0240-0242). The stream brief said
+//     these sort after 0234 and so would not move this constant; that is WRONG,
+//     and measuring it is what caught the mistake. This value is not 0234's
+//     domain — it is the digest of the whole ledger MINUS 0234, with every other
+//     migration still applied, so anything else the branch adds moves it too.
+//     Measured on real PostgreSQL 17 from THIS tree by rolling 0234's own down
+//     off the fully-migrated ledger (tests/fleet-worker-capacity-down-postgres.test.ts
+//     does exactly that, so this constant is where its assertion lands), and
+//     cross-checked by tests/nav-pre0234-probe.test.ts, which reaches the same
+//     value by a different route: it rolls 0242/0241/0240 off first and then 0234,
+//     and the fact that THAT reproduces cook/v1's value 9690e50b... byte for byte
+//     is the proof that the move is 0240-0242 and nothing else.
+const PRE_0234_DIGEST = "109f032cdec05902b9fb88ff16f079db27135c383f083a6990ef437dc114bd6f"; // + 0240-0242; the probe test proves rolling those three off restores 9690e50b… exactly
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {

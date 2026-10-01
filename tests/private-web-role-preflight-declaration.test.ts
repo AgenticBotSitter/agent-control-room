@@ -480,11 +480,23 @@ test("every task-coordinator grant is exactly declared by its startup preflight"
   assert.deepEqual(disagreements, [], "the task-coordinator grants and startup preflight disagree");
 });
 
-test("the web DELETE declaration is read from the preflight, not restated here", () => {
+test("the web DELETE declaration is read from the preflight, not restated here", async () => {
   // A restatement of the DELETE set would pass while describing a value the
   // preflight no longer holds, so the read is asserted against the source it
-  // parses, and the single grant it returns is the one the role files give.
-  assert.deepEqual(declaredDeletes(), ["owner_web_push_subscriptions"]);
+  // parses, and the grants it returns are the ones the role files give.
+  //
+  // TWO tables as of 0241. `page_pins` joined `owner_web_push_subscriptions`
+  // because "Pin this page" is a toggle and unpinning needs a DELETE — the
+  // other two navigation tables deliberately have none, so this list growing is a
+  // real widening of what the web login can erase and has to be a deliberate edit
+  // here as well as in the preflight.
+  assert.deepEqual(declaredDeletes(), ["owner_web_push_subscriptions", "page_pins"]);
+  // And each one is genuinely granted, so the declaration cannot drift into
+  // naming a table no role file gives the web login.
+  const granted = await appliedGrants();
+  for (const table of declaredDeletes())
+    assert.equal(granted.get("DELETE")?.get(table), null,
+      `${table} is granted DELETE to the web login by a role file`);
 });
 
 test("the fleet read tables come only from the fleet role file, and the preflight gates them on that role", async () => {
