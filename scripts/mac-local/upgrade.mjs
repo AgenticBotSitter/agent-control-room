@@ -9,6 +9,7 @@ import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:f
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
 import { readPrivateWebSchemaDigest } from "../../src/web/v1/private-database-preflight";
 import { loadMacLocalDatabaseRolesFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
@@ -212,7 +213,7 @@ export function parseMacUpgradeArgumentsV1(args) {
   return { protectedRoot: root, rollback };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   try { await runMacUpgradeV1(parseMacUpgradeArgumentsV1(process.argv.slice(2))); }
   catch (error) {
     const code = error instanceof Error && /^upgrade_[a-z_]+$/u.test(error.message) ? error.message : "upgrade_failed";

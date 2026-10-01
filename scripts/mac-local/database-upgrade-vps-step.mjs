@@ -5,8 +5,8 @@
  * A login code arrives on stdin and is never printed or written to a file. */
 import { mkdir, rm, statfs, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { connectTarget, readSchemaDigest } from "../../deploy/postgres/evidence.mjs";
+import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../ops/backup-database.mjs";
 import { databaseRoleManifestV1 as manifest } from "./database-role-manifest.mjs";
 import { macRolePlan } from "./database-upgrade-grants.mjs";
@@ -129,7 +129,7 @@ export async function runMacDatabaseUpgradeVpsStepV1({ args, readCode = readStdi
   } finally { await verify.end(); }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   let stage = "plan";
   try {
     await runMacDatabaseUpgradeVpsStepV1({ args: process.argv.slice(2), onStage: next => { stage = next; } });

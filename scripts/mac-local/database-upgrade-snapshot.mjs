@@ -2,6 +2,7 @@
  * host identity is included. Run as root from a clean main checkout. */
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { macDatabaseUpgradeReadOnlySqlV1 } from "./provision-database.mjs";
 
 export const MAC_DATABASE_UPGRADE_SNAPSHOT_V1 = "control-room.mac-database-upgrade-snapshot/v1";
@@ -26,7 +27,7 @@ export function captureMacUpgradeSnapshotV1(mainCommitSha, raw) {
   return { schema: MAC_DATABASE_UPGRADE_SNAPSHOT_V1, mainCommit: mainCommitSha, snapshot };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   try {
     if (process.argv.slice(2).join(" ") !== "--print") throw new Error("upgrade_snapshot_usage_refused");
     const commit = mainCommit();

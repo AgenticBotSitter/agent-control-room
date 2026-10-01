@@ -1,6 +1,6 @@
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { invokedDirectlyV1 } from "./dev/invoked-directly.mjs";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "../src/web/v1/private-postgres";
 
@@ -101,7 +101,7 @@ export async function checkMacVpsDatabase(configurationPath: string, runtime = p
   return exitCode;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   const path = process.argv[2];
   if (!path || process.argv.length !== 3) {
     process.stdout.write("Usage: pnpm check:database:vps /absolute/protected/database-check.json\n");

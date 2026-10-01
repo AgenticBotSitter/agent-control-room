@@ -3,6 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { verifyTrustedRuntimeInstallation } from "../../src/updater/v1/trusted-runtime.mjs";
 
 const runtimePolicyPath = fileURLToPath(new URL("../../src/updater/v1/policy/runtime.json", import.meta.url));
@@ -21,7 +22,7 @@ export async function checkTrustedRuntime(path) {
   return verifyTrustedRuntimeInstallation({ runtimeDirectory: path, manifestPolicy, initPolicy });
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   void checkTrustedRuntime(runtimeDirectory(process.argv.slice(2))).then(result => {
     process.stdout.write(`${JSON.stringify({ schema: "control-room.t1-check/v1", state: "passed",
       runtimeDirectory: result.runtimeDirectory, developerDirectory: result.developerTools.developerDirectory,

@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readdir } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { postgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
 import { runMacDatabaseUpgradeVpsStepV1 } from "./database-upgrade-vps-step.mjs";
 import { readBoundMacLocalDatabaseBackupV1, verifyMacLocalDatabaseBackupV1 } from "../ops/verify-database-backup.mjs";
@@ -96,7 +96,7 @@ export async function runMacDatabaseUpgradeVpsRehearseV1({ commit, backupRoot, p
   return Object.freeze({ backup: basename(backup), ...result });
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   let stage = "rehearse";
   try {
     const [commit, backupRoot, pgBin, port, factor] = process.argv.slice(2);
