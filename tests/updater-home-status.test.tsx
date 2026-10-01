@@ -42,10 +42,10 @@ async function fixture(t: test.TestContext) {
 test("the updater Home reader exposes only calm Off or attention, never public updater fields", async t => {
   const f = await fixture(t); await f.write();
   const reader = createUpdaterHomeStatusReaderV1({ root: f.root, now: () => now });
-  assert.deepEqual(await reader.read(), { schema: "control-room.updater-home-status/v1", state: "off" });
+  assert.deepEqual(await reader.read(), { schema: "control-room.updater-home-status/v1", state: "off", backup: null });
   const replies = await Promise.all(Array.from({ length: 50 }, () => reader.read()));
   assert.equal(replies.filter(reply => reply.state === "off").length, 50, "50 concurrent Home loads stay display-only and complete");
-  assert.ok(replies.every(reply => Object.keys(reply).join(",") === "schema,state"), "no release, health or raw status crosses the web boundary");
+  assert.ok(replies.every(reply => Object.keys(reply).join(",") === "schema,state,backup"), "only the bounded backup badge crosses with the display state");
 });
 
 test("missing, corrupt, huge, symlinked, stale, unknown and HTML-shaped updater status all require attention", async t => {
@@ -62,6 +62,12 @@ test("missing, corrupt, huge, symlinked, stale, unknown and HTML-shaped updater 
   assert.equal((await read()).state, "attention", "HTML-shaped field");
   await f.write(publicStatus({ needsYou: true })); assert.equal((await read()).state, "attention", "needs owner");
   await f.write(publicStatus({ state: "uncertain" })); assert.equal((await read()).state, "attention", "uncertain");
+  await f.write(publicStatus({ backup: "made_up" })); assert.equal((await read()).state, "attention", "unknown backup state");
+  await f.write(publicStatus({ selfUpdate: "On", backup: "failed" }));
+  assert.deepEqual(await read(), { schema: "control-room.updater-home-status/v1", state: "attention", backup: "failed" },
+    "self-update On stays adverse but does not hide a failed backup from the configured Home line");
+  await f.write(publicStatus({ selfUpdate: "On", backup: "ok" }));
+  assert.equal((await read()).state, "attention", "self-update On never becomes a reassuring legacy status");
   if (process.platform !== "win32") {
     await rm(file); execFileSync("mkfifo", [file]);
     const fifo = await Promise.race([read(), new Promise<"hung">(resolve => setTimeout(() => resolve("hung"), 2_000).unref())]);
@@ -71,10 +77,14 @@ test("missing, corrupt, huge, symlinked, stale, unknown and HTML-shaped updater 
 });
 
 test("the browser reader rejects an oversized or unexpected response as attention", async () => {
-  const good = await readUpdaterHomeStatusV1(async () => Response.json({ schema: "control-room.updater-home-status/v1", state: "off" }));
+  const good = await readUpdaterHomeStatusV1(async () => Response.json({ schema: "control-room.updater-home-status/v1", state: "off", backup: null }));
   assert.equal(good.state, "off");
   const html = await readUpdaterHomeStatusV1(async () => Response.json({ schema: "control-room.updater-home-status/v1", state: "off", releaseId: "<b>r1</b>" }));
   assert.equal(html.state, "attention");
+  const badBackup = await readUpdaterHomeStatusV1(async () => Response.json({
+    schema: "control-room.updater-home-status/v1", state: "off", backup: "made_up",
+  }));
+  assert.equal(badBackup.state, "attention"); assert.equal(badBackup.backup, null);
   const huge = await readUpdaterHomeStatusV1(async () => new Response(JSON.stringify({ schema: "control-room.updater-home-status/v1",
     state: "off", padding: "x".repeat(1_000) }), { headers: { "content-type": "application/json" } }));
   assert.equal(huge.state, "attention");
@@ -95,7 +105,7 @@ test("the authenticated web endpoint returns the reduced display projection and 
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), render);
   const cookie = signedIn.headers.get("set-cookie"); assert.equal(signedIn.status, 201); assert.ok(cookie);
   const response = await app.handle(new Request(`${origin}/api/v1/updater-status`, { headers: { cookie } }), render);
-  assert.equal(response.status, 200); assert.deepEqual(await response.json(), { schema: "control-room.updater-home-status/v1", state: "off" });
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), { schema: "control-room.updater-home-status/v1", state: "off", backup: null });
   assert.equal((await app.handle(new Request(`${origin}/api/v1/updater-status`, { method: "POST", headers: { cookie, origin } }), render)).status,
     404, "the display route never accepts a control request");
 });
@@ -146,10 +156,20 @@ test("Install names protected and dependency classes from updater facts", async 
 
 test("the legacy Off/attention safety read remains the fallback until the updater owner port is installed", async () => {
   const noPort = new Response(null, { status: 404 });
-  const off = await mountedStatus(noPort, Response.json({ schema: "control-room.updater-home-status/v1", state: "off" }));
+  const off = await mountedStatus(noPort, Response.json({ schema: "control-room.updater-home-status/v1", state: "off", backup: null }));
   assert.match(off.text, /Self-update: Off/u);
-  const attention = await mountedStatus(noPort, Response.json({ schema: "control-room.updater-home-status/v1", state: "attention" }));
+  const attention = await mountedStatus(noPort, Response.json({ schema: "control-room.updater-home-status/v1", state: "attention", backup: null }));
   assert.match(attention.text, /Self-update needs your attention/u); assert.ok(attention.alert);
+});
+
+test("a failed or missing backup is a red plain-language Home line on both owner UI paths", async () => {
+  for (const [backup, words] of [["failed", /Backup needs your attention/u], ["missing", /Backup is missing or too old/u]] as const) {
+    const legacy = Response.json({ schema: "control-room.updater-home-status/v1", state: "attention", backup });
+    const configured = await mountedStatus(Response.json(ownerUi({ plan: null })), legacy);
+    assert.match(configured.text, words); assert.match(configured.text, /Back up now/u); assert.ok(configured.alert);
+    const fallback = await mountedStatus(new Response(null, { status: 404 }), legacy);
+    assert.match(fallback.text, words); assert.match(fallback.text, /Back up now/u); assert.ok(fallback.alert);
+  }
 });
 
 test("every updater state has plain owner wording", async () => {

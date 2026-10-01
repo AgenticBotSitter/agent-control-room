@@ -3,12 +3,13 @@ import { resolve } from "node:path";
 import { PostgresUpdaterStoreV1 } from "./store.mjs";
 import { UpdaterControlServerV1 } from "./control-socket.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
-import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
+import { FileStepJournalV1, UpdaterBackupWorkerV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
   newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
 import { UpdaterAlertSenderV1 } from "./alerts.mjs";
 import { PasskeyAuthorityV1, PasskeyRefusalAggregatorV1, SimpleWebAuthnVerifierV1 } from "./passkey.mjs";
 import { PasskeyStoreV1 } from "./passkey-store.mjs";
+import { createNightlyBackupV1 } from "./backup-ports.mjs";
 
 // The fixed updater bundle exposes the item-13 actuator for composition with
 // the item-5 lifecycle and item-14 health ports. `startUpdaterV1` accepts that
@@ -29,9 +30,9 @@ function updaterRootV1(env) {
 
 export async function startUpdaterV1(options = {}) {
   const env = options.env ?? process.env, root = options.root ?? updaterRootV1(env);
-  let client = options.client, ownsClient = false, store = options.store;
+  let client = options.client, ownsClient = false, store = options.store, pg = options.pg;
   if (!store) {
-    const pg = options.pg ?? await import("pg");
+    pg ??= await import("pg");
     if (!client) {
       client = new pg.Client({ host: env.PGHOST, port: env.PGPORT ? Number(env.PGPORT) : undefined,
         database: env.PGDATABASE, user: "control_room_deployer" });
@@ -156,31 +157,58 @@ export async function startUpdaterV1(options = {}) {
   const refusalAggregator = options.refusalAggregator ?? (passkeyStore?.recordApprovalRefusal && options.refusalJournal
       && options.refusalPush ? new PasskeyRefusalAggregatorV1({ store: passkeyStore,
         journal: options.refusalJournal, push: options.refusalPush }) : undefined);
+  let backupWorker = null;
   const ownerActions = options.ownerActions ?? { handle: async request => {
     if (request.request_kind === "pause") {
       if (request.source !== "root" && await mode.read() === "stopped")
         throw updaterRefuseV1("updater_web_pause_from_stopped_refused");
       await mode.set("paused");
     }
-    else if (request.request_kind === "stop") await mode.set("stopped");
+    else if (request.request_kind === "stop") {
+      await mode.set("stopped");
+      backupWorker?.cancel();
+    }
     // A web login can mint an owner session and insert owner_requests. Resume is
     // therefore deliberately root-control-only until the approval join exists.
     else if (request.request_kind === "resume") throw updaterRefuseV1("updater_web_resume_refused");
     else if (request.request_kind === "check_and_continue")
       return runner.checkAndContinue({ source: request.source });
+    else if (request.request_kind === "backup_now") {
+      if (request.source !== "root" && request.requires_passkey !== false)
+        throw updaterRefuseV1("updater_backup_owner_request_refused");
+      if (!backupWorker) throw updaterRefuseV1("updater_backup_unavailable");
+      return backupWorker.runManual();
+    }
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
-  // `watcher` is updaterland's addition and is independent of the health
-  // contract: the main loop in runtime.mjs already accepts it (it merged
-  // cleanly), and the self-update Off flag suppresses its tick. Passing it
-  // here is what keeps that work alive through this merge. `alerts`/`alertFacts`
-  // are cook/v1's item-21 sender, and `onError` is the module-level
-  // `reportError` (declared near the top of this function, and already wired to
-  // the heartbeat below) rather than the `reportTimerError` this branch used to
-  // redeclare at this point -- `heartbeatState` likewise has one declaration,
-  // from the acquisition above, not two.
+  // Item 19a, the nightly backup, on the DEFAULT path. Like `alerts`, the
+  // ABSENCE of a `backup` key means the real one whenever this function opened
+  // the production connection itself; only an explicit `backup: null`/`false`
+  // opts out, and a caller that injects its own store or client composes its
+  // own (or none). A composition that cannot be built — no socket configured,
+  // the store's role check refused — is REPORTED and the updater still starts:
+  // the database's 26-hour freshness bound is what then turns Home red and
+  // blocks database plans, so a missing backup cannot pass unnoticed.
+  let backup = options.backup === null || options.backup === false ? null : options.backup ?? null;
+  let backupUnavailable = false;
+  if (options.backup === undefined && ownsClient) {
+    try {
+      const source = { host: env.PGHOST, port: env.PGPORT ? Number(env.PGPORT) : undefined, database: env.PGDATABASE };
+      backup = await createNightlyBackupV1({ root, client, source, connect: async target => {
+        const opened = new pg.Client(target);
+        await opened.connect();
+        return opened;
+      } });
+    } catch (error) {
+      backupUnavailable = true;
+      reportError(Object.assign(new Error("updater_backup_unavailable"), { code: "updater_backup_unavailable",
+        warning: true, cause: error }));
+    }
+  }
+  if (backup) backupWorker = options.backupWorker ?? new UpdaterBackupWorkerV1({ backup, stateFiles,
+    clock: options.backupClock, timeoutMs: options.backupTimeoutMs, onError: reportError });
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, watcher: options.watcher ?? null,
-    alerts: alertSender, alertFacts: options.alertFacts, onError: reportError });
+    alerts: alertSender, alertFacts: options.alertFacts, onError: reportError, backupWorker, backupUnavailable });
   // The scheduled health contract (design §8.4). Independent of the loop: it
   // owns its own timer and is stopped on both the success and the failure path.
   const scheduledHealth = options.scheduledHealth;
@@ -237,19 +265,15 @@ export async function startUpdaterV1(options = {}) {
     heartbeat.start(); loop.start();
     await scheduledHealth?.start();
   } catch (error) {
-    loop.stop(); await scheduledHealth?.stop(); await heartbeat.stop(); await control.stop();
+    loop.stop(); await scheduledHealth?.stop(); await backupWorker?.stop(); await heartbeat.stop(); await control.stop();
+    if (store.release) await store.release().catch(() => {});
     if (ownsClient) await client.end();
     throw error;
   }
-
-  // cook/v1's return (it exposes passkeys/refusalAggregator/alerts and releases
-  // the store on stop) plus this branch's `scheduledHealth`, which owns its own
-  // timer and must be stopped on BOTH the success and the failure path. `setHeartbeatState`
-  // is the single closure declared above, so it is exposed as-is rather than
-  // redefined here.
   return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, scheduledHealth,
-    passkeys, refusalAggregator, alerts: alertSender, setHeartbeatState,
-    async stop() { loop.stop(); await scheduledHealth?.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
+    passkeys, refusalAggregator, alerts: alertSender, backup, backupWorker,
+    setHeartbeatState,
+    async stop() { loop.stop(); await scheduledHealth?.stop(); await backupWorker?.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
       if (ownsClient) await client.end(); } });
 }
 

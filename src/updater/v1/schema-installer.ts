@@ -56,6 +56,7 @@ export function updaterDdlFilesV1(): readonly string[] {
     "0000_bootstrap.sql",
     "0002_schema.sql",
     "0003_guards.sql",
+    "0004_backups.sql",
   ]);
 }
 
@@ -103,7 +104,7 @@ export interface UpdaterSchemaResultV1 {
 export const updaterTablesV1 = Object.freeze(["plans", "plan_approvals", "plan_approval_outcomes",
   "passkey_registrations", "passkey_open_registrations", "passkey_registrations_limits",
   "approval_refusals", "approval_refusal_buckets", "owner_requests", "push_queue", "runs", "run_events",
-  "heartbeat"]);
+  "heartbeat", "backup_generations", "backup_state", "backup_lock"]);
 
 /**
  * The release-schema tables the deployer may read, and the only ones.
@@ -254,6 +255,35 @@ export async function applyUpdaterSchemaV1(options: UpdaterSchemaOptionsV1): Pro
   if (unexpectedReach.length > 0) refused(`release_reach:${unexpectedReach.join(",")}`);
   const missingReach = updaterReleaseReadTablesV1.filter(table => !reachable.includes(table));
   if (missingReach.length > 0) refused(`release_reach_missing:${missingReach.join(",")}`);
+
+  // The nightly backup's reader (item 19a, review backup19b C1): exactly the
+  // read-everything login 0001 creates and nothing more. Checked from the
+  // OUTSIDE here, on every start, because the attribute that matters most —
+  // "can it grant or become anything" — is the one a later ALTER or GRANT by
+  // somebody else would change silently. Its ONLY membership is
+  // `pg_read_all_data`; it holds ADMIN on nothing, has no members, owns nothing
+  // and carries no password (production reaches it by peer map only).
+  const reader = await options.bootstrap.query(
+    `SELECT r.rolcanlogin, r.rolsuper, r.rolcreatedb, r.rolcreaterole, r.rolreplication, r.rolbypassrls,
+            (a.rolpassword IS NOT NULL) AS has_password,
+            ARRAY(SELECT pg_catalog.pg_get_userbyid(m.roleid)::text FROM pg_catalog.pg_auth_members m
+                   WHERE m.member = r.oid ORDER BY 1) AS member_of,
+            EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member = r.oid AND m.admin_option) AS can_grant,
+            EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.roleid = r.oid) AS has_members,
+            (EXISTS (SELECT 1 FROM pg_catalog.pg_class c WHERE c.relowner = r.oid)
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspowner = r.oid)
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner = r.oid)) AS owns_objects
+       FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_authid a ON a.oid = r.oid
+      WHERE r.rolname = 'control_room_backup_reader'`);
+  const readerRow = reader.rows[0];
+  if (!readerRow || readerRow.rolcanlogin !== true || readerRow.rolsuper !== false
+    || readerRow.rolcreatedb !== false || readerRow.rolcreaterole !== false || readerRow.rolreplication !== false
+    || readerRow.rolbypassrls !== true || readerRow.can_grant !== false || readerRow.has_members !== false
+    || readerRow.owns_objects !== false
+    || JSON.stringify(readerRow.member_of) !== JSON.stringify(["pg_read_all_data"])) {
+    refused("backup_reader_attributes");
+  }
+  if (readerRow.has_password === true) refused("backup_reader_password");
 
   return { appliedFiles: Object.freeze(applied), tables: tables.length, triggers: Number(triggers.rows[0]?.count ?? 0) };
 }

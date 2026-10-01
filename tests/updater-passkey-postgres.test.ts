@@ -1572,16 +1572,15 @@ test("every routine in schema updater pins its search_path with pg_temp last", a
         + ` found ${JSON.stringify(result.unclassifiedSchemas)}`);
       // The EXACT count, not a floor. Item 7 shipped 13 functions; item 10a adds
             // eight (two bound helpers, four guards, the refusal aggregation and the
-            // cooling-off enqueue), and the audit counts only the PRIVILEGED ones —
-            // SECURITY DEFINER or returning a trigger. The updater DB round adds
-            // ONE more: `guard_owner_request_approval_kind`, which counts because it
-            // RETURNS A TRIGGER, not because it is a definer — it is deliberately
-            // INVOKER, since the web login already holds every column its body reads.
-            // A count that drifts is a routine that changed its privilege without
-            // anybody deciding to, and a floor would hide a routine that stopped
-            // being privileged while leaving the count high.
-            assert.equal(result.findings.length, 20,
-              `expected 20 privileged routines, found ${result.findings.length}`);
+            // cooling-off enqueue); item 19a adds four more, all privileged and all
+            // pinned (the freshness predicate, and the three backup guards), taking
+            // it to 24 together with the updater DB round's guard_owner_request_approval_kind. The audit counts only the PRIVILEGED ones — SECURITY DEFINER
+            // or returning a trigger. A count that drifts is a routine that changed
+            // its privilege without anybody deciding to, and a floor would hide a
+            // routine that stopped being privileged while leaving the count high. So
+            // the number moves here, deliberately, with the DDL that moved it.
+            assert.equal(result.findings.length, 24,
+              `expected 24 privileged routines, found ${result.findings.length}`);
       // Both new SECURITY DEFINER functions are in the set that was audited, by
       // name — a routine that stopped being privileged would otherwise shrink the
       // audited set and pass unnoticed.
@@ -1595,7 +1594,12 @@ test("every routine in schema updater pins its search_path with pg_temp last", a
       for (const name of ["updater.enqueue_cooling_off_notices", "updater.record_approval_refusal",
         "updater.guard_passkey_registration_open", "updater.guard_open_registration",
         "updater.guard_refusal_bucket", "updater.guard_push_schedule",
-        "updater.guard_owner_request_approval_kind"])
+        "updater.guard_owner_request_approval_kind",
+        // Item 19a's four, by the same rule: named here so a backup routine that
+        // stopped being privileged fails this lane rather than quietly leaving the
+        // audited set smaller than the count above.
+        "updater.backup_is_fresh", "updater.guard_plan_backup_fresh",
+        "updater.guard_backup_generation_immutable", "updater.guard_backup_state_update"])
         assert.ok(audited.some(routine => routine.startsWith(`${name}(`)),
           `${name} must be in the audited set (privileged), otherwise it changed privilege silently`);
       // And the pinned path is one of the DESIGN's two, not merely a path that ends in
@@ -1882,8 +1886,16 @@ test("DB-3: an item-7 updater schema upgrades to this one, with its rows, and ma
     // Item 7's schema, byte for byte (tests/fixtures/updater-ddl-item7 is
     // `git show 00722d26c:src/updater/v1/ddl/*`), applied through this tree's
     // loader. The loader runs every file and THEN asserts the table set, so the
-    // apply completes and the assertion names exactly the three tables item 7
-    // did not have — which is also the proof that this really is item 7's shape.
+    // apply completes and the assertion names exactly the tables item 7 did
+    // not have — which is also the proof that this really is item 7's shape.
+    //
+    // The fixture carries item 19a's `0004_backups.sql` alongside the item-7
+    // files, for one reason: the loader reads the FILE LIST from this tree, not
+    // from the directory it was pointed at, so without a `0004` here the read
+    // fails with ENOENT and the test never reaches the assertion that is the
+    // point of the fixture. The file is verbatim, so applying it creates the
+    // backup tables and they drop out of the missing list below; the four the
+    // assertion still names are item 7's real gap, and that list is the proof.
     await assert.rejects(installUpdaterSchema(postgres, { directory: ITEM7_DDL,
       rolesFile: join(ITEM7_DDL, "updater_release_reader_roles.sql") }),
     /updater_schema_refused:missing_tables:passkey_open_registrations,passkey_registrations_limits,approval_refusals,approval_refusal_buckets/u);

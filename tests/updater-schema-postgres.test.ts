@@ -315,12 +315,13 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
         `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='updater' AND c.relkind='r' ORDER BY 1`)).rows.map(row => row.relname);
       // The catalog's table set must equal the loader's declared list EXACTLY, in
-    // both directions. Naming the nine item-7 tables here instead would mean a
-    // table added by item 10a failed this lane rather than being required — which
-    // is the wrong failure: the list moved, and the list is the declaration of
-    // what exists. So the assertion reads the same constant the loader checks.
-    assert.deepEqual(tables, [...updaterTablesV1].sort(),
-      "the catalog holds exactly the loader's declared tables, and no others");
+      // both directions. Naming a fixed count here instead would mean a table
+      // added by item 10a (or by the backup ledger) failed this lane rather than
+      // being required — which is the wrong failure: the list moved, and the list
+      // is the declaration of what exists. So the assertion reads the same
+      // constant the loader checks.
+      assert.deepEqual(tables, [...updaterTablesV1].sort(),
+        "the catalog holds exactly the loader's declared tables, and no others");
     } finally { await privileged.end(); }
 
     // The release ledger created none of this. If a future migration reached

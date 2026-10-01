@@ -82,8 +82,14 @@ export function publicStatusV1(input = {}) {
   const lastHealthAt = input.lastHealthAt === null || input.lastHealthAt === undefined ? null : String(input.lastHealthAt);
   if (lastHealthAt !== null && !Number.isFinite(Date.parse(lastHealthAt)))
     throw updaterRefuseV1("updater_status_health_refused");
+  let backup;
+  if (input.backup !== undefined) {
+    if (!["ok", "failed", "missing"].includes(input.backup))
+      throw updaterRefuseV1("updater_status_backup_refused");
+    backup = input.backup;
+  }
   return Object.freeze({ schema: "control-room.updater-status/v1", state, releaseId, lastHealthAt,
     needsYou: input.needsYou === true, updaterRestartsLastHour: Number.isInteger(input.updaterRestartsLastHour)
       && input.updaterRestartsLastHour >= 0 && input.updaterRestartsLastHour <= 3 ? input.updaterRestartsLastHour : 0,
-    selfUpdate: input.selfUpdate === "On" ? "On" : "Off" });
+    selfUpdate: input.selfUpdate === "On" ? "On" : "Off", ...(backup === undefined ? {} : { backup }) });
 }

@@ -14,13 +14,16 @@ const UPDATER_STATES_V1 = new Set(["idle", "watching", "building", "awaiting_app
   "uncertain", "attended_upgrade_required", "paused", "stopped", "needs_attention"]);
 const ATTENTION_STATES_V1 = new Set(["uncertain", "attended_upgrade_required", "needs_attention"]);
 
-export type UpdaterHomeStatusV1 = Readonly<{ schema: typeof UPDATER_HOME_STATUS_SCHEMA_V1; state: "off" | "attention" }>;
+export type UpdaterHomeStatusV1 = Readonly<{ schema: typeof UPDATER_HOME_STATUS_SCHEMA_V1; state: "off" | "attention";
+  backup: "ok" | "failed" | "missing" | null }>;
 export type UpdaterHomeStatusReaderV1 = Readonly<{ read(): Promise<UpdaterHomeStatusV1> }>;
 type PublicUpdaterStatusV1 = Readonly<{ schema: "control-room.updater-status/v1"; state: string; releaseId: string | null;
-  lastHealthAt: string | null; needsYou: boolean; updaterRestartsLastHour: number; selfUpdate: "Off" }>;
+  lastHealthAt: string | null; needsYou: boolean; updaterRestartsLastHour: number; selfUpdate: "Off" | "On";
+  backup?: "ok" | "failed" | "missing" }>;
 
-const off = (): UpdaterHomeStatusV1 => Object.freeze({ schema: UPDATER_HOME_STATUS_SCHEMA_V1, state: "off" });
-const attention = (): UpdaterHomeStatusV1 => Object.freeze({ schema: UPDATER_HOME_STATUS_SCHEMA_V1, state: "attention" });
+const status = (state: "off" | "attention", backup: UpdaterHomeStatusV1["backup"] = null): UpdaterHomeStatusV1 =>
+  Object.freeze({ schema: UPDATER_HOME_STATUS_SCHEMA_V1, state, backup });
+const attention = (): UpdaterHomeStatusV1 => status("attention");
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
@@ -34,15 +37,14 @@ function validTimestamp(value: unknown): boolean {
  * rather than becoming a second accidental public API. */
 function isPublicStatus(value: unknown): value is PublicUpdaterStatusV1 {
   if (!plainObject(value)) return false;
-  const allowed = new Set(["schema", "state", "releaseId", "lastHealthAt", "needsYou", "updaterRestartsLastHour", "selfUpdate"]);
+  const allowed = new Set(["schema", "state", "releaseId", "lastHealthAt", "needsYou", "updaterRestartsLastHour", "selfUpdate", "backup"]);
   if (Object.keys(value).some(key => !allowed.has(key)) || value.schema !== "control-room.updater-status/v1"
     || typeof value.state !== "string" || !UPDATER_STATES_V1.has(value.state)
     || value.releaseId !== null && (typeof value.releaseId !== "string" || !SAFE_ID_V1.test(value.releaseId))
     || !validTimestamp(value.lastHealthAt) || typeof value.needsYou !== "boolean"
+    || value.backup !== undefined && !["ok", "failed", "missing"].includes(String(value.backup))
     || !Number.isInteger(value.updaterRestartsLastHour) || Number(value.updaterRestartsLastHour) < 0 || Number(value.updaterRestartsLastHour) > 3
-    // Install-night Home is intentionally an Off-only surface. An unexpected
-    // On value cannot turn into reassuring copy.
-    || value.selfUpdate !== "Off") return false;
+    || !["Off", "On"].includes(String(value.selfUpdate))) return false;
   return true;
 }
 
@@ -77,8 +79,14 @@ export function createUpdaterHomeStatusReaderV1(input: Readonly<{ root?: string;
       if (!Number.isFinite(current) || current - file.modifiedAtMs > staleAfterMs || file.modifiedAtMs - current > 10_000)
         return attention();
       const value = JSON.parse(file.text) as unknown;
-      if (!isPublicStatus(value) || value.needsYou || ATTENTION_STATES_V1.has(value.state)) return attention();
-      return off();
+      if (!isPublicStatus(value)) return attention();
+      const backup = value.backup ?? null;
+      // The legacy surface never calls self-update On reassuring, but it still
+      // carries the bounded backup badge to the configured owner UI.
+      if (value.selfUpdate === "On" || value.needsYou || ATTENTION_STATES_V1.has(value.state)
+          || backup === "failed" || backup === "missing")
+        return status("attention", backup);
+      return status("off", backup);
     } catch { return attention(); }
   } });
 }

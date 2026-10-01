@@ -1,0 +1,415 @@
+[
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "CREATE OR REPLACE FUNCTION updater.guard_plan_backup_fresh() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$\nBEGIN\n  IF NEW.kind <> 'database' THEN RETURN NEW; END IF;",
+    "replace": "CREATE OR REPLACE FUNCTION updater.guard_plan_backup_fresh() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$\nBEGIN\n  IF true THEN RETURN NEW; END IF;\n  IF NEW.kind <> 'database' THEN RETURN NEW; END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "a database plan with no fresh backup must be refused, or item 19a's §9.5 promise (\"blocks DB plans until fixed\") is void and a database can be migrated with nothing to restore from"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "  IF bound IS NULL THEN RETURN false; END IF;\n  RETURN EXISTS (\n    SELECT 1 FROM updater.backup_generations g\n     WHERE g.state = 'verified' AND g.completed_at > bound\n  );",
+    "replace": "  IF bound IS NULL THEN RETURN true; END IF;\n  RETURN EXISTS (\n    SELECT 1 FROM updater.backup_generations g\n     WHERE g.state = 'verified'\n  );",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the freshness bound is the rule: with it dropped, one backup ever taken would satisfy it forever and the 26-hour red badge would never appear. The mutation also flips the missing-policy case to fail open"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "    (state = 'failed'\n      AND completed_at IS NOT NULL\n      AND failure_code IS NOT NULL\n      AND dump_sha256 IS NULL AND dump_bytes IS NULL AND file_sha256 IS NULL\n      AND shape_digest IS NULL AND row_counts_digest IS NULL)",
+    "replace": "    (state = 'failed'\n      AND completed_at IS NOT NULL\n      AND failure_code IS NOT NULL)",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "THIS IS THE daemons4 CARRY-FORWARD. A failed row must be physically unable to carry a dump digest, size, schema digest or row-count digest, or retention has something to mistake for a dump and deletes a good one to keep the count at 14"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "  IF OLD.state <> 'failed' OR OLD.failure_code <> 'backup_in_progress' THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the whole immutability guard: with the condition inverted, a completed verified row becomes freely rewritable, so a failed attempt could be turned into a good one with no dump behind it"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "  IF (NEW.consecutive_failures < OLD.consecutive_failures - 1\n      OR NEW.consecutive_failures > OLD.consecutive_failures + 1)\n      AND NOT (NEW.consecutive_failures = 0\n               AND NEW.last_success_at IS DISTINCT FROM OLD.last_success_at\n               AND NEW.last_success_at IS NOT NULL) THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the failure counter must move by at most one, or one statement can zero it and reset the retry schedule the badge's urgency depends on. The whole condition goes, including the success carve-out: with the guard absent a caller can both zero the counter AND date a success that never happened, which turns the badge green with no new evidence behind it."
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "  IF OLD.last_success_at IS NOT NULL AND NEW.last_success_at IS NOT NULL\n      AND NEW.last_success_at < OLD.last_success_at THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "last_success_at must not move backwards: a wrong clock or a rewritten value would make a stale backup look fresh and re-admit database plans"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "  max_age_seconds integer NOT NULL CHECK (max_age_seconds BETWEEN 3600 AND 604800),",
+    "replace": "  max_age_seconds integer NOT NULL CHECK (max_age_seconds BETWEEN 3600 AND 2147483647),",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the policy bound must be capped: a caller that could set it to years would make the freshness rule satisfied by any backup ever taken, while still satisfying the type"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "REVOKE ALL ON updater.backup_generations, updater.backup_state FROM control_room_private_web;\nGRANT SELECT (generation_id, state, created_at, completed_at, encrypted, failure_code, retain_until)",
+    "replace": "GRANT SELECT ON updater.backup_generations, updater.backup_state TO control_room_private_web;\nGRANT SELECT (generation_id, state, created_at, completed_at, encrypted, failure_code, retain_until)",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the web must read state and ages, not the operator's digests and per-table counts. The mutation targets the REVOKE itself, because the later narrower GRANT does not undo a table-wide one (measured: grants accumulate)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "CREATE OR REPLACE TRIGGER plans_backup_fresh_guard BEFORE INSERT OR UPDATE ON updater.plans\n  FOR EACH ROW EXECUTE FUNCTION updater.guard_plan_backup_fresh();",
+    "replace": "-- mutation removes the backup-freshness plan trigger",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the refusal must be ATTACHED to the table, not merely defined: an unattached function is a comment"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "        if (keptValid < keep) { keptValid += 1; retained.push(generationId); }",
+    "replace": "        if (true) { keptValid += 1; retained.push(generationId); }",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "retention keeps exactly the newest `kept_generations`; keeping every verified row would let the backup root grow without limit, and would hide a policy that stopped applying"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "        else if (pinned.has(generationId)) retained.push(generationId);\n",
+    "replace": "        // mutation drops the retention pin from the keep set\n",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "item 18 pins a pre-update dump until the next successful database update plus seven days; a nightly sweep that ignored the pin would delete the one dump a failed upgrade would be restored from"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      const lock = await this.store.acquireBackupLock();\n      if (lock.status === \"busy\") {",
+    "replace": "      const lock = { status: \"acquired\" };\n      if (lock.status === \"busy\") {",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the backup lock is shared with the upgrader; without it a nightly dump and a database upgrade's pre-image dump can run against one cluster at once, and neither sees the other"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "    await rename(paths.inProgress, paths.final);",
+    "replace": "    // mutation skips the promotion rename, so a partial generation is never committed",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the rename IS the commit point: it is the only thing that makes a generation countable, and it is what makes a crash mid-backup leave nothing but an .inprogress- directory"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "    if (verified?.shapeDigest !== source.shapeDigest) {\n      const refusal = UpdaterBackupV1.#refuse(\"updater_backup_shape_digest_mismatch\");\n      refusal.evidence = `source=${source.shapeDigest} restored=${verified?.shapeDigest}`;\n      throw refusal;\n    }\n    if (JSON.stringify(verified.rowCounts) !== JSON.stringify(source.rowCounts))\n      throw UpdaterBackupV1.#refuse(\"updater_backup_row_counts_mismatch\");",
+    "replace": "    if (false) {\n      throw UpdaterBackupV1.#refuse(\"updater_backup_shape_digest_mismatch\");\n    }\n    if (false)\n      throw UpdaterBackupV1.#refuse(\"updater_backup_row_counts_mismatch\");",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the restore-VERIFY comparison is what makes a backup a backup; without it a dump that cannot be restored would be promoted and counted as good"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "    if (sealPolicy.sealRequired && encrypted !== true)\n      throw UpdaterBackupV1.#refuse(\"updater_backup_seal_refused\");",
+    "replace": "    // mutation accepts an unsealed dump on a root with no ownership protection",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the owner's external drive has ownership DISABLED, so R-FS does not protect a dump left there; an external root must be sealed, and a failed seal must refuse the generation"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "    if (Number.isFinite(free) && free < floor) throw UpdaterBackupV1.#refuse(\"updater_backup_disk_full\");",
+    "replace": "    if (false) throw UpdaterBackupV1.#refuse(\"updater_backup_disk_full\");",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the free-space preflight is §8.6's rule: without it a nearly-full disk is discovered half way through a dump, and the failure leaves a partial generation and a full root"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "        await assertSafeGenerationV1(this.policy.backupRoot, generationId);\n        await assertBackupRootUnchangedV1(root);\n        const doomed",
+    "replace": "        await assertBackupRootUnchangedV1(root);\n        const doomed",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "a generation is deleted only after it validates: without the check, a planted symlink at a generation's name would let the sweep remove a directory outside the backup root"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      if (row.state === \"verified\") {\n        if (keptValid < keep)",
+    "replace": "      if (true) {\n        if (keptValid < keep)",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "only a VERIFIED ledger row may fill a kept slot. With the filter gone, a failed row whose directory is whole (a crash between promote and record, review backup19b M1) would occupy a slot as if it were verified, and retention would delete a real verified dump to keep the count"
+  },
+  {
+    "file": "src/updater/v1/backup-store.mjs",
+    "find": "        row_counts=$6::jsonb, row_counts_digest=$7, snapshot_xid=$8,\n        encrypted=$9, retain_until=$10, failure_code=NULL, failure_detail=NULL\n      WHERE generation_id=$1 AND state='failed' AND failure_code='backup_in_progress'\n      RETURNING generation_id`,",
+    "replace": "        row_counts=$6::jsonb, row_counts_digest=$7, snapshot_xid=$8,\n        encrypted=$9, retain_until=$10, failure_code=NULL, failure_detail=NULL\n      WHERE generation_id=$1\n      RETURNING generation_id`,",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "only an IN-FLIGHT attempt may complete: without the predicate, a retry or a replay could rewrite a finished generation, and a row already completed would be counted twice. Anchored on the completion statement's own columns, because the same predicate also guards failAttempt and a bare anchor matched both."
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "      AND NEW.last_success_at IS DISTINCT FROM OLD.last_success_at\n      AND NEW.last_success_at IS NOT NULL AND OLD.last_failure_at IS NOT NULL\n      AND NEW.last_success_at < OLD.last_failure_at THEN",
+    "replace": "      AND false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "a recovery must not be dated before the failure it clears, or the ledger can be made to report a success that predates the failure it is credited with clearing. The last_success_at IS DISTINCT FROM clause is what separates a RECOVERY from a cleanup: dropping it makes the rule fire on clearing a stale failure, which is legal and which an earlier version of this guard wrongly refused."
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "REVOKE ALL ON FUNCTION updater.backup_row_counts_shape(jsonb) FROM PUBLIC;",
+    "replace": "-- mutation drops the REVOKE, so PUBLIC (and so the web login) keeps EXECUTE",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "A FUNCTION is EXECUTABLE by PUBLIC by default, so defining a CHECK helper without revoking it hands the web login a callable routine it never had. Measured, not theoretical: cook/v1's passkey lane asserts the web's executable routine set as an EXACT list, and this function was the one extra entry that failed it on the merged tree. The same leak reaches the migrator. Kept as its own check because 0002's two CHECK helpers each carry the identical REVOKE, so this is a pattern that has to be right in every file that follows it."
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "      `SELECT pg_catalog.count(*)::bigint AS count FROM ${table.qualified} WHERE $1::boolean`, [true]));",
+    "replace": "      `SELECT pg_catalog.count(*)::bigint AS count FROM public.\"${table.name}\"`, []));",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "C1, the reviewer's exact bug restored: a count built from the raw relname. The hostile-name test must fail (a quoted or semicolon name is refused or miscounted), proving the server-quoted, extended-protocol count is what keeps a table name from becoming SQL"
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "const extended = (text, values = []) => Object.freeze({ text, values, queryMode: \"extended\" });",
+    "replace": "const extended = (text, values = []) => Object.freeze({ text, values });",
+    "test": "node --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "C1 defence in depth: the extended protocol refuses a second statement in one call, so a quoting bug is a refused statement rather than a takeover (with quoting removed, the reviewer's name fails with \"cannot insert multiple commands into a prepared statement\"). It is a second fence, so the contract test pins it by recording how every evidence statement is sent"
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "  await pinEvidenceSessionV1(client);\n  await assertEvidenceReaderV1(client);\n  const shapeDigest",
+    "replace": "  await pinEvidenceSessionV1(client);\n  const shapeDigest",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "C1: the evidence read must refuse a login that can grant or become anything (a superuser reader is what turned the name bug into SUPERUSER for the release login)"
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "  await client.query(\"SET row_security = off\");\n",
+    "replace": "",
+    "test": "node --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "a policy expression is release code; with row_security left on, a reader without BYPASSRLS would evaluate it on every count. The production reader HAS BYPASSRLS, so this is a second fence and the contract test pins it by recording the session settings"
+  },
+  {
+    "file": "src/updater/v1/schema-installer.ts",
+    "find": "readerRow.can_grant !== false || readerRow.has_members !== false\n    || readerRow.owns_objects !== false\n    || JSON.stringify(readerRow.member_of) !== JSON.stringify([\"pg_read_all_data\"])) {",
+    "replace": "readerRow.has_members !== false\n    || readerRow.owns_objects !== false) {",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the backup reader's ONLY membership is pg_read_all_data and it holds ADMIN on nothing; the loader is the outside check, on every start, that nobody granted it more. Both clauses go together because an ADMIN grant is also a membership, so either alone would catch the test's grant"
+  },
+  {
+    "file": "src/updater/v1/backup-store.mjs",
+    "find": "          \"SELECT singleton FROM updater.backup_lock WHERE singleton FOR UPDATE NOWAIT\"));",
+    "replace": "          \"SELECT pg_catalog.pg_try_advisory_lock(1128354390,1431323731) AS singleton WHERE pg_catalog.pg_try_advisory_lock(1128354390,1431323731)\"));",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H1a: the reviewer's lock restored. Any login can hold an advisory key, so a release could stop every backup; only the deployer can lock the backup_lock row"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "        const recorded = await this.#recordStandaloneFailure(\"updater_backup_lock_busy\");",
+    "replace": "        const recorded = null;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H1: a busy lock must be RECORDED. A silent skip let a lock held forever stop every backup with consecutive_failures = 0"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "        || (entry.uid !== 0 && entry.uid !== ownerUid)\n        || ((entry.mode & 0o022) !== 0 && (entry.mode & 0o1000) === 0))",
+    "replace": "        || false)",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H2: every ancestor of the backup root must be root- or updater-owned and not writable by others unless sticky, or someone else can rename a component away and substitute their own tree"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "  if (!entry.isDirectory() || entry.uid !== ownerUid || (entry.mode & 0o077) !== 0)\n    throw updaterRefuseV1(\"updater_backup_root_unsafe\");\n}",
+    "replace": "  if (!entry.isDirectory())\n    throw updaterRefuseV1(\"updater_backup_root_unsafe\");\n}",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H2: the backup root itself must be the updater's and private (no group/other bits), in the ONE function both the first check and every re-check use. Measured before the fix: a 0777 root returned verified"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "    if (entry === null || entry.isSymbolicLink() || !entry.isDirectory()\n",
+    "replace": "    if (entry === null\n",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H2: no ANCESTOR of the backup root may be a symlink (lstat of a link is neither followed nor a directory). This is the single fence for that case (O_NOFOLLOW guards only the last component), so without it a root reached through a symlinked parent is accepted and written into. A symlink AT the root has three fences (O_NOFOLLOW, lstat, inode compare) and is pinned by the test, not by one mutation"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      await this.#settleInterrupted(generationId);\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "M1: a dead run's in-flight row must be settled to a real failure code, or it stays backup_in_progress forever"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      } else if (keptValid < keep) unrecorded.push(generationId);\n      else surplus.push(generationId);",
+    "replace": "      } else surplus.push(generationId);",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "M1: a failed row whose directory is a whole, verified generation (a crash between promote and record) is kept until superseded. Measured before the fix: the next run's sweep deleted it, which on a first-ever backup is the only good dump"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "    assertCompletionV1(completion);\n",
+    "replace": "",
+    "test": "node --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "H1b: everything the ledger's completion would refuse (the row counts' shape included) is refused before the promote rename. Without it a refused completion leaves a promoted gen- directory beside a failed row, which the first version did for every upper-case table name"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "          await child(bin(\"pg_dump\"), [\"--format=custom\", `--snapshot=${snapshot}`, \"--lock-wait-timeout=60000\",",
+    "replace": "          await child(bin(\"pg_dump\"), [\"--format=custom\", \"--lock-wait-timeout=60000\",",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the dump and its evidence must be ONE snapshot: without --snapshot, a write between the evidence read and the dump makes the restore disagree and the backup fails (or, worse, agrees by accident)"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "await admin.query(`CREATE ROLE ${SCRATCH_RESTORE_V1} LOGIN NOSUPERUSER",
+    "replace": "await admin.query(`CREATE ROLE ${SCRATCH_RESTORE_V1} LOGIN SUPERUSER",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the scratch restore must not run as a superuser: a release's own functions (CHECK helpers, index expressions) run during a restore, and a superuser restore is a shell as _crdb. The hostile-name test carries a CHECK function that raises if it ever runs as a superuser, so a superuser restore fails the backup"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      if (this.#startup) {",
+    "replace": "      if (false) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1: neither a missing nor an overdue schedule marker may launch from the updater's startup tick; an overdue marker rolls to the next 02:30 window"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      await this.stateFiles.writeBackupSchedule(nextBackupWindowV1(now).toISOString());\n      return this.#start({ scheduled: true });",
+    "replace": "      return this.#start({ scheduled: true });",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1: the schedule is advanced before launch as the durable claim, so one missed window cannot start repeatedly and several missed nights collapse to one catch-up"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "    return Object.freeze({ status: \"started\" });\n  }\n  runManual()",
+    "replace": "    return running;\n  }\n  runManual()",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M2: launching the worker must return immediately; returning its completion promise blocks the updater tick and Stop behind a long backup"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        await this.alerts.reconcile({ ...facts, backupFailed: facts.backupFailed === true || backupFailed,",
+    "replace": "        await this.alerts.reconcile({ ...facts, backupFailed: facts.backupFailed === true,",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "H1: the default path must derive backupFailed from the real backup status and queue the existing backup-failed push without a caller-supplied alertFacts port"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "    else if (request.request_kind === \"backup_now\") {",
+    "replace": "    else if (false) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "L4: Backup now must be handled by the default owner-action composition instead of falling through to the unbound refusal"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "      if (request.source !== \"root\" && request.requires_passkey !== false)\n        throw updaterRefuseV1(\"updater_backup_owner_request_refused\");",
+    "replace": "      if (false)\n        throw updaterRefuseV1(\"updater_backup_owner_request_refused\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "L4: a phone Backup now row must have the existing session-only owner-request shape; a passkey-shaped or forged row is refused while root control remains available"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      if (rootPolicy.sealRequired && this.ports.sealBound === false)\n        throw UpdaterBackupV1.#refuse(\"updater_backup_seal_unbound\");",
+    "replace": "      if (false)\n        throw UpdaterBackupV1.#refuse(\"updater_backup_seal_unbound\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L1: an external root without a bound seal must refuse before dump writes the first plaintext byte"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "    if (runAs) await child(\"/bin/rm\", [\"-rf\", path], { timeoutMs: timeouts.clusterMs,",
+    "replace": "    if (false) await child(\"/bin/rm\", [\"-rf\", path], { timeoutMs: timeouts.clusterMs,",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L2: recursive removal inside an _crdb-owned scratch directory must execute as _crdb, not as root following paths the service account can race"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "        if (runAs) await child(\"/usr/bin/tee\", [\"-a\", join(dataDir, \"postgresql.conf\")], {",
+    "replace": "        if (false) await child(\"/usr/bin/tee\", [\"-a\", join(dataDir, \"postgresql.conf\")], {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L2: the scratch configuration append must execute as _crdb, not as root inside a directory _crdb owns"
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "  await pinEvidenceSessionV1(client);\n  await assertEvidenceReaderV1(client);\n  const shapeDigest",
+    "replace": "  await assertEvidenceReaderV1(client);\n  await pinEvidenceSessionV1(client);\n  const shapeDigest",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L3: the scratch evidence reader session must be pinned before its first authority or catalog query"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "        await pinEvidenceSessionV1(reader);\n        await assertEvidenceReaderV1(reader);",
+    "replace": "        await assertEvidenceReaderV1(reader);\n        await pinEvidenceSessionV1(reader);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L3: the live source evidence reader session must be pinned before its first authority or catalog query"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        || value.schema !== \"control-room.backup-schedule/v1\"\n        || typeof value.nextWindowAt !== \"string\" || !Number.isFinite(Date.parse(value.nextWindowAt)))",
+    "replace": "        || value.schema !== \"control-room.backup-schedule/v1\")",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1: the root-held schedule marker must carry a real timestamp; malformed state cannot invent a due window or suppress the nightly job"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      if (signal?.aborted) throw UpdaterBackupV1.#refuse(\"updater_backup_cancelled\");\n      if (!manual && !scheduled)",
+    "replace": "      if (false) throw UpdaterBackupV1.#refuse(\"updater_backup_cancelled\");\n      if (!manual && !scheduled)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "M2: a bounded worker stopped before it begins must not enter the dump path or take the shared backup lock"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "    || value.backup !== undefined && ![\"ok\", \"failed\", \"missing\"].includes(String(value.backup))",
+    "replace": "    || false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-home-status.test.tsx",
+    "why": "H1: Home must fail closed on an unknown backup badge instead of rendering it as calm"
+  },
+  {
+    "file": "src/web/v1/updater-home-status-browser.ts",
+    "find": "      || status.backup !== null && ![\"ok\", \"failed\", \"missing\"].includes(String(status.backup))) throw new Error();",
+    "replace": "      || false) throw new Error();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-home-status.test.tsx",
+    "why": "H1: the browser boundary must reject an unknown backup badge rather than pass it into the owner UI"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "      if (value.selfUpdate === \"On\" || value.needsYou || ATTENTION_STATES_V1.has(value.state)",
+    "replace": "      if (value.needsYou || ATTENTION_STATES_V1.has(value.state)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-home-status.test.tsx",
+    "why": "H1: self-update On remains adverse on the legacy surface while its bounded backup badge is still available to the configured Home line"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "      await mode.set(\"stopped\");\n      backupWorker?.cancel();",
+    "replace": "      await mode.set(\"stopped\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M2: Stop must immediately signal a long-running backup child instead of merely recording the stopped mode while dump work continues"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      if (!manual && !scheduled) {",
+    "replace": "      if (!manual) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "M1b: the root-held 02:30 slot claim must bypass the completion-relative due time, or a backup finishing seconds late suppresses the next night's fixed slot"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      return this.#start({ scheduled: true });",
+    "replace": "      return this.#start();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1b default path: every claimed worker slot must be identified as scheduled when it reaches the runner"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        if (schedule === null) {",
+    "replace": "        if (schedule === null || Date.parse(schedule.nextWindowAt) <= now.getTime()) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1c: a persisted overdue slot means the Mac missed its night and must catch up once on restart; only a genuinely missing first-install marker is initialization-only"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "    if (cancelled || signal?.aborted) throw updaterRefuseV1(\"updater_backup_cancelled\");",
+    "replace": "    if (false) throw updaterRefuseV1(\"updater_backup_cancelled\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "M2 L8: Stop must translate the forced evidence-session disconnect into cancellation instead of a false backup failure"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "    await close(cancelled || signal?.aborted);",
+    "replace": "    // mutation leaks the owned evidence client on every completed exit",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "Stop and every other evidence-reader exit must await the owned client close; otherwise a rejected query can let the backup return while its production reader backend still consumes a connection slot and snapshot"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "  if (!Number.isSafeInteger(closeTimeoutMs) || closeTimeoutMs < 1)",
+    "replace": "  if (false)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "The evidence close bound must be a positive safe integer so cleanup cannot become unbounded or silently use an immediate timer through invalid composition"
+  }
+]

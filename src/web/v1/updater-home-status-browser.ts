@@ -1,6 +1,7 @@
 import { readBrowserJson } from "./browser-json";
 
-export type UpdaterHomeStatusV1 = Readonly<{ schema: "control-room.updater-home-status/v1"; state: "off" | "attention" }>;
+export type UpdaterHomeStatusV1 = Readonly<{ schema: "control-room.updater-home-status/v1"; state: "off" | "attention";
+  backup: "ok" | "failed" | "missing" | null }>;
 
 export async function readUpdaterHomeStatusV1(transport: typeof fetch = fetch, signal?: AbortSignal): Promise<UpdaterHomeStatusV1> {
   try {
@@ -11,8 +12,10 @@ export async function readUpdaterHomeStatusV1(transport: typeof fetch = fetch, s
     const value = await readBrowserJson(response, 512);
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
     const status = value as Record<string, unknown>;
-    if (Object.keys(status).length !== 2 || status.schema !== "control-room.updater-home-status/v1"
-      || !["off", "attention"].includes(String(status.state))) throw new Error();
-    return Object.freeze({ schema: "control-room.updater-home-status/v1", state: status.state as "off" | "attention" });
-  } catch { return Object.freeze({ schema: "control-room.updater-home-status/v1", state: "attention" }); }
+    if (Object.keys(status).sort().join(",") !== "backup,schema,state" || status.schema !== "control-room.updater-home-status/v1"
+      || !["off", "attention"].includes(String(status.state))
+      || status.backup !== null && !["ok", "failed", "missing"].includes(String(status.backup))) throw new Error();
+    return Object.freeze({ schema: "control-room.updater-home-status/v1", state: status.state as "off" | "attention",
+      backup: status.backup as "ok" | "failed" | "missing" | null });
+  } catch { return Object.freeze({ schema: "control-room.updater-home-status/v1", state: "attention", backup: null }); }
 }
