@@ -394,8 +394,19 @@ export class FleetGatewayStoreV1 {
     // and worker id together, never one alone, so two workers in one tenant
     // (or the same worker id in two tenants) cannot collide on one lock.
     if (advisoryLock) {
+      // The two-int form, not `hashtextextended`: PostgreSQL's two-argument
+      // pg_advisory_xact_lock takes (int4, int4), and hashtextextended returns
+      // bigint -- `hashtextextended($1,0), hashtextextended($2,0)` does not
+      // resolve at all and fails every heartbeat with 42883. Both ids are cast
+      // to int4 here, which is what the two-int overload expects.
+      //
+      // Keying on two SEPARATE hashes (tenant, worker) rather than one hash of
+      // the pair keeps the key space the database's own, and a collision between
+      // two distinct (tenant, worker) pairs costs one extra serialisation, never
+      // correctness: the lock is only ever held for the duration of this one
+      // worker's presence write.
       await tx.query(`SELECT pg_catalog.pg_advisory_xact_lock(
-        pg_catalog.hashtextextended($1,0), pg_catalog.hashtextextended($2,0))`,
+        pg_catalog.hashtext($1)::int, pg_catalog.hashtext($2)::int)`,
       [`fleet:presence:${this.#tenantId}`, workerId]);
     }
     const prior = (await tx.query<PresenceRowV1>(`SELECT session_id,presence_state,last_seen_at FROM fleet_worker_presence
