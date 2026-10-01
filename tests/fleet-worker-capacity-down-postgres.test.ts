@@ -50,7 +50,8 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
  * else, so after applying it onto current cook/v1 and running 0234's down, the
  * schema must come back to exactly what cook/v1 says it is.
  */
-const PRE_0234_DIGEST = "962ffe43db908640af3adbacfdc2b0d737e6b86cdb5f265764bbdd68fdd03df8";
+// Re-pinned when files part 2 (0209–0211, numbered before 0234) landed: equals files2's own pre-0234 schema digest.
+const PRE_0234_DIGEST = "45393cc6221f1a613b8dce8fb9f676821ba1cdb15ea7ae0f828b666ebc2df24a";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {

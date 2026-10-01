@@ -1,6 +1,6 @@
 {
   "schema": "control-room.runtime-license-manifest/v1",
-  "inventoryDigest": "4cf293978f7037ae2c5ef2b8960a9b35f20c1024ea1ccad8fadc1fb999a7f410",
+  "inventoryDigest": "a57376b660d33ddc1baf83441486172f53ba819960cb9305b4e6fab97fe210c3",
   "completeDistributionClearance": true,
   "scope": "complete for the declared artifact inputs only; #64 independently verifies the assembled release tree",
   "installed": [
@@ -101,6 +101,38 @@
       "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
     },
     {
+      "name": "@hexagon/base64",
+      "version": "1.1.28",
+      "installedPath": "node_modules/.pnpm/@hexagon+base64@1.1.28/node_modules/@hexagon/base64",
+      "manifestSha256": "4442456b51131c248c39189a13f1f3341146f2840eb36ed9a07afd77675ea819",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1101,
+          "sha256": "b9c657e3785c8b54b6165808e2a2744dfa33251f5bb8f2324ac5f70ff0d9af57"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@levischuck/tiny-cbor",
+      "version": "0.2.11",
+      "installedPath": "node_modules/.pnpm/@levischuck+tiny-cbor@0.2.11/node_modules/@levischuck/tiny-cbor",
+      "manifestSha256": "a936a51322f5bcb9775eeb5736269afcbffdcb446634544659215424c19f47c9",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1061,
+          "sha256": "5871de52772b5b8e6a7054616a4b59f3f7a7949adb588af7eddcf825c8db86b8"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
       "name": "@mozilla/readability",
       "version": "0.6.0",
       "installedPath": "node_modules/.pnpm/@mozilla+readability@0.6.0/node_modules/@mozilla/readability",
@@ -125,6 +157,262 @@
       "status": "missing_root_text",
       "provenance": "pinned_npm_release_integrity",
       "qualification": "installed 3.0.0 release is bound by pnpm lock integrity; prior 2.2.0 source comparison remains historical and is not used for clearance"
+    },
+    {
+      "name": "@peculiar/asn1-android",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-android@2.10.0/node_modules/@peculiar/asn1-android",
+      "manifestSha256": "e793e1235cb9e99ed72f9d99c7d74703c18f01a60b19b9f7121995a12c5c2b49",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1056,
+          "sha256": "3ee7c4b649b783688f1186c9aa0da50e331027514c9bfa143f27983e23783c71"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-asym-key",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-asym-key@2.10.0/node_modules/@peculiar/asn1-asym-key",
+      "manifestSha256": "b3cda091b2e3fe378b537298a1287bac8877255c249eb519786a7ac42c6947e8",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1079,
+          "sha256": "1a00d37fb9fca78a7f792fa6c8fd13f0123388756d81b471bcec11484316ff73"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-cms",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-cms@2.10.0/node_modules/@peculiar/asn1-cms",
+      "manifestSha256": "9d04f51df93e5ca9000ba8f62892ce868daf62ccf8bc7e68f751aa0c4e8437fc",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1057,
+          "sha256": "1ecdd8e8977af83c07c5f97bec87b47d27059b7ea323ca3160fbfa2314f5d99c"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-csr",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-csr@2.10.0/node_modules/@peculiar/asn1-csr",
+      "manifestSha256": "e2f5de1d19930666a0b2e9423ea84adc334786d429474dcd140bd5a7a794cd0c",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-ecc",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-ecc@2.10.0/node_modules/@peculiar/asn1-ecc",
+      "manifestSha256": "0cee2a01bea7ff5b71f7f409e70a4d3679f02d43a4ec4bebb51d9900d2c066cd",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-pfx",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-pfx@2.10.0/node_modules/@peculiar/asn1-pfx",
+      "manifestSha256": "7ac706a320147fe2f961b02cb6b5d38db8e5f5a19928884c81ea206b134e522e",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-pkcs8",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-pkcs8@2.10.0/node_modules/@peculiar/asn1-pkcs8",
+      "manifestSha256": "765040f9ce2acb42bec8a90dd8b138e2d252344351248317754f50e0169bef87",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-pkcs9",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-pkcs9@2.10.0/node_modules/@peculiar/asn1-pkcs9",
+      "manifestSha256": "728567cd9b060e0f0350a48a6ecda0cb5cd50224d399617fe5d66e9bad3c3694",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1056,
+          "sha256": "3ee7c4b649b783688f1186c9aa0da50e331027514c9bfa143f27983e23783c71"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-rsa",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-rsa@2.10.0/node_modules/@peculiar/asn1-rsa",
+      "manifestSha256": "2e49b7c6fa19b86111da58e64bb8aae3b0ec97e9f1ffb64ff74cbd76d02ea2ea",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-schema",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-schema@2.10.0/node_modules/@peculiar/asn1-schema",
+      "manifestSha256": "1c9c99853605aa7047c21ee0343266e67eb44cbeb42fd1c50b1088e99ff8b588",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1057,
+          "sha256": "1ecdd8e8977af83c07c5f97bec87b47d27059b7ea323ca3160fbfa2314f5d99c"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-x509",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-x509@2.10.0/node_modules/@peculiar/asn1-x509",
+      "manifestSha256": "5a82ceb1ea7525c62e26c1cec00b3ef8ec60950fb18221d3ecc6a1a6cbbfc222",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1057,
+          "sha256": "1ecdd8e8977af83c07c5f97bec87b47d27059b7ea323ca3160fbfa2314f5d99c"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-x509-attr",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-x509-attr@2.10.0/node_modules/@peculiar/asn1-x509-attr",
+      "manifestSha256": "96836f59432db44766bb89dcb0f2ea333775d5d408abae3d11b7ad7f2a07c53a",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1059,
+          "sha256": "031b1aac1313d91559ecc89cb6ce7c822f39f1a1259fae0f9b8d01a90c35c85a"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/asn1-x509-post-quantum",
+      "version": "2.10.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+asn1-x509-post-quantum@2.10.0/node_modules/@peculiar/asn1-x509-post-quantum",
+      "manifestSha256": "96176e0bcc32f35c22d3eb6d0afd2cb110f8f42f805f6a1643687474c270892b",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1079,
+          "sha256": "1a00d37fb9fca78a7f792fa6c8fd13f0123388756d81b471bcec11484316ff73"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/utils",
+      "version": "2.0.3",
+      "installedPath": "node_modules/.pnpm/@peculiar+utils@2.0.3/node_modules/@peculiar/utils",
+      "manifestSha256": "a94d3387ec3358c0445e395c9446236468044375a2e53e50ba3d9972cb7a1e6f",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1084,
+          "sha256": "ce2ae0f0066d1be56ab4ec851cc611805bb95cdc8dd858b301e22ee54b351d43"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@peculiar/x509",
+      "version": "2.1.0",
+      "installedPath": "node_modules/.pnpm/@peculiar+x509@2.1.0/node_modules/@peculiar/x509",
+      "manifestSha256": "af72b88cb2442274e30abc0a2ca0e3c7167b972e7f1a2ca9828ac84c4e9d704a",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1091,
+          "sha256": "3d5d1b1150b1fc25144d342daaba3875899b8dc2fcb172ea4810cc69affbe4d3"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "@simplewebauthn/server",
+      "version": "14.0.3",
+      "installedPath": "node_modules/.pnpm/@simplewebauthn+server@14.0.3/node_modules/@simplewebauthn/server",
+      "manifestSha256": "321fb48e43d8b3880b54261835c10dcfdd7c7402515d8b93128b85b7017c9f79",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1071,
+          "sha256": "bd9e3f45696472076c7160c7f66e54b2d62d38bc2646c812d19be83ee4400c63"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
     },
     {
       "name": "@types/debug",
@@ -328,6 +616,22 @@
           "file": "LICENSE",
           "bytes": 1070,
           "sha256": "251ecdcdb2bafa7b106187a8cce96f322d0074c66e557c3c94cb49c769970408"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "asn1js",
+      "version": "3.0.10",
+      "installedPath": "node_modules/.pnpm/asn1js@3.0.10/node_modules/asn1js",
+      "manifestSha256": "e5e046b9bca640e0aa4aeb60fe1e8178a97959c6383b965b0ff52ee565b0ff2c",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1571,
+          "sha256": "ebe5d98519d0dfcbcb80e20b22a56e7321e8557cd14355760434bbd4c1f4f683"
         }
       ],
       "status": "root_text_collected",
@@ -2315,6 +2619,38 @@
       "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
     },
     {
+      "name": "pvtsutils",
+      "version": "1.3.6",
+      "installedPath": "node_modules/.pnpm/pvtsutils@1.3.6/node_modules/pvtsutils",
+      "manifestSha256": "c919db2c1458eceb304414b4e4da34dabc43cee71141ceb13d1a0d389a9b5a01",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1084,
+          "sha256": "c620c1d08a47c93ce242914a4269b86e41df5a97845325725a5f83d5d6f9d7fd"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "pvutils",
+      "version": "1.2.0",
+      "installedPath": "node_modules/.pnpm/pvutils@1.2.0/node_modules/pvutils",
+      "manifestSha256": "8d7f27545db8668ab8e1a65f40cac53465646c36e18d1400bba3947f6ca7ed4c",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1137,
+          "sha256": "15c88630f1e778db64a446cb31b67362cc9eb7a048fdf5ac7ab51905b74464cd"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
       "name": "react",
       "version": "19.2.6",
       "installedPath": "node_modules/.pnpm/react@19.2.6/node_modules/react",
@@ -2356,6 +2692,22 @@
           "file": "license",
           "bytes": 1079,
           "sha256": "f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "reflect-metadata",
+      "version": "0.2.2",
+      "installedPath": "node_modules/.pnpm/reflect-metadata@0.2.2/node_modules/reflect-metadata",
+      "manifestSha256": "e0f6d5cf809e02e338f501d3030e917fa57e3a10044387de890cbf142b4f4083",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 9141,
+          "sha256": "c5217b0544ea9c91d010863582d6f6b35ec50e4146c34dee085ddcec5dd92def"
         }
       ],
       "status": "root_text_collected",
@@ -2798,6 +3150,54 @@
           "file": "license",
           "bytes": 1099,
           "sha256": "6c03fd41cfd7c92d8aa8a2fa521b94b2683f059123281dcf921ddea9216b6254"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "tslib",
+      "version": "1.14.1",
+      "installedPath": "node_modules/.pnpm/tslib@1.14.1/node_modules/tslib",
+      "manifestSha256": "f685f35daa1c75b3e6e3e2e9158de36130e34aee095498f65af9e508ea2d56b0",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 655,
+          "sha256": "210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "tslib",
+      "version": "2.8.1",
+      "installedPath": "node_modules/.pnpm/tslib@2.8.1/node_modules/tslib",
+      "manifestSha256": "f02b4851df316f29bdfcd404aa1eb41e4e216b5859015f81fcd3e91caf8be931",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 655,
+          "sha256": "210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751"
+        }
+      ],
+      "status": "root_text_collected",
+      "provenance": "installed_root_text",
+      "qualification": "package root ships LICENSE and/or NOTICE text matching reported bytes"
+    },
+    {
+      "name": "tsyringe",
+      "version": "4.10.0",
+      "installedPath": "node_modules/.pnpm/tsyringe@4.10.0/node_modules/tsyringe",
+      "manifestSha256": "d62f650419534a5f60d404d7d9cbf578ec7bca83b4b46a7a4a16a024969f95b1",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1162,
+          "sha256": "27ebda9d51f0a56b7e281ccd8230a27236dcb51c05f64b07869ecf6e965d68b0"
         }
       ],
       "status": "root_text_collected",

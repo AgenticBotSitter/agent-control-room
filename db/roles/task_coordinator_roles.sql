@@ -51,6 +51,16 @@ GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindi
 -- for every eligible candidate. No INSERT, UPDATE or DELETE: intents are
 -- written by the owning paths alone.
 GRANT SELECT ON control_effect_intents TO control_room_task_coordinator;
+-- Read-only, and only so 0211's combine-readiness guard on control_jobs is
+-- satisfiable. That guard is a BEFORE UPDATE trigger and it runs as the
+-- INVOKER, so the coordinator's own reconcile UPDATE (running -> ready, the
+-- supervisor's lease-expiry move) fails 42501 without this read and every
+-- stalled task stays stranded. 0238 converges an already-provisioned
+-- installation onto the same ACL. No INSERT, UPDATE or DELETE: a declaration
+-- is the owner's at approval and a binding is the accept path's; neither is
+-- the scheduler's to write.
+GRANT SELECT ON control_task_declared_inputs, control_job_artifact_inputs
+  TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
 -- Read-only: the coordinator enforces a project's eligible-worker-kinds and

@@ -7,6 +7,7 @@
 // declared type that disagrees with the bytes is shown rather than smoothed
 // over, and a catalog that could not be read never renders as an empty one.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -73,6 +74,18 @@ test("a set that is missing files says so and still offers the ones that arrived
   assert.match(markup, />Download</u, "the file that did arrive is still downloadable");
 });
 
+test("a quarantined set sorts before a declared or incomplete set", () => {
+  const incomplete = set({ setId: `result-set:${"i".repeat(32)}`, state: "incomplete",
+    files: [file({ displayName: "still-arriving.txt", state: "declared" })] });
+  // Set and file state are intentionally independent in the catalog. A stored
+  // row remains as the record of a set that was held back.
+  const held = set({ setId: `result-set:${"h".repeat(32)}`, state: "quarantined",
+    files: [file({ displayName: "held-back.txt", state: "stored" })] });
+  const markup = html(catalog({ sets: [incomplete, held] }));
+  assert.ok(markup.indexOf("Held back") < markup.indexOf("Not all files arrived"),
+    "a held-back set comes before a set that is merely incomplete");
+});
+
 test("a declared type that disagrees with the bytes is shown, not smoothed over", () => {
   const markup = html(catalog({ sets: [set({ files: [file({ displayName: "chart.png",
     declaredMediaType: "image/png", detectedMediaType: "text/html" })] })] }));
@@ -112,6 +125,12 @@ test("the panel is one column and the action is reachable at phone width", () =>
   assert.doesNotMatch(markup, /user-scalable=no|maximum-scale=1/u);
   // The action is a real button, so it works by keyboard and on a phone.
   assert.match(markup, /<button[^>]*class="private-action-link"[^>]*>Download<\/button>/u);
+});
+
+test("the single panel gives each file a full-width action at phone width", () => {
+  const css = readFileSync(new URL("../private-app/app/private.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.private-result-list-item\s*\{\s*grid-template-columns:\s*1fr/u);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.private-result-file-actions \.private-action-link\s*\{\s*width:\s*100%/u);
 });
 
 test("the browser client reads the catalog and refuses a cross-project answer", async () => {

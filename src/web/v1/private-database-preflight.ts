@@ -15,20 +15,32 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from the full public migration ledger of THIS tree — cook/v1's
-// 0230-0237 plus MIG-E's 0212 (the text-copy derivation record) and 0213 (its two
-// read views) — in filename order including the assigned gaps, by the controlled
-// PGlite digest script, and cross-checked against a real PostgreSQL 17 cluster
-// installed the production way.
+// Generated from the full public migration ledger of THIS tree, in filename order
+// including the assigned gaps, by the controlled digest script and cross-checked
+// against a real PostgreSQL 17 cluster installed the production way.
 //
-// Recomputed for the convdb merge round. The value this branch carried before the
-// merge was derived from a 0213-era tree with none of cook/v1's 0224-0237, so it
-// was wrong here by construction and could not be carried across. MIG-E added two
-// migrations and altered no object cook/v1 already declared, so this value is the
-// merge's and only the merge's; the pre-merge value is not expected to appear.
+// History of this constant, in the order the rounds happened:
+//  - through 0196, plus the owner-push migrations 0224-0227 (MIG-I);
+//  - through 0230, whose acceptance guard gained a NAMED rejection arm and whose
+//    90-day sweep made an unaccepted set disposable. The pre-0230 digest was
+//    re-derived with 0230 removed and matched the previous value exactly, so that
+//    change was 0230's and only 0230's;
+//  - through 0237 with 0209-0211 (the upload sessions, the publication receipt
+//    and the combine-input bindings) merged onto that ledger, then once more after
+//    0210's stored-set guard was corrected to key on `producer_kind` rather than
+//    `source_kind`;
+//  - THIS merge round, for the text-copy derivations: cook/v1 at 0238 plus 0212
+//    (the derivation record) and 0213 (its two read views).
+//
+// Neither side's value survived the merge and neither could have. cook/v1's value
+// was derived from a tree with no 0212/0213; this branch's pre-merge value was
+// derived from a 0213-era tree with none of cook/v1's 0209-0211 or 0224-0238, so
+// it was wrong here by construction and could not be carried across. The value
+// below is the merged tree's and only the merged tree's; neither pre-merge value
+// is expected to appear anywhere.
 //
 // Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "bde62df3d713d1e5ac1faa967fcbfac5c77c15b0d81b0012d4f1539ddc8dd502";
+export const privateWebSchemaDigest = "9e8d58708fc41b691e0372a485cb612e1778a63d0eddbbac002dcb09a3da9948";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -79,6 +91,13 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // preflight's column audit is what proves the web login cannot write a
   // catalog row, cannot quarantine a file and cannot rewrite a producer.
   "control_result_file_sets", "control_result_files", "control_result_file_download_grants",
+  // 0209-0211: the owner's approval artefacts for the upload path. Read plus
+  // INSERT on the three the owner actually declares and binds; the upload
+  // sessions, their chunks and the publication receipt are read only, so the
+  // owner's Stop decision about an upload is the 0209 guard's to check and not
+  // a column this login can simply set.
+  "control_task_declared_outputs", "control_task_declared_inputs", "control_job_artifact_inputs",
+  "control_result_upload_sessions", "control_result_upload_chunks", "control_result_publications",
   // 0213 (MIG-E part 2): the owner's per-project read of text-copy derivations.
   //
   // The VIEW, never `control_text_copy_derivations` itself, and the difference
@@ -124,6 +143,13 @@ privateWebInsertTables.add("control_result_file_download_grants");
 // cook/v1 (recurring + skills): the owner's rules and reusable skills.
 for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
   privateWebInsertTables.add(table);
+// 0209-0211: the owner approves what a part may produce and what it needs, and
+// binds an accepted file to the consumer that declared it. Each insert is
+// guarded by a live-owner check in the database (0209/0211), so this is
+// permission to ask, not permission to declare.
+privateWebInsertTables.add("control_task_declared_outputs");
+privateWebInsertTables.add("control_task_declared_inputs");
+privateWebInsertTables.add("control_job_artifact_inputs");
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -204,7 +230,12 @@ const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
   "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",
   "control_job_dependencies", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents",
-  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
+  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding",
+  // 0211's combine-readiness guard is a BEFORE UPDATE trigger on control_jobs
+  // that runs as the INVOKER, and this role holds UPDATE on control_jobs.state,
+  // so without these two reads the guard is unevaluable and every news job is
+  // refused 42501 as it starts. Granted by db/migrations/0238.
+  "control_task_declared_inputs", "control_job_artifact_inputs"];
 const newsCoordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts",
   "control_leases", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents", "control_approval_consumptions",
   "control_policy_decisions", "control_news_feed_plans", "audit_events", "control_audit_chain_heads"]);
@@ -228,7 +259,13 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_project_coordination_operation_jobs", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_task_model_selections",
   "control_task_declared_scopes", "control_assignment_lease_scopes", "work_batches", "work_batch_items",
-  "work_batch_effective_queue_admissions", "control_project_event_stream_heads", "control_project_events"];
+  "work_batch_effective_queue_admissions", "control_project_event_stream_heads", "control_project_events",
+  // 0211's combine-readiness guard is a BEFORE UPDATE trigger on control_jobs
+  // that runs as the INVOKER. The coordinator holds UPDATE on control_jobs.state
+  // -- it is the supervisor's own lease-expiry move -- so without these two
+  // reads reconcileStalled fails 42501 and every stalled task is stranded.
+  // Granted by db/migrations/0238.
+  "control_task_declared_inputs", "control_job_artifact_inputs"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
