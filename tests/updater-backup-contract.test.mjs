@@ -15,14 +15,16 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { updaterDdlFilesV1, updaterTablesV1 } from "../src/updater/v1/schema-installer.ts";
-import { BACKUP_LOCK_V1, BACKUP_MAX_AGE_SECONDS_V1, BACKUP_KEPT_GENERATIONS_V1, generationLeafV1 }
-  from "../src/updater/v1/backup-store.mjs";
-import { UpdaterBackupV1, assertSafeGenerationV1, backupManifestV1, resolveBackupRootPolicyV1 }
-  from "../src/updater/v1/backup-runner.mjs";
+import { BACKUP_LOCK_TABLE_V1, BACKUP_MAX_AGE_SECONDS_V1, BACKUP_KEPT_GENERATIONS_V1, assertRowCountsV1,
+  generationLeafV1 } from "../src/updater/v1/backup-store.mjs";
+import { UpdaterBackupV1, assertBackupRootOnDiskV1, assertSafeGenerationV1, backupManifestV1,
+  resolveBackupRootPolicyV1 } from "../src/updater/v1/backup-runner.mjs";
+import { isQuotedIdentifierV1 } from "../src/updater/v1/backup-evidence.mjs";
 
 const DDL_DIRECTORY = join(process.cwd(), "src/updater/v1/ddl");
 const read = async file => readFile(join(DDL_DIRECTORY, file), "utf8");
@@ -91,18 +93,82 @@ test("the in-flight completion path the store depends on is present in the trigg
     "completeAttempt must name the in-flight state the guard permits");
 });
 
-test("the backup lock key is the one item 18 will use, and is not the run lease's", async () => {
+test("the backup lock is a row lock a release cannot take, not a public advisory key", async () => {
   const store = await readFile(join(process.cwd(), "src/updater/v1/backup-store.mjs"), "utf8");
-  // §9.2's quiesce step takes "the backup lock" in-process, and §9.5 says the
-  // nightly "needs no upgrader". Sharing the KEY is what makes those two
-  // statements true at once; a second key would let both dump one cluster.
-  const lease = /UPDATER_LEASE_LOCK_V1 = Object\.freeze\(\[(\d+), (\d+)\]\)/u
-    .exec(await readFile(join(process.cwd(), "src/updater/v1/store.mjs"), "utf8"));
-  assert.ok(lease, "the run lease lock key must exist and be readable");
-  assert.notDeepEqual([...BACKUP_LOCK_V1], [Number(lease[1]), Number(lease[2])],
-    "the backup lock must not be the updater's run lease key, or a backup would block or be blocked by an update run");
-  assert.equal(store.includes(`[${BACKUP_LOCK_V1[0]}, ${BACKUP_LOCK_V1[1]}]`), true,
-    "the exported key must be the one the store actually locks on");
+  const ddl = withoutComments(await read("0004_backups.sql"));
+  // Review backup19b H1a: an advisory key is global, and the web and the
+  // migrator each held the old one and stopped every backup. The store must not
+  // take an advisory lock at all for the backup, and must take the row lock with
+  // NOWAIT so a busy lock is an answer, never a wait.
+  assert.doesNotMatch(withoutComments(store), /pg_try_advisory_lock|pg_advisory_lock\(/u,
+    "the backup lock is not an advisory lock any login could take");
+  assert.match(store, /SELECT singleton FROM updater\.backup_lock WHERE singleton FOR UPDATE NOWAIT/u);
+  assert.equal(BACKUP_LOCK_TABLE_V1, "updater.backup_lock");
+  assert.match(store, /idle_in_transaction_session_timeout/u, "the holding session is bounded");
+  // Only the deployer (the owner) can take it: the web is revoked and granted
+  // nothing on it, and nothing in 0004 grants it to anybody.
+  assert.match(ddl, /REVOKE ALL ON updater\.backup_lock FROM control_room_private_web;/u);
+  assert.doesNotMatch(ddl, /GRANT[^;]*ON[^;]*updater\.backup_lock/u, "no grant on the lock's table");
+});
+
+test("row-count keys accept every legal identifier and refuse what the ledger refuses", () => {
+  // Review backup19b H1b: one `public."Audit"` used to fail every backup.
+  const hostile = ['public."Audit"', 'public."t1"";ALTER ROLE x SUPERUSER;--"', 'public."表_ünï"', "updater.plans",
+    `public."${'"'.repeat(63).replaceAll('"', '""')}"`];
+  assert.deepEqual(assertRowCountsV1(hostile.map((table, count) => ({ table, count }))).map(entry => entry.table),
+    hostile);
+  for (const bad of [[], [{ table: "", count: 1 }], [{ table: "x".repeat(258), count: 1 }],
+    [{ table: "public.t", count: -1 }], [{ table: "public.t", count: 1.5 }], [{ table: "a\0b", count: 1 }],
+    [{ table: 7, count: 1 }]]) {
+    assert.throws(() => assertRowCountsV1(bad), /updater_backup_row_counts_refused/u, JSON.stringify(bad));
+  }
+});
+
+test("the evidence reader's identifier cross-check accepts exactly the two safe renderings", () => {
+  // C1: the server quotes, this checks. Either rendering is ONE identifier.
+  assert.equal(isQuotedIdentifierV1("plans", "plans"), true);
+  assert.equal(isQuotedIdentifierV1("Audit", '"Audit"'), true);
+  assert.equal(isQuotedIdentifierV1('t1";DROP', '"t1"";DROP"'), true);
+  assert.equal(isQuotedIdentifierV1("select", '"select"'), true, "a quoted keyword is fine");
+  for (const [name, quoted] of [['t1";DROP', '"t1";DROP"'], ["Audit", "Audit"], ['a"b', '"a"b"'],
+    ["x", '"x"; SELECT 1; --'], ["a\0b", '"a\0b"'], ["", '""'], ["x".repeat(64), "x".repeat(64)]]) {
+    assert.equal(isQuotedIdentifierV1(name, quoted), false, `${JSON.stringify(quoted)} is refused for ${JSON.stringify(name)}`);
+  }
+});
+
+test("the backup root is checked on disk: symlinks, loose modes and writable ancestors are refused", async t => {
+  const base = await mkdtemp(join(await realpath(tmpdir()), "b19-root-"));
+  t.after(() => rm(base, { recursive: true, force: true, maxRetries: 2 }));
+  const ownerUid = process.getuid();
+  const good = join(base, "good");
+  await mkdir(good, { mode: 0o700 });
+  const root = await assertBackupRootOnDiskV1(good, { ownerUid });
+  assert.equal(root.backupRoot, good);
+  await root.handle.close();
+  const cases = [];
+  const linkTarget = join(base, "target"); await mkdir(linkTarget, { mode: 0o700 });
+  await symlink(linkTarget, join(base, "link")); cases.push(["a symlinked root", join(base, "link")]);
+  const open = join(base, "open"); await mkdir(open, { mode: 0o700 }); await chmod(open, 0o777);
+  cases.push(["a 0777 root", open]);
+  const readable = join(base, "readable"); await mkdir(readable, { mode: 0o700 }); await chmod(readable, 0o750);
+  cases.push(["a group-readable root", readable]);
+  const shared = join(base, "shared"); await mkdir(join(shared, "backups"), { recursive: true, mode: 0o700 });
+  await chmod(shared, 0o777); cases.push(["a world-writable ancestor", join(shared, "backups")]);
+  const real = join(base, "real"); await mkdir(join(real, "backups"), { recursive: true, mode: 0o700 });
+  await symlink(real, join(base, "alias")); cases.push(["a symlinked ancestor", join(base, "alias", "backups")]);
+  const file = join(base, "file"); await writeFile(file, "x", { mode: 0o600 }); cases.push(["a file", file]);
+  cases.push(["a missing root", join(base, "missing")]);
+  for (const [label, path] of cases) {
+    await assert.rejects(assertBackupRootOnDiskV1(path, { ownerUid }), /updater_backup_root_unsafe/u, label);
+  }
+  await assert.rejects(assertBackupRootOnDiskV1(good, { ownerUid: ownerUid + 1 }), /updater_backup_root_unsafe/u,
+    "a root owned by somebody else is refused");
+  // A sticky world-writable ancestor (like /private/tmp) is accepted: nobody
+  // else can rename our entries out of it.
+  const sticky = join(base, "sticky"); await mkdir(join(sticky, "backups"), { recursive: true, mode: 0o700 });
+  await chmod(sticky, 0o1777);
+  const accepted = await assertBackupRootOnDiskV1(join(sticky, "backups"), { ownerUid });
+  await accepted.handle.close();
 });
 
 test("the backup root policy requires a seal outside the install root and refuses a relative one", () => {
@@ -161,9 +227,9 @@ test("the DDL directory holds exactly the loader's file list, and the backup tab
   const ddl = withoutComments(await read("0004_backups.sql"));
   const created = new Set([...ddl.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?updater\.(\w+)/giu)]
     .map(match => match[1]));
-  assert.deepEqual([...created].sort(), ["backup_generations", "backup_state"],
-    "0004 creates the two backup tables and nothing else");
-  for (const table of ["backup_generations", "backup_state"]) {
+  assert.deepEqual([...created].sort(), ["backup_generations", "backup_lock", "backup_state"],
+    "0004 creates the two backup tables and the backup lock's table, and nothing else");
+  for (const table of ["backup_generations", "backup_state", "backup_lock"]) {
     assert.ok(updaterTablesV1.includes(table), `${table} must be in the loader's asserted table set`);
   }
   // Every function 0004 defines is REVOKEd from PUBLIC. Same rule 0003 holds to.
@@ -259,8 +325,10 @@ class RecordingStore {
   async freshness() { this.#record("freshness"); return { fresh: false, lastSuccessAt: null, lastFailureCode: null,
     lastFailureAt: null, nextDueAt: this.nextDueAt, consecutiveFailures: 0, maxAgeSeconds: 93600 }; }
   async policy() { this.#record("policy"); return this.policyValue; }
-  async acquireBackupLock() { this.#record("acquireBackupLock"); return { status: this.lockStatus, inFlight: false }; }
-  async releaseBackupLock() { this.#record("releaseBackupLock"); }
+  async acquireBackupLock() { this.#record("acquireBackupLock"); this.held = this.lockStatus === "acquired";
+    return { status: this.lockStatus }; }
+  async releaseBackupLock() { this.#record("releaseBackupLock"); this.held = false; }
+  holdsBackupLock() { return this.held === true; }
   async scheduleNext(seconds) { this.#record("scheduleNext", { seconds }); this.nextDueAt = null; }
   // The id is minted to the REAL grammar, four tie-break digits wide. An
   // earlier version of this double used three, and the runner's own
@@ -275,6 +343,8 @@ class RecordingStore {
   async verifiedGenerations() { return []; }
   async pinnedGenerations() { return []; }
   async knownGenerationIds() { return []; }
+  async ledgerRows() { return []; }
+  async inFlightGenerations() { this.#record("inFlightGenerations"); return []; }
   names() { return this.calls.map(entry => entry.name); }
 }
 
@@ -301,15 +371,18 @@ test("a backup that is not due is not started, and writes nothing", async () => 
   assert.ok(outcome.nextDueAt);
 });
 
-test("a due backup takes the lock, and a held lock refuses without recording an attempt", async () => {
+test("a due backup takes the lock, and a held lock is RECORDED as a failed attempt", async () => {
   const held = new RecordingStore({ lockStatus: "busy" });
   const busy = await makeBackup(held).runOnce({ manual: true });
   assert.equal(busy.status, "busy");
   assert.equal(busy.code, "updater_backup_lock_busy");
-  // `beginAttempt` MUST NOT appear: a deferred backup is not a failed one, and a
-  // `failed` row here would turn Home red on every database update.
-  assert.deepEqual(held.names(), ["acquireBackupLock", "scheduleNext"],
-    "a refused-for-lock backup reschedules and writes no attempt row");
+  // Review backup19b H1: a skip that recorded nothing let a held lock stop every
+  // backup silently. The busy lock is now a failed attempt with its own code.
+  // (The badge follows freshness, so this does not turn Home red while the last
+  // backup is fresh.)
+  assert.deepEqual(held.names(), ["acquireBackupLock", "policy", "beginAttempt", "failAttempt", "scheduleNext"],
+    "a refused-for-lock backup records a failed attempt and reschedules");
+  assert.equal(held.calls.find(entry => entry.name === "failAttempt").code, "updater_backup_lock_busy");
   const scheduled = held.calls.find(entry => entry.name === "scheduleNext");
   assert.ok(scheduled.seconds > 0 && scheduled.seconds <= 900,
     "and reschedules within the quarter hour, so it is not a day away and not never");
@@ -323,6 +396,9 @@ test("a due backup takes the lock, and a held lock refuses without recording an 
   // released the lock on the way through, in that order.
   assert.equal(attempted.status, "failed");
   assert.deepEqual(free.names().slice(0, 3), ["acquireBackupLock", "policy", "beginAttempt"]);
+  // The root does not exist on disk here, so the run fails at the ON-DISK root
+  // check (H2) — before any dump — and that failure is the one recorded.
+  assert.equal(attempted.code, "updater_backup_root_unsafe");
   assert.ok(free.names().includes("failAttempt"));
   assert.equal(free.names().at(-1), "releaseBackupLock",
     "the lock is released on the failure path too, which is the whole reason it is a session lock");
@@ -343,15 +419,53 @@ test("a second concurrent caller is refused as busy, not queued behind the first
   assert.equal(store.names().filter(name => name === "acquireBackupLock").length, 1);
 });
 
-test("an unconfigured backup root refuses before touching the database", async () => {
+test("an unconfigured backup root is a RECORDED failure, and touches no disk", async () => {
   const store = new RecordingStore();
   const backup = new UpdaterBackupV1({ store, ports: throwingPorts,
     policy: { installRoot: "/opt/control-room", backupRoot: null, seal: false } });
   const outcome = await backup.runOnce({ manual: true });
   assert.equal(outcome.status, "failed");
   assert.equal(outcome.code, "updater_backup_root_unconfigured");
-  assert.deepEqual(store.names(), [],
-    "nothing was written, and no lock was taken, for a root that is not configured");
+  // Review backup19b H1: "every failure path must record a failure". The first
+  // version returned before touching the database, so a misconfigured install
+  // never put a single row on the ledger.
+  assert.deepEqual(store.names(), ["acquireBackupLock", "policy", "beginAttempt", "failAttempt", "releaseBackupLock"]);
+  assert.equal(store.calls.find(entry => entry.name === "failAttempt").code, "updater_backup_root_unconfigured");
+});
+
+test("a restore whose shape or rows differ is refused before promote, and recorded with the half that differed", async t => {
+  // Review backup19b H3.1: mutation #13 (the comparison deleted) survived the
+  // whole lane because no test fed a mismatching restore. Both halves here, on
+  // a real private root, with the store double recording what was written.
+  const base = await mkdtemp(join(await realpath(tmpdir()), "b19-verify-"));
+  t.after(() => rm(base, { recursive: true, force: true, maxRetries: 2 }));
+  const installRoot = join(base, "Control Room"), backupRoot = join(installRoot, "backups");
+  await mkdir(backupRoot, { recursive: true, mode: 0o700 });
+  const digest = text => `sha256:${createHash("sha256").update(text).digest("hex")}`;
+  const ports = mismatch => ({
+    dump: async ({ path }) => { await writeFile(path, "DUMP"); return { bytes: 4, sha256: digest("DUMP"),
+      evidence: { shapeDigest: digest("shape"), rowCounts: [{ table: "public.t", count: 3 }], ownership: [] } }; },
+    restoreVerify: async () => mismatch,
+    seal: async () => { throw new Error("seal_must_not_run"); },
+    writeManifest: async () => { throw new Error("writeManifest_must_not_run_for_a_refused_verify"); },
+  });
+  for (const [label, mismatch, code] of [
+    ["lost rows", { shapeDigest: digest("shape"), rowCounts: [{ table: "public.t", count: 2 }] },
+      "updater_backup_row_counts_mismatch"],
+    ["a lost table", { shapeDigest: digest("shape"), rowCounts: [] }, "updater_backup_row_counts_mismatch"],
+    ["a different shape", { shapeDigest: digest("other"), rowCounts: [{ table: "public.t", count: 3 }] },
+      "updater_backup_shape_digest_mismatch"],
+    ["no answer at all", undefined, "updater_backup_shape_digest_mismatch"],
+  ]) {
+    const store = new RecordingStore();
+    const outcome = await new UpdaterBackupV1({ store, ports: ports(mismatch),
+      policy: { installRoot, backupRoot, seal: false, freeSpaceFloorBytes: 0 } }).runOnce({ manual: true });
+    assert.equal(outcome.status, "failed", label);
+    assert.equal(outcome.code, code, label);
+    assert.equal(store.calls.find(entry => entry.name === "failAttempt")?.code, code, `${label} is recorded`);
+    assert.ok(!store.names().includes("completeAttempt"), `${label}: never completed`);
+    assert.deepEqual(await readdir(backupRoot), [], `${label}: nothing promoted, and the partial work removed`);
+  }
 });
 
 test("the badge is plain words and is derived from the freshness predicate", async () => {

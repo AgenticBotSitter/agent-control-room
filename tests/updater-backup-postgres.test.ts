@@ -37,7 +37,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -47,15 +47,24 @@ import type { RealPostgres } from "./support/attack-kit/real-postgres";
 import { applyUpdaterSchemaV1, updaterDdlFilesV1 } from "../src/updater/v1/schema-installer";
 import {
   BACKUP_FAILURE_RETRY_SECONDS_V1, BACKUP_KEPT_GENERATIONS_V1, BACKUP_MAX_AGE_SECONDS_V1,
-  BACKUP_LOCK_V1, PostgresBackupStoreV1, generationLeafV1,
+  PostgresBackupStoreV1, generationLeafV1,
 } from "../src/updater/v1/backup-store.mjs";
 import { UpdaterBackupV1, assertSafeGenerationV1, resolveBackupRootPolicyV1 } from "../src/updater/v1/backup-runner.mjs";
 import { readDumpEvidence } from "../src/updater/v1/backup-evidence.mjs";
+import { BACKUP_READER_ROLE_V1, createNightlyBackupV1, postgresBackupPortsV1 }
+  from "../src/updater/v1/backup-ports.mjs";
 
 const execFileAsync = promisify(execFile);
 // The block this job was given: 59790-59799.
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59790);
 const ALLOWED = Object.freeze([PORT, PORT + 1, PORT + 2]);
+/** The scratch cluster's port. It has NO TCP listener (`listen_addresses = ''`);
+ * the number only names its socket file, and is kept inside this job's block. */
+const SCRATCH_PORT = PORT + 9;
+/** The SQL that takes the backup lock, exactly as the store and item 18 take it. */
+const TAKE_BACKUP_LOCK = "SELECT singleton FROM updater.backup_lock WHERE singleton FOR UPDATE NOWAIT";
+/** The advisory key the FIRST version locked on; any login could take it. */
+const OLD_ADVISORY_KEY = [1128354390, 1431323731] as const;
 const PG = requiresRealPostgres();
 const PG_BIN = process.env.PG_BIN ?? "/opt/homebrew/opt/postgresql@17/bin";
 let required = 0, ran = 0;
@@ -149,30 +158,24 @@ async function as(postgres: RealPostgres, role: "deployer" | "web" | "migrator")
  * `finally` instead, and the store is usable only inside that.
  */
 async function withBackupStoreV1<T>(postgres: RealPostgres, body: (context: {
-  store: PostgresBackupStoreV1; client: Client; evidenceClient: Client; seed: (sql: string) => Promise<void>;
+  store: PostgresBackupStoreV1; client: Client; superuser: Client; seed: (sql: string) => Promise<void>;
 }) => Promise<T>): Promise<T> {
   const client = await as(postgres, "deployer");
-  const store = new PostgresBackupStoreV1(client);
-  // The seeding connection is the FIXTURE superuser, opened and closed here.
-  //
-  // Two reasons it is not the deployer: the deployer correctly cannot CREATE
-  // TABLE in `public` (that is the migrator's job, and "permission denied for
-  // schema pg_catalog" is the honest refusal), and every test that seeds a table
-  // needs a login that can. The EVIDENCE read still goes through the deployer —
-  // `evidenceClient` is the FIXTURE SUPERUSER, not the deployer, and that is
-  // deliberate rather than convenient: `readEvidenceV1` counts EVERY table in
-  // `public`, and a table the migrator owns has no grant for
-  // `control_room_deployer` (measured: SQLSTATE 42501, "permission denied for
-  // schema pg_catalog"). The production counterpart of this read is
-  // `collectConsistentSnapshot` in deploy/postgres/backup-database.mjs, which
-  // also runs as a login with full read access. The digests are about SCHEMA
-  // CONTENT, which is identical whoever reads it, and the restore side reads
-  // them the same way — so both sides of the comparison use one definition.
+  // The lock is held on a SECOND deployer session (the store opens and closes
+  // it per attempt), exactly as production composes it.
+  const store = new PostgresBackupStoreV1(client, { connectLock: () => as(postgres, "deployer") });
+  // The seeding connection is the FIXTURE superuser, opened and closed here,
+  // and it only ever SEEDS: the deployer correctly cannot CREATE TABLE in
+  // `public`. The EVIDENCE read no longer goes through it. It used to — and a
+  // superuser evidence reader is exactly what turned review backup19b's C1
+  // table name into a takeover — so the evidence now runs as the production
+  // `control_room_backup_reader` inside the product ports, and
+  // `assertEvidenceReaderV1` refuses a superuser outright (test 10 proves it).
   const seedClient = new Client({ ...postgres.admin(), user: "fixture_admin" } as never);
   await seedClient.connect();
   try {
     await store.initialize();
-    return await body({ store, client, evidenceClient: seedClient,
+    return await body({ store, client, superuser: seedClient,
       seed: async (sql: string) => { await seedClient.query(sql); } });
   } finally {
     await seedClient.end().catch(() => {});
@@ -280,46 +283,6 @@ async function closePlanV1(client: Client, id: string) {
 }
 
 /**
- * The evidence a dump and its restore-verify must agree on.
- *
- * The schema digest comes from the SAME helper the release's own backup tool
- * uses, so the digest compared here is the one item 18 and the operator's tools
- * compare. It is read the same way on BOTH sides, which is the point at which
- * the first version of this lane was wrong:
- *
- *   * `readSchemaDigest` includes each table's OWNER, and a restore is run with
- *     `--no-owner` (R9.3 step 4 restores as the migrator with
- *     `--no-owner --role=control_room_migrator`, so the restored objects are
- *     owned by whoever ran pg_restore, not by the original owner). Comparing the
- *     source's digest against a `--no-owner` restore's digest therefore NEVER
- *     matches, and would refuse every good backup. Measured:
- *     source=sha256:dfe89bf0… restored=sha256:e5699f6b….
- *   * The alternative — comparing a digest that ignores ownership — is what
- *     `collectConsistentSnapshot` in the release's own backup tool records, and
- *     it is the right shape here for the same reason: ownership is restored by
- *     provisioning roles, not by the dump, so it is not evidence about the DUMP.
- *
- * So this reads ownership separately (from the source, as evidence) and compares
- * only the object SHAPE across the restore. What the verify proves is the thing
- * §9.2 actually claims: the dump contains the same objects and the same rows.
- */
-async function readEvidenceV1(client: Client) {
-  return readDumpEvidence(client);
-}
-
-/** The restore side: the SHAPE and the rows, and never ownership. */
-async function readRestoreEvidence(client: Client) {
-  const { shapeDigest, rowCounts } = await readDumpEvidence(client);
-  return { shapeDigest, rowCounts };
-}
-
-async function hashFileV1(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return `sha256:${hash.digest("hex")}`;
-}
-
-/**
  * A disposable install root, and the reason it is NOT under `tmpdir()`.
  *
  * `resolveBackupRootPolicyV1` refuses any root under `/Users` (H15: the owner
@@ -350,91 +313,28 @@ interface BackupPorts {
   writeManifest(input: { path: string; manifest: unknown; generationId: string }): Promise<void>;
 }
 
+/** A `pg` client for the product ports' `connect` seam. Local auth is trust in
+ * the fixture cluster, so no password is passed: production reaches these
+ * logins by peer map, and neither has a verifier. */
+async function connectV1(target: { host: string; port?: number; user: string; database: string }) {
+  const client = new Client(target);
+  await client.connect();
+  return client;
+}
+
 /**
- * The REAL ports: `pg_dump` really runs against the live source and writes the
- * file the "root" (this process) created; `restoreVerify` really runs `initdb`
- * in a scratch directory with its own socket and really runs `pg_restore` into
- * it, then reads the digest and row counts back out.
- *
- * This is the part the brief demands and the part a stub could never prove: a
- * dump that cannot be restored, a restore that silently loses a table, or a
- * digest computed differently on the two sides would all pass against a fake.
- *
- * `evidenceClient` is the caller's own already-open connection, passed IN rather
- * than opened here. An earlier version opened one per dump and never closed it;
- * the leaked client then received the kit's teardown disconnect as an
- * UNHANDLED 'error' event, which surfaced as "terminating connection due to
- * administrator command" and masked the assertion that had actually failed. A
- * port that has to be trusted not to leak is a port the test cannot diagnose.
+ * The PRODUCTION ports (src/updater/v1/backup-ports.mjs), pointed at this
+ * fixture cluster. Nothing here re-implements a port: `pg_dump` runs as the
+ * production reader inside an exported snapshot and streams to a descriptor the
+ * runner's process holds, the scratch cluster is the product's, and the restore
+ * runs as the product's non-superuser role. Review backup19b H3.2: the lane used
+ * to carry its own `realPortsV1`, so the product had no implementation at all.
  */
-function realPortsV1({ postgres, scratchRoot, evidenceClient, onDumpStarted = () => {} }: {
-  postgres: RealPostgres; scratchRoot: string; evidenceClient: Client; onDumpStarted?: (id: string) => void;
-}): BackupPorts {
-  let scratchSeq = 0;
-  return {
-    async dump({ path, generationId }): Promise<DumpPortResult> {
-      onDumpStarted(generationId);
-      await runV1(join(PG_BIN, "pg_dump"), ["--format=custom", "--no-owner", "--no-privileges",
-        "--dbname", postgres.database, "--host", postgres.socketDirectory, "--port", String(postgres.port),
-        "--username", "fixture_admin", "--file", path]);
-      const { size } = await stat(path);
-      return { bytes: size, sha256: await hashFileV1(path),
-        evidence: { ...await readDumpEvidence(evidenceClient), snapshotXid: "00000000:0000000A:0000000B" } };
-    },
-    async restoreVerify({ generationId, dumpPath }): Promise<VerifyPortResult> {
-      const id = `19a${scratchSeq++}${generationId.slice(7, 20).replaceAll(":", "")}`;
-      const dataDir = join(scratchRoot, `scratch-${id}`), socketDir = join(scratchRoot, `sock-${id}`);
-      await mkdir(dataDir, { recursive: true, mode: 0o700 });
-      await mkdir(socketDir, { recursive: true, mode: 0o700 });
-      try {
-        // A real throwaway cluster with its OWN socket, exactly as R17a wants:
-        // root creates and lchowns `pg/scratch-<id>`, `_crdb` fills it.
-        // `--no-sync` at initdb AND `fsync=off` on the server, plus a local
-        // maintenance_work_mem: this is a THROWAWAY cluster whose only job is to
-        // prove the dump restores, so durability buys nothing and cost a lot of
-        // wall clock. The real settings live in the production runtime's
-        // pg-current and are not this file's business. Measured: the first
-        // version of this lane spent 150 s in one test, nearly all of it fsync.
-        await runV1(join(PG_BIN, "initdb"), ["-D", dataDir, "-U", "fixture_admin", "-A", "trust",
-          "--no-sync", "-E", "UTF8"]);
-        await writeFile(join(dataDir, "postgresql.conf"),
-          `\nunix_socket_directories = '${socketDir.replaceAll("'", "''")}'\nlisten_addresses = ''\n`
-          + "fsync = off\nfull_page_writes = off\nsynchronous_commit = off\n"
-          + "max_connections = 20\nshared_buffers = 32MB\n");
-        await runV1(join(PG_BIN, "pg_ctl"), ["-D", dataDir, "-w", "-t", "60", "start"]);
-        const restored = "restored";
-        await runV1(join(PG_BIN, "createdb"), ["-h", socketDir, "-U", "fixture_admin", restored]);
-        await runV1(join(PG_BIN, "pg_restore"), ["--no-owner", "--no-privileges", "-h", socketDir,
-          "-U", "fixture_admin", "-d", restored, dumpPath]);
-        const restoredClient = new Client({ host: socketDir, user: "fixture_admin", database: restored });
-        await restoredClient.connect();
-        try { return await readRestoreEvidence(restoredClient); } finally { await restoredClient.end(); }
-      } finally {
-        await runV1(join(PG_BIN, "pg_ctl"), ["-D", dataDir, "-m", "immediate", "-w", "-t", "30", "stop"])
-          .catch(() => {});
-        await rm(dataDir, { recursive: true, force: true, maxRetries: 2 });
-        await rm(socketDir, { recursive: true, force: true, maxRetries: 2 });
-      }
-    },
-    // REAL openssl, so "is the plaintext really gone" is answered by the bytes.
-    async seal({ path, generationId }): Promise<boolean> {
-      const key = join(scratchRoot, `key-${generationId.slice(7, 20).replaceAll(":", "")}`);
-      await runV1("/usr/bin/openssl", ["rand", "-out", key, "32"]);
-      await runV1("/usr/bin/openssl", ["enc", "-aes-256-cbc", "-pbkdf2", "-iter", "200000", "-salt",
-        "-in", path, "-out", `${path}.seal`, "-pass", `file:${key}`]);
-      // The sealed bytes REPLACE the plaintext. A "sealed" generation that kept
-      // its plaintext beside it would be one the owner believes encrypted and
-      // is not — the exact failure the external-drive case must not have.
-      await rm(path, { force: true });
-      await writeFile(path, await readFile(`${path}.seal`));
-      await rm(`${path}.seal`, { force: true });
-      await rm(key, { force: true });
-      return true;
-    },
-    async writeManifest({ path, manifest }): Promise<void> {
-      await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o400 });
-    },
-  };
+function productPortsV1(postgres: RealPostgres, scratchRoot: string,
+  extra: Record<string, unknown> = {}): BackupPorts {
+  return postgresBackupPortsV1({ pgBin: PG_BIN, scratchRoot, connect: connectV1, scratchPort: SCRATCH_PORT,
+    source: { host: postgres.socketDirectory, port: postgres.port, database: postgres.database },
+    ...extra }) as unknown as BackupPorts;
 }
 
 /**
@@ -479,7 +379,7 @@ test("a real dump restores into a scratch cluster and the evidence matches", asy
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, seed }) => {
       const { base, installRoot, backupRoot } = await backupRootForV1(t);
       const scratchRoot = join(base, "scratch");
       await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
@@ -489,8 +389,16 @@ test("a real dump restores into a scratch cluster and the evidence matches", asy
       await seed("CREATE TABLE recovered_two(id bigint PRIMARY KEY, label text NOT NULL)");
       await seed("INSERT INTO recovered_one(id,label) VALUES (1,'a'),(2,'b'),(3,'c')");
       await seed("INSERT INTO recovered_two(id,label) VALUES (10,'x'),(20,'y')");
-      const backup = new UpdaterBackupV1({ store, ports: realPortsV1({ postgres, scratchRoot, evidenceClient }),
-        policy: internalPolicyV1(installRoot, backupRoot) });
+      // THE DEFAULT PATH: the exact composition `startUpdaterV1` builds in
+      // production — real store, real lock session, real ports, the in-root
+      // policy (`<root>/backups`, scratch under `<root>/pg`, no seal). Only the
+      // runtime's `bin` directory and the scratch socket name are this
+      // machine's, and children run as this user because the lane is not root.
+      await mkdir(join(installRoot, "pg"), { recursive: true, mode: 0o700 });
+      const backup = await createNightlyBackupV1({ root: installRoot, client, connect: connectV1, pgBin: PG_BIN,
+        runAs: null, scratchPort: SCRATCH_PORT,
+        source: { host: postgres.socketDirectory, port: postgres.port, database: postgres.database } });
+      assert.equal(backup.policy.backupRoot, backupRoot, "the default backup root is <install root>/backups");
       const outcome = await backup.runOnce({ manual: true });
       // The ledger's `failure_detail` is what an operator reads, and reading it
       // here is what makes a broken step nameable. Asserting only on `status`
@@ -504,9 +412,25 @@ test("a real dump restores into a scratch cluster and the evidence matches", asy
       assert.equal(generation?.state, "verified");
       assert.ok(generation?.shapeDigest);
       const counts = await store.rowCounts(outcome.generationId) as { table: string; count: number }[];
-      assert.equal(counts.find((entry: { table: string; count: number }) => entry.table === "recovered_one")?.count, 3,
-        "the recorded counts are the source's, and include the seeded rows");
-      assert.equal(counts.find((entry: { table: string; count: number }) => entry.table === "recovered_two")?.count, 2);
+      const countOf = (table: string) => counts.find(entry => entry.table === table)?.count;
+      assert.equal(countOf("public.recovered_one"), 3,
+        "the recorded counts are the source's, keyed by the server-quoted name, and include the seeded rows");
+      assert.equal(countOf("public.recovered_two"), 2);
+      // The updater's OWN schema is in the evidence too (review backup19b H3.3):
+      // a dump that lost `updater` must not verify. The in-flight row of this
+      // very attempt is in the snapshot the dump was taken from.
+      assert.equal(countOf("updater.backup_state"), 1, "the updater's tables are counted");
+      assert.equal(countOf("updater.backup_generations"), 1,
+        "including the ledger, with this attempt's in-flight row, read inside the dump's snapshot");
+      assert.ok(countOf("updater.plans") !== undefined, "and every other updater table");
+      // The snapshot id is the one `pg_export_snapshot()` minted, not a constant.
+      assert.match(String(generation?.snapshotXid), /^[0-9A-F]+-[0-9A-F]+(-[0-9]+)?$/u,
+        "the dump and its evidence share one exported snapshot");
+      // The dump is WHOLE: it carries the grants (the first version dumped with
+      // --no-privileges, so a real restore would have come back with none).
+      const grants = await runV1(join(PG_BIN, "pg_restore"), ["--list", (await assertSafeGenerationV1(backupRoot,
+        outcome.generationId))!.dump], 1 << 28);
+      assert.match(grants.stdout, /ACL /u, "the dump keeps its privileges");
       // The generation on disk is a real custom-format dump, and its manifest
       // re-verifies: this is the file an operator would restore from by hand.
       const safe = await assertSafeGenerationV1(backupRoot, outcome.generationId);
@@ -531,7 +455,7 @@ test("a backup killed mid-dump leaves no countable generation and releases the l
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
+    await withBackupStoreV1(postgres, async ({ store }) => {
       const { base, installRoot, backupRoot } = await backupRootForV1(t);
       const scratchRoot = join(base, "scratch");
       await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
@@ -551,10 +475,10 @@ test("a backup killed mid-dump leaves no countable generation and releases the l
   import { PostgresBackupStoreV1 } from ${JSON.stringify(join(process.cwd(), "src/updater/v1/backup-store.mjs"))};
   import { UpdaterBackupV1 } from ${JSON.stringify(join(process.cwd(), "src/updater/v1/backup-runner.mjs"))};
   const [,, socket, port, database, installRoot, backupRoot, readyFile] = process.argv;
-  const client = new Client({ host: socket, port: Number(port), database,
-    user: "control_room_deployer", password: "fixture-deployer" });
-  await client.connect();
-  const store = new PostgresBackupStoreV1(client);
+  const open = async () => { const opened = new Client({ host: socket, port: Number(port), database,
+    user: "control_room_deployer", password: "fixture-deployer" }); await opened.connect(); return opened; };
+  const client = await open();
+  const store = new PostgresBackupStoreV1(client, { connectLock: open });
   await store.initialize();
   // A dump port that announces it has started and then never finishes, so the
   // parent can SIGKILL a process that is provably mid-attempt.
@@ -610,16 +534,17 @@ test("a backup killed mid-dump leaves no countable generation and releases the l
         "a killed attempt is not a verified generation");
       const latest = await store.latestAttempt();
       assert.ok(latest, "the attempt is still recorded, which is what turns the badge red");
+      assert.equal(latest.failureCode, "backup_in_progress", "the killed attempt is left in flight");
       assert.equal(latest.state, "failed");
       assert.equal(latest.dumpSha256, null, "a failed attempt carries no dump digest at all");
       assert.equal(latest.dumpBytes, null);
       assert.equal(latest.fileSha256, null);
       assert.equal(latest.rowCountsDigest, null);
       assert.equal((await store.freshness()).fresh, false, "a killed backup is not fresh");
-      // The advisory lock died with the session, so the next attempt is admitted.
-      // This is the property the brief asks for, and the reason the lock is a
-      // SESSION advisory lock rather than a lock file: a lock file would have
-      // survived the SIGKILL and blocked every future backup.
+      // The lock died with the session (its transaction aborted when the killed
+      // process's connection dropped), so the next attempt is admitted. This is
+      // the reason the lock is held by a SESSION rather than a lock file: a lock
+      // file would have survived the SIGKILL and blocked every future backup.
       const lock = await store.acquireBackupLock();
       assert.equal(lock.status, "acquired", "the killed process released the backup lock");
       await store.releaseBackupLock();
@@ -631,10 +556,18 @@ test("a backup killed mid-dump leaves no countable generation and releases the l
       // was refused with "updater backup failure counter moved by more than one".
       assert.equal((await store.freshness()).consecutiveFailures, 0,
         "a run that never completed is recorded but not counted as a failure");
-      // And the next run completes normally.
-      const backup = new UpdaterBackupV1({ store, ports: realPortsV1({ postgres, scratchRoot, evidenceClient }),
+      // And the next run completes normally, through the PRODUCT ports.
+      const backup = new UpdaterBackupV1({ store, ports: productPortsV1(postgres, scratchRoot),
         policy: internalPolicyV1(installRoot, backupRoot) });
-      assert.equal((await backup.runOnce({ manual: true })).status, "verified");
+      const next = await backup.runOnce({ manual: true });
+      assert.equal(next.status, "verified", next.message);
+      // The killed attempt is no longer stuck: the next run, holding the lock,
+      // settled it to a REAL failure code (review backup19b M1 second half). It
+      // never promoted, so it is `interrupted`, not `record_interrupted`.
+      const settled = await store.generation(latest.generationId);
+      assert.equal(settled?.state, "failed");
+      assert.equal(settled?.failureCode, "updater_backup_interrupted",
+        "a dead run's in-flight row is settled, never left `backup_in_progress` forever");
       const swept = await backup.sweep();
       assert.deepEqual(swept.unsafe, []);
       assert.deepEqual(swept.damaged, []);
@@ -653,7 +586,7 @@ test("a full disk fails with its own code, writes a failed row and promotes noth
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, seed }) => {
       const { installRoot, backupRoot } = await backupRootForV1(t);
       // A free-space floor above what the filesystem has. This is the same code
       // path a real ENOSPC takes — §8.6's preflight — and it is checked BEFORE a
@@ -697,7 +630,7 @@ test("retention keeps exactly fourteen VERIFIED generations when failures are mi
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, seed }) => {
       const { installRoot, backupRoot } = await backupRootForV1(t);
       const backup = new UpdaterBackupV1({ store, ports: filePortsV1(postgres),
         policy: internalPolicyV1(installRoot, backupRoot) });
@@ -794,66 +727,93 @@ test("retention keeps exactly fourteen VERIFIED generations when failures are mi
 });
 
 // ---------------------------------------------------------------------------
-// 5. The concurrent upgrader holding the shared backup lock.
+// 5. The backup lock: a holder makes the backup refuse AND RECORD it, and a
+//    candidate release cannot take the lock at all (review backup19b H1a).
 // ---------------------------------------------------------------------------
-test("a concurrent holder of the backup lock makes the backup refuse cleanly", async t => {
+test("a held backup lock is a recorded failure, and neither the web nor the migrator can take the lock", async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client }) => {
+    await withBackupStoreV1(postgres, async ({ store }) => {
       const { installRoot, backupRoot } = await backupRootForV1(t);
-      // The upgrader takes the SAME advisory key (item 18 §9.2's quiesce step) from
-      // its OWN session and keeps holding it. Sharing the key rather than adding a
-      // second one is the property: two keys would let both dump one cluster.
+      // THE REVIEWER'S EXACT SCENARIO FIRST: the web and the migrator each take
+      // the advisory key the first version locked on, and keep it. That used to
+      // make every backup return `busy` with nothing recorded. It is now just a
+      // key nobody looks at.
+      await withExtraClientsV1(postgres, async ({ web, migrator }) => {
+        // Nor can either take the REAL lock: it needs UPDATE on a table only the
+        // deployer may touch, so a candidate release has no way to hold it.
+        await web.query("BEGIN");
+        assert.match(await refuses(web, TAKE_BACKUP_LOCK), /permission denied/u,
+          "the web cannot take the backup lock");
+        await web.query("ROLLBACK");
+        await migrator.query("BEGIN");
+        assert.match(await refuses(migrator, TAKE_BACKUP_LOCK), /permission denied/u,
+          "the migrator (the account a candidate controls) cannot take the backup lock");
+        await migrator.query("ROLLBACK");
+        const running = new UpdaterBackupV1({ store, ports: filePortsV1(postgres),
+          policy: internalPolicyV1(installRoot, backupRoot) });
+        // One holder at a time, because an advisory key is exclusive across
+        // sessions: each holds it, and a backup runs anyway.
+        for (const [name, holder] of [["web", web], ["migrator", migrator]] as const) {
+          const held = await holder.query("SELECT pg_catalog.pg_try_advisory_lock($1::integer,$2::integer) AS ok",
+            [...OLD_ADVISORY_KEY]);
+          assert.equal(held.rows[0].ok, true, `the ${name} login holds the OLD advisory key`);
+          const outcome = await running.runOnce({ manual: true });
+          assert.equal(outcome.status, "verified",
+            `a backup runs while the ${name} login holds the old advisory key (${outcome.message})`);
+          await holder.query("SELECT pg_catalog.pg_advisory_unlock($1::integer,$2::integer)", [...OLD_ADVISORY_KEY]);
+        }
+      });
+
+      // The upgrader (item 18) takes the SAME lock from its own deployer session
+      // and keeps holding it. Sharing the lock rather than adding a second one is
+      // the property: two locks would let both dump one cluster.
       const upgrader = await as(postgres, "deployer");
-      const held = await upgrader.query("SELECT pg_catalog.pg_try_advisory_lock($1::integer,$2::integer) AS acquired",
-        [BACKUP_LOCK_V1[0], BACKUP_LOCK_V1[1]]);
-      assert.equal(held.rows[0].acquired, true, "the upgrader holds the shared backup lock");
-      let dumps = 0;
-      const backup = new UpdaterBackupV1({ store, ports: { ...filePortsV1(postgres),
-        dump: async () => { dumps += 1; throw new Error("dump_must_not_run_while_the_lock_is_held"); } },
-      policy: internalPolicyV1(installRoot, backupRoot) });
-      const outcome = await backup.runOnce({ manual: true });
-      assert.equal(outcome.status, "busy");
-      assert.equal(outcome.code, "updater_backup_lock_busy");
-      assert.match(outcome.message, /database update already holds the backup lock/u);
-      assert.equal(dumps, 0, "no dump was even started");
-      // A CLEAN refusal: no `failed` row, because nothing went wrong. A backup
-      // deferred by a database update that turned the badge red would be a false
-      // alarm on every DB plan, and the owner would learn to ignore the badge.
-      assert.equal(await store.latestAttempt(), null, "a refused-for-lock backup records no attempt");
-      const freshness = await store.freshness();
-      assert.equal(freshness.consecutiveFailures, 0);
-      assert.equal(freshness.lastFailureCode, null);
-      assert.equal(freshness.fresh, false, "with nothing ever backed up, the badge is still red");
-      assert.deepEqual(await readdir(backupRoot), []);
-      const secondsToRetry = (new Date(freshness.nextDueAt).getTime() - Date.now()) / 1000;
-      assert.ok(secondsToRetry > 0 && secondsToRetry <= 900,
-        `rescheduled within the quarter hour, not a day and not never (${Math.round(secondsToRetry)}s)`);
-      // Twenty concurrent backup callers against a held lock: one refusal each,
-      // one dump attempt total once the lock frees. The P6 concurrency case.
-      const many = await Promise.all(Array.from({ length: 20 }, () => backup.runOnce({ manual: true })));
-      assert.equal(many.filter(entry => entry.status === "busy").length, 20,
-        "all twenty refuse while the upgrader holds the lock");
-      assert.equal(dumps, 0);
-      // Once the upgrader releases, the backup runs.
-      await upgrader.query("SELECT pg_catalog.pg_advisory_unlock($1::integer,$2::integer)",
-        [BACKUP_LOCK_V1[0], BACKUP_LOCK_V1[1]]);
-      await upgrader.end();
-      const running = new UpdaterBackupV1({ store, ports: filePortsV1(postgres),
+      try {
+        await upgrader.query("BEGIN");
+        assert.equal((await upgrader.query(TAKE_BACKUP_LOCK)).rows.length, 1, "the upgrader holds the backup lock");
+        let dumps = 0;
+        const backup = new UpdaterBackupV1({ store, ports: { ...filePortsV1(postgres),
+          dump: async () => { dumps += 1; throw new Error("dump_must_not_run_while_the_lock_is_held"); } },
         policy: internalPolicyV1(installRoot, backupRoot) });
-      const first = await running.runOnce({ manual: true });
-      assert.equal(first.status, "verified", first.message);
-      // And once a second session holds it, no dump happens even with a real
-      // client: the lock is checked before the port is called, not after.
-      const second = await as(postgres, "deployer");
-      await second.query("SELECT pg_catalog.pg_try_advisory_lock($1::integer,$2::integer)",
-        [BACKUP_LOCK_V1[0], BACKUP_LOCK_V1[1]]);
-      const blocked = await running.runOnce({ manual: true });
-      assert.equal(blocked.status, "busy");
-      await second.end();
+        const before = (await store.freshness()).consecutiveFailures;
+        const outcome = await backup.runOnce({ manual: true });
+        assert.equal(outcome.status, "busy");
+        assert.equal(outcome.code, "updater_backup_lock_busy");
+        assert.equal(dumps, 0, "no dump was even started");
+        // RECORDED, not skipped (review backup19b H1): the ledger says why this
+        // attempt did not happen, and the counter moved — a lock held for hours
+        // is visible every quarter hour instead of only at the 26-hour bound.
+        const latest = await store.latestAttempt();
+        assert.equal(latest?.state, "failed");
+        assert.equal(latest?.failureCode, "updater_backup_lock_busy", "the busy lock is on the ledger");
+        const freshness = await store.freshness();
+        assert.equal(freshness.lastFailureCode, "updater_backup_lock_busy");
+        assert.equal(freshness.consecutiveFailures, before + 1, "and it counts as a failed attempt");
+        // The badge follows FRESHNESS: the backup a moment ago is still fresh, so
+        // a backup deferred by a database update does not turn Home red.
+        assert.equal(freshness.fresh, true, "a deferred backup does not make a fresh one stale");
+        const secondsToRetry = (new Date(freshness.nextDueAt).getTime() - Date.now()) / 1000;
+        assert.ok(secondsToRetry > 0 && secondsToRetry <= 900,
+          `rescheduled within the quarter hour, not a day and not never (${Math.round(secondsToRetry)}s)`);
+        // Twenty concurrent callers against a held lock: every one refuses, none
+        // dumps. The in-process second callers are `already_running`, which is
+        // not recorded: the first caller records its own outcome.
+        const many = await Promise.all(Array.from({ length: 20 }, () => backup.runOnce({ manual: true })));
+        assert.equal(many.filter(entry => entry.status === "busy").length, 20,
+          "all twenty refuse while the upgrader holds the lock");
+        assert.equal(dumps, 0);
+        assert.equal(store.holdsBackupLock(), false, "a refused caller holds no lock session afterwards");
+      } finally { await upgrader.end().catch(() => {}); }
+      // The upgrader's session ended, so its transaction — and the lock — is gone.
+      const after = new UpdaterBackupV1({ store, ports: filePortsV1(postgres),
+        policy: internalPolicyV1(installRoot, backupRoot) });
+      const freed = await after.runOnce({ manual: true });
+      assert.equal(freed.status, "verified", freed.message);
+      assert.equal(store.holdsBackupLock(), false, "and the lock session is closed after a successful run");
     });
   }, { port: PORT + 1, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
 });
@@ -867,7 +827,7 @@ test("a database plan is refused without a fresh backup, and admitted once one e
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, seed }) => {
       // NOTHING has ever run: a database plan must be refused.
       assert.equal((await store.freshness()).fresh, false);
       assert.match(await refuses(client, DATABASE_PLAN_INSERT("plan-nobackup", DIGEST("a"))),
@@ -1005,7 +965,7 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres);
-    await withBackupStoreV1(postgres, async ({ store, client, evidenceClient, seed }) => {
+    await withBackupStoreV1(postgres, async ({ store, client, seed }) => {
       const attempt = await store.beginAttempt({});
       await store.completeAttempt({ generationId: attempt.generationId, dumpSha256: DIGEST("dump"),
         dumpBytes: 1024, fileSha256: DIGEST("file"), shapeDigest: DIGEST("shape"),
@@ -1022,11 +982,16 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
         VALUES('backup:2026-01-01T00-00-01-0001Z','verified',pg_catalog.now())`),
       /backup_generation_(verified|counts)_shape/u);
       // Nor with a row-count array that is not a bounded array of {table,count}.
-      assert.match(await refuses(client, `INSERT INTO updater.backup_generations(generation_id,state,completed_at,
-        dump_sha256,dump_bytes,file_sha256,shape_digest,row_counts,row_counts_digest)
-        VALUES('backup:2026-01-01T00-00-04-0001Z','verified',pg_catalog.now(),'${DIGEST("d")}',10,'${DIGEST("f")}',
-        '${DIGEST("s")}','[{"table":"BAD-NAME","count":1}]'::jsonb,'${DIGEST("r")}')`),
-      /backup_generation_counts_shape/u);
+      // ANY legal identifier is a valid key now (review backup19b H1b), so the
+      // refused shapes are an empty name, an over-long one and a negative count.
+      for (const [index, bad] of [`[{"table":"","count":1}]`, `[{"table":"${"x".repeat(258)}","count":1}]`,
+        `[{"table":"public.t","count":-1}]`].entries()) {
+        assert.match(await refuses(client, `INSERT INTO updater.backup_generations(generation_id,state,completed_at,
+          dump_sha256,dump_bytes,file_sha256,shape_digest,row_counts,row_counts_digest)
+          VALUES('backup:2026-01-01T00-00-0${index}-0004Z','verified',pg_catalog.now(),'${DIGEST("d")}',10,
+          '${DIGEST("f")}','${DIGEST("s")}','${bad}'::jsonb,'${DIGEST("r")}')`),
+        /backup_generation_counts_shape/u, `the row-count shape ${bad.slice(0, 40)} is refused`);
+      }
       // Nor can a generation be rewritten from verified into failed, or have its
       // digest changed after the fact. A rewrite would resurrect the empty
       // generation defect under a different name.
@@ -1219,6 +1184,28 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
         assert.match(await refuses(migrator, "SELECT updater.backup_row_counts_shape('[]'::jsonb)"),
           /permission denied/u);
       } finally { await migrator.end(); }
+      // The BACKUP READER reads everything and writes nothing: it cannot record a
+      // backup, clear a failure or take the backup lock. Its authority is
+      // `pg_read_all_data` and BYPASSRLS, and nothing that can grant.
+      const reader = await connectV1({ host: postgres.socketDirectory, port: postgres.port,
+        user: BACKUP_READER_ROLE_V1, database: postgres.database });
+      try {
+        assert.ok((await reader.query("SELECT count(*)::int AS n FROM updater.backup_generations")).rows[0].n > 0,
+          "the reader can read the updater's schema, so the dump is whole");
+        assert.match(await refuses(reader, `INSERT INTO updater.backup_generations(generation_id,state,completed_at,
+          failure_code) VALUES('backup:2026-01-01T00-00-09-0001Z','failed',pg_catalog.now(),'xx')`),
+        /permission denied/u, "the reader cannot write the ledger");
+        assert.match(await refuses(reader, "UPDATE updater.backup_state SET consecutive_failures=0"),
+          /permission denied/u);
+        await reader.query("BEGIN");
+        assert.match(await refuses(reader, TAKE_BACKUP_LOCK), /permission denied/u,
+          "the reader cannot take the backup lock");
+        await reader.query("ROLLBACK");
+        assert.match(await refuses(reader, "CREATE TABLE public.reader_was_here(id int)"), /permission denied/u,
+          "the reader cannot create anything");
+        assert.match(await refuses(reader, "ALTER ROLE control_room_migrator SUPERUSER"), /permission denied|must be superuser/u,
+          "and cannot change any role");
+      } finally { await reader.end(); }
       // The WEB can read the badge, and it is the same verdict the trigger uses.
       const web = await as(postgres, "web");
       try {
@@ -1272,6 +1259,8 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
         assert.match(await refuses(web, "UPDATE updater.backup_state SET consecutive_failures=0"),
           /permission denied/u);
         assert.match(await refuses(web, "DELETE FROM updater.backup_generations"), /permission denied/u);
+        assert.match(await refuses(web, "SELECT * FROM updater.backup_lock"), /permission denied/u,
+          "the web holds nothing on the backup lock's table");
         // And it cannot queue a push in the updater's name: the existing R12
         // template guard still holds with the new tables present.
         assert.match(await refuses(web, `INSERT INTO updater.push_queue(id,template,title,body)
@@ -1487,7 +1476,7 @@ test("a backup root outside the install root is sealed, and a failed seal refuse
       // carry-forward's case. Nothing under it is protected by ownership, so the
       // policy REQUIRES a seal rather than merely allowing one.
       const backupRoot = join(base, "ExternalDrive", "backups");
-      await mkdir(backupRoot, { recursive: true, mode: 0o777 });
+      await mkdir(backupRoot, { recursive: true, mode: 0o700 });
       const policy = resolveBackupRootPolicyV1({ installRoot, backupRoot });
       assert.equal(policy.insideInstallRoot, false);
       assert.equal(policy.sealRequired, true, "an external root must be sealed");
@@ -1551,12 +1540,327 @@ test("a backup root outside the install root is sealed, and a failed seal refuse
   }, { port: PORT + 2, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
 });
 
+// ---------------------------------------------------------------------------
+// 10. Hostile table names (review backup19b C1): the count is right, nothing
+//     executes, and the release login is exactly what it was.
+// ---------------------------------------------------------------------------
+test("a hostile table name is counted correctly and executes nothing", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await withBackupStoreV1(postgres, async ({ store, superuser }) => {
+      const { base, installRoot, backupRoot } = await backupRootForV1(t);
+      const scratchRoot = join(base, "scratch");
+      await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
+      const attributes = async () => (await superuser.query(`SELECT rolsuper, rolcreaterole, rolcreatedb,
+        rolreplication, rolbypassrls FROM pg_roles WHERE rolname IN ('control_room_migrator', $1) ORDER BY rolname`,
+      [BACKUP_READER_ROLE_V1])).rows;
+      const before = await attributes();
+      // THE RELEASE LOGIN creates the tables, exactly as a candidate's migration
+      // would. The first name is the reviewer's, byte for byte (49 bytes); the
+      // rest cover quotes, semicolons, dollar quotes, unicode, upper case, a
+      // keyword and a space. Each one is given a different number of rows, so a
+      // count that read the WRONG table would also be caught.
+      const names = [
+        't1";ALTER ROLE control_room_migrator SUPERUSER;--',
+        "Audit",
+        "it's",
+        "a;b",
+        "$$x$$; DROP TABLE public.t1; $$",
+        "t$q$;SELECT pg_catalog.pg_sleep(30);$q$",
+        "表_ünïcødé",
+        "select",
+        "has space",
+        'x" OR "1"="1',
+      ];
+      await withExtraClientsV1(postgres, async ({ migrator }) => {
+        await migrator.query("CREATE TABLE public.t1(id int)");
+        for (const [index, name] of names.entries()) {
+          const quoted = `public."${name.replaceAll('"', '""')}"`;
+          await migrator.query(`CREATE TABLE ${quoted} (id int)`);
+          await migrator.query(`INSERT INTO ${quoted} SELECT generate_series(1, ${index + 2})`);
+        }
+        // A FORCE-RLS table whose policy raises if it is ever evaluated: its
+        // expression is release code, and it must never run as the reader (or as
+        // the scratch restore). If it did, the backup would fail.
+        await migrator.query(`CREATE FUNCTION public.policy_tripwire() RETURNS boolean LANGUAGE plpgsql AS
+          $f$ BEGIN RAISE EXCEPTION 'release policy code ran during the backup'; END $f$`);
+        await migrator.query("CREATE TABLE public.\"Guarded\"(id int)");
+        await migrator.query("INSERT INTO public.\"Guarded\" VALUES (1),(2),(3)");
+        await migrator.query("ALTER TABLE public.\"Guarded\" ENABLE ROW LEVEL SECURITY");
+        await migrator.query("ALTER TABLE public.\"Guarded\" FORCE ROW LEVEL SECURITY");
+        await migrator.query("CREATE POLICY tripwire ON public.\"Guarded\" USING (public.policy_tripwire())");
+        // A CHECK helper is release code that DOES run during a restore (every
+        // restored row is checked). It raises if it ever runs as a superuser, so
+        // a scratch restore with superuser authority — a shell as `_crdb` for a
+        // hostile release — fails the backup instead of passing quietly.
+        await migrator.query(`CREATE FUNCTION public.restore_tripwire(v int) RETURNS boolean LANGUAGE plpgsql
+          IMMUTABLE AS $f$ BEGIN
+            IF (SELECT r.rolsuper FROM pg_catalog.pg_roles r WHERE r.rolname = pg_catalog.current_user()) THEN
+              RAISE EXCEPTION 'release code ran as a superuser during the restore';
+            END IF;
+            RETURN true;
+          END $f$`);
+        await migrator.query("CREATE TABLE public.restore_probe(v int CHECK (public.restore_tripwire(v)))");
+        await migrator.query("INSERT INTO public.restore_probe VALUES (1),(2)");
+      });
+      const backup = new UpdaterBackupV1({ store, ports: productPortsV1(postgres, scratchRoot),
+        policy: internalPolicyV1(installRoot, backupRoot) });
+      const outcome = await backup.runOnce({ manual: true });
+      const latest = await store.latestAttempt();
+      assert.equal(outcome.status, "verified",
+        `${outcome.message} (${(outcome as { code?: string }).code}: ${latest?.failureDetail ?? ""})`);
+      // NOTHING EXECUTED: the release login and the reader are exactly as they
+      // were, and the table the DROP payload named is still there.
+      assert.deepEqual(await attributes(), before, "no role attribute changed");
+      assert.equal((await superuser.query("SELECT rolsuper FROM pg_roles WHERE rolname='control_room_migrator'"))
+        .rows[0].rolsuper, false, "the release login is NOT a superuser");
+      assert.equal((await superuser.query("SELECT to_regclass('public.t1') IS NOT NULL AS present")).rows[0].present,
+        true, "the DROP inside a dollar-quoted name did not run");
+      // THE COUNTS ARE RIGHT, keyed by the server's own quoting of each name.
+      const counts = await store.rowCounts(outcome.generationId) as { table: string; count: number }[];
+      for (const [index, name] of names.entries()) {
+        const quoted = (await superuser.query("SELECT format('%I.%I', 'public', $1::text) AS q", [name])).rows[0].q;
+        assert.equal(counts.find(entry => entry.table === quoted)?.count, index + 2,
+          `${JSON.stringify(name)} is counted as ${quoted} with its own rows`);
+      }
+      assert.equal(counts.find(entry => entry.table === 'public."Guarded"')?.count, 3,
+        "the FORCE-RLS table is counted whole, without evaluating its policy");
+      assert.equal(counts.find(entry => entry.table === "public.t1")?.count, 0);
+      // And the evidence reader refuses to run as a login that could grant: the
+      // superuser is exactly the login the C1 payload turned into a shell.
+      await assert.rejects(readDumpEvidence(superuser), /updater_backup_evidence_reader_refused/u,
+        "a superuser is refused as an evidence reader before the first catalog read");
+    });
+  }, { port: PORT + 2, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
+});
+
+// ---------------------------------------------------------------------------
+// 11. The backup root is checked ON DISK (review backup19b H2).
+// ---------------------------------------------------------------------------
+test("a symlinked, shared or loosely-held backup root is refused on disk, recorded, and never written", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await withBackupStoreV1(postgres, async ({ store }) => {
+      const { base, installRoot } = await backupRootForV1(t);
+      let dumps = 0;
+      const ports = { ...filePortsV1(postgres), dump: async (input: { path: string; generationId: string }) => {
+        dumps += 1; return filePortsV1(postgres).dump(input); } };
+      const attempt = async (backupRoot: string) => {
+        const outcome = await new UpdaterBackupV1({ store, ports,
+          policy: internalPolicyV1(installRoot, backupRoot) }).runOnce({ manual: true });
+        const latest = await store.latestAttempt();
+        return { outcome, latest };
+      };
+      // (a) The reviewer's case: the root is a SYMLINK to a 0777 directory
+      // elsewhere. Measured before the fix: `verified`, dump in the target.
+      const elsewhere = join(base, "elsewhere");
+      await mkdir(elsewhere, { mode: 0o700 });
+      await chmod(elsewhere, 0o777);
+      const linked = join(installRoot, "linked-backups");
+      await symlink(elsewhere, linked);
+      // (b) A plain world-writable root. (c) A group-writable one. (d) A private
+      // root under a world-writable, NON-sticky ancestor (anyone could rename the
+      // ancestor away and put their own tree in its place). (e) A root whose
+      // ANCESTOR is a symlink.
+      const open = join(installRoot, "open-backups");
+      await mkdir(open, { mode: 0o700 }); await chmod(open, 0o777);
+      const group = join(installRoot, "group-backups");
+      await mkdir(group, { mode: 0o700 }); await chmod(group, 0o770);
+      const shared = join(installRoot, "shared");
+      await mkdir(join(shared, "backups"), { recursive: true, mode: 0o700 }); await chmod(shared, 0o777);
+      const realParent = join(base, "real-parent");
+      await mkdir(join(realParent, "backups"), { recursive: true, mode: 0o700 });
+      await symlink(realParent, join(installRoot, "parent-link"));
+      for (const [label, root] of [["a symlinked root", linked], ["a 0777 root", open], ["a 0770 root", group],
+        ["a root under a world-writable ancestor", join(shared, "backups")],
+        ["a root under a symlinked ancestor", join(installRoot, "parent-link", "backups")]] as const) {
+        const { outcome, latest } = await attempt(root);
+        assert.equal(outcome.status, "failed", `${label} is refused`);
+        assert.equal((outcome as { code?: string }).code, "updater_backup_root_unsafe", `${label}: named code`);
+        // RECORDED: the refusal is a failed attempt on the ledger, not a skip.
+        assert.equal(latest?.failureCode, "updater_backup_root_unsafe", `${label} is recorded on the ledger`);
+      }
+      assert.equal(dumps, 0, "no dump was started for any unsafe root");
+      assert.deepEqual(await readdir(elsewhere), [], "nothing was written through the symlink");
+      assert.deepEqual(await readdir(open), [], "nothing was written into the open root");
+      assert.deepEqual(await readdir(join(realParent, "backups")), [], "nor through the symlinked ancestor");
+      // An UNCONFIGURED root is recorded too, not silently skipped.
+      const unconfigured = await new UpdaterBackupV1({ store, ports,
+        policy: { installRoot, backupRoot: null, seal: false } }).runOnce({ manual: true });
+      assert.equal((unconfigured as { code?: string }).code, "updater_backup_root_unconfigured");
+      assert.equal((await store.latestAttempt())?.failureCode, "updater_backup_root_unconfigured");
+      // And the control: the same runner with the private root is admitted.
+      const good = await attempt(join(installRoot, "backups"));
+      assert.equal(good.outcome.status, "verified", good.outcome.message);
+      assert.equal(dumps, 1);
+    });
+  }, { port: PORT, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
+});
+
+// ---------------------------------------------------------------------------
+// 12. Restore-verify really compares, through the REAL implementation
+//     (review backup19b H3.1/H3.3: mutation #13 survived the whole lane).
+// ---------------------------------------------------------------------------
+test("a restore that does not match the source is refused before promote, through the real ports", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await withBackupStoreV1(postgres, async ({ store, seed }) => {
+      const { base, installRoot, backupRoot } = await backupRootForV1(t);
+      const scratchRoot = join(base, "scratch");
+      await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
+      await seed("CREATE TABLE ledger_rows(id bigint PRIMARY KEY)");
+      await seed("INSERT INTO ledger_rows SELECT generate_series(1, 5)");
+      const real = productPortsV1(postgres, scratchRoot);
+      const first = await new UpdaterBackupV1({ store, ports: real, policy: internalPolicyV1(installRoot, backupRoot) })
+        .runOnce({ manual: true });
+      assert.equal(first.status, "verified", first.message);
+      const olderDump = (await assertSafeGenerationV1(backupRoot, first.generationId))!.dump;
+      await seed("INSERT INTO ledger_rows SELECT generate_series(6, 9)");
+      const expectRefused = async (ports: BackupPorts, code: string, label: string) => {
+        const before = (await readdir(backupRoot)).filter(name => name.startsWith("gen-")).sort();
+        const outcome = await new UpdaterBackupV1({ store, ports, policy: internalPolicyV1(installRoot, backupRoot) })
+          .runOnce({ manual: true });
+        assert.equal(outcome.status, "failed", `${label}: refused`);
+        assert.equal((outcome as { code?: string }).code, code, `${label}: ${outcome.message}`);
+        const row = await store.generation((outcome as { generationId: string }).generationId);
+        assert.equal(row?.state, "failed");
+        assert.equal(row?.failureCode, code, `${label}: the ledger names the half that disagreed`);
+        const after = (await readdir(backupRoot));
+        assert.deepEqual(after.filter(name => name.startsWith("gen-")).sort(), before,
+          `${label}: NOTHING was promoted`);
+        assert.equal(after.filter(name => name.startsWith(".inprogress-")).length, 0,
+          `${label}: and the refused work was removed`);
+      };
+      // (1) THE ROWS DIFFER: the real scratch cluster restores yesterday's real
+      // dump, which is missing four rows. A real pg_restore, a real count.
+      await expectRefused({ ...real, restoreVerify: (input: Parameters<BackupPorts["restoreVerify"]>[0]) =>
+        real.restoreVerify({ ...input, dumpPath: olderDump }) }, "updater_backup_row_counts_mismatch",
+      "a restore with lost rows");
+      // (2) THE SHAPE DIFFERS: the real restore is told to bring back only
+      // `public`, so the updater's own schema is lost — exactly the dump H3.3
+      // said would have passed. The flag goes in through the product's own
+      // process seam, so everything else about the restore is the real thing.
+      const publicOnly = productPortsV1(postgres, scratchRoot, {
+        spawnChild: (file: string, args: string[], options: Record<string, unknown>) =>
+          spawn(file, file.endsWith("/pg_restore") ? [...args, "--schema=public"] : args, options as never) });
+      await expectRefused(publicOnly, "updater_backup_shape_digest_mismatch", "a restore that lost the updater schema");
+      // And the control: the same real ports, unmodified, verify.
+      const good = await new UpdaterBackupV1({ store, ports: real, policy: internalPolicyV1(installRoot, backupRoot) })
+        .runOnce({ manual: true });
+      assert.equal(good.status, "verified", good.message);
+      const counts = await store.rowCounts(good.generationId) as { table: string; count: number }[];
+      assert.equal(counts.find(entry => entry.table === "public.ledger_rows")?.count, 9);
+    });
+  }, { port: PORT + 1, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
+});
+
+// ---------------------------------------------------------------------------
+// 13. A crash between promote and record (review backup19b M1).
+// ---------------------------------------------------------------------------
+test("a backup killed between promote and record keeps its verified dump and settles its row", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await withBackupStoreV1(postgres, async ({ store, client }) => {
+      const { base, installRoot, backupRoot } = await backupRootForV1(t);
+      // A child that runs a REAL attempt (file ports, real promote rename) whose
+      // `completeAttempt` announces itself and never returns, so the parent can
+      // SIGKILL it at exactly the point M1 names: the generation is promoted, the
+      // ledger row is still in flight.
+      const readyFile = join(base, "promoted"), script = join(process.cwd(), ".b19-killed-record.mjs");
+      await writeFile(script, `import { writeFile } from "node:fs/promises";
+  import { createHash } from "node:crypto";
+  import { Client } from "pg";
+  import { PostgresBackupStoreV1 } from ${JSON.stringify(join(process.cwd(), "src/updater/v1/backup-store.mjs"))};
+  import { UpdaterBackupV1 } from ${JSON.stringify(join(process.cwd(), "src/updater/v1/backup-runner.mjs"))};
+  const [,, socket, port, database, installRoot, backupRoot, readyFile] = process.argv;
+  const open = async () => { const opened = new Client({ host: socket, port: Number(port), database,
+    user: "control_room_deployer" }); await opened.connect(); return opened; };
+  const client = await open();
+  class StuckStore extends PostgresBackupStoreV1 {
+    async completeAttempt() { await writeFile(readyFile, "promoted"); return new Promise(() => {}); }
+  }
+  const store = new StuckStore(client, { connectLock: open });
+  await store.initialize();
+  const payload = Buffer.from("A-COMPLETE-VERIFIED-DUMP", "utf8");
+  const digest = "sha256:" + createHash("sha256").update(payload).digest("hex");
+  const backup = new UpdaterBackupV1({ store, policy: { installRoot, backupRoot, seal: false, freeSpaceFloorBytes: 0 },
+    ports: {
+      dump: async ({ path }) => { await writeFile(path, payload); return { bytes: payload.length, sha256: digest,
+        evidence: { shapeDigest: digest, rowCounts: [{ table: "public.t", count: 1 }], ownership: [] } }; },
+      restoreVerify: async ({ expectedShapeDigest, expectedRowCounts }) =>
+        ({ shapeDigest: expectedShapeDigest, rowCounts: expectedRowCounts }),
+      seal: async () => { throw new Error("seal_must_not_run"); },
+      writeManifest: async ({ path, manifest }) => { await writeFile(path, JSON.stringify(manifest), { mode: 0o400 }); },
+    } });
+  await backup.runOnce({ manual: true });
+  `);
+      const child = spawn(process.execPath, ["--import", "tsx", script, postgres.socketDirectory,
+        String(postgres.port), postgres.database, installRoot, backupRoot, readyFile],
+      { stdio: ["ignore", "pipe", "pipe"], cwd: process.cwd(), env: cleanEnv() });
+      let stderr = "";
+      child.stderr.on("data", chunk => { stderr += String(chunk); });
+      try {
+        let promoted = false;
+        for (let attempt = 0; attempt < 400; attempt += 1) {
+          if (await readFile(readyFile, "utf8").catch(() => "") === "promoted") { promoted = true; break; }
+          if (child.exitCode !== null) break;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        assert.ok(promoted, `the child reached the record step (exit ${child.exitCode ?? "running"}`
+          + `${stderr ? `: ${stderr.trim()}` : ""})`);
+      } finally {
+        child.kill("SIGKILL");
+        await new Promise(resolve => child.once("exit", resolve));
+        await rm(script, { force: true, maxRetries: 2 });
+      }
+      const crashed = await store.latestAttempt();
+      assert.equal(crashed?.failureCode, "backup_in_progress", "the crash left the row in flight");
+      const crashedLeaf = join(backupRoot, `gen-${generationLeafV1(crashed!.generationId)}`);
+      assert.ok(await assertSafeGenerationV1(backupRoot, crashed!.generationId),
+        "and a complete, digest-valid generation on disk");
+      // THE NEXT RUN, the one that deleted this dump before the fix.
+      const backup = new UpdaterBackupV1({ store, ports: filePortsV1(postgres),
+        policy: internalPolicyV1(installRoot, backupRoot) });
+      const next = await backup.runOnce({ manual: true });
+      assert.equal(next.status, "verified", next.message);
+      assert.equal(await existsAsync(crashedLeaf), true, "the verified dump the crash left is KEPT");
+      assert.ok(await assertSafeGenerationV1(backupRoot, crashed!.generationId), "and still whole");
+      const settled = await store.generation(crashed!.generationId);
+      assert.equal(settled?.failureCode, "updater_backup_record_interrupted",
+        "its row is settled to a real code, not stuck in flight forever");
+      const swept = await backup.sweep();
+      assert.deepEqual(swept.unrecorded, [crashed!.generationId], "the sweep reports it, by name");
+      assert.ok(!swept.removed.includes(crashed!.generationId));
+      // It is not kept FOREVER: once `kept_generations` newer verified dumps
+      // exist, it is surplus like any other, and removed by the full check.
+      await client.query("UPDATE updater.backup_state SET kept_generations=1 WHERE singleton");
+      const pruned = await backup.sweep();
+      assert.deepEqual(pruned.removed, [crashed!.generationId], "superseded, it is removed");
+      assert.equal(await existsAsync(crashedLeaf), false);
+      assert.deepEqual((await readdir(backupRoot)).filter(name => name.startsWith(".removing-")), [],
+        "and the removal finished: no half-removed directory is left behind");
+    });
+  }, { port: PORT + 2, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
+});
+
 test("the backup lane ran on a real cluster, not a skip", () => {
   // `required` is read HERE, inside the test body, and not hoisted into a constant
   // at module scope: `needsPg()` runs as each test is registered, so a constant
   // captured at import time would freeze the count at zero and this assertion
   // would pass for the wrong reason — vacuously, having compared 0 to 0.
-  assert.ok(required >= 8, `the lane declares a real number of PostgreSQL tests (${required}), not a token pair`);
+  assert.ok(required >= 13, `the lane declares a real number of PostgreSQL tests (${required}), not a token pair`);
   assert.equal(ran, required, "and every one of them ran rather than skipping");
   void updaterDdlFilesV1;
 });

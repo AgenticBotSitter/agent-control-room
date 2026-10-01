@@ -64,22 +64,22 @@
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
-    "find": "    for (const row of rows.slice(0, keep)) keepSet.add(row.generationId);",
-    "replace": "    for (const row of rows) keepSet.add(row.generationId);",
+    "find": "        if (keptValid < keep) { keptValid += 1; retained.push(generationId); }",
+    "replace": "        if (true) { keptValid += 1; retained.push(generationId); }",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "retention keeps exactly the newest `kept_generations`; keeping every verified row would let the backup root grow without limit, and would hide a policy that stopped applying"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
-    "find": "    for (const id of pinned) keepSet.add(id);",
-    "replace": "    // mutation drops the retention pin from the keep set",
+    "find": "        else if (pinned.has(generationId)) retained.push(generationId);\n",
+    "replace": "        // mutation drops the retention pin from the keep set\n",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "item 18 pins a pre-update dump until the next successful database update plus seven days; a nightly sweep that ignored the pin would delete the one dump a failed upgrade would be restored from"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
-    "find": "      lock = await this.store.acquireBackupLock();\n      if (lock.status === \"busy\") {",
-    "replace": "      lock = { status: \"acquired\" };\n      if (lock.status === \"busy\") {",
+    "find": "      const lock = await this.store.acquireBackupLock();\n      if (lock.status === \"busy\") {",
+    "replace": "      const lock = { status: \"acquired\" };\n      if (lock.status === \"busy\") {",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the backup lock is shared with the upgrader; without it a nightly dump and a database upgrade's pre-image dump can run against one cluster at once, and neither sees the other"
   },
@@ -113,17 +113,17 @@
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
-    "find": "          await assertSafeGenerationV1(this.policy.backupRoot, generationId);\n          await rm(paths.final, { recursive: true, force: false, maxRetries: 1 });",
-    "replace": "          await rm(paths.final, { recursive: true, force: false, maxRetries: 1 });",
+    "find": "        await assertSafeGenerationV1(this.policy.backupRoot, generationId);\n        await assertBackupRootUnchangedV1(root);\n        const doomed",
+    "replace": "        await assertBackupRootUnchangedV1(root);\n        const doomed",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "a generation is deleted only after it validates: without the check, a planted symlink at a generation's name would let the sweep remove a directory outside the backup root"
   },
   {
-    "file": "src/updater/v1/backup-store.mjs",
-    "find": "    const result = await this.client.query(`SELECT * FROM updater.backup_generations\n      WHERE state='verified' ORDER BY completed_at DESC, generation_id DESC LIMIT $1`, [bounded + 1]);",
-    "replace": "    const result = await this.client.query(`SELECT * FROM updater.backup_generations\n      ORDER BY completed_at DESC, generation_id DESC LIMIT $1`, [bounded + 1]);",
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      if (row.state === \"verified\") {\n        if (keptValid < keep)",
+    "replace": "      if (true) {\n        if (keptValid < keep)",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "the retention read must filter to `verified` in the DATABASE, not in JavaScript: a failed attempt would otherwise occupy one of the fourteen slots. This is the daemons4 finding, and filtering after the LIMIT would also pick the wrong fourteen"
+    "why": "only a VERIFIED ledger row may fill a kept slot. With the filter gone, a failed row whose directory is whole (a crash between promote and record, review backup19b M1) would occupy a slot as if it were verified, and retention would delete a real verified dump to keep the count"
   },
   {
     "file": "src/updater/v1/backup-store.mjs",
@@ -145,5 +145,110 @@
     "replace": "-- mutation drops the REVOKE, so PUBLIC (and so the web login) keeps EXECUTE",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "A FUNCTION is EXECUTABLE by PUBLIC by default, so defining a CHECK helper without revoking it hands the web login a callable routine it never had. Measured, not theoretical: cook/v1's passkey lane asserts the web's executable routine set as an EXACT list, and this function was the one extra entry that failed it on the merged tree. The same leak reaches the migrator. Kept as its own check because 0002's two CHECK helpers each carry the identical REVOKE, so this is a pattern that has to be right in every file that follows it."
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "      `SELECT pg_catalog.count(*)::bigint AS count FROM ${table.qualified} WHERE $1::boolean`, [true]));",
+    "replace": "      `SELECT pg_catalog.count(*)::bigint AS count FROM public.\"${table.name}\"`, []));",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "C1, the reviewer's exact bug restored: a count built from the raw relname. The hostile-name test must fail (a quoted or semicolon name is refused or miscounted), proving the server-quoted, extended-protocol count is what keeps a table name from becoming SQL"
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "const extended = (text, values = []) => Object.freeze({ text, values, queryMode: \"extended\" });",
+    "replace": "const extended = (text, values = []) => Object.freeze({ text, values });",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "C1 defence in depth: the extended protocol refuses a second statement in one call. Without it a quoting bug is a takeover again rather than a refused statement"
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "  await assertEvidenceReaderV1(client);\n  await pinEvidenceSessionV1(client);\n  const shapeDigest",
+    "replace": "  await pinEvidenceSessionV1(client);\n  const shapeDigest",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "C1: the evidence read must refuse a login that can grant or become anything (a superuser reader is what turned the name bug into SUPERUSER for the release login)"
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "  await client.query(\"SET row_security = off\");\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "a policy expression is release code; with row_security left on, a non-BYPASSRLS reader would evaluate it on every count"
+  },
+  {
+    "file": "src/updater/v1/schema-installer.ts",
+    "find": "    || readerRow.rolbypassrls !== true || readerRow.can_grant !== false || readerRow.has_members !== false",
+    "replace": "    || readerRow.rolbypassrls !== true || readerRow.has_members !== false",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the backup reader must hold ADMIN on no role; the loader is the outside check that nothing granted it the power to grant"
+  },
+  {
+    "file": "src/updater/v1/backup-store.mjs",
+    "find": "          \"SELECT singleton FROM updater.backup_lock WHERE singleton FOR UPDATE NOWAIT\"));",
+    "replace": "          \"SELECT pg_catalog.pg_try_advisory_lock(1128354390,1431323731) AS singleton WHERE pg_catalog.pg_try_advisory_lock(1128354390,1431323731)\"));",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H1a: the reviewer's lock restored. Any login can hold an advisory key, so a release could stop every backup; only the deployer can lock the backup_lock row"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "        const recorded = await this.#recordStandaloneFailure(\"updater_backup_lock_busy\");",
+    "replace": "        const recorded = null;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H1: a busy lock must be RECORDED. A silent skip let a lock held forever stop every backup with consecutive_failures = 0"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "        || (entry.uid !== 0 && entry.uid !== ownerUid)\n        || ((entry.mode & 0o022) !== 0 && (entry.mode & 0o1000) === 0))",
+    "replace": "        || false)",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H2: every ancestor of the backup root must be root- or updater-owned and not writable by others unless sticky, or someone else can rename a component away and substitute their own tree"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "    if (!entry.isDirectory() || entry.uid !== ownerUid || (entry.mode & 0o077) !== 0)\n      throw updaterRefuseV1(\"updater_backup_root_unsafe\");\n    const root",
+    "replace": "    if (!entry.isDirectory())\n      throw updaterRefuseV1(\"updater_backup_root_unsafe\");\n    const root",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H2: the backup root itself must be the updater's and private (no group/other bits). Measured before the fix: a 0777 root returned verified"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "    handle = await open(backupRoot, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));",
+    "replace": "    handle = await open(backupRoot, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H2: the root is opened without following a symlink. Measured before the fix: a symlinked root returned verified and the dump landed in the link's target"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      await this.#settleInterrupted(generationId);\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "M1: a dead run's in-flight row must be settled to a real failure code, or it stays backup_in_progress forever"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      } else if (keptValid < keep) unrecorded.push(generationId);\n      else surplus.push(generationId);",
+    "replace": "      } else surplus.push(generationId);",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "M1: a failed row whose directory is a whole, verified generation (a crash between promote and record) is kept until superseded. Measured before the fix: the next run's sweep deleted it, which on a first-ever backup is the only good dump"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "    assertRowCountsV1(source.rowCounts);\n",
+    "replace": "",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "H1b: the ledger's row-count shape is checked before the promote rename, so a refusal leaves no promoted generation beside a failed row"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "          await child(bin(\"pg_dump\"), [\"--format=custom\", `--snapshot=${snapshot}`, \"--lock-wait-timeout=60000\",",
+    "replace": "          await child(bin(\"pg_dump\"), [\"--format=custom\", \"--lock-wait-timeout=60000\",",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the dump and its evidence must be ONE snapshot: without --snapshot, a write between the evidence read and the dump makes the restore disagree and the backup fails (or, worse, agrees by accident)"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "            NOREPLICATION BYPASSRLS`);\n          await admin.query(`CREATE ROLE ${SCRATCH_READER_V1}",
+    "replace": "            NOREPLICATION BYPASSRLS SUPERUSER`);\n          await admin.query(`CREATE ROLE ${SCRATCH_READER_V1}",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "the scratch restore must not run as a superuser: a release's own functions (CHECK helpers, index expressions) run during a restore, and a superuser restore is a shell as _crdb. The hostile-name test carries a CHECK function that raises if it ever runs as a superuser, so a superuser restore fails the backup"
   }
 ]
