@@ -28,7 +28,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "pg";
@@ -51,6 +51,12 @@ const OWNER_SESSION = DIGEST("owner-session-fixture");
 /** 32 bytes of authenticatorData and a 64-byte signature: both legal, both real. */
 const AUTH = Buffer.alloc(32, 0x11), SIG = Buffer.alloc(64, 0x22), CLIENT = Buffer.from('{"type":"webauthn.get"}', "utf8");
 const CREDENTIAL = "Y3JlZGVudGlhbC1maXh0dXJlLTMyLWJ5dGVzLWxvbmc";
+/** A root-shaped VAPID key for the R12 custody seam. Fixture vocabulary, not a
+ * real key: nothing in this lane ever signs with it, because the alert sender's
+ * send path is exercised in `tests/updater-alerts-postgres.test.ts` against a
+ * fake endpoint. */
+const ROOT_HELD_VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1",
+  subject: "mailto:owner@example.invalid", publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
 
 type Postgres = Parameters<Parameters<typeof withRealPostgres>[0]>[0];
 
@@ -975,9 +981,18 @@ test("startUpdaterV1 boots with a live run and only one of 20 production session
     };
     let updater;
     try {
+      // The R12 custody seam: a real root-only-shaped key file, and only the
+      // PROCESS IDENTITY the custody check reads is simulated, because this lane
+      // runs as a non-root test user and production runs as root. The alert
+      // sender itself is the real default one, which is the point — the
+      // production call passes no `alerts` key.
+      await writeFile(join(root, "updater-state/vapid.json"), `${JSON.stringify(ROOT_HELD_VAPID)}\n`,
+        { mode: 0o600 });
+      const vapidRuntime = { getuid: () => 0,
+        lstat: async (path: string) => Object.assign(await lstat(path), { uid: 0 }) };
       updater = await startUpdaterV1({ root, store,
         identity: { bootId: "boot-live-resume", leaseToken: "lease-new-session" }, effects,
-        referee: { async assertPlanAllowed() {} } });
+        referee: { async assertPlanAllowed() {} }, alertRuntime: vapidRuntime });
       assert.equal(updater.identity.leaseToken, "lease-previous-session");
       assert.equal(updater.loop.lastOutcome.status, "succeeded");
       assert.deepEqual(calls, ["precheck", "stage", "quick_backup", "drain", "switch", "restart", "health",

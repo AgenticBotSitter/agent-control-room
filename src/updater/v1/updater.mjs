@@ -6,6 +6,7 @@ import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
 import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
   newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
+import { UpdaterAlertSenderV1 } from "./alerts.mjs";
 import { PasskeyAuthorityV1, PasskeyRefusalAggregatorV1, SimpleWebAuthnVerifierV1 } from "./passkey.mjs";
 
 // The fixed updater bundle exposes the item-13 actuator for composition with
@@ -39,6 +40,48 @@ export async function startUpdaterV1(options = {}) {
     } catch (error) {
       if (ownsClient) await client.end().catch(() => {});
       throw error;
+    }
+  }
+  const reportError = options.onTimerError ?? (error => {
+    process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
+  });
+  // R12 wiring, corrected after review. The production entry point passes NO
+  // options, so the ABSENCE of an `alerts` key has to mean the real sender,
+  // exactly like every other optional collaborator in this function (`store`,
+  // `effects`, `referee`, `ownerActions`). The previous ternary read the
+  // absence of the key as "off" and an explicit `null` as "on", so production
+  // started with no sender at all and the VAPID custody gate below never ran:
+  // the item could not fire, and the gate meant to catch a mis-held key was
+  // dead code. Only an explicit `alerts: null`/`false` opts out.
+  //
+  // `alertRuntime` injects the PROCESS IDENTITY the VAPID custody check reads
+  // (`getuid`, `lstat`, `readFile`) and nothing else — never the sender, its
+  // store or its send path. It exists so a test running as a non-root user can
+  // exercise this DEFAULT construction, which is the whole point of the fix.
+  // Production leaves it unset.
+  const alerts = options.alerts === false || options.alerts === null ? null
+    : options.alerts ?? new UpdaterAlertSenderV1({ root, store, ...(options.alertRuntime ?? {}) });
+  // Preflight BEFORE the lease is acquired below, so a custody refusal cannot
+  // strand a session advisory lock that the acquire failure path is not in
+  // scope to release — a stranded lock is a permanent, silent refusal to ever
+  // update again.
+  //
+  // A key that is simply not installed yet is NOT a refusal. §15 item 21 states
+  // install-night pushes come from item 8's minimal sender, and the key is
+  // written by the installer, so a root-only updater that starts before it
+  // would otherwise refuse to apply the release it was woken for. The absence
+  // is reported once, as a warning, and the sender is left off so no send is
+  // attempted without a key. Every other custody refusal — `not_root`,
+  // `permissions_refused`, `invalid` — stops the updater rather than starting a
+  // process that could never alert.
+  let alertSender = alerts;
+  if (alerts) {
+    try { await alerts.preflight(); }
+    catch (error) {
+      if (error?.code !== "updater_vapid_unavailable") throw error;
+      reportError(Object.assign(new Error("updater_vapid_unavailable"),
+        { code: "updater_vapid_unavailable", warning: true }));
+      alertSender = null;
     }
   }
   const requestedIdentity = options.identity ?? newUpdaterIdentityV1();
@@ -112,13 +155,10 @@ export async function startUpdaterV1(options = {}) {
     else if (request.request_kind === "check_and_continue") await runner.checkAndContinue();
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
-  const reportTimerError = options.onTimerError ?? (error => {
-    process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
-  });
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, watcher: options.watcher ?? null,
-    onError: reportTimerError });
+    alerts: alertSender, alertFacts: options.alertFacts, onError: reportError });
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
-    onError: reportTimerError });
+    onError: reportError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
     if (request.verb === "passkey-add-begin") {
       if (request.arguments.length) throw updaterRefuseV1("updater_passkey_arguments_refused");
@@ -155,7 +195,7 @@ export async function startUpdaterV1(options = {}) {
     if (ownsClient) await client.end();
     throw error;
   }
-  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, passkeys, refusalAggregator,
+  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, passkeys, refusalAggregator, alerts: alertSender,
     setHeartbeatState,
     async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
       if (ownsClient) await client.end(); } });
