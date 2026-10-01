@@ -1,0 +1,30 @@
+{
+  "schema": "control-room.trusted-runtime-init-config/v1",
+  "tools": {
+    "node": {
+      "files": [],
+      "environment": {}
+    },
+    "pnpm": {
+      "files": ["/dev/null"],
+      "environment": {
+        "HOME": "/var/empty",
+        "NPM_CONFIG_USERCONFIG": "/dev/null",
+        "NPM_CONFIG_GLOBALCONFIG": "/dev/null"
+      }
+    },
+    "esbuild": {
+      "files": [],
+      "environment": {}
+    },
+    "git": {
+      "files": ["/dev/null"],
+      "environment": {
+        "HOME": "/var/empty",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null"
+      }
+    }
+  }
+}

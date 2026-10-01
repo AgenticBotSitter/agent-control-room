@@ -1,0 +1,20 @@
+(version 1)
+(allow default)
+
+;; No service may initialize code or configuration from owner-writable trees.
+(deny file-read* file-map-executable (subpath "/opt/homebrew") (subpath "/Users"))
+(deny file-read* file-map-executable
+  (require-all
+    (subpath "/usr/local")
+    (require-not (literal "/usr/local/bin/control-room"))))
+
+;; The supervisor and its web/task-host children write only runtime state and
+;; the two root-precreated log files supplied by the launcher.
+(deny file-write*
+  (require-all
+    (require-not (subpath (param "RUNTIME_STATE")))
+    (require-not (literal (param "OUT_LOG")))
+    (require-not (literal (param "ERR_LOG")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (subpath "/dev/fd"))))
