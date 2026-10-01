@@ -37,8 +37,14 @@ import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from 
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 import { applyUpdaterSchemaV1 } from "../src/updater/v1/schema-installer";
 
-// Ports 59480-59489 are this job's block. This lane takes its own.
-const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59480), PG = requiresRealPostgres();
+// Its OWN port, distinct from the recovery lane's. `node --test` runs test FILES
+// concurrently even under `--test-concurrency=1` (that flag governs `t.test`
+// subtests inside one file), so two files that default to the same
+// `CONTROL_ROOM_PG_TEST_PORT_BASE` race for the same port and each refuses the
+// other's cluster with `refusing_occupied_port` — which reads as a real failure
+// and is not one. Measured, and the symptom is confusing: a different test fails
+// on each run, depending on which file won the race.
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59484), PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => { if (PG) { required += 1; return undefined; } return { skip: realPostgresSkipMessage() }; };
 
