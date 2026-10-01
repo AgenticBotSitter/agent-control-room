@@ -55,16 +55,18 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 //  1. files part 2 (0209-0211, numbered before 0234) landed, so the pre-0234
 //     schema they produce became the before-state. Equals files2's own pre-0234
 //     schema digest.
-//  2. THIS merge. The text-copy derivations are 0212-0213, ALSO numbered before
-//     0234, so 0234's down now leaves them in place and the before-state moves
-//     again. The value below is measured on real PostgreSQL 17 from the merged
-//     tree, not carried across: it is cook/v1's value plus 0212+0213 exactly,
-//     which is provable because the merged tree minus 0212/0213 minus 0234
-//     reproduces cook/v1's own PRE_0234 constant above (`45393cc6...`) byte for
-//     byte. Carrying the old constant instead would have left this test green on
-//     a schema it no longer describes -- the failure mode the file's own header
-//     exists to prevent.
-const PRE_0234_DIGEST = "73ebc791e5800ff7a33d4d6ff18edddca06bc352b1bd2d3abc6ae85ee277bf85";
+//  2. The text-copy derivations are 0212-0213, ALSO numbered before 0234, so
+//     0234's down now leaves them in place and the before-state moves again.
+//  3. THIS merge, the third re-pin for the same reason: the fleet presence
+//     migrations are 0215-0220, ALSO numbered before 0234, so 0234's down leaves
+//     them in place too and the before-state moves once more. The value below is
+//     MEASURED on real PostgreSQL 17 from this merged tree, not carried across,
+//     exactly as the file's own header requires -- carrying the old constant would
+//     leave this test green on a schema it no longer describes, which is the one
+//     failure mode this file exists to prevent. The 0140 capacity-clause assertion
+//     and the function/trigger counts above still prove 0234's down removed
+//     exactly its own objects; this constant only pins the surroundings.
+const PRE_0234_DIGEST = "f9bf0166d2db83cbd13720a53981f9ab5d231c15845acbc54f1d07a3d7aa544f";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {
