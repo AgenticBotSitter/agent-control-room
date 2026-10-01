@@ -486,20 +486,27 @@ test("the updater's health counts: boundary, contents, closed paths and load", a
         assert.equal(JSON.stringify((await updater.query<Counts>(`SELECT * FROM ${FUNCTION}`)).rows[0]), expected,
           `burst round ${round} drifted`);
 
-      // A SECOND, heavier wave, on top of the 50 above. This is the "burst at the
-      // limit" case, and it is the one that would expose a connection leak or a
-      // lock the single-connection burst cannot see.
-      //
-      // 25, NOT 200. The disposable cluster this lane runs on is started with
-      // `-c max_connections=60` (tests/support/attack-kit/real-postgres.ts), and
-      // roughly a third of those slots are already held by the fixture's own
-      // admin/schema-owner/web/updater clients, so 200 callers would fail at
-      // CONNECT and report a connection limit as a boundary failure. 25 racing
-      // on top of the existing four puts the peak at roughly half the real
-      // ceiling, which is the burst the cluster can actually exercise. Each
-      // caller opens its own backend and closes it, and a failure names the
-      // caller rather than collapsing into one anonymous rejection.
-      const secondWave = await Promise.all(Array.from({ length: 25 }, async (_, index) => {
+      // The 50 concurrent callers' own connections must all be closed again.
+      await sessions.close();
+      const survivors = await asSchemaOwner(postgres, sessions).then(async client =>
+        (await client.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity"
+          + " WHERE datname = current_database() AND usename = 'control_room_deployer'")).rows[0]!.n);
+      assert.equal(survivors, 0, "every updater-login backend was closed, so the burst leaked nothing");
+      await sessions.close();
+
+      // A SECOND wave, now that the first wave's 50 backends are provably gone
+      // (the assertion above reads pg_stat_activity and finds none). Placing it
+      // HERE is what makes it a burst at the limit rather than a test that
+      // trips over the cluster's own connection ceiling: the disposable cluster
+      // runs with `-c max_connections=60` and PostgreSQL reserves 3 of those for
+      // SUPERUSER, so 57 are usable, and an earlier placement of this same wave
+      // on top of the still-open first wave failed with SQLSTATE 53300
+      // ("remaining connection slots are reserved for roles with the SUPERUSER
+      // attribute") -- a connection limit reported where a boundary failure was
+      // meant. 40 racing callers on a fresh set of backends is as close to the
+      // 57-slot ceiling as this lane can get while leaving room for the fixture's
+      // own clients.
+      const secondWave = await Promise.all(Array.from({ length: 40 }, async (_, index) => {
         const client = await asUpdater(postgres, sessions);
         try { return (await client.query<Counts>(`SELECT * FROM ${FUNCTION}`)).rows[0]; }
         catch (error) {
@@ -508,22 +515,16 @@ test("the updater's health counts: boundary, contents, closed paths and load", a
       }));
       for (const [index, countsSeen] of secondWave.entries())
         assert.equal(JSON.stringify(countsSeen), expected, `second-wave caller ${index} saw different counts`);
-
-      // A hostile caller that abandons its query mid-flight must not leave the
-      // others short: the next wave still has to be able to open its backend.
+      // And a hostile caller that abandons its backend mid-use must not starve
+      // the next one: the slot it released is immediately reusable. `updater`
+      // itself was closed by the sessions.close() above, so this opens a fresh
+      // one rather than reusing a dead client.
       const abandoned = await asUpdater(postgres, sessions);
       await abandoned.query(`SELECT * FROM ${FUNCTION}`);
-      await abandoned.end();
-      assert.equal(JSON.stringify((await updater.query<Counts>(`SELECT * FROM ${FUNCTION}`)).rows[0]), expected,
-        "an abandoned connection does not starve the next caller");
-
-      // The 50 concurrent callers' own connections must all be closed again.
-      await sessions.close();
-      const survivors = await asSchemaOwner(postgres, sessions).then(async client =>
-        (await client.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity"
-          + " WHERE datname = current_database() AND usename = 'control_room_deployer'")).rows[0]!.n);
-      assert.equal(survivors, 0, "every updater-login backend was closed, so the burst leaked nothing");
-      await sessions.close();
+      await abandoned.end().catch(() => {});
+      const afterAbandon = await asUpdater(postgres, sessions);
+      assert.equal(JSON.stringify((await afterAbandon.query<Counts>(`SELECT * FROM ${FUNCTION}`)).rows[0]), expected,
+        "an abandoned backend does not starve the next caller");
 
       // -- (10) The down migration reverses exactly what the up file granted ------
       const owner = await asSchemaOwner(postgres, sessions);
