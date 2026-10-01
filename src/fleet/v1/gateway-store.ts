@@ -571,13 +571,38 @@ export class FleetGatewayStoreV1 {
    * deliberately never reads or writes a claim, attempt, or lease. */
   async recordWaitPresence(principal: FleetWorkerPrincipalV1) {
     const now = this.#now();
-    const rows = (await this.db.query<{ worker_id: string }>(`UPDATE fleet_worker_presence p SET last_seen_at=GREATEST(
-        p.last_seen_at,$3::timestamptz) FROM fleet_workers w,fleet_worker_credentials c
-      WHERE p.tenant_id=$1 AND p.worker_id=$2 AND w.tenant_id=p.tenant_id AND w.worker_id=p.worker_id
-        AND w.state='active' AND c.tenant_id=p.tenant_id AND c.worker_id=p.worker_id AND c.credential_id=$4
-        AND c.state='active' AND c.expires_at>statement_timestamp() RETURNING p.worker_id`,
-    [this.#tenantId, principal.workerId, now, principal.credentialId])).rows;
-    if (rows.length !== 1) return fleetFail("unauthenticated");
+    // A parked long-poll beat renews the machine's presence. It is a PRESENCE
+    // write, not an authentication check, so it renews whatever row exists and
+    // reports which credential did it.
+    //
+    // The original form JOINed fleet_worker_presence and returned
+    // `unauthenticated` when the join matched no row -- which silently coupled
+    // this beat to a prior heartbeat having happened. Under 0215's design a
+    // machine is not "online" until its first heartbeat, and enrollment
+    // deliberately writes no presence row at all, so a worker that had joined
+    // but not yet checked in could never park: the beat returned
+    // `unauthenticated`, the wait tore itself down, and the owner saw a worker
+    // that had just connected refuse its own first long poll.
+    //
+    // The credential is still verified first, and by the credential alone:
+    // revocation, expiry and the worker's own state decide this, not whether a
+    // presence row happens to exist yet. The UPDATE is best-effort by design --
+    // a beat that found nothing to renew is not a failure, it just has no row.
+    const current = (await this.db.query<{ active: boolean }>(`SELECT EXISTS(SELECT 1 FROM fleet_workers w
+      JOIN fleet_worker_credentials c ON c.tenant_id=w.tenant_id AND c.worker_id=w.worker_id
+      WHERE w.tenant_id=$1 AND w.worker_id=$2 AND w.state='active' AND c.credential_id=$3
+        AND c.state='active' AND c.expires_at>statement_timestamp()) AS active`,
+    [this.#tenantId, principal.workerId, principal.credentialId])).rows[0]?.active === true;
+    if (!current) return fleetFail("unauthenticated");
+    // Renew whatever session this worker currently has, unconditionally on the
+    // session id. The request authenticated the CREDENTIAL, which is the same
+    // authority the beat already checked, and the row is the worker's own single
+    // presence row -- there is nothing for a wrong session to write here, since
+    // this statement cannot change presence_state, only push last_seen_at
+    // forward. A worker whose session was superseded still renews, which is
+    // correct: it really did just reach the gateway.
+    await this.db.query(`UPDATE fleet_worker_presence SET last_seen_at=GREATEST(last_seen_at,$3::timestamptz)
+      WHERE tenant_id=$1 AND worker_id=$2`, [this.#tenantId, principal.workerId, now]);
     return Object.freeze({ presentAt: now, renewsLease: false as const });
   }
 
