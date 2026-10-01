@@ -229,5 +229,17 @@ GRANT UPDATE (spent_at) ON control_result_file_download_grants TO control_room_p
 -- grant, so this UPDATE is permission to try, not permission to accept.
 GRANT UPDATE (retention_state, accepted_at, accepted_by_identity_id, retained_until)
   ON control_result_file_sets TO control_room_private_web;
+-- 0209-0211: the owner's approval artefacts for the upload path. The web login
+-- records the declared outputs and inputs (0209/0211's guards require a live
+-- human owner with a write grant over the project, so INSERT is permission to
+-- try, not permission to declare) and binds an accepted file to the consumer
+-- that declared it, on the same transaction that accepts the producer's result.
+-- It holds no UPDATE on any of them, so it cannot re-point a binding, and no
+-- UPDATE on an upload session, so the owner's Stop decision goes through the
+-- 0209 guard's own check that the installation is actually stopped.
+GRANT SELECT, INSERT ON control_task_declared_outputs, control_task_declared_inputs,
+  control_job_artifact_inputs TO control_room_private_web;
+GRANT SELECT ON control_result_upload_sessions, control_result_upload_chunks,
+  control_result_publications TO control_room_private_web;
 
 COMMIT;

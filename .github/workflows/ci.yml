@@ -274,6 +274,8 @@ jobs:
         run: node --test tests/check-pr-claims.test.mjs
       - name: Test the affected-test planner
         run: node --test tests/affected-tests.test.mjs
+      - name: Test the generic VPS front-door installer
+        run: pnpm run test:front-door
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
       - name: Reject stale or incomplete test quarantines
@@ -431,6 +433,13 @@ jobs:
         # supervisor's machine-health port. It is its own lane because each file
         # builds its own disposable cluster on the reserved 58710-58719 range.
         run: pnpm run test:operations-mode
+      - name: Bot dogfood journey
+        # Can a bot create and run work in Control Room, end to end? The
+        # scripted-bot journey and its stress run, both on real PostgreSQL as
+        # the production logins, with a scripted bot that never starts a real
+        # agent CLI. Its own lane because each file builds its own disposable
+        # cluster on the reserved 59620-59629 range.
+        run: pnpm run test:bot-dogfood
       - name: Resource-bound connector contracts
         # The wrapper preserves this command's flags/files after filtering:
         # node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { parseInstallationSetupViewV1, type InstallationSetupViewV1 } from "../../../src/harness/v1/installation-setup-wire";
 import { verifyInstallationPlanViewV1, type InstallationPlanViewV1 } from "../../../src/installer/v1/installation-plan-view";
 import { LocalInstallationWizard } from "../local-installation-wizard";
+import { PasskeyRegistration } from "./passkey-registration";
 
 type InstallationPlanRestartCategoryV1 = "ready_to_begin" | "inspect" | "owner_attention" | "complete";
 
@@ -92,10 +93,11 @@ export function SetupWorkspace() {
   }, [generation]);
 
   return <main id="private-main" className="private-shell" tabIndex={-1}>
+    <PasskeyRegistration />
     <section className="private-heading" aria-labelledby="setup-page-title">
-      <p className="private-eyebrow">Source-only setup preview</p>
+      <p className="private-eyebrow">Owner setup</p>
       <h1 id="setup-page-title">Set up Control Room</h1>
-      <p><strong>The macOS bundle source exists, but a public release and live installation do not.</strong> This page shows only saved, browser-safe setup status and progress; it cannot install, start, enable, or configure Control Room.</p>
+      <p><strong>A passkey can be registered only from a fresh link printed by the installer.</strong> Without that link, this page shows only saved, browser-safe setup status and progress; it cannot install, start, or enable Control Room.</p>
       <p className="private-note">This page refreshes its saved setup status while it is visible and when you return to it. Refreshing never repeats a setup action.</p>
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh saved setup status</button>
     </section>

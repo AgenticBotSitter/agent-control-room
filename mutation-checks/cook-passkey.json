@@ -1,0 +1,233 @@
+[
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "(object.crossOrigin !== undefined && object.crossOrigin !== false) || object.topOrigin !== undefined",
+    "replace": "false || object.topOrigin !== undefined",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "cross-origin client data must be refused even when the pinned library tolerates a Safari-shaped response without topOrigin"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "exactBase64urlV1(response.attestationObject,\n      { min: 32, max: 8192, code: \"updater_passkey_attestation_refused\" });",
+    "replace": "exactBase64urlV1(response.attestationObject,\n      { min: 32, max: 81920, code: \"updater_passkey_attestation_refused\" });",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "attestation parsing must stop at the item-7 database bound before the CBOR verifier runs"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "supportedAlgorithmIDs: [ES256_V1, EDDSA_V1]",
+    "replace": "supportedAlgorithmIDs: [EDDSA_V1]",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "the wrapper must admit the specified ES256 algorithm instead of drifting to a different verifier policy"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "expectedOrigin: fixed.expectedOrigin, expectedRPID: fixed.rpId, expectedType: \"webauthn.get\"",
+    "replace": "expectedOrigin: parseClientDataV1(exact.response.clientDataJSON, \"webauthn.get\").origin, expectedRPID: fixed.rpId, expectedType: \"webauthn.get\"",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "assertion origin is fixed root configuration and is never learned from attacker-supplied client data"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "|| credential.counter > 0\n        && result.authenticationInfo.newCounter <= credential.counter",
+    "replace": "|| false",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "the wrapper independently refuses a nonzero signature counter that does not advance"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "registration.status = \"consuming\"; registration.consumedAt = now.toISOString(); await this.#writeLedger(ledger);",
+    "replace": "registration.consumedAt = now.toISOString();",
+    "test": "node --test --test-name-pattern='dropped registration-row read' tests/updater-passkey.test.mjs",
+    "why": "a stopped or failed attempt consumes the registration secret before any parser or database wait"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (!this.store?.registrationRows) throw updaterRefuseV1(\"updater_passkey_store_port_unbound\");\n      if (!['initial', 'add'].includes(mode))",
+    "replace": "if (!['initial', 'add'].includes(mode))",
+    "test": "node --test --test-name-pattern='exactly-one-row' tests/updater-passkey.test.mjs",
+    "why": "the updater refuses before issuing a registration link when the one-row database port is not bound"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (!Array.isArray(rows) || rows.length !== 1) throw updaterRefuseV1(\"updater_registration_row_count_refused\");",
+    "replace": "if (!Array.isArray(rows) || rows.length === 0) throw updaterRefuseV1(\"updater_registration_row_count_refused\");",
+    "test": "node --test --test-name-pattern='exactly-one-row' tests/updater-passkey.test.mjs",
+    "why": "a raced registration with two rows must invalidate the secret rather than select either credential"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "row.comparisonCode !== typedCode\n            || comparisonCodeV1(row.credentialId) !== typedCode",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='exactly-one-row' tests/updater-passkey.test.mjs",
+    "why": "the installer must require the owner to type the exact six-character credential comparison code"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "(!passkey.coolingOffUntil || Date.parse(passkey.coolingOffUntil) <= nowMs)",
+    "replace": "true",
+    "test": "node --test --test-name-pattern='keep an unauthorised second passkey inactive' tests/updater-passkey.test.mjs",
+    "why": "an added passkey without old-passkey authorization cannot approve anything during its 24-hour cooling-off"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "plan?.expectedOrigin !== config.expectedOrigin) throw updaterRefuseV1(\"updater_plan_binding_refused\");",
+    "replace": "false) throw updaterRefuseV1(\"updater_plan_binding_refused\");",
+    "test": "node --test --test-name-pattern='keep an unauthorised second passkey inactive' tests/updater-passkey.test.mjs",
+    "why": "a plan is accepted only when its installation, rpId and expected origin equal root configuration"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "await this.#burnNonce(plan.nonce, planDigest);",
+    "replace": "// mutation skips the single-use nonce burn",
+    "test": "node --test --test-name-pattern='keep an unauthorised second passkey inactive' tests/updater-passkey.test.mjs",
+    "why": "the plan nonce is durably burned before an approval can be replayed"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (result.firstInHour === true)\n      await this.#deliver(",
+    "replace": "if (true)\n      await this.#deliver(",
+    "test": "node --test --test-name-pattern='10,000 refusal rows' tests/updater-passkey.test.mjs",
+    "why": "junk approvals produce only one journal entry and one push for a plan in an hour"
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "if (window.location.hash.length > 1024) {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='setup source keeps fragments' tests/setup-passkey-page.test.tsx",
+    "why": "an attacker-controlled setup fragment is bounded before URLSearchParams parses it"
+  },
+  {
+    "file": "private-app/app/setup/passkey-registration.tsx",
+    "find": "const fragment = window.location.hash.slice(1);\n    history.replaceState(null, \"\", `${window.location.pathname}${window.location.search}`);",
+    "replace": "const fragment = window.location.hash.slice(1);\n    // mutation leaves the registration secret in synchronized browser history",
+    "test": "node --import tsx --test --test-name-pattern='strips fragment authority' tests/setup-passkey-page.test.tsx",
+    "why": "the setup page removes owner-code and registration authority from browser history before its first request"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (decodeAttestationObject(attestationObject).get(\"fmt\") !== \"none\")",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='exact importable' tests/updater-passkey.test.mjs",
+    "why": "registration refuses attestation formats other than none before the pinned verifier parses their statements"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "|| /^\\d+$/u.test(object.rpId.split(\".\").at(-1)))",
+    "replace": ")",
+    "test": "node --test --test-name-pattern='numeric relying-party' tests/updater-passkey.test.mjs",
+    "why": "the root configuration refuses IP-style numeric relying-party identifiers"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "|| origin.port && object.rehearsal !== true)",
+    "replace": ")",
+    "test": "node --test --test-name-pattern='numeric relying-party' tests/updater-passkey.test.mjs",
+    "why": "production root configuration refuses an origin port unless the configuration explicitly marks a rehearsal"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (cose.size !== keys.size || [...cose.keys()].some(key => !keys.has(key)) || cose.get(1) !== 2",
+    "replace": "if (cose.get(1) !== 2",
+    "test": "node --test --test-name-pattern='exact importable' tests/updater-passkey.test.mjs",
+    "why": "an ES256 COSE key has exactly the allowed fields and no attacker-controlled extras"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "createPublicKey({ key: { kty: \"EC\", crv: \"P-256\", x: b64urlV1(cose.get(-2)), y: b64urlV1(cose.get(-3)) },\n        format: \"jwk\" });",
+    "replace": "void cose;",
+    "test": "node --test --test-name-pattern='exact importable' tests/updater-passkey.test.mjs",
+    "why": "an ES256 credential is accepted only when Node can import its point as a P-256 public key"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (cose.size !== keys.size || [...cose.keys()].some(key => !keys.has(key)) || cose.get(1) !== 1",
+    "replace": "if (cose.get(1) !== 1",
+    "test": "node --test --test-name-pattern='exact importable' tests/updater-passkey.test.mjs",
+    "why": "an EdDSA COSE key has exactly the allowed fields and no attacker-controlled extras"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "requireUserPresence: true, requireUserVerification: true, supportedAlgorithmIDs: [ES256_V1, EDDSA_V1]",
+    "replace": "requireUserPresence: false, requireUserVerification: false, supportedAlgorithmIDs: [ES256_V1, EDDSA_V1]",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "registration requires both user presence and user verification"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "expectedOrigin: fixed.expectedOrigin, expectedRPID: fixed.rpId, expectedType: \"webauthn.create\"",
+    "replace": "expectedOrigin: parseClientDataV1(exact.response.clientDataJSON, \"webauthn.create\").origin, expectedRPID: fixed.rpId, expectedType: \"webauthn.create\"",
+    "test": "node --test --test-name-pattern='pinned wrapper verifies' tests/updater-passkey.test.mjs",
+    "why": "registration origin is fixed root configuration and an otherwise-valid response from another port is refused"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (mode === \"add\" && !this.store?.notifyCoolingOff)\n        throw updaterRefuseV1(\"updater_passkey_notification_port_unbound\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_passkey_notification_port_unbound\");",
+    "test": "node --test --test-name-pattern='notice is mandatory' tests/updater-passkey.test.mjs",
+    "why": "an add registration is not issued unless the mandatory cooling-off notification port is bound"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (mode === \"initial\" && ledger.passkeys.length !== 0)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='notice is mandatory' tests/updater-passkey.test.mjs",
+    "why": "initial registration is available only on a ledger that has never held a passkey"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (ledger.registrations.length >= MAX_REGISTRATIONS_V1)\n        throw updaterRefuseV1(\"updater_registration_cap_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_registration_cap_refused\");",
+    "test": "node --test --test-name-pattern='ledger caps refuse' tests/updater-passkey.test.mjs",
+    "why": "a full registration ledger refuses before another row can make the next read fail"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "if (ledger.passkeys.length >= MAX_PASSKEYS_V1) throw updaterRefuseV1(\"updater_passkey_cap_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_passkey_cap_refused\");",
+    "test": "node --test --test-name-pattern='ledger caps refuse' tests/updater-passkey.test.mjs",
+    "why": "a full passkey ledger refuses before a thirty-third key can brick later reads"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "credentialId: verified.credentialId, number,\n            coolingOffUntil",
+    "replace": "credentialId: verified.credentialId, number: 0,\n            coolingOffUntil",
+    "test": "node --test --test-name-pattern='notice is mandatory' tests/updater-passkey.test.mjs",
+    "why": "the queued cooling-off warning names the same passkey number the owner can revoke"
+  },
+  {
+    "file": "src/updater/v1/passkey.mjs",
+    "find": "coolingOffUntil, repeatAt: new Date(nowMs + 12 * 60 * 60_000).toISOString() }), this.notificationTimeoutMs);",
+    "replace": "coolingOffUntil, repeatAt: new Date(nowMs + 12 * 60 * 60_000).toISOString() }));",
+    "test": "node --test --test-name-pattern='failed cooling-off enqueue' tests/updater-passkey.test.mjs",
+    "why": "a slow cooling-off notification port is bounded so the CLI cannot time out after an ambiguous completed add"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "const typedCode = (await context.readComparisonCode()).trim().toUpperCase();",
+    "replace": "const typedCode = await context.readComparisonCode();",
+    "test": "node --import tsx --test --test-name-pattern='CLI keeps status' tests/updater-cli-flip.test.mjs",
+    "why": "the CLI trims and uppercases the human-entered comparison code before the single-use request"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "if (result.coolingOffUntil && result.coolingOffNoticesEnqueued !== true)\n        throw updaterRefuseV1(\"updater_passkey_control_reply_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_passkey_control_reply_refused\");",
+    "test": "node --import tsx --test --test-name-pattern='CLI keeps status' tests/updater-cli-flip.test.mjs",
+    "why": "the CLI claims warnings were queued only when the updater confirms the mandatory enqueue"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "verb: \"passkey-add-complete\", arguments: [registration.registrationSecret, typedCode] }, { timeoutMs: 15_000 });",
+    "replace": "verb: \"passkey-add-complete\", arguments: [registration.registrationSecret, typedCode] }, { timeoutMs: 5_000 });",
+    "test": "node --import tsx --test --test-name-pattern='CLI keeps status' tests/updater-cli-flip.test.mjs",
+    "why": "the completion request allows enough time for both bounded verifiers, durable notification enqueue and fsyncs"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "sessions.assertLocalRequest(request, true);\n        const body = await readBoundedJson(request.body, 20_000);",
+    "replace": "const body = await readBoundedJson(request.body, 20_000);",
+    "test": "node --import tsx --test --test-name-pattern='passkey POST adapter requires Origin' tests/setup-passkey-page.test.tsx",
+    "why": "both passkey registration POSTs require the exact request Origin before parsing or forwarding input"
+  }
+]

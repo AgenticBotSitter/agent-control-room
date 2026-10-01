@@ -4,8 +4,8 @@
 // database with every migration applied. The same guards are exercised as the
 // production logins in tests/fleet-connector-postgres.test.ts.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { chmod, mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -20,7 +20,7 @@ import { createFleetGatewayAdmissionV1, createFleetGatewayHandlerV1, fleetGatewa
   type FleetGatewayAdmissionV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
 import { captureFleetGatewayConfigurationV1, FLEET_GATEWAY_CONFIGURATION_V1,
   FLEET_GATEWAY_SERVER_OPTIONS_V1, createFleetGatewayStoreFromConfigurationV1, fleetGatewayAdmissionFromConfigurationV1,
-  prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
+  loadFleetGatewayConfigurationFileV1, prepareFleetGatewayAdmissionV1 } from "../scripts/run-fleet-gateway";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { SupervisorReconcilerV1 } from "../src/supervisor/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
@@ -28,9 +28,15 @@ import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, see
 // The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
 import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1 } from "../src/fleet/v1/connector-release";
+import { connectorReleaseSignatureMaterialV1, releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 const CF_PROXY = Object.freeze({ trustedProxyAddresses: ["127.0.0.1"], trustedClientHeader: "cf-connecting-ip" as const });
+const RELEASE_KEYS = generateKeyPairSync("ed25519");
+const RELEASE_PUBLIC_KEY = RELEASE_KEYS.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const RELEASE_TRUST = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(RELEASE_PUBLIC_KEY), publicKey: RELEASE_PUBLIC_KEY,
+  versionFloor: connector.CONNECTOR_VERSION, revokedKeyIds: Object.freeze([]) });
 
 function requestFrom(address: string, values: Record<string, string> = {}) {
   return { socket: { remoteAddress: address }, headers: values } as unknown as IncomingMessage;
@@ -61,6 +67,12 @@ test("gateway unauthenticated identities use IPv4 /24 and IPv6 /64 networks", ()
   assert.equal(fleetGatewayClientNetworkV1("unknown"), "unknown");
 });
 
+test("database refusals prefer the production wrapper SQLSTATE over its public availability code", () => {
+  assert.equal(databaseSqlStateV1({ sqlState: "23P01", code: "database_unavailable" }), "23P01");
+  assert.equal(databaseSqlStateV1({ code: "23P01" }), "23P01", "PGlite exposes the same refusal through code");
+  assert.equal(databaseSqlStateV1({ sqlState: 23, code: null }), undefined);
+});
+
 test("fleet gateway checks slow request timeouts every second", () => {
   assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.requestTimeout, 15_000);
   assert.equal(FLEET_GATEWAY_SERVER_OPTIONS_V1.headersTimeout, 5_000);
@@ -89,7 +101,8 @@ test("slow enrollment uploads from two networks cannot occupy the enrollment lan
   const unexpected: unknown[] = [];
   const store = { async enroll() { return { workerId: `fleet-worker:${"a".repeat(32)}`, replayed: false }; } };
   const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
-    admission: createFleetGatewayAdmissionV1(CF_PROXY), onUnexpectedError: error => unexpected.push(error) });
+    releaseTrust: RELEASE_TRUST, admission: createFleetGatewayAdmissionV1(CF_PROXY),
+    onUnexpectedError: error => unexpected.push(error) });
   const server = createServer(FLEET_GATEWAY_SERVER_OPTIONS_V1,
     (request, response) => { void handler.handle(request, response); });
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
@@ -115,7 +128,8 @@ test("an enrollment upload stopped halfway is a fixed invalid refusal, not an un
   let handled = 0;
   const store = { async enroll() { throw new Error("enroll must not run for an incomplete body"); } };
   const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
-    admission: createFleetGatewayAdmissionV1(CF_PROXY), onUnexpectedError: error => unexpected.push(error) });
+    releaseTrust: RELEASE_TRUST, admission: createFleetGatewayAdmissionV1(CF_PROXY),
+    onUnexpectedError: error => unexpected.push(error) });
   const server = createServer(FLEET_GATEWAY_SERVER_OPTIONS_V1, (request, response) => {
     void handler.handle(request, response).then(() => { handled += 1; });
   });
@@ -140,18 +154,50 @@ test("an enrollment upload stopped halfway is a fixed invalid refusal, not an un
 
 test("gateway protected configuration defaults to no proxy trust and validates explicit trust", () => {
   const base = { schema: FLEET_GATEWAY_CONFIGURATION_V1, tenantId: FLEET_TENANT, port: 8443,
+    releaseTrust: RELEASE_TRUST,
     database: { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_fleet",
       password: "fixture-value", majorVersion: 17 as const } };
   const defaults = captureFleetGatewayConfigurationV1(base);
   assert.equal(defaults.trustedClientHeader, "none");
   assert.deepEqual(defaults.trustedProxyAddresses, []);
+  assert.throws(() => captureFleetGatewayConfigurationV1({ ...base, releaseTrust: undefined }),
+    /fleet_gateway_configuration_refused/u);
   assert.throws(() => captureFleetGatewayConfigurationV1({ ...base, trustedClientHeader: "cf-connecting-ip" }),
     /fleet_gateway_configuration_refused/u);
   const configured = captureFleetGatewayConfigurationV1({ ...base, trustedClientHeader: "x-forwarded-for-rightmost",
-    trustedProxyAddresses: ["127.0.0.1"] });
+    trustedProxyAddresses: ["127.0.0.1"], releaseTrust: RELEASE_TRUST });
+  assert.deepEqual(configured.releaseTrust, RELEASE_TRUST);
+  assert.throws(() => captureFleetGatewayConfigurationV1({ ...base, releaseTrust: { ...RELEASE_TRUST, publicKey: "bad" } }),
+    /fleet_gateway_configuration_refused/u);
   const admission = fleetGatewayAdmissionFromConfigurationV1(configured);
   const lease = admission.enter(requestFrom("127.0.0.1", { "x-forwarded-for": "2001:db8:2:3::1" }), "authenticate");
   lease.completeAuthentication(null);
+});
+
+test("gateway loads public release trust beside a group-readable configuration and refuses substitution", async t => {
+  const root = await mkdtemp(join(tmpdir(), "fleet-gateway-release-trust-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = join(root, "gateway.json"), trustPath = join(root, "release-trust.json");
+  const config = { schema: FLEET_GATEWAY_CONFIGURATION_V1, tenantId: FLEET_TENANT, port: 8443,
+    database: { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_fleet",
+      password: "fixture-value", majorVersion: 17 as const } };
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, { mode: 0o640 });
+  await writeFile(trustPath, `${JSON.stringify(RELEASE_TRUST)}\n`, { mode: 0o640 });
+  await chmod(configPath, 0o640); await chmod(trustPath, 0o640);
+  assert.deepEqual((await loadFleetGatewayConfigurationFileV1(configPath)).releaseTrust, RELEASE_TRUST);
+
+  const stranger = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  await writeFile(configPath, `${JSON.stringify({ ...config, releaseTrust: { ...RELEASE_TRUST,
+    keyId: releaseKeyIdV1(stranger), publicKey: stranger } })}\n`, { mode: 0o640 });
+  await assert.rejects(loadFleetGatewayConfigurationFileV1(configPath), /fleet_gateway_configuration_refused/u);
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, { mode: 0o640 });
+  await chmod(trustPath, 0o660);
+  await assert.rejects(loadFleetGatewayConfigurationFileV1(configPath), /fleet_gateway_configuration_refused/u);
+  await chmod(trustPath, 0o640);
+  const outsideTrust = join(root, "outside-trust.json");
+  await writeFile(outsideTrust, `${JSON.stringify(RELEASE_TRUST)}\n`, { mode: 0o640 });
+  await rm(trustPath); await symlink(outsideTrust, trustPath);
+  await assert.rejects(loadFleetGatewayConfigurationFileV1(configPath), /fleet_gateway_configuration_refused/u);
 });
 
 test("gateway operations mode reports every decision and fails closed when its provider is absent or fails", async () => {
@@ -224,13 +270,20 @@ async function fixture(options: { gatewayClock?: () => number; admission?: Fleet
   const owner = new FleetOwnerServiceV1(db, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
     afterDecision: () => gateway.reconcile() });
   const proposals = new WorkBatchServiceV1(new WorkBatchStoreV1(db, new Uint8Array(32).fill(3)));
-  const fixtureBundle = Buffer.from("export {};\n");
-  const fixtureManifest = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: "0.3.0", file: "connector-0.3.0.mjs",
+  const fixtureBundle = await readFile("scripts/fleet/connector.mjs");
+  const fixtureManifest = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: connector.CONNECTOR_VERSION,
+    file: `connector-${connector.CONNECTOR_VERSION}.mjs`,
     sha256: createHash("sha256").update(fixtureBundle).digest("hex"), size: fixtureBundle.length,
     builtFrom: "0".repeat(40) } as const;
+  const unsignedAdvertisement = { version: fixtureManifest.version, file: fixtureManifest.file,
+    sha256: fixtureManifest.sha256, size: fixtureManifest.size, builtFrom: fixtureManifest.builtFrom,
+    minVersion: connector.CONNECTOR_VERSION };
+  const advertisement = { ...unsignedAdvertisement,
+    signature: sign(null, connectorReleaseSignatureMaterialV1(unsignedAdvertisement), RELEASE_KEYS.privateKey).toString("base64url") };
   const handler = createFleetGatewayHandlerV1({ store: gateway, proposals,
+    releaseTrust: RELEASE_TRUST,
     connectorRelease: { bundle: fixtureBundle, manifest: fixtureManifest,
-      manifestBody: `${JSON.stringify(fixtureManifest, null, 2)}\n` },
+      manifestBody: `${JSON.stringify(fixtureManifest, null, 2)}\n`, advertisement },
     ...(options.admission ? { admission: options.admission } : {}),
     ...(options.waitRegistry ? { waitRegistry: options.waitRegistry } : {}) });
   let reads = 0;
@@ -304,6 +357,8 @@ test("one-command join: a single-use code enrolls a machine whose secret never l
   const worker = await joinWorker(f, "Laptop");
   assert.match(worker.joined.workerId, /^fleet-worker:[a-f0-9]{32}$/u);
   assert.deepEqual(worker.joined.projectIds, [PROJECT_A]);
+  assert.equal(worker.config.updates.releasePublicKey, RELEASE_PUBLIC_KEY);
+  assert.equal(worker.config.updates.floorVersion, connector.CONNECTOR_VERSION);
   if (process.platform !== "win32") assert.equal((await stat(worker.configPath)).mode & 0o077, 0, "credential file is private");
   // Only the digest is stored; the secret itself is nowhere in the database.
   const dump = JSON.stringify(await f.query("SELECT * FROM fleet_worker_credentials"));
@@ -311,7 +366,15 @@ test("one-command join: a single-use code enrolls a machine whose secret never l
   assert.ok(!JSON.stringify(await f.query("SELECT * FROM fleet_enrollment_codes")).includes(worker.code.code));
   const me = await worker.client.me();
   assert.equal(me.workerId, worker.joined.workerId);
+  assert.equal(me.connector.version, connector.CONNECTOR_VERSION);
   assert.equal(me.canApprove, false); assert.equal(me.canMerge, false);
+  assert.equal((await fetch(`${f.origin}/fleet/v1/connector-releases/${connector.CONNECTOR_VERSION}`)).status, 401,
+    "self-update downloads require the machine credential");
+  const releaseDownload = await fetch(`${f.origin}/fleet/v1/connector-releases/${connector.CONNECTOR_VERSION}`, { headers: {
+    authorization: `Bearer ${worker.config.secret}`, "x-control-room-worker": worker.config.workerId,
+  } });
+  assert.equal(releaseDownload.status, 200);
+  assert.equal(await releaseDownload.text(), await readFile("scripts/fleet/connector.mjs", "utf8"));
   assert.deepEqual(Object.keys(me.workingAgreement).sort(), ["digest", "grantsAuthority", "startsWork", "version"]);
   assert.deepEqual(me.workingAgreement, { version: connector.WORKING_AGREEMENT.version,
     digest: connector.WORKING_AGREEMENT.digest, startsWork: false, grantsAuthority: false });
@@ -361,11 +424,19 @@ test("connector-owned welcome rules refuse mismatched server metadata without sh
 
   const dir = await mkdtemp(join(tmpdir(), "fleet-welcome-mismatch-")); t.after(() => rm(dir, { recursive: true, force: true }));
   const configPath = join(dir, "connector.json");
-  const fetcher: typeof fetch = async () => new Response(JSON.stringify({ ok: true, result: {
+  const releaseBytes = await readFile("scripts/fleet/connector.mjs");
+  const unsignedRelease = { version: connector.CONNECTOR_VERSION, file: `connector-${connector.CONNECTOR_VERSION}.mjs`,
+    sha256: createHash("sha256").update(releaseBytes).digest("hex"), size: releaseBytes.length,
+    builtFrom: "0".repeat(40), minVersion: connector.CONNECTOR_VERSION };
+  const signedRelease = { ...unsignedRelease,
+    signature: sign(null, connectorReleaseSignatureMaterialV1(unsignedRelease), RELEASE_KEYS.privateKey).toString("base64url") };
+  const fetcher: typeof fetch = async input => new URL(String(input)).pathname === "/fleet/v1/connector-manifest.json"
+    ? new Response("not found", { status: 404 }) : new Response(JSON.stringify({ ok: true, result: {
     workerId: `fleet-worker:${"d".repeat(32)}`, displayName: "mismatch", workerKind: "codex",
     projectIds: [PROJECT_A], capabilities: ["writing"],
     credentialExpiresAt: "2099-01-01T00:00:00.000Z", workingAgreement: { version: "999", digest: "sha256:bad",
-      text: hostile, startsWork: false, grantsAuthority: false } } }), { status: 201, headers: { "content-type": "application/json" } });
+      text: hostile, startsWork: false, grantsAuthority: false }, releaseTrust: RELEASE_TRUST,
+    connector: signedRelease } }), { status: 201, headers: { "content-type": "application/json" } });
   await assert.rejects(connector.join({ server: "http://127.0.0.1:8123", code: `crj_${"J".repeat(43)}`,
     workerKind: "codex", configPath, fetcher }), error => String((error as Error).message).includes(connector.WORKING_AGREEMENT_TEXT)
       && !String((error as Error).message).includes(hostile));
@@ -452,26 +523,114 @@ test("one SQLSTATE reader serves every refusal site, with both refusal sets inta
 
   // Every refusal site uses the helper. A hand-rolled comparison (=== "23505",
   // .includes(...), or a direct .code read) is a second reader by another name.
+  //
+  // maxconc moved the claim-path sets into named constants in database-failure.ts
+  // and the call sites now pass the constant. That is the SAME guarantee with
+  // less duplication, so the sites are pinned by NAME here and the contents are
+  // pinned once, in database-failure.ts, below. What must never happen is the
+  // old three-element literal creeping back at the call site: without 54000 every
+  // claim by a worker at its own ceiling escapes as an unexpected error, the
+  // gateway answers a bare 400 `refused`, and the connector abandons its pass
+  // instead of moving to the next offer.
   const sites = new Map<string, readonly string[]>([
-    ["src/fleet/v1/gateway-store.ts", [`["23505"]`, `["P0001", "23505", "23503"]`, `["23P01", "23514"]`, `["P0001"]`]],
+    ["src/fleet/v1/gateway-store.ts", [`["23505"]`, `["P0001"]`,
+      "FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1", "FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1"]],
     ["src/fleet/v1/owner-service.ts", [`["P0001", "23503", "23505"]`, `["P0001", "23505"]`]],
     ["src/web/v1/task-assignment-coordinator.ts", [`["23P01", "23514"]`]],
   ]);
   for (const [file, expected] of sites) {
     const source = await readFile(file, "utf8");
     for (const line of source.split("\n").filter(row => row.includes("databaseSqlStateIsAnyV1(error")
-      && !row.trimStart().startsWith("import")))
-      assert.ok(line.trimStart().startsWith("if (databaseSqlStateIsAnyV1(error"),
-        `${file}: every site maps a refusal through the one 'is any of' helper`);
+      && !row.trimStart().startsWith("import") && !row.trimStart().startsWith("*")
+      && !row.trimStart().startsWith("//")))
+      assert.match(line.trimStart(), /^if \((!?)databaseSqlStateIsAnyV1\(error/u,
+        `${file}: every site maps a refusal through the one 'is any of' helper in an if — ${
+          line.trim()}`);
     for (const states of expected)
       assert.ok(source.includes(`databaseSqlStateIsAnyV1(error, ${states})`),
         `${file}: the refusal set ${states} must survive the merge`);
   }
+  // The two named sets, by value, in one place. A refusal set is a promise about
+  // what the caller is told, so its contents are pinned where they are declared
+  // rather than at each use.
+  const failures = await readFile("src/fleet/v1/database-failure.ts", "utf8");
+  assert.ok(failures.includes(`FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1: readonly string[] =
+  ["54000", "P0001", "23505", "23503"];`),
+    "the claim insert set must carry 0234's 54000, or an at-capacity claim leaves as an unexpected error");
+  assert.ok(failures.includes(`FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1: readonly string[] = ["23P01", "23514"];`),
+    "the lease scope set must stay exactly 0100's two codes: a claim-path code here would absorb a real fault as a conflict");
   // No site may re-read the error itself, which is the shape a second reader takes.
   for (const [file] of sites) {
     const source = await readFile(file, "utf8");
     for (const row of source.split("\n")) if (/sqlState|\(error as \{ code/.test(row))
       assert.ok(row.includes("databaseSqlStateIsAnyV1("), `${file}: a raw SQLSTATE read survived: ${row.trim()}`);
+  }
+});
+
+test("no source may lock the tenant row with FOR UPDATE: the mutex must stay FOR NO KEY UPDATE", async () => {
+  // The lock order IS the fix for the 40P01 that deadlocked the fleet, and a
+  // single new `FROM tenants ... FOR UPDATE` silently reintroduces it.
+  //
+  // `FOR NO KEY UPDATE` still conflicts with itself, so the mutex serialises
+  // exactly as before; it does NOT conflict with the `FOR KEY SHARE` every
+  // foreign-key check takes. `FOR UPDATE` DOES, which closes the cycle with any
+  // audit-first writer (`recordMcpCall` takes the audit chain head, then its
+  // `INSERT INTO audit_events` checks `tenants(id)`), and PostgreSQL then kills
+  // a worker transaction per collision.
+  //
+  // So: zero `tenants ... FOR UPDATE` anywhere in src/, and at least one real
+  // mutex site, so this cannot pass by finding nothing at all.
+  const root = resolve("src");
+  const offenders: string[] = [];
+  let mutexSites = 0;
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) { await walk(path); continue; }
+      if (!entry.name.endsWith(".ts")) continue;
+      const source = await readFile(path, "utf8");
+      for (const [index, row] of source.split("\n").entries()) {
+        // Match a tenant lock that is NOT already the NO KEY UPDATE form.
+        if (/FROM\s+tenants\b/iu.test(row) && /FOR\s+UPDATE\b/iu.test(row)
+          && !/FOR\s+NO\s+KEY\s+UPDATE/iu.test(row)) offenders.push(`${path}:${index + 1}: ${row.trim()}`);
+        if (/FROM\s+tenants\b/iu.test(row) && /FOR\s+NO\s+KEY\s+UPDATE/iu.test(row)) mutexSites += 1;
+      }
+    }
+  };
+  await walk(root);
+  assert.deepEqual(offenders, [],
+    "the tenant mutex must be FOR NO KEY UPDATE everywhere; FOR UPDATE reintroduces the audit deadlocks");
+  assert.ok(mutexSites > 0, "the guard must find the real mutex sites, or it is guarding nothing");
+});
+
+test("every fleet move to ready takes the tenant mutex explicitly", async () => {
+  // The release path used to be serialised against mutex holders only by
+  // accident: a foreign-key wait against a `FOR UPDATE` holder. Once the mutex
+  // weakens to NO KEY UPDATE that accident disappears, so every fleet `-> ready`
+  // move must take the mutex itself or two releases can race a policy-bound
+  // ready count.
+  const source = await readFile("src/fleet/v1/gateway-store.ts", "utf8");
+  const readyMoves = [...source.matchAll(/moveFleetEntityV1\(tx, job, "ready"/gu)];
+  assert.ok(readyMoves.length >= 2,
+    `the guard must find the fleet -> ready moves, or it is guarding nothing (found ${readyMoves.length})`);
+  // Scope the search to the ENCLOSING transaction, not a fixed window: a fixed
+  // window lets one mutex satisfy a later move that has none. Each move belongs
+  // to the nearest preceding `this.db.transaction(`.
+  for (const move of readyMoves) {
+    const before = source.slice(0, move.index ?? 0);
+    const transactionStart = before.lastIndexOf("this.db.transaction(");
+    assert.ok(transactionStart >= 0, "a fleet -> ready move must live inside a transaction");
+    const body = source.slice(transactionStart, move.index ?? 0);
+    const mutexAt = body.search(/#tenantMutex\(tx\)/u);
+    assert.ok(mutexAt >= 0,
+      "a fleet -> ready move must take the tenant mutex in ITS OWN transaction; the release path lost its "
+      + "(accidental) serialisation");
+    // Mutex FIRST, rows second — the order every coordinator mutex holder uses.
+    // Taking it after a job/attempt/lease row lock closes a deadlock cycle with a
+    // coordinator that holds the mutex and waits on that row.
+    const firstRowLock = body.search(/readFleetEntityV1\(tx,/u);
+    assert.ok(firstRowLock < 0 || mutexAt < firstRowLock,
+      "the tenant mutex must be taken BEFORE the first job/attempt/lease row lock in the same transaction");
   }
 });
 
@@ -483,7 +642,8 @@ test("a body-less long-poll may outlive requestTimeout and still answer", async 
     async waitWork() { return { offers: [], operationsMode: "running" as const }; },
   };
   const registry = new FleetWaitRegistryV1({ waitMs: 80, pollMs: 20, random: () => 0 });
-  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1, waitRegistry: registry });
+  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
+    releaseTrust: RELEASE_TRUST, waitRegistry: registry });
   const server = createServer({ ...FLEET_GATEWAY_SERVER_OPTIONS_V1, requestTimeout: 20, headersTimeout: 10,
     connectionsCheckingInterval: 5 },
     (request, response) => { void handler.handle(request, response); });
@@ -506,7 +666,8 @@ test("a duplicate wait is refused before wait-route DB work and an early disconn
     async waitWork() { workCalls += 1; return { offers: [], operationsMode: presenceCalls === 1 ? "running" as const : "paused" as const }; },
   };
   const registry = new FleetWaitRegistryV1({ waitMs: 5_000, pollMs: 20 });
-  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1, waitRegistry: registry });
+  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
+    releaseTrust: RELEASE_TRUST, waitRegistry: registry });
   const server = createServer((request, response) => { void handler.handle(request, response); });
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   t.after(() => { releasePresence(); return new Promise<void>(done => server.close(() => done())); });
@@ -533,7 +694,8 @@ test("wait query failures are retryable 503 responses with Retry-After", async t
   };
   const unexpected: unknown[] = [];
   const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
-    waitRegistry: new FleetWaitRegistryV1({ waitMs: 100, pollMs: 20 }), onUnexpectedError: error => unexpected.push(error) });
+    releaseTrust: RELEASE_TRUST, waitRegistry: new FleetWaitRegistryV1({ waitMs: 100, pollMs: 20 }),
+    onUnexpectedError: error => unexpected.push(error) });
   const server = createServer((request, response) => { void handler.handle(request, response); });
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   t.after(() => new Promise<void>(done => server.close(() => done())));
@@ -552,7 +714,7 @@ test("database pressure during authentication and ordinary routes is a retryable
   ] as const) await t.test(name, async t => {
     const unexpected: unknown[] = [];
     const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
-      onUnexpectedError: error => unexpected.push(error) });
+      releaseTrust: RELEASE_TRUST, onUnexpectedError: error => unexpected.push(error) });
     const server = createServer((request, response) => { void handler.handle(request, response); });
     await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
     t.after(() => new Promise<void>(done => server.close(() => done())));
@@ -562,6 +724,32 @@ test("database pressure during authentication and ordinary routes is a retryable
     assert.deepEqual([response.status, response.body.error, response.headers["retry-after"]], [503, "unavailable", "1"]);
     assert.deepEqual(unexpected, [failure]);
   });
+});
+
+test("an uncertain database outcome is NOT the retryable 503 -- it may have committed", async t => {
+  // `database_unavailable` is a promise: the server rejected the statement, so
+  // a replay is safe and the connector's transient path retries it.
+  // `database_outcome_uncertain` is the opposite -- COMMIT may already have
+  // landed, so replaying could duplicate work. It must stay a distinct code
+  // and must NOT be mapped to a retryable 503 that invites exactly that.
+  const uncertain = Object.assign(new Error("database_outcome_uncertain"),
+    { code: "database_outcome_uncertain", sqlState: undefined });
+  assert.equal(uncertain.code === "database_unavailable", false,
+    "an uncertain outcome must never satisfy the retryable-unavailable check");
+  const principal = fakePrincipal();
+  const unexpected: unknown[] = [];
+  const handler = createFleetGatewayHandlerV1({
+    store: { async authenticate() { return principal; }, async myClaims() { throw uncertain; } } as unknown as FleetGatewayStoreV1,
+    releaseTrust: RELEASE_TRUST,
+    onUnexpectedError: error => unexpected.push(error) });
+  const server = createServer((request, response) => { void handler.handle(request, response); });
+  await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => server.close(() => done())));
+  const response = await nodeJsonRequest(`http://127.0.0.1:${(server.address() as AddressInfo).port}/fleet/v1/claims`,
+    { headers: { authorization: "Bearer fake", "x-control-room-worker": principal.workerId } });
+  assert.notEqual(response.status, 503,
+    `an uncertain commit must not invite a blind replay: ${JSON.stringify(response)}`);
+  assert.deepEqual([response.status, response.body.error], [400, "refused"]);
 });
 
 test("stress: 80 parked waits cap and jitter DB polling while a burst of claims completes", { timeout: 10_000 }, async t => {
@@ -583,7 +771,8 @@ test("stress: 80 parked waits cap and jitter DB polling while a burst of claims 
   const admission = createFleetGatewayAdmissionV1({ authenticatePerIp: 1_000, authenticateGlobal: 1_000,
     authenticatedPerWorker: 1_000, authenticatedGlobal: 1_000, maxConcurrent: 200,
     maxConcurrentKnown: 200, maxConcurrentKnownPerWorker: 4, maxTrackedWorkers: 200 });
-  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1, waitRegistry: registry, admission });
+  const handler = createFleetGatewayHandlerV1({ store: store as unknown as FleetGatewayStoreV1,
+    releaseTrust: RELEASE_TRUST, waitRegistry: registry, admission });
   const server = createServer((request, response) => { void handler.handle(request, response); });
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   t.after(() => new Promise<void>(done => server.close(() => done())));
@@ -767,6 +956,7 @@ test("a lost enrollment response cannot be replayed after the code expires", asy
   const configPath = join(f.dir, "expired-replay.json");
   const loseResponse: typeof fetch = async (...args) => {
     const response = await fetch(...args);
+    if (new URL(String(args[0])).pathname !== "/fleet/v1/enroll") return response;
     await response.arrayBuffer();
     throw new Error("simulated lost enrollment response");
   };

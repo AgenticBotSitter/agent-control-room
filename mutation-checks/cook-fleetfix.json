@@ -281,8 +281,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": "    if (request.aborted) return fleetFail(\"invalid\");",
-    "replace": "    if (false) return fleetFail(\"invalid\");",
+    "find": "    if (request.aborted) return fleetFail(\"invalid\");\n    throw error;\n  }\n  return Buffer.concat(chunks, length).toString(\"utf8\");",
+    "replace": "    if (false) return fleetFail(\"invalid\");\n    throw error;\n  }\n  return Buffer.concat(chunks, length).toString(\"utf8\");",
     "test": "node --import tsx --test --test-name-pattern \"stopped halfway\" tests/fleet-connector.test.ts",
     "why": "an aborted enrollment body is a fixed invalid refusal rather than an unexpected logged error"
   }

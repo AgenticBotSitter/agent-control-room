@@ -458,7 +458,7 @@ export class ConnectionEnrollmentIntakeServiceV1 {
     const delivery = parseConnectionEnrollmentProtectedDeliveryV1(deliveryValue, input.deliveryId, input.receivedAt);
     try {
       return await this.#transaction(async (tx) => {
-        const tenantRows = await safeQuery(tx, `SELECT id AS tenant_id FROM tenants WHERE id=$1 FOR UPDATE`,
+        const tenantRows = await safeQuery(tx, `SELECT id AS tenant_id FROM tenants WHERE id=$1 FOR NO KEY UPDATE`,
           [delivery.tenantId], 1);
         requireReturnedTenant(tenantRows, delivery.tenantId);
         const stream = await this.#verifiedStream(tx, delivery.tenantId);

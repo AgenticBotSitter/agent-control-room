@@ -1,0 +1,18 @@
+{
+  "schema": "control-room.updater-bundle-policy/v1",
+  "tool": "runtime/esbuild-current/esbuild",
+  "packageManager": "runtime/pnpm-current/pnpm",
+  "arguments": [
+    "--bundle",
+    "--platform=node",
+    "--format=esm",
+    "--target=node22",
+    "--packages=bundle",
+    "--log-level=warning"
+  ],
+  "entries": [
+    { "input": "updater.mjs", "output": "updater.mjs" },
+    { "input": "cli.mjs", "output": "bin/control-room.mjs" }
+  ],
+  "candidateBuildOutputAccepted": false
+}

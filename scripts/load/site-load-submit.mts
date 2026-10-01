@@ -146,8 +146,19 @@ while (submitted < target && index < projects.length * 12 && consecutiveMisses <
   byStatus[`assign-${assigned.status}`] = (byStatus[`assign-${assigned.status}`] ?? 0) + 1;
   if (assigned.status === 409 || assigned.status === 503) { counts.refused += 1; await ensureRunning(); continue; }
   counts.assigned += 1;
-  const submission = await (await api(`${base}/submission?inputDigest=${idOf(receipt.inputDigest)}`,
-    { expect: [200] })).json();
+  let submissionResponse = await api(`${base}/submission?inputDigest=${idOf(receipt.inputDigest)}`,
+    { expect: [200, 503] });
+  for (let wait = 0; submissionResponse.status === 503 && wait < 6; wait += 1) {
+    await new Promise(done => setTimeout(done, 10_000));
+    byStatus[`submission-${submissionResponse.status}-retried`] =
+      (byStatus[`submission-${submissionResponse.status}-retried`] ?? 0) + 1;
+    await ensureRunning();
+    submissionResponse = await api(`${base}/submission?inputDigest=${idOf(receipt.inputDigest)}`,
+      { expect: [200, 503] });
+  }
+  byStatus[`submission-${submissionResponse.status}`] = (byStatus[`submission-${submissionResponse.status}`] ?? 0) + 1;
+  if (submissionResponse.status === 503) { counts.refused += 1; await ensureRunning(); continue; }
+  const submission = await submissionResponse.json();
   const packetDigest = submission?.preview?.packetDigest;
   if (!packetDigest) {
     // Already queued by an earlier attempt: count it and move on.

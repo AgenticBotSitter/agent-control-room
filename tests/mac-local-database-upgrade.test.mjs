@@ -487,9 +487,17 @@ test("queue fingerprint ignores which UTC days have queue_stats partitions but n
 
 test("the role manifest names every role the migrations, down files and schema files touch, with no dangerous attribute", async t => {
   const { databaseRoleManifestV1: manifest, databaseRoleAttributesV1, databaseRoleNamesInSqlV1,
-    unknownDatabaseRoleNamesV1 } = await import("../scripts/mac-local/database-role-manifest.mjs");
-  const logins = Object.keys(manifest.logins), known = new Set([...manifest.groups, ...logins]);
-  assert.equal(known.size, manifest.groups.length + logins.length, "a name is either a group or a login");
+    databaseKnownRoleNamesV1, unknownDatabaseRoleNamesV1 } =
+    await import("../scripts/mac-local/database-role-manifest.mjs");
+  const logins = Object.keys(manifest.logins), known = new Set(databaseKnownRoleNamesV1);
+  // A name is owned by exactly one list, and the two Mac-owned lists do not
+  // overlap. A vpsOnlyGroup is a third category -- a role a migration may name
+  // that a Mac install neither creates nor grants to -- so it is counted
+  // separately rather than folded into "a group or a login".
+  assert.equal(known.size, manifest.groups.length + manifest.vpsOnlyGroups.length + logins.length,
+    "a name belongs to exactly one list: a Mac group, a VPS-only group, or a login");
+  assert.deepEqual([...known].filter(role => role.startsWith("control_room_")).sort(), [...known].sort(),
+    "every manifest name is a control_room role");
   for (const [login, { group }] of Object.entries(manifest.logins)) assert.ok(manifest.groups.includes(group), login);
   const named = new Set();
   for (const file of ["production_provision.sql", "production_roles.sql", "production_table_grants.sql",
@@ -538,11 +546,21 @@ test("the role manifest names every role the migrations, down files and schema f
   // reverse exactly that by naming the same roles. A down file that dropped them
   // would leave a database whose shared roles still held the blanket grants the
   // up migration removed, which is exactly what a down migration must never do.
+  // 0238 added control_room_news_coordinator, and for the same reason 0206-0208
+  // added the five shared roles: 0211 hangs a combine-readiness guard off
+  // control_jobs that runs as the INVOKER, so every role holding UPDATE on
+  // control_jobs.state must be able to read the two tables that guard reads, and
+  // the news coordinator holds exactly those four columns. Its up and down files
+  // both name it, so the role has to be in the manifest and here -- a migration
+  // that names a role the upgrade never creates leaves the owner with a live
+  // role no tool reasons about. It is a VPS-only role and not a Mac login, which
+  // is why nothing failed until 0211 and 0238 met.
   assert.deepEqual([...touched.keys()].sort(),
     ["control_room_agent_reviewer", "control_room_application", "control_room_backup",
       "control_room_fleet_gateway", "control_room_github_broker", "control_room_local_result_publisher",
-      "control_room_native_results", "control_room_private_web", "control_room_reader",
-      "control_room_schedule_admissions", "control_room_task_coordinator", "control_room_work_intake"],
+      "control_room_native_results", "control_room_news_coordinator", "control_room_private_web",
+      "control_room_reader", "control_room_schedule_admissions", "control_room_task_coordinator",
+      "control_room_work_intake"],
   "the migrations name these manifest roles and no others");
 
   // The scanner reads what SQL actually means, so prove it on a temp copy of
@@ -1013,6 +1031,9 @@ async function startWebHostOnRoster(t, protectedRoot) {
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() {
       return { async start() { return { isReady: () => true, async close() {} }; } };
     } };
+    if (name === "macLocalFleet.js") return { async loadMacLocalFleetReleaseTrustV1() { return {}; },
+      async loadMacLocalFleetConnectorReleaseV1() { return undefined; },
+      prepareMacLocalFleetOwnerV1() { return { fleet: { ownerAuthority: {} }, async close() {} }; } };
     if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {
       return { async start() {}, async close() {} };
     } };

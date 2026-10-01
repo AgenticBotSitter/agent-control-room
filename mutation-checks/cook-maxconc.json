@@ -1,0 +1,79 @@
+[
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "  PERFORM pg_catalog.pg_advisory_xact_lock(\n    pg_catalog.hashtextextended(json_build_array('fleet_worker_capacity', NEW.tenant_id, NEW.worker_id)::text, 0));",
+    "replace": "  -- MUTATED: the serialising lock is gone",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "a worker's live-claim ceiling is serialised in the database, so three unlocked racing claimers cannot all read the same count and all win"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "    AND (l.id IS NULL OR (l.state='active' AND l.expires_at>pg_catalog.statement_timestamp()));",
+    "replace": "    AND (l.id IS NULL OR l.state='active');",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "a lease past its expiry does not occupy a slot, so a crashed machine does not hold its own ceiling open"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "  LEFT JOIN public.control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id",
+    "replace": "  JOIN public.control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-isolation-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "a claim whose lease is not written yet still occupies a slot, so one transaction claiming several tasks cannot insert its way past the ceiling; the claim row is written before its lease and 0140's lease-consistency check is DEFERRED to COMMIT, so an inner JOIN counts a same-transaction claim as nothing"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "  IF live_claims>=worker_max_concurrent THEN",
+    "replace": "  IF live_claims>worker_max_concurrent THEN",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "the ceiling is exactly maxConcurrent, not one above it"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "  IF pg_catalog.current_setting('transaction_isolation')='repeatable read' THEN\n    RAISE EXCEPTION 'fleet claim capacity cannot be enforced in a repeatable read transaction'\n      USING ERRCODE='0A000';\n  END IF;",
+    "replace": "  -- MUTATED: the repeatable read refusal is gone",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-isolation-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "an advisory lock cannot serialise a REPEATABLE READ caller's COUNT, because its snapshot predates the wait for the lock, so the ceiling only holds if the mode itself is refused"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "    pg_catalog.hashtextextended(json_build_array('fleet_worker_capacity', NEW.tenant_id, NEW.worker_id)::text, 0));",
+    "replace": "    pg_catalog.hashtextextended(json_build_array(NEW.tenant_id, NEW.worker_id)::text, 0));",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "the advisory key is namespaced by a literal tag, so a fleet worker id cannot collide with 0100's project-scope lock keyspace and serialise against it"
+  },
+  {
+    "file": "db/migrations/0234_fleet_worker_claim_capacity.sql",
+    "find": "CREATE TRIGGER fleet_claims_zz_capacity_guard",
+    "replace": "CREATE TRIGGER fleet_claims_capacity_guard",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/fleet-worker-capacity-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "BEFORE triggers fire in NAME order, so the zz_ prefix is what puts the capacity guard after 0140's guard: an inadmissible claim is refused before it takes a lock"
+  },
+  {
+    "file": "src/fleet/v1/database-failure.ts",
+    "find": "export const FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1: readonly string[] =\n  [\"54000\", \"P0001\", \"23505\", \"23503\"];",
+    "replace": "export const FLEET_CLAIM_INSERT_REFUSAL_SQL_STATES_V1: readonly string[] =\n  [\"P0001\", \"23505\", \"23503\"];",
+    "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
+    "why": "0234's capacity refusal reaches the worker as a conflict, so the connector moves to the next offer instead of abandoning its pass"
+  },
+  {
+    "file": "src/fleet/v1/database-failure.ts",
+    "find": "export const FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1: readonly string[] = [\"23P01\", \"23514\"];",
+    "replace": "export const FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1: readonly string[] =\n  [\"23P01\", \"23514\", \"54000\", \"P0001\"];",
+    "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
+    "why": "the two inserts have SEPARATE refusal sets: a 23514 on the CLAIM row is a caller bug that must be reported, and a claim-path code on the SCOPE insert is a fault that must not be absorbed as a conflict"
+  },
+  {
+    "file": "src/persistence/database.ts",
+    "find": "    if (typeof value === \"string\" && /^[0-9A-Z]{5}$/u.test(value) && !value.startsWith(\"E\")) return value;",
+    "replace": "    if (typeof value === \"string\" && /^[0-9A-Z]{5}$/u.test(value)) return value;",
+    "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
+    "why": "a POSIX errno like EPIPE is five uppercase letters on the same field, and no SQLSTATE begins with E, so the shape alone is not enough to call the value a SQLSTATE"
+  },
+  {
+    "file": "src/persistence/database.ts",
+    "find": "  for (const key of [\"sqlState\", \"code\"] as const) {",
+    "replace": "  for (const key of [\"code\"] as const) {",
+    "test": "node --import tsx --test tests/fleet-claim-refusal-mapping.test.ts",
+    "why": "the private pool carries the SQLSTATE on sqlState and sets code to the class of failure, so reading only code matches no guarded refusal at all"
+  }
+]

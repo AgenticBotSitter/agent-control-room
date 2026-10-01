@@ -7,6 +7,7 @@
 // tests/fleet-harness-handoff-postgres.test.ts repeats the end-to-end path as
 // the production logins.
 import assert from "node:assert/strict";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -17,13 +18,21 @@ import { PGlite } from "@electric-sql/pglite";
 import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, InMemoryFleetToolTaskBindingsV1,
   type FleetOperationsModeV1 } from "../src/fleet/v1";
+import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1 } from "../src/fleet/v1/connector-release";
 import { createFleetHarnessAdapter } from "../src/fleet/v1/harness-adapters";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { connectorReleaseSignatureMaterialV1, releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 import * as fake from "./support/fleet-fake-harness-adapter.mjs";
 
 const FAKE_MODULE = resolve("tests/support/fleet-fake-harness-adapter.mjs");
 const REAL_MODULE = resolve("src/fleet/v1/harness-adapters.ts");
+const RELEASE_KEYS = generateKeyPairSync("ed25519");
+const RELEASE_PUBLIC_KEY = RELEASE_KEYS.publicKey
+  .export({ format: "der", type: "spki" }).toString("base64url");
+const RELEASE_TRUST = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(RELEASE_PUBLIC_KEY), publicKey: RELEASE_PUBLIC_KEY,
+  versionFloor: connector.CONNECTOR_VERSION, revokedKeyIds: Object.freeze([]) });
 
 type Mode = FleetOperationsModeV1 | "throw";
 
@@ -41,7 +50,17 @@ async function fixture() {
   }, toolTasks });
   const owner = new FleetOwnerServiceV1(db, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
     afterDecision: () => gateway.reconcile() });
-  const handler = createFleetGatewayHandlerV1({ store: gateway });
+  const fixtureBundle = await readFile("scripts/fleet/connector.mjs");
+  const manifest = { schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1, version: connector.CONNECTOR_VERSION,
+    file: `connector-${connector.CONNECTOR_VERSION}.mjs`,
+    sha256: createHash("sha256").update(fixtureBundle).digest("hex"), size: fixtureBundle.length,
+    builtFrom: "0".repeat(40) } as const;
+  const unsignedAdvertisement = { version: manifest.version, file: manifest.file, sha256: manifest.sha256,
+    size: manifest.size, builtFrom: manifest.builtFrom, minVersion: connector.CONNECTOR_VERSION };
+  const advertisement = { ...unsignedAdvertisement,
+    signature: sign(null, connectorReleaseSignatureMaterialV1(unsignedAdvertisement), RELEASE_KEYS.privateKey).toString("base64url") };
+  const handler = createFleetGatewayHandlerV1({ store: gateway, releaseTrust: RELEASE_TRUST,
+    connectorRelease: { bundle: fixtureBundle, manifest, manifestBody: `${JSON.stringify(manifest, null, 2)}\n`, advertisement } });
   const server: Server = createServer((request, response) => { void handler.handle(request, response); });
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -221,6 +240,29 @@ test("two machines racing for one offered task: exactly one runs it", async t =>
   assert.equal((await results(f)).length, 1);
   assert.equal((await f.query<{ count: number }>("SELECT count(*)::int AS count FROM fleet_claims WHERE job_id=$1",
     [task.jobId]))[0]!.count, 1);
+});
+
+test("stress: three bots make ten passes, drain ten same-project tasks, and never abandon on claim conflicts", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const bots = await Promise.all(["BurstOne", "BurstTwo", "BurstThree"].map(name => joinWorker(f, name)));
+  const tasks = [];
+  for (let index = 0; index < 10; index += 1) tasks.push(await offer(f, `burst-${index + 1}`));
+  const path = await settings(f, "burst", fakeCodex("success", { delayMs: 75 }));
+  const passes = [];
+  for (let round = 0; round < 10; round += 1)
+    passes.push(...await Promise.all(bots.map(bot => runOnce(f, bot, path).then(result => result.pass))));
+  assert.equal(passes.filter(pass => pass.outcome === "submitted").length, 10, JSON.stringify(passes));
+  assert.equal(passes.filter(pass => pass.state === "unreachable" || pass.outcome === "abandoned").length, 0,
+    `no bot abandons its pass: ${JSON.stringify(passes)}`);
+  const taskIds = tasks.map(task => task.jobId);
+  assert.deepEqual(await f.query(`SELECT job_id,count(*)::int AS claims FROM fleet_claims
+    WHERE job_id=ANY($1::text[]) GROUP BY job_id HAVING count(*) > 1`, [taskIds]), [], "zero double claims");
+  const awaiting = (await f.owner.listResults(ownerIdentity(), { awaitingOnly: true }))
+    .filter(row => taskIds.includes(row.jobId));
+  assert.equal(awaiting.length, 10, "every job reaches owner review");
+  for (const row of awaiting) await f.owner.review(ownerIdentity(), { resultId: row.resultId, decision: "accepted" });
+  assert.deepEqual(await f.query(`SELECT state,count(*)::int AS count FROM control_jobs
+    WHERE id=ANY($1::text[]) GROUP BY state`, [taskIds]), [{ state: "succeeded", count: 10 }]);
 });
 
 test("not enabled: a machine runs only the harness its owner enabled locally", async t => {

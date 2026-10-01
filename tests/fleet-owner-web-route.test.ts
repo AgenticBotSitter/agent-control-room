@@ -2,12 +2,17 @@
 // signed-in owner only, same-origin writes only, and absent unless the host
 // runs the fleet gateway.
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
+import { EventEmitter } from "node:events";
 import test, { after } from "node:test";
 import { sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
 import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1, type FleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
+import { prepareMacLocalFleetGatewayV1, prepareMacLocalFleetOwnerV1 }
+  from "../src/fleet/v1/mac-local-composition";
+import { RELEASE_TRUST_SCHEMA_V1, releaseKeyIdV1 } from "../scripts/release-signing.mjs";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 
@@ -15,6 +20,9 @@ after(closePrivateOwnerBootstrapConformanceDatabase);
 
 const connectorRelease: FleetConnectorReleaseManifestV1 = Object.freeze({ schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1,
   version: "0.3.0", file: "connector-0.3.0.mjs", sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) });
+const releasePublicKey = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const releaseTrust = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(releasePublicKey), publicKey: releasePublicKey, versionFloor: "0.0.0", revokedKeyIds: [] });
 
 test("owner fleet routes: add a worker returns a one-time install command; foreign origins and signed-out calls are refused", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "fleet-owner-web" }); t.after(fixture.close);
@@ -61,9 +69,15 @@ test("owner fleet routes: add a worker returns a one-time install command; forei
   const listed = await board.json() as { pendingCodes: { displayName: string }[]; workers: unknown[] };
   assert.deepEqual(listed.pendingCodes.map(code => code.displayName), ["Build server"]);
   assert.ok(!JSON.stringify(listed).includes(value.code), "the code is shown once and never listed again");
+  const localWorkers = await app.handle(request("/api/v1/local-workers", { headers: { cookie } }), unused);
+  assert.equal(localWorkers.status, 200, "connector-only Mac hosts retain their owner-visible worker route");
+  assert.deepEqual(await localWorkers.json(), { taskWorkersStarted: true,
+    projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "automations", "settings"],
+    workers: [] });
 
   const connectBody = JSON.stringify({ botKind: "cursor", name: "desktop-cursor", operatingSystem: "windows",
-    projectIds: [projectId], capabilities: ["writing"], unattended: false });
+    projectIds: [projectId], capabilities: ["writing"], unattended: false,
+    workerModel: "", workerProfile: "", workerProvider: "" });
   const connected = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
     "content-type": "application/json" }, body: connectBody }), unused);
   assert.equal(connected.status, 201, await connected.clone().text());
@@ -85,7 +99,8 @@ test("owner fleet routes: add a worker returns a one-time install command; forei
   assert.match(unattendedInstall.installLine, /--unattended --i-am-the-installer$/u);
   assert.match(unattendedInstall.ownerNextStep, /per-user background worker[\s\S]*approved work[\s\S]*turn it off/iu);
   const unicodeName = JSON.stringify({ botKind: "mcp-agent", name: "<owner bot> Ω", operatingSystem: "linux",
-    projectIds: [projectId], capabilities: ["writing"], unattended: false });
+    projectIds: [projectId], capabilities: ["writing"], unattended: false,
+    workerModel: "", workerProfile: "", workerProvider: "" });
   const unicode = await app.handle(request("/api/v1/fleet/connect-codes", { method: "POST", headers: { cookie, origin,
     "content-type": "application/json" }, body: unicodeName }), unused);
   assert.equal(unicode.status, 201, "HTML and Unicode names are stored as text; the UI escapes them when rendering");
@@ -105,4 +120,41 @@ test("owner fleet routes: add a worker returns a one-time install command; forei
   const without = make();
   assert.equal((await without.handle(request("/api/v1/fleet", { headers: { cookie } }), unused)).status, 401,
     "a process without the fleet option has no fleet routes (and its own sessions)");
+});
+
+test("the Mac fleet composition refuses a remote owner origin before opening a database", () => {
+  let opened = 0;
+  assert.throws(() => prepareMacLocalFleetOwnerV1({
+    configuration: { localOwnerSession: { tenantId: "tenant:test" } } as never,
+    databaseRoles: { fleetGateway: {}, fleetOwner: {} } as never,
+    gatewayOrigin: "http://0.0.0.0:3212",
+    openDatabase() { opened += 1; return { client: {} as never, async close() {} }; },
+  }), /mac_local_fleet_owner_invalid/);
+  assert.equal(opened, 0);
+});
+
+test("the Mac fleet composition binds its independently owned listener to loopback only", async () => {
+  const opened: unknown[] = [], closed: unknown[] = [], listened: unknown[] = [];
+  class FakeServer extends EventEmitter {
+    listen(port: number, host: string, callback: () => void) { listened.push([port, host]); callback(); return this; }
+    close(callback: (error?: Error) => void) { callback(); return this; }
+  }
+  const service = await prepareMacLocalFleetGatewayV1({
+    configuration: { localOwnerSession: { tenantId: "tenant:test" } } as never,
+    databaseRoles: { fleetGateway: { role: "gateway" }, fleetOwner: { role: "owner" } } as never,
+    releaseTrust,
+    openDatabase(role) {
+      opened.push(role);
+      return { client: { async query() { return { rows: [], rowCount: 0 }; } } as never,
+        async close() { closed.push(role); } };
+    },
+    createServer: () => new FakeServer() as never,
+    port: 43212,
+  });
+  assert.deepEqual(opened, [{ role: "gateway" }]);
+  assert.equal(service.origin, "http://127.0.0.1:43212");
+  await service.start();
+  assert.deepEqual(listened, [[43212, "127.0.0.1"]]);
+  await service.close();
+  assert.deepEqual(closed, [{ role: "gateway" }]);
 });

@@ -25,22 +25,29 @@ function translate(error: unknown): never {
 const shellSafe = /^https?:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?$/u;
 const connectOperatingSystems = ["macos", "windows", "linux"] as const;
 const unattendedWorkerKinds = ["claude-code", "codex", "hermes"] as const;
+const workerSelectionPattern = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/u;
 type ConnectOperatingSystem = typeof connectOperatingSystems[number];
 
 /** This endpoint deliberately asks the service to validate the display name.
  * That keeps its Unicode/HTML-safe display policy identical to every other
  * owner enrollment route, while rejecting newlines and control characters. */
 function captureConnectBotRequestV1(body: Record<string, unknown>) {
-  if (Object.keys(body).sort().join(",") !== "botKind,capabilities,name,operatingSystem,projectIds,unattended"
+  if (Object.keys(body).sort().join(",") !== "botKind,capabilities,name,operatingSystem,projectIds,unattended,workerModel,workerProfile,workerProvider"
     || typeof body.name !== "string" || typeof body.botKind !== "string"
     || typeof body.unattended !== "boolean"
+    || typeof body.workerModel !== "string" || typeof body.workerProfile !== "string" || typeof body.workerProvider !== "string"
     || !FLEET_WORKER_KINDS_V1.includes(body.botKind as never)
     || body.unattended && !(unattendedWorkerKinds as readonly string[]).includes(body.botKind)
+    || body.botKind === "hermes" && body.unattended && ![body.workerProfile, body.workerModel, body.workerProvider]
+      .every(value => workerSelectionPattern.test(value as string))
+    || (body.botKind !== "hermes" || !body.unattended) && [body.workerProfile, body.workerModel, body.workerProvider]
+      .some(value => value !== "")
     || !(connectOperatingSystems as readonly string[]).includes(body.operatingSystem as string))
     throw new WebAccessError("invalid_request");
   return Object.freeze({ displayName: body.name, workerKind: body.botKind,
     operatingSystem: body.operatingSystem as ConnectOperatingSystem,
-    projectIds: body.projectIds, capabilities: body.capabilities, unattended: body.unattended });
+    projectIds: body.projectIds, capabilities: body.capabilities, unattended: body.unattended,
+    workerModel: body.workerModel, workerProfile: body.workerProfile, workerProvider: body.workerProvider });
 }
 const installerCheck = `const f=require("fs"),c=require("crypto"),a=process.argv.slice(1);try{const b=f.readFileSync(a[0]),m=JSON.parse(f.readFileSync(a[1],"utf8")),k=Object.keys(m).sort().join(",");if(k!=="builtFrom,file,schema,sha256,size,version"||m.schema!=="control-room.fleet-connector-release/v1"||m.version!==a[2]||m.file!=="connector-"+a[2]+".mjs"||m.sha256!==a[3]||m.size!==Number(a[4])||m.builtFrom!==a[5]||b.length!==m.size||c.createHash("sha256").update(b).digest("hex")!==m.sha256)throw 0}catch{console.error("This download does not match what Control Room showed you. Nothing was installed.");process.exit(1)}`;
 export const FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1 = Buffer.from(installerCheck).toString("base64");
@@ -93,10 +100,14 @@ export function fleetConnectorOwnerNextStepV1(workerKind: string, operatingSyste
  * creates a private workspace, joins, and registers one MCP profile. */
 export function fleetJoinCommandsV1(gatewayOrigin: string, code: string, workerKind: string,
   releaseValue: FleetConnectorReleaseManifestV1, identity: Readonly<{ displayName: string; workerId: string }>,
-  unattended = false) {
+  unattended = false, workerSelection: Readonly<{ model?: string; profile?: string; provider?: string }> = {}) {
   if (!shellSafe.test(gatewayOrigin) || !/^crj_[A-Za-z0-9_-]{43}$/u.test(code)
     || !(FLEET_WORKER_KINDS_V1 as readonly string[]).includes(workerKind)
-    || unattended && !(unattendedWorkerKinds as readonly string[]).includes(workerKind)) throw new WebAccessError("invalid_request");
+    || unattended && !(unattendedWorkerKinds as readonly string[]).includes(workerKind)
+    || workerKind === "hermes" && unattended && ![workerSelection.profile, workerSelection.model, workerSelection.provider]
+      .every(value => typeof value === "string" && workerSelectionPattern.test(value))
+    || (workerKind !== "hermes" || !unattended) && Object.values(workerSelection).some(value => value !== undefined))
+    throw new WebAccessError("invalid_request");
   let release: FleetConnectorReleaseManifestV1;
   try { release = captureFleetConnectorReleaseManifestV1(releaseValue); } catch { throw new WebAccessError("invalid_request"); }
   const profileName = fleetConnectorProfileNameV1(identity.displayName, identity.workerId, workerKind);
@@ -104,7 +115,9 @@ export function fleetJoinCommandsV1(gatewayOrigin: string, code: string, workerK
   const manifestUrl = `${gatewayOrigin}/fleet/v1/connector-manifest.json`;
   const check = `node -e "eval(Buffer.from('${FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1}','base64').toString())"`;
   const expected = `${release.version} ${release.sha256} ${release.size} ${release.builtFrom}`;
-  const unattendedArgument = unattended ? " --unattended" : "";
+  const workerArguments = unattended && workerKind === "hermes"
+    ? ` --worker-profile ${workerSelection.profile} --worker-model ${workerSelection.model} --worker-provider ${workerSelection.provider}` : "";
+  const unattendedArgument = unattended ? `${workerArguments} --unattended` : "";
   return Object.freeze({
     profileName,
     unix: `d="$HOME/.local/share/control-room"; w="$HOME/ControlRoomWork/${profileName}"; mkdir -p "$d" && curl -fsSL ${url} -o "$d/${release.file}" && curl -fsSL ${manifestUrl} -o "$d/connector-manifest.json" && ${check} "$d/${release.file}" "$d/connector-manifest.json" ${expected} && node "$d/${release.file}" install --server ${gatewayOrigin} --code ${code} --bot ${workerKind} --name ${profileName} --workspace "$w"${unattendedArgument} --i-am-the-installer`,
@@ -163,9 +176,12 @@ export function createFleetOwnerHttpHandlerV1(options: FleetOwnerHttpOptionsV1) 
       if (path === "/api/v1/fleet/connect-codes") {
         if (!options.gatewayOrigin || !connectorRelease) throw new WebAccessError("not_found");
         const input = captureConnectBotRequestV1(body);
-        const issued = await options.service.createEnrollmentCode(identity, input).catch(translate);
+        const issued = await options.service.createEnrollmentCode(identity, { displayName: input.displayName,
+          workerKind: input.workerKind, projectIds: input.projectIds, capabilities: input.capabilities }).catch(translate);
         const commands = fleetJoinCommandsV1(options.gatewayOrigin, issued.code, issued.workerKind, connectorRelease,
-          { displayName: input.displayName, workerId: issued.workerId }, input.unattended);
+          { displayName: input.displayName, workerId: issued.workerId }, input.unattended,
+          input.unattended && input.workerKind === "hermes" ? { model: input.workerModel,
+            profile: input.workerProfile, provider: input.workerProvider } : {});
         return Response.json({ codeId: issued.codeId, workerId: issued.workerId, expiresAt: issued.expiresAt,
           operatingSystem: input.operatingSystem, botKind: issued.workerKind, profileName: commands.profileName,
           unattended: input.unattended,

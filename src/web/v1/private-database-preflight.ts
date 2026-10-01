@@ -15,17 +15,29 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0230, by filename order including
-// assigned gaps (0110-0111, 0155-0157, 0160-0162, 0186 and 0115) plus the
-// generic external-content migrations 0025/0026, this stream's chief-of-staff
-// migrations 0200-0205, cook/v1's result-file catalog 0206-0208, MIG-I's owner
-// push attempt heads 0224-0226, the push-endpoint allow list 0227 and the
-// acceptance-sweep 0230. Recomputed after the round-4 merge of cook/v1, from a
-// real PostgreSQL 17 cluster installed the production way and cross-checked
-// against a PGlite build of the same migrations; both agree, so the number is
-// not an artefact of either applier. Catalog query below; not a mutable
-// database marker.
-export const privateWebSchemaDigest = "3cdf9d3eec0ebb93ab16c80ac02fbfe02eb790cfbeec186ca41f6bfe384dc116";
+
+// Generated from public migrations through 0237 (filename order, including assigned gaps, 0110-0111, 0155-0157 and 0160-0162),
+// including generic external-content migrations 0025/0026, by the controlled
+// PGlite digest script. Recomputed for the fix round after 0206's quota guard
+// gained its per-tenant advisory lock, 0207's producer guard was corrected, and
+// 0207's acceptance guard gained the owner check on discarding a set; then again
+// after 0230 gave the acceptance guard a NAMED rejection arm and the plan's
+// 90-day sweep, which closed the review's S3 (an unaccepted set was previously
+// undisposable by anyone, the superuser included). The pre-0230 digest was
+// re-derived with 0230 removed and matched the previous value exactly, so this
+// change is 0230's and only 0230's. Recomputed once more after 0209-0211 (the
+// upload sessions, the publication receipt and the combine-input bindings) were
+// merged onto the ledger cook/v1 had reached at 0237; catalog query below; not a
+// mutable database marker.
+// Recomputed once more after 0210's stored-set guard was corrected to key on
+// `producer_kind` rather than `source_kind`, so the digest records THAT and not
+// 0209-0211's arrival alone.
+// Merged with cook/orchui (fix round 5): adds this stream's chief-of-staff
+// migrations 0200-0205 -- three views the web login reads, 0205's owner-retry
+// function and its amended counter guard -- to cook/v1's 0206-0238. Neither
+// side's value is right for the merge; recomputed from a real PostgreSQL 17
+// cluster installed the production way, as the private web login.
+export const privateWebSchemaDigest = "f86e435b152e975bfafabd51b887e36c9544bab2c01892fc0a38f483dd48377c";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -79,7 +91,14 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // MIG-A 0200/0202/0201: the current-split-suggestion read, the open Needs-you
   // ledger, and the stored planner selection. All three are VIEWS granted to the
   // web login, so the column audit reads their columns like any other relation.
-  "work_batch_current_split_suggestions", "control_planner_open_needs_you", "control_project_planner_selections"] as const;
+  "work_batch_current_split_suggestions", "control_planner_open_needs_you", "control_project_planner_selections",
+  // 0209-0211: the owner's approval artefacts for the upload path. Read plus
+  // INSERT on the three the owner actually declares and binds; the upload
+  // sessions, their chunks and the publication receipt are read only, so the
+  // owner's Stop decision about an upload is the 0209 guard's to check and not
+  // a column this login can simply set.
+  "control_task_declared_outputs", "control_task_declared_inputs", "control_job_artifact_inputs",
+  "control_result_upload_sessions", "control_result_upload_chunks", "control_result_publications"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -121,6 +140,13 @@ privateWebInsertTables.add("control_result_file_download_grants");
 // neither insert a suggestion (an agent's act), clear a counter, nor raise an item.
 for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
   privateWebInsertTables.add(table);
+// 0209-0211: the owner approves what a part may produce and what it needs, and
+// binds an accepted file to the consumer that declared it. Each insert is
+// guarded by a live-owner check in the database (0209/0211), so this is
+// permission to ask, not permission to declare.
+privateWebInsertTables.add("control_task_declared_outputs");
+privateWebInsertTables.add("control_task_declared_inputs");
+privateWebInsertTables.add("control_job_artifact_inputs");
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -225,7 +251,12 @@ const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
   "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",
   "control_job_dependencies", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents",
-  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
+  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding",
+  // 0211's combine-readiness guard is a BEFORE UPDATE trigger on control_jobs
+  // that runs as the INVOKER, and this role holds UPDATE on control_jobs.state,
+  // so without these two reads the guard is unevaluable and every news job is
+  // refused 42501 as it starts. Granted by db/migrations/0238.
+  "control_task_declared_inputs", "control_job_artifact_inputs"];
 const newsCoordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts",
   "control_leases", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents", "control_approval_consumptions",
   "control_policy_decisions", "control_news_feed_plans", "audit_events", "control_audit_chain_heads"]);
@@ -249,7 +280,13 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_project_coordination_operation_jobs", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_task_model_selections",
   "control_task_declared_scopes", "control_assignment_lease_scopes", "work_batches", "work_batch_items",
-  "work_batch_effective_queue_admissions", "control_project_event_stream_heads", "control_project_events"];
+  "work_batch_effective_queue_admissions", "control_project_event_stream_heads", "control_project_events",
+  // 0211's combine-readiness guard is a BEFORE UPDATE trigger on control_jobs
+  // that runs as the INVOKER. The coordinator holds UPDATE on control_jobs.state
+  // -- it is the supervisor's own lease-expiry move -- so without these two
+  // reads reconcileStalled fails 42501 and every stalled task is stranded.
+  // Granted by db/migrations/0238.
+  "control_task_declared_inputs", "control_job_artifact_inputs"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
