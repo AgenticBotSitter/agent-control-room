@@ -76,7 +76,7 @@
     "release:publish": "node scripts/release-tool.mjs publish",
     "build:demo": "vite build --config vite.contributor.config.ts",
     "demo": "pnpm run build:demo && node --import tsx scripts/contributor-demo.mjs",
-    "test:demo": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/audit-required-hashes.test.mjs tests/contributor-demo-launcher.test.ts tests/contributor-demo-runtime.test.ts tests/local-preview-panels.test.tsx tests/web-private-serving.test.ts",
+    "test:demo": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/audit-required-hashes.test.mjs tests/contributor-demo-launcher.test.ts tests/contributor-demo-runtime.test.ts tests/local-preview-panels.test.tsx tests/web-private-serving.test.ts tests/vps-front-door-survey.test.mjs",
     "test:build:demo": "pnpm run build:demo && node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/contributor-demo-build.test.mjs",
     "test:browser:private": "pnpm build && node --import tsx scripts/private-browser-acceptance.mjs && node --import tsx scripts/private-uncertain-save-browser-acceptance.mjs && node --import tsx scripts/private-result-review-browser-acceptance.mjs && node --import tsx scripts/private-revision-browser-acceptance.mjs && node --import tsx scripts/private-accessibility-browser-acceptance.mjs && node --import tsx scripts/private-two-configuration-browser-acceptance.mjs",
     "test:product-browser": "node scripts/run-tests-with-quarantine.mjs --test tests/browser/workspace/product-browser-journeys.test.mjs",
