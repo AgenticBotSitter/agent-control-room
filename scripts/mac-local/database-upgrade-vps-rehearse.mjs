@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /** The isolated half of `cr-db-upgrade --rehearse`. It selects the newest
  * intact bound backup, restores it into a fresh socket-only PostgreSQL cluster,
  * and runs the same plan/apply code as a real upgrade. Nothing accepts or even
@@ -7,7 +8,6 @@ import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readdir } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { postgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
 import { runMacDatabaseUpgradeVpsStepV1 } from "./database-upgrade-vps-step.mjs";
 import { readBoundMacLocalDatabaseBackupV1, verifyMacLocalDatabaseBackupV1 } from "../ops/verify-database-backup.mjs";
@@ -96,7 +96,7 @@ export async function runMacDatabaseUpgradeVpsRehearseV1({ commit, backupRoot, p
   return Object.freeze({ backup: basename(backup), ...result });
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   let stage = "rehearse";
   try {
     const [commit, backupRoot, pgBin, port, factor] = process.argv.slice(2);

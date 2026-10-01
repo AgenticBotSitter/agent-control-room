@@ -1,5 +1,5 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { readFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { normalizeStaticDiscovery } from '../src/node-fleet/v1/static-discovery.ts';
@@ -124,7 +124,7 @@ async function main(args) {
   process.stdout.write(`${JSON.stringify(checkPrivateWorkerPreparationV1(value))}\n`);
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try { await main(process.argv.slice(2)); }
   catch { console.error('Control Room worker preparation refused supplied facts.'); process.exitCode = 1; }
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { verifyInstallerSignedReleaseFromTrustFileV1 } from "../src/installer/v1/signed-release-verifier.mjs";
 
 function parse(args) {
@@ -34,5 +34,5 @@ export async function runVerifySignedReleaseCliV1(args, options) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   process.exitCode = await runVerifySignedReleaseCliV1(process.argv.slice(2));

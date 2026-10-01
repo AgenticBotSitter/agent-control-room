@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Read-only daily activity report from explicit, sanitized session records.
 // Missing time remains unknown: availability, claims and gaps never imply activity.
 import { readFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
 
 export const DAILY_ACTIVITY_SCHEMA_V1 = "acr-daily-activity:v1";
 export const ACTIVITY_CATEGORIES = Object.freeze([
@@ -256,5 +256,5 @@ async function main() {
   console.log(options.json ? JSON.stringify(report, null, 2) : renderDailyActivity(report));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(error => { console.error(`public-daily-activity: ${error.message}`); process.exitCode = 1; });

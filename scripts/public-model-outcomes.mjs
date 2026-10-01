@@ -1,5 +1,5 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Read-only outcome metrics grouped by the model a contributor reports in its PR body.
-import { pathToFileURL } from "node:url";
 import { parseHandoff } from "./review-handoff-controller.mjs";
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -319,5 +319,5 @@ async function main() {
   const report = await readModelOutcomes({ repository, token: process.env.GITHUB_TOKEN });
   console.log(json ? JSON.stringify(report, null, 2) : renderModelOutcomes(report));
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(error => { console.error(`public-model-outcomes: ${error.message}`); process.exitCode = 1; });

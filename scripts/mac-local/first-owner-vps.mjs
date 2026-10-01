@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /** One-time VPS-local first-owner setup. The CLI accepts only a reviewed,
  * shareable manifest, connects as postgres over a Unix socket, and never
  * retries an uncertain transaction. The exported function is injected with
@@ -7,7 +8,6 @@ import { generateKeyPairSync } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { sha256Digest } from "../../src/security/canonical-digest";
 import { publicKeyFingerprint } from "../../src/node-protocol/v1";
@@ -228,7 +228,7 @@ async function run() {
   }finally{await client.end().catch(()=>{});}
 }
 
-if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+if(isMainModuleV1(process.argv[1], import.meta.url)){
   try{await run();}
   catch{process.stderr.write("First-owner setup failed or its outcome is uncertain. Do not automatically retry. Review the database and manifest privately.\n");process.exitCode=1;}
 }

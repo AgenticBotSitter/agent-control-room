@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -172,7 +173,7 @@ function argumentsFrom(argv) {
   return { sourceDirectory: values["--source-directory"], runtimeDirectory: values["--runtime-directory"] };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   void vendorTrustedRuntime(argumentsFrom(process.argv.slice(2))).then(result => {
     process.stdout.write(`${JSON.stringify({ schema: "control-room.runtime-vendor-result/v1", ...result })}\n`);
   }).catch(error => {

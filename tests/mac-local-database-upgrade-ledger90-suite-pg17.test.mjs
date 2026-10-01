@@ -461,6 +461,8 @@ test("a real kill between migrations leaves the ledger at the last committed fil
     await blocker.query(`SELECT pg_advisory_lock(${lockKey})`);
     const child = spawn(process.execPath, [staged.stepModule, "apply", staged.commit, target, root, PG_BIN, "2", plan.digest]);
     let stderr = "";
+    let stdout = "";
+    child.stdout.on("data", chunk => { stdout += String(chunk); });
     child.stderr.on("data", chunk => { stderr += String(chunk); });
     child.stdin.write(bothLoginCodes);
     child.stdin.end();
@@ -492,10 +494,12 @@ test("a real kill between migrations leaves the ledger at the last committed fil
     // own line, which is the evidence worth reading.
     if (committed < committedReal) {
       const ended = child.exitCode !== null || child.signalCode !== null;
+      if (ended) await exited;
       assert.fail(`the apply did not reach the point this test kills it: waited ${KILL_WINDOW_BUDGET_MS}ms and the `
         + `ledger holds ${committed} of ${committedReal} migration rows. The child `
         + `${ended ? `ended (code ${child.exitCode}, signal ${child.signalCode})` : "was still running when the budget ran out"}`
-        + `.${ended && stderr.trim() ? ` Its stderr: ${stderr.trim()}` : ""}`);
+        + `.${ended && stderr.trim() ? ` Its stderr: ${stderr.trim()}` : ""}`
+        + `.${ended && stdout.trim() ? ` Its stdout: ${stdout.trim()}` : ""}`);
     }
     child.kill("SIGKILL");
     await exited;

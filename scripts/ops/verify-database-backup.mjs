@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Verifies one bound backup only by restoring it into a new temp PostgreSQL 17
 // cluster. The cluster is stopped and removed on every success or failure path.
 import { createHash } from "node:crypto";
@@ -5,7 +6,6 @@ import { execFileSync } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { restoreDatabase } from "../../deploy/postgres/restore-database.mjs";
 import { DISPOSABLE_POSTGRES_MARKER } from "../dev/cleanup-test-postgres.mjs";
@@ -336,7 +336,7 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
 function flag(args, name) { const index = args.indexOf(name); return index === -1 ? undefined : args[index + 1]; }
 const USAGE = `usage: verify-database-backup.mjs --backup ABSOLUTE_DIRECTORY --port ${DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1.min}..${DEFAULT_DATABASE_BACKUP_VERIFICATION_PORT_RANGE_V1.max} [--pg-bin ABSOLUTE_DIRECTORY] [--port-range MIN-MAX]`
   + ` (${DATABASE_BACKUP_VERIFICATION_PORT_RANGE_ENV}=MIN-MAX overrides the range for one run)`;
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     const args = process.argv.slice(2), backup = flag(args, "--backup"), pgBin = flag(args, "--pg-bin"),
       portRange = flag(args, "--port-range"), port = Number(flag(args, "--port"));

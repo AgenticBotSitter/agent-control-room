@@ -1,4 +1,4 @@
-import { pathToFileURL } from "node:url";
+import { isMainModuleV1 } from "../../installer/shared/is-main-module.mjs";
 import { resolve } from "node:path";
 import { PostgresUpdaterStoreV1 } from "./store.mjs";
 import { UpdaterControlServerV1 } from "./control-socket.mjs";
@@ -227,7 +227,7 @@ export async function startUpdaterV1(options = {}) {
       if (ownsClient) await client.end(); } });
 }
 
-const invoked = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const invoked = isMainModuleV1(process.argv[1], import.meta.url);
 if (invoked) startUpdaterV1().then(updater => {
   for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => void updater.stop().finally(() => process.exit(0)));
 }).catch(error => { process.stderr.write(`${error?.code ?? "updater_start_failed"}\n`); process.exitCode = 1; });

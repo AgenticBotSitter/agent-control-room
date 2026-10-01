@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Owner-run installer for the persistent M2 supervisor. This file is shipped
 // but never invoked by build/test. A system LaunchDaemon (not a user agent) is
 // required to survive logout and reboot; UserName keeps the service unprivileged.
@@ -62,5 +63,5 @@ async function main(){
   console.log(`installed ${SUPERVISOR_LAUNCHD_LABEL_V1}`);
 }
 
-if(process.argv[1]&&fileURLToPath(import.meta.url)===process.argv[1])void main().catch(error=>{
+if(isMainModuleV1(process.argv[1], import.meta.url))void main().catch(error=>{
   console.error(error instanceof Error?error.message:"supervisor install failed");process.exitCode=1;});

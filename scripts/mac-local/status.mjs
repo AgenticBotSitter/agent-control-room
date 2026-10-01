@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Read-only health for the Mac-local task host, whether directly started or launchd-managed.
 // Usage: pnpm mac:status -- --protected-root ABSOLUTE_PATH
 import { connect } from "node:net";
-import { fileURLToPath } from "node:url";
 import { alive, FLEET_GATEWAY_PORT, fleetGatewayCommand, hostCommand, protectedRootFromArguments, readPid,
   recordedHostCommand, runtimePaths, taskHostCommand } from "./stack.mjs";
 import { serviceInstalled, serviceStatus } from "./service.mjs";
@@ -78,7 +78,7 @@ async function main() {
   process.exitCode ??= result.exitCode;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   void main().catch(error => {
     console.error(`mac:status FAILED ${error instanceof Error ? error.message : "unknown"}`);
     process.exitCode = 2;

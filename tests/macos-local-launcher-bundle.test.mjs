@@ -275,7 +275,7 @@ test("assembles one deterministic macOS asset with an executable Finder launcher
   assert.doesNotMatch(source, /curl|wget|brew|npm install/u);
   await run("/bin/sh", ["-n", command]);
   const verified = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
-  assert.equal(verified.verified, true); assert.equal(verified.version, "0.1.0"); assert.equal(verified.fileCount, 19);
+  assert.equal(verified.verified, true); assert.equal(verified.version, "0.1.0"); assert.equal(verified.fileCount, 20);
   assert.equal(verified.releaseManifestDigest, `sha256:${createHash("sha256").update(await readFile(join(bundleRoot,
     "release", "agent-control-room-0.1.0.manifest.json"))).digest("hex")}`);
   assert.equal(verified.protectedDirectoryNativeSidecar.executableSha256, assembled.protectedDirectoryNativeSidecar.executableSha256);
@@ -290,7 +290,7 @@ test("expanded v2 deterministically binds four inert sidecars and both extracted
   assert.equal(second.archiveSha256, expandedAssembled.archiveSha256);
   assert.equal(second.schema, "control-room.macos-local-launcher-bundle/v2");
   const verified = await verifyExtractedMacosLocalLauncherBundleV1(expandedBundleRoot);
-  assert.equal(verified.fileCount, 31);
+  assert.equal(verified.fileCount, 32);
   assert.equal(verified.outerLauncherManifestSha256, expandedAssembled.outerLauncherManifestSha256);
   assert.equal(verified.outerLauncherManifestSha256,
     `sha256:${sha256(await readFile(join(expandedBundleRoot, "MACOS_LAUNCHER_MANIFEST.json")))}`);
@@ -326,7 +326,7 @@ test("v3 ships one exact release-bound Claude process sidecar without installing
   assert.equal(second.claudeCodeProcessNativeSidecar.compiles, false);
   assert.equal(second.claudeCodeProcessNativeSidecar.downloads, false);
   assert.equal(verified.schema, "control-room.macos-local-launcher-bundle/v3");
-  assert.equal(verified.fileCount, 36);
+  assert.equal(verified.fileCount, 37);
   assert.deepEqual(verified.claudeCodeProcessNativeSidecar, second.claudeCodeProcessNativeSidecar);
   const manifest = JSON.parse(await readFile(join(claudeBoundBundleRoot, "MACOS_LAUNCHER_MANIFEST.json"), "utf8"));
   assert.deepEqual(manifest.files.filter(file => file.path.startsWith("native/claude-code-process/"))

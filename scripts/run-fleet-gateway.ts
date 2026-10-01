@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Starts the control-side fleet gateway that remote worker connectors call.
 //
 //   pnpm fleet:gateway <protected-config.json>
@@ -205,6 +206,6 @@ async function main(path: string | undefined) {
   process.stderr.write(`Fleet gateway listening on 127.0.0.1:${config.port}\n`);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   main(process.argv[2]).catch(error => { process.stderr.write(`${error instanceof Error ? error.message : "failed"}\n`); process.exitCode = 1; });
 }
