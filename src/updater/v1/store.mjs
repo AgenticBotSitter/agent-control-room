@@ -66,23 +66,40 @@ export class PostgresUpdaterStoreV1 {
     this.#leaseHeld = false;
   }
 
+  /** B4: the run row and its journal mirror move in ONE statement.
+   *
+   * `updater.record_run_step` does both inside a single PostgreSQL statement,
+   * which commits or rolls back as a unit. The two-statement form this replaced
+   * had a window between the row's move and its event, and a kill in that window
+   * left the run wedged at the new state with no way forward: `guard_run_state`
+   * refuses any later non-terminal move whose last event disagrees with the row,
+   * so at `switched` the updater could not restart, roll back, or be measured.
+   *
+   * The lease token is re-checked INSIDE the statement, so ownership and the move
+   * are one fact rather than a read followed by a write. A caller without the
+   * token gets `42501 updater run lease lost`, which is what the previous
+   * `updater_run_lease_lost` refusal meant. The code is kept distinct so the
+   * failure is still identifiable at the call site.
+   *
+   * A terminal step writes no mirror row (the insert guard requires an unfinished
+   * run), and the function derives the ordinal from the run's own last event, so
+   * this method no longer needs an ordinal from the caller. */
   async transition(runId, leaseToken, state, detail = {}, { terminal = false } = {}) {
     assertSafeIdV1(leaseToken);
     if (typeof runId !== "string" || !/^run:[0-9a-f-]{36}$/u.test(runId) || !RUN_STATES_V1.has(state))
       throw updaterRefuseV1("updater_transition_refused");
-    const result = await this.client.query(`UPDATE updater.runs SET state=$3,detail=$4::jsonb,
-      finished_at=CASE WHEN $5::boolean THEN pg_catalog.now() ELSE NULL END
-      WHERE run_id=$1 AND lease_token=$2 AND finished_at IS NULL RETURNING *`,
-    [runId, leaseToken, state, JSON.stringify(detail), terminal]);
-    if (result.rows.length !== 1) throw updaterRefuseV1("updater_run_lease_lost");
-    return result.rows[0];
-  }
-
-  async appendEvent(runId, ordinal, state, detail = {}) {
-    if (!Number.isSafeInteger(ordinal) || ordinal < 1 || !RUN_STATES_V1.has(state))
-      throw updaterRefuseV1("updater_event_refused");
-    await this.client.query(`INSERT INTO updater.run_events(run_id,ordinal,state,detail)
-      VALUES($1,$2,$3,$4::jsonb)`, [runId, ordinal, state, JSON.stringify(detail)]);
+    let result;
+    try {
+      result = await this.client.query(`SELECT pg_catalog.to_jsonb(m) AS run FROM updater.record_run_step($1,$2,$3,$4::jsonb,$5) m`,
+        [runId, leaseToken, state, JSON.stringify(detail), terminal]);
+    } catch (error) {
+      if (error?.code === "42501" && String(error?.message ?? "").includes("updater run lease lost"))
+        throw updaterRefuseV1("updater_run_lease_lost");
+      throw error;
+    }
+    const row = result.rows[0]?.run;
+    if (!row || typeof row !== "object") throw updaterRefuseV1("updater_run_lease_lost");
+    return row;
   }
 
   async events(runId) {

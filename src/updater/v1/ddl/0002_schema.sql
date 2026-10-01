@@ -585,6 +585,54 @@ CREATE TABLE IF NOT EXISTS updater.owner_requests (
 );
 CREATE INDEX IF NOT EXISTS owner_requests_unhandled ON updater.owner_requests(requested_at, id) WHERE handled_at IS NULL;
 
+-- M1, HALF ONE: `requires_passkey` is derived from `request_kind`, not chosen by
+-- the caller. The pairing CHECK above only says "a passkey-backed request names
+-- an approval"; it says nothing about WHICH requests are allowed to be
+-- passkey-backed, and `requires_passkey` is a column the web login writes. So
+-- the web could insert `rollback` with `requires_passkey=false` and the row was
+-- perfectly well formed — the column was simply lying about what the request
+-- needed, and the 10b handler that has to trust it would have had no database
+-- fact to check.
+--
+-- The design's §5.6 table is the rule, and it is a rule about the request kind:
+-- the five risk-reducing controls (pause, stop, resume, check-and-continue,
+-- backup-now, repair-serve) need only an owner session, `rollback` needs a
+-- passkey against a `kind:"rollback"` plan because rolling back can re-open a
+-- fixed security hole, and `serve_accepted` (turning self-update On) needs a
+-- passkey against a `kind:"setting"` plan as well as the root confirmation
+-- (R4a). `passkey_added` is a notification the owner taps after the fact and
+-- carries no authority, so it is in the session-only half.
+--
+-- Named `rollback` only, as the review wrote it, would force `serve_accepted`
+-- to `requires_passkey=false` and REMOVE the owner's Face ID from turning
+-- self-update on. That is a security regression wearing the shape of a fix, so
+-- the constraint covers both kinds the design gives a passkey to. `rollback` is
+-- still refused for a session-only row, which is what the review measured.
+--
+-- Wrapped, because the updater applies this file at every startup and
+-- PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`: the unguarded form fails on
+-- the second apply with "constraint already exists", which is an updater that
+-- cannot restart. Every ADD CONSTRAINT in this schema is wrapped.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'owner_requests'
+       AND c.conname = 'owner_request_passkey_kinds') THEN
+    ALTER TABLE updater.owner_requests ADD CONSTRAINT owner_request_passkey_kinds
+      CHECK ((request_kind IN ('rollback','serve_accepted')) = requires_passkey);
+  END IF;
+END;
+$$;
+-- The VALIDATE is unconditional and idempotent, and it is what makes the
+-- constraint true of an EXISTING install rather than only of rows written after
+-- the apply: a NOT VALID constraint is enforced for new rows and ignored for old
+-- ones, so an install that somehow holds a mismatched row would keep it. An
+-- install in that state is one where the mismatch should stop the updater anyway,
+-- and this statement is where it stops.
+ALTER TABLE updater.owner_requests VALIDATE CONSTRAINT owner_request_passkey_kinds;
+
 -- ---------------------------------------------------------------------------
 -- push_queue — the web queues, the updater sends (R12)
 -- ---------------------------------------------------------------------------

@@ -161,11 +161,11 @@
     "why": "each counted guard attempt performs exactly one updater restart"
   },
   {
-    "file": "src/updater/v1/store.mjs",
-    "find": "WHERE run_id=$1 AND lease_token=$2 AND finished_at IS NULL RETURNING *`,",
-    "replace": "WHERE run_id=$1 AND finished_at IS NULL RETURNING *`,",
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "    WHERE run_id = p_run_id AND lease_token = p_lease_token AND finished_at IS NULL\n    RETURNING * INTO moved;",
+    "replace": "    WHERE run_id = p_run_id AND finished_at IS NULL\n    RETURNING * INTO moved;",
     "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
-    "why": "a second updater boot must not transition a run without its exact lease token"
+    "why": "a second updater boot must not transition a run without its exact lease token. The check lives inside updater.record_run_step since B4 made the move atomic, so ownership and the write are one fact rather than a read followed by a write"
   },
   {
     "file": "src/updater/v1/store.mjs",

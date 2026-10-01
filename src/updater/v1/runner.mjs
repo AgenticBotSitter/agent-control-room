@@ -28,24 +28,39 @@ export class UpdaterRunnerV1 {
     this.stateFiles = stateFiles; this.referee = referee; this.onHeartbeatState = onHeartbeatState;
   }
 
+  /** The next journal ordinal for a run, for the runner's own intent lines.
+   *
+   * Only used to LABEL the intent line the file journal records before the
+   * effect. The database's mirror ordinal is now derived inside
+   * `updater.record_run_step`, so this read is display bookkeeping and a stale
+   * answer costs a mislabelled journal line, never a wedge. */
+  async #nextOrdinal(runId) {
+    const events = await this.store.events(runId);
+    return (events.at(-1)?.ordinal ?? 0) + 1;
+  }
+
   async #record(run, state, detail = {}, options = {}) {
-    const events = await this.store.events(run.run_id);
-    const ordinal = (events.at(-1)?.ordinal ?? 0) + 1;
+    // §11's order, unchanged: journal the intent, take the transition (which
+    // writes the database mirror in the SAME statement), journal the done line.
+    // The ordinal for both lines is read once, before either, so the file and the
+    // mirror describe the same step.
+    const ordinal = await this.#nextOrdinal(run.run_id);
     await this.journal.intent({ runId: run.run_id, ordinal, from: run.state, to: state, detail });
     const next = await this.store.transition(run.run_id, run.lease_token, state, detail, options);
-    if (!options.terminal) await this.store.appendEvent(run.run_id, ordinal, state, detail);
     await this.journal.done({ runId: run.run_id, ordinal, state, detail });
     return next;
   }
 
   async #effect(run, name, nextState, effect, detail = {}) {
-    const events = await this.store.events(run.run_id);
-    const ordinal = (events.at(-1)?.ordinal ?? 0) + 1;
+    const ordinal = await this.#nextOrdinal(run.run_id);
     await this.journal.intent({ runId: run.run_id, ordinal, from: run.state, to: nextState,
       detail: { ...detail, effect: name } });
     await effect(); // Every port method is required to be repeat-safe.
+    // The row and its mirror event move in one statement, so a kill after the
+    // effect leaves the run in its PREVIOUS state — which is exactly what an
+    // interrupted effect looks like, and which the replayable ports can repeat.
+    // There is no window in which the row has advanced and the journal has not.
     const next = await this.store.transition(run.run_id, run.lease_token, nextState, detail);
-    await this.store.appendEvent(run.run_id, ordinal, nextState, detail);
     await this.journal.done({ runId: run.run_id, ordinal, state: nextState, detail });
     return next;
   }

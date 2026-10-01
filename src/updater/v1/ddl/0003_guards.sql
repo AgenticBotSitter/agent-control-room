@@ -521,6 +521,23 @@ BEGIN
   IF OLD.state = 'approved' AND NEW.state = 'approval_required' THEN
     RAISE EXCEPTION 'updater approved plan cannot return to approval_required' USING ERRCODE = '23514';
   END IF;
+  -- B2's second half. A plan with a LIVE run is not competing for the owner's
+  -- Face ID — it is the thing an update is already being executed from — so it
+  -- may not be superseded. Without this, a newer commit landing while an update
+  -- was mid-flight moved the plan out from under its own run, and the run's next
+  -- step was refused (the plan was no longer `approved`). At `switched` that left
+  -- the new code live with no health check and no rollback: the exact wedge §8.5
+  -- exists to prevent.
+  --
+  -- `finished_at IS NULL` rather than a state list, because "live" is already one
+  -- database property (`runs_one_live` is a partial unique index on exactly this
+  -- predicate). Deriving it from a list of states would add a second definition
+  -- of liveness that could disagree with the index. A TERMINAL run does not
+  -- block: once a run has finished, the newer plan may supersede freely.
+  IF NEW.state = 'superseded' AND EXISTS (
+      SELECT 1 FROM updater.runs r WHERE r.plan_id = OLD.plan_id AND r.finished_at IS NULL) THEN
+    RAISE EXCEPTION 'updater plan cannot be superseded while its run is live' USING ERRCODE = '23514';
+  END IF;
   RETURN NEW;
 END;
 $$;
@@ -571,7 +588,24 @@ BEGIN
   END IF;
   -- A plan that has been approved may be run once. A run row for a plan that is
   -- not approved is a run nobody authorised.
-  IF NOT EXISTS (SELECT 1 FROM updater.plans p WHERE p.plan_id = NEW.plan_id
+  --
+  -- ON INSERT ONLY, and this is B2's first half rather than a convenience. The
+  -- check answered "is this run authorised?", and an approval is a moment, not a
+  -- property: the run row it authorises is created once and then walks a run of
+  -- states that can outlast both the plan's 72-hour expiry and the plan itself
+  -- being superseded by a newer release. Re-asking on every UPDATE made the
+  -- answer change under a run that was already in flight, and the failure mode
+  -- was the worst kind: at `switched` the new code was already live, so refusing
+  -- `restarted` left no health check, and refusing `rollback_started` left no way
+  -- back. A newer commit landing mid-run, or the deadline passing during a pause,
+  -- could strand Control Room on the new version permanently.
+  --
+  -- What the check is still load-bearing for: the INSERT. That is where an
+  -- unauthorised run would be created, and the INSERT is the only place a run
+  -- can come into existence. A run already in flight was authorised when it was
+  -- created, and the plan's later state is the watcher's business — which the
+  -- next guard refuses (a plan with a live run cannot be superseded).
+  IF TG_OP = 'INSERT' AND NOT EXISTS (SELECT 1 FROM updater.plans p WHERE p.plan_id = NEW.plan_id
       AND p.state = 'approved' AND p.expires_at > pg_catalog.now()) THEN
     RAISE EXCEPTION 'updater run needs an approved, unexpired plan' USING ERRCODE = '23514';
   END IF;
@@ -644,10 +678,57 @@ BEGIN
     (OLD.state = 'rollback_started' AND NEW.state IN ('restore_started','code_restored','needs_attention')) OR
     (OLD.state = 'restore_started' AND NEW.state IN ('db_restored','needs_attention')) OR
     (OLD.state = 'db_restored' AND NEW.state IN ('code_restored','needs_attention')) OR
-    (OLD.state = 'code_restored' AND NEW.state IN ('rolled_back','needs_attention'))
+    (OLD.state = 'code_restored' AND NEW.state IN ('rolled_back','needs_attention')) OR
+    -- B3: THE WAY OUT OF `uncertain`. `uncertain` is reachable from anywhere
+    -- (the row above returns early for it) and it had no successor here, so the
+    -- state was a dead end in the database: §11's "Check and continue" measures
+    -- and then records `succeeded` or `rolled_back`, and the runner settles a
+    -- `rollback_required` measurement through `rollback_started` — and every one
+    -- of those three moves was refused `23514 upddater run transition refused`.
+    -- The owner's only button could not clear the state it existed to clear, on
+    -- the install-night path, against the real database.
+    --
+    -- The three successors are exactly the ones the design's §11 measurement can
+    -- justify, and nothing else. What is deliberately ABSENT is the whole
+    -- forward path — `uncertain -> prechecked`, `uncertain -> switched`,
+    -- `uncertain -> restarted`, `uncertain -> healthy` — because a run that
+    -- measured "I don't know" must not then decide to try the next step; that is
+    -- the rule `uncertain` exists to enforce.
+    --
+    -- `uncertain -> attended_upgrade_required` is NOT listed because it cannot
+    -- reach this table: the early return above fires first, since the NEW state
+    -- is itself `attended_upgrade_required`. Listing it would look like a
+    -- permission and be dead text.
+    --
+    -- §9.7's hand-off is a state of its own with the same need — the attended
+    -- upgrader the owner watches has to be able to record what it found — so it
+    -- is listed too. It is reachable from anywhere and, unlike `uncertain`, its
+    -- exit is a hand-off the owner is present for, so it carries no measurement
+    -- requirement below.
+    (OLD.state = 'uncertain' AND NEW.state IN ('succeeded','rolled_back','rollback_started')) OR
+    (OLD.state = 'attended_upgrade_required' AND NEW.state IN ('succeeded','rolled_back','rollback_started'))
   ) THEN
     RAISE EXCEPTION 'updater run transition refused: % -> %', OLD.state, NEW.state
       USING ERRCODE = '23514';
+  END IF;
+  -- §11 is exact about the two measured exits: the updater "makes the updater
+  -- measure: link targets, the served release id, `pg/current`, the schema digest
+  -- and full health. If those prove a consistent known-good pair, it records
+  -- `succeeded` or `rolled_back` with `detail.measured=true`". So the
+  -- measurement is not only something the runner promises to have done — it is
+  -- something the row carries, and this makes the carrying load-bearing: a run
+  -- cannot leave `uncertain` as "succeeded" without an answer recorded, which is
+  -- the difference between "we looked and it is fine" and "we gave up on
+  -- looking".
+  --
+  -- Only the exits FROM `uncertain` are annotated. `rollback_started` is
+  -- deliberately exempt: rolling back is the direction that cannot make anything
+  -- worse, so permitting it unconditionally is the conservative half. And a run
+  -- that arrives at `rolled_back` the long way (`rollback_started` ->
+  -- `code_restored` -> `rolled_back`) is already past this check.
+  IF OLD.state = 'uncertain' AND NEW.state IN ('succeeded','rolled_back')
+      AND NEW.detail->>'measured' IS DISTINCT FROM 'true' THEN
+    RAISE EXCEPTION 'updater run leaves uncertain only on a recorded measurement' USING ERRCODE = '23514';
   END IF;
   -- Only a terminal state may carry a finish time, and only a live one may not.
   IF NEW.finished_at IS NOT NULL AND NEW.state NOT IN ('succeeded','rolled_back','needs_attention','refused') THEN
@@ -691,6 +772,135 @@ $$;
 REVOKE ALL ON FUNCTION updater.guard_run_event_insert() FROM PUBLIC;
 CREATE OR REPLACE TRIGGER run_events_insert_guard BEFORE INSERT ON updater.run_events
   FOR EACH ROW EXECUTE FUNCTION updater.guard_run_event_insert();
+
+-- ---------------------------------------------------------------------------
+-- B4: the run row and its journal mirror move in ONE statement
+-- ---------------------------------------------------------------------------
+-- WHY A FUNCTION, AND WHY IT IS NOT OPTIONAL. The runner moved the run row and
+-- then wrote the matching `run_events` row as two separate statements
+-- (`store.transition` then `store.appendEvent`). Between them is a window in
+-- which the row says `switched` and the last event still says `draining` — and
+-- `guard_run_state` refuses any later non-terminal move whose last event differs
+-- from the row, precisely because it must not guess which record is right. So a
+-- kill in that window wedged the run permanently at `switched`: `restarted` was
+-- refused, `rollback_started` was refused, "Check and continue" was refused, and
+-- Control Room was left running the new code with no health check and no way
+-- back. A guard that detects a wedge is not the same as not having one.
+--
+-- ATOMICITY IS THE POINT. PostgreSQL guarantees that one statement either
+-- completes in full or is rolled back in full, with or without a `BEGIN`: so a
+-- single `SELECT updater.record_run_step(...)` is the atomic pair, and the
+-- caller's two statements cannot interleave with anything. That is what closes
+-- the window, and it is why this is a function and not a stored procedure with
+-- its own transaction: a `BEGIN`/`COMMIT` inside the function would still be
+-- atomic for the row, but it would detach the move from whatever else the caller
+-- was doing and would commit the row alone if the caller's next statement failed
+-- — the same wedge with a new name.
+--
+-- THE CALLER OWNS NOTHING ELSE. The lease token is checked inside the statement,
+-- in the two places that filter on it: the row lock below and the UPDATE that
+-- follows. They are NOT equally load-bearing, and that is measured rather than
+-- assumed: removing the token from either alone still refuses an impostor, so
+-- each looks redundant — but only the LOCK's copy can actually be relied on,
+-- because the repeat path (a step the row is already in) returns the row it read
+-- without ever reaching the UPDATE. Remove the lock's filter and an impostor who
+-- asks for the state the run is already in gets the row, with its state, from a
+-- run it does not hold. The UPDATE's filter is the belt to that braces, and it
+-- stays.
+--
+-- So the mutation manifest tests the LOCK's filter, because that is the one whose
+-- removal a test can actually observe, and the suite asserts both refusals — the
+-- ordinary step and the repeat. An entry for the UPDATE's copy would be a check
+-- that provably cannot bite, which is a false positive rather than evidence.
+--
+-- The return value is `jsonb` of the row rather than the composite type, on
+-- purpose: a composite return arrives at a client driver as an unparsed string,
+-- and a caller that has to `JSON.parse` its own result to learn which state the
+-- run is in is a caller this function has not simplified. The store spreads the
+-- object, so `transition()`'s callers see the same shape they always did.
+--
+-- `p_terminal` moves `finished_at` with the state, so the row's terminal shape
+-- (`runs_finished_shape`) is satisfied by the same atomic statement. When it is
+-- true the mirror row is NOT written: `guard_run_event_insert` requires the run
+-- to be unfinished (`finished_at IS NULL`), so a terminal step has no mirror
+-- event, and the existing exception in `guard_run_state` (which skips the
+-- row/journal comparison when the run is becoming terminal) is what keeps that
+-- consistent. Both halves of that decision are in the database, not split
+-- between this function and a caller that has to know.
+-- WHY THE ROW IS LOCKED FIRST, AND WHY THAT IS NOT OPTIONAL. `guard_run_state`
+-- already returns early when `NEW.state = OLD.state` (a no-op move is not a
+-- transition), which means the statement alone cannot tell a REPEAT of the
+-- current state from a real advance. Without the lock below, twenty concurrent
+-- callers all asked for `approved -> prechecked` and all twenty got it: the
+-- measure was twenty `succeeded` rows and ordinals 1 through 20, twenty mirror
+-- events for one step. That is worse than the wedge it replaced, because the
+-- run's journal is the audit trail the recovery path reads — twenty copies of one
+-- step is a journal that lies about how the run got where it is.
+--
+-- So the function is REPEAT-SAFE, which is the runner's own requirement on every
+-- effect it takes (design §8.1): a step that is already recorded is a no-op that
+-- returns the row, and only a genuine advance writes a mirror event. A repeat
+-- therefore costs nothing, writes nothing, and — the part that matters — does not
+-- poison the ordinal chain for every later step.
+--
+-- The lock is `FOR UPDATE` on the run row, taken BEFORE the update and in the
+-- same statement. It is what makes the read of the prior state and the write of
+-- the new one one fact: a second caller blocks on that row until the first has
+-- committed, and then observes the state the first left. Without it the two read
+-- the same `prior_state` and both advance. It is also why twenty callers cannot
+-- deadlock here — they all want the same single row, in the same order.
+CREATE OR REPLACE FUNCTION updater.record_run_step(
+  p_run_id text, p_lease_token text, p_state text, p_detail jsonb DEFAULT '{}'::jsonb,
+  p_terminal boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE plpgsql SET search_path = pg_catalog, updater, pg_temp AS $$
+DECLARE
+  prior_state text;
+  moved updater.runs;
+BEGIN
+  -- The lock and the read of the prior state, together. `FOR UPDATE` takes the
+  -- row lock and returns the row as it was; everything after this line sees a
+  -- state no other caller can change until this statement ends.
+  SELECT r.state INTO prior_state FROM updater.runs r
+    WHERE r.run_id = p_run_id AND r.lease_token = p_lease_token AND r.finished_at IS NULL
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';
+  END IF;
+  -- Already there: a repeat of the step that is recorded. Return the row as it
+  -- stands and write nothing, so the mirror keeps one row per step.
+  IF prior_state = p_state AND NOT p_terminal THEN
+    SELECT r.* INTO moved FROM updater.runs r WHERE r.run_id = p_run_id;
+    RETURN pg_catalog.to_jsonb(moved);
+  END IF;
+  UPDATE updater.runs SET state = p_state, detail = p_detail,
+      finished_at = CASE WHEN p_terminal THEN pg_catalog.now() ELSE NULL END
+    WHERE run_id = p_run_id AND lease_token = p_lease_token AND finished_at IS NULL
+    RETURNING * INTO moved;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';
+  END IF;
+  -- The mirror row, in the same statement. The ordinal is the last one plus one,
+  -- read inside this same snapshot while the row lock is still held, so two
+  -- callers racing for the next step serialise on the lock above and each gets
+  -- one ordinal. The second is refused by `guard_run_event_insert`'s primary key
+  -- rather than overwriting the first, which is a visible refusal rather than a
+  -- silent loss.
+  IF NOT p_terminal THEN
+    INSERT INTO updater.run_events(run_id, ordinal, state, detail)
+      SELECT p_run_id,
+        COALESCE((SELECT max(e.ordinal) FROM updater.run_events e WHERE e.run_id = p_run_id), 0) + 1,
+        p_state, p_detail;
+  END IF;
+  RETURN pg_catalog.to_jsonb(moved);
+END;
+$$;
+REVOKE ALL ON FUNCTION updater.record_run_step(text, text, text, jsonb, boolean) FROM PUBLIC;
+COMMENT ON FUNCTION updater.record_run_step(text, text, text, jsonb, boolean) IS
+  'Moves a run to its next state and writes the matching journal mirror row in one'
+  ' statement, which PostgreSQL commits or rolls back as a unit. The lease token is'
+  ' re-checked inside the statement, so a caller without it moves nothing. A'
+  ' terminal step writes no mirror row.';
 
 -- ---------------------------------------------------------------------------
 -- Append-only, everywhere it applies
@@ -1044,3 +1254,71 @@ $$;
 REVOKE ALL ON FUNCTION updater.guard_heartbeat() FROM PUBLIC;
 CREATE OR REPLACE TRIGGER heartbeat_guard BEFORE INSERT OR UPDATE ON updater.heartbeat
   FOR EACH ROW EXECUTE FUNCTION updater.guard_heartbeat();
+
+-- ---------------------------------------------------------------------------
+-- M1, HALF TWO: the approval a request cites must be for THAT kind of plan
+-- ---------------------------------------------------------------------------
+-- The first M1 CHECK makes `requires_passkey` honest. This makes the cited
+-- `approval_id` mean something: the web login may insert into
+-- `owner_requests`, so it chose the approval, and nothing stopped it choosing an
+-- approval that belongs to an INSTALL plan and citing it for a rollback. The row
+-- was well formed on every column — a real approval id, a real plan — and the
+-- rollback it authorised had the owner's Face ID over the wrong bytes. The
+-- review measured exactly that (P5c) and it was refused today only because the
+-- rollback port is unbound, which is not a control.
+--
+-- §5.6's rule is one sentence: `rollback` needs a passkey against a
+-- `kind:"rollback"` plan, and `serve_accepted` against a `kind:"setting"` plan.
+-- The mapping is written as a CASE so the two kinds cannot drift from the design
+-- when one is added, and so a request kind with no expected kind at all is
+-- refused rather than defaulting to "anything".
+--
+-- It is a TRIGGER, not a CHECK, because a CHECK may not read another table —
+-- `plan_approvals.plan_id` and `plans.kind` are one and two joins away. And it
+-- is BEFORE INSERT, which is the only moment the row is the web's to choose; the
+-- content is immutable afterwards (`guard_owner_request_handled` refuses any
+-- change beyond `handled_at`/`handled_outcome`), so checking at INSERT is
+-- checking it for good.
+--
+-- IT IS NOT SECURITY DEFINER, and that is a measured choice rather than an
+-- oversight. An earlier draft made it SECURITY DEFINER on the assumption that
+-- the web login holds no privilege on `plans` — the reason
+-- `guard_owner_session` above needs it. Measured on a real cluster:
+-- `0002_schema.sql` grants the web login SELECT on `updater.plans` in full (it
+-- renders the owner's plan cards), and separately on `(id, plan_id, received_at)`
+-- of `plan_approvals`, which is every column this body reads. So the invoker
+-- body has what it needs, and the definer would be pure extra authority.
+--
+-- Leaving it INVOKER means the guard holds exactly the web login's own reach:
+-- it can ask which kind one named plan is, and it can do nothing the web could
+-- not already do by hand — no approval, no state change, no other plan's kind.
+-- `guard_owner_session` keeps SECURITY DEFINER because `control_web_sessions`
+-- really is unreadable from the web side; this one does not, so it must not
+-- borrow that justification.
+CREATE OR REPLACE FUNCTION updater.guard_owner_request_approval_kind() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, updater, pg_temp AS $$
+DECLARE
+  approval_plan text;
+  plan_kind text;
+  expected_kind text;
+BEGIN
+  IF NEW.approval_id IS NULL THEN RETURN NEW; END IF;
+  SELECT CASE NEW.request_kind
+      WHEN 'rollback' THEN 'rollback'
+      WHEN 'serve_accepted' THEN 'setting'
+    END INTO expected_kind;
+  SELECT a.plan_id INTO approval_plan FROM updater.plan_approvals a WHERE a.id = NEW.approval_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'updater owner request cites an approval that does not exist' USING ERRCODE = '23514';
+  END IF;
+  SELECT p.kind INTO plan_kind FROM updater.plans p WHERE p.plan_id = approval_plan;
+  IF NOT FOUND OR plan_kind IS DISTINCT FROM expected_kind THEN
+    RAISE EXCEPTION 'updater owner request % needs an approval for a % plan, not %',
+      NEW.request_kind, expected_kind, plan_kind USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION updater.guard_owner_request_approval_kind() FROM PUBLIC;
+CREATE OR REPLACE TRIGGER owner_requests_approval_kind_guard BEFORE INSERT ON updater.owner_requests
+  FOR EACH ROW EXECUTE FUNCTION updater.guard_owner_request_approval_kind();
