@@ -66,7 +66,6 @@ test("an uncertain write makes health unready and a supervised replacement serve
     "a restarted host owns a fresh binding and can serve a later request");
   await restarted.close();
 });
-
 test("the real Mac-local wrapper signs in locally and reaches the existing project service", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-web" }); t.after(fixture.close);
   await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
@@ -74,7 +73,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   });
   const origin = "http://127.0.0.1:3210", trustedOrigin = "https://control-room-mac.example.ts.net";
   const ownerCode = "mac-local-owner-code-long-enough";
-  let actionInboxReads = 0;
+  let actionInboxReads = 0; const passkeyCalls: unknown[] = [];
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
@@ -88,13 +87,21 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
     taskWorkersStarted: true,
     actionInboxSource: { read: async () => { actionInboxReads += 1; return {
-      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } } });
+      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } },
+    passkeyRegistration: {
+      options: async input => { passkeyCalls.push(input); return { publicKey: { challenge: "A".repeat(43) } }; },
+      insert: async input => { passkeyCalls.push(input); return { accepted: true }; },
+    } });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedOutApi = await app.handle(request("/api/v1/projects"), () => new Response("unused"));
   assert.equal(signedOutApi.status, 401);
   assert.deepEqual(await signedOutApi.json(), { error: "authentication_required" });
   const signedOutInbox = await app.handle(request("/api/v1/needs-me/action-items"), () => new Response("unused"));
   assert.equal(signedOutInbox.status, 401);
+  const signedOutPasskey = await app.handle(request("/api/v1/passkeys/registration/options", { method: "POST",
+    headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ registrationSecret: "A".repeat(43) }) }),
+  () => new Response("unused"));
+  assert.equal(signedOutPasskey.status, 401);
   const signedOutFile = await app.handle(request("/api/v1/projects/project:test/tasks/job:test/files/artifact:test?disposition=preview&token=untrusted"),
     () => new Response("unused"));
   assert.equal(signedOutFile.status, 401, "file preview requires an authenticated owner session before a ticket is considered");
@@ -130,6 +137,21 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);
   const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const passkeyHeaders = { cookie: cookie!, origin, "content-type": "application/json" };
+  const passkeyOptions = await app.handle(request("/api/v1/passkeys/registration/options", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43) }) }), () => new Response("unused"));
+  assert.equal(passkeyOptions.status, 200);
+  const passkeyResponse = { id: "B".repeat(43), rawId: "B".repeat(43), type: "public-key", response: {} };
+  const passkeyInsert = await app.handle(request("/api/v1/passkeys/registration", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43), comparisonCode: "ABC234",
+      response: passkeyResponse, authorizationAssertion: null }) }), () => new Response("unused"));
+  assert.equal(passkeyInsert.status, 201); assert.deepEqual(await passkeyInsert.json(), { accepted: true });
+  assert.equal(passkeyCalls.length, 2);
+  assert.match((passkeyCalls[0] as { ownerSessionDigest: string }).ownerSessionDigest, /^sha256:[a-f0-9]{64}$/);
+  const oversizedPasskey = await app.handle(request("/api/v1/passkeys/registration", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43), comparisonCode: "ABC234",
+      response: { value: "x".repeat(21_000) }, authorizationAssertion: null }) }), () => new Response("unused"));
+  assert.equal(oversizedPasskey.status, 400); assert.equal(passkeyCalls.length, 2);
   const actionInboxResponse = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(actionInboxResponse.status, 200, await actionInboxResponse.clone().text());
   assert.deepEqual(await actionInboxResponse.json(), { observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false });
@@ -524,4 +546,53 @@ test("the Mac-local transport stays loopback-only and admits only one configured
   const foreignDone = new Promise<void>((resolve, reject) => { foreign.output.once("finish", resolve); foreign.output.once("error", reject); });
   void handler.handle(foreign.input, foreign.output); await foreignDone;
   assert.equal(foreign.output.statusCode, 403);
+});
+
+// ---------------------------------------------------------------------------
+// Readiness must fold in the database. This is the review's N1 follow-up: the
+// process reported ready for the whole life of a database client that had been
+// closed underneath it, so the host never restarted it and every page failed.
+// ---------------------------------------------------------------------------
+
+test("a closed database client makes the process NOT ready", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-readiness" }); t.after(fixture.close);
+  const origin = "http://127.0.0.1:3210";
+  const ownerCode = "mac-local-owner-code-long-enough";
+  const build = (database: { client: typeof fixture.client; close: () => Promise<void>; isAvailable: () => boolean }) =>
+    createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
+      localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
+        provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }),
+        sessionSeconds: 900 },
+      database, clock: () => conformanceNow, hostProcessId: 4_243,
+      healthProbeKey: new Uint8Array(32).fill(9), healthReleaseId: "dev",
+      healthStartedAt: "2026-09-30T00:00:00.000Z" });
+
+  // A live client: ready.
+  let available = true;
+  const live = build({ client: fixture.client, close: async () => {}, isAvailable: () => available });
+  assert.equal(live.isReady(), true, "a live database client is ready");
+
+  // The same client, closed underneath the process — which is exactly what
+  // `bindPrivatePgPool` does permanently on an uncertain outcome.
+  available = false;
+  assert.equal(live.isReady(), false,
+    "N1: a process whose database client has been closed is NOT ready, so something restarts it");
+
+  // Back to live, and back to not: the answer tracks the client rather than
+  // latching.
+  available = true;
+  assert.equal(live.isReady(), true, "and it recovers when the client is available again");
+
+  // `isAvailable` is REQUIRED, not optional. This test used to assert the
+  // opposite — that a host supplying no `isAvailable` kept the old answer — and
+  // the strict type is the better contract: a host that cannot say whether its
+  // database is alive cannot be told apart from a host whose database is gone,
+  // which is the review's N1 in its original shape. The case is now that a host
+  // MUST provide it, proved by the type rather than by a runtime branch, and the
+  // runtime half is the `isReady` assertions above.
+  //
+  // An explicit close still reports not-ready, which is the older half of the
+  // rule and must not have been lost.
+  await live.close();
+  assert.equal(live.isReady(), false, "an explicitly closed process is still not ready");
 });

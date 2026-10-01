@@ -12,19 +12,30 @@ STAT=/usr/bin/stat
 DATE=/bin/date
 SLEEP=/bin/sleep
 PG_CONTROLDATA="$ROOT/runtime/pg-current/bin/pg_controldata"
+LABEL_PREFIX=xyz.agentcontrolroom
+PLIST_DIR=/Library/LaunchDaemons
 ASSUME_YES=0
 
 # The rehearsal uses only temp roots and fake privileged commands. A production
 # invocation cannot redirect the guard with inherited variables.
 if [ "${CONTROL_ROOM_GUARD_TESTING-}" = 1 ]; then
-  case "${CONTROL_ROOM_GUARD_ROOT-}" in /tmp/*|/private/tmp/*) ROOT=$CONTROL_ROOM_GUARD_ROOT ;; *) exit 70 ;; esac
-  case "${CONTROL_ROOM_GUARD_TEST_BIN-}" in /tmp/*|/private/tmp/*)
+  GUARD_ROOT_INPUT=${CONTROL_ROOM_GUARD_ROOT-}
+  case "/$GUARD_ROOT_INPUT/" in */../*|*/./*) exit 70 ;; esac
+  GUARD_ROOT_CANONICAL=$(cd "$GUARD_ROOT_INPUT" 2>/dev/null && /bin/pwd -P) || exit 70
+  [ "$GUARD_ROOT_CANONICAL" = "$GUARD_ROOT_INPUT" ] || exit 70
+  case "$GUARD_ROOT_CANONICAL" in /private/tmp/*|/Volumes/CRRehearsal/*) ROOT=$GUARD_ROOT_CANONICAL ;; *) exit 70 ;; esac
+  case "${CONTROL_ROOM_GUARD_TEST_BIN-}" in "$ROOT"/*)
     LAUNCHCTL="$CONTROL_ROOM_GUARD_TEST_BIN/launchctl"
     STAT="$CONTROL_ROOM_GUARD_TEST_BIN/stat"
     DATE="$CONTROL_ROOM_GUARD_TEST_BIN/date"
     SLEEP="$CONTROL_ROOM_GUARD_TEST_BIN/sleep"
     PG_CONTROLDATA="$CONTROL_ROOM_GUARD_TEST_BIN/pg_controldata"
     ;; esac
+  if [ -n "${CONTROL_ROOM_GUARD_TEST_LABEL_PREFIX-}" ]; then
+    /bin/echo "$CONTROL_ROOM_GUARD_TEST_LABEL_PREFIX" | /usr/bin/grep -Eq '^xyz\.agentcontrolroom\.rehearsal\.[A-Za-z0-9._-]{1,49}$' || exit 70
+    LABEL_PREFIX=$CONTROL_ROOM_GUARD_TEST_LABEL_PREFIX
+    PLIST_DIR="$ROOT/fake-plists"
+  fi
   [ "${CONTROL_ROOM_GUARD_ASSUME_YES-}" = 1 ] && ASSUME_YES=1
 fi
 
@@ -54,14 +65,14 @@ atomic_link() {
 }
 
 bootout_all() {
-  for label in xyz.agentcontrolroom.updater xyz.agentcontrolroom.supervisor xyz.agentcontrolroom.gateway xyz.agentcontrolroom.postgres; do
-    "$LAUNCHCTL" bootout "system/$label" >/dev/null 2>&1 || :
+  for name in updater supervisor gateway postgres; do
+    "$LAUNCHCTL" bootout "system/$LABEL_PREFIX.$name" >/dev/null 2>&1 || :
   done
 }
 
 bootstrap_all() {
   for name in postgres supervisor gateway updater; do
-    "$LAUNCHCTL" bootstrap system "/Library/LaunchDaemons/xyz.agentcontrolroom.$name.plist" >/dev/null 2>&1 || :
+    "$LAUNCHCTL" bootstrap system "$PLIST_DIR/$LABEL_PREFIX.$name.plist" >/dev/null 2>&1 || :
   done
 }
 
@@ -153,6 +164,11 @@ rescue() {
   temp="$STATE/.rescued.json.$$"
   /usr/bin/printf '%s\n' "{\"schema\":\"control-room.rescued/v1\",\"at\":\"$at\",\"from\":{\"releaseId\":\"$current_release\",\"pgDataId\":\"$current_pg\",\"schemaDigest\":$current_digest_json},\"to\":{\"releaseId\":\"$release\",\"pgDataId\":\"$pg\",\"schemaDigest\":\"$digest\"}}" >"$temp"
   /bin/chmod 600 "$temp"; /bin/mv -f "$temp" "$STATE/rescued.json"
+  # The rescue is authoritative. Retain any interrupted switch as evidence,
+  # but move it out of the startup recovery path before services are restarted.
+  if [ -e "$STATE/link-switch.json" ] || [ -L "$STATE/link-switch.json" ]; then
+    /bin/mv -f "$STATE/link-switch.json" "$STATE/link-switch.rescued.json"
+  fi
   bootstrap_all
 }
 
@@ -167,7 +183,7 @@ watch() {
   temp="$STATE/.guard-status.json.$$"
   /usr/bin/printf '%s\n' "{\"schema\":\"control-room.guard-status/v1\",\"updaterRestartsLastHour\":$((recent + 1)),\"at\":$now}" >"$temp"
   /bin/chmod 600 "$temp"; /bin/mv -f "$temp" "$STATE/guard-status.json"
-  "$LAUNCHCTL" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed
+  "$LAUNCHCTL" kickstart -k "system/$LABEL_PREFIX.updater" >/dev/null 2>&1 || die kickstart_failed
 }
 
 case "${1-watch}" in rescue) rescue ;; watch) watch ;; *) die invalid_verb ;; esac

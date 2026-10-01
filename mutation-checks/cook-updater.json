@@ -43,8 +43,8 @@
   },
   {
     "file": "src/updater/v1/runner.mjs",
-    "find": "if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };",
-    "replace": "if (false) return { status: \"busy\", message: \"Another updater call is active.\" };",
+    "find": "if (this.#running) return { status: \"busy\", message: \"Another updater call is active.\" };\n    this.#running = true;\n    let run;",
+    "replace": "if (false) return { status: \"busy\", message: \"Another updater call is active.\" };\n    this.#running = true;\n    let run;",
     "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
     "why": "the updater has one in-process actor under a 50-caller burst"
   },
@@ -155,8 +155,8 @@
   },
   {
     "file": "src/updater/v1/guard/guard.sh",
-    "find": "\"$LAUNCHCTL\" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed",
-    "replace": "\"$LAUNCHCTL\" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed\n  \"$LAUNCHCTL\" kickstart -k system/xyz.agentcontrolroom.updater >/dev/null 2>&1 || die kickstart_failed",
+    "find": "\"$LAUNCHCTL\" kickstart -k \"system/$LABEL_PREFIX.updater\" >/dev/null 2>&1 || die kickstart_failed",
+    "replace": "\"$LAUNCHCTL\" kickstart -k \"system/$LABEL_PREFIX.updater\" >/dev/null 2>&1 || die kickstart_failed\n  \"$LAUNCHCTL\" kickstart -k \"system/$LABEL_PREFIX.updater\" >/dev/null 2>&1 || die kickstart_failed",
     "test": "node --test --test-name-pattern='hung updater' tests/updater-guard.test.mjs",
     "why": "each counted guard attempt performs exactly one updater restart"
   },
@@ -173,5 +173,320 @@
     "replace": "if (!row || false",
     "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
     "why": "the updater store refuses any connection that is not the production deployer login"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (!equalMacV1(prevMac, previous) || !equalMacV1(mac, macV1(key, previous, entry)))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='torn boundary' tests/updater-journal.test.mjs",
+    "why": "a hostile local bot cannot append a forged journal line without the root-held MAC key"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "(entry.mode & 0o022) !== 0",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='torn boundary' tests/updater-journal.test.mjs",
+    "why": "a writable journal is not trusted as root-only authority"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (!text.endsWith(\"\\n\")) throw journalErrorV1(\"updater_journal_short\");",
+    "replace": "if (false) throw journalErrorV1(\"updater_journal_short\");",
+    "test": "node --test --test-name-pattern='torn boundary' tests/updater-journal.test.mjs",
+    "why": "a partial final line after a crash is uncertain, never silently accepted"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "if (mirror.length > file.length) return { state: \"uncertain\", reason: \"display_ahead\" };",
+    "replace": "if (false) return { state: \"uncertain\", reason: \"display_ahead\" };",
+    "test": "node --test --test-name-pattern='file-first' tests/updater-journal.test.mjs",
+    "why": "a database display ahead of the authoritative journal must stop automatic action"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (!measurement || ![\"succeeded\", \"rolled_back\"].includes(measurement.state))",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
+    "why": "check-and-continue removes uncertainty only after an explicit valid measured terminal state"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "?? this.stateFiles.journalUncertain?.();",
+    "replace": "?? false;",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
+    "why": "a disagreement between the authoritative file and database display blocks automatic effects"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (measurement?.state === \"rollback_required\") {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='Off, rescue' tests/updater-skeleton.test.mjs",
+    "why": "an inconsistent measured state must run the rollback port rather than resume forward"
+  },
+  {
+    "file": "src/updater/v1/store.mjs",
+    "find": "if (result.rows[0]?.acquired !== true)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
+    "why": "a second live PostgreSQL session must not acquire the singleton updater lease"
+  },
+  {
+    "file": "src/updater/v1/store.mjs",
+    "find": "leaseToken: run?.lease_token ?? requestedLeaseToken,",
+    "replace": "leaseToken: requestedLeaseToken,",
+    "test": "node --test --test-name-pattern='PostgreSQL adapter refuses' tests/updater-skeleton.test.mjs",
+    "why": "a replacement session resumes with the immutable durable token instead of rewriting it"
+  },
+  {
+    "file": "src/updater/v1/runner.mjs",
+    "find": "if (run.lease_token !== acquisition.leaseToken) return { status: \"busy\", liveRun: true,",
+    "replace": "if (false) return { status: \"busy\", liveRun: true,",
+    "test": "node --test --test-name-pattern='runner refuses an acquired result' tests/updater-skeleton.test.mjs",
+    "why": "the runner never advances a live run without the acquired durable token"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "if (acquisition.status !== \"acquired\") {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='startup refuses when another database session' tests/updater-skeleton.test.mjs",
+    "why": "startup refuses while another PostgreSQL session owns the updater lease"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "let heartbeatState = acquisition.run",
+    "replace": "let heartbeatState = false",
+    "test": "node --test --test-name-pattern='startup reports a live run' tests/updater-skeleton.test.mjs",
+    "why": "the first heartbeat reports a live run instead of contradicting it as idle"
+  },
+  {
+    "file": "src/updater/v1/attended-flip.mjs",
+    "find": "if (plan?.planId !== planId || confirmation.planDigest !== planDigest)",
+    "replace": "if (false)",
+    "test": "node --test --test-name-pattern='rechecks the confirmed digest' tests/updater-cli-flip.test.mjs",
+    "why": "the attended flip rechecks the exact plan bytes immediately before staging"
+  },
+  {
+    "file": "src/updater/v1/fs-safety.mjs",
+    "find": "constants.O_RDONLY | constants.O_NONBLOCK",
+    "replace": "constants.O_RDONLY",
+    "test": "node --test --test-name-pattern='planted FIFO' tests/updater-skeleton.test.mjs",
+    "why": "a root-owned FIFO cannot block the updater's state-file reader"
+  },
+  {
+    "file": "src/updater/v1/control-socket.mjs",
+    "find": "const deadline = setTimeout(() => socket.destroy(), this.requestTimeoutMs);",
+    "replace": "const deadline = setTimeout(() => {}, this.requestTimeoutMs);",
+    "test": "node --test --test-name-pattern='absolute request deadline' tests/updater-control-socket.test.mjs",
+    "why": "a byte-dribbling client cannot hold a control socket slot indefinitely"
+  },
+  {
+    "file": "src/updater/v1/cli.mjs",
+    "find": "return [0, 1, 2, 3, 4, 5].map(index => WORDS_V1[bytes[index] & 63]);",
+    "replace": "return [0, 1, 2, 3].map(index => WORDS_V1[bytes[index] & 63]);",
+    "test": "node --test --test-name-pattern='CLI keeps status' tests/updater-cli-flip.test.mjs",
+    "why": "the owner confirmation retains six 6-bit words rather than the old offline-guessable four"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": ": [\"busy\", \"needs_attention\", \"error\"].includes(this.lastOutcome.status) ? \"needs_attention\"",
+    "replace": ": [\"needs_attention\", \"error\"].includes(this.lastOutcome.status) ? \"needs_attention\"",
+    "test": "node --test --test-name-pattern='busy result with a live run' tests/updater-skeleton.test.mjs",
+    "why": "a busy live run is visible as needs attention instead of idle"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "needsYou: [\"busy\", \"uncertain\", \"attended_upgrade_required\", \"needs_attention\", \"error\"]",
+    "replace": "needsYou: [\"uncertain\", \"attended_upgrade_required\", \"needs_attention\", \"error\"]",
+    "test": "node --test --test-name-pattern='busy result with a live run' tests/updater-skeleton.test.mjs",
+    "why": "a busy live run explicitly tells the owner attention is needed"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (!Number.isSafeInteger(free) || free < required) throw updaterRefuseV1(\"updater_disk_reserve_low\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_disk_reserve_low\");",
+    "test": "node --test --test-name-pattern='disk admission' tests/updater-actuator.test.mjs",
+    "why": "space below two releases plus headroom must refuse before any archive is unpacked"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "|| Number(entry.blocks) * 512 < this.reserveBytes)",
+    "replace": ")",
+    "test": "node --test --test-name-pattern='disk admission' tests/updater-actuator.test.mjs",
+    "why": "the rescue reserve must be physically allocated rather than a sparse promise of space"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (this.#switching) throw updaterRefuseV1(\"updater_actuator_busy\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_actuator_busy\");",
+    "test": "node --test --test-name-pattern='50 parallel actuator' tests/updater-actuator.test.mjs",
+    "why": "fifty-caller switch and rollback bursts must each admit exactly one filesystem actor"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (isNoSpaceV1(retryError)) await this.#reportDepleted(retryError);",
+    "replace": "if (false) await this.#reportDepleted(retryError);",
+    "test": "node --test --test-name-pattern='double ENOSPC retry reports' tests/updater-actuator.test.mjs",
+    "why": "a second disk-full failure must report depletion instead of silently consuming the rescue reserve"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "&& await this.services.databaseStopped?.(run, plan) !== true)",
+    "replace": "&& false)",
+    "test": "node --test --test-name-pattern='clean-stop proof' tests/updater-actuator.test.mjs",
+    "why": "a database link cannot move until the clean-stop port proves PostgreSQL is held down"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (!await this.artifacts.verifyPair(candidate)) { lastCode = \"updater_rollback_pair_corrupt\"; continue; }",
+    "replace": "if (false) { lastCode = \"updater_rollback_pair_corrupt\"; continue; }",
+    "test": "node --test --test-name-pattern='corrupt release' tests/updater-actuator.test.mjs",
+    "why": "rollback must walk past a corrupt newer pair instead of serving it"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "const pairs = [...existing.filter(item => !samePairV1(item, pair)), pair].slice(-3);",
+    "replace": "const pairs = [...existing.filter(item => !samePairV1(item, pair)), pair];",
+    "test": "node --test --test-name-pattern='pair history keeps three' tests/updater-actuator.test.mjs",
+    "why": "the automatic rollback history is bounded to the newest three healthy pairs"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "const removable = entries.filter(item => !item.protected).sort((a, b) => a.mtimeMs - b.mtimeMs);",
+    "replace": "const removable = entries.sort((a, b) => a.mtimeMs - b.mtimeMs);",
+    "test": "node --test --test-name-pattern='retention never deletes' tests/updater-actuator.test.mjs",
+    "why": "retention must never collect current, previous, automatic, restore-point or open-staging releases"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "if (stagedReleaseId) protectedIds.add(stagedReleaseId);",
+    "replace": "if (false) protectedIds.add(stagedReleaseId);",
+    "test": "node --test --test-name-pattern='promoted staged release survives' tests/updater-actuator.test.mjs",
+    "why": "retention must honor the durable marker for a promoted release whose run crashed before switch"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "await assertPairTargetsV1(root, record.to);",
+    "replace": "await assertPairTargetsV1(root, record.from);",
+    "test": "node --test --test-name-pattern='interrupted pair switch rolls back' tests/updater-actuator.test.mjs",
+    "why": "startup may resume only when both members of the recorded target pair still exist"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (currentPgDataId === nextPgDataId) return;",
+    "replace": "if (false) return;",
+    "test": "node --test --test-name-pattern='does not demand stop proof' tests/updater-actuator.test.mjs",
+    "why": "recovery must distinguish an already-durable database-link effect from a move that still needs stop proof"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "async function assertRecoveryDatabaseStoppedV1(root, record, nextPgDataId, direction, databaseStopped) {\n  let currentPgDataId;",
+    "replace": "async function assertRecoveryDatabaseStoppedV1(root, record, nextPgDataId, direction, databaseStopped) {\n  if (record.from.pgDataId === record.to.pgDataId) return;\n  let currentPgDataId;",
+    "test": "node --test --test-name-pattern='present drifted pg/current' tests/updater-actuator.test.mjs",
+    "why": "a code-only record cannot bypass the real stop check when the on-disk database link has drifted"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "await readFileNoFollowV1(root, \"updater-state/rescued.json\", { maxBytes: 16_384 });",
+    "replace": "await readFileNoFollowV1(root, \"updater-state/rescue-ignored.json\", { maxBytes: 16_384 });",
+    "test": "node --test --test-name-pattern='rescue marker makes' tests/updater-actuator.test.mjs",
+    "why": "startup recovery must defer to an operator rescue instead of replaying a pre-rescue switch record"
+  },
+  {
+    "file": "src/updater/v1/guard/guard.sh",
+    "find": "if [ -e \"$STATE/link-switch.json\" ] || [ -L \"$STATE/link-switch.json\" ]; then",
+    "replace": "if false; then",
+    "test": "node --test --test-name-pattern='rescue tombstones' tests/updater-guard.test.mjs",
+    "why": "rescue must tombstone a stale switch record before restarting services"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "await lstat(pidPath);\n    throw updaterRefuseV1(\"updater_database_not_stopped\");",
+    "replace": "await lstat(pidPath);\n    return;",
+    "test": "node --test --test-name-pattern='stop proof before database moves' tests/updater-actuator.test.mjs",
+    "why": "startup recovery must refuse a database-link move while the current data directory has postmaster.pid"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (await databaseStopped?.(move) !== true) throw updaterRefuseV1(\"updater_database_not_stopped\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_database_not_stopped\");",
+    "test": "node --test --test-name-pattern='stop proof before database moves' tests/updater-actuator.test.mjs",
+    "why": "startup recovery needs an affirmative stop proof before moving pg/current forward or backward"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (error?.code === \"ENOENT\") return Object.freeze([]);",
+    "replace": "if (false) return Object.freeze([]);",
+    "test": "node --test --test-name-pattern='fresh-install retention' tests/updater-actuator.test.mjs",
+    "why": "a fresh install with no known-good file has an empty automatic history rather than a broken retention pass"
+  },
+  {
+    "file": "src/updater/v1/staged-release.mjs",
+    "find": "if (await readStagedReleaseV1(root) !== expected) return false;",
+    "replace": "if (false) return false;",
+    "test": "node --test --test-name-pattern='never clears a different staged release' tests/updater-actuator.test.mjs",
+    "why": "settling an older transaction must not unpin the staged release belonging to another run"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "catch (error) { if (error?.code !== \"ENOENT\") throw error; return; }",
+    "replace": "catch (error) { throw error; }",
+    "test": "node --test --test-name-pattern='code-only recovery completes' tests/updater-actuator.test.mjs",
+    "why": "an absent pg/current link is a no-op recovery case and must not wedge a code-only switch"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "async #reportDepleted(error) {\n    try { await this.onDepleted(error); } catch { /* notification is best-effort */ }\n  }",
+    "replace": "async #reportDepleted(error) {\n    await this.onDepleted(error);\n  }",
+    "test": "node --test --test-name-pattern='throwing depletion hook' tests/updater-actuator.test.mjs",
+    "why": "a failing owner-notification hook must not prevent reserve restoration or replace the operation error"
+  },
+  {
+    "file": "src/updater/v1/staged-release.mjs",
+    "find": "if (error instanceof SyntaxError) throw updaterRefuseV1(\"updater_staged_release_refused\");",
+    "replace": "if (error instanceof SyntaxError) return undefined;",
+    "test": "node --test --test-name-pattern='corrupt and symlinked staged-release markers' tests/updater-actuator.test.mjs",
+    "why": "a corrupt staged-release marker must fail closed instead of silently unprotecting its release"
+  },
+  {
+    "file": "src/updater/v1/staged-release.mjs",
+    "find": "if (error?.code === \"ENOENT\") return undefined;",
+    "replace": "if (true) return undefined;",
+    "test": "node --test --test-name-pattern='corrupt and symlinked staged-release markers' tests/updater-actuator.test.mjs",
+    "why": "only an absent staged-release marker is optional; planted symlinks and other read failures must refuse"
+  },
+  {
+    "file": "src/updater/v1/release-layout.mjs",
+    "find": "if (!/^data-[A-Za-z0-9._-]{1,80}$/u.test(target)) throw updaterRefuseV1(\"updater_pg_link_refused\");",
+    "replace": "if (false) throw updaterRefuseV1(\"updater_pg_link_refused\");",
+    "test": "node --test --test-name-pattern='malformed pg/current target' tests/updater-actuator.test.mjs",
+    "why": "recovery must reject traversal and out-of-root pg/current target shapes before a database move"
+  },
+  {
+    "file": "src/updater/v1/actuator.mjs",
+    "find": "await this.artifacts.verifyRelease(run, final, plan);\n      await writeStagedReleaseV1(this.root, plan.to.releaseId);",
+    "replace": "await this.artifacts.verifyRelease(run, final, plan);",
+    "test": "node --test --test-name-pattern='replayed stage pins' tests/updater-actuator.test.mjs",
+    "why": "a replayed stage must durably pin its already-present release until the switch settles"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "await effects.recover?.();",
+    "replace": "if (false) await effects.recover?.();",
+    "test": "node --test --test-name-pattern='startup settles' tests/updater-skeleton.test.mjs",
+    "why": "startup settles a torn link transaction before opening the updater control socket"
+  },
+  {
+    "file": "src/updater/v1/journal.mjs",
+    "find": "await this.#read({ missingOk: false, relativePath: temporary });",
+    "replace": "await this.#read({ missingOk: false, relativePath: JOURNAL_PATH_V1 });",
+    "test": "node --test --test-name-pattern='append and compaction disk-full' tests/updater-journal.test.mjs",
+    "why": "compaction validates the replacement file itself before it can replace the old authority"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "journalRecoveryPending = repaired && !fileJournalUncertain;",
+    "replace": "journalRecoveryPending = false;",
+    "test": "node --test --test-name-pattern='torn live file journal' tests/updater-skeleton.test.mjs",
+    "why": "Check and continue only settles a poisoned journal after it is explicitly archived and revalidated"
   }
 ]

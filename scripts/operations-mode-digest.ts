@@ -7,8 +7,10 @@ import { Client } from "pg";
 import { withRealPostgres } from "../tests/support/attack-kit/index.ts";
 import { readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight.ts";
 
-// The reserved disposable-cluster lane for this script: 58710-58719.
-const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) => 58710 + index));
+// The reserved disposable-cluster lane for this script: 58710-58719 by default,
+// moved with CONTROL_ROOM_PG_TEST_PORT_BASE like the lane's test files.
+const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) =>
+  Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58710) + index));
 const port = Number(process.argv[2] ?? PORTS[0]);
 if (!PORTS.includes(port)) throw new Error("digest_port_outside_reserved_lane");
 

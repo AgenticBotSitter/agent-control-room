@@ -20,11 +20,15 @@ database password and never gets your login.
    ```
 
    On Windows, use the PowerShell line shown under **Windows** on the same page.
-5. Keep it connected: `node control-room-connector.mjs run`. The machine shows
-   as **Connected** on the Workers page within a minute.
+5. Keep it connected: `node control-room-connector.mjs run`. Or select
+   **Let this bot pick up approved work on its own** to add `--unattended` to
+   the verified line and install one profile-scoped per-user login service on
+   macOS, Windows or Linux. The task host never starts the bot. The machine
+   shows as **Connected** within a minute.
 
-The machine keeps its own key in a private file (`~/.config/control-room/connector.json`,
-readable only by you). The key renews itself every few weeks while `run` is going.
+Each installed bot keeps its own key in a private file
+(`~/.config/control-room/bots/<name>.json`, readable only by you). The key
+renews itself every few weeks while `run` is going.
 
 **If something goes wrong**
 
@@ -68,8 +72,9 @@ time, gives it to that bot on the machine, and sends the answer back to you
 for review.
 
 It only does this when the person at that machine has switched the bot on.
-Write a settings file next to the key file
-(`~/.config/control-room/harnesses.json`) that only you can change:
+The per-bot installer writes a private settings file beside that bot's key
+(`~/.config/control-room/bots/<name>.harnesses.json`). A manual connector can
+use the same schema with `run --harnesses <path>`:
 
 ```json
 {
@@ -81,9 +86,18 @@ Write a settings file next to the key file
 }
 ```
 
-Then run the downloaded connector with `run`. Its reviewed Codex, Claude Code
-and Hermes adapters are inside the same file; the machine needs no Control Room
-checkout and the settings cannot select a replacement adapter module.
+Then run the downloaded connector with `run`, or select **Let this bot pick up
+approved work on its own** on the Connect a bot page to install a per-user
+login worker that runs it for this profile. Its reviewed Codex, Claude Code and
+Hermes adapters are inside the same file; the machine needs no Control Room
+checkout and the settings cannot select a replacement adapter module. The
+login worker re-reads this file, so it is safe to enable or disable the harness
+after installation.
+
+Hermes unattended setup asks for its local profile, model and provider before
+creating the join code. Invalid or missing worker choices, executable paths,
+deadlines, service platforms and per-user identities are refused before the
+single-use code can be redeemed.
 
 - `deadlineMs` is the longest one task may run (at most one hour).
 - Codex and Claude Code can also take `"model"` and `"effort"`

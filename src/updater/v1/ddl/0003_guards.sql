@@ -160,6 +160,291 @@ CREATE OR REPLACE TRIGGER owner_requests_owner_session
   FOR EACH ROW EXECUTE FUNCTION updater.guard_owner_session();
 
 -- ---------------------------------------------------------------------------
+-- A registration row is only accepted for a registration the updater opened
+-- ---------------------------------------------------------------------------
+-- P-1's fourth clause, and it is the guard the one-row rule rests on. R is a
+-- 32-byte secret the installer holds as a digest; the web is handed it in a URL
+-- fragment and can insert anything it likes. Without this check a page on
+-- another port, or a loopback bot that saw the fragment, could insert a
+-- registration for a digest the installer never issued, and the installer's
+-- one-row rule would then be counting rows nobody authorised. Three refusals:
+--
+--   * UNKNOWN: there is no `passkey_open_registrations` row with this digest.
+--     The updater writes that table from its own ledger, so "the updater never
+--     opened this" is a fact the database can see and the web cannot fake.
+--   * CONSUMED: the updater already finished with this registration (used or
+--     refused). Stated by name so a late insert is refused for the reason it
+--     actually failed, rather than looking like an expiry race.
+--   * EXPIRED: past `expires_at` at the DATABASE clock. Thirty minutes (§5.1).
+--
+-- And a cap: at most MAX_REGISTRATION_ROWS_V1 rows per digest. Four is enough to
+-- make every racer visible — the installer's rule is "exactly one", so two rows
+-- already refuses — and small enough that a flood of 10 000 junk inserts against
+-- one open digest is refused by the fourth rather than filling a table.
+CREATE TABLE IF NOT EXISTS updater.passkey_registrations_limits (
+  max_rows_per_registration integer NOT NULL CHECK (max_rows_per_registration BETWEEN 1 AND 8),
+  PRIMARY KEY (max_rows_per_registration)
+);
+-- One row, written by the updater at apply time. A table rather than a literal in
+-- the body because a limit an operator cannot see is a limit nobody reviews; the
+-- INSERT below is the updater's, so the web has no path to it (it holds no
+-- INSERT here).
+INSERT INTO updater.passkey_registrations_limits (max_rows_per_registration) VALUES (4)
+  ON CONFLICT DO NOTHING;
+
+-- SECURITY DEFINER IS LOAD-BEARING HERE, and for the same reason it is on
+-- `guard_owner_session` above: this trigger fires for the WEB login, which
+-- holds only five columns of `passkey_open_registrations` and none of
+-- `passkey_registrations_limits`. A plain invoker body would run the SELECT as
+-- the web and fail with `permission denied for table passkey_open_registrations`
+-- — so every web insert would be refused and the feature would look like a
+-- permissions problem rather than a missing `SECURITY DEFINER`. Measured, not
+-- assumed: that is the first run of this DDL.
+--
+-- What the definer body gains is the ability to ASK whether a digest is open, an
+-- unexpired and under the cap. It cannot open one, extend one or mark one
+-- consumed, and the web cannot call it: the only caller is this trigger, which
+-- fires by name and not by permission.
+--
+-- THE ADVISORY LOCK IS THE CAP'S ACTUAL MECHANISM, and without it the cap does
+-- not work at all. A BEFORE INSERT trigger that SELECTs a count and compares it
+-- to a limit is a read-then-write with nothing in between, so fifty racers each
+-- observe "zero rows" and all fifty land. That is exactly what the first real-PG
+-- run of this lane measured: 50 concurrent registrations produced 50 rows and the
+-- cap of 4 was never once consulted, because every one of those transactions ran
+-- its SELECT before any of them committed.
+--
+-- `pg_advisory_xact_lock` is transaction-scoped, so it serialises the racers on
+-- the digest and each one counts what the previous one committed. The lock is
+-- keyed on a HASH of the digest, so two unrelated registrations do not queue
+-- behind each other, and it is taken in the same order the guard then reads, so
+-- there is no window between "I have the lock" and "I have counted".
+--
+-- This is the same discipline the one-open-plan rule in 0003 uses, and for the
+-- same reason: a count a caller could interleave with is not a bound.
+CREATE OR REPLACE FUNCTION updater.guard_passkey_registration_open() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$
+DECLARE
+  open_consumed_at timestamptz;
+  open_expires_at timestamptz;
+  existing_rows integer;
+  cap integer;
+BEGIN
+  -- The advisory lock below serialises the racers, but a serialised racer only
+  -- counts what the previous one committed if its SNAPSHOT is taken after the
+  -- lock — which is READ COMMITTED's per-statement snapshot. Under REPEATABLE
+  -- READ (or SERIALIZABLE) the snapshot is fixed at the transaction's first
+  -- statement, so every racer that began before the others committed counts the
+  -- same stale number and all of them land: 20 racers put 20 rows past a cap of
+  -- 4 (review passkey2 DB-2). The web login chooses its own isolation level, so
+  -- the cap refuses to be evaluated anywhere it cannot hold, the same way the
+  -- fleet claim-capacity guard (0234) does. 0A000 is a feature class: the insert
+  -- is unsupported in that mode, not retryable in it.
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'updater registration row cap cannot be enforced in a % transaction',
+      pg_catalog.current_setting('transaction_isolation') USING ERRCODE = '0A000';
+  END IF;
+  -- Only the two columns the guard actually needs, and no `SELECT *`: a definer
+  -- body that read a column it did not need would be reading as the deployer, and
+  -- the narrower the read the smaller that is. (`mode` was selected here once and
+  -- never consulted — a dead read in a SECURITY DEFINER body is still a read, so
+  -- it is gone rather than left as a hint that `mode` matters here.)
+  SELECT o.consumed_at, o.expires_at INTO open_consumed_at, open_expires_at
+    FROM updater.passkey_open_registrations o WHERE o.registration_digest = NEW.registration_digest;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'updater registration digest is not open' USING ERRCODE = '42501';
+  END IF;
+  IF open_consumed_at IS NOT NULL THEN
+    RAISE EXCEPTION 'updater registration was already consumed at %', open_consumed_at
+      USING ERRCODE = '42501';
+  END IF;
+  IF open_expires_at <= pg_catalog.now() THEN
+    RAISE EXCEPTION 'updater registration expired at %', open_expires_at USING ERRCODE = '42501';
+  END IF;
+  -- The cap comes from a row rather than a literal, so it is visible and
+  -- reviewable. A missing row would make the comparison NULL, and NULL is not
+  -- TRUE, so the guard would refuse every insert — which is the safe direction
+  -- for a limit that cannot be read.
+  SELECT l.max_rows_per_registration INTO cap FROM updater.passkey_registrations_limits l LIMIT 1;
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('updater:registration-rows:' || NEW.registration_digest, 0));
+  SELECT count(*)::integer INTO existing_rows FROM updater.passkey_registrations r
+    WHERE r.registration_digest = NEW.registration_digest;
+  IF existing_rows >= COALESCE(cap, 1) THEN
+    RAISE EXCEPTION 'updater registration already has % rows', existing_rows USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION updater.guard_passkey_registration_open() FROM PUBLIC;
+CREATE OR REPLACE TRIGGER passkey_registrations_open_guard BEFORE INSERT ON updater.passkey_registrations
+  FOR EACH ROW EXECUTE FUNCTION updater.guard_passkey_registration_open();
+
+-- ---------------------------------------------------------------------------
+-- What the updater may change about an open registration
+-- ---------------------------------------------------------------------------
+-- `passkey_open_registrations` is the updater's own table: it inserts the row and
+-- sets `consumed_at`, and nothing else. The mode, the options object, the
+-- add-challenge and the expiry are what the web will be shown, so a change to any
+-- of them after the row exists is a change to what the owner is asked to approve
+-- — and only the updater's ledger may decide that. Deleting the row is refused
+-- outright, because the consumed marker is what makes a late web insert fail by
+-- name; a deleted row would make it look merely expired.
+CREATE OR REPLACE FUNCTION updater.guard_open_registration() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, updater, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'updater open registrations are not deletable' USING ERRCODE = '23514';
+  END IF;
+  IF (to_jsonb(NEW) - ARRAY['consumed_at']) IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['consumed_at']) THEN
+    RAISE EXCEPTION 'updater open registration content is immutable' USING ERRCODE = '23514';
+  END IF;
+  IF OLD.consumed_at IS NOT NULL THEN
+    RAISE EXCEPTION 'updater open registration was already consumed' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.consumed_at IS NULL OR NEW.consumed_at < OLD.created_at THEN
+    RAISE EXCEPTION 'updater open registration must be consumed with a timestamp' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION updater.guard_open_registration() FROM PUBLIC;
+CREATE OR REPLACE TRIGGER passkey_open_registrations_update_guard BEFORE UPDATE OR DELETE
+  ON updater.passkey_open_registrations FOR EACH ROW EXECUTE FUNCTION updater.guard_open_registration();
+
+-- ---------------------------------------------------------------------------
+-- The per-plan-per-hour refusal aggregate (R16, P-3, P-4)
+-- ---------------------------------------------------------------------------
+-- `record_approval_refusal` is the whole of P-3 in one statement, and the reason
+-- it is a function rather than two queries the caller runs in sequence is that
+-- the answer the caller needs — the new count, and whether this refusal was the
+-- first of its hour — is only computable atomically.
+--
+-- HOW THE ATOMICITY IS OBTAINED. Two statements, in one function, inside the
+-- caller's transaction, and the second one is a plain `INSERT ... ON CONFLICT DO
+-- UPDATE ... RETURNING`:
+--
+--   1. `INSERT INTO updater.approval_refusals ... ON CONFLICT (approval_id) DO
+--      NOTHING RETURNING approval_id`. The RETURNING clause reports a row ONLY
+--      when this transaction was the one that claimed the approval id. So a
+--      replayed approval — a retried NOTIFY, a re-read of the queue — returns no
+--      row, does not bump the bucket, and does not re-earn `first_in_hour`. That
+--      is P-3's idempotency clause, enforced by a primary key rather than by a
+--      read-then-write a caller could interleave.
+--   2. `INSERT INTO updater.approval_refusal_buckets ... ON CONFLICT (plan_id,
+--      bucket_start) DO UPDATE SET count = count + 1, last_approval_id = EXCLUDED
+--      .last_approval_id RETURNING count, first_in_hour, (xmax = 0) AS first_in_hour_claimed`.
+--
+-- Under 50 concurrent callers on one plan-hour, PostgreSQL's ON CONFLICT makes
+-- exactly one of the 50 inserts create the row; the other 49 wait for that
+-- transaction and then UPDATE it. `first_in_hour` is the INSERT's own
+-- `approval_id`, so it is set once, by the winner, and the `(xmax = 0)` test is
+-- reported as well so the caller can check which of the two it was — which is
+-- how "exactly one firstInHour per plan-hour" is proved rather than assumed.
+--
+-- The bucket is `date_trunc('hour', now())`: the DATABASE's clock, so an updater
+-- whose own clock is skewed or moving backwards cannot open a second bucket for
+-- an hour that already has one. The caller's `observed_at` is recorded but never
+-- used to choose the bucket.
+--
+-- `first_in_hour` here means "this call was the first of its hour". It is NOT the
+-- same as "this alert still needs sending": the delivery columns below are the
+-- durable half, and they are separate so that a journal or push sink that failed
+-- after this statement committed is re-driven rather than lost.
+-- `RETURNS TABLE (count integer, first_in_hour boolean, bucket_start timestamptz)`
+-- creates OUT parameters with those names, and they are IN SCOPE inside the body
+-- — so a bare `bucket_start` in the INSERT's value list, in the ON CONFLICT
+-- inference clause or in the RETURNING resolves to the OUT parameter and
+-- PostgreSQL refuses with 42702 ("column reference bucket_start is ambiguous").
+--
+-- Two fixes were needed and one was not enough, which is why this is written
+-- down: the INSERT and the RETURNING take a table alias (`AS b`), and the
+-- conflict target is named by CONSTRAINT rather than by an `(plan_id,
+-- bucket_start)` column list — an inference list has no alias to qualify it
+-- with, so naming the constraint is the only way to express "the primary key"
+-- from inside a function whose parameters are named after the key's columns.
+-- Measured, not assumed: the first two real-PG runs failed with 42702 and only
+-- the third, with both fixes, applied cleanly.
+--
+-- On `xmax = 0`: an INSERT that did not collide has `xmax = 0`, and an INSERT
+-- that took the DO UPDATE path has the updating transaction's xid there. That is
+-- how the caller learns whether it was the first of the hour, and it is a
+-- property of the row PostgreSQL just wrote rather than a read anybody could
+-- interleave with.
+CREATE OR REPLACE FUNCTION updater.record_approval_refusal(p_approval_id text, p_plan_id text, p_reason text)
+RETURNS TABLE (count integer, first_in_hour boolean, bucket_start timestamptz)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$
+DECLARE
+  claimed boolean;
+  bucket timestamptz;
+BEGIN
+  IF current_setting('session_replication_role') <> 'origin' THEN
+    RAISE EXCEPTION 'updater refusal refused under session_replication_role=%',
+      current_setting('session_replication_role') USING ERRCODE = '42501';
+  END IF;
+  bucket := pg_catalog.date_trunc('hour', pg_catalog.now());
+  INSERT INTO updater.approval_refusals (approval_id, plan_id, reason, bucket_start)
+    VALUES (p_approval_id, p_plan_id, p_reason, bucket)
+    ON CONFLICT (approval_id) DO NOTHING
+    RETURNING TRUE INTO claimed;
+  IF claimed IS NULL THEN
+    RAISE EXCEPTION 'updater refusal is not an approval' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+    INSERT INTO updater.approval_refusal_buckets AS b (plan_id, bucket_start, count, first_in_hour, last_approval_id)
+      VALUES (p_plan_id, bucket, 1, p_approval_id, p_approval_id)
+      ON CONFLICT ON CONSTRAINT approval_refusal_buckets_pkey DO UPDATE
+        SET count = b.count + 1,
+            last_approval_id = EXCLUDED.last_approval_id
+      RETURNING b.count, (b.xmax = 0), b.bucket_start;
+END;
+$$;
+REVOKE ALL ON FUNCTION updater.record_approval_refusal(text, text, text) FROM PUBLIC;
+
+-- The refusal rows are evidence that a decision was made, so they are
+-- append-only like every other evidence table. The BUCKETS are different: their
+-- count and their delivery timestamps are the updater's own bookkeeping and must
+-- move, so they are guarded rather than frozen — the count may only rise by one,
+-- the identity of the bucket may not change, and a delivered bucket may not
+-- become undelivered.
+CREATE OR REPLACE TRIGGER approval_refusals_immutable BEFORE UPDATE OR DELETE
+  ON updater.approval_refusals FOR EACH ROW EXECUTE FUNCTION updater.reject_append_only_mutation();
+CREATE OR REPLACE TRIGGER approval_refusals_no_truncate BEFORE TRUNCATE ON updater.approval_refusals
+  FOR EACH STATEMENT EXECUTE FUNCTION updater.reject_append_only_mutation();
+CREATE OR REPLACE TRIGGER approval_refusal_buckets_no_truncate BEFORE TRUNCATE
+  ON updater.approval_refusal_buckets FOR EACH STATEMENT EXECUTE FUNCTION updater.reject_append_only_mutation();
+
+CREATE OR REPLACE FUNCTION updater.guard_refusal_bucket() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, updater, pg_temp AS $$
+BEGIN
+  IF (to_jsonb(NEW) - ARRAY['count','last_approval_id','journaled_at','pushed_at'])
+     IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['count','last_approval_id','journaled_at','pushed_at']) THEN
+    RAISE EXCEPTION 'updater refusal bucket identity is immutable' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.count <> OLD.count AND NEW.count <> OLD.count + 1 THEN
+    RAISE EXCEPTION 'updater refusal count refused: % -> %', OLD.count, NEW.count USING ERRCODE = '23514';
+  END IF;
+  -- Delivery is one-way. A bucket that was journaled cannot become un-journaled,
+  -- or a re-drive that failed halfway could put the same hour back in the queue
+  -- and the owner would see the same line twice.
+  IF (OLD.journaled_at IS NOT NULL AND NEW.journaled_at IS NULL)
+     OR (OLD.pushed_at IS NOT NULL AND NEW.pushed_at IS NULL) THEN
+    RAISE EXCEPTION 'updater refusal delivery cannot be undone' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.journaled_at IS NOT NULL AND NEW.journaled_at < NEW.bucket_start THEN
+    RAISE EXCEPTION 'updater refusal journaled before the bucket began' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.pushed_at IS NOT NULL AND NEW.pushed_at < NEW.bucket_start THEN
+    RAISE EXCEPTION 'updater refusal pushed before the bucket began' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION updater.guard_refusal_bucket() FROM PUBLIC;
+CREATE OR REPLACE TRIGGER approval_refusal_buckets_update_guard BEFORE UPDATE
+  ON updater.approval_refusal_buckets FOR EACH ROW EXECUTE FUNCTION updater.guard_refusal_bucket();
+
+-- ---------------------------------------------------------------------------
 -- One open plan at a time (design §5.5, SI-24)
 -- ---------------------------------------------------------------------------
 -- A newer candidate supersedes the older plan, and there is never more than one
@@ -483,11 +768,47 @@ BEGIN
     RAISE EXCEPTION 'updater push insert refused under session_replication_role=%',
       current_setting('session_replication_role') USING ERRCODE = '42501';
   END IF;
-  IF NEW.template LIKE 'control-room-updater%' THEN
+  -- The prefix rule is about the INSERTING ROLE, not about the string. Only the
+  -- updater may speak as the updater, and `current_user` inside a plain invoker
+  -- trigger IS the inserting role — so the web is refused and the updater is not,
+  -- for the same statement.
+  --
+  -- It was previously written as a test on the template ALONE, which refused the
+  -- updater too and therefore also refused `enqueue_cooling_off_notices` (a
+    -- SECURITY DEFINER function whose inserts run with the updater's privileges but
+    -- still fire this trigger). The test that "the web cannot queue a
+    -- control-room-updater push" passed for the wrong reason — the updater could
+    -- not queue one either — and nothing measured the half that mattered. Measured,
+    -- not assumed: that is what the first real-PG run of item 10a showed.
+  IF NEW.template LIKE 'control-room-updater%' AND current_user <> 'control_room_deployer' THEN
     RAISE EXCEPTION 'only the updater may use its own push template' USING ERRCODE = '42501';
   END IF;
   IF NEW.sent_at IS NOT NULL OR NEW.attempts <> 0 THEN
     RAISE EXCEPTION 'updater push must be queued unsent' USING ERRCODE = '42501';
+  END IF;
+  -- Everything below is about rows the WEB writes, and the updater is exempt for
+  -- the same reason it is exempt from the prefix rule: it is the one writer whose
+  -- rows these namespaces exist for.
+  IF current_user <> 'control_room_deployer' THEN
+    -- THE IDEMPOTENCY KEY IS THE UPDATER'S NAMESPACE (review passkey2 DB-1).
+    -- Both of the updater's keys are predictable — `passkey-cooling-off:<cred>:*`
+    -- from a credential id the attacker minted, `passkey-refusal:<plan>:<hour>`
+    -- from a plan id and a clock — and the updater's inserts are `ON CONFLICT DO
+    -- NOTHING`. So a web that could set a key could pre-claim one with a harmless
+    -- row and the updater's warning would silently never be queued. That was
+    -- measured on real PG: "2 warnings queued", zero sent. The web has no use for
+    -- a key at all, so it may not set one.
+    IF NEW.idempotency_key IS NOT NULL THEN
+      RAISE EXCEPTION 'only the updater may set a push idempotency key' USING ERRCODE = '42501';
+    END IF;
+    -- Only the updater schedules (review passkey2 DB-5). A web row is sent at
+    -- once: no `not_before`, and queued at the DATABASE's now() — the insert's
+    -- own transaction time, which is what the column default gives it. The
+    -- earlier rule only refused `not_before <> queued_at`, so a web row with
+    -- both set 30 days ahead passed and sat in the queue as a scheduled send.
+    IF NEW.not_before IS NOT NULL OR NEW.queued_at IS DISTINCT FROM pg_catalog.now() THEN
+      RAISE EXCEPTION 'only the updater may schedule a push' USING ERRCODE = '42501';
+    END IF;
   END IF;
   RETURN NEW;
 END;
@@ -521,6 +842,154 @@ $$;
 REVOKE ALL ON FUNCTION updater.guard_push_update() FROM PUBLIC;
 CREATE OR REPLACE TRIGGER push_queue_update_guard BEFORE UPDATE ON updater.push_queue
   FOR EACH ROW EXECUTE FUNCTION updater.guard_push_update();
+
+-- ---------------------------------------------------------------------------
+-- The cooling-off notices (R14c, P-5)
+-- ---------------------------------------------------------------------------
+-- §5.1 step 7: "the updater pushes 'A new passkey was added on your Mac. It
+-- becomes active in 24 hours. If this wasn't you, run `sudo
+-- /usr/local/bin/control-room passkey revoke <n>`.' to every existing
+-- subscription at once and again at 12 h."
+--
+-- `enqueue_cooling_off_notices` is P-5 in one statement, and the parts of it
+-- that matter are these:
+--
+--   * IT IS IDEMPOTENT ON `credential_id`. The key is
+--     `passkey-cooling-off:<credentialId>:now` and `...:repeat`, and
+--     `push_queue.idempotency_key` is UNIQUE. A retried call — the updater
+--     restarting mid-registration, or an operator re-running `passkey add` — adds
+--     no second row, so the owner cannot be told twice about the same key.
+--   * IT IS ONE TRANSACTION. Both rows commit together or neither does, so
+--     "there is a 12 h reminder" is never false by half.
+--   * IT REFUSES WITH ZERO SUBSCRIPTIONS. This is the case the review called out
+--     (P-5, "the owner must know nobody was told"): an add with nobody to tell
+--     RAISEs rather than returning success, so `completeRegistration` burns R
+--     and writes no passkey. A silently successful add with no notice is exactly
+--     the failure the 24 h cooling-off exists to catch.
+--
+-- WHY THE TEXT IS A BOUNDED ARGUMENT AND NOT PROSE THE CALLER CHOOSES. The body
+-- is the design's §5.1 wording, with the number substituted; `p_number` is the
+-- ledger position and `p_cooling_off_until` is the instant, both of which the
+-- updater owns. The template id is the updater's reserved prefix, so
+-- `guard_push_insert`'s rule (only the updater may use `control-room-updater%`)
+-- holds for these rows too — the function is SECURITY DEFINER but still runs the
+-- table's triggers, so it could not use the prefix if it were not the updater.
+CREATE OR REPLACE FUNCTION updater.enqueue_cooling_off_notices(p_credential_id text, p_number integer,
+  p_cooling_off_until timestamptz, p_repeat_at timestamptz)
+RETURNS TABLE (enqueued integer, subscriptions integer)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$
+DECLARE
+  reached integer;
+  own integer;
+  body_text text;
+  key_now text;
+  key_repeat text;
+BEGIN
+  IF p_number < 1 OR p_number > 32
+     OR p_repeat_at <= pg_catalog.now() OR p_cooling_off_until <= pg_catalog.now() THEN
+    RAISE EXCEPTION 'updater cooling-off notice arguments refused' USING ERRCODE = '23501';
+  END IF;
+  -- How many browsers the owner has. Read as the updater, which holds SELECT on
+  -- the three subscription columns it needs (see db/roles, item 10a's second
+  -- grant file); with none, the add must fail rather than pass quietly.
+  SELECT count(*)::integer INTO reached FROM public.owner_web_push_subscriptions s
+    WHERE s.expires_at IS NULL OR s.expires_at > pg_catalog.now();
+  IF reached = 0 THEN
+    RAISE EXCEPTION 'updater cooling-off notice has no subscriptions to send to' USING ERRCODE = '23503';
+  END IF;
+  body_text := 'A new passkey was added on your Mac. It becomes active in 24 hours. '
+    || 'If this wasn''t you, run sudo /usr/local/bin/control-room passkey revoke ' || p_number::text || '.';
+  key_now := 'passkey-cooling-off:' || p_credential_id || ':now';
+  key_repeat := 'passkey-cooling-off:' || p_credential_id || ':repeat';
+  INSERT INTO updater.push_queue (id, idempotency_key, template, title, body, queued_at, not_before)
+    VALUES ('push:' || pg_catalog.gen_random_uuid()::text, key_now, 'control-room-updater.passkey_cooling_off',
+      'A new passkey was added', body_text, pg_catalog.now(), NULL)
+    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING;
+  INSERT INTO updater.push_queue (id, idempotency_key, template, title, body, queued_at, not_before)
+    VALUES ('push:' || pg_catalog.gen_random_uuid()::text, key_repeat, 'control-room-updater.passkey_cooling_off',
+      'A new passkey was added', body_text, pg_catalog.now(), p_repeat_at)
+    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING;
+  -- COUNT ONLY THE UPDATER'S OWN NOTICES (review passkey2 DB-1). `ON CONFLICT
+  -- DO NOTHING` is what makes a retry idempotent, and it is also what would hide
+  -- a key someone else already holds: the old count was of ANY row under the two
+  -- keys, so a squatted "Weekly summary" row counted as a queued warning. A key
+  -- counts here only when its row is this notice — the updater's template, the
+  -- design's title, this body, and the right schedule shape — and anything else
+  -- under the key RAISES, so `completeRegistration` burns R and writes no key
+  -- rather than trusting a warning nobody will receive. The guard on
+  -- `push_queue` already stops the web setting a key; this is the second wall,
+  -- and it is the one that would still hold if that grant ever widened.
+  SELECT count(*)::integer INTO own FROM updater.push_queue p
+    WHERE p.template = 'control-room-updater.passkey_cooling_off'
+      AND p.title = 'A new passkey was added' AND p.body = body_text
+      AND ((p.idempotency_key = key_now AND p.not_before IS NULL)
+        OR (p.idempotency_key = key_repeat AND p.not_before IS NOT NULL));
+  IF own <> 2 THEN
+    RAISE EXCEPTION 'updater cooling-off notice key is held by a row the updater did not write'
+      USING ERRCODE = '42501';
+  END IF;
+  -- `reached` counts every live subscription row, including ones the web login
+  -- inserted and ones in any tenant (review passkey2 DB-7). It is a sanity check
+  -- that SOMEBODY could be told, not proof that the owner was: real delivery is
+  -- item 21's dispatch, which must fan each notice out to the owner's
+  -- subscriptions with the root VAPID key and honour `not_before`.
+  RETURN QUERY SELECT own, reached;
+END;
+$$;
+REVOKE ALL ON FUNCTION updater.enqueue_cooling_off_notices(text, integer, timestamptz, timestamptz) FROM PUBLIC;
+
+-- ---------------------------------------------------------------------------
+-- The cooling-off repeat is a SCHEDULING question the queue does not answer yet
+-- ---------------------------------------------------------------------------
+-- `push_queue` has no `not_before` column, so a 12 h repeat cannot simply be
+-- queued with a future `queued_at`: the dispatch loop reads unsent rows and would
+-- send it at once, which is the opposite of the requirement. The column is added
+-- here, with the dispatch side a one-line change in item 21 (`WHERE sent_at IS
+-- NULL AND queued_at <= now()` becomes `... AND not_before <= now()`), and the
+-- guard above is written against it from the start so the two cannot disagree.
+ALTER TABLE updater.push_queue ADD COLUMN IF NOT EXISTS not_before timestamptz;
+-- A row may not be sent before it was queued, and a NULL is the ordinary
+-- "send at once" case, so the CHECK is one-sided.
+--
+-- THE `DO` BLOCK IS NOT COSMETIC. PostgreSQL has no `ADD CONSTRAINT IF NOT
+-- EXISTS`, and the updater applies this file at EVERY startup — so the unguarded
+-- form fails on the second apply with `constraint "..." already exists`, which is
+-- an updater that cannot restart. The existing schema lane caught exactly this,
+-- which is what that lane's "a second apply changes nothing and refuses nothing"
+-- assertion is for. Every ADD CONSTRAINT in this schema is therefore wrapped; the
+-- ones inside `0002_schema.sql` are wrapped the same way.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'push_queue'
+       AND c.conname = 'push_not_before_after_queued') THEN
+    ALTER TABLE updater.push_queue ADD CONSTRAINT push_not_before_after_queued
+      CHECK (not_before IS NULL OR not_before >= queued_at) NOT VALID;
+  END IF;
+END;
+$$;
+ALTER TABLE updater.push_queue VALIDATE CONSTRAINT push_not_before_after_queued;
+-- The repeat row must carry one; the immediate rows must not need to. Stated as a
+-- guard on the UPDATE path so a future change cannot quietly move a scheduled
+-- notice into the past, which would turn the 12 h reminder into a second
+-- immediate alert.
+CREATE OR REPLACE FUNCTION updater.guard_push_schedule() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, updater, pg_temp AS $$
+BEGIN
+  IF NEW.not_before IS NOT NULL AND NEW.not_before < NEW.queued_at THEN
+    RAISE EXCEPTION 'updater push not_before precedes its queue time' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.sent_at IS NOT NULL AND NEW.not_before IS NOT NULL AND NEW.sent_at < NEW.not_before THEN
+    RAISE EXCEPTION 'updater push was sent before it was due' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION updater.guard_push_schedule() FROM PUBLIC;
+CREATE OR REPLACE TRIGGER push_queue_schedule_guard BEFORE UPDATE ON updater.push_queue
+  FOR EACH ROW EXECUTE FUNCTION updater.guard_push_schedule();
 
 -- ---------------------------------------------------------------------------
 -- The owner request's handling, and the heartbeat's shape

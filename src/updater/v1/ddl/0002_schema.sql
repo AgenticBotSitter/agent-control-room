@@ -76,6 +76,75 @@ $$;
 REVOKE ALL ON SCHEMA updater FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
+-- The two bound helpers, defined BEFORE the tables that CHECK on them
+-- ---------------------------------------------------------------------------
+-- A CHECK constraint may not contain a subquery, so the transports bound cannot
+-- be written inline: `cardinality() <= 8` is fine, but "no element longer than 32
+-- bytes" needs `unnest`, and PostgreSQL refuses that with `0A000`. An IMMUTABLE
+-- function is the supported way to express it, and putting it here rather than in
+-- 0003 is what lets `CREATE TABLE` use it — a function defined later in the file
+-- would not exist yet.
+--
+-- IMMUTABLE IS NOT DECORATIVE. It is what makes the function usable in a CHECK
+-- at all, and it is also what makes it safe: the result depends only on its
+-- argument and not on the session, the clock or any table, so a row's legality
+-- cannot change under it. Both are `LANGUAGE sql` over one expression each, so
+-- there is no plpgsql and no way to smuggle a statement in.
+--
+-- `pg_temp` LAST, like every other routine in this schema (R10b), so an object a
+-- candidate created cannot be found by one of these names first.
+CREATE OR REPLACE FUNCTION updater.bounded_transports(value text[]) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, updater, pg_temp AS $$
+  SELECT cardinality(value) <= 8
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(value) AS t WHERE pg_catalog.length(t) > 32)
+$$;
+REVOKE ALL ON FUNCTION updater.bounded_transports(text[]) FROM PUBLIC;
+
+-- The add-mode assertion's pairing, as a predicate rather than a five-branch
+-- CHECK, so the table, the ALTER and any future caller all ask the same question.
+-- `auth_user_handle` is deliberately absent: a user handle is optional on an
+-- assertion (a discoverable credential returns one, an allow-list one may not),
+-- so its absence cannot make the set partial.
+CREATE OR REPLACE FUNCTION updater.authorization_complete(credential_id text, authenticator_data bytea,
+  client_data_json bytea, signature bytea) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, updater, pg_temp AS $$
+  SELECT (credential_id IS NULL AND authenticator_data IS NULL AND client_data_json IS NULL
+      AND signature IS NULL)
+    OR (credential_id IS NOT NULL AND authenticator_data IS NOT NULL AND client_data_json IS NOT NULL
+      AND signature IS NOT NULL)
+$$;
+REVOKE ALL ON FUNCTION updater.authorization_complete(text, bytea, bytea, bytea) FROM PUBLIC;
+
+-- EXECUTE FOR THE WEB LOGIN IS REQUIRED, NOT OPTIONAL — and both GRANTs come
+-- AFTER both REVOKEs on purpose.
+--
+-- WHY IT IS REQUIRED. A CHECK constraint is evaluated as the role doing the
+-- INSERT, so a function named inside one is CALLED AS THAT ROLE. `CREATE FUNCTION`
+-- grants EXECUTE to PUBLIC by default, so the web could already evaluate these —
+-- but the moment either is REVOKEd from PUBLIC without a grant back, every web
+-- insert here fails with `permission denied for function`, which is a refusal
+-- that looks like a permissions mistake rather than a missing grant. This is the
+-- same lesson `scripts/mac-local/database-upgrade-grants.mjs` already records for
+-- MIG-I's push-endpoint allow list (0227): in a comment there, and as a named
+-- grant here.
+--
+-- WHY THE ORDER. REVOKE closes the PUBLIC default that CREATE FUNCTION installed;
+-- GRANT then re-opens exactly one named caller for the one statement shape that
+-- needs it. Granting first and revoking second would leave the web with no
+-- EXECUTE at all, and `CREATE OR REPLACE FUNCTION` on the next startup would
+-- restore the PUBLIC default — so the close must be the last thing that runs
+-- before the reopen.
+--
+-- WHAT EXECUTE CONVEYS HERE: nothing. Both are IMMUTABLE, pure SQL over their own
+-- arguments, own no object and reach no table. All it grants is the ability to
+-- ask whether a value is inside a bound, which is the entire question a CHECK
+-- asks. The deployer keeps its implicit owner privilege and the migrator still
+-- holds no USAGE on the schema at all.
+GRANT EXECUTE ON FUNCTION updater.bounded_transports(text[]) TO control_room_private_web;
+GRANT EXECUTE ON FUNCTION updater.authorization_complete(text, bytea, bytea, bytea)
+  TO control_room_private_web;
+
+-- ---------------------------------------------------------------------------
 -- plans — one row per install/update proposal the updater has written
 -- ---------------------------------------------------------------------------
 -- The authoritative copy of a plan is `updater-state/plans/<id>.json` on disk
@@ -186,6 +255,16 @@ CREATE INDEX IF NOT EXISTS plan_approval_outcomes_by_plan ON updater.plan_approv
 -- R13a) is checked by the updater from its own file, not here: this table
 -- deliberately allows more than one row per R so the race that rule exists to
 -- catch is VISIBLE, and the installer refuses and restarts when it sees two.
+-- So there is NO UNIQUE constraint on `registration_digest` and there must never
+-- be one: a unique index would make the second racer's INSERT raise instead of
+-- land, and the race would become invisible rather than refused (review §5 P-1).
+--
+-- A WebAuthn registration response is FOUR fields, not one. Item 7's table held
+-- the attestation and the comparison code, so `registrationRows` could not hand
+-- the wrapper a response it would accept — the wrapper's parser refuses a
+-- missing clientDataJSON before the library is ever called. The additions below
+-- close that, and their bounds ARE the wrapper's bounds, so an over-bound
+-- response is refused by the database and never reaches a parser (R16).
 CREATE TABLE IF NOT EXISTS updater.passkey_registrations (
   id text PRIMARY KEY CHECK (id ~ '^passkey-registration:[0-9a-f-]{36}$'),
   -- The single-use registration secret, as a digest. The secret itself never
@@ -193,14 +272,285 @@ CREATE TABLE IF NOT EXISTS updater.passkey_registrations (
   registration_digest text NOT NULL CHECK (registration_digest ~ '^sha256:[a-f0-9]{64}$'),
   credential_id text NOT NULL CHECK (credential_id ~ '^[A-Za-z0-9_-]{16,255}$'),
   attestation_object bytea NOT NULL CHECK (octet_length(attestation_object) BETWEEN 32 AND 8192),
+  -- §5.1 steps 3 and 6. The wrapper bounds clientDataJSON at 1..4096 bytes and
+  -- refuses any base64url that does not round-trip exactly, so the column's
+  -- bound is the same 1..4096 and no more (review §5 P-1). The bound itself is
+  -- installed by the ALTER below rather than written here, so that a fresh
+  -- install and an upgraded one get it from the SAME statement and the two
+  -- cannot drift; see the note at that ALTER.
+  client_data_json bytea NOT NULL,
+  -- The transports the browser reported, bounded exactly as the wrapper bounds
+  -- them: at most 8 entries, each at most 32 bytes. An empty array is legal and
+  -- means the browser reported none. Bound installed by the ALTER below.
+  transports text[] NOT NULL DEFAULT ARRAY[]::text[],
   -- The 6-character comparison code the phone showed and the owner typed at the
   -- installer (R13b). Bounded to the exact alphabet the code is drawn from, so
   -- a row cannot carry a paragraph.
   comparison_code text NOT NULL CHECK (comparison_code ~ '^[0-9A-Z]{6}$'),
   owner_session_digest text NOT NULL CHECK (owner_session_digest ~ '^sha256:[a-f0-9]{64}$'),
+  -- -------------------------------------------------------------------------
+  -- `passkey add`'s existing-passkey assertion (§5.1 step 7). NULL on the
+  -- initial registration, and NULL is the cooling-off route: no assertion means
+  -- the new key enters its 24 h cooling-off rather than being active at once.
+  --
+  -- These are an ASSERTION's bytes, so they carry `plan_approvals`' bounds:
+  -- authenticator_data 37..1024 (the wrapper's floor is rpIdHash + flags +
+  -- signCount = 37), client_data_json 1..4096, signature 32..512, user_handle
+  -- at most 128. The pairing CHECK makes the set all-null or all-present, so a
+  -- row cannot carry a credential id with no signature: an incomplete assertion
+  -- is not a weaker assertion, it is a parse error waiting to happen.
+  -- -------------------------------------------------------------------------
+  auth_credential_id text CHECK (auth_credential_id IS NULL OR auth_credential_id ~ '^[A-Za-z0-9_-]{16,255}$'),
+  auth_authenticator_data bytea
+    CHECK (auth_authenticator_data IS NULL OR octet_length(auth_authenticator_data) BETWEEN 37 AND 1024),
+  auth_client_data_json bytea
+    CHECK (auth_client_data_json IS NULL OR octet_length(auth_client_data_json) BETWEEN 1 AND 4096),
+  auth_signature bytea CHECK (auth_signature IS NULL OR octet_length(auth_signature) BETWEEN 32 AND 512),
+  auth_user_handle bytea CHECK (auth_user_handle IS NULL OR octet_length(auth_user_handle) <= 128),
   received_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS passkey_registrations_by_registration ON updater.passkey_registrations(registration_digest, received_at);
+
+-- The three new columns are ALTERs as well as parts of the CREATE above, and
+-- that is not redundancy — it is the only way both installs work.
+--
+-- WHY. The updater applies this file at every startup, and `CREATE TABLE IF NOT
+-- EXISTS` does NOT add a column to a table that already exists. So an install
+-- that already has item 7's shape keeps its shape, and without the ALTERs every
+-- insert fails on a missing NOT NULL column: right for a new install, wrong for
+-- an upgrade.
+--
+-- WHY THE BOUNDS ARE ONLY IN THE ALTERs. A CHECK written inline in the CREATE
+-- would fire on a new install and then the named ALTER below would try to add a
+-- SECOND constraint — which for the same columns means two enforcement points
+-- that can drift apart. Every bound for these three columns is therefore
+-- installed by exactly one named `ADD CONSTRAINT`, on both paths, so there is one
+-- statement to read and one to mutate. The loader sends this whole file as one
+-- query, so the CREATE and its ALTERs commit together: there is no window in
+-- which the columns exist without their bounds.
+--
+-- The temporary default satisfies NOT NULL on the pre-existing table and is
+-- dropped again immediately, so the end state is NOT NULL with no default: a new
+-- row must carry real client data. An old installation is upgraded before the
+-- web login can insert here, and a web insert that did somehow supply the empty
+-- default is refused by the length CHECK regardless.
+ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS
+  client_data_json bytea NOT NULL DEFAULT ''::bytea;
+ALTER TABLE updater.passkey_registrations ALTER COLUMN client_data_json DROP DEFAULT;
+ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS
+  transports text[] NOT NULL DEFAULT ARRAY[]::text[];
+-- The five `auth_*` columns arrive the same way, and they have to arrive HERE,
+-- before the pairing CHECK below names them: on item 7's table that CHECK was the
+-- first statement to reference a column that did not exist, and the upgrade
+-- stopped with 42703 (review passkey2 DB-3). All five are nullable with no
+-- default, so an existing row gains NULLs, which is the "no assertion" shape the
+-- pairing CHECK accepts.
+ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS auth_credential_id text;
+ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS auth_authenticator_data bytea;
+ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS auth_client_data_json bytea;
+ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS auth_signature bytea;
+ALTER TABLE updater.passkey_registrations ADD COLUMN IF NOT EXISTS auth_user_handle bytea;
+-- Their bounds are written inline in the CREATE above, so a fresh install gets
+-- them under PostgreSQL's generated names (`<table>_<column>_check`). An
+-- upgraded table got the columns from the ALTERs, which carry no CHECK, so the
+-- same constraints are added here UNDER THE SAME NAMES and with the same text.
+-- Same names is what makes "fresh" and "upgraded" one catalog rather than two
+-- that merely behave alike, and the upgrade lane compares the two catalogs
+-- constraint by constraint. Added if and only if absent, so a fresh install and
+-- every restart skip all five. No NOT VALID: every pre-existing row holds NULL
+-- in these columns, which each CHECK accepts.
+DO $$
+DECLARE
+  bound record;
+BEGIN
+  FOR bound IN SELECT * FROM (VALUES
+      ('passkey_registrations_auth_credential_id_check',
+       'CHECK (auth_credential_id IS NULL OR auth_credential_id ~ ''^[A-Za-z0-9_-]{16,255}$'')'),
+      ('passkey_registrations_auth_authenticator_data_check',
+       'CHECK (auth_authenticator_data IS NULL OR octet_length(auth_authenticator_data) BETWEEN 37 AND 1024)'),
+      ('passkey_registrations_auth_client_data_json_check',
+       'CHECK (auth_client_data_json IS NULL OR octet_length(auth_client_data_json) BETWEEN 1 AND 4096)'),
+      ('passkey_registrations_auth_signature_check',
+       'CHECK (auth_signature IS NULL OR octet_length(auth_signature) BETWEEN 32 AND 512)'),
+      ('passkey_registrations_auth_user_handle_check',
+       'CHECK (auth_user_handle IS NULL OR octet_length(auth_user_handle) <= 128)')) AS v(name, definition)
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+        JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'updater' AND t.relname = 'passkey_registrations' AND c.conname = bound.name) THEN
+      EXECUTE pg_catalog.format('ALTER TABLE updater.passkey_registrations ADD CONSTRAINT %I %s',
+        bound.name, bound.definition);
+    END IF;
+  END LOOP;
+END;
+$$;
+-- ADD COLUMN carries no column CHECK, so each bound is installed here, which is
+-- the only place it is written. Each is added NOT VALID and validated in the
+-- next statement, so an existing installation is checked row by row and a row
+-- that cannot satisfy the bound is a row no verifier could have accepted.
+--
+-- On an item-7 table that already HOLDS a registration row, that row has the
+-- empty default for `client_data_json` and the VALIDATE below refuses the whole
+-- apply, loudly. That is stated rather than engineered around: item 7 had no
+-- writer for this table (the web's insert path is item 10a's), so no item-7
+-- install can hold such a row, and one that somehow did holds a response the
+-- wrapper would refuse anyway. The upgrade lane proves the path for an item-7
+-- schema with rows in the tables item 7 did write.
+--
+-- WHY EACH IS WRAPPED IN A `DO` BLOCK. PostgreSQL has no `ADD CONSTRAINT IF NOT
+-- EXISTS`, and the updater applies this file at EVERY startup (design §9.1). The
+-- unguarded form therefore fails on the second apply with `constraint "..."
+-- already exists` — an updater that cannot restart. `tests/updater-schema-
+-- postgres.test.ts` asserts that a second apply "changes nothing and refuses
+-- nothing", and it caught exactly this, which is that assertion earning its
+-- place. Every ADD CONSTRAINT in this schema is wrapped the same way, and the
+-- wrapper is idempotent rather than merely quiet: the constraint is added if and
+-- only if it is absent.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'passkey_registrations'
+       AND c.conname = 'passkey_registrations_client_data_bound') THEN
+    ALTER TABLE updater.passkey_registrations ADD CONSTRAINT passkey_registrations_client_data_bound CHECK (octet_length(client_data_json) BETWEEN 1 AND 4096) NOT VALID;
+  END IF;
+END;
+$$;
+ALTER TABLE updater.passkey_registrations VALIDATE CONSTRAINT passkey_registrations_client_data_bound;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'passkey_registrations'
+       AND c.conname = 'passkey_registrations_transports_bound') THEN
+    ALTER TABLE updater.passkey_registrations ADD CONSTRAINT passkey_registrations_transports_bound CHECK (updater.bounded_transports(transports)) NOT VALID;
+  END IF;
+END;
+$$;
+ALTER TABLE updater.passkey_registrations VALIDATE CONSTRAINT passkey_registrations_transports_bound;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'passkey_registrations'
+       AND c.conname = 'passkey_registrations_authorization_pair') THEN
+    ALTER TABLE updater.passkey_registrations ADD CONSTRAINT passkey_registrations_authorization_pair CHECK (updater.authorization_complete(auth_credential_id, auth_authenticator_data,
+    auth_client_data_json, auth_signature)) NOT VALID;
+  END IF;
+END;
+$$;
+ALTER TABLE updater.passkey_registrations VALIDATE CONSTRAINT passkey_registrations_authorization_pair;
+
+-- ---------------------------------------------------------------------------
+-- passkey_open_registrations — what the updater published for the web to use
+-- ---------------------------------------------------------------------------
+-- P-1's requirement, and the reason the web can be refused anything else: the
+-- web may only render or accept a registration the updater itself opened. Two
+-- consequences make that worth a table rather than a code check on the web:
+--
+--   * `options_json` is the updater's OWN `PasskeyAuthorityV1.registrationOptions`,
+--     byte for byte. The challenge, the RP ID, the origin and the credential
+--     lists therefore cannot be re-derived or "helpfully" adjusted by the
+--     release process — there is nothing on the web side to compute them from.
+--     P-2's parity requirement is met by construction rather than by a test that
+--     has to keep passing.
+--   * the guard in 0003 refuses any row whose digest is unknown, already
+--     consumed, or expired at the DATABASE clock, and caps the rows per digest
+--     so a flood stays bounded while a genuine two-row race stays visible.
+--
+-- The updater owns this table and is the only writer. The web gets SELECT on
+-- five columns and nothing else: it can ask "is this digest open, and what
+-- should I show" and cannot open one, extend one, or mark one consumed.
+CREATE TABLE IF NOT EXISTS updater.passkey_open_registrations (
+  registration_digest text PRIMARY KEY CHECK (registration_digest ~ '^sha256:[a-f0-9]{64}$'),
+  installation_id text NOT NULL CHECK (installation_id ~ '^[A-Za-z0-9._-]{1,80}$'),
+  mode text NOT NULL CHECK (mode IN ('initial','add')),
+  -- The exact bytes the web must hand `navigator.credentials.create`. 16 KiB
+  -- covers the whole options object with room to spare and refuses a payload
+  -- that is trying to be something else; the object must be an OBJECT, so a
+  -- JSON array or a bare string cannot stand in for it.
+  options_json jsonb NOT NULL CHECK (jsonb_typeof(options_json) = 'object'
+    AND octet_length(options_json::text) <= 16384),
+  -- §5.1 step 7. Present exactly when `mode = 'add'`, and never otherwise, so an
+  -- initial registration cannot acquire an add-challenge after the fact.
+  authorization_challenge text CHECK (authorization_challenge IS NULL
+    OR authorization_challenge ~ '^[A-Za-z0-9_-]{43}$'),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  -- Set by the updater when it consumes the registration (used or refused). A
+  -- consumed row stays, so a late web insert is refused by name rather than by a
+  -- silent expiry race.
+  consumed_at timestamptz,
+  CONSTRAINT passkey_open_registration_expiry_after_creation CHECK (expires_at > created_at),
+  CONSTRAINT passkey_open_registration_challenge_matches_mode CHECK (
+    (mode = 'add' AND authorization_challenge IS NOT NULL)
+    OR (mode = 'initial' AND authorization_challenge IS NULL)),
+  CONSTRAINT passkey_open_registration_consumed_at_after_creation
+    CHECK (consumed_at IS NULL OR consumed_at >= created_at)
+);
+
+-- ---------------------------------------------------------------------------
+-- approval_refusals — one row per refused approval, the idempotency ledger
+-- ---------------------------------------------------------------------------
+-- R16's "refusals are aggregated per plan per hour". `recordApprovalRefusal`
+-- claims an approval here with ON CONFLICT DO NOTHING, and only a row that was
+-- actually claimed may bump the bucket — so re-processing one approval row (a
+-- retried NOTIFY, a re-read of the queue) cannot increment the count a second
+-- time, and cannot re-earn the "first in this hour" flag.
+--
+-- Append-only like every other evidence table, and `reason` is a bounded token
+-- the updater chose, never free text a caller supplied.
+CREATE TABLE IF NOT EXISTS updater.approval_refusals (
+  approval_id text PRIMARY KEY CHECK (approval_id ~ '^approval:[0-9a-f-]{36}$'),
+  plan_id text NOT NULL REFERENCES updater.plans(plan_id) ON DELETE RESTRICT,
+  reason text NOT NULL CHECK (reason ~ '^[a-z][a-z0-9_]{1,63}$'),
+  -- The bucket is the DATABASE's hour, never the caller's clock: an updater with
+  -- a skewed clock must not be able to open a second bucket for the same hour.
+  bucket_start timestamptz NOT NULL DEFAULT now() - (EXTRACT(epoch FROM pg_catalog.now())
+    - EXTRACT(epoch FROM pg_catalog.date_trunc('hour', pg_catalog.now()))) * interval '1 second',
+  observed_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
+-- approval_refusal_buckets — the per-plan-per-hour aggregate and its delivery
+-- ---------------------------------------------------------------------------
+-- One row per (plan, hour), which is what makes "one journal line and one push
+-- per plan per hour" a database property rather than a convention in the caller.
+--
+-- `first_in_hour` is the INSERT's own `approval_id`, so "the first refusal of
+-- this hour" is decided by which row created the bucket — under concurrency, by
+-- the row that won the upsert — and not by a read-then-write a caller could
+-- interleave.
+--
+-- The two delivery timestamps are P-4's durable-delivery contract: the updater
+-- sets `journaled_at` only after the journal line is fsynced and `pushed_at`
+-- only after the push row is committed, and it re-drives any bucket whose two
+-- are not both set at startup. So a sink that failed after the count was
+-- committed cannot lose the hourly alert, and a re-drive cannot duplicate it:
+-- both are keyed on the bucket, and the push row carries the same idempotency
+-- key.
+CREATE TABLE IF NOT EXISTS updater.approval_refusal_buckets (
+  plan_id text NOT NULL REFERENCES updater.plans(plan_id) ON DELETE RESTRICT,
+  bucket_start timestamptz NOT NULL,
+  count integer NOT NULL CHECK (count >= 1),
+  first_in_hour text NOT NULL CHECK (first_in_hour ~ '^approval:[0-9a-f-]{36}$'),
+  -- The most recent approval folded into this bucket, so the updater can tell a
+  -- replayed approval from a new one without reading the ledger table.
+  last_approval_id text NOT NULL CHECK (last_approval_id ~ '^approval:[0-9a-f-]{36}$'),
+  journaled_at timestamptz,
+  pushed_at timestamptz,
+  PRIMARY KEY (plan_id, bucket_start),
+  CONSTRAINT approval_refusal_bucket_delivery_after_bucket CHECK (
+    (journaled_at IS NULL OR journaled_at >= bucket_start)
+    AND (pushed_at IS NULL OR pushed_at >= bucket_start))
+);
+CREATE INDEX IF NOT EXISTS approval_refusal_buckets_undelivered
+  ON updater.approval_refusal_buckets(bucket_start, plan_id)
+  WHERE journaled_at IS NULL OR pushed_at IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- owner_requests — phone controls that reduce risk or only measure
@@ -247,7 +597,43 @@ CREATE INDEX IF NOT EXISTS owner_requests_unhandled ON updater.owner_requests(re
 -- web-inserted row can never claim that prefix.
 CREATE TABLE IF NOT EXISTS updater.push_queue (
   id text PRIMARY KEY CHECK (id ~ '^push:[0-9a-f-]{36}$'),
-  template text NOT NULL CHECK (template ~ '^[a-z][a-z0-9_.]{1,63}$'),
+  -- P-4: the caller-chosen key that makes a re-drive safe. The refusal
+  -- aggregation's key is `passkey-refusal:<planId>:<bucketStart>`, so a bucket
+  -- whose push sink failed can be re-driven at startup without a second alert
+  -- reaching the phone. It is UNIQUE, not merely indexed: an idempotency key
+  -- that does not refuse a duplicate is not an idempotency key.
+  -- The alphabet is base64url PLUS `:` `.`, `-` and `_`, and the first character
+  -- is constrained separately from the rest.
+  --
+  -- WHY THE TWO RANGES. The key is `<prefix>:<credentialId>:<suffix>`: a
+  -- lowercase-word prefix, a base64url credential id (which carries UPPERCASE and
+  -- DIGITS, and is the part the earlier draft refused), and a lowercase suffix.
+  -- A single `[a-z][a-z0-9:._~-]*` pattern therefore had to either admit an
+  -- uppercase first character — which would let a key look like a credential id
+  -- — or exclude the credential id entirely. The first version did the latter, so
+  -- every REAL cooling-off key was refused by this CHECK while the fixture's
+  -- (lowercase) keys passed: a fixture less demanding than production, which is
+  -- the worst way for a fixture to be wrong.
+  --
+  -- So: first character lowercase, remainder the full base64url alphabet with the
+  -- four separators. The credential id can then be a key component and a key
+  -- still cannot be mistaken for one.
+  idempotency_key text CHECK (idempotency_key IS NULL
+    OR (idempotency_key ~ '^[a-z]' AND idempotency_key ~ '^[A-Za-z0-9:._~-]{2,191}$')),
+  -- The template alphabet INCLUDES `-`, and it must: the updater's own reserved
+  -- prefix is `control-room-updater`, and the pattern used to be
+  -- `^[a-z][a-z0-9_.]{1,63}$`. So the updater's own template ids could never be
+  -- inserted at all, and the guard below that reserves the prefix
+  -- (`only the updater may use its own push template`) was a rule about a
+  -- namespace nothing could reach — which is why it passed for the wrong reason
+  -- when item 10a tried to enqueue a real cooling-off notice and PostgreSQL
+  -- refused the row on the CHECK instead. Measured, not assumed: that is what the
+  -- first real-PG run of the cooling-off enqueue showed.
+  --
+  -- `-` is safe here because a template id is a fixed token chosen by the code
+  -- that renders it, never parsed as a path or interpolated into SQL, and the
+  -- guard above still decides WHO may use the prefix.
+  template text NOT NULL CHECK (template ~ '^[a-z][a-z0-9._-]{1,63}$'),
   -- Fixed-template arguments only. `title` is a plan title the updater itself
   -- wrote; everything else is a code, not prose.
   title text NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
@@ -259,6 +645,49 @@ CREATE TABLE IF NOT EXISTS updater.push_queue (
   last_error_code text CHECK (last_error_code IS NULL OR last_error_code ~ '^[a-z][a-z0-9_]{1,63}$'),
   CONSTRAINT push_sent_shape CHECK ((sent_at IS NULL) OR attempts > 0)
 );
+-- The column arrives by ALTER for the same reason the registration columns did:
+-- an install that already has item 7's shape must be upgraded, not skipped. It
+-- comes BEFORE the index that names it; the other order failed on item 7's
+-- table (review passkey2 DB-3).
+ALTER TABLE updater.push_queue ADD COLUMN IF NOT EXISTS idempotency_key text;
+-- Two bounds that `CREATE TABLE IF NOT EXISTS` does not bring to item 7's table,
+-- under the names a fresh install gives them:
+--
+--   * `push_queue_idempotency_key_check`, the key's alphabet, which the ALTER
+--     above could not carry;
+--   * `push_queue_template_check`, which item 7 wrote WITHOUT `-`. Left alone,
+--     an upgraded queue would refuse every `control-room-updater.*` template,
+--     so the cooling-off enqueue would fail on exactly the installs that already
+--     have an owner to warn. It is replaced only when its text lacks the `-`
+--     range; widening a CHECK cannot invalidate a row the narrower one accepted.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'push_queue'
+       AND c.conname = 'push_queue_idempotency_key_check') THEN
+    ALTER TABLE updater.push_queue ADD CONSTRAINT push_queue_idempotency_key_check
+      CHECK (idempotency_key IS NULL
+        OR (idempotency_key ~ '^[a-z]' AND idempotency_key ~ '^[A-Za-z0-9:._~-]{2,191}$'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'updater' AND t.relname = 'push_queue'
+       AND c.conname = 'push_queue_template_check'
+       AND pg_catalog.strpos(pg_catalog.pg_get_constraintdef(c.oid), 'a-z0-9._-') > 0) THEN
+    ALTER TABLE updater.push_queue DROP CONSTRAINT IF EXISTS push_queue_template_check;
+    ALTER TABLE updater.push_queue ADD CONSTRAINT push_queue_template_check
+      CHECK (template ~ '^[a-z][a-z0-9._-]{1,63}$');
+  END IF;
+END;
+$$;
+-- A PARTIAL unique index, so the web's un-keyed pushes are unaffected while the
+-- updater's keyed ones refuse a duplicate exactly. `CREATE UNIQUE INDEX IF NOT
+-- EXISTS` is idempotent for the same reason every other statement here is.
+CREATE UNIQUE INDEX IF NOT EXISTS push_queue_idempotency ON updater.push_queue(idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS push_queue_unsent ON updater.push_queue(queued_at, id) WHERE sent_at IS NULL;
 
 -- ---------------------------------------------------------------------------
@@ -382,6 +811,37 @@ GRANT SELECT (id, request_kind, requires_passkey, requested_at, handled_at, hand
 GRANT SELECT (id, template, title, queued_at, sent_at) ON updater.push_queue TO control_room_private_web;
 GRANT SELECT (id, credential_id, registration_digest, received_at) ON updater.passkey_registrations
   TO control_room_private_web;
+-- P-2's read side, and the only thing item 10a adds to the web's reach. Five
+-- columns: the digest, the mode, the exact options object, the add-challenge and
+-- the expiry. Not `consumed_at`, because a web page that could see "consumed"
+-- would be rendering a state it cannot act on; and not `installation_id`, because
+-- the options object already carries the RP ID the page needs.
+--
+-- The web cannot INSERT here, so it cannot open a registration of its own: the
+-- only writer is the updater, and only from its own passkey ledger. That is the
+-- whole reason a compromised release cannot mint a registration challenge.
+GRANT SELECT (registration_digest, mode, options_json, authorization_challenge, expires_at)
+  ON updater.passkey_open_registrations TO control_room_private_web;
+-- The web's USABLE read (review passkey2 DB-8). The column grant above cannot
+-- tell the web that a registration was consumed, because `consumed_at` is
+-- withheld — so a web that read the table directly would serve the options of a
+-- finished registration and the owner would only find out at the insert. This
+-- view is the same five columns filtered to what is actually open, evaluated as
+-- its owner (the deployer), so the web learns "still open" without ever reading
+-- `consumed_at` or `created_at`. `security_barrier` keeps a caller-supplied
+-- predicate from being pushed below the filter, so a leaky function in the web's
+-- WHERE clause cannot observe a consumed row.
+CREATE OR REPLACE VIEW updater.passkey_open_registrations_web WITH (security_barrier = true) AS
+  SELECT o.registration_digest, o.mode, o.options_json, o.authorization_challenge, o.expires_at
+    FROM updater.passkey_open_registrations o
+   WHERE o.consumed_at IS NULL AND o.expires_at > pg_catalog.now();
+REVOKE ALL ON updater.passkey_open_registrations_web FROM PUBLIC;
+GRANT SELECT ON updater.passkey_open_registrations_web TO control_room_private_web;
+-- Neither refusal table is granted at all. The web has no business knowing that
+-- an approval was refused — the updater's journal and the phone are the channels
+-- for that — and a read grant would turn `approval_refusals` into a place where a
+-- web-insertable plan id could be observed to accumulate refusals. The web is not
+-- in the INSERT list below either, so the whole aggregation is the updater's.
 
 -- INSERT only, on the four tables the design names and no others. There is no
 -- UPDATE, no DELETE and no TRUNCATE anywhere for this login, which is why the

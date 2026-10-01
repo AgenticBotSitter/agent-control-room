@@ -4,9 +4,15 @@ import { PostgresUpdaterStoreV1 } from "./store.mjs";
 import { UpdaterControlServerV1 } from "./control-socket.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
 import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
-  newUpdaterIdentityV1 } from "./runtime.mjs";
+  newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
 import { UpdaterAlertSenderV1 } from "./alerts.mjs";
+import { PasskeyAuthorityV1, PasskeyRefusalAggregatorV1, SimpleWebAuthnVerifierV1 } from "./passkey.mjs";
+
+// The fixed updater bundle exposes the item-13 actuator for composition with
+// the item-5 lifecycle and item-14 health ports. `startUpdaterV1` accepts that
+// composed instance through `options.effects` and settles it before listening.
+export { DiskReserveV1, PairHistoryV1, UpdaterActuatorV1, collectOldReleasesV1 } from "./actuator.mjs";
 
 function updaterRootV1(env) {
   const production = "/Library/Application Support/Control Room";
@@ -36,7 +42,23 @@ export async function startUpdaterV1(options = {}) {
       throw error;
     }
   }
-  const identity = options.identity ?? newUpdaterIdentityV1();
+  const requestedIdentity = options.identity ?? newUpdaterIdentityV1();
+  let acquisition;
+  try {
+    if (store.acquire) acquisition = await store.acquire(requestedIdentity.leaseToken);
+    else {
+      const run = await store.liveRun();
+      acquisition = { status: "acquired", run, leaseToken: run?.lease_token ?? requestedIdentity.leaseToken };
+    }
+  } catch (error) {
+    if (ownsClient) await client.end().catch(() => {});
+    throw error;
+  }
+  if (acquisition.status !== "acquired") {
+    if (ownsClient) await client.end().catch(() => {});
+    throw updaterRefuseV1("updater_live_session_busy");
+  }
+  const identity = Object.freeze({ ...requestedIdentity, leaseToken: acquisition.leaseToken });
   const stateFiles = new UpdaterStateFilesV1(root, identity.leaseToken), mode = new UpdaterModeV1();
   const unavailable = async () => { throw updaterRefuseV1("updater_actuator_port_unbound"); };
   const effects = options.effects ?? { precheck: unavailable, stage: unavailable, quickBackup: unavailable,
@@ -45,40 +67,111 @@ export async function startUpdaterV1(options = {}) {
   const referee = options.referee ?? { assertPlanAllowed: async () => {
     throw updaterRefuseV1("updater_referee_port_unbound");
   } };
-  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles,
-    journal: new FileStepJournalV1(root) });
+  let heartbeatState = acquisition.run
+    ? { state: "running", step: acquisition.run.state }
+    : { state: "idle", step: null };
+  const setHeartbeatState = value => { heartbeatState = value; };
+  const journal = options.journal ?? new FileStepJournalV1(root);
+  await journal.recoverCompaction();
+  let fileJournalUncertain, displayJournalUncertain, journalRecoveryPending = false;
+  const refreshJournalHealth = async () => {
+    try { await journal.validate(); fileJournalUncertain = undefined; }
+    catch (error) { fileJournalUncertain = error?.code ?? "updater_journal_invalid"; }
+    return fileJournalUncertain;
+  };
+  await refreshJournalHealth();
+  if (!fileJournalUncertain && options.journalDisplay) {
+    const reconciliation = await reconcileJournalDisplayV1({ journal, display: options.journalDisplay,
+      rescued: await stateFiles.hasRescueMarker() });
+    displayJournalUncertain = reconciliation.state === "uncertain" ? reconciliation.reason : undefined;
+  }
+  stateFiles.refreshJournalHealth = refreshJournalHealth;
+  stateFiles.journalUncertain = () => fileJournalUncertain ?? displayJournalUncertain;
+  stateFiles.repairJournalUncertain = async () => {
+    if (!fileJournalUncertain) return false;
+    const repaired = await journal.quarantineCorrupt();
+    await refreshJournalHealth();
+    journalRecoveryPending = repaired && !fileJournalUncertain;
+    return journalRecoveryPending;
+  };
+  stateFiles.journalRecoveryPending = () => journalRecoveryPending;
+  stateFiles.settleJournalRecovery = () => { journalRecoveryPending = false; };
+  const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles, journal,
+    onHeartbeatState: setHeartbeatState });
+  // Item 10b binds the web/approval polling loop. Item 10a exposes the complete
+  // authority and typed DB/sink ports now, without adding SQL here.
+  const passkeyStore = options.passkeyStore ?? store;
+  const passkeys = options.passkeys ?? new PasskeyAuthorityV1({ root,
+    store: passkeyStore, verifier: options.passkeyVerifier ?? new SimpleWebAuthnVerifierV1() });
+  const refusalAggregator = options.refusalAggregator ?? (passkeyStore?.recordApprovalRefusal && options.refusalJournal
+      && options.refusalPush ? new PasskeyRefusalAggregatorV1({ store: passkeyStore,
+        journal: options.refusalJournal, push: options.refusalPush }) : undefined);
   const ownerActions = options.ownerActions ?? { handle: async request => {
     if (request.request_kind === "pause") mode.set("paused");
     else if (request.request_kind === "stop") mode.set("stopped");
     else if (request.request_kind === "resume") mode.set("running");
+    else if (request.request_kind === "check_and_continue") await runner.checkAndContinue();
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
   const reportTimerError = options.onTimerError ?? (error => {
     process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
   });
-  const alerts = options.alerts === undefined ? null : options.alerts ?? new UpdaterAlertSenderV1({ root, store });
+  // R12 wiring, corrected after review: the production entry point passes NO
+  // options, so "no `alerts` key" must mean the REAL sender, exactly like every
+  // other optional collaborator above (`store`, `effects`, `referee`,
+  // `ownerActions`). Only an explicit `alerts: null` (or `false`) turns the
+  // sender off, and only for a caller that supplies its own. The previous
+  // ternary read the absence of the key as "off" and the presence of an
+  // explicit `null` as "on", so production started with no sender at all and
+  // the VAPID refuse-to-start gate below never ran.
+  const alerts = options.alerts === false ? null
+    : options.alerts === undefined || options.alerts === null ? new UpdaterAlertSenderV1({ root, store })
+    : options.alerts;
   if (alerts) await alerts.preflight();
-  const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, alerts,
-    alertFacts: options.alertFacts, onError: reportTimerError });
-  let heartbeatState = { state: "idle", step: null };
+  const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, watcher: options.watcher ?? null,
+    alerts, alertFacts: options.alertFacts, onError: reportTimerError });
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportTimerError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
+    if (request.verb === "passkey-add-begin") {
+      if (request.arguments.length) throw updaterRefuseV1("updater_passkey_arguments_refused");
+      const registration = await passkeys.beginRegistration({ mode: "add" });
+      return { registrationSecret: registration.registrationSecret,
+        expectedOrigin: registration.config.expectedOrigin, expiresAt: registration.expiresAt };
+    }
+    if (request.verb === "passkey-add-complete") {
+      if (request.arguments.length !== 2) throw updaterRefuseV1("updater_passkey_arguments_refused");
+      return passkeys.completeRegistration({ registrationSecret: request.arguments[0], typedCode: request.arguments[1] });
+    }
+    if (request.verb === "passkey-list") {
+      if (request.arguments.length) throw updaterRefuseV1("updater_passkey_arguments_refused");
+      return passkeys.listPasskeys();
+    }
+    if (request.verb === "passkey-revoke") {
+      if (request.arguments.length !== 1 || !/^[1-9][0-9]{0,2}$/u.test(request.arguments[0]))
+        throw updaterRefuseV1("updater_passkey_number_refused");
+      return passkeys.revokePasskey(Number(request.arguments[0]));
+    }
     const map = { pause: "paused", resume: "running", stop: "stopped" };
     if (map[request.verb]) { mode.set(map[request.verb]); return { accepted: true }; }
     return ownerActions.handle({ request_kind: request.verb.replaceAll("-", "_"), detail: { arguments: request.arguments },
       requires_passkey: request.verb === "rollback" });
   } });
   try {
-    await control.start(); await heartbeat.beat(); await loop.tick(); heartbeat.start(); loop.start();
+    // Item 13: settle a durable release/database link transaction before any
+    // run is observed. The actuator either completes it or restores its source.
+    await effects.recover?.();
+    await control.start(); await heartbeat.beat(); await loop.tick(); await heartbeat.beat(); heartbeat.start(); loop.start();
   } catch (error) {
     loop.stop(); await heartbeat.stop(); await control.stop();
+    if (store.release) await store.release().catch(() => {});
     if (ownsClient) await client.end();
     throw error;
   }
-  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, alerts,
-    setHeartbeatState(value) { heartbeatState = value; },
-    async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); if (ownsClient) await client.end(); } });
+  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, passkeys, refusalAggregator, alerts,
+    setHeartbeatState,
+    async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
+      if (ownsClient) await client.end(); } });
 }
 
 const invoked = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

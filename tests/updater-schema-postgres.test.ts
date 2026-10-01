@@ -28,12 +28,15 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
-import { applyUpdaterSchemaV1, updaterDdlFilesV1, type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
+import { applyUpdaterSchemaV1, updaterDdlFilesV1, updaterTablesV1,
+  type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
+import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
 
 // CONTROL_ROOM_PG_TEST_PORT_BASE moves the disposable cluster, as in the module
 // approval lane. 59510 is the block this job was given.
@@ -199,7 +202,8 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
     // The updater's own loader, in the design's order: role and schema as the
     // installer, tables and guards as the deployer.
     const created = await installUpdaterSchema(postgres);
-    assert.equal(created.tables, 9, "the design's nine tables exist");
+    assert.equal(created.tables, updaterTablesV1.length,
+      `the loader's table list exists (${updaterTablesV1.length} tables)`);
     assert.deepEqual([...created.appliedFiles], [...updaterDdlFilesV1()],
       "every DDL file was applied, in order");
     // Idempotent: the updater applies this at every startup.
@@ -271,7 +275,15 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
           "the web login inserts exactly the design's four tables");
         // The updater's own state is not insertable by the web: a compromised
         // release cannot manufacture a run, a journal line or a heartbeat.
-        const notInsertable = ["heartbeat", "plan_approval_outcomes", "plans", "run_events", "runs"];
+        // Item 10a adds three tables (`passkey_open_registrations`,
+        // `approval_refusals`, `approval_refusal_buckets`, plus the limits table)
+        // and none of them is insertable by the web: the open-registration table is
+        // the UPDATER's (a web that could insert one could mint its own challenge),
+        // and the refusal tables are the aggregate's. Asserted by name so a future
+        // grant here is a test failure rather than a surprise.
+        const notInsertable = ["heartbeat", "plan_approval_outcomes", "plans", "run_events", "runs",
+          "passkey_open_registrations", "passkey_registrations_limits", "approval_refusals",
+          "approval_refusal_buckets"];
         for (const table of notInsertable)
           assert.equal(surface.find(row => row.table_name === table)?.insert, false,
             `the web login must not INSERT into updater.${table}`);
@@ -295,9 +307,13 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
       const tables = (await privileged.query<{ relname: string }>(
         `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='updater' AND c.relkind='r' ORDER BY 1`)).rows.map(row => row.relname);
-      assert.deepEqual(tables, ["heartbeat", "owner_requests", "passkey_registrations", "plan_approval_outcomes",
-        "plan_approvals", "plans", "push_queue", "run_events", "runs"],
-      "the design's nine tables, and no others");
+      // The catalog's table set must equal the loader's declared list EXACTLY, in
+    // both directions. Naming the nine item-7 tables here instead would mean a
+    // table added by item 10a failed this lane rather than being required — which
+    // is the wrong failure: the list moved, and the list is the declaration of
+    // what exists. So the assertion reads the same constant the loader checks.
+    assert.deepEqual(tables, [...updaterTablesV1].sort(),
+      "the catalog holds exactly the loader's declared tables, and no others");
     } finally { await privileged.end(); }
 
     // The release ledger created none of this. If a future migration reached
@@ -860,6 +876,12 @@ test("the item-8 store runs every query as the production deployer login", async
       await store.transition(runId, "lease-item8", "prechecked", { source: "item8-test" });
       await store.appendEvent(runId, 1, "prechecked", { source: "item8-test" });
       assert.deepEqual((await store.events(runId)).map((row: { state: string }) => row.state), ["prechecked"]);
+      // Round-trip: the next ordinal is computed from what the REAL store returns (bigint → number).
+      const [first] = await store.events(runId);
+      assert.equal(typeof first.ordinal, "number", "events() must return ordinal as a number, not node-pg's int8 string");
+      await store.transition(runId, "lease-item8", "staged", { source: "item8-test" });
+      await store.appendEvent(runId, first.ordinal + 1, "staged", { source: "item8-test" });
+      assert.deepEqual((await store.events(runId)).map((row: { ordinal: number }) => row.ordinal), [1, 2]);
       await assert.rejects(store.transition(runId, "wrong-lease", "staged"), /updater_run_lease_lost/u,
         "a second caller cannot take over the production row");
 
@@ -873,6 +895,100 @@ test("the item-8 store runs every query as the production deployer login", async
       assert.equal(await store.finishOwnerRequest(requestId, "acted"), true);
       assert.equal((await store.unhandledOwnerRequests()).length, 0);
     } finally { await deployer.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("the item-17 watcher plan port uses database time and atomically supersedes the only open plan", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    const deployer = as(postgres, "deployer"); await deployer.connect();
+    try {
+      const store = new PostgresUpdaterStoreV1(deployer); await store.initialize();
+      const plan = (id: string, commit: string) => ({ schema: "control-room.install-plan/v2", planId: id,
+        installationId: "install-fixture", kind: "code", candidate: { commit }, updaterDerived: { classes: ["code"],
+          changesDatabase: false, changesUpdater: false } });
+      const first = plan("plan-watcher-a", "a".repeat(40)), second = plan("plan-watcher-b", "b".repeat(40));
+      assert.ok((await store.databaseNow()) instanceof Date, "plan timestamps come from PostgreSQL, not the app clock");
+      assert.equal((await store.replaceOpenPlan({ plan: first, planDigest: planDigest("watcher-a"), expectedOpenPlanId: null })).status, "created");
+      assert.equal((await store.openPlan())?.plan.candidate.commit, first.candidate.commit);
+      assert.equal((await store.replaceOpenPlan({ plan: second, planDigest: planDigest("watcher-b"), expectedOpenPlanId: first.planId })).status, "created");
+      assert.equal((await store.openPlan())?.plan.candidate.commit, second.candidate.commit);
+      assert.equal((await store.replaceOpenPlan({ plan: second, planDigest: planDigest("watcher-b"), expectedOpenPlanId: second.planId })).status, "existing",
+        "a restart cannot mint a second plan for the same commit");
+      const old = await deployer.query("SELECT state,superseded_by_plan_id FROM updater.plans WHERE plan_id=$1", [first.planId]);
+      assert.deepEqual(old.rows[0], { state: "superseded", superseded_by_plan_id: second.planId });
+    } finally { await deployer.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("startUpdaterV1 boots with a live run and only one of 20 production sessions acquires it", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    const plan = planId("item8-live-boot");
+    await insertPlan(postgres, plan);
+    const seedClient = as(postgres, "deployer"); await seedClient.connect();
+    const runId = `run:${randomUUID()}`;
+    try {
+      await seedClient.query("UPDATE updater.plans SET state='approved' WHERE plan_id=$1", [plan]);
+      await seedClient.query("INSERT INTO updater.runs(run_id,plan_id,state,run_class,lease_token) "
+        + "VALUES($1,$2,'approved','code','lease-previous-session')", [runId, plan]);
+    } finally { await seedClient.end(); }
+
+    const contenders = await Promise.all(Array.from({ length: 20 }, async (_value, index) => {
+      const client = as(postgres, "deployer"); await client.connect();
+      const store = new PostgresUpdaterStoreV1(client); await store.initialize();
+      const result = await store.acquire(`lease-contender-${index}`);
+      return { client, store, result };
+    }));
+    try {
+      assert.equal(contenders.filter(item => item.result.status === "acquired").length, 1,
+        "exactly one production session owns the updater lease");
+      assert.equal(contenders.filter(item => item.result.status === "busy").length, 19);
+      const winner = contenders.find(item => item.result.status === "acquired");
+      if (!winner || winner.result.status !== "acquired") assert.fail("the lease winner was not retained");
+      assert.equal(winner.result.leaseToken, "lease-previous-session",
+        "the new session resumes with the immutable live-run token");
+      assert.equal(winner.result.resumed, true);
+      await winner.store.release();
+    } finally {
+      await Promise.all(contenders.map(async item => { await item.store.release(); await item.client.end(); }));
+    }
+
+    const root = await mkdtemp(join(tmpdir(), "updater-live-boot-"));
+    await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
+    await writeFile(join(root, "updater-state/self-update"), "On\n");
+    const deployer = as(postgres, "deployer"); await deployer.connect();
+    const store = new PostgresUpdaterStoreV1(deployer); await store.initialize();
+    const calls: string[] = [];
+    const effects = {
+      async precheck() { calls.push("precheck"); }, async stage() { calls.push("stage"); },
+      async quickBackup() { calls.push("quick_backup"); }, async drain() { calls.push("drain"); },
+      async switchPair() { calls.push("switch"); }, async restart() { calls.push("restart"); },
+      async health() { calls.push("health"); return true; }, async commitKnownGood() { calls.push("known_good"); },
+      async rollback() { calls.push("rollback"); }, async measure() { calls.push("measure"); },
+    };
+    let updater;
+    try {
+      updater = await startUpdaterV1({ root, store,
+        identity: { bootId: "boot-live-resume", leaseToken: "lease-new-session" }, effects,
+        referee: { async assertPlanAllowed() {} } });
+      assert.equal(updater.identity.leaseToken, "lease-previous-session");
+      assert.equal(updater.loop.lastOutcome.status, "succeeded");
+      assert.deepEqual(calls, ["precheck", "stage", "quick_backup", "drain", "switch", "restart", "health",
+        "known_good"]);
+      const heartbeat = await deployer.query("SELECT boot_id,lease_token,reported_state FROM updater.heartbeat");
+      assert.deepEqual(heartbeat.rows[0], { boot_id: "boot-live-resume", lease_token: "lease-previous-session",
+        reported_state: "idle" }, "the post-run heartbeat returns to idle without stranding the live run");
+      assert.equal((await store.liveRun()), undefined, "the resumed run is not stranded");
+    } finally {
+      await updater?.stop(); await deployer.end(); await rm(root, { recursive: true, force: true });
+    }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 

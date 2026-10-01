@@ -269,7 +269,7 @@ jobs:
       - name: Test the lane coverage checker and the path routing
         # The quarantine wrapper delegates the original invocation after applying
         # its exact-name exclusions: node --test tests/check-test-lane-coverage.test.mjs
-        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/release-tool.test.mjs tests/migration-number-check.test.mjs tests/verify-mutation-checks.test.mjs
+        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/test-file-dynamic-import-guard.test.mjs tests/release-tool.test.mjs tests/migration-number-check.test.mjs tests/verify-mutation-checks.test.mjs
       - name: Test the PR evidence claims checker
         run: node --test tests/check-pr-claims.test.mjs
       - name: Test the affected-test planner
@@ -431,6 +431,13 @@ jobs:
         # supervisor's machine-health port. It is its own lane because each file
         # builds its own disposable cluster on the reserved 58710-58719 range.
         run: pnpm run test:operations-mode
+      - name: Bot dogfood journey
+        # Can a bot create and run work in Control Room, end to end? The
+        # scripted-bot journey and its stress run, both on real PostgreSQL as
+        # the production logins, with a scripted bot that never starts a real
+        # agent CLI. Its own lane because each file builds its own disposable
+        # cluster on the reserved 59620-59629 range.
+        run: pnpm run test:bot-dogfood
       - name: Resource-bound connector contracts
         # The wrapper preserves this command's flags/files after filtering:
         # node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts

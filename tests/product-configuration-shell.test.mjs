@@ -145,12 +145,17 @@ test("local client shell exposes only reachable routes and reads only local work
         React.createElement(InstallationTopologyProvider, null,
           React.createElement(WorkersWorkspace),
           React.createElement(ProjectNavigation, { projectId: "project:alpha", current: "overview" }))))));
-    // WorkersWorkspace mounts the shared PrivateHeader, and the Mac-local
-    // host serves both the sanitized product configuration and
-    // /api/v1/needs-me/tasks, so those are legitimate reads here. What must
-    // stay bounded is that no hosted-only route is contacted.
+    // WorkersWorkspace mounts the shared PrivateHeader, and the Mac-local host
+    // serves the fleet board and the worker scorecard from that same private web
+    // process, alongside the sanitized product configuration and
+    // /api/v1/needs-me/tasks. All five are identity-gated reads rather than
+    // hosted-only routes -- /api/v1/fleet through the fleet owner handler,
+    // /api/v1/workers-scorecard through `projects.read` in private-process.ts --
+    // so the header polls them here legitimately. What must stay bounded is that
+    // no hosted-only route is contacted.
     await flushBadgeRead();
-    assert.deepEqual(reads, ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks"]);
+    assert.deepEqual(reads, ["/api/v1/fleet", "/api/v1/workers-scorecard", "/api/v1/local-workers",
+      "/api/v1/product-configuration", "/api/v1/needs-me/tasks"]);
     const links = [...dom.window.document.querySelectorAll("a[href]")].map(link => link.getAttribute("href"));
     assert.ok(links.includes("/workers"));
     assert.ok(links.includes("/morning"));

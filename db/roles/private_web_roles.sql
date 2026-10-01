@@ -170,4 +170,32 @@ GRANT UPDATE (next_position, updated_at) ON work_batch_agent_queue_heads TO cont
 GRANT SELECT, INSERT ON installation_operations_mode_revisions TO control_room_private_web;
 GRANT SELECT ON installation_effective_operations_mode TO control_room_private_web;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
+-- Result-file catalog (0206-0208, "Save to my Mac"). The web login is the
+-- owner-facing reader and the only writer of download grants: it reads the
+-- catalog, records a short-lived grant for the exact file it is about to
+-- serve, and marks that grant spent. It holds no UPDATE on the catalog itself
+-- beyond the retention columns, so it cannot mark bytes stored, quarantine a
+-- file or rewrite a producer.
+GRANT SELECT ON control_result_file_sets, control_result_files, control_result_file_download_grants
+  TO control_room_private_web;
+GRANT INSERT ON control_result_file_download_grants TO control_room_private_web;
+GRANT UPDATE (spent_at) ON control_result_file_download_grants TO control_room_private_web;
+-- The owner's two retention decisions: accept a stored set, or move one on to
+-- trash. 0207's acceptance trigger checks the recorded identity's live owner
+-- grant, so this UPDATE is permission to try, not permission to accept.
+GRANT UPDATE (retention_state, accepted_at, accepted_by_identity_id, retained_until)
+  ON control_result_file_sets TO control_room_private_web;
+-- 0209-0211: the owner's approval artefacts for the upload path. The web login
+-- records the declared outputs and inputs (0209/0211's guards require a live
+-- human owner with a write grant over the project, so INSERT is permission to
+-- try, not permission to declare) and binds an accepted file to the consumer
+-- that declared it, on the same transaction that accepts the producer's result.
+-- It holds no UPDATE on any of them, so it cannot re-point a binding, and no
+-- UPDATE on an upload session, so the owner's Stop decision goes through the
+-- 0209 guard's own check that the installation is actually stopped.
+GRANT SELECT, INSERT ON control_task_declared_outputs, control_task_declared_inputs,
+  control_job_artifact_inputs TO control_room_private_web;
+GRANT SELECT ON control_result_upload_sessions, control_result_upload_chunks,
+  control_result_publications TO control_room_private_web;
+
 COMMIT;

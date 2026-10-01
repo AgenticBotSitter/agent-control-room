@@ -1,0 +1,375 @@
+{
+  "schema": "control-room.policy.protected/v1",
+  "policyVersion": 1,
+  "author": "Claude Opus 5.5 (updater design item 16, Opus half), 2026-09-30",
+  "readAgainst": {
+    "cook/v1": "60596d5a0",
+    "forwardLookingBranches": {
+      "cook/daemons": "e5273e308",
+      "cook/installer": "966bffee4",
+      "cook/trustrt": "1e08933ae",
+      "cook/updaterdb": "4f2f5e771"
+    },
+    "spec": "UPDATER_SAFETY_DESIGN.md §10, reviews/updaterdesign.md §2.5, R15, R18a"
+  },
+  "installedAt": "updater/<uver>/policy/protected.json (source: src/updater/v1/policy/protected.json). Only the copy under updater/current is ever read. A candidate's copy is data to be judged, never rules.",
+  "matching": {
+    "subject": "Every path from `git diff --raw -z -M -C <from.commit> <candidate>`: for a rename or copy BOTH the old and the new path; for a delete the old path; for a mode-only or type change the path itself.",
+    "normalise": "Paths are repo-relative, '/'-separated, no leading './'. Pattern and path are both lower-cased (ASCII) before matching, because APFS is case-insensitive: 'SRC/Security/x.ts' lands in src/security/.",
+    "syntax": "Whole-path glob. '**' = zero or more whole segments; '*' = any run of characters except '/'; '?' = one character except '/'; '{a,b,c}' = alternation (no nesting); every other character is literal, including '[' and ']' (Next.js route folders such as 'projects/[projectId]').",
+    "directoryForm": "A pattern ending in '/**' also matches the bare directory path, so a symlink or submodule entry named like the directory is caught.",
+    "exclude": "An entry's 'exclude' patterns remove paths from that entry only; they never lower a class another entry gives.",
+    "combine": "A path collects the classes of every entry it matches, plus the database/dependency classes from classes.json. The plan's classes are the union over all paths. Nothing here ever lowers a class."
+  },
+  "onChangeValues": {
+    "protected": "Red card 'changes Control Room's safety checks'; needs a recorded independent review bound to the candidate tree digest (classes.json 'protected').",
+    "updater": "Class 'updater' (always also 'protected'): passkey + root-rendered Mac `confirm`; §7.4 two-phase (attended `install --commit` before item 8b); never combined with a database change.",
+    "refuse_reinstall": "Class 'updater', and the plan is refused with attended_upgrade_required: 'this change needs a reinstall on the Mac'. These files are put in place only by the one-sudo installer, never by an update."
+  },
+  "entries": [
+    {
+      "id": "updater-source",
+      "patterns": ["src/updater/**"],
+      "onChange": "updater",
+      "status": "future",
+      "reason": "The root updater itself (updater, upgrader, CLI, journal, health prober, migrate/digest tool): bundled by the fixed step §6.6b and run as root."
+    },
+    {
+      "id": "updater-policy",
+      "patterns": ["src/updater/v1/policy/**", "policy/**"],
+      "onChange": "updater",
+      "status": "future",
+      "reason": "The referee's own rules (this file, classes, profiles, review, health, npmrc, bundle, accounts, Seatbelt profiles, epoch); judged only by the OLD rules (§10.1)."
+    },
+    {
+      "id": "updater-ddl-and-lockfile",
+      "patterns": ["src/updater/v1/ddl/**", "src/updater/v1/package.json", "src/updater/v1/pnpm-lock.yaml"],
+      "onChange": "updater",
+      "status": "future",
+      "reason": "The updater schema's fixed DDL and the updater's own lockfile. classes.json excludes the DDL from 'database' (it is applied by the updater, not the release ledger), so an updater plan is never also a DB plan; the lockfile is also 'dependency'."
+    },
+    {
+      "id": "runtime-pins",
+      "patterns": ["src/updater/v1/policy/runtime.json", "src/updater/v1/trusted-runtime.mjs", "scripts/updater/**"],
+      "onChange": "updater",
+      "status": "future",
+      "reason": "Pinned Node/pnpm/PostgreSQL/esbuild digests and the tools that vendor and T1-check them; a change flips runtime/*-current links (§4, §7.4, R11)."
+    },
+    {
+      "id": "guard",
+      "patterns": ["src/updater/v1/guard/**", "guard/**", "**/guard.sh"],
+      "onChange": "refuse_reinstall",
+      "status": "future",
+      "reason": "guard.sh is the rescue and link-revert path that runs when everything else is broken; §7.4 says a guard change is refused ('needs a reinstall')."
+    },
+    {
+      "id": "root-shim",
+      "patterns": ["bin/**"],
+      "onChange": "refuse_reinstall",
+      "status": "future",
+      "reason": "bin/control-room is installed once to /usr/local/bin and run under sudo (R1); only the installer may replace it."
+    },
+    {
+      "id": "sudoers",
+      "patterns": ["**/*sudoers*"],
+      "onChange": "refuse_reinstall",
+      "status": "future",
+      "reason": "The /etc/sudoers.d/control-room secure_path file (R1a) is written only by the installer."
+    },
+    {
+      "id": "seatbelt-profiles",
+      "patterns": ["**/*.sb"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Sandbox profiles; the live ones sit under policy (updater-class above); any other .sb file is suspicious and gets a red card."
+    },
+    {
+      "id": "launch-daemons",
+      "patterns": ["deploy/macos/**", "**/*.plist.in", "scripts/mac-local/install-supervisor-launchdaemon.mjs", "scripts/mac-local/uninstall-service.mjs"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "LaunchDaemon definitions (which uid runs what, KeepAlive, the guard tick); applied only by the attended installer, but they define the service split."
+    },
+    {
+      "id": "launch-daemons-future",
+      "patterns": ["**/*.plist", "src/installer/v1/macos-launch-daemon-*"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Future LaunchDaemon definitions and installer adapters retain the same protected treatment before they first land."
+    },
+    {
+      "id": "installer",
+      "patterns": ["src/installer/**", "native/**", "scripts/build-*-native.mjs", "scripts/{prepare,initialize}-local-installation*.mjs", "scripts/{launch-local-setup,run-local-setup-host,run-private-local-installation-operator}.mjs", "scripts/{assemble-local-release,assemble-macos-local-launcher,stage-local-release,prepare-local-production-dependencies}.mjs", "scripts/install-private-name-hook.mjs"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "The installer, its native sidecars (protected directory, installation journal, service control) and release assembly: code that runs with the owner's or root's authority at install time."
+    },
+    {
+      "id": "gitattributes",
+      "patterns": ["**/.gitattributes"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "R18a: export-ignore/export-subst/eol/filter attributes change what `git archive` unpacks versus what was reviewed; see POLICY_NOTES for the attributes that are refused outright."
+    },
+    {
+      "id": "gitmodules",
+      "patterns": ["**/.gitmodules"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Submodules are not supported: `git archive` omits their content. Any gitlink (mode 160000) refuses the plan (POLICY_NOTES)."
+    },
+    {
+      "id": "ci-workflows",
+      "patterns": [".github/**"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "The GitHub Actions checks that §10.4 requires green on main, the job-claim and review-handoff automations that run with the repo token, and the PR template."
+    },
+    {
+      "id": "ci-scripts",
+      "patterns": ["scripts/ci/**", "scripts/ci-path-routing.mjs", "scripts/check-test-lane-coverage.mjs", "scripts/{automatic-claim-controller,review-handoff-controller}.mjs"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Scripts the CI workflows run to decide which tests are required, to verify mutation checks and PR claims, and to hand work between bots."
+    },
+    {
+      "id": "mutation-manifests",
+      "patterns": ["mutation-checks/**"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Mutation manifests prove guard tests fail when the guarded code is broken; loosening one silently disarms a guard."
+    },
+    {
+      "id": "test-runners",
+      "patterns": ["scripts/run-tests-with-quarantine.mjs", "scripts/check-test-quarantine.mjs", "tests/quarantine.json", "scripts/test-runner/**", "scripts/run-runtime-assembly-memory-guard.mjs", "playwright.config.ts"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Test runner, quarantine list and runner service: a change can skip or neuter tests (R15: mistake-catcher, so the class does not depend on the tests passing)."
+    },
+    {
+      "id": "guard-scripts",
+      "patterns": ["scripts/check-private-names.mjs", "scripts/runtime-license-repository-guard.mjs", "scripts/{check-migration-changes,check-migration-search-path,verify-migration-ledger,generate-migration-ledger}.mjs", ".squawk.toml"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Repository and migration referees (private-name leak guard, license guard, migration lint/search_path/ledger checks) that CI runs as gates."
+    },
+    {
+      "id": "guard-tests",
+      "patterns": [
+        "tests/*guard*",
+        "tests/attack-kit*",
+        "tests/support/attack-kit/**",
+        "tests/*security*",
+        "tests/*{owner-bootstrap,owner-signing,owner-signature,local-owner-session,ingress-conformance,private-serving,access-library,remote-access}*",
+        "tests/*{approval,passkey,webauthn}*",
+        "tests/{reviewer-independence,agent-review-authority,protected-agent-principal}*",
+        "tests/completion-*",
+        "tests/{improve-control-room,candidate-acceptance-precheck}*",
+        "tests/*mutation*",
+        "tests/{test-quarantine,affected-tests,ci-path-routing,audit-required-hashes,check-pr-claims}*",
+        "tests/migration-*-check*",
+        "tests/*{database-roles,-role.,role-acl,web-role,narrow-role,grants}*",
+        "tests/*preflight*",
+        "tests/*{install,installer,installation}*",
+        "tests/*protected-*",
+        "tests/*-fence*",
+        "tests/mac-local-{upgrade,database-upgrade}*",
+        "tests/mac-local-web-process*",
+        "tests/{updater,trusted-runtime,macos-launch-daemon,control-room-installer}*",
+        "tests/helpers/*{security,owner-bootstrap,approval,authority}*"
+      ],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Guard tests: the tests that pin the protected areas in this file; the running release's pack also runs against the candidate (§10.3), so editing one is a protected change."
+    },
+    {
+      "id": "future-updater-guard-tests",
+      "patterns": ["tests/*update-candidate*"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Future update-candidate guard tests are protected from the first commit that adds them."
+    },
+    {
+      "id": "security-core",
+      "patterns": ["src/security/**", "src/node-policy/**"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Canonical digests (the plan digest uses canonicalJson from here), redaction, rollback checkpoints, and the node execution policy that fences what bots may touch."
+    },
+    {
+      "id": "auth-session",
+      "patterns": [
+        "middleware.ts",
+        "src/web/v1/private-process.ts",
+        "src/web/v1/private-serving.ts",
+        "src/web/v1/mac-local-serving.ts",
+        "src/web/v1/access-*",
+        "src/web/v1/session-authority.ts",
+        "src/web/v1/local-owner-session*",
+        "src/web/v1/*owner-bootstrap*",
+        "src/web/v1/owner-bootstrap-ceremony/**",
+        "app/components/local-pilot-owner-session.tsx"
+      ],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "The web front door: request gate, origin/host checks, owner session cookie, access keys and the first-owner bootstrap."
+    },
+    {
+      "id": "worker-trust-and-protected-configuration",
+      "patterns": [
+        "src/web/v1/mac-local-{node-key-pin,protected-loader,protected-configuration}.ts"
+      ],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Worker key pinning and the loaders and schema for the Mac's Protected configuration."
+    },
+    {
+      "id": "machine-authentication",
+      "patterns": [
+        "src/node-protocol/v1/{crypto,authentication}.ts",
+        "src/connection-registry/v1/{node-ingress,transport-admission}.ts",
+        "src/work-intake/v1/machine-auth.ts"
+      ],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Worker and node authentication: frame signatures, enrollment proofs, pinned transports and machine tokens."
+    },
+    {
+      "id": "owner-signing",
+      "patterns": ["src/harness/v1/{bounded-owner-signature,owned-owner-signature,owner-signing-stream}.ts"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Owner-signing bounds and streams that protected owner-signature tests exercise."
+    },
+    {
+      "id": "front-door-body-parsing",
+      "patterns": ["src/web/v1/http-common.ts"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Shared bounded JSON parsing used by the owner-session and access-key front door."
+    },
+    {
+      "id": "front-door-serve",
+      "patterns": ["src/web/v1/mac-local-remote-access.ts", "scripts/mac-local/remote-access.ts"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Tailscale Serve set-up for the live hostname; the updater's Serve exclusivity watch (R3) depends on it staying one handler, no Funnel."
+    },
+    {
+      "id": "approvals-passkey",
+      "patterns": ["{src,private-app,app,scripts}/**/*{approval,passkey,webauthn}*"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Approval and passkey code by name, so a new approval file in a new folder is caught (task approvals, native approval packets, module-install approvals, pinned approval trust)."
+    },
+    {
+      "id": "review-completion-gate",
+      "patterns": ["src/completion-gate/**", "src/improve-control-room/**", "src/web/v1/improve-control-room-http.ts", "src/release-candidate-precheck/**", "src/web/v1/mac-local-owner-review-profile.ts"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Review/completion gate and reviewer independence, the update-candidate publisher (its classification is display only, but it feeds the card) and the release pre-check."
+    },
+    {
+      "id": "owner-update-screens",
+      "patterns": [
+        "private-app/app/layout.tsx",
+        "private-app/app/layout-providers.tsx",
+        "private-app/app/owner-ui.tsx",
+        "private-app/app/update-candidates-home.tsx",
+        "private-app/app/improve-control-room-workspace.tsx",
+        "private-app/app/projects/[projectid]/improvements/**",
+        "private-app/app/setup/**",
+        "private-app/app/local-installation-wizard.tsx",
+        "private-app/app/**/*{update,install,passkey,approval,setup}*",
+        "private-app/app/service-worker.js",
+        "private-app/app/pwa-registration.tsx",
+        "src/web/v1/browser-json.ts"
+      ],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "The Install/update/setup/approval screens the owner reads before Face ID, and the service worker that can rewrite any page of the origin (R15: catches mistakes; §5.4 covers a hostile release)."
+    },
+    {
+      "id": "future-owner-update-screens",
+      "patterns": ["private-app/app/updates/**"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "The future dedicated Install route is protected from the first commit that adds it."
+    },
+    {
+      "id": "health-handlers",
+      "patterns": ["src/web/v1/mac-local-web-process.ts", "src/fleet/v1/gateway-http.ts", "scripts/mac-local/up.mjs", "scripts/mac-local/start-web-host.mjs"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "The HMAC-tagged health endpoints the updater probes (§8.4: /api/v1/local-host-health, /api/v1/updater-health, /fleet/v1/health) and the code that loads health-probe.key."
+    },
+    {
+      "id": "future-updater-health-handlers",
+      "patterns": ["src/web/v1/*updater-health*"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Future updater health handlers are protected from the first commit that adds them."
+    },
+    {
+      "id": "owner-setup-scripts",
+      "patterns": [
+        "scripts/mac-local/{provision-*,bootstrap-owner*,finish-setup*,complete-first-owner*,first-owner-*}",
+        "scripts/mac-local/{narrow-role-provision,database-upgrade-grants,load-protected-configuration,generate-web-push-config,pin-node-keys,repin-workers}.*",
+        "scripts/{bootstrap-private-vps-owner,activate-private-vps,preflight-*}.*"
+      ],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Owner bootstrap, database provisioning and grants, the Protected/ configuration loader, VAPID key generation and worker key pinning."
+    },
+    {
+      "id": "preflight",
+      "patterns": ["src/web/v1/private-database-preflight.ts", "src/**/*preflight*"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Start-up preflights, including the pinned private-web schema digest and role declarations that refuse to serve on a drifted database."
+    },
+    {
+      "id": "database-roles",
+      "patterns": ["db/roles/**", "db/setup/**", "deploy/postgres/provision-database.sql", "scripts/mac-local/database-role-manifest.mjs", "scripts/mac-local/database-upgrade-scram.mjs", "src/web/v1/mac-local-database-roles.ts"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Database roles and grants decide which login can write which table (including updater.plan_approvals); these are also 'database' class via classes.json."
+    },
+    {
+      "id": "build-pipeline",
+      "patterns": ["**/{tsconfig,jsconfig}*.json", "vite.*.config.ts", "postcss.config.mjs", "scripts/build-vps.mjs", "scripts/mac-local/build-source.mjs"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Build configuration and entry scripts decide which candidate source becomes the running web application."
+    },
+    {
+      "id": "environment-files",
+      "patterns": ["**/.env*"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "Build tools load .env files into candidate builds; tracked environment files can therefore change security behaviour."
+    },
+    {
+      "id": "deploy-authority",
+      "patterns": ["deploy/**"],
+      "exclude": ["deploy/postgres/migration-ledger.json"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "Operator configs, GitHub worker broker unit, VPS database-upgrade tool and the Postgres apply/backup/restore scripts; the ledger alone stays database-only so an ordinary migration is not red."
+    },
+    {
+      "id": "deploy-runner",
+      "patterns": ["src/deploy/**", "scripts/mac-local/{deploy-runner,deploy-runner-operations,release-layout}.mjs"],
+      "onChange": "protected",
+      "status": "future",
+      "reason": "The unmerged cook/deploy runner (superseded by the updater, H20); caught if any of it lands later."
+    },
+    {
+      "id": "github-credentials",
+      "patterns": ["src/github-app/**", "scripts/run-github-worker-broker.mjs"],
+      "onChange": "protected",
+      "status": "present",
+      "reason": "GitHub App installation auth and the worker broker that hands bots their GitHub tokens (who can push and merge to main)."
+    }
+  ]
+}

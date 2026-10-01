@@ -38,6 +38,7 @@ test("the CLI keeps status unprivileged, sudo verbs root-only, and confirm bound
     /updater_install_needs_root/u);
 
   const fixture = await planFixtureV1(root); output.length = 0;
+  assert.equal(fixture.words.length, 6, "the owner confirmation carries 36 bits, not the old 24-bit code");
   const originalPlan = await readFile(join(root, "updater-state/plans/u2.json"), "utf8");
   await writeFile(join(root, "updater-state/plans/u2.json"), JSON.stringify({ ...fixture.plan,
     artifact: { releaseId: "swapped" } }));
@@ -60,6 +61,65 @@ test("the CLI keeps status unprivileged, sudo verbs root-only, and confirm bound
   assert.equal(sent.verb, "backup-now");
   await assert.rejects(runUpdaterCliV1(["owner-code"], { root, getuid: () => 0 }),
     /updater_cli_port_not_implemented/u, "later sudo verbs are explicit typed ports, never socket aliases");
+  const passkeyOutput = [], passkeyAuthority = {
+    async beginRegistration() { return { registrationSecret: "A".repeat(43),
+      config: { expectedOrigin: "https://control-room.example.test" } }; },
+    async listPasskeys() { return [{ number: 1, credentialId: "credential-one", createdAt: "2026-09-30T12:00:00.000Z",
+      coolingOffUntil: null, revokedAt: null }]; },
+    async revokePasskey(number) { return { number, credentialId: "unused" }; },
+    async completeRegistration(input) { assert.deepEqual(input, { registrationSecret: "A".repeat(43),
+      typedCode: "ABC234" }); return { coolingOffUntil: null }; },
+  };
+  assert.equal(await runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0, passkeyAuthority,
+    readComparisonCode: async () => " abc234 \n", stdout: text => passkeyOutput.push(text) }), 0);
+  assert.match(passkeyOutput.join(""), /\/setup#reg=/u);
+  assert.match(passkeyOutput.join(""), /Passkey added and active/u);
+  assert.equal(await runUpdaterCliV1(["passkey", "list"], { root, getuid: () => 0, passkeyAuthority,
+    stdout: text => passkeyOutput.push(text) }), 0);
+  assert.match(passkeyOutput.join(""), /created 2026-09-30T12:00:00.000Z; id credential-one/u);
+  assert.equal(await runUpdaterCliV1(["passkey", "revoke", "1"], { root, getuid: () => 0, passkeyAuthority,
+    stdout: () => {} }), 0);
+  const controlVerbs = [], sendOptions = [], send = async (_path, request, options) => {
+    controlVerbs.push(request.verb);
+    sendOptions.push(options);
+    if (request.verb === "passkey-add-begin") return { registrationSecret: "B".repeat(43),
+      expectedOrigin: "https://control-room.example.test" };
+    if (request.verb === "passkey-add-complete") return { credentialId: "unused", coolingOffUntil: null };
+    if (request.verb === "passkey-list") return [];
+    return { number: 1, credentialId: "unused" };
+  };
+  assert.equal(await runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0, send,
+    readComparisonCode: async () => "ABC234", stdout: () => {} }), 0);
+  assert.equal(await runUpdaterCliV1(["passkey", "list"], { root, getuid: () => 0, send, stdout: () => {} }), 0);
+  assert.equal(await runUpdaterCliV1(["passkey", "revoke", "1"], { root, getuid: () => 0, send, stdout: () => {} }), 0);
+  assert.deepEqual(controlVerbs, ["passkey-add-begin", "passkey-add-complete", "passkey-list", "passkey-revoke"]);
+  assert.deepEqual(sendOptions, [undefined, { timeoutMs: 15_000 }, undefined, undefined]);
+
+  const coolingOutput = [], coolingAuthority = { ...passkeyAuthority,
+    async completeRegistration() { return { coolingOffUntil: "2026-10-01T12:00:00.000Z",
+      coolingOffNoticesEnqueued: true }; } };
+  assert.equal(await runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0, passkeyAuthority: coolingAuthority,
+    readComparisonCode: async () => "ABC234", stdout: text => coolingOutput.push(text) }), 0);
+  assert.match(coolingOutput.join(""), /Cooling-off warnings were queued/u);
+  await assert.rejects(runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0,
+    passkeyAuthority: { ...coolingAuthority, async completeRegistration() {
+      return { coolingOffUntil: "2026-10-01T12:00:00.000Z", coolingOffNoticesEnqueued: false }; } },
+    readComparisonCode: async () => "ABC234", stdout: () => {} }), /updater_passkey_control_reply_refused/u);
+});
+
+test("attended flip rechecks the confirmed digest immediately before staging", async t => {
+  const root = await rootV1(t), fixture = await planFixtureV1(root), bundle = await bundleV1(root);
+  await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  await runUpdaterCliV1(["confirm", ...fixture.words], { root, getuid: () => 0, stdout: () => {} });
+  await writeFile(join(root, "updater-state/plans/u2.json"), JSON.stringify({ ...fixture.plan,
+    artifact: { releaseId: "swapped-after-confirmation" } }));
+  let staged = false;
+  const operations = { async stage() { staged = true; }, async restart() {}, async fullHealth() { return true; },
+    async waitForNextHeartbeat() {} };
+  await assert.rejects(new AttendedUpdaterFlipV1({ root, operations }).run({ planId: "u2", version: "updater-2",
+    bundleDirectory: bundle.directory, expectedBundleDigest: bundle.digest, links: [] }),
+  /updater_attended_plan_digest_mismatch/u);
+  assert.equal(staged, false, "mutated plan bytes are refused before candidate bytes are staged");
 });
 
 async function bundleV1(root) {

@@ -9,7 +9,7 @@ test('runtime report binds current manifests, preserves missing texts and reject
   const input = JSON.parse(fs.readFileSync('research/runtime-license-input.json', 'utf8'));
   const saved = JSON.parse(fs.readFileSync('research/runtime-license-report.json', 'utf8'));
   assert.deepEqual(runtimeLicenseReport(input), saved);
-  assert.equal(saved.packages, 200);
+  assert.equal(saved.packages, 225);
   assert.deepEqual(saved.missing.map(value => value.name), ['@nodable/entities', 'http_ece', 'pg-types', 'pgpass', 'saxes']);
   assert.throws(() => runtimeLicenseReport({ ...input, lockSha256: '0'.repeat(64) }), /inventory_stale/);
   const foreign = structuredClone(input); foreign.records[0].name = 'foreign-package';

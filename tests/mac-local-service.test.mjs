@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { installOrRefreshService, plistPath, SERVICE_LABEL, serviceInstalled, servicePid, servicePlist,
+import { FLEET_GATEWAY_LAUNCHD_HANDOFF, installOrRefreshService, plistPath, SERVICE_LABEL, serviceInstalled, servicePid, servicePlist,
   serviceStatus, serviceUpToDate, stopService, uninstallService } from "../scripts/mac-local/service.mjs";
 import { hostCommand } from "../scripts/mac-local/stack.mjs";
 import { cleanupTestPostgres, DISPOSABLE_POSTGRES_MARKER, parsePostgresProcesses,
@@ -45,6 +45,8 @@ test("plist runs exactly the host command, restarts only after a crash, and carr
   assert.match(plist, /<key>PATH<\/key>/u);
   assert.match(plist, /<key>LANG<\/key>/u);
   assert.doesNotMatch(plist, /SECRET_TOKEN|do-not-copy|<key>HOME<\/key>/u);
+  assert.doesNotMatch(plist, /start-fleet-gateway/u, "cook/daemons owns the separate production service definition");
+  assert.match(FLEET_GATEWAY_LAUNCHD_HANDOFF, /cook\/daemons item 5/u);
 });
 
 test("plist escapes XML and refuses relative or control-character paths", () => {
