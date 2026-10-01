@@ -8,7 +8,17 @@ import { dirname, join, resolve } from "node:path";
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const setupScript = join(repositoryRoot, "deploy/front-door/vps-setup.sh");
 const policyScript = join(repositoryRoot, "deploy/front-door/tailnet-policy-snippet.mjs");
+const ownerOnePager = join(repositoryRoot, "docs/front-door/OWNER_ONE_PAGER.md");
 const liveGroups = new Set();
+
+test("owner one-pager is generic and makes the Face-ID-only phishing warning prominent", async () => {
+  const guide = await readFile(ownerOnePager, "utf8");
+  assert.ok(guide.split(/\r?\n/u).length <= 60, "the owner guide must remain a one-pager");
+  assert.match(guide, /Face ID only\. A page that asks you for a code or password is fake — close it\./u);
+  assert.match(guide, /TLS passthrough/u);
+  assert.match(guide, /`--remove` restores/u);
+  assert.doesNotMatch(guide, /(?:\b\d{1,3}(?:\.\d{1,3}){3}\b|\.ts\.net\b|\b[a-z0-9][a-z0-9-]*@[a-z0-9.-]+\b)/iu);
+});
 
 async function executable(path, source) {
   await mkdir(dirname(path), { recursive: true });
