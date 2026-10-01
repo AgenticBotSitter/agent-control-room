@@ -254,7 +254,7 @@ BEGIN
   -- file cannot grant it (see above) and the two files are applied in an order
   -- that is not this file's to choose. Asserting it would refuse in both
   -- legitimate orders -- measured: it refused the installer's own replay of this
-  -- file immediately after db/down/0238 revoked the grant and before the role
+  -- file immediately after db/down/0239 revoked the grant and before the role
   -- file re-granted it.
   --
   -- The gap is covered where it can actually be observed: the live boundary. The

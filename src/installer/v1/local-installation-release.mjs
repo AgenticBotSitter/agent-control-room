@@ -26,9 +26,12 @@ const requiredFiles = Object.freeze([
   "pnpm-lock.yaml",
   "RELEASE_MANIFEST.json",
   "scripts/prepare-local-installation.mjs",
+  "scripts/release-signing.mjs",
+  "scripts/verify-signed-release.mjs",
   "scripts/run-private-vps.mjs",
   "scripts/run-private-local-installation-operator.mjs",
   "src/installer/v1/local-installation-release.mjs",
+  "src/installer/v1/signed-release-verifier.mjs",
 ]);
 
 const refused = () => { throw new Error("local_installation_package_refused"); };

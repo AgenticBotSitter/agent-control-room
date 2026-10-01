@@ -1,4 +1,5 @@
 import { assertPlainObjectV1, assertSafeIdV1, SAFE_STEP_V1, updaterRefuseV1 } from "./contracts.mjs";
+import { updaterPushBodyV1 } from "./alerts.mjs";
 
 const RUN_STATES_V1 = new Set(["approved", "prechecked", "staged", "quick_backup", "draining", "quiesced",
   "backup_verified", "preimage_taken", "migrating", "migrated", "switched", "restarted", "healthy",
@@ -163,5 +164,50 @@ export class PostgresUpdaterStoreV1 {
       await this.client.query("COMMIT");
       return { status: "created", plan, planId: plan.planId, planDigest: value.planDigest };
     } catch (error) { await this.client.query("ROLLBACK").catch(() => {}); throw error; }
+  }
+
+  /** Item 21 alert port: the owner's live push subscriptions. */
+  async subscriptions() {
+    return (await this.client.query(`SELECT id,endpoint,p256dh,auth,expires_at FROM public.owner_web_push_subscriptions
+      WHERE expires_at IS NULL OR expires_at > pg_catalog.now() ORDER BY tenant_id,id LIMIT 100`)).rows;
+  }
+
+  async pending(limit = 50) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw updaterRefuseV1("updater_push_limit_refused");
+    return (await this.client.query(`SELECT id,template,title,body,link_path,attempts FROM updater.push_queue
+      WHERE sent_at IS NULL AND attempts < 10 AND coalesce(last_error_code,'') <> 'updater_push_reserved'
+      ORDER BY queued_at,id LIMIT $1`, [limit])).rows;
+  }
+
+  async begin(id) {
+    if (!/^push:[0-9a-f-]{36}$/u.test(id)) throw updaterRefuseV1("updater_push_id_refused");
+    return (await this.client.query(`UPDATE updater.push_queue SET attempts=attempts+1,last_error_code='updater_push_reserved'
+      WHERE id=$1 AND sent_at IS NULL AND attempts < 10 AND coalesce(last_error_code,'') <> 'updater_push_reserved'
+      RETURNING id,attempts`, [id])).rows.length === 1;
+  }
+
+  async finish(id, { sent, errorCode = null } = {}) {
+    if (!/^push:[0-9a-f-]{36}$/u.test(id) || typeof sent !== "boolean"
+      || errorCode !== null && (typeof errorCode !== "string" || !/^[a-z][a-z0-9_]{1,63}$/u.test(errorCode)))
+      throw updaterRefuseV1("updater_push_finish_refused");
+    await this.client.query(`UPDATE updater.push_queue SET sent_at=CASE WHEN $2::boolean THEN pg_catalog.now() ELSE NULL END,
+      last_error_code=$3 WHERE id=$1 AND sent_at IS NULL`, [id, sent, errorCode]);
+  }
+
+  async queue(template) {
+    if (typeof template !== "string" || !/^control-room-updater\.[a-z-]{3,63}$/u.test(template))
+      throw updaterRefuseV1("updater_push_template_refused");
+    // `push_queue.body` is NOT NULL and CHECKed to 1..400 characters, so a
+    // queued row has to carry the fixed text it will be sent with. An empty
+    // body was refused by the real cluster on the first run of the alert lane
+    // ("new row ... violates check constraint push_queue_body_check"), which
+    // would have meant no alert could ever be queued. The text is the SAME
+    // fixed template the sender renders, not a second copy of it: the title and
+    // body are what the owner's phone shows if a row is ever read outside the
+    // sender, and the sender's payload is still built from the template id.
+    const text = updaterPushBodyV1(template);
+    await this.client.query(`INSERT INTO updater.push_queue(id,template,title,body,link_path)
+      VALUES($1,$2,'Control Room updater',$3, '/needs-me')`,
+    [`push:${globalThis.crypto.randomUUID()}`, template, text]);
   }
 }

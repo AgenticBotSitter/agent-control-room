@@ -5,12 +5,14 @@
 // agent, so it starts at login and restarts after a crash. Without it, the host is a detached child.
 // Usage: pnpm mac:up -- --protected-root ABS_PATH [--install-service]   (or CONTROL_ROOM_PROTECTED_ROOT)
 import { spawn } from "node:child_process";
+import { connect } from "node:net";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { lstat, mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runtimePaths,
-  stopRecorded, stopRecordedHost, taskHostCommand } from "./stack.mjs";
+import { alive, FLEET_GATEWAY_PORT, fleetGatewayCommand, hostCommand, protectedRootFromArguments, readPid, repoRoot,
+  runtimePaths, stopRecorded, stopRecordedHost, taskHostCommand } from "./stack.mjs";
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
 import { captureMacLocalBuildSourceV1, macLocalBuildSourceV1 } from "./build-source.mjs";
 import { readHostState, readRecoverableHostState } from "./task-host-supervisor.mjs";
@@ -157,6 +159,22 @@ async function waitFor(check, seconds) {
   }
 }
 
+const portOpen = (port, timeoutMs = 1_000) => new Promise(resolve => {
+  const socket = connect({ host: "127.0.0.1", port });
+  socket.setTimeout(timeoutMs);
+  socket.once("connect", () => { socket.destroy(); resolve(true); });
+  socket.once("timeout", () => { socket.destroy(); resolve(false); });
+  socket.once("error", () => resolve(false));
+});
+
+/** The dev/preview gateway is accepted only when both its exact recorded
+ * process and its fixed loopback listener are present. */
+export async function fleetGatewayReady(root, runtime = {}) {
+  const paths = runtimePaths(root), pid = await (runtime.readPid ?? readPid)(paths.fleetGatewayPid);
+  if (!pid || !(runtime.alive ?? alive)(pid, fleetGatewayCommand(root))) return undefined;
+  return await (runtime.portOpen ?? portOpen)(FLEET_GATEWAY_PORT) ? pid : undefined;
+}
+
 async function writePrivate(path, content) {
   const temporary = `${path}.new-${process.pid}`;
   await writeFile(temporary, content, { encoding: "utf8", mode: 0o600, flag: "w" });
@@ -225,14 +243,14 @@ async function main() {
   if (!existsSync(join(repoRoot, "dist-vps/server/macLocalHost.js"))) fail("release build missing: run pnpm build first");
   if (!await verifyMacLocalBuildCurrentV1()) fail("release build stale: run pnpm build first");
 
-  log("1/5 database");
+  log("1/6 database");
   if (await run(["--import", "tsx", "scripts/mac-local/check-database.ts", root]) !== 0) {
     const binding = await run(["--import", "tsx", "scripts/mac-local/bootstrap-owner.ts", root]);
     if (binding === 2) fail("first-owner setup has not been run; see OWNER_GUIDE_MAC.md");
     fail("database check failed");
   }
 
-  log("2/5 first-owner binding");
+  log("2/6 first-owner binding");
   const binding = await run(["--import", "tsx", "scripts/mac-local/bootstrap-owner.ts", root]);
   if (binding === 2)
     fail("first-owner setup has not been run; see OWNER_GUIDE_MAC.md");
@@ -245,25 +263,28 @@ async function main() {
     if (await stopRecordedHost(paths.hostPid, root, 45) === "still_running")
       fail("the existing direct task host would not stop: run pnpm mac:down first");
   }
+  let existingHostPid;
   if (!service && hostPid && alive(hostPid, hostCommand(root))) {
     // A host that is alive but not serving is a failure, never "already running".
-    if (await hostReady()) { log(`already running (pid ${hostPid})`); return; }
-    fail("task host is running but not serving: run pnpm mac:down first");
+    if (await hostReady()) existingHostPid = hostPid;
+    else fail("task host is running but not serving: run pnpm mac:down first");
   }
   if (service) {
     const pid = await hostReady();
     if (pid
       && await serviceUpToDate({ protectedRoot: root, logPath: paths.hostLog, env: process.env })) {
-      log(`already running as a launchd user agent (pid ${pid})`); return;
+      log(`already running as a launchd user agent (pid ${pid})`);
+      log("fleet gateway launchd hand-off pending: cook/daemons item 5 owns its production service definition");
+      return;
     }
   }
 
-  log("3/5 repin");
+  log("3/6 repin");
   const repin = await run(["--import", "tsx", "scripts/mac-local/repin-workers.mjs", "--protected-root", root]);
   if (repin === 1) log("repin blocked for a worker: it will show unavailable");
   else if (repin !== 0) fail(`repin exit ${repin}: protected configuration is unsafe`);
 
-  log("4/5 task provider");
+  log("4/6 task provider");
   const module = join(repoRoot, PROVIDER_MODULE);
   if (existsSync(module)) {
     const body = providerFileBody(module);
@@ -272,16 +293,36 @@ async function main() {
   } else log("task provider absent; only a zero-project website can start");
 
   if (service) return startService(root, paths, mac.port, hostReady);
-  log("5/5 task host");
-  await stopRecordedHost(paths.hostPid, root, 45);
-  const pid = await startAndWait(hostCommand(root), paths.hostLog, paths.hostPid, hostReady, 90, "task host");
-  log(`running: http://127.0.0.1:${mac.port} (pid ${pid})`);
+
+  log("5/6 fleet connector release");
+  if (await run(["scripts/build-fleet-connector.mjs", "--root", "scripts/fleet/release"]) !== 0)
+    fail("fleet connector release build failed");
+
+  let pid = existingHostPid, startedHost = false;
+  if (!pid) {
+    log("6/6 task host and fleet gateway");
+    await stopRecordedHost(paths.hostPid, root, 45);
+    pid = await startAndWait(hostCommand(root), paths.hostLog, paths.hostPid, hostReady, 90, "task host");
+    startedHost = true;
+  } else log(`task host already running (pid ${pid})`);
+  try {
+    let gatewayPid = await fleetGatewayReady(root);
+    if (!gatewayPid) {
+      await stopRecorded(paths.fleetGatewayPid, fleetGatewayCommand(root), 10);
+      gatewayPid = await startAndWait(fleetGatewayCommand(root), paths.fleetGatewayLog, paths.fleetGatewayPid,
+        () => fleetGatewayReady(root), 30, "fleet gateway");
+    }
+    log(`running: http://127.0.0.1:${mac.port} (pid ${pid}); fleet gateway http://127.0.0.1:${FLEET_GATEWAY_PORT} (pid ${gatewayPid})`);
+  } catch (error) {
+    if (startedHost) await stopRecordedHost(paths.hostPid, root, 45);
+    throw error;
+  }
 }
 
 /** Service mode: launchd owns the host process. A host that mac:up once started directly is
  * stopped first; the launchd-started host is never signalled here, only reloaded through launchctl. */
 async function startService(root, paths, port, hostReady) {
-  log("5/5 task host (launchd user agent)");
+  log("5/6 task host (launchd user agent)");
   const { loaded } = await servicePid();
   if (!loaded && await stopRecordedHost(paths.hostPid, root, 45) === "still_running")
     fail("a directly started task host would not stop: run pnpm mac:down first");
@@ -290,6 +331,7 @@ async function startService(root, paths, port, hostReady) {
   const pid = await waitFor(hostReady, 90);
   if (!pid) fail(`task host did not start within 90s (see ${paths.hostLog.split("/").slice(-2).join("/")})`);
   log(`running: http://127.0.0.1:${port} (pid ${pid})`);
+  log("fleet gateway launchd hand-off pending: cook/daemons item 5 owns its production service definition");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -120,7 +120,7 @@ test("one client shell binds truthful links to two distinct sanitized configurat
   }
 });
 
-test("local client shell exposes only reachable routes and reads only locally served worker status", async () => {
+test("local client shell exposes only reachable routes and reads only local worker status", async () => {
   const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true, url: "http://127.0.0.1:3210/workers" });
   const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -129,7 +129,6 @@ test("local client shell exposes only reachable routes and reads only locally se
   const reads = [];
   globalThis.fetch = path => {
     reads.push(path);
-    if (path === "/api/v1/fleet") return Promise.resolve(new Response(null, { status: 404 }));
     if (path === "/api/v1/needs-me/tasks") return Promise.resolve(Response.json(attentionPage([])));
     if (path === "/api/v1/product-configuration") return Promise.resolve(Response.json(profile("Control Room", false)));
     if (path !== "/api/v1/local-workers") throw new Error(`unsupported local fetch: ${path}`);
@@ -146,13 +145,17 @@ test("local client shell exposes only reachable routes and reads only locally se
         React.createElement(InstallationTopologyProvider, null,
           React.createElement(WorkersWorkspace),
           React.createElement(ProjectNavigation, { projectId: "project:alpha", current: "overview" }))))));
-    // WorkersWorkspace mounts the shared PrivateHeader, and the Mac-local
-    // host serves both the sanitized product configuration and
-    // /api/v1/needs-me/tasks and the optional fleet endpoint, so those are
-    // legitimate reads here. What must stay bounded is that no hosted-only
-    // route, such as the scorecard, is contacted.
+    // WorkersWorkspace mounts the shared PrivateHeader, and the Mac-local host
+    // serves the fleet board and the worker scorecard from that same private web
+    // process, alongside the sanitized product configuration and
+    // /api/v1/needs-me/tasks. All five are identity-gated reads rather than
+    // hosted-only routes -- /api/v1/fleet through the fleet owner handler,
+    // /api/v1/workers-scorecard through `projects.read` in private-process.ts --
+    // so the header polls them here legitimately. What must stay bounded is that
+    // no hosted-only route is contacted.
     await flushBadgeRead();
-    assert.deepEqual(reads, ["/api/v1/fleet", "/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks"]);
+    assert.deepEqual(reads, ["/api/v1/fleet", "/api/v1/workers-scorecard", "/api/v1/local-workers",
+      "/api/v1/product-configuration", "/api/v1/needs-me/tasks"]);
     const links = [...dom.window.document.querySelectorAll("a[href]")].map(link => link.getAttribute("href"));
     assert.ok(links.includes("/workers"));
     assert.ok(links.includes("/morning"));

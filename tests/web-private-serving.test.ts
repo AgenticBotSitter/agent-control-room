@@ -218,7 +218,8 @@ test("reviewed HTTP listener and outbound request imports stay separate; legacy 
     }
     visit(tree); if (ownsHttp) owners.push(path.replaceAll("\\", "/"));
   }
-  assert.deepEqual(owners.sort(), ["src/vendor/control-center/pinned-fetch.ts", "src/web/v1/private-serving.ts"]);
+  assert.deepEqual(owners.sort(), ["src/fleet/v1/mac-local-composition.ts",
+    "src/vendor/control-center/pinned-fetch.ts", "src/web/v1/private-serving.ts"]);
   // The reviewed task host, Mac-local host, bootstrap-only host, first-run setup host,
   // proposal-only intake service and separately reviewed GitHub broker explicitly compose serving.
   // No other consumer or additional native HTTP owner is admitted by this inventory.

@@ -59,8 +59,8 @@ const manualAdapter = (tenantId: string, workspaceId: string) =>
     `{"tenantId":"${tenantId}","workspaceId":"${workspaceId}"}`, "utf8").digest("hex").slice(0, 32)}`;
 const ADAPTER = manualAdapter(TENANT, WORKSPACE);
 const DEPLOYER_PASSWORD = "fixture-health-deployer";
-const MIGRATION = join(process.cwd(), "db/migrations/0238_updater_health_counts.sql");
-const DOWN = join(process.cwd(), "db/down/0238_updater_health_counts.sql");
+const MIGRATION = join(process.cwd(), "db/migrations/0239_updater_health_counts.sql");
+const DOWN = join(process.cwd(), "db/down/0239_updater_health_counts.sql");
 const FUNCTION = "public.updater_health_counts()";
 
 type Postgres = Parameters<Parameters<typeof withRealPostgres>[0]>[0];
@@ -193,7 +193,7 @@ async function seedCandidate(postgres: Postgres, id: string, tenantId: string, p
  * scripts/ops/verify-database-backup.mjs).
  *
  * The release ledger is NOT re-applied here: the attack kit has already applied
- * db/migrations/0238 from the real committed ledger, and `CREATE FUNCTION` is
+ * db/migrations/0239 from the real committed ledger, and `CREATE FUNCTION` is
  * not idempotent, so a second apply refuses with 42723.
  *
  * The role file IS applied here, inside `connectDeployer`, and that ordering is

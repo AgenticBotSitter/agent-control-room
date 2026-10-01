@@ -2,6 +2,7 @@
 // fleet leases swept by one supervisor, and two supervisors racing the same
 // burst. Everything runs on this file's own disposable port lane.
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -18,10 +19,16 @@ import { createFleetGatewayStoreFromConfigurationV1 } from "../scripts/run-fleet
 import { SupervisorReconcilerV1 } from "../src/supervisor/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 
 const PORT = Number(process.env.LAPSE_STRESS_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59349);
 const PG = requiresRealPostgres();
 const BURST = Number(process.env.LAPSE_STRESS_BURST ?? 20);
+const RELEASE_PUBLIC_KEY = generateKeyPairSync("ed25519").publicKey
+  .export({ format: "der", type: "spki" }).toString("base64url");
+const RELEASE_TRUST = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(RELEASE_PUBLIC_KEY), publicKey: RELEASE_PUBLIC_KEY,
+  versionFloor: connector.CONNECTOR_VERSION, revokedKeyIds: Object.freeze([]) });
 
 function pool(postgres: RealPostgres, role: string) {
   const login = postgres.connection(role);
@@ -50,7 +57,8 @@ test("a burst of stalled leases sweeps once under one supervisor and once under 
       workIntake: { database: {} as never, integrityKey: Buffer.alloc(32, 3).toString("base64url") } });
     const owner = new FleetOwnerServiceV1(fleetOwner.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
       afterDecision: () => gateway.reconcile() });
-    const handler = createFleetGatewayHandlerV1({ store: gateway, onUnexpectedError: error => { console.error(error); } });
+    const handler = createFleetGatewayHandlerV1({ store: gateway, releaseTrust: RELEASE_TRUST,
+      onUnexpectedError: error => { console.error(error); } });
     const server = createServer((request, response) => { void handler.handle(request, response); });
     await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

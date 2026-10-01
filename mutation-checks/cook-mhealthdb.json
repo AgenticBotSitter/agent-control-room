@@ -1,34 +1,34 @@
 [
   {
-    "file": "db/migrations/0238_updater_health_counts.sql",
+    "file": "db/migrations/0239_updater_health_counts.sql",
     "find": "REVOKE ALL ON FUNCTION updater_health_counts() FROM PUBLIC;",
     "replace": "-- mutation: PUBLIC keeps the default EXECUTE",
     "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "PostgreSQL grants EXECUTE to PUBLIC on every new function, so without this REVOKE any login on the socket could ask the definer for the counts (R20d: counts only, to the updater)"
   },
   {
-    "file": "db/migrations/0238_updater_health_counts.sql",
+    "file": "db/migrations/0239_updater_health_counts.sql",
     "find": "  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc\n      WHERE proname = 'updater_health_counts'\n        AND pg_catalog.pg_get_function_identity_arguments(oid) <> '') THEN\n    RAISE EXCEPTION 'another signature of updater_health_counts already exists' USING ERRCODE = '42501';\n  END IF;",
     "replace": "  -- mutation: a competing overload would no longer be refused",
     "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "the boundary must be the only updater_health_counts on the cluster: PostgreSQL installs the zero-argument form ALONGSIDE an overload rather than replacing it (measured), and every later check resolves the zero-argument signature, so an overload displaces the boundary without any of them noticing"
   },
   {
-    "file": "db/migrations/0238_updater_health_counts.sql",
+    "file": "db/migrations/0239_updater_health_counts.sql",
     "find": "      AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']::text[])\n    THEN\n    RAISE EXCEPTION 'updater health count function must be STABLE SECURITY DEFINER",
     "replace": "    THEN",
     "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "the pinned search_path is what stops candidate SQL shadowing an object the definer's body names (R10b); dropping it must be caught"
   },
   {
-    "file": "db/migrations/0238_updater_health_counts.sql",
+    "file": "db/migrations/0239_updater_health_counts.sql",
     "find": "      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE' AND a.is_grantable\n        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN",
     "replace": "      WHERE p.oid = fn AND a.privilege_type = 'EXECUTE' AND false\n        AND pg_catalog.pg_get_userbyid(a.grantee) = 'control_room_deployer') THEN",
     "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "a GRANTABLE EXECUTE would let the updater's login hand this definer's reach to anybody, which is the exact authority growth the function exists not to permit"
   },
   {
-    "file": "db/migrations/0238_updater_health_counts.sql",
+    "file": "db/migrations/0239_updater_health_counts.sql",
     "find": "    WHERE b.singleton\n      AND (SELECT count(*) FROM public.workspaces x WHERE x.tenant_id = b.tenant_id) = 1\n  )\n",
     "replace": "    WHERE b.singleton\n",
     "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
@@ -84,7 +84,7 @@
     "why": "§8.4 requires a NON-EMPTY render; an empty body must refuse, and an implausibly large one must not be reported as a healthy page"
   },
   {
-    "file": "db/down/0238_updater_health_counts.sql",
+    "file": "db/down/0239_updater_health_counts.sql",
     "find": "    DROP FUNCTION updater_health_counts();",
     "replace": "    -- mutation: the down migration does not drop the function",
     "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",

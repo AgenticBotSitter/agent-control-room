@@ -100,6 +100,17 @@ test("it renders the mode the server reported, and reads again rather than inven
   } finally { await mounted.restore(); }
 });
 
+test("an automatic pause says plainly that the Mac will restart work when it calms down", async () => {
+  const { client } = stubClient(view("paused", { revision: 2, setByIdentityId: "identity:owner",
+    reason: "Paused automatically — this Mac was too busy. It will start again by itself when things calm down.",
+    setAt: new Date().toISOString(), admitsNewWork: false }));
+  const mounted = await mount(() => createElement(Panel, { client }));
+  try {
+    assert.match(mounted.document.body.textContent ?? "",
+      /Paused automatically — this Mac was too busy\. It will start again by itself when things calm down\./);
+  } finally { await mounted.restore(); }
+});
+
 test("pressing a mode writes to the endpoint, with the reason, and shows what came back", async () => {
   const { state, client } = stubClient(view("running"));
   const mounted = await mount(() => createElement(Panel, { client }));

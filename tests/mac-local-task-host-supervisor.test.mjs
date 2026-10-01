@@ -10,11 +10,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { monitorActiveTaskHost } from "../scripts/mac-local/start-task-host.mjs";
-import { inspectMacLocalHost } from "../scripts/mac-local/status.mjs";
-import { readPreviousHostState, startAndWait } from "../scripts/mac-local/up.mjs";
+import { inspectMacLocalFleetGateway, inspectMacLocalHost } from "../scripts/mac-local/status.mjs";
+import { fleetGatewayReady, readPreviousHostState, startAndWait } from "../scripts/mac-local/up.mjs";
 import { RotatingHostLog, openHostLog, readHostState, rotateHostLog, stoppedBecause,
   superviseTaskHost } from "../scripts/mac-local/task-host-supervisor.mjs";
-import { alive, hostCommand, readPid, recordedHostCommand, runtimePaths, stopRecorded,
+import { alive, FLEET_GATEWAY_PORT, fleetGatewayCommand, hostCommand, readPid, recordedHostCommand, runtimePaths, stopRecorded,
   stopRecordedHost, taskHostCommand } from "../scripts/mac-local/stack.mjs";
 import { healthRequestTagV1, healthResponseTagV1,
   LOCAL_HOST_HEALTH_ENDPOINT_V1 } from "../src/updater/v1/health-protocol.mjs";
@@ -572,6 +572,35 @@ test("mac:status distinguishes serving, unhealthy, and dead/restarting hosts", a
   assert.equal(dead.reason, "host stopped because its supervisor disappeared without recording an exit");
 });
 
+test("mac:status requires the exact recorded loopback fleet gateway", async () => {
+  const root = "/protected/root", command = fleetGatewayCommand(root);
+  const running = await inspectMacLocalFleetGateway(root, {
+    readPid: async () => 77,
+    alive: (pid, expected) => pid === 77 && expected.join(" ") === command.join(" "),
+    portOpen: async port => port === FLEET_GATEWAY_PORT,
+  });
+  assert.deepEqual(running, { status: "running", exitCode: 0, pid: 77 });
+  const occupiedByOther = await inspectMacLocalFleetGateway(root, {
+    readPid: async () => 77, alive: () => false, portOpen: async () => true,
+  });
+  assert.equal(occupiedByOther.status, "dead", "an unrelated process on the port is never accepted");
+  const dropped = await inspectMacLocalFleetGateway(root, {
+    readPid: async () => 77, alive: () => true, portOpen: async () => false,
+  });
+  assert.equal(dropped.status, "unhealthy");
+  assert.match(dropped.reason, /running but not serving/u);
+});
+
+test("mac:up accepts the dev gateway only with its exact PID command and open loopback port", async () => {
+  const root = "/protected/root", command = fleetGatewayCommand(root);
+  const runtime = { readPid: async () => 88,
+    alive: (pid, expected) => pid === 88 && expected.join(" ") === command.join(" "),
+    portOpen: async port => port === FLEET_GATEWAY_PORT };
+  assert.equal(await fleetGatewayReady(root, runtime), 88);
+  assert.equal(await fleetGatewayReady(root, { ...runtime, alive: () => false }), undefined);
+  assert.equal(await fleetGatewayReady(root, { ...runtime, portOpen: async () => false }), undefined);
+});
+
 test("the real mac:status reports dead rather than failing on a restored loose state file", async t => {
   const root = await rootFixture(t), paths = runtimePaths(root);
   await mkdir(join(root, "config"), { recursive: true });
@@ -847,6 +876,8 @@ test("mac:up binds every stack helper its start-failure cleanup calls", async t 
     "launchd readiness must follow the host-written record, not launchd's sampled pid");
   assert.doesNotMatch(serviceStart, /writePrivate\(paths\.hostPid/u,
     "mac:up must not overwrite the pid file written by the supervisor");
+  assert.match(source, /catch \(error\) \{\s*if \(startedHost\) await stopRecordedHost\(paths\.hostPid, root, 45\);/u,
+    "a gateway start failure must stop the task host started by the same mac:up attempt");
 });
 
 test("mac:up's whole preflight survives a host state file it cannot read", async t => {

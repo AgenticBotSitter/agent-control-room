@@ -64,8 +64,8 @@ async function readPrivateRecord(path) {
   }
 }
 
-async function gitCommand(args) {
-  const { stdout } = await exec("git", args, { cwd: repoRoot, encoding: "utf8", timeout: 30_000 });
+async function gitCommand(args, cwd = repoRoot) {
+  const { stdout } = await exec("git", args, { cwd, encoding: "utf8", timeout: 30_000 });
   return stdout.trim();
 }
 
@@ -134,7 +134,8 @@ export async function runMacUpgradeV1(options) {
   const protectedRoot = options.protectedRoot;
   if (!isAbsolute(protectedRoot ?? "") || resolve(protectedRoot) !== protectedRoot) failure("upgrade_protected_root_required");
   const runtime = runtimePaths(protectedRoot);
-  const git = options.git ?? gitCommand, run = options.run ?? runPnpm, write = options.write ?? (line => process.stdout.write(`${line}\n`));
+  const git = options.git ?? (args => gitCommand(args, options.repositoryRoot ?? repoRoot));
+  const run = options.run ?? runPnpm, write = options.write ?? (line => process.stdout.write(`${line}\n`));
   const readLedgerHead = options.readLedgerHead ?? readMacUpgradeLedgerHeadV1;
   const prepare = options.prepare ?? prepareMacLocalDatabaseUpgradeV1, finish = options.finish ?? finishMacLocalDatabaseUpgradeV1;
   const wait = options.wait ?? waitForOwner, writeRecord = options.writeRecord ?? (record => writePrivateJson(runtime.upgradePrevious, record));

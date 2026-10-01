@@ -299,14 +299,6 @@ const UNATTENDED_OBJECTS = ["pipeline_unattended_transitions", "pipeline_advance
 
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
-// A rung's expected suffix is read from `pendingFromLedger` below, which takes the
-// real ledger order, never from a list of the migrations that happened to follow
-// 0135 when the test was written. Such a list is a constant that goes stale in
-// silence: `AFTER_0135` named thirteen files and the shipped ledger now orders
-// twenty-five after 0135, so it was missing every one of S7b's 0150-0154, the
-// operations-mode 0155-0157, and 0185/0186/0195/0196. Nothing read it, so
-// nothing failed — a restated copy of the ledger that looks checked because it
-// compiles. It is gone rather than extended; the derivation is the check.
 
 /** Splits a SQL file into its top-level statements, keeping each one's text.
  *

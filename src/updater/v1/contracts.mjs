@@ -6,6 +6,9 @@ export const SAFE_STEP_V1 = /^[a-z][a-z0-9_]{1,63}$/u;
 export const PHONE_FALLBACK_VERBS_V1 = Object.freeze(new Set([
   "pause", "resume", "stop", "backup-now", "check-and-continue", "repair-serve", "rollback",
 ]));
+export const PASSKEY_CONTROL_VERBS_V1 = Object.freeze(new Set([
+  "passkey-add-begin", "passkey-add-complete", "passkey-list", "passkey-revoke",
+]));
 
 export const SUDO_ONLY_VERBS_V1 = Object.freeze(new Set([
   "confirm", "install", "owner-code", "passkey", "run-without-profiles", "serve-accept",
@@ -61,7 +64,8 @@ export function parseControlRequestV1(line) {
   if (Object.keys(object).some(key => !allowed.has(key)) || object.schema !== "control-room.updater-control/v1")
     throw updaterRefuseV1("updater_request_refused");
   assertSafeIdV1(object.requestId, "updater_request_refused");
-  if (!PHONE_FALLBACK_VERBS_V1.has(object.verb) || !Array.isArray(object.arguments)
+  if (!PHONE_FALLBACK_VERBS_V1.has(object.verb) && !PASSKEY_CONTROL_VERBS_V1.has(object.verb)
+      || !Array.isArray(object.arguments)
       || object.arguments.length > 8 || object.arguments.some(argument => typeof argument !== "string"
         || Buffer.byteLength(argument) > 256)) throw updaterRefuseV1("updater_request_refused");
   return Object.freeze({ schema: object.schema, requestId: object.requestId, verb: object.verb,

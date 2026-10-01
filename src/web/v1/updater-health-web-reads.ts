@@ -21,7 +21,7 @@
  * documented cap (Home 10 shown / 250 scanned plus a page bound, projects 201,
  * panel 100). The count reported is of the SAME bounded set each service
  * returned, so it answers "how many rows did the owner's page just read", which is
- * the question §8.4 asks. db/migrations/0238 counts the same bounded sets
+ * the question §8.4 asks. db/migrations/0239 counts the same bounded sets
  * server-side; if a service's cap and the migration's cap ever disagree, the
  * comparison fails and health reports unhealthy -- which is the intended
  * direction for a health signal that cannot be trusted.

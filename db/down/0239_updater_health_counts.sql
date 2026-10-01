@@ -1,4 +1,4 @@
--- Reverses db/migrations/0238_updater_health_counts.sql and nothing else.
+-- Reverses db/migrations/0239_updater_health_counts.sql and nothing else.
 --
 -- The up file created one function and granted EXECUTE on it. This revokes the
 -- grant, drops the function, and asserts that no other object is left behind by

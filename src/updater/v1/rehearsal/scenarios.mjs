@@ -421,7 +421,7 @@ async function pauseStop() {
   const preDrain = ["approved", "prechecked", "staged", "quick_backup"];
   for (const state of preDrain) {
     for (const requested of ["paused", "stopped"]) {
-      const mode = new UpdaterModeV1(); mode.set(requested);
+      const mode = new UpdaterModeV1(); await mode.set(requested);
       const fixture = runnerFixture({ run: { run_id: "run:00000000-0000-4000-8000-000000000001",
         plan_id: "plan-one", state, run_class: "code", lease_token: "lease-one", detail: {} }, mode });
       const result = await fixture.runner.runOnce();
@@ -429,7 +429,7 @@ async function pauseStop() {
     }
   }
   for (const state of ["draining", "switched", "restarted", "healthy"]) {
-    const mode = new UpdaterModeV1(); mode.set("paused");
+    const mode = new UpdaterModeV1(); await mode.set("paused");
     const fixture = runnerFixture({ run: { run_id: "run:00000000-0000-4000-8000-000000000001",
       plan_id: "plan-one", state, run_class: "code", lease_token: "lease-one", detail: {} }, mode });
     assert.ok(["succeeded", "rolled_back"].includes((await fixture.runner.runOnce()).status));

@@ -1,4 +1,4 @@
-// The mutation lane for db/migrations/0238_updater_health_counts.sql.
+// The mutation lane for db/migrations/0239_updater_health_counts.sql.
 //
 // WHY A SEPARATE FILE, AND WHY IT APPLIES THE MIGRATION ITSELF.
 //
@@ -12,7 +12,7 @@
 // mutation reads as "the test fails on a whitespace-only edit".
 //
 // So this file builds its cluster with `withoutMigrations`-style independence: it
-// applies 0238 DIRECTLY, from disk, after the ledger has run. A mutated 0238 is
+// applies 0239 DIRECTLY, from disk, after the ledger has run. A mutated 0239 is
 // therefore applied exactly as written, and a whitespace-only edit is genuinely
 // semantically neutral to PostgreSQL, which is the property the harness is
 // checking for.
@@ -36,7 +36,7 @@ const DIGEST = (value: string) => `sha256:${createHash("sha256").update(value).d
 const manualAdapter = (tenantId: string, workspaceId: string) =>
   `adapter:manual:${createHash("sha256").update(
     `{"tenantId":"${tenantId}","workspaceId":"${workspaceId}"}`, "utf8").digest("hex").slice(0, 32)}`;
-const MIGRATION = join(process.cwd(), "db/migrations/0238_updater_health_counts.sql");
+const MIGRATION = join(process.cwd(), "db/migrations/0239_updater_health_counts.sql");
 const FUNCTION = "public.updater_health_counts()";
 
 type Postgres = Parameters<Parameters<typeof withRealPostgres>[0]>[0];

@@ -11,7 +11,7 @@
  * THE UPDATER AT STARTUP if that grows. Granting it `projects` or
  * `control_update_candidates` would also hand release-schema rows to the login
  * that holds the owner's approval authority, which is the authority growth R10a
- * exists to forbid. So db/migrations/0238 defines
+ * exists to forbid. So db/migrations/0239 defines
  * `public.updater_health_counts()`: SECURITY DEFINER, owned by the release
  * schema owner, zero-argument (pre-bound to the live tenant/workspace), and
  * returning three integers. This adapter calls exactly that and nothing else.

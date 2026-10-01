@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { constants } from "node:fs";
-import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, readdir, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { constants, mkdtempSync, realpathSync } from "node:fs";
+import { chmod, link, lstat, mkdir, open, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -12,11 +11,12 @@ import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "../src/updater/v1/runner.mj
 import { UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1 } from "../src/updater/v1/runtime.mjs";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
+import { sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
 
 const execFileAsync = promisify(execFile);
 
 async function temporaryRoot(t) {
-  const root = await mkdtemp(join(tmpdir(), "updater-skeleton-"));
+  const root = realpathSync(mkdtempSync("/private/tmp/updater-skeleton-"));
   t.after(async () => { await import("node:fs/promises").then(fs => fs.rm(root, { recursive: true, force: true })); });
   await mkdir(join(root, "updater-state", "confirmations"), { recursive: true });
   await mkdir(join(root, "status"));
@@ -67,8 +67,20 @@ test("R-FS reads refuse a planted FIFO without waiting for a writer", async t =>
 const makeRun = () => ({ run_id: "run:00000000-0000-4000-8000-000000000001", plan_id: "plan-one", state: "approved",
   run_class: "code", lease_token: "lease-one", detail: {} });
 
+/** R12 custody seam. The production process is root and the key file is
+ * root-owned 0600; a developer test is neither, so the ONLY thing injected is
+ * the identity the custody check reads. The sender, its store and its send
+ * path are the real ones, so these tests still run the default construction. */
+const ROOT_VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "mailto:owner@example.invalid",
+  publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
+async function rootHeldVapid(root) {
+  await writeFile(join(root, "updater-state/vapid.json"), `${JSON.stringify(ROOT_VAPID)}\n`, { mode: 0o600 });
+  return { getuid: () => 0, lstat: async path => Object.assign(await lstat(path), { uid: 0 }) };
+}
+
 class MemoryStore {
-  constructor(run = makeRun()) { this.run = run; this.eventRows = []; this.heartbeats = []; this.requests = []; }
+  constructor(run = makeRun()) { this.run = run; this.eventRows = []; this.heartbeats = []; this.requests = [];
+    this.queued = []; this.pushRows = []; }
   async liveRun() { return this.run; }
   async events() { return this.eventRows; }
   async transition(_id, lease, state, detail, options = {}) {
@@ -80,6 +92,15 @@ class MemoryStore {
   async heartbeat(value) { this.heartbeats.push(value); }
   async unhandledOwnerRequests() { return [...this.requests]; }
   async finishOwnerRequest(id, outcome) { this.requests = this.requests.filter(row => row.id !== id); this.finished = [id, outcome]; }
+  // The four R12 alert ports, so the DEFAULT sender in `startUpdaterV1` can be
+  // constructed against this fake exactly as it is against the real store.
+  async subscriptions() { return this.subscriptionsValue ?? []; }
+  async pending() { return this.pushRows.filter(row => !row.sent); }
+  async begin(id) { const row = this.pushRows.find(item => item.id === id); if (!row || row.sent) return false;
+    row.attempts += 1; return true; }
+  async finish(id, { sent, errorCode = null } = {}) { const row = this.pushRows.find(item => item.id === id);
+    if (row) { row.sent = sent; row.errorCode = errorCode; } }
+  async queue(template) { this.queued.push(template); }
 }
 
 class MemoryJournal {
@@ -153,10 +174,10 @@ test("Off, rescue, pause/stop, retry failure and a second concurrent caller fail
     assert.deepEqual(fixture.effects.calls, ["measure", "rollback"]); assert.equal(fixture.rescued(), false);
   });
   await t.test("pause before drain waits and stop refuses without switching", async () => {
-    const paused = new UpdaterModeV1(); paused.set("paused");
+    const paused = new UpdaterModeV1(); await paused.set("paused");
     const fixture = makeRunner({ mode: paused }), result = await fixture.runner.runOnce();
     assert.equal(result.status, "waiting"); assert.deepEqual(fixture.effects.calls, []);
-    paused.set("stopped"); assert.equal((await fixture.runner.runOnce()).status, "refused");
+    await paused.set("stopped"); assert.equal((await fixture.runner.runOnce()).status, "refused");
     assert.ok(!fixture.effects.calls.includes("switch"));
   });
   await t.test("post-drain failure rolls back and preserves the original code", async () => {
@@ -175,6 +196,117 @@ test("Off, rescue, pause/stop, retry failure and a second concurrent caller fail
   });
 });
 
+test("P1b: only root Check and continue clears a no-run rescue marker on the default path", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  await writeFile(join(root, "updater-state/rescued.json"), "{}\n", { mode: 0o600 });
+  const store = new MemoryStore(null);
+  const updater = await startUpdaterV1({ alerts: null, root, store });
+  t.after(() => updater.stop());
+  updater.loop.stop();
+  assert.equal(updater.loop.lastOutcome.status, "uncertain");
+  assert.match(updater.loop.lastOutcome.message, /no update is running, clear the rescue on the Mac/u);
+  await assert.rejects(updater.runner.checkAndContinue(),
+    error => error?.code === "updater_web_rescue_clear_refused");
+  store.requests = [{ id: "owner-request:00000000-0000-4000-8000-000000000001",
+    request_kind: "check_and_continue" }];
+  assert.equal((await updater.loop.tick()).status, "uncertain");
+  assert.equal(store.finished[1], "refused");
+  assert.equal(await readFile(join(root, "updater-state/rescued.json"), "utf8"), "{}\n");
+  const status = JSON.parse(await readFile(join(root, "status/status.json"), "utf8"));
+  assert.deepEqual({ state: status.state, needsYou: status.needsYou }, { state: "uncertain", needsYou: true });
+  const socket = join(root, "updater-state/control.sock");
+  const results = await Promise.allSettled(Array.from({ length: 50 }, (_, index) => sendControlRequestV1(socket, {
+    schema: "control-room.updater-control/v1", requestId: `p1b-root-clear-${index}`,
+    verb: "check-and-continue", arguments: [],
+  })));
+  assert.equal(results.filter(result => result.status === "fulfilled" && result.value.status === "idle").length, 1);
+  assert.equal(results.filter(result => (result.status === "fulfilled" && result.value.status === "busy")
+    || (result.status === "rejected" && result.reason?.code === "updater_check_continue_refused")).length, 49);
+  await assert.rejects(lstat(join(root, "updater-state/rescued.json")), /ENOENT/u);
+  store.requests = [{ id: "owner-request:00000000-0000-4000-8000-000000000002",
+    request_kind: "check_and_continue" }];
+  assert.equal((await updater.loop.tick()).status, "idle");
+  assert.equal(store.finished[1], "refused", "a retry after the marker was cleared is refused");
+});
+
+test("P7: Pause and Stop survive restart, a request-row Resume is refused, and root control may Resume", async t => {
+  for (const [index, requested] of ["pause", "stop"].entries()) {
+    const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
+    const store = new MemoryStore(null);
+    let updater = await startUpdaterV1({ alerts: null, root, store }); updater.loop.stop();
+    t.after(async () => { await updater?.stop(); });
+    const socket = join(root, "updater-state/control.sock");
+    const burst = await Promise.all(Array.from({ length: 50 }, (_, caller) => sendControlRequestV1(socket, {
+      schema: "control-room.updater-control/v1", requestId: `p7-${index}-${caller}`, verb: requested, arguments: [],
+    })));
+    assert.equal(burst.every(result => result.accepted === true), true);
+    assert.equal(await updater.loop.mode.read(), requested === "pause" ? "paused" : "stopped");
+    await updater.stop();
+
+    updater = await startUpdaterV1({ alerts: null, root, store }); updater.loop.stop();
+    assert.equal(await updater.loop.mode.read(), requested === "pause" ? "paused" : "stopped");
+    if (requested === "stop") {
+      store.requests = [{ id: "owner-request:00000000-0000-4000-8000-000000000009", request_kind: "pause" }];
+      await updater.loop.tick();
+      assert.equal(store.finished[1], "refused", "a web Pause cannot lower the owner's durable Stop");
+      assert.equal(await updater.loop.mode.read(), "stopped");
+    }
+    store.requests = [{ id: `owner-request:00000000-0000-4000-8000-00000000000${index + 2}`,
+      request_kind: "resume" }];
+    await updater.loop.tick();
+    assert.equal(store.finished[1], "refused");
+    assert.equal(await updater.loop.mode.read(), requested === "pause" ? "paused" : "stopped");
+    assert.deepEqual(await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
+      requestId: `p7-resume-${index}`, verb: "resume", arguments: [] }), { accepted: true });
+    assert.equal(await updater.loop.mode.read(), "running");
+    await updater.stop();
+  }
+});
+
+test("a malformed saved updater mode refuses startup instead of silently resuming", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
+  await writeFile(join(root, "updater-state/mode.json"), '{"schema":"control-room.updater-mode/v1","mode":"running","extra":true}\n');
+  const store = new MemoryStore(null);
+  let started;
+  try { started = await startUpdaterV1({ alerts: null, root, store }); }
+  catch (error) { assert.match(error.message, /updater_mode_state_refused/u); }
+  if (started) { await started.stop(); assert.fail("startup accepted malformed durable mode state"); }
+  await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u);
+});
+
+test("P8a: the default control handlers publish and consume the registration without an injected handler", async t => {
+  const productionSource = await readFile("src/updater/v1/updater.mjs", "utf8");
+  assert.match(productionSource, /new PasskeyStoreV1\(client\)/u);
+  assert.match(productionSource, /if \(ownsPasskeyStore\) await passkeyStore\.initialize\(\)/u);
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  const registrationSecret = "A".repeat(43), registrationDigest = `sha256:${"b".repeat(64)}`;
+  const calls = [];
+  const store = new MemoryStore(null);
+  store.openRegistration = async value => { calls.push(["open", value]); };
+  store.consumeRegistration = async value => { calls.push(["consume", value]); return true; };
+  const passkeys = {
+    async beginRegistration() { return { registrationSecret, registrationDigest,
+      authorizationChallenge: "C".repeat(43), expiresAt: "2026-10-01T00:00:00.000Z",
+      config: { installationId: "install-fixture", expectedOrigin: "https://mac.example.test" } }; },
+    async registrationOptions(secret) { assert.equal(secret, registrationSecret); return {
+      schema: "control-room.passkey-registration-options/v1", registrationDigest, publicKey: { challenge: "D".repeat(43) } }; },
+    async completeRegistration({ registrationSecret: secret, typedCode }) {
+      assert.equal(secret, registrationSecret); assert.equal(typedCode, "ABC234");
+      return { credentialId: "credential", coolingOffUntil: null };
+    },
+  };
+  const updater = await startUpdaterV1({ alerts: null, root, store, passkeys }); updater.loop.stop(); t.after(() => updater.stop());
+  const socket = join(root, "updater-state/control.sock");
+  const begun = await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
+    requestId: "p8-begin", verb: "passkey-add-begin", arguments: [] });
+  assert.equal(begun.registrationSecret, registrationSecret);
+  const completed = await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
+    requestId: "p8-complete", verb: "passkey-add-complete", arguments: [registrationSecret, "ABC234"] });
+  assert.equal(completed.credentialId, "credential");
+  assert.equal(calls[0][0], "open"); assert.equal(calls[0][1].optionsJson.registrationDigest, registrationDigest);
+  assert.deepEqual(calls[1], ["consume", registrationDigest]);
+});
+
 test("a torn live file journal becomes uncertain, then Check and continue archives it before settling", async t => {
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
   const journal = new FileStepJournalV1(root, { ownerUid: process.getuid() });
@@ -182,7 +314,8 @@ test("a torn live file journal becomes uncertain, then Check and continue archiv
   const complete = await readFile(join(root, "updater-state/journal.jsonl"));
   await writeFile(join(root, "updater-state/journal.jsonl"), complete.subarray(0, complete.length - 5), { mode: 0o600 });
   const store = new MemoryStore({ ...makeRun(), state: "staged" }), effects = new Effects();
-  const updater = await startUpdaterV1({ root, store, journal, effects, referee: { async assertPlanAllowed() {} } });
+  const updater = await startUpdaterV1({ root, store, journal, effects, referee: { async assertPlanAllowed() {} },
+    alertRuntime: await rootHeldVapid(root) });
   t.after(() => updater.stop());
   assert.equal(updater.loop.lastOutcome.status, "uncertain");
   assert.equal(store.run.state, "uncertain"); assert.deepEqual(effects.calls, []);
@@ -245,7 +378,8 @@ test("a failed initial heartbeat closes the control socket before startup return
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
   const store = new MemoryStore(undefined);
   store.heartbeat = async () => { throw Object.assign(new Error("down"), { code: "connection_dropped" }); };
-  await assert.rejects(startUpdaterV1({ root, store }), error => error.code === "connection_dropped");
+  await assert.rejects(startUpdaterV1({ root, store, alertRuntime: await rootHeldVapid(root) }),
+    error => error.code === "connection_dropped");
   await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u,
     "failed startup did not leave a listener or stale socket");
 });
@@ -255,7 +389,7 @@ test("startup reports a live run before its first heartbeat and reuses its durab
   const store = new MemoryStore(), effects = new Effects();
   const updater = await startUpdaterV1({ root, store,
     identity: { bootId: "boot-restarted", leaseToken: "lease-new" }, effects,
-    referee: { async assertPlanAllowed() {} } });
+    referee: { async assertPlanAllowed() {} }, alertRuntime: await rootHeldVapid(root) });
   t.after(() => updater.stop());
   assert.equal(updater.identity.leaseToken, "lease-one");
   assert.deepEqual(store.heartbeats[0], { bootId: "boot-restarted", leaseToken: "lease-one",
@@ -269,7 +403,7 @@ test("startup refuses when another database session still owns the updater lease
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
   const store = new MemoryStore(); store.acquire = async () => ({ status: "busy", run: store.run });
   let started;
-  try { started = await startUpdaterV1({ root, store }); }
+  try { started = await startUpdaterV1({ root, store, alertRuntime: await rootHeldVapid(root) }); }
   catch (error) { assert.match(error.message, /updater_live_session_busy/u); }
   if (started) { await started.stop(); assert.fail("startup accepted a busy database lease"); }
   await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u);
@@ -278,7 +412,8 @@ test("startup refuses when another database session still owns the updater lease
 test("startup settles the actuator's durable link transaction before opening its socket", async t => {
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
   const store = new MemoryStore(null); let recovered = 0;
-  const updater = await startUpdaterV1({ root, store, effects: { async recover() { recovered += 1; } } });
+  const updater = await startUpdaterV1({ root, store, effects: { async recover() { recovered += 1; } },
+    alertRuntime: await rootHeldVapid(root) });
   try { assert.equal(recovered, 1); assert.ok(await lstat(join(root, "updater-state/control.sock"))); }
   finally { await updater.stop(); }
 });
@@ -305,6 +440,86 @@ test("the main loop does not poll the runner while Off and rejects a risk-increa
   assert.equal(watcherCalls, 0, "even the rescue path does not wake the watcher while Off");
 });
 
+test("the production call shape starts the REAL alert sender; only an explicit null or false turns it off", async t => {
+  // Review blocker 1. The old ternary read the ABSENCE of the `alerts` key as
+  // "off" and an explicit `null` as "on", so the production entry point — which
+  // passes no options — started with `alerts === null` and no alert could ever
+  // fire. The default path below is the shape `src/updater/v1/updater.mjs` uses
+  // when it is invoked as a program: no `alerts` key at all.
+  const root = await temporaryRoot(t);
+  await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const store = new MemoryStore();
+  // The started updaters are stopped in a `finally`, so a FAILING assertion —
+  // which is exactly what a guard mutation produces — cannot leak a 5s loop
+  // timer and hang the test runner instead of reporting the failure.
+  const started = [];
+  t.after(async () => { for (const updater of started.splice(0)) await updater.stop().catch(() => {}); });
+  const updater = await startUpdaterV1({ root, store,
+    identity: { bootId: "boot-wiring", leaseToken: "lease-new" },
+    alertRuntime: await rootHeldVapid(root) });
+  started.push(updater);
+  assert.ok(updater.alerts, "no `alerts` key means the real sender, not null");
+  assert.equal(updater.alerts.constructor.name, "UpdaterAlertSenderV1");
+  assert.equal(updater.alerts.root, root, "it is bound to the real root");
+  assert.equal(updater.loop.alerts, updater.alerts, "the main loop drives the same sender");
+  await updater.stop();
+  // An explicit opt-out still works, for a caller that supplies its own port.
+  for (const optOut of [{ alerts: null }, { alerts: false }]) {
+    const off = await startUpdaterV1({ root, store, ...optOut, alertRuntime: await rootHeldVapid(root) });
+    started.push(off);
+    assert.equal(off.alerts, null, `explicit ${JSON.stringify(optOut)} turns the sender off`);
+    assert.equal(off.loop.alerts, null);
+    await off.stop();
+  }
+});
+
+test("startup refuses a VAPID key that is not root-held, and does not strand the lease", async t => {
+  // The custody gate the review found was dead code. A key readable by anyone
+  // but root is a refusal, and it must happen BEFORE the session lease is taken
+  // so a refusal cannot leave a second updater permanently locked out.
+  const root = await temporaryRoot(t);
+  await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const key = join(root, "updater-state/vapid.json");
+  await writeFile(key, `${JSON.stringify(ROOT_VAPID)}\n`, { mode: 0o644 });
+  const store = new MemoryStore();
+  let acquired = 0;
+  store.acquire = async token => { acquired += 1; return { status: "acquired", run: store.run, leaseToken: token }; };
+  // Both attempts below are expected to REFUSE, so nothing is started — but if a
+  // guard mutation makes one of them start instead, the updater it returns owns
+  // a 5s loop timer. Registering every successful start means a broken guard is
+  // reported as a failed assertion rather than as a hung test runner.
+  const started = [];
+  t.after(async () => { for (const updater of started.splice(0)) await updater.stop().catch(() => {}); });
+  const start = async options => {
+    const updater = await startUpdaterV1({ root, store, ...options });
+    started.push(updater); return updater;
+  };
+  await assert.rejects(start({ alertRuntime: { getuid: () => 0,
+    lstat: async path => Object.assign(await lstat(path), { uid: 0 }) } }),
+  /updater_vapid_permissions_refused/u);
+  assert.equal(acquired, 0, "the key is checked before the updater takes its lease");
+  await chmod(key, 0o600);
+  await assert.rejects(start({ alertRuntime: { getuid: () => 501 } }),
+    /updater_vapid_not_root/u);
+  assert.equal(acquired, 0);
+});
+
+test("a missing VAPID key is a warning, not a refusal: the updater still runs its release", async t => {
+  // §15 item 21: install-night pushes come from item 8's minimal sender, and the
+  // key is written by the installer. A not-yet-installed key must not stop the
+  // updater from applying the release it was woken for.
+  const root = await temporaryRoot(t);
+  await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const warnings = [];
+  const store = new MemoryStore();
+  const updater = await startUpdaterV1({ root, store, onTimerError: error => warnings.push(error.code),
+    alertRuntime: { getuid: () => 0 } });
+  try {
+    assert.equal(updater.alerts, null, "no sender without a key, so no send is attempted");
+    assert.deepEqual(warnings, ["updater_vapid_unavailable"], "the absence is reported once, as a warning");
+  } finally { await updater.stop(); }
+});
+
 test("a busy result with a live run is published as needs_attention", async () => {
   let written;
   const loop = new UpdaterMainLoopV1({ runner: { async runOnce() { return { status: "busy", liveRun: true }; } },
@@ -322,6 +537,16 @@ test("the runner refuses an acquired result whose durable token does not match",
   const result = await fixture.runner.runOnce();
   assert.equal(result.status, "busy"); assert.equal(result.liveRun, true);
   assert.deepEqual(fixture.effects.calls, []);
+});
+
+test("the main loop feeds updater and health facts to the alert sender without trusting free-form text", async () => {
+  const facts = [], alerts = { async reconcile(value) { facts.push(value); }, async tick() {} };
+  const loop = new UpdaterMainLoopV1({ runner: { async runOnce() { return { status: "uncertain" }; } },
+    store: new MemoryStore(undefined), stateFiles: { readSelfUpdate: async () => "On\n", hasRescueMarker: async () => false,
+      publicFacts: async () => ({}), async writeStatus() {} }, mode: new UpdaterModeV1(), ownerActions: { async handle() {} },
+    alerts, alertFacts: async () => ({ webDown: true, backupMissing: true }) });
+  await loop.tick();
+  assert.deepEqual(facts, [{ webDown: true, backupMissing: true, needsOwner: false, uncertain: true, rescue: false }]);
 });
 
 test("the PostgreSQL adapter refuses a wrong production role and never transitions without the run lease", async () => {

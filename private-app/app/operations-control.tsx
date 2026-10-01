@@ -18,6 +18,7 @@ const labels: Record<OperationsModeV1, { label: string; tone: ChipTone; explanat
   stopped: { label: "Stopped", tone: "bad",
     explanation: "Nothing new is claimed or started, and running work has been asked to stop." },
 };
+const AUTO_PAUSE_REASON = "Paused automatically — this Mac was too busy. It will start again by itself when things calm down.";
 
 /**
  * The mode is a server-side fact, not a browser note.
@@ -85,6 +86,8 @@ export function OperationsControlPanel({ client }: { client?: OperationsModeClie
       ? <>
         <p><StateChip state={view.mode} tone={labels[view.mode].tone} label={labels[view.mode].label} />{" "}
           {labels[view.mode].explanation}</p>
+        {view.mode === "paused" && view.reason === AUTO_PAUSE_REASON
+          && <p className="private-notice">Paused automatically — this Mac was too busy. It will start again by itself when things calm down.</p>}
         {view.revision > 0
           ? <p className="private-note">Set {new Date(view.setAt).toLocaleString()}{view.reason ? ` — ${view.reason}` : ""}.</p>
           : <p className="private-note">No one has paused this installation, so it is running normally.</p>}
