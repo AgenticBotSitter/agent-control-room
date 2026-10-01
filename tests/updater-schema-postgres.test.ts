@@ -28,8 +28,8 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
@@ -967,7 +967,7 @@ test("startUpdaterV1 boots with a live run and only one of 20 production session
       await Promise.all(contenders.map(async item => { await item.store.release(); await item.client.end(); }));
     }
 
-    const root = await mkdtemp(join(tmpdir(), "updater-live-boot-"));
+    const root = realpathSync(mkdtempSync("/private/tmp/updater-live-boot-"));
     await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
     await writeFile(join(root, "updater-state/self-update"), "On\n");
     const deployer = as(postgres, "deployer"); await deployer.connect();
@@ -1014,7 +1014,7 @@ test("P1b/P7: web cannot clear no-run rescue and web Resume stays refused across
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres); await seedOwnerSession(postgres);
-    const root = await mkdtemp("/tmp/cr-upd-pg-");
+    const root = realpathSync(mkdtempSync("/private/tmp/cr-upd-pg-"));
     await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
     await writeFile(join(root, "updater-state/self-update"), "On\n");
     await writeFile(join(root, "updater-state/rescued.json"), "{}\n", { mode: 0o600 });

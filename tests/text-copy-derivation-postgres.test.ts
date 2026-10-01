@@ -12,7 +12,7 @@
 
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -882,7 +882,7 @@ test("a bot reads only the inputs of the work it was admitted to", { skip }, asy
       // Declared before the `try` so the `finally` can remove it even if the
       // ceremony refuses half way through; every path here is a temp directory
       // under the OS temp dir, created by this test and removed by it.
-      const storeRoot = await mkdtemp(join(tmpdir(), "cr-convdb-store-"));
+      const storeRoot = await realpath(await mkdtemp(join(tmpdir(), "cr-convdb-store-")));
       try {
       // `operationsMode` is REQUIRED, not optional: with no reader the gateway
       // reports "unknown", and a claim under an unknown mode is refused as

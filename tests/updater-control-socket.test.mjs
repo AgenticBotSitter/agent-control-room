@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { chmod, lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { UpdaterControlServerV1, requestVerifiedAdminSocketV1,
   sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
 
 async function rootV1(t) {
-  const root = await mkdtemp(join(tmpdir(), "updater-control-"));
+  const root = realpathSync(mkdtempSync("/private/tmp/updater-control-"));
   t.after(async () => { await import("node:fs/promises").then(fs => fs.rm(root, { recursive: true, force: true })); });
   await mkdir(join(root, "updater-state")); return root;
 }

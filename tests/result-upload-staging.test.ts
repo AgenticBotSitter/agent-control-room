@@ -7,8 +7,8 @@
 // the staging error's own code, which is the only thing a caller ever sees.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { link, mkdir, mkdtemp, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { constants, mkdtempSync, realpathSync } from "node:fs";
+import { link, mkdir, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -32,8 +32,8 @@ const digest = (value: Uint8Array) => `sha256:${createHash("sha256").update(valu
  * carries after the installer resolves it once. `mkdtemp` also hands back a
  * 0700 directory, which is the other thing the area insists on.
  */
-async function privateBase(): Promise<{ path: string; root: (name: string) => string }> {
-  const path = await realpath(await mkdtemp(join(tmpdir(), "cr-staging-")));
+function privateBase(): { path: string; root: (name: string) => string } {
+  const path = realpathSync(mkdtempSync(join(tmpdir(), "cr-staging-")));
   return { path, root: (name: string) => join(path, name) };
 }
 
@@ -393,6 +393,33 @@ test("fifty writers and readers at once, and the queue does not lie", async () =
     assert.deepEqual(await staging.stagedNames(), [], "and both sessions clean up completely");
   } finally {
     await rm(base.path, { recursive: true, force: true });
+  }
+});
+
+test("the staging fixture canonicalizes a TMPDIR symlink before production opens its root", async () => {
+  const temporaryParent = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "cr-staging-real-tmp-")));
+  const linkedParent = join(realpathSync(tmpdir()), `cr-staging-linked-tmp-${process.pid}-${Date.now()}`);
+  const original = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+  await symlink(temporaryParent, linkedParent);
+  try {
+    process.env.TMPDIR = linkedParent;
+    delete process.env.TMP;
+    delete process.env.TEMP;
+    const base = privateBase();
+    assert.ok(base.path.startsWith(`${temporaryParent}/`), "fixture supplies the physical, not symlinked, root");
+    const root = base.root("staging");
+    await mkdir(root, { mode: 0o700 });
+    const staging = await openRoot(root), value = bytes("canonical fixture");
+    await staging.stage({ tenantId: TENANT, projectId: PROJECT, uploadId: UPLOAD, ordinal: 1 }, value);
+    assert.deepEqual(Buffer.from((await staging.read({ tenantId: TENANT, projectId: PROJECT,
+      uploadId: UPLOAD, ordinal: 1 }))!), Buffer.from(value));
+    await rm(base.path, { recursive: true, force: true });
+  } finally {
+    if (original.TMPDIR === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = original.TMPDIR;
+    if (original.TMP === undefined) delete process.env.TMP; else process.env.TMP = original.TMP;
+    if (original.TEMP === undefined) delete process.env.TEMP; else process.env.TEMP = original.TEMP;
+    await rm(linkedParent, { force: true });
+    await rm(temporaryParent, { recursive: true, force: true });
   }
 });
 

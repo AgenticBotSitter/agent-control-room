@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { constants } from "node:fs";
-import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, readdir, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { constants, mkdtempSync, realpathSync } from "node:fs";
+import { chmod, link, lstat, mkdir, open, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -17,7 +16,7 @@ import { sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
 const execFileAsync = promisify(execFile);
 
 async function temporaryRoot(t) {
-  const root = await mkdtemp(join(tmpdir(), "updater-skeleton-"));
+  const root = realpathSync(mkdtempSync("/private/tmp/updater-skeleton-"));
   t.after(async () => { await import("node:fs/promises").then(fs => fs.rm(root, { recursive: true, force: true })); });
   await mkdir(join(root, "updater-state", "confirmations"), { recursive: true });
   await mkdir(join(root, "status"));

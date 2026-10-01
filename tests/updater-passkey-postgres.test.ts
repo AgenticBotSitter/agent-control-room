@@ -27,9 +27,9 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { securityDefinerAuditLive } from "./support/attack-kit/search-path-audit";
@@ -219,7 +219,7 @@ test("P8: default updater and Mac-local composition complete add -> phone -> typ
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres); await seedOwnerSession(postgres);
     await seedSubscription(postgres, "https://web.push.apple.com/p8-default-path");
-    const root = await mkdtemp(join(tmpdir(), "updater-p8-default-"));
+    const root = realpathSync(mkdtempSync("/private/tmp/updater-p8-default-"));
     await mkdir(join(root, "updater-state"), { recursive: true }); await mkdir(join(root, "status"));
     await mkdir(join(root, "Protected/config"), { recursive: true });
     await writeFile(join(root, "updater-state/self-update"), "Off\n");
