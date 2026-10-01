@@ -71,7 +71,7 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 //     and taking 0205..0200's downs off that, newest first, gives the previous
 //     constant (`73ebc791...`) byte for byte -- so the move is 0200-0205 and
 //     nothing else.
-const PRE_0234_DIGEST = "5c5562866faf1221bb5f8da6e162da4f48f97c707ee540666a8dae1e07372d27";
+const PRE_0234_DIGEST = "30522043bf0538df79c91c43e70d701a4e6c31cd6fcddcf8bb60a405f9bd8291"; // + 0215-0220 (presence + cursors); measured: rolling those six back gives the previous pin 5c556286…
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {
