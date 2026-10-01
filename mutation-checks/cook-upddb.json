@@ -64,10 +64,10 @@
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
-    "find": "CREATE OR REPLACE FUNCTION updater.guard_owner_request_approval_kind() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER",
-    "replace": "CREATE OR REPLACE FUNCTION updater.guard_owner_request_approval_kind() RETURNS trigger\nLANGUAGE plpgsql",
+    "find": "CREATE OR REPLACE FUNCTION updater.guard_owner_request_approval_kind() RETURNS trigger\nLANGUAGE plpgsql SET search_path",
+    "replace": "CREATE OR REPLACE FUNCTION updater.guard_owner_request_approval_kind() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
-    "why": "M1: the guard reads `plans`, which the web login has no privilege on, so SECURITY DEFINER is load-bearing — without it the trigger fails and refuses EVERY rollback request"
+    "why": "M1's kind guard must stay INVOKER: the web login already holds SELECT on updater.plans and on (id, plan_id) of plan_approvals — every column the body reads — so SECURITY DEFINER would be authority the guard does not need and the web does not have (measured)"
   },
   {
     "file": "src/updater/v1/ddl/0002_schema.sql",

@@ -1270,16 +1270,23 @@ CREATE OR REPLACE TRIGGER heartbeat_guard BEFORE INSERT OR UPDATE ON updater.hea
 -- change beyond `handled_at`/`handled_outcome`), so checking at INSERT is
 -- checking it for good.
 --
--- SECURITY DEFINER is load-bearing for the same reason it is on
--- `guard_owner_session` above: the web login holds three columns of
--- `plan_approvals` and none of `plans`, so an invoker body would fail with
--- "permission denied for table plans" and refuse EVERY rollback request — the
--- feature would read as a permissions problem rather than a missing definer.
--- The body gains the ability to ASK which kind a named plan is. It cannot
--- approve anything, cannot change the approval, and cannot reach any other
--- plan's kind except the one it was handed.
+-- IT IS NOT SECURITY DEFINER, and that is a measured choice rather than an
+-- oversight. An earlier draft made it SECURITY DEFINER on the assumption that
+-- the web login holds no privilege on `plans` — the reason
+-- `guard_owner_session` above needs it. Measured on a real cluster:
+-- `0002_schema.sql` grants the web login SELECT on `updater.plans` in full (it
+-- renders the owner's plan cards), and separately on `(id, plan_id, received_at)`
+-- of `plan_approvals`, which is every column this body reads. So the invoker
+-- body has what it needs, and the definer would be pure extra authority.
+--
+-- Leaving it INVOKER means the guard holds exactly the web login's own reach:
+-- it can ask which kind one named plan is, and it can do nothing the web could
+-- not already do by hand — no approval, no state change, no other plan's kind.
+-- `guard_owner_session` keeps SECURITY DEFINER because `control_web_sessions`
+-- really is unreadable from the web side; this one does not, so it must not
+-- borrow that justification.
 CREATE OR REPLACE FUNCTION updater.guard_owner_request_approval_kind() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, updater, pg_temp AS $$
 DECLARE
   approval_plan text;
   plan_kind text;

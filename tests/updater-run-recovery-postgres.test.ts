@@ -617,15 +617,34 @@ test("B4: the run row and its journal mirror move in one statement", async t => 
       assert.deepEqual(await eventStates(client, runId2), before, "a refused step wrote no mirror row");
       assert.equal((await runRow(client, runId2)).state, "prechecked", "and left the row where it was");
 
-      // The web login cannot reach the function at all. It owns the tables but
-      // not the routine, so a compromised release cannot move a run row even if
-      // it found the SQL.
+      // The web login must not be able to EXECUTE the function. Asserted on the
+      // CATALOG, not on the refusal a call produces, because those are two
+      // different layers and only one of them is this guard: with the REVOKE
+      // removed, `has_function_privilege` for the web login reads true and a call
+      // is still refused — but by the function's own lease check, because the
+      // attacker does not hold the lease. So a test that only asserts "the call
+      // is refused" passes with the REVOKE deleted, which is a test of the lease
+      // wearing the label of a privilege test. The privilege itself is what has
+      // to be absent, and only the catalog says so.
       const web = as(postgres, "web"); await web.connect();
       try {
         await seedOwnerSession(postgres);
+        const acl = await web.query<{ executable: boolean }>(
+          "SELECT has_function_privilege(current_user,"
+          + "'updater.record_run_step(text,text,text,jsonb,boolean)','EXECUTE') AS executable");
+        assert.equal(acl.rows[0]?.executable, false,
+          "the web login holds no EXECUTE on record_run_step: the routine is REVOKEd from PUBLIC, "
+          + "so a compromised release cannot reach it even if it found the SQL");
+        // And it is still refused when it tries, which is the second layer.
         assert.match(await refuses(web, "SELECT updater.record_run_step($1,$2,'healthy','{}'::jsonb,false)",
-          [runId2, leaseToken2]), /permission denied/u);
+          [runId2, leaseToken2]), /permission denied|lease lost/u);
       } finally { await web.end(); }
+      // The same assertion as the deployer, because the deployer must keep it.
+      const deployerAcl = await client.query<{ executable: boolean }>(
+        "SELECT has_function_privilege(current_user,"
+        + "'updater.record_run_step(text,text,text,jsonb,boolean)','EXECUTE') AS executable");
+      assert.equal(deployerAcl.rows[0]?.executable, true,
+        "the updater's own login is the holder, and it keeps it");
     } finally { await client.end(); }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 900_000 });
 });
@@ -825,6 +844,23 @@ test("M1: a rollback request must be passkey-backed, and cite a rollback approva
       assert.match(await refuses(web, "INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,"
         + "owner_session_digest) VALUES($1,'rollback',true,$2)",
       [`owner-request:${randomUUID()}`, OWNER_SESSION]), /violates check constraint "owner_request_passkey_pairing"/u);
+
+      // (h) The kind guard runs with the WEB LOGIN's own privileges, not the
+      // deployer's. Asserted on the catalog because the refusal above proves
+      // nothing about privilege: the guard works either way (the web can read
+      // `plans`, so it needs no definer), which is exactly why "it works" is not
+      // evidence that it holds no more authority than it should. This is the
+      // difference from `guard_owner_session`, which IS a definer because
+      // `control_web_sessions` really is unreadable from the web side.
+      const kind = await client.query<{ security_definer: boolean }>(
+        "SELECT p.prosecdef AS security_definer FROM pg_catalog.pg_proc p "
+        + "WHERE p.oid = 'updater.guard_owner_request_approval_kind()'::regprocedure");
+      assert.equal(kind.rows[0]?.security_definer, false,
+        "M1's kind guard must stay INVOKER: a definer would give it the deployer's reach for nothing");
+      // The pinned path is asserted by the passkey lane's live search_path audit,
+      // which parses `proconfig` with PostgreSQL's own GUC rules rather than by
+      // string-matching it — re-asserting it here would be a weaker second copy,
+      // and a weaker copy of a security property is worse than none.
     } finally { await client.end(); await web.end(); }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 900_000 });
 });

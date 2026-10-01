@@ -1510,11 +1510,12 @@ test("every routine in schema updater pins its search_path with pg_temp last", a
             // eight (two bound helpers, four guards, the refusal aggregation and the
             // cooling-off enqueue), and the audit counts only the PRIVILEGED ones —
             // SECURITY DEFINER or returning a trigger. The updater DB round adds
-            // ONE more (`guard_owner_request_approval_kind`, SECURITY DEFINER
-            // because it must read `plans`, which the web login has no privilege
-            // on). A count that drifts is a routine that changed its privilege
-            // without anybody deciding to, and a floor would hide a routine that
-            // stopped being privileged while leaving the count high.
+            // ONE more: `guard_owner_request_approval_kind`, which counts because it
+            // RETURNS A TRIGGER, not because it is a definer — it is deliberately
+            // INVOKER, since the web login already holds every column its body reads.
+            // A count that drifts is a routine that changed its privilege without
+            // anybody deciding to, and a floor would hide a routine that stopped
+            // being privileged while leaving the count high.
             assert.equal(result.findings.length, 20,
               `expected 20 privileged routines, found ${result.findings.length}`);
       // Both new SECURITY DEFINER functions are in the set that was audited, by
