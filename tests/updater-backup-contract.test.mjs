@@ -167,9 +167,23 @@ test("the DDL directory holds exactly the loader's file list, and the backup tab
     assert.ok(updaterTablesV1.includes(table), `${table} must be in the loader's asserted table set`);
   }
   // Every function 0004 defines is REVOKEd from PUBLIC. Same rule 0003 holds to.
-  for (const match of ddl.matchAll(/CREATE OR REPLACE FUNCTION updater\.(\w+)\(\)/gu)) {
-    assert.match(ddl, new RegExp(`REVOKE ALL ON FUNCTION updater\\.${match[1]}\\(\\) FROM PUBLIC`, "u"),
-      `${match[1]} must be revoked from PUBLIC`);
+  // The pattern must match EVERY arity, not just the zero-argument one: a
+  // function declared with parameters (`backup_row_counts_shape(value jsonb)`)
+  // does not match `\w+\(\)`, so the first version of this loop silently skipped
+  // the one CHECK helper with a parameter, and it reached the web login as an
+  // EXECUTABLE PUBLIC routine. cook/v1's passkey lane caught the consequence.
+  const definedFunctions = [...ddl.matchAll(/CREATE OR REPLACE FUNCTION updater\.(\w+)\(([^)]*)\)/gu)]
+    .map(match => ({ name: match[1], arity: (match[2] ?? "").trim() === "" ? 0 : (match[2] ?? "").split(",").length }));
+  assert.ok(definedFunctions.length >= 5, "0004 still defines its functions (this loop has something to check)");
+  for (const { name, arity } of definedFunctions) {
+    // Matched by NAME and ARITY, not by the full signature. The CREATE spells
+    // its parameters as `name type` (`value jsonb`) and the REVOKE spells the
+    // same routine as the bare TYPES (`jsonb`) -- PostgreSQL's two spellings of
+    // one signature -- so a signature-to-signature comparison matches nothing.
+    // Name plus arity is exactly as strong here: 0004 declares each name once.
+    const arguments_ = arity === 0 ? "" : arity === 1 ? "[^)]*" : `[^)]*(?:,[^)]*){${arity - 1}}`;
+    assert.match(ddl, new RegExp(`REVOKE ALL ON FUNCTION updater\\.${name}\\(${arguments_}\\) FROM PUBLIC`, "u"),
+    `${name} must be revoked from PUBLIC`);
   }
   for (const match of ddl.matchAll(/ON updater\.(\w+)\s*\n\s*FOR EACH ROW EXECUTE FUNCTION/gu)) {
     assert.ok(updaterTablesV1.includes(match[1]),

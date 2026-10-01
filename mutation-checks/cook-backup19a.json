@@ -4,7 +4,7 @@
     "find": "CREATE OR REPLACE FUNCTION updater.guard_plan_backup_fresh() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$\nBEGIN\n  IF NEW.kind <> 'database' THEN RETURN NEW; END IF;",
     "replace": "CREATE OR REPLACE FUNCTION updater.guard_plan_backup_fresh() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, updater, pg_temp AS $$\nBEGIN\n  IF true THEN RETURN NEW; END IF;\n  IF NEW.kind <> 'database' THEN RETURN NEW; END IF;",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "a database plan with no fresh backup must be refused, or item 19a's \u00a79.5 promise (\"blocks DB plans until fixed\") is void and a database can be migrated with nothing to restore from"
+    "why": "a database plan with no fresh backup must be refused, or item 19a's §9.5 promise (\"blocks DB plans until fixed\") is void and a database can be migrated with nothing to restore from"
   },
   {
     "file": "src/updater/v1/ddl/0004_backups.sql",
@@ -109,7 +109,7 @@
     "find": "    if (Number.isFinite(free) && free < floor) throw UpdaterBackupV1.#refuse(\"updater_backup_disk_full\");",
     "replace": "    if (false) throw UpdaterBackupV1.#refuse(\"updater_backup_disk_full\");",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "the free-space preflight is \u00a78.6's rule: without it a nearly-full disk is discovered half way through a dump, and the failure leaves a partial generation and a full root"
+    "why": "the free-space preflight is §8.6's rule: without it a nearly-full disk is discovered half way through a dump, and the failure leaves a partial generation and a full root"
   },
   {
     "file": "src/updater/v1/backup-runner.mjs",
@@ -138,5 +138,12 @@
     "replace": "      AND false THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "a recovery must not be dated before the failure it clears, or the ledger can be made to report a success that predates the failure it is credited with clearing. The last_success_at IS DISTINCT FROM clause is what separates a RECOVERY from a cleanup: dropping it makes the rule fire on clearing a stale failure, which is legal and which an earlier version of this guard wrongly refused."
+  },
+  {
+    "file": "src/updater/v1/ddl/0004_backups.sql",
+    "find": "REVOKE ALL ON FUNCTION updater.backup_row_counts_shape(jsonb) FROM PUBLIC;",
+    "replace": "-- mutation drops the REVOKE, so PUBLIC (and so the web login) keeps EXECUTE",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
+    "why": "A FUNCTION is EXECUTABLE by PUBLIC by default, so defining a CHECK helper without revoking it hands the web login a callable routine it never had. Measured, not theoretical: cook/v1's passkey lane asserts the web's executable routine set as an EXACT list, and this function was the one extra entry that failed it on the merged tree. The same leak reaches the migrator. Kept as its own check because 0002's two CHECK helpers each carry the identical REVOKE, so this is a pattern that has to be right in every file that follows it."
   }
 ]

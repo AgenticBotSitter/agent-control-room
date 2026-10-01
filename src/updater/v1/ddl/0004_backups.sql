@@ -84,6 +84,16 @@ LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, updater, pg_temp AS $$
            OR entry ->> 'table' !~ '^[a-z0-9_]{1,63}$'
            OR (entry ->> 'count')::bigint < 0)
 $$;
+-- Same treatment as the two CHECK helpers in `0002_schema.sql`, and for the
+-- same reason. A function is EXECUTABLE by PUBLIC by default, so without this
+-- REVOKE the web login inherits EXECUTE on it (observed: cook/v1's
+-- `updater-passkey-postgres` lane asserts the web's executable routine set as
+-- an EXACT list, and this function was the one extra entry). EXECUTE is all
+-- this buys: the function reads no table and owns nothing, so it cannot leak
+-- data -- but the web never INSERTs a backup row, so unlike
+-- `bounded_transports` and `authorization_complete` it does not even need the
+-- EXECUTE a CHECK constraint would implicitly require of the inserting role.
+REVOKE ALL ON FUNCTION updater.backup_row_counts_shape(jsonb) FROM PUBLIC;
 
 CREATE TABLE IF NOT EXISTS updater.backup_generations (
   generation_id text PRIMARY KEY CHECK (generation_id ~

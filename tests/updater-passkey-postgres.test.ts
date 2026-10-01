@@ -1572,12 +1572,15 @@ test("every routine in schema updater pins its search_path with pg_temp last", a
         + ` found ${JSON.stringify(result.unclassifiedSchemas)}`);
       // The EXACT count, not a floor. Item 7 shipped 13 functions; item 10a adds
             // eight (two bound helpers, four guards, the refusal aggregation and the
-            // cooling-off enqueue), and the audit counts only the PRIVILEGED ones —
-            // SECURITY DEFINER or returning a trigger. A count that drifts is a routine
-            // that changed its privilege without anybody deciding to, and a floor would
-            // hide a routine that stopped being privileged while leaving the count high.
-            assert.equal(result.findings.length, 19,
-              `expected 19 privileged routines, found ${result.findings.length}`);
+            // cooling-off enqueue); item 19a adds four more, all privileged and all
+            // pinned (the freshness predicate, and the three backup guards), taking
+            // it to 23. The audit counts only the PRIVILEGED ones — SECURITY DEFINER
+            // or returning a trigger. A count that drifts is a routine that changed
+            // its privilege without anybody deciding to, and a floor would hide a
+            // routine that stopped being privileged while leaving the count high. So
+            // the number moves here, deliberately, with the DDL that moved it.
+            assert.equal(result.findings.length, 23,
+              `expected 23 privileged routines, found ${result.findings.length}`);
       // Both new SECURITY DEFINER functions are in the set that was audited, by
       // name — a routine that stopped being privileged would otherwise shrink the
       // audited set and pass unnoticed.
@@ -1590,7 +1593,12 @@ test("every routine in schema updater pins its search_path with pg_temp last", a
       const audited = result.findings.map(finding => finding.routine);
       for (const name of ["updater.enqueue_cooling_off_notices", "updater.record_approval_refusal",
         "updater.guard_passkey_registration_open", "updater.guard_open_registration",
-        "updater.guard_refusal_bucket", "updater.guard_push_schedule"])
+        "updater.guard_refusal_bucket", "updater.guard_push_schedule",
+        // Item 19a's four, by the same rule: named here so a backup routine that
+        // stopped being privileged fails this lane rather than quietly leaving the
+        // audited set smaller than the count above.
+        "updater.backup_is_fresh", "updater.guard_plan_backup_fresh",
+        "updater.guard_backup_generation_immutable", "updater.guard_backup_state_update"])
         assert.ok(audited.some(routine => routine.startsWith(`${name}(`)),
           `${name} must be in the audited set (privileged), otherwise it changed privilege silently`);
       // And the pinned path is one of the DESIGN's two, not merely a path that ends in

@@ -1247,6 +1247,17 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
         assert.match(await refuses(web, "SELECT updater.backup_is_fresh()"),
           /permission denied/u,
           "the freshness RULE stays the trigger's alone");
+        // The row-counts CHECK helper is shut to the web too. A function is
+        // EXECUTABLE by PUBLIC by default, so an unrevoked helper is callable by
+        // the web login as well as by the migrator -- which is exactly how this
+        // one leaked: `0004` defined it and never revoked it, and cook/v1's
+        // passkey lane (which asserts the web's executable routine set as an
+        // EXACT list) is what caught it on the merged tree. The migrator's
+        // refusal of the same function is asserted above; without the matching
+        // one here, deleting the REVOKE would only fail that other lane.
+        assert.match(await refuses(web, "SELECT updater.backup_row_counts_shape('[]'::jsonb)"),
+          /permission denied/u,
+          "the row-counts CHECK helper is the deployer's alone");
         // The digests are NOT readable: the badge needs state and ages, not the
         // operator's hashes or per-table counts.
         assert.match(await refuses(web, "SELECT dump_sha256 FROM updater.backup_generations"),
