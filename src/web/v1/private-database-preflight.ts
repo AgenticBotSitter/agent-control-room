@@ -29,8 +29,8 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 //    and the combine-input bindings) merged onto that ledger, then once more after
 //    0210's stored-set guard was corrected to key on `producer_kind` rather than
 //    `source_kind`;
-//  - THIS merge round, for the text-copy derivations: cook/v1 at 0238 plus 0212
-//    (the derivation record) and 0213 (its two read views).
+//  - this merge round: cook/v1 at 0238 plus 0212/0213 (text-copy derivations)
+//    and 0215-0220 (fleet presence and the owner surface cursor).
 //
 // Neither side's value survived the merge and neither could have. cook/v1's value
 // was derived from a tree with no 0212/0213; this branch's pre-merge value was
@@ -40,7 +40,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // is expected to appear anywhere.
 //
 // Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "MERGED_TREE_DIGEST_PENDING";
+export const privateWebSchemaDigest = "19d0d19d75c80eb765bb16b73aa8d4411c306f04ed109fd80c0d356b60e5f97a";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
