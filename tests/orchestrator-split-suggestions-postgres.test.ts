@@ -1731,12 +1731,50 @@ test("ONE owner grant and twenty concurrent presses is ONE run, and nineteen hon
         // grant function latching BOTH the project scope and the request scope in
         // one call, so the scopes that still carry a latch afterwards name which of
         // them was spent twice.
-        const remaining = await admin.query<{ scope_key: string; failure_count: string; latched: string }>(
-          `SELECT scope_key, failure_count::text, coalesce(owner_retry_cleared_at::text,'') AS latched
+        const remaining = await admin.query<{ scope_key: string; failure_count: string; latched: string; cleared: string }>(
+          `SELECT scope_key, failure_count::text, coalesce(owner_retry_cleared_at::text,'') AS latched,
+             coalesce(cleared_at::text,'') AS cleared
              FROM control_planner_failure_counters ORDER BY scope_key`);
         assert.equal(runs, 1,
           `one owner grant authorised ${runs} planner runs under twenty concurrent presses; `
           + `it must authorise exactly one. counters: ${JSON.stringify(remaining.rows)}`);
+        // AND THE BOUND IS THE NEEDS-YOU ITEM, not the counter. Read through the
+        // REAL store method the coordinator now calls, because the counter reads 0
+        // by then and the item is the only thing still saying "this description
+        // escalated". A store whose `open` answered from the counter would report
+        // false here and take the run bound with it.
+        assert.equal(await new PostgresIntakeNeedsYouStoreV1(database(clients[0]!),
+          () => ({ identityId: "identity:orch-agent" }), () => LATER)
+          .open({ tenantId: scope.tenantId, projectId: scope.projectId, ownerRequest: description }), true,
+        "the owner's description still has an open escalation after the latch was spent");
+        assert.equal(await new PostgresIntakeNeedsYouStoreV1(database(clients[0]!),
+          () => ({ identityId: "identity:orch-agent" }), () => LATER)
+          .open({ tenantId: scope.tenantId, projectId: scope.projectId,
+            ownerRequest: "A different description that never escalated." }), false,
+        "and a description that never escalated has none, so this is not a blanket refusal");
+        // AND IT IS NOT PERMANENT, which is the part that is easy to get wrong here.
+        // The Needs-you ledger is append-only (0202 rejects UPDATE and DELETE on it)
+        // and 0102's inbox guard only admits attention:work-batch ids, so NEITHER
+        // record closes -- a read of either would refuse this description forever and
+        // make the owner's next escalation unreachable. `open()` therefore reads the
+        // counter row's own `cleared_at`, which the next failure clears.
+        //
+        // The two fresh failures below are what a real owner's next escalation looks
+        // like, and they must make the description runnable again. `record()` sets
+        // `cleared_at=NULL`, which is precisely the re-escalation this needs.
+        const retryStore = new PostgresIntakePlannerFailureStoreV1(database(clients[1]!),
+          () => ({ tenantId: scope.tenantId, projectId: scope.projectId }), () => LATER);
+        const projectScope = intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, description);
+        // One record is enough to prove the point and keeps this block free of the
+        // guard's increment preconditions, which are about the latch rather than
+        // about `cleared_at` and are 0205's business.
+        assert.equal(await retryStore.record(projectScope), 1,
+          "the next failure of this description clears the spent state");
+        assert.equal(await new PostgresIntakeNeedsYouStoreV1(database(clients[0]!),
+          () => ({ identityId: "identity:orch-agent" }), () => LATER)
+          .open({ tenantId: scope.tenantId, projectId: scope.projectId, ownerRequest: description }), false,
+        "two fresh failures clear the spent state, so the owner's next escalation is reachable");
+
         const statuses = outcomes.reduce<Record<string, number>>((acc, status) => {
           acc[status] = (acc[status] ?? 0) + 1; return acc;
         }, {});

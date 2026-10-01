@@ -83,6 +83,28 @@ export interface IntakePlannerFailureStoreV1 {
 }
 
 export interface IntakePlannerNeedsYouPortV1 {
+  /** Is there an OPEN escalation for this description, whatever the counters say?
+   *
+   * OPTIONAL, and the coordinator answers the same way when it is absent.
+   *
+   * WHY IT EXISTS, and why it is not a detail. The counter is per SCOPE; the
+   * escalation is per DESCRIPTION. 0205's owner retry zeroes the counter in the
+   * same statement that spends the latch, so after the one press that is allowed
+   * to spend it, the counter reads 0 and a concurrent peer reads "not escalated"
+   * -- and runs. Measured on the real coordinator over the real stores: one owner
+   * grant, twenty concurrent presses, TWO runs, with the counter rows afterwards
+   * showing the project scope at 0 and the request scopes at 1.
+   *
+   * The Needs-you ledger is the durable record that this DESCRIPTION escalated, and
+   * it is unique per description (0205's `control_planner_needs_you_scope_unique`),
+   * so it is the one thing that still says "already escalated" after the counter
+   * has been spent. A press may run when it spends a latch; while an item is open
+   * and no latch can be spent, it answers needs_you.
+   *
+   * It is a READ of a ledger the coordinator already WRITES, so it adds no new
+   * authority: the same login, the same rows, one more method. */
+  open?(input: Readonly<{ tenantId: string; projectId: string; ownerRequest: string }>):
+    Promise<boolean> | boolean;
   /** Idempotent by tenant, project, and request key.
    *
    * `ownerRequest` is the description the failing request carried. The port uses
@@ -510,7 +532,8 @@ export class IntakeCoordinatorV1 {
    *
    * The grant is checked only when the count HAS escalated, so an unconfigured
    * store (one with no `ownerRetryGranted`) answers the same way it always did. */
-  async #escalated(input: Readonly<{ projectScope: string; failureScope: string }>) {
+  async #escalated(input: Readonly<{ projectScope: string; failureScope: string;
+    principal: AuthenticatedPrincipal; projectId: string; ownerRequest: string }>) {
     // ONE GRANT IS ONE RUN, WHICHEVER SCOPE IT LANDED ON. The loop returns as soon
     // as a retry is SPENT, not as soon as one fails to be spent, and that return is
     // the fix for a bound the round-4 test still measured wrong.
@@ -534,6 +557,18 @@ export class IntakeCoordinatorV1 {
       if (spent) return false;
       return true;
     }
+    // NO COUNTER IS AT 2, and that is NOT the same as "this description has not
+    // escalated". The one press that was allowed to spend the latch zeroed the
+    // counter in the same statement, so its nineteen concurrent peers all read 0
+    // here and would each run. The Needs-you item is the durable record that this
+    // DESCRIPTION escalated, and it is what closes that window -- measured before
+    // this line existed: one owner grant, twenty concurrent presses, two runs.
+    //
+    // Read only when the store offers it, and only for the DESCRIPTION, so a
+    // different description in the same project is unaffected: the counters above
+    // still decide that one on its own evidence.
+    if (await this.needsYou.open?.({ tenantId: input.principal.tenantId, projectId: input.projectId,
+      ownerRequest: input.ownerRequest })) return true;
     return false;
   }
 

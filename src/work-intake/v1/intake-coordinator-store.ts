@@ -418,6 +418,46 @@ export class PostgresIntakeNeedsYouStoreV1 implements IntakePlannerNeedsYouPortV
     private readonly principal: () => Readonly<{ identityId: string }>,
     private readonly now: () => string) {}
 
+  /** Is this DESCRIPTION still escalated, whatever the counters now say?
+   *
+   * Matched on the PROJECT scope, which is the one 0204's guard derives from the
+   * description DIGEST -- so the answer is about the owner's words and not about a
+   * request key, and a repeat that mints a fresh key still finds the escalation
+   * its description already earned.
+   *
+   * WHY THE COUNTER ROW AND NOT THE LEDGER OR THE INBOX, which is the part worth
+   * getting right. `control_planner_needs_you_items` is APPEND-ONLY: 0202 puts a
+   * trigger on it that rejects UPDATE and DELETE, so an item there never closes.
+   * The inbox row is no better -- 0102's guard only admits `attention:work-batch:%`
+   * ids, so an `attention:planner:` item cannot be resolved at all. Reading either
+   * would make this a PERMANENT refusal for any description that ever escalated: the
+   * owner could never retry again, not even after a successful run, and the owner's
+   * NEXT escalation (two fresh failures) would be unreachable. Measured, not
+   * reasoned: the attempt to resolve one is refused with `work batch notification
+   * update rejected`.
+   *
+   * So the bound reads the counter row's own `cleared_at`, which is the one field
+   * with a real lifecycle. `spendOwnerRetry` sets it while zeroing the count, and the
+   * NEXT failure of this description clears it again -- so:
+   *
+   *   cleared, count below 2  -> a spend is in progress or a run succeeded: no
+   *   live counter at 2        -> this press may run: the description re-escalated
+   *
+   * The press itself already decided about the latch before reaching here, so this
+   * only answers for the peers that arrive after the one spend. */
+  async open(input: Readonly<{ tenantId: string; projectId: string; ownerRequest: string }>): Promise<boolean> {
+    // The PROJECT scopes are the two entries of the shared key list whose digest does
+    // not depend on a request key -- indexed [2] and [3] by construction, so this
+    // does not guess which is which.
+    const projectScopes = plannerNeedsYouScopeKeysV1(input.tenantId, input.projectId, "", input.ownerRequest).slice(2);
+    const row = (await this.db.query<{ blocked: number }>(
+      `SELECT count(*)::int AS blocked FROM public.control_planner_failure_counters
+        WHERE tenant_id=$1 AND project_id=$2 AND scope_key = ANY($3::text[])
+          AND cleared_at IS NOT NULL`,
+    [input.tenantId, input.projectId, projectScopes])).rows[0];
+    return Number(row?.blocked ?? 0) > 0;
+  }
+
   async raise(input: Readonly<{ tenantId: string; projectId: string; requestKey: string;
     reasonCode: "orchestrator_failed_twice"; ownerRequest: string; now: string }>): Promise<void> {
     const { tenantId, projectId } = input;
