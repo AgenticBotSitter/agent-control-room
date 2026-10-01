@@ -41,8 +41,31 @@ const FUNCTION = "public.updater_health_counts()";
 
 type Postgres = Parameters<Parameters<typeof withRealPostgres>[0]>[0];
 
-async function seed<T extends Record<string, unknown>>(postgres: Postgres, sql: string,
-  params: unknown[] = []) {
+/** Every client a phase opens, closed together before the cluster stops. A client
+ * left open is killed by the cluster's own stop and surfaces as an asynchronous
+ * error after the test has already reported -- which is a leak in the test, not a
+ * finding about the boundary, and it looks like neither. */
+class Sessions {
+  #open: Client[] = [];
+  track<T extends Client>(client: T): T { this.#open.push(client); return client; }
+  async close(): Promise<void> {
+    await Promise.all(this.#open.splice(0).map(client => client.end().catch(() => {})));
+  }
+}
+
+/** Drops EVERY signature named updater_health_counts, not only the zero-argument
+ * one. PostgreSQL treats each argument list as a distinct function, so
+ * `DROP FUNCTION updater_health_counts()` resolves to the zero-arg form alone and an
+ * overload created by an earlier case survives into the next apply. */
+const dropEverySignature = async (client: Client) => {
+  await client.query("DO $q$ DECLARE signature record; BEGIN"
+    + " FOR signature IN SELECT pg_catalog.pg_get_function_identity_arguments(p.oid) AS args"
+    + " FROM pg_catalog.pg_proc p WHERE p.proname = 'updater_health_counts' LOOP"
+    + " EXECUTE 'DROP FUNCTION public.updater_health_counts(' || signature.args || ') CASCADE';"
+    + " END LOOP; END $q$");
+};
+
+async function seed<T extends Record<string, unknown>>(postgres: Postgres, sql: string, params: unknown[] = []) {
   const client = new Client(postgres.admin() as never);
   await client.connect();
   try {
@@ -61,18 +84,6 @@ async function refuses(client: Client, sql: string): Promise<string> {
   assert.fail(`statement was not refused: ${sql}`);
 }
 
-/** Drop any copy the ledger already made, then apply the file exactly as it is on
- * disk. This is the point of the file: the bytes under mutation are what runs. */
-async function applyMigrationDirectly(postgres: Postgres): Promise<Client> {
-  const owner = new Client({ host: postgres.socketDirectory, port: postgres.port,
-    user: "control_room_migrator",
-    password: (postgres.connection("migrator") as { password: string }).password, database: postgres.database });
-  await owner.connect();
-  await owner.query(`DROP FUNCTION IF EXISTS ${FUNCTION} CASCADE`);
-  await owner.query(await readFile(MIGRATION, "utf8"));
-  return owner;
-}
-
 async function seedScope(postgres: Postgres) {
   const now = new Date().toISOString();
   await seed(postgres, `INSERT INTO tenants(id,display_name) VALUES($1,$1) ON CONFLICT DO NOTHING`, [TENANT]);
@@ -86,16 +97,23 @@ async function seedScope(postgres: Postgres) {
     ON CONFLICT (singleton) DO UPDATE SET tenant_id=EXCLUDED.tenant_id`, [TENANT]);
 }
 
+const schemaOwner = (postgres: Postgres, sessions: Sessions) => sessions.track(new Client({
+  host: postgres.socketDirectory, port: postgres.port, user: "control_room_migrator",
+  password: (postgres.connection("migrator") as { password: string }).password, database: postgres.database }));
+
 test("the health count function's boundary, against the migration applied from disk", async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
   ran += 1;
   await withRealPostgres(async postgres => {
-    const owner = await applyMigrationDirectly(postgres);
+    const sessions = new Sessions();
+    const owner = schemaOwner(postgres, sessions);
+    await owner.connect();
     try {
+      await dropEverySignature(owner);
+      await owner.query(await readFile(MIGRATION, "utf8"));
       await seedScope(postgres);
 
-      // The function exists and is shaped as the boundary claims.
       const shape = (await owner.query<{ prosecdef: boolean; provolatile: string; pronargs: number;
         search_path: string[]; columns: string }>(`
         SELECT p.prosecdef, p.provolatile, p.pronargs, p.proconfig AS search_path,
@@ -108,28 +126,109 @@ test("the health count function's boundary, against the migration applied from d
       assert.deepEqual(shape.search_path, ["search_path=pg_catalog, public, pg_temp"], "pinned search_path");
       assert.equal(shape.columns, "home_summary_count,project_count,updates_panel_count");
 
-      // PUBLIC holds no EXECUTE. Without this the whole boundary is decorative.
       assert.equal((await owner.query<{ allowed: boolean }>(
         `SELECT has_function_privilege('public','${FUNCTION}','EXECUTE') AS allowed`)).rows[0]!.allowed,
         false, "PUBLIC holds no EXECUTE");
-      // And the EXECUTE is never grantable onward.
       assert.equal((await owner.query<{ onward: number }>(`
         SELECT count(*)::int AS onward FROM pg_proc p
         CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
         WHERE p.oid = '${FUNCTION}'::regprocedure AND a.privilege_type = 'EXECUTE' AND a.is_grantable`))
         .rows[0]!.onward, 0, "the EXECUTE grant is not grantable onward");
 
-      // It calls, and it returns three integers and nothing else.
       const counts = (await owner.query(`SELECT * FROM ${FUNCTION}`)).rows[0];
       assert.deepEqual(Object.keys(counts!).sort(),
         ["home_summary_count", "project_count", "updates_panel_count"]);
-
-      // The scope is pre-bound: there is no argument to point it anywhere else.
       assert.match(await refuses(owner, `SELECT * FROM ${FUNCTION}('tenant:elsewhere')`), /42601|42883/u);
-    } finally { await owner.end().catch(() => {}); }
+    } finally { await sessions.close(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("the migration REFUSES a boundary that is already wrong, at apply time", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    const sessions = new Sessions();
+    const owner = schemaOwner(postgres, sessions);
+    await owner.connect();
+    try {
+      // Two fixture roles are created by the FIXTURE SUPERUSER, because the migrator
+      // correctly cannot create roles (measured: "permission denied to create role").
+      const admin = sessions.track(new Client(postgres.admin() as never));
+      await admin.connect();
+      await admin.query("DO $q$ BEGIN"
+        + " IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'health_counts_extra_grantee') THEN"
+        + " CREATE ROLE health_counts_extra_grantee NOLOGIN; END IF;"
+        + " IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_deployer') THEN"
+        + " CREATE ROLE control_room_deployer LOGIN; END IF; END $q$");
+
+      // The file starts with plain CREATE FUNCTION, so applying it twice is refused
+      // with 42723 -- which would mask the boundary checks and make this a test that
+      // passes for the wrong reason. Re-applying as CREATE OR REPLACE removes that
+      // confound: the only statement left that can refuse is its own guard.
+      const migration = (await readFile(MIGRATION, "utf8"))
+        .replace("CREATE FUNCTION updater_health_counts()", "CREATE OR REPLACE FUNCTION updater_health_counts()");
+      const refusesBoundary = async (why: string) => {
+        await assert.rejects(
+          async () => { await owner.query(migration); },
+          (error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            assert.match(message, /updater health count function|another signature of/u,
+              `refused by the migration's own guard, not by an unrelated DDL error: ${message}`);
+            // 42723's message is `function "..." already exists with same argument
+            // types` -- distinguished from the guard's own wording by the trailing
+            // "with same argument types", since the guard's text also says "already
+            // exists".
+            assert.doesNotMatch(message, /with same argument types/u,
+              "a 42723 would mask the guard");
+            return true;
+          },
+          `the migration must refuse when there is ${why}`);
+      };
+
+      // A second, unexpected EXECUTE grantee: the definer's reach in someone else's hands.
+      await dropEverySignature(owner);
+      await owner.query(migration);
+      await owner.query(`REVOKE EXECUTE ON FUNCTION ${FUNCTION} FROM control_room_deployer`);
+      await owner.query(`GRANT EXECUTE ON FUNCTION ${FUNCTION} TO health_counts_extra_grantee`);
+      await refusesBoundary("an EXECUTE grantee the design does not name");
+
+      // An EXECUTE the updater's login may hand onward: exactly the authority growth
+      // this function exists not to permit.
+      await dropEverySignature(owner);
+      await owner.query(migration);
+      await owner.query(`GRANT EXECUTE ON FUNCTION ${FUNCTION} TO control_room_deployer WITH GRANT OPTION`);
+      await refusesBoundary("a GRANTABLE EXECUTE");
+
+      // A competing OVERLOAD. PostgreSQL installs the zero-argument form alongside a
+      // one-argument one rather than replacing it (measured on PostgreSQL 17), so
+      // every check below -- all of which resolve the zero-argument signature --
+      // would inspect the wrong function. This is the case that is invisible without
+      // building one deliberately.
+      await dropEverySignature(owner);
+      await owner.query("CREATE FUNCTION updater_health_counts(p_tenant text)"
+        + " RETURNS TABLE(out_home bigint, out_projects bigint, out_panel bigint)"
+        + " LANGUAGE sql STABLE AS $b$ SELECT 0::bigint, 0::bigint, 0::bigint $b$");
+      await refusesBoundary("a competing overload that could displace the boundary");
+
+      // LEFT IN PLACE FOR NOTHING FURTHER: the boundary exactly as it should be, and
+      // re-applying it proves the refusals above were the boundary's own doing.
+      await dropEverySignature(owner);
+      await owner.query(migration);
+      const clean = (await owner.query<{ allowed: boolean; onward: number; overloads: number }>(`
+        SELECT has_function_privilege('public','${FUNCTION}','EXECUTE') AS allowed,
+          (SELECT count(*)::int FROM pg_proc p
+             CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+           WHERE p.oid = '${FUNCTION}'::regprocedure AND a.is_grantable) AS onward,
+          (SELECT count(*)::int FROM pg_proc p WHERE p.proname = 'updater_health_counts') AS overloads`))
+        .rows[0]!;
+      assert.equal(clean.allowed, false, "PUBLIC holds no EXECUTE");
+      assert.equal(clean.onward, 0, "and nothing is grantable onward");
+      assert.equal(clean.overloads, 1, "and exactly one signature exists");
+    } finally { await sessions.close(); }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 
 test("the lane ran on a real cluster, not a skip", () => {
-  assert.equal(ran, 1, "the direct-apply phase executed");
+  assert.equal(ran, 2, "both direct-apply phases executed");
 });

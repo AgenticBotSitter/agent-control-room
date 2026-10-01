@@ -8,10 +8,10 @@
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
-    "find": "        AND pg_catalog.pg_get_userbyid(a.grantee) <> 'control_room_deployer') THEN",
-    "replace": "        AND true) THEN",
+    "find": "        AND a.grantee <> 0 AND a.grantee <> p.proowner\n        AND pg_catalog.pg_get_userbyid(a.grantee) <> 'control_room_deployer') THEN",
+    "replace": "        AND a.grantee <> 0 AND a.grantee <> p.proowner\n        AND true) THEN",
     "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
-    "why": "an EXECUTE grantee the design does not name must be refused at apply time, not discovered later"
+    "why": "an EXECUTE grantee the design does not name must be refused at apply time, not discovered later; the mutation tolerates any non-owner grantee, which is what widening the grant by hand actually produces"
   },
   {
     "file": "db/migrations/0238_updater_health_counts.sql",
@@ -47,13 +47,6 @@
     "replace": "    -- mutation: the updater's login is never granted the health counts",
     "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "without this grant the updater's independent read cannot run at all and §8.4's count comparison can never be satisfied"
-  },
-  {
-    "file": "db/down/0238_updater_health_counts.sql",
-    "find": "      REVOKE EXECUTE ON FUNCTION updater_health_counts() FROM control_room_deployer;",
-    "replace": "      -- mutation: the down migration leaves the grant behind",
-    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
-    "why": "a down migration that dropped the function but left a grant behind is not a reversal; it is an upgrade that cannot be rolled back the way it went up"
   },
   {
     "file": "src/updater/v1/health-authority-reads.ts",
@@ -96,5 +89,12 @@
     "replace": "      if (!Number.isSafeInteger(size)) refused(\"home_render_size\");",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/updater-health-count-ports.test.ts",
     "why": "§8.4 requires a NON-EMPTY render; an empty body must refuse, and an implausibly large one must not be reported as a healthy page"
+  },
+  {
+    "file": "db/down/0238_updater_health_counts.sql",
+    "find": "    DROP FUNCTION updater_health_counts();",
+    "replace": "    -- mutation: the down migration does not drop the function",
+    "test": "pnpm db:ledger && PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59870}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-health-counts-postgres.test.ts tests/updater-health-counts-direct.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "a down migration that does not drop the function leaves the boundary installed after a rollback, and the next apply then refuses with 42723"
   }
 ]

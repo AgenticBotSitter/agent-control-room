@@ -191,6 +191,18 @@ DO $$
 DECLARE
   fn regprocedure := 'public.updater_health_counts()'::regprocedure;
 BEGIN
+  -- A COMPETING SIGNATURE IS A REFUSAL, not a skip. PostgreSQL treats each argument
+  -- list as a distinct function, so `CREATE OR REPLACE FUNCTION updater_health_counts()`
+  -- installs alongside a one-argument `updater_health_counts(text)` instead of
+  -- replacing it (measured on PostgreSQL 17). The boundary checks below all resolve
+  -- `fn` by the ZERO-argument signature, so with an impostor present they inspect the
+  -- wrong function and a displaced boundary would install without complaint. Checked
+  -- FIRST, before anything reads `fn`.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc
+      WHERE proname = 'updater_health_counts'
+        AND pg_catalog.pg_get_function_identity_arguments(oid) <> '') THEN
+    RAISE EXCEPTION 'another signature of updater_health_counts already exists' USING ERRCODE = '42501';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE oid = fn) THEN RETURN; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p WHERE p.oid = fn
       AND p.prosecdef AND p.provolatile = 's' AND p.prokind = 'f' AND p.pronargs = 0
