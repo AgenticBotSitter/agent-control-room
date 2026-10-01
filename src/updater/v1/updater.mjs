@@ -8,6 +8,7 @@ import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV
 import { updaterRefuseV1 } from "./contracts.mjs";
 import { UpdaterAlertSenderV1 } from "./alerts.mjs";
 import { PasskeyAuthorityV1, PasskeyRefusalAggregatorV1, SimpleWebAuthnVerifierV1 } from "./passkey.mjs";
+import { PasskeyStoreV1 } from "./passkey-store.mjs";
 
 // The fixed updater bundle exposes the item-13 actuator for composition with
 // the item-5 lifecycle and item-14 health ports. `startUpdaterV1` accepts that
@@ -101,7 +102,7 @@ export async function startUpdaterV1(options = {}) {
     throw updaterRefuseV1("updater_live_session_busy");
   }
   const identity = Object.freeze({ ...requestedIdentity, leaseToken: acquisition.leaseToken });
-  const stateFiles = new UpdaterStateFilesV1(root, identity.leaseToken), mode = new UpdaterModeV1();
+  const stateFiles = new UpdaterStateFilesV1(root, identity.leaseToken), mode = new UpdaterModeV1(stateFiles);
   const unavailable = async () => { throw updaterRefuseV1("updater_actuator_port_unbound"); };
   const effects = options.effects ?? { precheck: unavailable, stage: unavailable, quickBackup: unavailable,
     drain: unavailable, switchPair: unavailable, restart: unavailable, health: unavailable,
@@ -142,17 +143,29 @@ export async function startUpdaterV1(options = {}) {
     onHeartbeatState: setHeartbeatState });
   // Item 10b binds the web/approval polling loop. Item 10a exposes the complete
   // authority and typed DB/sink ports now, without adding SQL here.
-  const passkeyStore = options.passkeyStore ?? store;
+  const ownsPasskeyStore = !options.passkeyStore && !options.store && Boolean(client);
+  const passkeyStore = options.passkeyStore ?? (ownsPasskeyStore ? new PasskeyStoreV1(client) : store);
+  // Item 21's sender belongs in this production startup composition: it must
+  // drain updater.push_queue through the owner web-push transport and mark each
+  // row only after delivery. No sender is composed here yet, so owner text must
+  // describe the 24-hour hold without claiming that a phone was warned.
   const passkeys = options.passkeys ?? new PasskeyAuthorityV1({ root,
     store: passkeyStore, verifier: options.passkeyVerifier ?? new SimpleWebAuthnVerifierV1() });
   const refusalAggregator = options.refusalAggregator ?? (passkeyStore?.recordApprovalRefusal && options.refusalJournal
       && options.refusalPush ? new PasskeyRefusalAggregatorV1({ store: passkeyStore,
         journal: options.refusalJournal, push: options.refusalPush }) : undefined);
   const ownerActions = options.ownerActions ?? { handle: async request => {
-    if (request.request_kind === "pause") mode.set("paused");
-    else if (request.request_kind === "stop") mode.set("stopped");
-    else if (request.request_kind === "resume") mode.set("running");
-    else if (request.request_kind === "check_and_continue") await runner.checkAndContinue();
+    if (request.request_kind === "pause") {
+      if (request.source !== "root" && await mode.read() === "stopped")
+        throw updaterRefuseV1("updater_web_pause_from_stopped_refused");
+      await mode.set("paused");
+    }
+    else if (request.request_kind === "stop") await mode.set("stopped");
+    // A web login can mint an owner session and insert owner_requests. Resume is
+    // therefore deliberately root-control-only until the approval join exists.
+    else if (request.request_kind === "resume") throw updaterRefuseV1("updater_web_resume_refused");
+    else if (request.request_kind === "check_and_continue")
+      return runner.checkAndContinue({ source: request.source });
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, watcher: options.watcher ?? null,
@@ -163,11 +176,22 @@ export async function startUpdaterV1(options = {}) {
     if (request.verb === "passkey-add-begin") {
       if (request.arguments.length) throw updaterRefuseV1("updater_passkey_arguments_refused");
       const registration = await passkeys.beginRegistration({ mode: "add" });
+      const registrationOptions = await passkeys.registrationOptions(registration.registrationSecret);
+      if (!passkeyStore?.openRegistration) throw updaterRefuseV1("updater_passkey_store_port_unbound");
+      await passkeyStore.openRegistration({ registrationDigest: registration.registrationDigest,
+        installationId: registration.config.installationId, mode: "add", optionsJson: registrationOptions,
+        authorizationChallenge: registration.authorizationChallenge, expiresAt: registration.expiresAt });
       return { registrationSecret: registration.registrationSecret,
         expectedOrigin: registration.config.expectedOrigin, expiresAt: registration.expiresAt };
     }
     if (request.verb === "passkey-add-complete") {
       if (request.arguments.length !== 2) throw updaterRefuseV1("updater_passkey_arguments_refused");
+      const registration = await passkeys.registrationOptions(request.arguments[0]);
+      if (!passkeyStore?.consumeRegistration) throw updaterRefuseV1("updater_passkey_store_port_unbound");
+      // Close the phone write window first. The response row remains readable
+      // by the updater, but the registration secret is single-use: after an
+      // uncertain reply the owner must use passkey list to verify the result.
+      await passkeyStore.consumeRegistration(registration.registrationDigest);
       return passkeys.completeRegistration({ registrationSecret: request.arguments[0], typedCode: request.arguments[1] });
     }
     if (request.verb === "passkey-list") {
@@ -180,11 +204,13 @@ export async function startUpdaterV1(options = {}) {
       return passkeys.revokePasskey(Number(request.arguments[0]));
     }
     const map = { pause: "paused", resume: "running", stop: "stopped" };
-    if (map[request.verb]) { mode.set(map[request.verb]); return { accepted: true }; }
+    if (map[request.verb]) { await mode.set(map[request.verb]); return { accepted: true }; }
     return ownerActions.handle({ request_kind: request.verb.replaceAll("-", "_"), detail: { arguments: request.arguments },
-      requires_passkey: request.verb === "rollback" });
+      requires_passkey: request.verb === "rollback", source: "root" });
   } });
   try {
+    await mode.initialize();
+    if (ownsPasskeyStore) await passkeyStore.initialize();
     // Item 13: settle a durable release/database link transaction before any
     // run is observed. The actuator either completes it or restores its source.
     await effects.recover?.();

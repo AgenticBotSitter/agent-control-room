@@ -99,7 +99,8 @@ export function PasskeyRegistration() {
         } catch (error) {
           if (controller.signal.aborted) throw error;
           // Continuing without the old passkey is safe: the updater records the
-          // new credential inactive for 24 hours and sends two warnings.
+          // new credential inactive for 24 hours. Item 21 will deliver the two
+          // notice rows that are recorded for a future sender.
         }
       }
       const created = await navigator.credentials.create({ publicKey: publicKeyCreation(options.publicKey),
@@ -120,7 +121,7 @@ export function PasskeyRegistration() {
     {state.status === "working" && <p role="status">Waiting for Face ID. Keep this page open.</p>}
     {state.status === "ready" && <><p>Type this code in the installer:</p>
       <p role="status" aria-label="Passkey comparison code"><strong>{state.code}</strong></p>
-      <p>The installer must show the same code. A mismatch cancels registration.</p></>}
+      <p>Type the code above into the installer. A rejected code cancels registration.</p></>}
     {state.status === "failed" && <p role="alert">Registration stopped. Return to the installer and start again. No passkey was activated.</p>}
   </section>;
 }

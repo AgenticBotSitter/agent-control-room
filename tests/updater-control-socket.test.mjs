@@ -89,6 +89,13 @@ test("a planted socket symlink or ordinary file is refused without removing its 
     /updater_control_path_refused/u);
 });
 
+test("an overlong macOS control socket path is refused before listen", async t => {
+  const root = await rootV1(t);
+  const socketPath = `updater-state/${"x".repeat(104)}`;
+  await assert.rejects(new UpdaterControlServerV1({ root, socketPath, handler: async () => ({}) }).start(),
+    error => error?.code === "updater_control_socket_path_too_long");
+});
+
 test("an admin socket needs the service uid, fixed magic and a bounded primitive-only reply", async t => {
   const root = await rootV1(t), path = join(root, "updater-state/admin.sock");
   let magic = "CONTROL-ROOM-ADMIN/1", body = { ok: true, state: "running", pid: process.pid, generation: 2 };

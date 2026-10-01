@@ -104,7 +104,7 @@ export async function runUpdaterCliV1(argv, options = {}) {
       if (result.coolingOffUntil && result.coolingOffNoticesEnqueued !== true)
         throw updaterRefuseV1("updater_passkey_control_reply_refused");
       context.stdout(result.coolingOffUntil
-        ? `Passkey added. It is inactive until ${result.coolingOffUntil}. Cooling-off warnings were queued.\n`
+        ? `Passkey added. It is inactive until ${result.coolingOffUntil}. Phone warning delivery is not available yet; review passkeys on this Mac.\n`
         : "Passkey added and active.\n");
       return 0;
     }

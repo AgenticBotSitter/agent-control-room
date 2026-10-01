@@ -100,7 +100,8 @@ test("the CLI keeps status unprivileged, sudo verbs root-only, and confirm bound
       coolingOffNoticesEnqueued: true }; } };
   assert.equal(await runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0, passkeyAuthority: coolingAuthority,
     readComparisonCode: async () => "ABC234", stdout: text => coolingOutput.push(text) }), 0);
-  assert.match(coolingOutput.join(""), /Cooling-off warnings were queued/u);
+  assert.match(coolingOutput.join(""), /Phone warning delivery is not available yet/u);
+  assert.doesNotMatch(coolingOutput.join(""), /warnings? (?:were )?(?:queued|sent)|phone (?:was|will be) warn/iu);
   await assert.rejects(runUpdaterCliV1(["passkey", "add"], { root, getuid: () => 0,
     passkeyAuthority: { ...coolingAuthority, async completeRegistration() {
       return { coolingOffUntil: "2026-10-01T12:00:00.000Z", coolingOffNoticesEnqueued: false }; } },

@@ -4,6 +4,8 @@ import { assertNoSymlinkBelowV1 } from "./fs-safety.mjs";
 import { assertPlainObjectV1, parseControlRequestV1, updaterRefuseV1 } from "./contracts.mjs";
 
 const ADMIN_MAGIC_V1 = "CONTROL-ROOM-ADMIN/1";
+// Darwin's sockaddr_un.sun_path is 104 bytes including its terminating NUL.
+const DARWIN_UNIX_SOCKET_PATH_MAX_BYTES_V1 = 103;
 
 /** R-FS admin-socket boundary: lstat/no symlink, exact service uid, fixed magic,
  * bounded reply, and only primitive values returned to the root caller. */
@@ -50,6 +52,8 @@ export class UpdaterControlServerV1 {
   get activeConnections() { return this.#active; }
   async start() {
     const path = await assertNoSymlinkBelowV1(this.root, this.socketPath, { allowMissingLeaf: true });
+    if (Buffer.byteLength(path) > DARWIN_UNIX_SOCKET_PATH_MAX_BYTES_V1)
+      throw updaterRefuseV1("updater_control_socket_path_too_long");
     this.#path = path;
     try {
       const old = await lstat(path);

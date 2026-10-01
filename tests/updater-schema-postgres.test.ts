@@ -37,6 +37,7 @@ import { applyUpdaterSchemaV1, updaterDdlFilesV1, updaterTablesV1,
   type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
+import { sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
 
 // CONTROL_ROOM_PG_TEST_PORT_BASE moves the disposable cluster, as in the module
 // approval lane. 59510 is the block this job was given.
@@ -1003,6 +1004,68 @@ test("startUpdaterV1 boots with a live run and only one of 20 production session
       assert.equal((await store.liveRun()), undefined, "the resumed run is not stranded");
     } finally {
       await updater?.stop(); await deployer.end(); await rm(root, { recursive: true, force: true });
+    }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("P1b/P7: web cannot clear no-run rescue and web Resume stays refused across restart", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres); await seedOwnerSession(postgres);
+    const root = await mkdtemp("/tmp/cr-upd-pg-");
+    await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
+    await writeFile(join(root, "updater-state/self-update"), "On\n");
+    await writeFile(join(root, "updater-state/rescued.json"), "{}\n", { mode: 0o600 });
+    const deployer = as(postgres, "deployer"), web = as(postgres, "web");
+    let updater: Awaited<ReturnType<typeof startUpdaterV1>> | undefined;
+    try {
+      await deployer.connect(); await web.connect();
+      const store = new PostgresUpdaterStoreV1(deployer); await store.initialize();
+      updater = await startUpdaterV1({ root, store }); updater.loop.stop();
+      assert.equal(updater.loop.lastOutcome.status, "uncertain");
+      const checkId = `owner-request:${randomUUID()}`;
+      await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)
+        VALUES($1,'check_and_continue',false,$2)`, [checkId, OWNER_SESSION]);
+      assert.equal((await updater.loop.tick()).status, "uncertain");
+      assert.equal((await deployer.query("SELECT handled_outcome FROM updater.owner_requests WHERE id=$1", [checkId]))
+        .rows[0]?.handled_outcome, "refused");
+      assert.equal(await readFile(join(root, "updater-state/rescued.json"), "utf8"), "{}\n");
+      const refusedStatus = JSON.parse(await readFile(join(root, "status/status.json"), "utf8"));
+      assert.deepEqual({ state: refusedStatus.state, needsYou: refusedStatus.needsYou },
+        { state: "uncertain", needsYou: true });
+      await sendControlRequestV1(join(root, "updater-state/control.sock"), {
+        schema: "control-room.updater-control/v1", requestId: "p1b-pg-root-clear",
+        verb: "check-and-continue", arguments: [] });
+      await assert.rejects(readFile(join(root, "updater-state/rescued.json")), /ENOENT/u);
+
+      await sendControlRequestV1(join(root, "updater-state/control.sock"), {
+        schema: "control-room.updater-control/v1", requestId: "p7-pg-pause", verb: "pause", arguments: [] });
+      await updater.stop();
+      updater = await startUpdaterV1({ root, store }); updater.loop.stop();
+      assert.equal(await updater.loop.mode.read(), "paused");
+      const resumeId = `owner-request:${randomUUID()}`;
+      await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)
+        VALUES($1,'resume',false,$2)`, [resumeId, OWNER_SESSION]);
+      await updater.loop.tick();
+      assert.equal((await deployer.query("SELECT handled_outcome FROM updater.owner_requests WHERE id=$1", [resumeId]))
+        .rows[0]?.handled_outcome, "refused");
+      assert.equal(await updater.loop.mode.read(), "paused");
+
+      await sendControlRequestV1(join(root, "updater-state/control.sock"), {
+        schema: "control-room.updater-control/v1", requestId: "p7-pg-stop", verb: "stop", arguments: [] });
+      const pauseId = `owner-request:${randomUUID()}`;
+      await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)
+        VALUES($1,'pause',false,$2)`, [pauseId, OWNER_SESSION]);
+      await updater.loop.tick();
+      assert.equal((await deployer.query("SELECT handled_outcome FROM updater.owner_requests WHERE id=$1", [pauseId]))
+        .rows[0]?.handled_outcome, "refused");
+      assert.equal(await updater.loop.mode.read(), "stopped");
+    } finally {
+      await updater?.stop();
+      await Promise.allSettled([web.end(), deployer.end()]);
+      await rm(root, { recursive: true, force: true });
     }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });

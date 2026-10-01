@@ -66,12 +66,17 @@ test("the setup passkey flow strips fragment authority before requests and shows
 test("the setup source keeps fragments out of history and fixes RP data to server options", async () => {
   const source = await readFile("private-app/app/setup/passkey-registration.tsx", "utf8");
   const authority = await readFile("src/updater/v1/passkey.mjs", "utf8");
+  const cli = await readFile("src/updater/v1/cli.mjs", "utf8");
   assert.ok(source.indexOf("history.replaceState") < source.indexOf("fetch(\"/api/v1/local-owner-session\""));
   assert.match(source, /window\.location\.hash\.length > 1024/);
   assert.match(source, /credentials: "same-origin"/);
   assert.match(authority, /residentKey: "required"/);
   assert.match(authority, /userVerification: "required"/);
   assert.doesNotMatch(source, /window\.location\.origin|document\.location\.origin/);
+  assert.match(source, /Type the code above into the installer/u);
+  assert.doesNotMatch(source, /installer must show the same code/iu);
+  assert.match(cli, /Phone warning delivery is not available yet/u);
+  assert.doesNotMatch(cli, /Cooling-off warnings were queued/iu);
 });
 
 test("the passkey POST adapter requires Origin before reading or forwarding the body", async () => {
