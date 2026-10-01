@@ -65,6 +65,7 @@ export const LOCAL_RELEASE_FILE_POLICY_V1 = Object.freeze({
     "src/installer/v1/signed-release-verifier.mjs",
     "src/installer/v1/local-release-assembly.mjs",
     "src/installer/v1/local-release-stager.mjs",
+    "src/installer/shared/is-main-module.mjs",
   ]),
   directories: Object.freeze([
     "db/migrations",

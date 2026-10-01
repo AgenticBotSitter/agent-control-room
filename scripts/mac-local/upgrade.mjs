@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /**
  * Owner-attended Mac half of the two-command database upgrade. It deliberately
  * delegates start, stop, and login handling to the existing guarded commands.
@@ -11,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
 import { readPrivateWebSchemaDigest } from "../../src/web/v1/private-database-preflight";
-import { loadMacLocalDatabaseRolesFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
+import { loadMacLocalWebRoleFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
 import { finishMacLocalDatabaseUpgradeV1, prepareMacLocalDatabaseUpgradeV1 } from "./provision-database.mjs";
 import { protectedRootFromArguments, repoRoot, runtimePaths } from "./stack.mjs";
 
@@ -94,6 +95,20 @@ async function localTargetLedgerHeadV1() {
   return { file: last.file, order: last.order, digest: `sha256:${last.sha256}` };
 }
 
+/** Reads the web login out of the protected role record, and reports every
+ * way that can fail as one recognisable upgrade refusal.
+ *
+ * Without this, a protected-record problem surfaced as
+ * `mac_local_database_roles_root_invalid` escaping the whole command, which the
+ * CLI collapsed to the opaque `upgrade_failed` -- an owner who fixed the file
+ * and re-ran got the same opaque line, because the reason was never named. Each
+ * refusal here is still a refusal; only the reason is now one the owner can
+ * act on, and it names no path, no username and no secret. */
+async function loadMacUpgradeWebRoleV1(protectedRoot) {
+  try { return await loadMacLocalWebRoleFromRootV1(protectedRoot); }
+  catch { failure("upgrade_ledger_head_refused"); }
+}
+
 /** Reads the non-secret migration identity with the already-configured web
  * login: this build's own ledger head (above, no database access) paired with
  * the live schema's structural digest. The migration ledger table itself
@@ -104,8 +119,13 @@ async function localTargetLedgerHeadV1() {
  * check already does, and changes whenever the VPS actually migrates. */
 export async function readMacUpgradeLedgerHeadV1(protectedRoot) {
   const target = await localTargetLedgerHeadV1();
-  const roles = await loadMacLocalDatabaseRolesFromRootV1(protectedRoot);
-  const database = createPrivatePostgresDatabase(roles.web);
+  // Only the `web` login is read, and only the `web` login is opened. The
+  // full six-role record is what a COMPLETED install writes, so requiring it
+  // here refused the command on every install that had not yet run `--finish`
+  // -- which is every install this command exists to upgrade. The narrower
+  // reader is the same protected file under the same checks.
+  const web = await loadMacUpgradeWebRoleV1(protectedRoot);
+  const database = createPrivatePostgresDatabase(web);
   try {
     const schemaDigest = await readPrivateWebSchemaDigest(database.client);
     if (typeof schemaDigest !== "string" || !/^[a-f0-9]{64}$/u.test(schemaDigest)) failure("upgrade_ledger_head_refused");
@@ -212,7 +232,7 @@ export function parseMacUpgradeArgumentsV1(args) {
   return { protectedRoot: root, rollback };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try { await runMacUpgradeV1(parseMacUpgradeArgumentsV1(process.argv.slice(2))); }
   catch (error) {
     const code = error instanceof Error && /^upgrade_[a-z_]+$/u.test(error.message) ? error.message : "upgrade_failed";

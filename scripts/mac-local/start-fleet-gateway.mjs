@@ -1,6 +1,7 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Separate Mac-local fleet gateway process. Service definitions should launch
 // this entry point; the website process only owns the fleet-owner routes.
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseMacLocalWebHostArguments } from "./start-web-host.mjs";
 
 export async function startMacLocalFleetGateway(input, runtime = {}) {
@@ -54,5 +55,5 @@ async function main() {
   process.once("SIGTERM", () => { void stop(); });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   void main().catch(error => { console.error(`mac-local-fleet-gateway: ${error.message}`); process.exitCode = 1; });

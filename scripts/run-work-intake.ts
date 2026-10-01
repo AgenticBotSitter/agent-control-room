@@ -1,8 +1,8 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createWorkIntakeLoopbackClientV1, runWorkIntakeCliV1 } from "../src/work-intake/v1";
 import { captureWorkIntakeClientConfigurationV1 } from "../src/work-intake/v1/installed-configuration";
 
@@ -45,5 +45,5 @@ export async function runInstalledWorkIntakeV1(args = process.argv.slice(2)) {
     reportError: (message: string) => process.stderr.write(`${message}\n`) });
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])
+if (isMainModuleV1(process.argv[1], import.meta.url))
   process.exitCode = await runInstalledWorkIntakeV1();

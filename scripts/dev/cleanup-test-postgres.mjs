@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Stops only PostgreSQL clusters that are demonstrably disposable, then removes
 // only unattached SysV segments created by the stopped postmaster processes.
 // Usage: node scripts/dev/cleanup-test-postgres.mjs [--dry-run]
@@ -5,7 +6,6 @@ import { execFile as execFileCallback } from "node:child_process";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
@@ -73,7 +73,7 @@ export async function cleanupTestPostgres({ dryRun = false } = {}, runtime = pro
     segments: segments.map(value => Object.freeze({ ...value })) });
 }
 
-const invoked = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const invoked = isMainModuleV1(process.argv[1], import.meta.url);
 if (invoked) {
   const args = process.argv.slice(2);
   if (args.some(value => value !== "--dry-run")) {

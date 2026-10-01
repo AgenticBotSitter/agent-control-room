@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // One artifact-derived, deterministic notice inventory with a single
 // `inventoryDigest` suitable for #64 release-qualification consumption.
 //
@@ -27,7 +28,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { collectBundledRows } from './runtime-license-bundled-collector.mjs';
 import { assertInsideRepository } from './runtime-license-repository-guard.mjs';
 import { buildInventoryDigestPayload, computeInventoryDigest } from './runtime-license-digest.mjs';
@@ -208,7 +208,7 @@ export function buildArtifactInventory(repository = process.cwd()) {
   };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const out = buildArtifactInventory();
   const target = process.argv[2] || 'research/runtime-license-artifact-inventory.json';
   fs.writeFileSync(target, JSON.stringify(out, null, 2) + '\n');

@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Generates deploy/postgres/migration-ledger.json from the exact ordered bytes of
 // db/migrations/*.sql plus the role/provision SQL the production applier applies.
 // Run: pnpm db:ledger. The committed ledger is the immutable order/checksum record;
@@ -39,7 +40,7 @@ export function ledgerDigest(entries) {
   return sha256(JSON.stringify(entries.map(entry => [entry.file, entry.order, entry.sha256, entry.kind ?? "migrate"])));
 }
 
-const invoked = resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url);
+const invoked = isMainModuleV1(process.argv[1], import.meta.url);
 if (invoked) {
   const entries = await collectLedgerEntries();
   const ledger = { version: 1, digest: ledgerDigest(entries), entries };

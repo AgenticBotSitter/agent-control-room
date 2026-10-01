@@ -1,8 +1,8 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Render the release-consumable notice index and manifest from the captured
 // artifact inventory. No network, install, or caller-selected roots.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { assertInsideRepository } from './runtime-license-repository-guard.mjs';
 
 const INVENTORY = 'research/runtime-license-artifact-inventory.json';
@@ -56,7 +56,7 @@ export function writeFinalizedRuntimeLicenseOutputs(repository = process.cwd()) 
   return out;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const out = writeFinalizedRuntimeLicenseOutputs();
   process.stdout.write(`${NOTICE} ${MANIFEST} digest=${out.manifest.inventoryDigest}\n`);
 }

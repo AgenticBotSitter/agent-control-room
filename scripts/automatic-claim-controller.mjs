@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { createHash } from "node:crypto";
 
 const CLAIM_HEADER = "CLAIM REQUEST";
@@ -1438,7 +1439,7 @@ function githubApi(token) {
   } });
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const { readFile } = await import("node:fs/promises");
   const { GITHUB_EVENT_PATH: eventPath, GITHUB_REPOSITORY: repository, GITHUB_TOKEN: token } = process.env;
   if (!eventPath || !repository || !token) throw new Error("claim_controller_environment_invalid");

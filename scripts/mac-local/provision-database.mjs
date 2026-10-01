@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /**
  * Owner-authorized Mac-local database provisioner.
  *
@@ -920,7 +921,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   return Object.freeze({ provisioned: !options.dryRun, protectedRoot, workers: workers.map(worker => worker.kind) });
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     const supplied = process.argv.slice(2);
     const args = supplied[0] === "--" ? supplied.slice(1) : supplied;

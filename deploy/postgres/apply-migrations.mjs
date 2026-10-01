@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Production migration applier. Effect-free unless both connection flags are
 // supplied: without them it prints the planned file order and exits 0 without
 // connecting. A real run needs the two-phase connections:
@@ -371,7 +372,7 @@ async function runBootstrap({ target, env, rootDir }) {
   }
 }
 
-const invoked = resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url);
+const invoked = isMainModuleV1(process.argv[1], import.meta.url);
 if (invoked) {
   const args = process.argv.slice(2);
   try {

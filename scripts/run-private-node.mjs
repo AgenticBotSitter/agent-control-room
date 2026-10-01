@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parsePrivateVpsArguments, validatePrivateVpsConfigurationPath } from './run-private-vps.mjs';
@@ -108,7 +109,7 @@ export async function runPrivateNode(args, runtime = installed) {
 }
 
 // Import/help is inert. This command opens real resources only with explicit args.
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try { process.exitCode = await runPrivateNode(process.argv.slice(2)); }
   catch { console.error('Control Room node launcher refused setup.'); process.exitCode = 1; }
 }

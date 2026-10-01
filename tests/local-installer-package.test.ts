@@ -33,10 +33,14 @@ async function release(t: import("node:test").TestContext) {
     "scripts/verify-signed-release.mjs": await readFile("scripts/verify-signed-release.mjs", "utf8"),
     "scripts/run-private-vps.mjs": "export {};\n",
     "scripts/run-private-local-installation-operator.mjs": fixtureOperatorRunner,
+    "src/installer/shared/is-main-module.mjs": await readFile("src/installer/shared/is-main-module.mjs", "utf8"),
     "src/installer/v1/local-installation-release.mjs": await readFile("src/installer/v1/local-installation-release.mjs", "utf8"),
     "src/installer/v1/signed-release-verifier.mjs": await readFile("src/installer/v1/signed-release-verifier.mjs", "utf8"),
   };
-  await mkdir(join(root, "src/installer/v1"), { recursive: true });
+  await Promise.all([
+    mkdir(join(root, "src/installer/shared"), { recursive: true }),
+    mkdir(join(root, "src/installer/v1"), { recursive: true }),
+  ]);
   await Promise.all(Object.entries(files).map(([path, contents]) => writeFile(join(root, path), contents)));
   t.after(() => rm(root, { recursive: true, force: true }));
   return root;

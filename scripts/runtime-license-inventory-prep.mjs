@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Portable, deterministic pnpm-licenses preparation for the captured
 // runtime-license-input.json. Converts the pnpm license-keyed JSON to
 // the flat `records[]` schema consumed by `runtime-license-report.mjs`,
@@ -13,7 +14,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { assertInsideRepository, normalizeRelative } from './runtime-license-repository-guard.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -97,7 +97,7 @@ export function regenerateCapturedInput(repository = process.cwd(), outputPath =
   return { outputPath: absoluteOutput, manifestSha256: prepped.manifestSha256, lockSha256: prepped.lockSha256, records: prepped.records.length };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const out = regenerateCapturedInput();
   process.stdout.write(`${out.outputPath} records=${out.records} manifest=${out.manifestSha256.slice(0,12)} lock=${out.lockSha256.slice(0,12)}\n`);
 }

@@ -1,9 +1,9 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Mac-local database backup wrapper. It reuses the production snapshot-bound
 // pg_dump implementation and adds an outer digest manifest used before restore.
 import { createHash } from "node:crypto";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { backupDatabase } from "../../deploy/postgres/backup-database.mjs";
 
 export const VERIFIED_BACKUP_MANIFEST_V1 = "control-room.verified-database-backup/v1";
@@ -44,7 +44,7 @@ export async function createMacLocalDatabaseBackupV1({ source, out, pgBin = "/op
 }
 
 function flag(args, name) { const index = args.indexOf(name); return index === -1 ? undefined : args[index + 1]; }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     const args = process.argv.slice(2), source = flag(args, "--source"), out = flag(args, "--out"), pgBin = flag(args, "--pg-bin");
     if (!source || !out || args.some((value, index) => index % 2 === 0 && !["--source", "--out", "--pg-bin"].includes(value)))

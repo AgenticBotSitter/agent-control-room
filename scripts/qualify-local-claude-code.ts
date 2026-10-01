@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 /**
  * Owner-attended Claude qualification entry. Production qualification accepts
  * only one process-local capability produced by the protected native
@@ -6,7 +7,6 @@
  */
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { types } from "node:util";
 import { consumePrivateMacosClaudeCodeQualificationRouteV1 } from
   "../src/node-bridge/private-macos-claude-code-qualification-port-composer";
@@ -80,5 +80,5 @@ export async function runPrivateLocalClaudeQualificationV1(args: readonly string
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   process.exitCode = await runPrivateLocalClaudeQualificationV1(process.argv.slice(2));

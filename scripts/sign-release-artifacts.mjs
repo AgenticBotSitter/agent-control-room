@@ -1,6 +1,6 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { signReleaseArtifactsV1 } from "./release-signing.mjs";
 
 const required = Object.freeze(["--release-directory", "--version", "--config", "--connector",
@@ -36,5 +36,5 @@ export async function runSignReleaseArtifactsCliV1(args, options) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   process.exitCode = await runSignReleaseArtifactsCliV1(process.argv.slice(2));

@@ -1,4 +1,4 @@
-import { pathToFileURL } from 'node:url';
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { readWorkerInbox } from './public-worker-inbox.mjs';
 
 export function queueHealth(actions, { now = Date.now(), staleMinutes = 60 } = {}) {
@@ -27,5 +27,5 @@ async function main() {
   console.log(JSON.stringify({ alerts: queueHealth(results.flat()), workersChecked: workerIds.length,
     note: 'Read-only report. Legacy acknowledgments are not machine-verifiable. No worker was awakened or reassigned.' }, null, 2));
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(() => { console.error('Queue health unavailable; do not interpret this as no waiting work.'); process.exitCode = 1; });
