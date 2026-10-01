@@ -28,11 +28,16 @@
 // the orchestration runs against a real repository with a real local
 // `origin/main`.
 //
-// Two disposable PostgreSQL 17 clusters, both loopback-only, both started and
-// stopped here. Lane-owned ports 59460-59469; nothing else is ever touched.
+// One shared pin cluster plus one disposable pre-upgrade cluster PER UPGRADE TEST,
+// all loopback-only, all started and stopped here. Every port is OS-assigned
+// rather than a literal: a literal lane port makes two concurrent runs of this
+// lane collide, and the mutation runner invokes the lane many times over, so a
+// developer running it by hand at the same time is the normal case rather than an
+// edge one. (It happened: the stress case below failed to start because the
+// mutation runner's own baseline run held the port.)
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -52,14 +57,13 @@ import { MAC_LOCAL_DATABASE_ROLES_V1 } from "../src/web/v1/mac-local-database-ro
 import { MAC_LOCAL_NODE_KEYS_V1 } from "../src/web/v1/mac-local-node-key-pin.ts";
 import { CompletionGateStoreV1 } from "../src/completion-gate/v1/store.ts";
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
-import { PG_BIN, needsPg } from "./helpers/disposable-postgres-cluster.ts";
+import { PG_BIN, findFreePort, needsPg } from "./helpers/disposable-postgres-cluster.ts";
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const run = promisify(execFile);
 // This lane owns 59460-59469, so both clusters take a literal port rather than
 // an OS-assigned one: a collision with another job is a loud start failure
 // instead of two jobs silently sharing a database.
-const PIN_PORT = 59460;
 const nodeIds = ["mac-1.hermes", "mac-1.claude", "mac-1.codex"];
 const workers = [
   { workerId: "worker:codex:mac-1", kind: "codex", executablePath: "/opt/codex", recordedVersion: "codex 1.2.3" },
@@ -110,10 +114,10 @@ const legacyPassword = login => `p${login.replaceAll("_", "")}`.padEnd(40, "x");
 
 before(async () => {
   if (needsPg) return;
-  state.pin = { root: await mkdtemp(join(tmpdir(), "acr-pin-default-")), port: PIN_PORT };
+  state.pin = { root: await mkdtemp(join(tmpdir(), "acr-pin-default-")), port: await findFreePort() };
   state.roots.push(state.pin.root);
-  state.pin.socket = await cluster(state.pin.root, PIN_PORT);
-  await applyLedger(PIN_PORT);
+  state.pin.socket = await cluster(state.pin.root, state.pin.port);
+  await applyLedger(state.pin.port);
   // The real offline Mac installer: the fixed queue schema, the eight narrow
   // group roles, their exact ACLs, and one LOGIN per Mac role with its password.
   const planned = {
@@ -127,7 +131,7 @@ before(async () => {
     control_room_fleet_owner: "o".repeat(40),
   };
   state.pinPasswords = planned;
-  const mac = await admin(PIN_PORT, state.pin.socket);
+  const mac = await admin(state.pin.port, state.pin.socket);
   try { await provisionMacLocalNarrowRolesV1(mac, planned); } finally { await mac.end(); }
 
 });
@@ -150,7 +154,7 @@ async function completedInstall(label) {
   state.roots.push(root);
   const config = join(root, "config");
   await mkdir(config, { recursive: true, mode: 0o700 });
-  const web = { host: "127.0.0.1", port: PIN_PORT, database: "control_room", username: "control_room_web",
+  const web = { host: "127.0.0.1", port: state.pin.port, database: "control_room", username: "control_room_web",
     password: state.pinPasswords.control_room_web, majorVersion: 17 };
   const role = username => ({ ...web, username, password: state.pinPasswords[username] });
   const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1, web, coordinator: role("control_room_coordinator"),
@@ -172,7 +176,7 @@ async function firstOwnerReceipt(label) {
   const configuration = JSON.parse(await readFile(join(install.config, "mac-local.json"), "utf8"));
   const manifest = createMacLocalFirstOwnerManifestV1(configuration, "2026-09-30T12:00:00.000Z",
     CompletionGateStoreV1.genesisIntegrityForKeyV1(configuration.localOwnerSession.tenantId, new Uint8Array(32).fill(41)));
-  const vps = await admin(PIN_PORT, state.pin.socket);
+  const vps = await admin(state.pin.port, state.pin.socket);
   let receipt;
   try { receipt = await applyMacLocalFirstOwnerV1(vps, manifest); }
   finally { await vps.end(); }
@@ -210,7 +214,7 @@ test("item 4: the pin command reads three real node keys through the production 
 
   // The login that read the rows really is the restricted one and nothing wider:
   // the ledger table it must not read is refused on the same cluster.
-  const coordinator = connectTarget(tcp(PIN_PORT, "control_room_coordinator", state.pinPasswords.control_room_coordinator));
+  const coordinator = connectTarget(tcp(state.pin.port, "control_room_coordinator", state.pinPasswords.control_room_coordinator));
   await coordinator.connect();
   try {
     assert.equal((await coordinator.query("SELECT current_user AS role, session_user AS session")).rows[0].role,
@@ -315,6 +319,59 @@ test("item 5: pinning twice is idempotent, and twenty concurrent callers converg
     "mac-local.json", "node-keys.json"], "twenty racing writers leave no staging file");
 });
 
+/**
+ * The same convergence under the shape that actually happens on the Mac: SEPARATE
+ * OS PROCESSES, because in-process `Promise.all` shares one event loop and cannot
+ * interleave the way two `mac:pin-node-keys` invocations do. Each child is the
+ * production CLI, with no argument but the two paths, spawned in its own process
+ * group, and every one of them is waited for in a `finally` so a failure part-way
+ * through cannot leave a child running.
+ *
+ * 50 children against one cluster is well past the point where a non-atomic writer
+ * would show a half-written file, so this is where a partial write would show up.
+ */
+test("item 5 stress: fifty separate pin processes converge on one exact 0600 file", {
+  skip: needsPg,
+}, async t => {
+  const install = await firstOwnerReceipt("process-race");
+  const children = [];
+  try {
+    const attempts = Array.from({ length: 50 }, () => new Promise(resolve => {
+      const child = spawn(process.execPath, ["--import", "tsx", "scripts/mac-local/pin-node-keys.mjs",
+        install.root, install.receiptPath], { cwd: repoRoot, env: { ...process.env, TMPDIR: process.env.TMPDIR },
+        detached: true, stdio: ["ignore", "ignore", "pipe"] });
+      children.push(child);
+      let stderr = "";
+      child.stderr?.on("data", part => { stderr += String(part); });
+      child.once("error", error => resolve({ status: -1, stderr: error.message }));
+      child.once("close", status => resolve({ status, stderr }));
+    }));
+    const results = await Promise.all(attempts);
+    const failed = results.filter(result => result.status !== 0);
+    assert.deepEqual(failed, [], `every process must converge, failed: ${JSON.stringify(failed.slice(0, 3))}`);
+  } finally {
+    // Kill only pids this test spawned, and only ones still running.
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) {
+        try { process.kill(-child.pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* gone */ } }
+      }
+    }
+    await Promise.all(children.map(child => new Promise(resolve => {
+      if (child.exitCode !== null || child.signalCode !== null) return resolve();
+      child.once("close", () => resolve());
+      setTimeout(resolve, 5000);
+    })));
+  }
+  const entry = await lstat(install.pinFile);
+  assert.equal(entry.isFile(), true);
+  assert.equal(entry.isSymbolicLink(), false);
+  assert.equal(entry.mode & 0o777, 0o600, "fifty racing processes leave one owner-only file");
+  assert.deepEqual(JSON.parse(await readFile(install.pinFile, "utf8")),
+    { schema: MAC_LOCAL_NODE_KEYS_V1, fingerprints: { ...install.receipt.fingerprints } });
+  assert.deepEqual((await readdir(install.config)).sort(), ["database-roles.json", "first-owner-receipt.json",
+    "mac-local.json", "node-keys.json"], "no staging file survives fifty racing processes");
+});
+
 /** A disposable cluster in the shape a real Mac install had before the five new
  * logins existed: the ledger stops at 0090, the work-intake group and login do
  * not exist, and the four Mac logins hold the broad application role. That is
@@ -326,7 +383,6 @@ test("item 5: pinning twice is idempotent, and twenty concurrent callers converg
  * shared cluster would let one test's migration decide another test's expected
  * value. The port is OS-assigned, so several can exist at once. */
 async function preUpgradeCluster(t) {
-  const { findFreePort } = await import("./helpers/disposable-postgres-cluster.ts");
   const root = await mkdtemp(join(tmpdir(), "acr-upgrade-cluster-"));
   // No t.after removal here: the data directory must outlive the postmaster, and
   // the postmaster is stopped by this lane's own `after` hook. Removing the
