@@ -246,8 +246,8 @@
   },
   {
     "file": "src/updater/v1/backup-ports.mjs",
-    "find": "            NOREPLICATION BYPASSRLS`);\n          await admin.query(`CREATE ROLE ${SCRATCH_READER_V1}",
-    "replace": "            NOREPLICATION BYPASSRLS SUPERUSER`);\n          await admin.query(`CREATE ROLE ${SCRATCH_READER_V1}",
+    "find": "await admin.query(`CREATE ROLE ${SCRATCH_RESTORE_V1} LOGIN NOSUPERUSER",
+    "replace": "await admin.query(`CREATE ROLE ${SCRATCH_RESTORE_V1} LOGIN SUPERUSER",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the scratch restore must not run as a superuser: a release's own functions (CHECK helpers, index expressions) run during a restore, and a superuser restore is a shell as _crdb. The hostile-name test carries a CHECK function that raises if it ever runs as a superuser, so a superuser restore fails the backup"
   }
