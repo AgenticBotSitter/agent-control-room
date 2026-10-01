@@ -3,7 +3,7 @@
 -- WHY THIS FILE EXISTS AND WHY IT IS HERE RATHER THAN IN THE UPDATER'S DDL.
 -- The updater's guard `updater.owner_session_is_live` is SECURITY DEFINER and
 -- owned by `control_room_deployer`, so it runs as the deployer — and a deployer
--- cannot grant itself SELECT on a table it does not own. The three tables below
+-- cannot grant itself SELECT on a table it does not own. The four tables below
 -- are owned by `control_room_schema_owner`, so the GRANT has to be issued by
 -- their owner. Measured, not assumed: as the deployer, PostgreSQL refuses with
 -- "permission denied for column tenant_id of relation control_web_sessions".
@@ -18,12 +18,15 @@
 -- diffed and grant-converged like every other release-schema grant, and the
 -- exact text is asserted by the existing role-manifest and preflight tests.
 --
--- WHAT IS GRANTED, AND WHY IT IS COLUMN-SCOPED. Three tables, and only the
--- columns the guard's EXISTS evaluates. A table-wide SELECT would let a
+-- WHAT IS GRANTED, AND WHY IT IS COLUMN-SCOPED. Four tables, and only the
+-- columns the updater actually evaluates. A table-wide SELECT would let a
 -- compromised updater read every session's identity and expiry independently of
--- the check, and would silently widen if a column were ever added. The point of
--- the grant is to answer one question — "is this token digest a live owner
--- session right now?" — and nothing else.
+-- the check, and would silently widen if a column were ever added. On the first
+-- three the point of the grant is to answer one question — "is this token digest
+-- a live owner session right now?" — and nothing else. On the fourth
+-- (`owner_web_push_subscriptions`, item 21) it is the opposite kind of read: the
+-- updater is the process that SENDS the owner's push, so it needs the endpoint
+-- and the two encryption keys, and still nothing writable.
 --
 -- WHAT THE DEPLOYER STILL CANNOT DO, which is the part that matters:
 --   * it holds NO INSERT, UPDATE, DELETE or TRUNCATE on any release table, so it
@@ -68,18 +71,28 @@ BEGIN
     || ' ON public.control_identities TO control_room_deployer';
   EXECUTE 'GRANT SELECT (tenant_id, identity_id, role_key, risk_ceiling, allowed_actions, project_ids,'
     || ' expires_at, revoked_at) ON public.control_role_grants TO control_room_deployer';
-  -- Item 10a's addition, and the only reason `enqueue_cooling_off_notices` can
-  -- work: the deployer must be able to COUNT the owner's live subscriptions, so
-  -- it can refuse a `passkey add` when there is nobody to warn. One boolean
-  -- question, granted column-wise: the endpoint itself is never readable from
-  -- here, because the updater does not send pushes — it queues them and the
-  -- dispatch path (item 21) does, with the root-only VAPID key (R12).
+  -- Item 21's addition, and the only reason the updater can SEND rather than
+  -- only queue. §15 item 21 makes the updater the process that POSTs to the
+  -- owner's push endpoints with the root-only VAPID key (R12); the web cannot
+  -- (it holds only the public key) and must not. So the updater needs the
+  -- endpoint and the two encryption keys, not just the count.
   --
-  -- `id` is included so a future de-duplication is possible without a second
-  -- grant, and `expires_at` because an expired browser endpoint is not a browser
-  -- that will be told. No endpoint, no key material, no tenant beyond the one it
-  -- already had.
-  EXECUTE 'GRANT SELECT (tenant_id, id, expires_at)'
+  -- It was granted `(tenant_id, id, expires_at)` alone because item 10a only
+  -- needed to COUNT live subscriptions. The item-21 query reads
+  -- `id, endpoint, p256dh, auth, expires_at`, so on a real cluster the one
+  -- process that must alert was refused `permission denied for table
+  -- owner_web_push_subscriptions` and every send would have failed. Measured,
+  -- not assumed: that is what the first real-PG run of the alert lane showed.
+  -- The grant is extended rather than replaced, and it stays read-only and
+  -- column-scoped: `endpoint`, `p256dh` and `auth` are the three columns a push
+  -- send needs, and nothing on this table is writable by the updater.
+  --
+  -- WHAT THE UPDATER STILL CANNOT DO WITH THEM: it holds no INSERT, UPDATE or
+  -- DELETE here, so it cannot mint a subscription for an endpoint it does not
+  -- already have, cannot make one expire to silence an alert, and cannot read
+  -- or write any other release table. R12's threat was a web forging the
+  -- updater's voice, which is the trigger, not this read.
+  EXECUTE 'GRANT SELECT (tenant_id, id, endpoint, p256dh, auth, expires_at)'
     || ' ON public.owner_web_push_subscriptions TO control_room_deployer';
 END;
 $$;

@@ -42,6 +42,41 @@ export async function startUpdaterV1(options = {}) {
       throw error;
     }
   }
+  // R12 wiring, corrected after review: the production entry point passes NO
+  // options, so "no `alerts` key" must mean the REAL sender, exactly like every
+  // other optional collaborator above (`store`, `effects`, `referee`,
+  // `ownerActions`). Only an explicit `alerts: null` (or `false`) turns the
+  // sender off, and only for a caller that supplies its own. The previous
+  // ternary read the absence of the key as "off" and the presence of an
+  // explicit `null` as "on", so production started with no sender at all and
+  // the VAPID refuse-to-start gate below never ran.
+  // `alertRuntime` injects only the PROCESS IDENTITY used by the VAPID custody
+  // check (`getuid`, `lstat`, `readFile`) — never the sender, its store, or its
+  // send path. It exists so a test running as a non-root user can exercise the
+  // DEFAULT construction path below, which is the whole point of the fix: the
+  // production call passes no `alerts` key at all. Production leaves it unset.
+  const alerts = options.alerts === false || options.alerts === null ? null
+    : options.alerts ?? new UpdaterAlertSenderV1({ root, store, ...(options.alertRuntime ?? {}) });
+  // The key is preflighted BEFORE the lease is acquired, so a refusal cannot
+  // strand a session advisory lock the `catch` below is not in scope to release.
+  // A root-only key that is simply not installed yet is not a refusal: item 21
+  // states install-night pushes come from item 8's sender, and the updater must
+  // still run the release it was woken for. Once the key exists, every custody
+  // refusal (`not_root`, `permissions_refused`, `unavailable`, `invalid`) stops
+  // the updater rather than starting a process that can never alert.
+  let alertSender = alerts;
+  if (alerts) {
+    const reportAlerts = options.onTimerError ?? (error => {
+      process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
+    });
+    try { await alerts.preflight(); }
+    catch (error) {
+      if (error?.code !== "updater_vapid_unavailable") throw error;
+      reportAlerts(Object.assign(new Error("updater_vapid_unavailable"),
+        { code: "updater_vapid_unavailable", warning: true }));
+      alertSender = null;
+    }
+  }
   const requestedIdentity = options.identity ?? newUpdaterIdentityV1();
   let acquisition;
   try {
@@ -116,20 +151,8 @@ export async function startUpdaterV1(options = {}) {
   const reportTimerError = options.onTimerError ?? (error => {
     process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_timer_failed"}\n`);
   });
-  // R12 wiring, corrected after review: the production entry point passes NO
-  // options, so "no `alerts` key" must mean the REAL sender, exactly like every
-  // other optional collaborator above (`store`, `effects`, `referee`,
-  // `ownerActions`). Only an explicit `alerts: null` (or `false`) turns the
-  // sender off, and only for a caller that supplies its own. The previous
-  // ternary read the absence of the key as "off" and the presence of an
-  // explicit `null` as "on", so production started with no sender at all and
-  // the VAPID refuse-to-start gate below never ran.
-  const alerts = options.alerts === false ? null
-    : options.alerts === undefined || options.alerts === null ? new UpdaterAlertSenderV1({ root, store })
-    : options.alerts;
-  if (alerts) await alerts.preflight();
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, watcher: options.watcher ?? null,
-    alerts, alertFacts: options.alertFacts, onError: reportTimerError });
+    alerts: alertSender, alertFacts: options.alertFacts, onError: reportTimerError });
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportTimerError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
@@ -168,7 +191,7 @@ export async function startUpdaterV1(options = {}) {
     if (ownsClient) await client.end();
     throw error;
   }
-  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, passkeys, refusalAggregator, alerts,
+  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, passkeys, refusalAggregator, alerts: alertSender,
     setHeartbeatState,
     async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
       if (ownsClient) await client.end(); } });

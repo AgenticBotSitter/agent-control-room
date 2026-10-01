@@ -8,7 +8,11 @@ export const UPDATER_PUSH_RATE_MS_V1 = 60 * 60_000;
 export const UPDATER_PUSH_TIMEOUT_MS_V1 = 5_000;
 export const UPDATER_PUSH_RETRY_MS_V1 = Object.freeze([30_000, 120_000, 600_000, 3_600_000]);
 
-const TEMPLATES = Object.freeze({
+/** The fixed R12 alert texts. Exported so the QUEUE and the SENDER cannot
+ * disagree about what a condition says: `store.queue()` writes this text into
+ * `push_queue.body` (which the schema CHECKs to 1..400 characters), and
+ * `tick()` builds the payload from the same table. One source, two readers. */
+export const UPDATER_PUSH_TEMPLATES_V1 = Object.freeze(Object.assign(Object.create(null), {
   "control-room-updater.needs-owner": "Control Room needs you",
   "control-room-updater.uncertain": "Control Room needs a check before continuing",
   "control-room-updater.rescue": "Control Room recovered safely and needs a review",
@@ -18,7 +22,17 @@ const TEMPLATES = Object.freeze({
   "control-room-updater.disk-reserve-used": "Control Room used its disk reserve",
   "control-room-updater.subscriptions-zero": "Phone notifications are not set up",
   "control-room-updater.recovered": "Control Room is back to normal",
-});
+}));
+
+const TEMPLATES = UPDATER_PUSH_TEMPLATES_V1;
+
+/** The fixed text for one updater template id, or a refusal: the queue path
+ * must not be able to write a body the sender would then refuse to send. */
+export function updaterPushBodyV1(template) {
+  if (typeof template !== "string" || !(template in TEMPLATES))
+    throw updaterRefuseV1("updater_push_condition_refused");
+  return TEMPLATES[template];
+}
 
 function safeErrorCode(error) {
   const code = typeof error?.code === "string" ? error.code : "updater_push_send_failed";

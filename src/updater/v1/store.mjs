@@ -1,4 +1,5 @@
 import { assertPlainObjectV1, assertSafeIdV1, SAFE_STEP_V1, updaterRefuseV1 } from "./contracts.mjs";
+import { updaterPushBodyV1 } from "./alerts.mjs";
 
 const RUN_STATES_V1 = new Set(["approved", "prechecked", "staged", "quick_backup", "draining", "quiesced",
   "backup_verified", "preimage_taken", "migrating", "migrated", "switched", "restarted", "healthy",
@@ -196,7 +197,17 @@ export class PostgresUpdaterStoreV1 {
   async queue(template) {
     if (typeof template !== "string" || !/^control-room-updater\.[a-z-]{3,63}$/u.test(template))
       throw updaterRefuseV1("updater_push_template_refused");
+    // `push_queue.body` is NOT NULL and CHECKed to 1..400 characters, so a
+    // queued row has to carry the fixed text it will be sent with. An empty
+    // body was refused by the real cluster on the first run of the alert lane
+    // ("new row ... violates check constraint push_queue_body_check"), which
+    // would have meant no alert could ever be queued. The text is the SAME
+    // fixed template the sender renders, not a second copy of it: the title and
+    // body are what the owner's phone shows if a row is ever read outside the
+    // sender, and the sender's payload is still built from the template id.
+    const text = updaterPushBodyV1(template);
     await this.client.query(`INSERT INTO updater.push_queue(id,template,title,body,link_path)
-      VALUES($1,$2,'Control Room updater','', '/needs-me')`, [`push:${globalThis.crypto.randomUUID()}`, template]);
+      VALUES($1,$2,'Control Room updater',$3, '/needs-me')`,
+    [`push:${globalThis.crypto.randomUUID()}`, template, text]);
   }
 }

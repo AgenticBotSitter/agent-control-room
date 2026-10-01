@@ -67,8 +67,20 @@ test("R-FS reads refuse a planted FIFO without waiting for a writer", async t =>
 const makeRun = () => ({ run_id: "run:00000000-0000-4000-8000-000000000001", plan_id: "plan-one", state: "approved",
   run_class: "code", lease_token: "lease-one", detail: {} });
 
+/** R12 custody seam. The production process is root and the key file is
+ * root-owned 0600; a developer test is neither, so the ONLY thing injected is
+ * the identity the custody check reads. The sender, its store and its send
+ * path are the real ones, so these tests still run the default construction. */
+const ROOT_VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "mailto:owner@example.invalid",
+  publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
+async function rootHeldVapid(root) {
+  await writeFile(join(root, "updater-state/vapid.json"), `${JSON.stringify(ROOT_VAPID)}\n`, { mode: 0o600 });
+  return { getuid: () => 0, lstat: async path => Object.assign(await lstat(path), { uid: 0 }) };
+}
+
 class MemoryStore {
-  constructor(run = makeRun()) { this.run = run; this.eventRows = []; this.heartbeats = []; this.requests = []; }
+  constructor(run = makeRun()) { this.run = run; this.eventRows = []; this.heartbeats = []; this.requests = [];
+    this.queued = []; this.pushRows = []; }
   async liveRun() { return this.run; }
   async events() { return this.eventRows; }
   async transition(_id, lease, state, detail, options = {}) {
@@ -80,6 +92,15 @@ class MemoryStore {
   async heartbeat(value) { this.heartbeats.push(value); }
   async unhandledOwnerRequests() { return [...this.requests]; }
   async finishOwnerRequest(id, outcome) { this.requests = this.requests.filter(row => row.id !== id); this.finished = [id, outcome]; }
+  // The four R12 alert ports, so the DEFAULT sender in `startUpdaterV1` can be
+  // constructed against this fake exactly as it is against the real store.
+  async subscriptions() { return this.subscriptionsValue ?? []; }
+  async pending() { return this.pushRows.filter(row => !row.sent); }
+  async begin(id) { const row = this.pushRows.find(item => item.id === id); if (!row || row.sent) return false;
+    row.attempts += 1; return true; }
+  async finish(id, { sent, errorCode = null } = {}) { const row = this.pushRows.find(item => item.id === id);
+    if (row) { row.sent = sent; row.errorCode = errorCode; } }
+  async queue(template) { this.queued.push(template); }
 }
 
 class MemoryJournal {
@@ -182,7 +203,8 @@ test("a torn live file journal becomes uncertain, then Check and continue archiv
   const complete = await readFile(join(root, "updater-state/journal.jsonl"));
   await writeFile(join(root, "updater-state/journal.jsonl"), complete.subarray(0, complete.length - 5), { mode: 0o600 });
   const store = new MemoryStore({ ...makeRun(), state: "staged" }), effects = new Effects();
-  const updater = await startUpdaterV1({ root, store, journal, effects, referee: { async assertPlanAllowed() {} } });
+  const updater = await startUpdaterV1({ root, store, journal, effects, referee: { async assertPlanAllowed() {} },
+    alertRuntime: await rootHeldVapid(root) });
   t.after(() => updater.stop());
   assert.equal(updater.loop.lastOutcome.status, "uncertain");
   assert.equal(store.run.state, "uncertain"); assert.deepEqual(effects.calls, []);
@@ -245,7 +267,8 @@ test("a failed initial heartbeat closes the control socket before startup return
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
   const store = new MemoryStore(undefined);
   store.heartbeat = async () => { throw Object.assign(new Error("down"), { code: "connection_dropped" }); };
-  await assert.rejects(startUpdaterV1({ root, store }), error => error.code === "connection_dropped");
+  await assert.rejects(startUpdaterV1({ root, store, alertRuntime: await rootHeldVapid(root) }),
+    error => error.code === "connection_dropped");
   await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u,
     "failed startup did not leave a listener or stale socket");
 });
@@ -255,7 +278,7 @@ test("startup reports a live run before its first heartbeat and reuses its durab
   const store = new MemoryStore(), effects = new Effects();
   const updater = await startUpdaterV1({ root, store,
     identity: { bootId: "boot-restarted", leaseToken: "lease-new" }, effects,
-    referee: { async assertPlanAllowed() {} } });
+    referee: { async assertPlanAllowed() {} }, alertRuntime: await rootHeldVapid(root) });
   t.after(() => updater.stop());
   assert.equal(updater.identity.leaseToken, "lease-one");
   assert.deepEqual(store.heartbeats[0], { bootId: "boot-restarted", leaseToken: "lease-one",
@@ -269,7 +292,7 @@ test("startup refuses when another database session still owns the updater lease
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
   const store = new MemoryStore(); store.acquire = async () => ({ status: "busy", run: store.run });
   let started;
-  try { started = await startUpdaterV1({ root, store }); }
+  try { started = await startUpdaterV1({ root, store, alertRuntime: await rootHeldVapid(root) }); }
   catch (error) { assert.match(error.message, /updater_live_session_busy/u); }
   if (started) { await started.stop(); assert.fail("startup accepted a busy database lease"); }
   await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u);
@@ -278,7 +301,8 @@ test("startup refuses when another database session still owns the updater lease
 test("startup settles the actuator's durable link transaction before opening its socket", async t => {
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
   const store = new MemoryStore(null); let recovered = 0;
-  const updater = await startUpdaterV1({ root, store, effects: { async recover() { recovered += 1; } } });
+  const updater = await startUpdaterV1({ root, store, effects: { async recover() { recovered += 1; } },
+    alertRuntime: await rootHeldVapid(root) });
   try { assert.equal(recovered, 1); assert.ok(await lstat(join(root, "updater-state/control.sock"))); }
   finally { await updater.stop(); }
 });
@@ -303,6 +327,69 @@ test("the main loop does not poll the runner while Off and rejects a risk-increa
   assert.equal((await loop.tick()).status, "uncertain", "the Off flag cannot hide a rescue marker");
   assert.equal(runnerCalls, 1, "a rescued active run is measured, never advanced by the watcher/build path");
   assert.equal(watcherCalls, 0, "even the rescue path does not wake the watcher while Off");
+});
+
+test("the production call shape starts the REAL alert sender; only an explicit null or false turns it off", async t => {
+  // Review blocker 1. The old ternary read the ABSENCE of the `alerts` key as
+  // "off" and an explicit `null` as "on", so the production entry point — which
+  // passes no options — started with `alerts === null` and no alert could ever
+  // fire. The default path below is the shape `src/updater/v1/updater.mjs` uses
+  // when it is invoked as a program: no `alerts` key at all.
+  const root = await temporaryRoot(t);
+  await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const store = new MemoryStore();
+  const updater = await startUpdaterV1({ root, store,
+    identity: { bootId: "boot-wiring", leaseToken: "lease-new" },
+    alertRuntime: await rootHeldVapid(root) });
+  assert.ok(updater.alerts, "no `alerts` key means the real sender, not null");
+  assert.equal(updater.alerts.constructor.name, "UpdaterAlertSenderV1");
+  assert.equal(updater.alerts.root, root, "it is bound to the real root");
+  assert.equal(updater.loop.alerts, updater.alerts, "the main loop drives the same sender");
+  await updater.stop();
+  // An explicit opt-out still works, for a caller that supplies its own port.
+  for (const optOut of [{ alerts: null }, { alerts: false }]) {
+    const off = await startUpdaterV1({ root, store, ...optOut, alertRuntime: await rootHeldVapid(root) });
+    assert.equal(off.alerts, null, `explicit ${JSON.stringify(optOut)} turns the sender off`);
+    assert.equal(off.loop.alerts, null);
+    await off.stop();
+  }
+});
+
+test("startup refuses a VAPID key that is not root-held, and does not strand the lease", async t => {
+  // The custody gate the review found was dead code. A key readable by anyone
+  // but root is a refusal, and it must happen BEFORE the session lease is taken
+  // so a refusal cannot leave a second updater permanently locked out.
+  const root = await temporaryRoot(t);
+  await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const key = join(root, "updater-state/vapid.json");
+  await writeFile(key, `${JSON.stringify(ROOT_VAPID)}\n`, { mode: 0o644 });
+  const store = new MemoryStore();
+  let acquired = 0;
+  store.acquire = async token => { acquired += 1; return { status: "acquired", run: store.run, leaseToken: token }; };
+  await assert.rejects(startUpdaterV1({ root, store,
+    alertRuntime: { getuid: () => 0, lstat: async path => Object.assign(await lstat(path), { uid: 0 }) } }),
+    /updater_vapid_permissions_refused/u);
+  assert.equal(acquired, 0, "the key is checked before the updater takes its lease");
+  await chmod(key, 0o600);
+  await assert.rejects(startUpdaterV1({ root, store, alertRuntime: { getuid: () => 501 } }),
+    /updater_vapid_not_root/u);
+  assert.equal(acquired, 0);
+});
+
+test("a missing VAPID key is a warning, not a refusal: the updater still runs its release", async t => {
+  // §15 item 21: install-night pushes come from item 8's minimal sender, and the
+  // key is written by the installer. A not-yet-installed key must not stop the
+  // updater from applying the release it was woken for.
+  const root = await temporaryRoot(t);
+  await writeFile(join(root, "updater-state/self-update"), "On\n");
+  const warnings = [];
+  const store = new MemoryStore();
+  const updater = await startUpdaterV1({ root, store, onTimerError: error => warnings.push(error.code),
+    alertRuntime: { getuid: () => 0 } });
+  try {
+    assert.equal(updater.alerts, null, "no sender without a key, so no send is attempted");
+    assert.deepEqual(warnings, ["updater_vapid_unavailable"], "the absence is reported once, as a warning");
+  } finally { await updater.stop(); }
 });
 
 test("a busy result with a live run is published as needs_attention", async () => {
