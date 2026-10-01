@@ -1,0 +1,93 @@
+[
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "valid_host \"$front_host\" || refuse \"--host must be a plain DNS hostname\"",
+    "replace": "true # weakened host validation",
+    "test": "node --test --test-name-pattern='hostile host' tests/front-door-vps-setup.test.mjs",
+    "why": "hostnames with spaces, newlines, or shell metacharacters must be refused"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "valid_target \"$tailnet_target\" || refuse \"--tailnet-target must be an IP literal\"",
+    "replace": "true # weakened tailnet target validation",
+    "test": "node --test --test-name-pattern='hostile host' tests/front-door-vps-setup.test.mjs",
+    "why": "the Control Room backend must be a literal Tailscale address"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "valid_cidr \"$source\" || refuse \"--allow-source must be an IPv4 or IPv6 CIDR\"",
+    "replace": "true # weakened source CIDR validation",
+    "test": "node --test --test-name-pattern='hostile host' tests/front-door-vps-setup.test.mjs",
+    "why": "allow-list entries must not inject HAProxy directives"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "server control_room_mac ${backend_target}:${front_port} send-proxy-v2",
+    "replace": "server control_room_mac ${backend_target}:${front_port}",
+    "test": "node --test --test-name-pattern='rendered HAProxy' tests/front-door-vps-setup.test.mjs",
+    "why": "the Mac must receive the client address through PROXY protocol v2"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "tcp-request content reject if control_room_sni { sc0_conn_cur gt 20 }",
+    "replace": "tcp-request content reject if control_room_sni { sc0_conn_cur gt 200 }",
+    "test": "node --test --test-name-pattern='rendered HAProxy' tests/front-door-vps-setup.test.mjs",
+    "why": "Control Room concurrent connections must remain capped at twenty per source"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "tcp-request content reject if control_room_sni { sc0_conn_rate gt 60 }",
+    "replace": "tcp-request content reject if control_room_sni { sc0_conn_rate gt 600 }",
+    "test": "node --test --test-name-pattern='rendered HAProxy' tests/front-door-vps-setup.test.mjs",
+    "why": "Control Room connection creation must remain capped at sixty per minute per source"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "printf '\\n  tcp-request content reject if control_room_sni !control_room_source_allowed\\n'",
+    "replace": "printf '\\n'",
+    "test": "node --test --test-name-pattern='rendered HAProxy' tests/front-door-vps-setup.test.mjs",
+    "why": "a configured source allow-list must actually refuse other Control Room sources"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "if [ -n \"$disable_old_serve\" ]; then tailscale serve reset >/dev/null; fi",
+    "replace": "tailscale serve reset >/dev/null",
+    "test": "node --test --test-name-pattern='Serve is untouched' tests/front-door-vps-setup.test.mjs",
+    "why": "the old Serve configuration may change only after the explicit flag"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "if [ -n \"$transaction\" ]; then",
+    "replace": "if false; then",
+    "test": "node --test --test-name-pattern='failed post-change probe' tests/front-door-vps-setup.test.mjs",
+    "why": "a failed post-change website probe must trigger rollback"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "flock($fh, LOCK_EX | LOCK_NB)",
+    "replace": "flock($fh, LOCK_EX)",
+    "test": "node --test --test-name-pattern='second caller is refused' tests/front-door-vps-setup.test.mjs",
+    "why": "a second caller must be refused rather than wait and mutate after the first"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "same_install || refuse \"a different front-door installation already exists; remove it first\"",
+    "replace": "true # accept a mismatched installation",
+    "test": "node --test --test-name-pattern='missing website inputs' tests/front-door-vps-setup.test.mjs",
+    "why": "idempotency must not accept changed install arguments"
+  },
+  {
+    "file": "deploy/front-door/vps-setup.sh",
+    "find": "if [ -n \"$dry_run\" ]; then\n  check_haproxy_config_path\n  if [ -n \"$remove\" ]; then",
+    "replace": "if false; then\n  check_haproxy_config_path\n  if [ -n \"$remove\" ]; then",
+    "test": "node --test --test-name-pattern='dry-run lists changes' tests/front-door-vps-setup.test.mjs",
+    "why": "dry-run must return before any mutation"
+  },
+  {
+    "file": "deploy/front-door/tailnet-policy-snippet.mjs",
+    "find": "if (ports.some(port => [22, 443, 5432].includes(port))) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='policy generator emits' tests/front-door-vps-setup.test.mjs",
+    "why": "generated accept ports must not contradict the fixed deny tests"
+  }
+]

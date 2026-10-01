@@ -26,11 +26,12 @@ function LocalWorkers() {
           <p><StateChip state={worker.state} tone={workerChipToneV1(worker)} />. {localWorkerStateLabel(worker)}.</p>
           <p className="private-note">Current task, capacity and last seen are unknown in Mac-local mode: this host does not yet record them per worker.</p></li>)}</ul></>}
     <FleetWorkers />
+    <WorkersScorecard />
     <p><a href="/projects">Open projects</a></p>
   </main></div>;
 }
 
 export function WorkersWorkspace() {
   const runtime = useLocalRuntime();
-  return runtime.mode === "hosted" ? <PrivateConnections><WorkersScorecard /></PrivateConnections> : <LocalWorkers />;
+  return runtime.mode === "hosted" ? <PrivateConnections /> : <LocalWorkers />;
 }

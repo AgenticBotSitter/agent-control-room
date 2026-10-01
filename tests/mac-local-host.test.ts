@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import type { Server } from "node:http";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { sha256Digest } from "../src/security";
-import { createMacLocalProtectedHostV1, createMacLocalWebServiceFromConfigurationV1 } from "../src/web/v1/mac-local-host";
+import { createMacLocalPasskeyRegistrationPortV1, createMacLocalProtectedHostV1,
+  createMacLocalWebServiceFromConfigurationV1 } from "../src/web/v1/mac-local-host";
 import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1 } from "../src/web/v1/mac-local-protected-configuration";
 import { MAC_LOCAL_DATABASE_ROLES_V1 } from "../src/web/v1/mac-local-database-roles";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
@@ -26,6 +28,49 @@ const databaseRoles = Object.freeze({
   queueWorker: { ...configuration.database, username: "control_room_queue_worker", password: "queue-worker-test" },
 });
 
+test("P8b: the default Mac-local passkey port uses the production web-store contract under load", async () => {
+  assert.match(await readFile("src/web/v1/mac-local-host.ts", "utf8"),
+    /passkeyRegistration: createMacLocalPasskeyRegistrationPortV1\(input\.database\.client\)/u);
+  const secret = Buffer.alloc(32, 7).toString("base64url"), ownerSessionDigest = sha256Digest({ ownerCode: "session" });
+  const digest = `sha256:${(await import("node:crypto")).createHash("sha256").update(Buffer.alloc(32, 7)).digest("hex")}`;
+  let initializeChecks = 0, inserts = 0, optionReads = 0;
+  const insertIds: unknown[] = [], insertStatements: string[] = [];
+  const client = { async query(statement: string, params: unknown[] = []) {
+    if (statement.startsWith("SET search_path")) return { rows: [] };
+    if (statement.includes("current_user AS current_user")) {
+      initializeChecks += 1;
+      await new Promise(resolve => setImmediate(resolve));
+      return { rows: [{ current_user: "control_room_web", is_web: true, replication_role: "origin" }] };
+    }
+    if (statement.includes("passkey_open_registrations_web")) {
+      optionReads += 1; assert.deepEqual(params, [digest]);
+      return { rows: [{ registration_digest: digest, mode: "add", authorization_challenge: null,
+        options_json: { publicKey: { challenge: "C".repeat(43) }, authorization: null } }] };
+    }
+    if (statement.includes("INSERT INTO updater.passkey_registrations")) {
+      inserts += 1; insertIds.push(params[0]); insertStatements.push(statement); return { rows: [] };
+    }
+    assert.fail(`unexpected passkey query: ${statement}`);
+  }, async transaction() { throw new Error("unused"); }, async transactionWithPreCommitCheck() { throw new Error("unused"); } };
+  const port = createMacLocalPasskeyRegistrationPortV1(client as never);
+  const options = await Promise.all(Array.from({ length: 50 }, () => port.options({ ownerSessionDigest, registrationSecret: secret })));
+  assert.equal(initializeChecks, 1, "one role assertion is shared by concurrent callers");
+  assert.equal(optionReads, 50); assert.ok(options.every(value => (value as any).publicKey.challenge === "C".repeat(43)));
+  const credentialId = Buffer.alloc(32, 8).toString("base64url");
+  const registration = { ownerSessionDigest, registrationSecret: secret, comparisonCode: "ABC234",
+    response: { id: credentialId, rawId: credentialId, type: "public-key", clientExtensionResults: {}, response: {
+      clientDataJSON: Buffer.from("{}").toString("base64url"), attestationObject: Buffer.alloc(64, 9).toString("base64url"),
+      transports: ["internal"] } }, authorizationAssertion: null };
+  const accepted = await Promise.all(Array.from({ length: 50 }, () => port.insert(registration)));
+  assert.ok(accepted.every(value => (value as { accepted?: unknown }).accepted === true));
+  assert.equal(inserts, 50); assert.equal(new Set(insertIds).size, 1,
+    "50 exact retries share one deterministic database id");
+  assert.ok(insertStatements.every(statement => statement.includes("ON CONFLICT (id) DO NOTHING")),
+    "the store makes an exact retry a successful no-op");
+  await assert.rejects(port.options({ ownerSessionDigest, registrationSecret: "A".repeat(42) }),
+    /updater_registration_secret_refused/u);
+});
+
 test("loads then verifies workers before it opens the authority database", async () => {
   const trace: string[] = [];
   const server = new EventEmitter() as Server;
@@ -39,7 +84,13 @@ test("loads then verifies workers before it opens the authority database", async
       async close() { trace.push("database-close"); } }; },
     assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
-    hostProcessId: 4_243,
+    // A pid, a probe key, a release and a start time travel together: the web
+    // process refuses a pid with no key behind it rather than serving a readiness
+    // route that `mac:up` could not verify. Before the host forwarded the pid
+    // this test passed with the pid alone, which meant the combination was never
+    // exercised at all.
+    hostProcessId: 4_243, healthProbeKey: new Uint8Array(32).fill(11),
+    healthReleaseId: "test-release", healthStartedAt: "2026-09-30T00:00:00.000Z",
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
   });
   // Construction itself has no filesystem, database, listener, or worker effect.
@@ -58,6 +109,33 @@ test("does not open the database when the pinned worker changes", async () => {
   });
   await assert.rejects(host.start());
   assert.equal(opened, false);
+});
+
+test("connector-only host refuses direct task factories and starts without bot executable inspection", async () => {
+  assert.throws(() => createMacLocalProtectedHostV1({ connectorOnly: true,
+    async loadConfiguration() { return configuration; },
+    openDatabase() { return {} as never; },
+    async loadDatabaseRoles() { return {} as never; },
+    createTaskApplication: async () => ({ operations: {}, isReady: () => true, async close() {} }),
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+  }), /mac_local_host_configuration_invalid/);
+
+  const trace: string[] = [];
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const host = createMacLocalProtectedHostV1({ connectorOnly: true,
+    async loadConfiguration() { trace.push("load"); return configuration; },
+    async readVersion() { assert.fail("connector-only host must not inspect a bot CLI"); },
+    openDatabase() { trace.push("database"); return { client: {} as never, isAvailable: () => true,
+      async close() { trace.push("close"); } }; },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+  });
+  const running = await host.start();
+  assert.deepEqual(trace, ["load", "database"]);
+  await running.close();
 });
 
 test("protected Mac startup creates the shared task lifecycle only after worker verification and owns its shutdown", async () => {

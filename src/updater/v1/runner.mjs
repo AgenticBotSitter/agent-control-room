@@ -87,7 +87,7 @@ export class UpdaterRunnerV1 {
     if (await this.stateFiles.hasRescueMarker()) {
       if (run.state !== "uncertain") run = await this.#record(run, "uncertain", { reason: "rescue_marker" });
       return { status: "uncertain", run,
-        message: "Control Room isn't sure the last update finished. Tap Check and continue." };
+        message: "Control Room isn't sure the last update finished. Check and continue; if no update is running, clear the rescue on the Mac." };
     }
     if (run.state === "uncertain" || run.state === "attended_upgrade_required")
       return { status: run.state, run, message: "Owner action is required before this run can continue." };
@@ -191,14 +191,21 @@ export class UpdaterRunnerV1 {
   /** Owner-gated recovery. The measurement port must establish one of the two
    * terminal observable states; a false, missing, or malformed answer leaves
    * both the rescue marker and the run uncertain. */
-  async checkAndContinue() {
+  async checkAndContinue({ source } = {}) {
     if (this.#running) return { status: "busy", message: "Another updater call is active." };
     this.#running = true;
     try {
       const run = await this.store.liveRun();
       const rescued = await this.stateFiles.hasRescueMarker(), journalUncertain = await this.stateFiles.journalUncertain?.();
       const journalRecoveryPending = await this.stateFiles.journalRecoveryPending?.();
-      if (!run || run.lease_token !== this.stateFiles.leaseToken || (!rescued && !journalUncertain && !journalRecoveryPending))
+      if (!run) {
+        if (source !== "root") throw updaterRefuseV1("updater_web_rescue_clear_refused");
+        if (!rescued || journalUncertain || journalRecoveryPending)
+          throw updaterRefuseV1("updater_check_continue_refused");
+        await this.stateFiles.removeRescueMarker();
+        return { status: "idle", message: "The rescue status is cleared; no update is active." };
+      }
+      if (run.lease_token !== this.stateFiles.leaseToken || (!rescued && !journalUncertain && !journalRecoveryPending))
         throw updaterRefuseV1("updater_check_continue_refused");
       if (run.state !== "uncertain") throw updaterRefuseV1("updater_check_continue_refused");
       if (journalUncertain && !await this.stateFiles.repairJournalUncertain?.())

@@ -4,7 +4,16 @@
  * outside this list is never touched. `newLogin` marks a login the upgrade may
  * create, and only from a SCRAM verifier the Mac hands over; every other login
  * must already exist. `legacyGroup` is the one old membership the upgrade may
- * revoke from that login. */
+ * revoke from that login.
+ *
+ * `groups` and `logins` are what a Mac installation OWNS: the Mac creates them,
+ * grants to them, and converges their ACLs. `vpsOnlyGroups` are roles a
+ * migration names but the Mac never installs -- the news coordinator, for
+ * instance, which exists only on the VPS. They are listed so the role scanner
+ * and the installer can recognise a role a migration refers to, and they are
+ * NOT created on a Mac: `databaseRoleNamesV1` is what the upgrade creates and
+ * inspects, so a VPS-only role in it would make every Mac upgrade invent a role
+ * a fresh Mac install never has, and the two would stop matching. */
 const login = (group, extra = {}) => Object.freeze({ group, newLogin: false, legacyGroup: null, ...extra });
 
 export const databaseRoleManifestV1 = Object.freeze({
@@ -15,6 +24,12 @@ export const databaseRoleManifestV1 = Object.freeze({
     "control_room_local_result_publisher", "control_room_agent_reviewer", "control_room_native_queue_worker",
     "control_room_fleet_gateway", "control_room_fleet_owner_authority",
   ]),
+  // 0238 names the news coordinator in both its up and down files, because 0211
+  // hangs a combine-readiness guard off control_jobs that runs as the INVOKER
+  // and this role holds UPDATE on control_jobs.state -- the same 42501 the task
+  // coordinator had. It is VPS-only: a Mac install never runs a news
+  // coordinator, so it belongs here rather than in `groups`.
+  vpsOnlyGroups: Object.freeze(["control_room_news_coordinator"]),
   logins: Object.freeze({
     control_room_migrator: login("control_room_schema_owner"),
     control_room_app: login("control_room_application"),
@@ -36,8 +51,22 @@ export const databaseRoleManifestV1 = Object.freeze({
 export const databaseRoleNamesV1 = Object.freeze([...databaseRoleManifestV1.groups,
   ...Object.keys(databaseRoleManifestV1.logins)]);
 
+/** Every role the schema may name, Mac-installed or VPS-only. This is what a
+ * migration or a down file is allowed to refer to; `databaseRoleNamesV1` is the
+ * narrower list a Mac install creates, grants to and inspects. The two differ by
+ * the VPS-only groups, and a scanner that used the narrow list would report a
+ * correct VPS migration as naming an unknown role. */
+export const databaseKnownRoleNamesV1 = Object.freeze([...databaseRoleNamesV1,
+  ...databaseRoleManifestV1.vpsOnlyGroups]);
+
+/** The attribute line for a role the schema knows. A VPS-only group is still a
+ * real role with the same never-dangerous attributes, so the guard is the known
+ * set rather than the Mac-installed one: refusing to describe a role the schema
+ * legitimately names would be a second, quieter copy of the same mistake 0238
+ * fixed. Whether a Mac install CREATES the role is a separate question, answered
+ * by `databaseRoleNamesV1`. */
 export function databaseRoleAttributesV1(role) {
-  if (!databaseRoleNamesV1.includes(role)) throw new Error("upgrade_role_catalog_refused");
+  if (!databaseKnownRoleNamesV1.includes(role)) throw new Error("upgrade_role_catalog_refused");
   return `${Object.hasOwn(databaseRoleManifestV1.logins, role) ? "LOGIN" : "NOLOGIN"} INHERIT `
     + "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS";
 }
@@ -97,5 +126,5 @@ export function databaseRoleNamesInSqlV1(text) {
 export function unknownDatabaseRoleNamesV1(sources) {
   const named = new Set();
   for (const text of sources) for (const name of databaseRoleNamesInSqlV1(text).keys()) named.add(name);
-  return [...named].filter(name => !databaseRoleNamesV1.includes(name)).sort();
+  return [...named].filter(name => !databaseKnownRoleNamesV1.includes(name)).sort();
 }

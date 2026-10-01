@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { chmod, lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { UpdaterControlServerV1, requestVerifiedAdminSocketV1,
   sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
 
 async function rootV1(t) {
-  const root = await mkdtemp(join(tmpdir(), "updater-control-"));
+  const root = realpathSync(mkdtempSync("/private/tmp/updater-control-"));
   t.after(async () => { await import("node:fs/promises").then(fs => fs.rm(root, { recursive: true, force: true })); });
   await mkdir(join(root, "updater-state")); return root;
 }
@@ -20,6 +20,8 @@ test("control.sock is owner-only, bounded, validates input, and survives a dropp
   const path = await server.start(); t.after(() => server.stop());
   const entry = await lstat(path); assert.ok(entry.isSocket()); assert.equal(entry.mode & 0o777, 0o600);
   assert.equal(await sendControlRequestV1(path, requestV1("ok")), "request-ok");
+  assert.equal(await sendControlRequestV1(path, { ...requestV1("passkey"), verb: "passkey-list" }),
+    "request-passkey", "the narrow passkey verbs use the same root-only socket");
   await assert.rejects(sendControlRequestV1(path, { ...requestV1("bad"), verb: "install" }),
     /updater_request_refused/u, "an R14 sudo-only verb cannot cross the socket");
 
@@ -85,6 +87,13 @@ test("a planted socket symlink or ordinary file is refused without removing its 
   await (await import("node:fs/promises")).unlink(path); await writeFile(path, "ordinary"); await chmod(path, 0o600);
   await assert.rejects(new UpdaterControlServerV1({ root, handler: async () => ({}) }).start(),
     /updater_control_path_refused/u);
+});
+
+test("an overlong macOS control socket path is refused before listen", async t => {
+  const root = await rootV1(t);
+  const socketPath = `updater-state/${"x".repeat(104)}`;
+  await assert.rejects(new UpdaterControlServerV1({ root, socketPath, handler: async () => ({}) }).start(),
+    error => error?.code === "updater_control_socket_path_too_long");
 });
 
 test("an admin socket needs the service uid, fixed magic and a bounded primitive-only reply", async t => {

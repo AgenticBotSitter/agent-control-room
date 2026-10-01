@@ -43,7 +43,7 @@
 // response intercepted — no stubbed component, no injected state — so hosted
 // Home's focus order is measured rather than assumed. Hosted Home is where the
 // original defect was worse, and nothing in the rehearsal stack serves it.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { assertDisposableBrowserOrigin } from "../../private-app/app/browser-test-origin";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
@@ -61,7 +61,7 @@ const PHONE_HEIGHT = 812;
 
 /** The owner routes. The project/task routes need ids, so they are appended once
  * the fixture has created them. */
-const OWNER_ROUTES: readonly string[] = ["/", "/projects", "/workers", "/needs-me"];
+const OWNER_ROUTES: readonly string[] = ["/", "/projects", "/workers", "/workers/connect", "/needs-me"];
 
 type Measurement = {
   scrollWidth: number;
@@ -337,7 +337,7 @@ async function seedOwnerFixture(page: Page) {
   return { projectId, routes };
 }
 
-test("every owner page is usable at phone width", async ({ page }) => {
+test("every owner page is usable at phone width", async ({ page }, testInfo: TestInfo) => {
   await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
   await signIn(page);
   const { projectId, routes } = await seedOwnerFixture(page);
@@ -350,6 +350,10 @@ test("every owner page is usable at phone width", async ({ page }) => {
     // state rather than the page the owner would actually read.
     await expect(page.locator('[role="status"]').filter({ hasText: /Loading|Checking saved|Reading|Saving…/i }))
       .toHaveCount(0, { timeout: 30_000 });
+    if (route === "/workers/connect")
+      await page.screenshot({ path: testInfo.outputPath("workers-connect-375.png"), fullPage: true, animations: "disabled" });
+    if (route.endsWith("/files"))
+      await page.screenshot({ path: testInfo.outputPath("project-files-375.png"), fullPage: true, animations: "disabled" });
     const measured = await measure(page);
 
     if (measured.scrollWidth > measured.clientWidth) {

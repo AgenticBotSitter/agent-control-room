@@ -20,6 +20,26 @@ export class UpdaterStateFilesV1 {
     await this.hasRescueMarker();
     await unlink(`${this.root}/updater-state/rescued.json`);
   }
+  async readMode() {
+    let value;
+    try { value = JSON.parse(await readFileNoFollowV1(this.root, "updater-state/mode.json", { maxBytes: 256 })); }
+    catch (error) {
+      if (error?.code === "ENOENT") return "running";
+      if (error instanceof SyntaxError) throw updaterRefuseV1("updater_mode_state_refused");
+      throw error;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)
+        || Object.keys(value).sort().join(",") !== "mode,schema"
+        || value.schema !== "control-room.updater-mode/v1"
+        || !["running", "paused", "stopped"].includes(value.mode))
+      throw updaterRefuseV1("updater_mode_state_refused");
+    return value.mode;
+  }
+  writeMode(mode) {
+    return atomicWriteNoFollowV1(this.root, "updater-state/mode.json", `${JSON.stringify({
+      schema: "control-room.updater-mode/v1", mode,
+    })}\n`);
+  }
   async writeHeartbeat(value) {
     await atomicWriteNoFollowV1(this.root, "updater-state/heartbeat", `${JSON.stringify({
       schema: "control-room.updater-heartbeat/v1", at: new Date().toISOString(), ...value,
@@ -51,10 +71,21 @@ export class UpdaterStateFilesV1 {
 
 export class UpdaterModeV1 {
   #value = "running";
-  async read() { return this.#value; }
-  set(value) {
+  #serial = Promise.resolve();
+  constructor(stateFiles) { this.stateFiles = stateFiles; }
+  async initialize() {
+    if (this.stateFiles?.readMode) this.#value = await this.stateFiles.readMode();
+    return this.#value;
+  }
+  async read() { await this.#serial; return this.#value; }
+  async set(value) {
     if (!["running", "paused", "stopped"].includes(value)) throw updaterRefuseV1("updater_mode_refused");
-    this.#value = value;
+    const change = this.#serial.then(async () => {
+      if (this.stateFiles?.writeMode) await this.stateFiles.writeMode(value);
+      this.#value = value;
+    });
+    this.#serial = change.catch(() => {});
+    await change;
   }
 }
 
@@ -62,9 +93,11 @@ const RISK_REDUCING_WHILE_OFF_V1 = new Set(["pause", "stop", "backup_now", "chec
 
 export class UpdaterMainLoopV1 {
   #timer; #ticking = false;
-  constructor({ runner, store, stateFiles, mode, ownerActions, watcher = null, intervalMs = 5_000, onError = () => {} }) {
+  constructor({ runner, store, stateFiles, mode, ownerActions, watcher = null, alerts = null,
+    alertFacts = async () => ({}), intervalMs = 5_000, onError = () => {} }) {
     this.runner = runner; this.store = store; this.stateFiles = stateFiles; this.mode = mode;
-    this.ownerActions = ownerActions; this.watcher = watcher; this.intervalMs = intervalMs; this.onError = onError;
+    this.ownerActions = ownerActions; this.watcher = watcher; this.alerts = alerts; this.alertFacts = alertFacts;
+    this.intervalMs = intervalMs; this.onError = onError;
     this.lastOutcome = { status: "idle" };
   }
   async #requests(flag) {
@@ -73,7 +106,7 @@ export class UpdaterMainLoopV1 {
         await this.store.finishOwnerRequest(request.id, "refused"); continue;
       }
       try {
-        await this.ownerActions.handle(request);
+        await this.ownerActions.handle({ ...request, source: "web" });
         await this.store.finishOwnerRequest(request.id, "acted");
       } catch { await this.store.finishOwnerRequest(request.id, "refused"); }
     }
@@ -91,7 +124,8 @@ export class UpdaterMainLoopV1 {
       if (rescued) {
         const measured = await this.runner.runOnce();
         this.lastOutcome = measured.status === "idle" ? { status: "uncertain",
-          message: "A rescue occurred; owner review is required." } : measured;
+          message: "A rescue occurred; owner review is required. If no update is running, clear the rescue on the Mac." }
+          : measured;
       } else this.lastOutcome = flag === "Off" ? { status: "idle", message: "Self-update is Off." }
         : await this.runner.runOnce();
       const mode = await this.mode.read();
@@ -106,6 +140,13 @@ export class UpdaterMainLoopV1 {
         needsYou: ["busy", "uncertain", "attended_upgrade_required", "needs_attention", "error"]
           .includes(this.lastOutcome.status),
       selfUpdate: flag });
+      if (this.alerts) {
+        const facts = await this.alertFacts();
+        if (!facts || typeof facts !== "object" || Array.isArray(facts)) throw updaterRefuseV1("updater_alert_facts_refused");
+        await this.alerts.reconcile({ ...facts, needsOwner: facts.needsOwner === true || this.lastOutcome.status === "needs_attention",
+          uncertain: facts.uncertain === true || this.lastOutcome.status === "uncertain", rescue: facts.rescue === true || rescued });
+        await this.alerts.tick();
+      }
       return this.lastOutcome;
     } finally { this.#ticking = false; }
   }

@@ -34,8 +34,9 @@ sign in on the Control Room computer first.
    curl -fsSL https://your-control-room.example/fleet/v1/connector.mjs -o control-room-connector.mjs && node control-room-connector.mjs join --server https://your-control-room.example --code crj_…
    ```
 
-   You should see that the credential was saved and that the next command is
-   `node control-room-connector.mjs run`. If the code is refused, it was used,
+   You should see that the credential was saved. If the installer configured an
+   unattended worker, it also prints a `launcher.mjs launch run` command. Use
+   that launcher command so a healthy update can relaunch the new version. If the code is refused, it was used,
    cancelled, or expired; create a new code in Control Room.
 
    If the network drops while joining, run the same command again before the
@@ -45,7 +46,7 @@ sign in on the Control Room computer first.
 2. Keep the connector running on that machine:
 
    ```sh
-   node control-room-connector.mjs run
+   node /installed/path/launcher.mjs launch run --config /installed/profile.json
    ```
 
    You should see the machine as **Connected** on Control Room's Workers page

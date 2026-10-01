@@ -140,16 +140,16 @@
     "why": "the status must be checked BEFORE store.delivered(), which is a terminal, non-retryable write to the 0174 ledger. Recording it for a response outside 2xx would settle the item as delivered and the phone would never ring for that stall. Unreachable through the real web-push library, which REJECTS on non-2xx -- which is exactly why the invariant has to be enforced by this code rather than by an external library's undocumented contract"
   },
   {
-    "file": "src/web-push/v1/policy.ts",
-    "find": "  return pushServiceHostsV1.some(pattern => pattern.test(host));",
-    "replace": "  return host.endsWith(\".googleapis.com\") || /^web\\.push\\.apple\\.com$/.test(host);",
+    "file": "src/updater/v1/push-policy.mjs",
+    "find": "  return PUSH_SERVICE_HOSTS_V1.some(pattern => pattern.test(parsed.hostname.toLowerCase()));",
+    "replace": "  return parsed.hostname.endsWith(\".googleapis.com\") || /^web\\.push\\.apple\\.com$/u.test(parsed.hostname);",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
     "why": "the allow list must be matched on the WHOLE host, not a suffix or a substring. A suffix test admits ANY host under a vendor's domain, which is not a push service and is an SSRF; the refused-endpoint table has evil.invalid, a suffixed apple host, a prefixed fcm host and a Windows wildcard abuse for exactly this"
   },
   {
-    "file": "src/web-push/v1/policy.ts",
-    "find": "  if (parsed.protocol !== \"https:\") return false;",
-    "replace": "  if (parsed.protocol !== \"https:\" && parsed.protocol !== \"http:\") return false;",
+    "file": "src/updater/v1/push-policy.mjs",
+    "find": "parsed.protocol !== \"https:\" || parsed.hash",
+    "replace": "(parsed.protocol !== \"https:\" && parsed.protocol !== \"http:\") || parsed.hash",
     "test": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/owner-web-push.test.ts",
     "why": "HTTPS only. An http endpoint would carry the VAPID-signed request in clear text and would reach a different service entirely; the refused table has an http://fcm.googleapis.com entry for this"
   },

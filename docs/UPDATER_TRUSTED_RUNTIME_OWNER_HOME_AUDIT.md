@@ -24,6 +24,10 @@ exception. Service profiles deny `/Users` in full.
 - `scripts/mac-local/start-web-host.mjs` passes the owner's `HOME` while probing
   configured local bot executables. The installed supervisor may not retain
   that probe; the connector must report bounded capability evidence instead.
+- `scripts/mac-local/bot-executable-inspection.mjs` passes the owner's `HOME`
+  to the bounded version probe of a configured local bot executable (the
+  Connect-a-bot check). Same rule as `start-web-host.mjs`: owner-side only, never
+  run by the installed supervisor.
 - `scripts/qualify-local-workers.ts` passes the owner's `HOME` while qualifying
   local workers. It must remain an owner-side qualification command and must
   not be called by an installed service.

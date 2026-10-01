@@ -10,6 +10,8 @@ export function createFleetHarnessAdapter({ harness, configuration }) {
     async execute({ delivery, signal }) {
       calls.push({ harness, delivery: JSON.parse(JSON.stringify(delivery)), signalIsAbortSignal: signal instanceof AbortSignal });
       const at = new Date().toISOString();
+      if (Number.isSafeInteger(configuration.delayMs) && configuration.delayMs > 0)
+        await new Promise(done => setTimeout(done, configuration.delayMs));
       if (behaviour === "success") return { kind: "completed", text: `Done by fake ${harness}: ${delivery.input.prompt}`,
         startedAt: at, finishedAt: at, usage: null };
       if (behaviour === "failure") return { kind: "failed", reason: "failed:process_or_output_refused",

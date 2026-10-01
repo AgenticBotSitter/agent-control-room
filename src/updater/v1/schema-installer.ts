@@ -96,21 +96,30 @@ export interface UpdaterSchemaResultV1 {
   readonly triggers: number;
 }
 
-/** The design's table list (§9.1), asserted on the live catalog after the apply. */
+/** The design's table list (§9.1), asserted on the live catalog after the apply.
+ * Item 10a adds three: the open-registration table the web reads, and the two
+ * refusal tables that make R16's per-plan-per-hour aggregate a database
+ * property. They are named here so the loader's "unexpected_tables" refusal
+ * fires on a table nobody reviewed. */
 export const updaterTablesV1 = Object.freeze(["plans", "plan_approvals", "plan_approval_outcomes",
-  "passkey_registrations", "owner_requests", "push_queue", "runs", "run_events", "heartbeat",
-  "backup_generations", "backup_state"]);
+  "passkey_registrations", "passkey_open_registrations", "passkey_registrations_limits",
+  "approval_refusals", "approval_refusal_buckets", "owner_requests", "push_queue", "runs", "run_events",
+  "heartbeat", "backup_generations", "backup_state"]);
 
 /**
  * The release-schema tables the deployer may read, and the only ones.
  *
- * Three, all read-only, all about who the owner is. The guard that requires a
- * live owner session on every web-inserted row is SECURITY DEFINER and owned by
- * the deployer, so it needs exactly these. Naming them here rather than only in
- * the DDL is what makes the grant checkable in both directions on every start.
+ * Three about who the owner is, and — since item 10a — one about how many
+ * browsers can be warned. All read-only, all column-scoped. The first three are
+ * what the owner-session guard's SECURITY DEFINER body needs; the fourth is what
+ * `enqueue_cooling_off_notices` counts so a `passkey add` with nobody to warn
+ * refuses rather than passing quietly (P-5).
+ *
+ * Naming them here rather than only in the DDL is what makes the grant checkable
+ * in both directions on every start.
  */
 export const updaterReleaseReadTablesV1 = Object.freeze([
-  "control_web_sessions", "control_identities", "control_role_grants",
+  "control_web_sessions", "control_identities", "control_role_grants", "owner_web_push_subscriptions",
 ]);
 
 function refused(reason: string): never {

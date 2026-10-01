@@ -103,19 +103,36 @@ describe("attack kit: search_path gate (real PostgreSQL)", () => {
       // violations are real and the gate reports them.
       const bare = await runGate(postgres, empty, ["--json"]);
       assert.notEqual(bare.code, 0, "an empty allowlist must fail on the shipped violations");
+      // The shipped migrations' own unpinned-routine count, MEASURED on this
+      // database. Every later comparison in this file is "the planted routine
+      // changed nothing", so it needs the number to move with the migrations
+      // rather than a literal somebody has to remember to retype.
+      const baseline = JSON.parse(bare.stdout.slice(bare.stdout.indexOf("{"))) as { unpinned: number };
+      // The empty allowlist unmasked exactly the routines the shipped allowlist
+      // was waiving, so the two numbers must be EQUAL. This is the derived
+      // anchor: it ties the measured baseline to the shipped run above, so a
+      // gate that silently reported 0 for BOTH runs could not pass -- which is
+      // the one way a measured count is weaker than a written literal.
+      assert.equal(baseline.unpinned, cleanSummary.allowlisted,
+        "the empty allowlist unmasked exactly the routines the shipped allowlist waives");
 
       /**
        * The routines a scenario is expected to be caught ON, per planted routine.
        *
-       * The empty allowlist means the gate also fails on the 23 violations the
+       * The empty allowlist means the gate also fails on the violations the
        * shipped migrations already contain, so a non-zero exit alone proves
        * nothing: a scenario whose own routine stopped being flagged would still
-       * fail the gate for the other 23. Every scenario therefore names the
-       * identities it planted, and the assertion is that the gate NAMED THOSE. That
-       * is what makes a disabled `prosecdef` branch, a disabled trigger branch, or
-       * a disabled last-element-is-pg_temp check fail a test here instead of
-       * hiding behind the shipped baseline.
+       * fail the gate for the violations it did not plant. Every scenario
+       * therefore names the identities it planted, and the assertion is that
+       * the gate NAMED THOSE. That is what makes a disabled `prosecdef` branch, a
+       * disabled trigger branch, or a disabled last-element-is-pg_temp check
+       * fail a test here instead of hiding behind the shipped ones. The count of
+       * those is `baseline.unpinned`, measured on this same database above; it is
+       * never written down here, because a literal goes stale the moment a
+       * routine is pinned or removed and then a planted routine can stop being
+       * caught without anything failing.
        */
+      assert.ok(baseline.unpinned > 0, "the shipped migrations themselves have violations to measure against");
       const scenarios: readonly [name: string, statements: readonly string[], caught: readonly string[]][] = [
         // A named-argument CREATE pinned, then a LATER migration RESETs it.
         // A regex-per-file model read the CREATE's own pin and passed; the
@@ -194,8 +211,13 @@ describe("attack kit: search_path gate (real PostgreSQL)", () => {
         `CREATE FUNCTION probe.pinned_ok() RETURNS integer LANGUAGE sql SECURITY DEFINER
            SET search_path = pg_catalog, public, pg_temp AS $$ SELECT 1 $$;`]);
       const controlSummary = JSON.parse(control.stdout.slice(control.stdout.indexOf("{"))) as { unpinned: number };
-      assert.equal(controlSummary.unpinned, 23,
-        "the control adds no unpinned routine beyond the 23 the migrations already ship");
+      // The claim is that the control adds NOTHING, so what has to be compared is
+      // the count before and after it -- not a number typed into this file. The
+      // migrations move with every other cook's work, so a literal went stale the
+      // first time a routine was pinned or removed, and the test then failed for a
+      // reason that had nothing to do with what it is checking.
+      assert.equal(controlSummary.unpinned, baseline.unpinned,
+        "the control adds no unpinned routine beyond what the migrations already ship");
       assert.doesNotMatch(control.stderr, /pinned_ok/,
         "a correctly pinned routine is not named as a violation");
     }, { port, allowedPorts: PORTS, database: "control_room" });
@@ -226,12 +248,26 @@ describe("attack kit: search_path gate (real PostgreSQL)", () => {
         routine: "probe.waived()", searchPath: "pg_catalog, public",
         added: "2026-09-28", expires: "2027-03-01", issue: "999",
       };
+      // The shipped entries, measured on THIS database, which already holds
+      // probe.waived(). So the count below is "the shipped set, plus the one
+      // entry under test, and nothing else" -- derived rather than typed, so it
+      // tracks the allowlist file instead of going stale when a routine is
+      // pinned or removed.
+      const shippedFile = join(directory, "shipped.json");
+      await writeFile(shippedFile, JSON.stringify({ entries: shipped.entries }));
+      const shippedOnlyRun = await runGate(postgres, shippedFile, ["--json"]);
+      const shippedOnly = JSON.parse(shippedOnlyRun.stdout.slice(shippedOnlyRun.stdout.indexOf("{"))) as
+        { allowlisted: number; unpinned: number };
+      assert.equal(shippedOnly.unpinned, 1,
+        "with the shipped allowlist and this one routine outside it, exactly that routine is unpinned");
+      const shippedBaseline = { allowlisted: shippedOnly.allowlisted + 1 };
       await writeFile(allowlistFile, JSON.stringify({ entries: [...shipped.entries, extra] }));
       const waived = await runGate(postgres, allowlistFile, ["--json"]);
       assert.equal(waived.code, 0,
         `an in-date waiver must suppress its own routine, got: ${waived.stderr.slice(0, 600)}`);
       const waivedSummary = JSON.parse(waived.stdout.slice(waived.stdout.indexOf("{"))) as { allowlisted: number };
-      assert.equal(waivedSummary.allowlisted, 24, "the shipped 23 plus this one");
+      assert.equal(waivedSummary.allowlisted, shippedBaseline.allowlisted,
+        "the shipped allowlist plus this one, and no more");
 
       // Past its expiry: the same entry no longer suppresses it, and the lapsed
       // entry is itself reported so the check fails. `added` moves back with it

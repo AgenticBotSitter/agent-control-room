@@ -17,13 +17,21 @@ export interface QueryResult<T> {
  * only `error.code` therefore sees the wrapper's own code and never matches a
  * refusal class -- which silently turns a clean, typed refusal into an opaque
  * one. The raw driver, PGlite and a raw `pg` client all carry the code
- * directly, so both shapes are read here. */
+ * directly, so both shapes are read here.
+ *
+ * `code` is also where Node puts its OWN system errors, and fourteen of them are
+ * five UPPERCASE LETTERS: EPIPE, EBADF, ESRCH, ETIME and so on. So the shape
+ * alone admits them. No SQLSTATE begins with `E` -- read off PostgreSQL 17's
+ * `utils/errcodes.h`, which defines 260 codes across 42 classes, and the only
+ * classes starting with a letter are F0, HV, P0 and XX -- so excluding a leading
+ * E costs nothing and cannot reject a real code. Without it this function
+ * answers with a value that reads as a SQLSTATE and is not one. */
 export function databaseSqlStateV1(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
   for (const key of ["sqlState", "code"] as const) {
     let value: unknown;
     try { value = Reflect.get(error, key); } catch { return undefined; }
-    if (typeof value === "string" && /^[0-9A-Z]{5}$/u.test(value)) return value;
+    if (typeof value === "string" && /^[0-9A-Z]{5}$/u.test(value) && !value.startsWith("E")) return value;
   }
   return undefined;
 }

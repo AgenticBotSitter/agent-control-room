@@ -49,7 +49,7 @@ test('retained attachment metadata must match the reviewed evidence exactly', ()
 
 test('actual collector assembles every pinned package instance while retaining provenance gaps', () => {
   const result = assembleRuntimeLicenses();
-  assert.equal(result.entries.length, 200); assert.equal(result.rawMissingRootTexts.length, 5);
+  assert.equal(result.entries.length, 225); assert.equal(result.rawMissingRootTexts.length, 5);
   assert.equal(result.completeDistributionClearance, false);
   assert.match(result.entries.find(entry => entry.name === '@nodable/entities').qualification, /not resolved/);
   const httpEce = result.entries.find(entry => entry.name === 'http_ece');

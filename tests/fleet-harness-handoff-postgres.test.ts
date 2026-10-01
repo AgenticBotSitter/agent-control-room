@@ -27,6 +27,7 @@ import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycl
 import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
 import * as fake from "./support/fleet-fake-harness-adapter.mjs";
 
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59200);
@@ -59,7 +60,13 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
     const owner = new FleetOwnerServiceV1(fleetOwner.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
       afterDecision: () => gateway.reconcile() });
     const unexpected: unknown[] = [];
-    const handler = createFleetGatewayHandlerV1({ store: gateway, onUnexpectedError: error => { unexpected.push(error); } });
+    // The connector refuses enrollment unless the gateway advertises a release
+    // signed by the trust it hands out, so this gateway must carry one.
+    const release = await buildSignedFleetConnectorReleaseForTestV1({ root: resolve(dir, "fleet"),
+      builtFrom: "0".repeat(40) });
+    const handler = createFleetGatewayHandlerV1({ store: gateway, releaseTrust: release.releaseTrust,
+      connectorRelease: release.connectorRelease,
+      onUnexpectedError: error => { unexpected.push(error); } });
     const server = createServer((request, response) => { void handler.handle(request, response); });
     await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -106,7 +113,8 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
       assert.equal(shown.length, 1);
       assert.equal(shown[0]!.jobId, task.jobId);
       assert.equal(shown[0]!.workerName, "PG Codex box");
-      assert.match(shown[0]!.summary, /^Done by fake codex: Task handoff-pg/u);
+      assert.match(shown[0]!.summary,
+        /^Done by fake codex: <<<CONTROL_ROOM_TASK_DATA_V1>>>\n\{"title":"Task handoff-pg"/u);
       assert.equal(shown[0]!.taskState, "waiting_approval");
       assert.equal(shown[0]!.decision, null);
       // What the owner's pages read with the private web login agrees.
@@ -144,6 +152,56 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
       assert.equal(timeline[0].event_kind, "attention");
       assert.equal(timeline[0].summary, "Worker handed this task back");
       assert.match(timeline[0].detail, /^The Codex run did not finish/u);
+
+      // --- Stress: three independent bots make ten simultaneous passes each
+      // over ten same-project jobs. The lease-scope exclusion means most
+      // simultaneous claims collide with SQLSTATE 23P01. Those are ordinary
+      // 409 conflicts: each bot continues its offer list/pass, and later
+      // rounds drain every job without a double claim or abandonment.
+      const bots = await Promise.all(Array.from({ length: 3 }, async (_, index) => {
+        const burstCode = await owner.createEnrollmentCode(ownerIdentity(), { displayName: `Burst bot ${index + 1}`,
+          workerKind: "codex", projectIds: [PROJECT_A], capabilities: ["writing"], maxConcurrent: 1 });
+        const burstConfig = join(dir, `burst-${index + 1}.json`);
+        await connector.join({ server: origin, code: burstCode.code, workerKind: "codex", configPath: burstConfig, fetcher });
+        return burstConfig;
+      }));
+      const burstSettings = join(dir, "harnesses-burst.json");
+      await writeFile(burstSettings, JSON.stringify({ schema: "control-room.fleet-harnesses/v1",
+        adapterModule: resolve("tests/support/fleet-fake-harness-adapter.mjs"),
+        harnesses: { codex: { enabled: true, deadlineMs: 5_000, fakeBehaviour: "success", delayMs: 75 } } }),
+      { mode: 0o600 });
+      const burstTasks = [];
+      for (let index = 0; index < 10; index += 1) {
+        const burstTask = await seedProposedTask(admin.client, PROJECT_A, `burst-${index + 1}`);
+        await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: burstTask.jobId, capability: "writing" });
+        burstTasks.push(burstTask);
+      }
+      const passes: any[] = [];
+      for (let round = 0; round < 10; round += 1) passes.push(...await Promise.all(bots.map(configPath =>
+        connector.runWorker({ configPath, harnessesPath: burstSettings, fetcher, once: true,
+          log: () => {}, progressIntervalMs: 25 }))));
+      const burstIds = burstTasks.map(taskRow => taskRow.jobId);
+      // The failing-harness task above is released back to `ready` with an open
+      // offer in the SAME project, so a burst bot legitimately claims and runs
+      // it. Counting every submitted pass therefore sees that eleventh job, so
+      // the count is scoped to the burst ids exactly as the three assertions
+      // below it already are.
+      const burstSubmits = passes.filter(pass => pass.outcome === "submitted" && burstIds.includes(pass.jobId));
+      assert.equal(burstSubmits.length, 10, JSON.stringify(passes));
+      assert.equal(new Set(burstSubmits.map(pass => pass.jobId)).size, 10, "each burst job is submitted exactly once");
+      assert.equal(passes.filter(pass => pass.state === "unreachable" || pass.outcome === "abandoned").length, 0,
+        `no bot abandons its pass: ${JSON.stringify(passes)}`);
+      const doubled = await asWeb(`SELECT job_id,count(*)::int AS claims FROM fleet_claims
+        WHERE job_id=ANY($1::text[]) GROUP BY job_id HAVING count(*) > 1`, [burstIds]);
+      assert.deepEqual(doubled, [], "the burst creates zero double claims");
+      const burstResults = await owner.listResults(ownerIdentity(), { awaitingOnly: true });
+      const byBurstJob = burstResults.filter(row => burstIds.includes(row.jobId));
+      assert.equal(byBurstJob.length, 10, "every burst job reaches owner review");
+      for (const row of byBurstJob)
+        await owner.review(ownerIdentity(), { resultId: row.resultId, decision: "accepted" });
+      const completed = await asWeb(`SELECT state,count(*)::int AS count FROM control_jobs
+        WHERE id=ANY($1::text[]) GROUP BY state`, [burstIds]);
+      assert.deepEqual(completed, [{ state: "succeeded", count: 10 }], "every burst job completes");
 
       assert.ok(requests.every(url => url.startsWith(`${origin}/fleet/v1/`)), "the connector spoke only to the gateway");
       assert.deepEqual(unexpected, []);

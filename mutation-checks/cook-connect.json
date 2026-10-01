@@ -1,6 +1,13 @@
 [
   {
     "file": "scripts/fleet/connector.mjs",
+    "find": "    if (isNetworkConnectionError(error)) return;",
+    "replace": "    if (false) return;",
+    "test": "node --test --test-name-pattern \"pre-enrollment manifest fallback\" tests/fleet-connector-install.test.mjs",
+    "why": "only a genuine connection failure may fall back from the public release preflight"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
     "find": "  const release = await acquireRotationLock(`${configPath}.rotate.lock`, lock);\n  let failure;\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
     "replace": "  const release = async () => {};\n  let failure;\n  try {\n    const config = await recoverPendingUnlocked({ configPath, fetcher });",
     "test": "node --test --test-name-pattern \"ten concurrent rotations\" tests/fleet-connector-install.test.mjs",
@@ -57,10 +64,10 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  // Keep the small, credential-free shim. A bot process that still holds it",
-    "replace": "  await rm(paths.shimPath, { force: true });\n  // Keep the small, credential-free shim. A bot process that still holds it",
-    "test": "node --test --test-name-pattern \"CLI-backed uninstall\" tests/fleet-connector-install.test.mjs",
-    "why": "uninstall keeps the credential-free shim so a stale launch receives a graceful profile refusal"
+    "find": "      await clearMachineConnectorState(paths);\n      return true;",
+    "replace": "      return true;",
+    "test": "node --test --test-name-pattern \"last uninstall clears shared state\" tests/fleet-connector-install.test.mjs",
+    "why": "the final uninstall clears shared machine state so another Control Room key can install"
   },
   {
     "file": "scripts/fleet/connector.mjs",
@@ -113,9 +120,9 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
-    "replace": "  const release = async () => {};\n  let failure;\n  try {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
-    "test": "node --test --test-name-pattern \"ten concurrent installs\" tests/fleet-connector-install.test.mjs",
+    "find": "  const release = await acquireRotationLock(`${paths.configPath}.rotate.lock`, { deadlineMs: INSTALL_LOCK_DEADLINE_MS });\n  let failure, joinedRelease;\n  try {\n    return await withMachineStateLock(paths, async () => {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
+    "replace": "  const release = async () => {};\n  let failure, joinedRelease;\n  try {\n    return await withMachineStateLock(paths, async () => {\n    await removeConfigTemporaryFiles(paths.configPath);\n    let config;",
+    "test": "node --test --test-name-pattern \"twenty concurrent unattended installs\" tests/fleet-connector-install.test.mjs",
     "why": "same-profile installs serialize through the shared profile mutation lock"
   },
   {
@@ -155,22 +162,22 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (typeof workspaceRoot !== \"string\" || !isAbsolute(workspaceRoot))",
+    "find": "  if (typeof workspaceRoot !== \"string\" || !workspaceRoot || !isAbsolute(workspaceRoot))",
     "replace": "  if (false)",
     "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
     "why": "MCP refuses a relative workspace instead of resolving it against the process directory"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "    if (error?.code === \"ENOENT\") throw new Error(\"MCP --workspace must exist and be a directory.\");",
-    "replace": "    if (false) throw new Error(\"MCP --workspace must exist and be a directory.\");",
+    "find": "  try { current = await realpath(path); }\n  catch { throw new Error(`The ${kind} could not be checked safely.`); }",
+    "replace": "  try { current = await realpath(path); }\n  catch (error) { throw error; }",
     "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
     "why": "MCP gives a controlled refusal when the absolute workspace does not exist"
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (!workspaceInfo.isDirectory()) throw new Error(\"MCP --workspace must exist and be a directory.\");",
-    "replace": "  if (false) throw new Error(\"MCP --workspace must exist and be a directory.\");",
+    "find": "    if (!info.isDirectory()) throw new Error(`The ${kind} must exist and be a directory.`);",
+    "replace": "    if (false) throw new Error(`The ${kind} must exist and be a directory.`);",
     "test": "node --test --test-name-pattern \"bad install input\" tests/fleet-connector-install.test.mjs",
     "why": "MCP refuses a file passed as its workspace"
   },
@@ -204,6 +211,20 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
+    "find": "    if (error?.preflightFailure === true && pending === undefined) await removeConfigArtifacts(configPath);",
+    "replace": "    if (error?.preflightFailure === true) await removeConfigArtifacts(configPath);",
+    "test": "node --test --test-name-pattern \"preflight retries retain\" tests/fleet-connector-install.test.mjs",
+    "why": "a preflight refusal during a retry retains the original pending secret and nonce because the prior enrollment may have committed"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "    response = await fetcher(`${origin}/fleet/v1/connector-manifest.json`, { method: \"GET\", redirect: \"error\",\n      signal: AbortSignal.timeout(30_000),",
+    "replace": "    response = await fetcher(`${origin}/fleet/v1/connector-manifest.json`, { method: \"GET\", redirect: \"error\",\n      signal: undefined,",
+    "test": "node --test --test-name-pattern \"stalled pre-enrollment manifest\" tests/fleet-connector-install.test.mjs",
+    "why": "the public release preflight has the same bounded 30-second request lifetime as enrollment"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
     "find": "          if (!elected) continue;",
     "replace": "          if (false) continue;",
     "test": "node --test --test-name-pattern \"losing stale cleaner\" tests/fleet-connector-install.test.mjs",
@@ -225,8 +246,8 @@
   },
   {
     "file": "scripts/fleet/connector.mjs",
-    "find": "  if (dirname(paths.workspace) === paths.workspace || resolve(paths.workspace) === resolve(homeDir)\n    || pathContains(paths.workspace, paths.configRoot) || pathContains(paths.configRoot, paths.workspace))",
-    "replace": "  if (false)",
+    "find": "  try { await validateWorkspaceTarget(paths, homeDir, platform); }",
+    "replace": "  try { await Promise.resolve(); }",
     "test": "node --test --test-name-pattern \"unsafe workspace roots\" tests/fleet-connector-install.test.mjs",
     "why": "install refuses roots that could expose the live connector credential as a result attachment"
   },
@@ -316,8 +337,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": "        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);",
-    "replace": "        [\"code\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"]);",
+    "find": "        [\"code\", \"workerKind\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);",
+    "replace": "        [\"code\", \"credentialDigest\", \"platform\", \"architecture\", \"connectorVersion\", \"clientNonce\"], [\"adapterCapabilities\"]);",
     "test": "node --import tsx --test --test-name-pattern \"server-side redemption refuses\" tests/fleet-connector.test.ts",
     "why": "the enrollment HTTP contract admits the declared local worker kind for server-side binding"
   },
@@ -330,9 +351,9 @@
   },
   {
     "file": "src/web/v1/fleet-owner-http.ts",
-    "find": "&& node \"$d/${release.file}\" join --server ${gatewayOrigin} --code ${code} --bot ${workerKind}`",
-    "replace": "&& node \"$d/${release.file}\" join --server ${gatewayOrigin} --code ${code}`",
-    "test": "node --import tsx --test --test-name-pattern \"owner's join command\" tests/fleet-connector.test.ts",
+    "find": "&& node \"$d/${release.file}\" install --server ${gatewayOrigin} --code ${code} --bot ${workerKind}",
+    "replace": "&& node \"$d/${release.file}\" install --server ${gatewayOrigin} --code ${code}",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-name-pattern \"owner's install command\" tests/fleet-connector.test.ts",
     "why": "the verified-release owner command still declares the worker kind bound into its one-time code"
   }
 ]

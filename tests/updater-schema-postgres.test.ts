@@ -28,14 +28,16 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
-import { applyUpdaterSchemaV1, updaterDdlFilesV1, type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
+import { applyUpdaterSchemaV1, updaterDdlFilesV1, updaterTablesV1,
+  type UpdaterSchemaResultV1 } from "../src/updater/v1/schema-installer";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
+import { sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
 
 // CONTROL_ROOM_PG_TEST_PORT_BASE moves the disposable cluster, as in the module
 // approval lane. 59510 is the block this job was given.
@@ -50,6 +52,12 @@ const OWNER_SESSION = DIGEST("owner-session-fixture");
 /** 32 bytes of authenticatorData and a 64-byte signature: both legal, both real. */
 const AUTH = Buffer.alloc(32, 0x11), SIG = Buffer.alloc(64, 0x22), CLIENT = Buffer.from('{"type":"webauthn.get"}', "utf8");
 const CREDENTIAL = "Y3JlZGVudGlhbC1maXh0dXJlLTMyLWJ5dGVzLWxvbmc";
+/** A root-shaped VAPID key for the R12 custody seam. Fixture vocabulary, not a
+ * real key: nothing in this lane ever signs with it, because the alert sender's
+ * send path is exercised in `tests/updater-alerts-postgres.test.ts` against a
+ * fake endpoint. */
+const ROOT_HELD_VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1",
+  subject: "mailto:owner@example.invalid", publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
 
 type Postgres = Parameters<Parameters<typeof withRealPostgres>[0]>[0];
 
@@ -201,7 +209,8 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
     // The updater's own loader, in the design's order: role and schema as the
     // installer, tables and guards as the deployer.
     const created = await installUpdaterSchema(postgres);
-    assert.equal(created.tables, 11, "the design's eleven tables exist");
+    assert.equal(created.tables, updaterTablesV1.length,
+      `the loader's table list exists (${updaterTablesV1.length} tables)`);
     assert.deepEqual([...created.appliedFiles], [...updaterDdlFilesV1()],
       "every DDL file was applied, in order");
     // Idempotent: the updater applies this at every startup.
@@ -273,7 +282,15 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
           "the web login inserts exactly the design's four tables");
         // The updater's own state is not insertable by the web: a compromised
         // release cannot manufacture a run, a journal line or a heartbeat.
-        const notInsertable = ["heartbeat", "plan_approval_outcomes", "plans", "run_events", "runs"];
+        // Item 10a adds three tables (`passkey_open_registrations`,
+        // `approval_refusals`, `approval_refusal_buckets`, plus the limits table)
+        // and none of them is insertable by the web: the open-registration table is
+        // the UPDATER's (a web that could insert one could mint its own challenge),
+        // and the refusal tables are the aggregate's. Asserted by name so a future
+        // grant here is a test failure rather than a surprise.
+        const notInsertable = ["heartbeat", "plan_approval_outcomes", "plans", "run_events", "runs",
+          "passkey_open_registrations", "passkey_registrations_limits", "approval_refusals",
+          "approval_refusal_buckets"];
         for (const table of notInsertable)
           assert.equal(surface.find(row => row.table_name === table)?.insert, false,
             `the web login must not INSERT into updater.${table}`);
@@ -297,10 +314,14 @@ test("the updater's schema is the deployer's, and no other login can alter it", 
       const tables = (await privileged.query<{ relname: string }>(
         `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='updater' AND c.relkind='r' ORDER BY 1`)).rows.map(row => row.relname);
-      assert.deepEqual(tables, ["backup_generations", "backup_state", "heartbeat", "owner_requests",
-        "passkey_registrations", "plan_approval_outcomes", "plan_approvals", "plans", "push_queue",
-        "run_events", "runs"],
-      "the design's eleven tables, and no others");
+      // The catalog's table set must equal the loader's declared list EXACTLY, in
+      // both directions. Naming a fixed count here instead would mean a table
+      // added by item 10a (or by the backup ledger) failed this lane rather than
+      // being required — which is the wrong failure: the list moved, and the list
+      // is the declaration of what exists. So the assertion reads the same
+      // constant the loader checks.
+      assert.deepEqual(tables, [...updaterTablesV1].sort(),
+        "the catalog holds exactly the loader's declared tables, and no others");
     } finally { await privileged.end(); }
 
     // The release ledger created none of this. If a future migration reached
@@ -947,7 +968,7 @@ test("startUpdaterV1 boots with a live run and only one of 20 production session
       await Promise.all(contenders.map(async item => { await item.store.release(); await item.client.end(); }));
     }
 
-    const root = await mkdtemp(join(tmpdir(), "updater-live-boot-"));
+    const root = realpathSync(mkdtempSync("/private/tmp/updater-live-boot-"));
     await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
     await writeFile(join(root, "updater-state/self-update"), "On\n");
     const deployer = as(postgres, "deployer"); await deployer.connect();
@@ -962,9 +983,18 @@ test("startUpdaterV1 boots with a live run and only one of 20 production session
     };
     let updater;
     try {
-      updater = await startUpdaterV1({ root, store,
+      // The R12 custody seam: a real root-only-shaped key file, and only the
+      // PROCESS IDENTITY the custody check reads is simulated, because this lane
+      // runs as a non-root test user and production runs as root. The alert
+      // sender itself is the real default one, which is the point — the
+      // production call passes no `alerts` key.
+      await writeFile(join(root, "updater-state/vapid.json"), `${JSON.stringify(ROOT_HELD_VAPID)}\n`,
+        { mode: 0o600 });
+      const vapidRuntime = { getuid: () => 0,
+        lstat: async (path: string) => Object.assign(await lstat(path), { uid: 0 }) };
+      updater = await startUpdaterV1({ alerts: null, root, store,
         identity: { bootId: "boot-live-resume", leaseToken: "lease-new-session" }, effects,
-        referee: { async assertPlanAllowed() {} } });
+        referee: { async assertPlanAllowed() {} }, alertRuntime: vapidRuntime });
       assert.equal(updater.identity.leaseToken, "lease-previous-session");
       assert.equal(updater.loop.lastOutcome.status, "succeeded");
       assert.deepEqual(calls, ["precheck", "stage", "quick_backup", "drain", "switch", "restart", "health",
@@ -975,6 +1005,68 @@ test("startUpdaterV1 boots with a live run and only one of 20 production session
       assert.equal((await store.liveRun()), undefined, "the resumed run is not stranded");
     } finally {
       await updater?.stop(); await deployer.end(); await rm(root, { recursive: true, force: true });
+    }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
+
+test("P1b/P7: web cannot clear no-run rescue and web Resume stays refused across restart", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres); await seedOwnerSession(postgres);
+    const root = realpathSync(mkdtempSync("/private/tmp/cr-upd-pg-"));
+    await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
+    await writeFile(join(root, "updater-state/self-update"), "On\n");
+    await writeFile(join(root, "updater-state/rescued.json"), "{}\n", { mode: 0o600 });
+    const deployer = as(postgres, "deployer"), web = as(postgres, "web");
+    let updater: Awaited<ReturnType<typeof startUpdaterV1>> | undefined;
+    try {
+      await deployer.connect(); await web.connect();
+      const store = new PostgresUpdaterStoreV1(deployer); await store.initialize();
+      updater = await startUpdaterV1({ alerts: null, root, store }); updater.loop.stop();
+      assert.equal(updater.loop.lastOutcome.status, "uncertain");
+      const checkId = `owner-request:${randomUUID()}`;
+      await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)
+        VALUES($1,'check_and_continue',false,$2)`, [checkId, OWNER_SESSION]);
+      assert.equal((await updater.loop.tick()).status, "uncertain");
+      assert.equal((await deployer.query("SELECT handled_outcome FROM updater.owner_requests WHERE id=$1", [checkId]))
+        .rows[0]?.handled_outcome, "refused");
+      assert.equal(await readFile(join(root, "updater-state/rescued.json"), "utf8"), "{}\n");
+      const refusedStatus = JSON.parse(await readFile(join(root, "status/status.json"), "utf8"));
+      assert.deepEqual({ state: refusedStatus.state, needsYou: refusedStatus.needsYou },
+        { state: "uncertain", needsYou: true });
+      await sendControlRequestV1(join(root, "updater-state/control.sock"), {
+        schema: "control-room.updater-control/v1", requestId: "p1b-pg-root-clear",
+        verb: "check-and-continue", arguments: [] });
+      await assert.rejects(readFile(join(root, "updater-state/rescued.json")), /ENOENT/u);
+
+      await sendControlRequestV1(join(root, "updater-state/control.sock"), {
+        schema: "control-room.updater-control/v1", requestId: "p7-pg-pause", verb: "pause", arguments: [] });
+      await updater.stop();
+      updater = await startUpdaterV1({ alerts: null, root, store }); updater.loop.stop();
+      assert.equal(await updater.loop.mode.read(), "paused");
+      const resumeId = `owner-request:${randomUUID()}`;
+      await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)
+        VALUES($1,'resume',false,$2)`, [resumeId, OWNER_SESSION]);
+      await updater.loop.tick();
+      assert.equal((await deployer.query("SELECT handled_outcome FROM updater.owner_requests WHERE id=$1", [resumeId]))
+        .rows[0]?.handled_outcome, "refused");
+      assert.equal(await updater.loop.mode.read(), "paused");
+
+      await sendControlRequestV1(join(root, "updater-state/control.sock"), {
+        schema: "control-room.updater-control/v1", requestId: "p7-pg-stop", verb: "stop", arguments: [] });
+      const pauseId = `owner-request:${randomUUID()}`;
+      await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)
+        VALUES($1,'pause',false,$2)`, [pauseId, OWNER_SESSION]);
+      await updater.loop.tick();
+      assert.equal((await deployer.query("SELECT handled_outcome FROM updater.owner_requests WHERE id=$1", [pauseId]))
+        .rows[0]?.handled_outcome, "refused");
+      assert.equal(await updater.loop.mode.read(), "stopped");
+    } finally {
+      await updater?.stop();
+      await Promise.allSettled([web.end(), deployer.end()]);
+      await rm(root, { recursive: true, force: true });
     }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });

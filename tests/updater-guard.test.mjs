@@ -8,6 +8,17 @@ import { recoverPairLinksV1 } from "../src/updater/v1/release-layout.mjs";
 import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
 
 const exec = promisify(execFile), guard = join(process.cwd(), "src/updater/v1/guard/guard.sh");
+
+/** R12 custody seam: only the process identity the VAPID check reads is
+ * injected, so this test still runs the DEFAULT alert sender construction. */
+const ROOT_VAPID = Object.freeze({ schema: "control-room.updater-vapid/v1", subject: "mailto:owner@example.invalid",
+  publicKey: "A".repeat(88), privateKey: "b".repeat(48) });
+async function rootHeldVapid(root) {
+  const key = join(root, "updater-state/vapid.json");
+  await writeFile(key, `${JSON.stringify(ROOT_VAPID)}\n`, { mode: 0o600 });
+  const { lstat } = await import("node:fs/promises");
+  return { getuid: () => 0, lstat: async path => Object.assign(await lstat(path), { uid: 0 }) };
+}
 const digest = suffix => `sha256:${String(suffix).padStart(64, "0")}`;
 
 async function executable(path, body) { await writeFile(path, `#!/bin/sh\n${body}\n`); await chmod(path, 0o500); }
@@ -106,13 +117,17 @@ test("rescue tombstones a stale link switch and boot cannot undo the rescued pai
   await writeFile(join(fixture.root, "updater-state/self-update"), "Off\n");
   let proofs = 0, recovered;
   const store = { async unhandledOwnerRequests() { return []; }, async liveRun() { return null; },
-    async heartbeat() {} };
+    async heartbeat() {},
+    // The four R12 alert ports, so the DEFAULT sender constructs against this
+    // store exactly as it does against the real PostgreSQL one.
+    async subscriptions() { return []; }, async pending() { return []; },
+    async begin() { return false; }, async finish() {}, async queue() {} };
   const updater = await startUpdaterV1({ root: fixture.root, store, effects: { async recover() {
     recovered = await recoverPairLinksV1(fixture.root, { databaseStopped: async () => {
       proofs += 1; return true;
     } });
     return recovered;
-  } } });
+  } }, alertRuntime: await rootHeldVapid(fixture.root) });
   await updater.stop();
   assert.deepEqual(recovered, { status: "uncertain", reason: "rescue_marker" });
   assert.equal(JSON.parse(await readFile(join(fixture.root, "status/status.json"), "utf8")).state, "uncertain");

@@ -71,10 +71,11 @@ export async function buildFixedUpdaterBundleV1(input) {
   if (updaterPackage.name !== "@control-room/updater-v1" || updaterPackage.private !== true
       || updaterPackage.scripts !== undefined
       || JSON.stringify(updaterPackage.dependencies) !== JSON.stringify({ "@simplewebauthn/server": "14.0.3",
-        pg: "8.23.0" })
+        pg: "8.23.0", "web-push": "3.6.7" })
       || !/^lockfileVersion: '9\.0'/mu.test(updaterLock)
       || !/^ {6}'@simplewebauthn\/server':\n {8}specifier: 14\.0\.3\n {8}version: 14\.0\.3$/mu.test(updaterLock)
-      || !/^ {6}pg:\n {8}specifier: 8\.23\.0\n {8}version: 8\.23\.0$/mu.test(updaterLock))
+      || !/^ {6}pg:\n {8}specifier: 8\.23\.0\n {8}version: 8\.23\.0$/mu.test(updaterLock)
+      || !/^ {6}web-push:\n {8}specifier: 3\.6\.7\n {8}version: 3\.6\.7$/mu.test(updaterLock))
     refuse("updater_bundle_lock_refused");
   const policy = JSON.parse(await readFile(policyPath, "utf8"));
   const exactArguments = ["--bundle", "--platform=node", "--format=esm", "--target=node22", "--packages=bundle",

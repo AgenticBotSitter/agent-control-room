@@ -1,6 +1,6 @@
 {
   "schema": "control-room.runtime-license-bundled-scan/v1",
-  "inventoryDigest": "4cf293978f7037ae2c5ef2b8960a9b35f20c1024ea1ccad8fadc1fb999a7f410",
+  "inventoryDigest": "a57376b660d33ddc1baf83441486172f53ba819960cb9305b4e6fab97fe210c3",
   "summary": {
     "observed": 44,
     "matched": 38,

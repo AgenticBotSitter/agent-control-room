@@ -2,15 +2,31 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { countSharedMemorySegmentsV1, createSupervisorMachineProbeV1,
-  evaluateSupervisorMachineHealthV1, startSupervisorLoopV1 } from "../src/supervisor/v1";
+  evaluateSupervisorMachineHealthV1, isSupervisorMachineRecoveryHealthyV1, startSupervisorLoopV1,
+  supervisorMachineHealthConfigV1 } from "../src/supervisor/v1";
 import { renderSupervisorLaunchDaemonV1 } from "../scripts/mac-local/install-supervisor-launchdaemon.mjs";
 
 test("machine health uses strict shared-memory and load ceilings", () => {
-  assert.equal(evaluateSupervisorMachineHealthV1({hostAlive:true,sharedMemorySegments:31,loadOneMinute:17.99},true).healthy,true);
-  assert.deepEqual(evaluateSupervisorMachineHealthV1({hostAlive:true,sharedMemorySegments:32,loadOneMinute:18},true).reasonCodes,
+  const config = supervisorMachineHealthConfigV1({ cpuCount: 12 });
+  assert.equal(evaluateSupervisorMachineHealthV1({hostAlive:true,sharedMemorySegments:31,loadOneMinute:17.99},true,config).healthy,true);
+  assert.deepEqual(evaluateSupervisorMachineHealthV1({hostAlive:true,sharedMemorySegments:32,loadOneMinute:18},true,config).reasonCodes,
     ["shared_memory_limit","load_limit"]);
   assert.deepEqual(evaluateSupervisorMachineHealthV1({hostAlive:false,sharedMemorySegments:null,loadOneMinute:null},false).reasonCodes,
     ["host_not_alive","loop_not_alive","shared_memory_unavailable","load_unavailable"]);
+});
+
+test("load limits scale with CPU count and recovery has a lower hysteresis threshold", () => {
+  const twelve = supervisorMachineHealthConfigV1({ cpuCount: 12 });
+  const eight = supervisorMachineHealthConfigV1({ cpuCount: 8 });
+  assert.deepEqual({ pause: twelve.pauseLoadOneMinute, resume: twelve.resumeLoadOneMinute }, { pause: 18, resume: 12 });
+  assert.deepEqual({ pause: eight.pauseLoadOneMinute, resume: eight.resumeLoadOneMinute }, { pause: 12, resume: 8 });
+  assert.equal(evaluateSupervisorMachineHealthV1({hostAlive:true,sharedMemorySegments:1,loadOneMinute:17.9},true,twelve).healthy,true);
+  assert.deepEqual(evaluateSupervisorMachineHealthV1({hostAlive:true,sharedMemorySegments:1,loadOneMinute:12},true,eight).reasonCodes,["load_limit"]);
+  assert.equal(isSupervisorMachineRecoveryHealthyV1(
+    evaluateSupervisorMachineHealthV1({hostAlive:true,sharedMemorySegments:1,loadOneMinute:11.99},true,twelve),twelve),true);
+  assert.equal(isSupervisorMachineRecoveryHealthyV1(
+    evaluateSupervisorMachineHealthV1({hostAlive:true,sharedMemorySegments:1,loadOneMinute:12},true,twelve),twelve),false,
+  "recovery must be below, not at, the lower boundary");
 });
 
 test("the process probe counts macOS and Linux shared-memory output without mutating either", async () => {
@@ -20,6 +36,19 @@ test("the process probe counts macOS and Linux shared-memory output without muta
   let reads=0;const probe=createSupervisorMachineProbeV1({parentAlive:()=>true,loadOneMinute:()=>4.5,
     sharedMemory:async()=>{reads++;return mac;}});
   assert.deepEqual(await probe.sample(),{hostAlive:true,sharedMemorySegments:2,loadOneMinute:4.5});assert.equal(reads,1);
+});
+
+test("item 14: the default machine probe returns finite-or-null OS metrics without throwing", async () => {
+  const sample=await createSupervisorMachineProbeV1().sample();
+  assert.equal(typeof sample.hostAlive,"boolean");
+  assert.ok(sample.sharedMemorySegments===null||Number.isSafeInteger(sample.sharedMemorySegments)&&sample.sharedMemorySegments>=0);
+  assert.ok(sample.loadOneMinute===null||Number.isFinite(sample.loadOneMinute)&&sample.loadOneMinute>=0);
+});
+
+test("item 14 hostile: an ipcs failure and invalid load become null health evidence", async () => {
+  const probe=createSupervisorMachineProbeV1({parentAlive:()=>true,loadOneMinute:()=>Number.NaN,
+    sharedMemory:async()=>{throw new Error("ipcs_unavailable_fixture");}});
+  assert.deepEqual(await probe.sample(),{hostAlive:true,sharedMemorySegments:null,loadOneMinute:null});
 });
 
 test("the uninstalled LaunchDaemon kit survives logout/reboot and crash without embedding a machine path", async () => {

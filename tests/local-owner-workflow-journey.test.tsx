@@ -104,8 +104,8 @@ test("owner can follow the saved local workflow without a false live-worker clai
   assert.doesNotMatch(firstStart, /Status: Ready for owner enablement|operational/);
 
   const setup = renderToStaticMarkup(createElement(SetupWorkspace));
-  assert.match(setup, /public release and live installation do not/);
-  assert.match(setup, /cannot install, start, enable, or configure Control Room/);
+  assert.match(setup, /public release asset and launcher are not available yet/);
+  assert.match(setup, /cannot install, start, or enable Control Room/);
   assert.match(setup, /Refreshing never repeats a setup action/);
 
   noAgentControl(`${projectProposal}${taskProposal}${detail}${guidance}${review}${attention}${workers}${setup}`);
