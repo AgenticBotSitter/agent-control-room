@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, open, opendir, rename, rm, statfs } from "node:fs/
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { updaterRefuseV1 } from "./contracts.mjs";
 import { assertNoSymlinkBelowV1 } from "./fs-safety.mjs";
-import { assertGenerationIdV1, generationLeafV1 } from "./backup-store.mjs";
+import { assertCompletionV1, assertGenerationIdV1, assertRowCountsV1, generationLeafV1 } from "./backup-store.mjs";
 
 /**
  * Item 19a: the minimal nightly backup (design §9.5, R5i, R17a/c).
@@ -36,21 +36,40 @@ import { assertGenerationIdV1, generationLeafV1 } from "./backup-store.mjs";
  *    generation does not have a dump name.
  *  * Encryption at rest: the dump is streamed to a PLAINTEXT pipe first, so the
  *    plaintext digest is what the ledger records, and then the file is sealed
- *    in place. The seal uses the runtime's own `openssl` and is refused unless
- *    the backup root is outside the install root — inside the install root,
- *    R-FS (root 0700, `_crdb` denied) is already the protection, and sealing
- *    every nightly dump would make a restore depend on a key held nowhere.
+ *    in place. Outside the install root a seal is REQUIRED (an unsealed dump
+ *    is refused); inside it a seal is OPTIONAL and happens exactly when the
+ *    policy's `seal` is true. (An earlier version of this comment said sealing
+ *    is refused inside the install root; the code never did that, and the
+ *    production composition simply sets `seal: false` for the in-root default,
+ *    because inside the install root R-FS — root 0700, `_crdb` denied — is the
+ *    protection and a seal would make a restore depend on a key held nowhere.)
+ *
+ * WHAT IS CHECKED ON DISK, not only as a string (review backup19b H2): before a
+ * byte is written, `assertBackupRootOnDiskV1` walks the backup root from `/`.
+ * No component may be a symlink; every ancestor must be owned by root or by the
+ * updater and must not be group/world-writable unless it is sticky (so nobody
+ * else can rename a component away); and the root itself, opened with
+ * O_NOFOLLOW|O_DIRECTORY, must be a directory owned by the updater with no
+ * group/other bits at all. The open descriptor's device and inode are then
+ * re-compared with the path before the promote rename and before every removal,
+ * so a root swapped after the check is refused rather than written into.
  */
 
 const DUMP_FILE_V1 = "database.dump";
 const MANIFEST_FILE_V1 = "manifest.json";
 const IN_PROGRESS_PREFIX_V1 = ".inprogress-";
+/** A surplus generation is RENAMED to this prefix before it is removed, so a
+ * sweep killed half-way through an `rm` leaves a name the next sweep clears,
+ * not a half-deleted `gen-` directory reported `unsafe` forever (review L1). */
+const REMOVING_PREFIX_V1 = ".removing-";
 const MANIFEST_SCHEMA_V1 = "control-room.backup-manifest/v1";
 /** The generation directory holds at most a dump, a manifest and a seal. */
 const GENERATION_ENTRIES_MAX_V1 = 8;
 
 const plainMessage = Object.freeze({
-  updater_backup_lock_busy: "A database update already holds the backup lock, so tonight's backup did not run.",
+  updater_backup_lock_busy: "Another backup or a database update held the backup lock, so this backup did not run. It will try again shortly.",
+  updater_backup_root_unsafe: "The backup folder is not private to the updater, so no backup was written there.",
+  updater_backup_root_unconfigured: "No backup folder is set up, so no backup was written.",
   updater_backup_disk_full: "There was not enough room to write the backup, so it did not complete.",
   updater_backup_dump_failed: "The database could not be read in one piece, so no backup was written.",
   updater_backup_shape_digest_mismatch: "The backup was written but the restored database is not shaped the same, so it was thrown away.",
@@ -100,6 +119,71 @@ export function resolveBackupRootPolicyV1({ installRoot, backupRoot, seal = true
     sealRequired: !inside,
     seal: seal === true,
   });
+}
+
+/**
+ * The backup root, checked ON DISK (review backup19b H2). Returns an open
+ * descriptor for the root plus its identity; the caller keeps it open for the
+ * attempt and re-checks the path against it with `assertBackupRootUnchangedV1`.
+ *
+ * Node has no openat/mkdirat, so the descriptor alone cannot make every later
+ * path operation race-free. What makes the later paths safe is the ANCESTOR
+ * rule: when no component can be renamed or replaced by anybody but root or
+ * the updater itself, there is nobody to race. The descriptor and the identity
+ * re-check are the second fence, for a root that changed anyway.
+ *
+ * Measured before this existed: a backup root that was a symlink to a 0777
+ * directory elsewhere returned `verified` with the dump written into the
+ * symlink's target, and a plain 0777 root returned `verified` too.
+ */
+export async function assertBackupRootOnDiskV1(backupRoot, { ownerUid = currentUidV1() } = {}) {
+  if (typeof backupRoot !== "string" || !isAbsolute(backupRoot) || resolve(backupRoot) !== backupRoot
+      || backupRoot.includes("\0") || !Number.isSafeInteger(ownerUid) || ownerUid < 0)
+    throw updaterRefuseV1("updater_backup_root_unsafe");
+  const parts = backupRoot.split(sep).filter(Boolean);
+  let current = sep;
+  for (let index = 0; index < parts.length; index += 1) {
+    const entry = await lstat(current).catch(() => null);
+    // Every ANCESTOR (the root itself is checked through its descriptor below):
+    // a real directory, owned by root or by the updater, and not writable by
+    // group or other unless the sticky bit stops them renaming our entries.
+    if (entry === null || entry.isSymbolicLink() || !entry.isDirectory()
+        || (entry.uid !== 0 && entry.uid !== ownerUid)
+        || ((entry.mode & 0o022) !== 0 && (entry.mode & 0o1000) === 0))
+      throw updaterRefuseV1("updater_backup_root_unsafe");
+    current = join(current, parts[index]);
+  }
+  let handle;
+  try {
+    handle = await open(backupRoot, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0));
+  } catch { throw updaterRefuseV1("updater_backup_root_unsafe"); }
+  try {
+    const entry = await handle.stat();
+    if (!entry.isDirectory() || entry.uid !== ownerUid || (entry.mode & 0o077) !== 0)
+      throw updaterRefuseV1("updater_backup_root_unsafe");
+    const root = Object.freeze({ backupRoot, handle, dev: entry.dev, ino: entry.ino });
+    await assertBackupRootUnchangedV1(root);
+    return root;
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
+/** The path still names the directory the descriptor was opened on, and that
+ * directory is still private. Called before the promote rename and before every
+ * removal. */
+export async function assertBackupRootUnchangedV1(root) {
+  const byPath = await lstat(root.backupRoot).catch(() => null);
+  const byHandle = await root.handle.stat().catch(() => null);
+  if (byPath === null || byHandle === null || byPath.isSymbolicLink() || !byPath.isDirectory()
+      || byPath.dev !== root.dev || byPath.ino !== root.ino
+      || byHandle.dev !== root.dev || byHandle.ino !== root.ino || (byHandle.mode & 0o077) !== 0)
+    throw updaterRefuseV1("updater_backup_root_unsafe");
+}
+
+function currentUidV1() {
+  return typeof process.geteuid === "function" ? process.geteuid() : -1;
 }
 
 /** Free bytes on the filesystem holding `path`, or null when unreadable. */
@@ -198,7 +282,7 @@ function generationPathsV1(backupRoot, generationId) {
  * generation holding an extra file, or one whose dump is a symlink to something
  * outside are all refused, and the victim is left untouched.
  */
-export async function assertSafeGenerationV1(backupRoot, generationId, { requireManifest = true } = {}) {
+export async function assertSafeGenerationV1(backupRoot, generationId, { requireManifest = true, hashDump = true } = {}) {
   const paths = generationPathsV1(backupRoot, generationId);
   const walk = await assertNoSymlinkBelowV1(resolve(backupRoot, ".."), paths.final)
     .catch(error => { if (error?.code === "ENOENT") return null; throw error; });
@@ -247,8 +331,13 @@ export async function assertSafeGenerationV1(backupRoot, generationId, { require
   const expectedDigest = onDisk ? manifest.fileSha256 : manifest.dumpSha256;
   if (dump.size !== manifest.dumpBytes && !onDisk)
     throw updaterRefuseV1("updater_backup_manifest_refused");
-  const actual = await sha256FileV1(paths.dump, onDisk ? undefined : manifest.dumpBytes);
-  if (actual !== expectedDigest) throw updaterRefuseV1("updater_backup_manifest_refused");
+  // `hashDump: false` is the sweep's cheap STRUCTURAL check, used only to decide
+  // which generations fill the kept slots; a generation is never REMOVED without
+  // the full digest check below.
+  if (hashDump) {
+    const actual = await sha256FileV1(paths.dump, onDisk ? undefined : manifest.dumpBytes);
+    if (actual !== expectedDigest) throw updaterRefuseV1("updater_backup_manifest_refused");
+  }
   return Object.freeze({ ...paths, entries: names.sort(), manifest });
 }
 
@@ -276,16 +365,25 @@ async function sha256FileV1(path, maxBytes) {
   return `sha256:${hash.digest("hex")}`;
 }
 
+
 /**
  * The nightly backup, as a class whose every effect goes through a port.
  *
  * The ports are not a testing convenience: the dump, the verify, the scratch
- * cluster and the sealing are all `spawnTrusted`-shaped effects that the trusted
- * runtime owns (R9/T1), and the item-19a brief is explicitly "minimal". What is
- * NOT ported is everything that decides: the order of operations, the lock, the
+ * cluster and the sealing are all subprocess effects, and the production
+ * implementation of each is `postgresBackupPortsV1` in ./backup-ports.mjs,
+ * which `createNightlyBackupV1` composes and `startUpdaterV1` runs. What is NOT
+ * ported is everything that decides: the order of operations, the lock, the
  * promotion rename, the retention arithmetic, the failure codes and the plain
  * words. Those live here, and that is where the guards and their mutation
  * entries point.
+ *
+ * EVERY FAILURE IS RECORDED (review backup19b H1). Each path that ends a run
+ * without a verified generation — a held lock, an unconfigured or unsafe root,
+ * a store error before the attempt row existed — writes a `failed` row with its
+ * own code. The first version returned early on a held lock and on an
+ * unconfigured root, so a lock somebody kept forever stopped every backup with
+ * `consecutive_failures = 0` and nothing on the ledger.
  */
 export class UpdaterBackupV1 {
   #running = false;
@@ -300,6 +398,25 @@ export class UpdaterBackupV1 {
   async #intent(record) { if (this.journal?.backupIntent) await this.journal.backupIntent(record); }
   async #done(record) { if (this.journal?.backupDone) await this.journal.backupDone(record); }
 
+  #ownerUid() {
+    return Number.isSafeInteger(this.policy.ownerUid) ? this.policy.ownerUid : currentUidV1();
+  }
+
+  /**
+   * Record a failure that happened BEFORE this run's attempt row existed: a
+   * fresh attempt row, settled at once with the real code. Best effort — if the
+   * database itself is unreachable there is nowhere to record anything, and the
+   * staleness bound is then the backstop.
+   */
+  async #recordStandaloneFailure(code, error = null) {
+    try {
+      const policy = await this.store.policy();
+      const attempt = await this.store.beginAttempt({ policy });
+      await this.store.failAttempt({ generationId: attempt.generationId, code, detail: boundedDetailV1(error) });
+      return attempt.generationId;
+    } catch { return null; }
+  }
+
   /**
    * `manual` is the phone's "Backup now" (a risk-reducing owner request, so it
    * runs while self-update is Off) and skips the due-time check. Everything else
@@ -307,14 +424,13 @@ export class UpdaterBackupV1 {
    * path would be untested by every nightly run.
    */
   async runOnce({ manual = false } = {}) {
+    // An in-process second caller is NOT recorded: the first caller is running
+    // and will record its own outcome, so this is not a backup that failed.
     if (this.#running) return Object.freeze({ status: "busy", code: "updater_backup_already_running",
       message: "A backup is already running on this Mac." });
     this.#running = true;
-    let generationId = null;
-    let lock = null;
+    let generationId = null, lockHeld = false, root = null;
     try {
-      if (!this.policy.backupRoot) throw UpdaterBackupV1.#refuse("updater_backup_root_unconfigured");
-      resolveBackupRootPolicyV1(this.policy); // Re-derived, never trusted from a field.
       if (!manual) {
         // The due check reads `next_due_at` — written from `pg_catalog.now()` —
         // and compares it with this process's clock. The two are different clocks,
@@ -331,60 +447,99 @@ export class UpdaterBackupV1 {
         if (!due) return Object.freeze({ status: "not_due", nextDueAt: freshness.nextDueAt,
           message: plainMessage.updater_backup_not_due });
       }
-      // The lock is the same advisory lock item 18 takes for its pre-image dump,
-      // so a database upgrade and tonight's backup can never dump one cluster at
-      // once. A `busy` answer is a REFUSAL, not a failure: nothing was written,
-      // nothing is broken, and the row state is untouched — so no red badge for
-      // a backup that was correctly deferred, and no `failed` row either.
-      lock = await this.store.acquireBackupLock();
+      // The lock is the row lock item 18 also takes for its pre-image dump, so a
+      // database upgrade and tonight's backup can never dump one cluster at once,
+      // and it is one a candidate release cannot take (see the store). A busy
+      // lock IS recorded — as a failed attempt with its own code — and retried
+      // within the quarter hour. The badge follows freshness, not this row, so a
+      // backup postponed by a few minutes does not turn Home red while the last
+      // one is still fresh; a lock held for hours, though, is on the ledger every
+      // fifteen minutes instead of being invisible until the 26-hour bound.
+      const lock = await this.store.acquireBackupLock();
       if (lock.status === "busy") {
-        await this.store.scheduleNext(BACKUP_DEFERRED_SECONDS_V1);
-        return Object.freeze({ status: "busy", code: "updater_backup_lock_busy",
+        const recorded = await this.#recordStandaloneFailure("updater_backup_lock_busy");
+        await this.store.scheduleNext(BACKUP_DEFERRED_SECONDS_V1).catch(() => {});
+        const outcome = Object.freeze({ status: "busy", code: "updater_backup_lock_busy", generationId: recorded,
           message: plainMessage.updater_backup_lock_busy });
+        this.onResult(outcome);
+        return outcome;
       }
+      lockHeld = true;
       const policy = await this.store.policy();
       const attempt = await this.store.beginAttempt({ policy });
       generationId = attempt.generationId;
+      // The root is checked AFTER the attempt row exists, so an unconfigured or
+      // unsafe root is a recorded failure like any other, and BEFORE any byte is
+      // written or any directory is read.
+      if (!this.policy.backupRoot) throw UpdaterBackupV1.#refuse("updater_backup_root_unconfigured");
+      resolveBackupRootPolicyV1(this.policy); // Re-derived, never trusted from a field.
+      root = await assertBackupRootOnDiskV1(this.policy.backupRoot, { ownerUid: this.#ownerUid() });
+      await this.#settleInterrupted(generationId);
       const paths = generationPathsV1(this.policy.backupRoot, generationId);
       await this.#intent({ generationId, phase: "begin" });
-      const outcome = await this.#attempt(generationId, paths, policy);
+      const outcome = await this.#attempt(generationId, paths, policy, root);
       await this.#done({ generationId, phase: "complete", state: outcome.status });
       this.onResult(outcome);
       return outcome;
     } catch (error) {
-      const code = typeof error?.code === "string" ? error.code : "updater_backup_failed";
-      // A trace hook, off unless the environment asks. It is how this lane
-      // found that a failure can be raised BEFORE an attempt exists — in which
-      // case there is no row to record a detail on, and a bare SQLSTATE in the
-      // test output is the only clue. Set CONTROL_ROOM_BACKUP_TRACE=1 to get one
-      // line per failure with the driver's own message.
+      const code = typeof error?.code === "string" && /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
+        ? error.code : "updater_backup_failed";
+      // A trace hook, off unless the environment asks. Set
+      // CONTROL_ROOM_BACKUP_TRACE=1 to get one line per failure with the driver's
+      // own message.
       if (process.env.CONTROL_ROOM_BACKUP_TRACE === "1")
         process.stderr.write(`BACKUP-TRACE ${code} :: ${error?.message ?? ""}`
           + `${typeof error?.evidence === "string" ? ` :: ${error.evidence}` : ""}\n`);
       if (generationId) {
-        // The detail is a BOUNDED, sanitised slice of the driver's message, and
-        // that is a deliberate trade worth stating. Without it, a failure like
-        // "permission denied for schema pg_catalog" arrives as a bare `42501`,
-        // which is undiagnosable both for an operator reading the ledger and for
-        // a test trying to work out which step broke — the whole reason this
-        // lane's first four real bugs each cost a run. The bound (200 chars, the
-        // column's own CHECK) and the fact that it is only ever a PostgreSQL
-        // error's own text — never a file content, a command line or an argument
-        // — are what keep it from becoming a channel. It is stored, never
+        // The detail is a BOUNDED, sanitised slice of the driver's message: the
+        // bound (200 chars, the column's own CHECK) and the fact that it is only
+        // ever an error's own text — never a file content, a command line or an
+        // argument — keep it from becoming a channel. It is stored, never
         // rendered to the owner: the plain words come from `plainMessage`.
-        const detail = boundedDetailV1(error);
-        await this.store.failAttempt({ generationId, code, detail }).catch(() => {});
+        await this.store.failAttempt({ generationId, code, detail: boundedDetailV1(error) }).catch(() => {});
         await this.#done({ generationId, phase: "complete", state: "failed", code }).catch(() => {});
-        const paths = generationPathsV1(this.policy.backupRoot, generationId);
-        await this.#discardInProgress(paths);
+        // Only a root that passed its on-disk check is ever touched on the way
+        // out: an unsafe root is exactly the one not to `rm` inside.
+        if (root) await this.#discardInProgress(generationPathsV1(this.policy.backupRoot, generationId), root);
+      } else {
+        // Nothing was recorded yet (the lock or the store failed before the
+        // attempt row existed). Record it now, so no failure is silent.
+        generationId = await this.#recordStandaloneFailure(code, error);
       }
       const outcome = Object.freeze({ status: "failed", code, generationId,
         message: plainMessage[code] ?? "The nightly backup did not complete." });
       this.onResult(outcome);
       return outcome;
     } finally {
-      if (lock?.status === "acquired") await this.store.releaseBackupLock().catch(() => {});
+      await root?.handle.close().catch(() => {});
+      if (lockHeld) await this.store.releaseBackupLock().catch(() => {});
       this.#running = false;
+    }
+  }
+
+  /**
+   * Settle every attempt a dead run left in flight (review backup19b M1).
+   *
+   * Called with the backup lock HELD, so every other `backup_in_progress` row
+   * belongs to a run that is no longer alive. Each is settled to a REAL failure
+   * code rather than left stuck forever:
+   *   * `updater_backup_record_interrupted` when its `gen-` directory is a
+   *     complete, digest-verified generation — the run died between the promote
+   *     rename and the ledger write. The dump is KEPT (the sweep reports it as
+   *     `unrecorded` and keeps it until enough newer verified generations
+   *     exist); it is not adopted as `verified`, because its completion time
+   *     would then be "now" and freshness would claim a dump newer than it is.
+   *   * `updater_backup_interrupted` otherwise (the run died before promoting).
+   */
+  async #settleInterrupted(currentGenerationId) {
+    for (const row of await this.store.inFlightGenerations()) {
+      if (row.generationId === currentGenerationId) continue;
+      let complete = false;
+      try { complete = (await assertSafeGenerationV1(this.policy.backupRoot, row.generationId)) !== null; }
+      catch { complete = false; }
+      await this.store.failAttempt({ generationId: row.generationId,
+        code: complete ? "updater_backup_record_interrupted" : "updater_backup_interrupted",
+        detail: "settled by a later run: the process that began this attempt is gone" }).catch(() => {});
     }
   }
 
@@ -393,21 +548,23 @@ export class UpdaterBackupV1 {
    *
    * The order is the safety property, and each step's failure is a distinct code
    * so a fixed problem is not re-diagnosed as a mystery:
-   *   space -> dump -> verify -> seal -> promote.
-   * A failure at any step leaves an `.inprogress-` directory and a `failed` row,
-   * and never a `gen-` directory, so retention can never count it.
+   *   space -> dump -> verify -> seal -> validate -> promote -> record.
+   * Every check the ledger would apply runs BEFORE the promote rename, so a
+   * failure at any of those steps leaves an `.inprogress-` directory and a
+   * `failed` row, and never a `gen-` directory.
    */
-  async #attempt(generationId, paths, policy) {
+  async #attempt(generationId, paths, policy, root) {
     const floor = Number.isSafeInteger(this.policy.freeSpaceFloorBytes) ? this.policy.freeSpaceFloorBytes : 0;
     const free = await freeBytesAtV1(this.policy.backupRoot);
     if (Number.isFinite(free) && free < floor) throw UpdaterBackupV1.#refuse("updater_backup_disk_full");
+    await assertBackupRootUnchangedV1(root);
     await mkdir(paths.inProgress, { recursive: false, mode: 0o700 });
     const dumpPath = join(paths.inProgress, DUMP_FILE_V1);
     // R17c: the dump is streamed, not staged. The dump port writes the bytes to
     // a file the ROOT created and owns; `_crdb` writes to a pipe and never has
     // a path under `backups/`.
     const dumped = await this.ports.dump({ path: dumpPath, generationId });
-    if (dumped?.bytes <= 0 || typeof dumped.sha256 !== "string"
+    if (!(dumped?.bytes > 0) || typeof dumped.sha256 !== "string"
         || !/^sha256:[a-f0-9]{64}$/u.test(dumped.sha256))
       throw UpdaterBackupV1.#refuse("updater_backup_dump_failed");
     // Re-read the bytes the root actually wrote, rather than trusting the port's
@@ -416,26 +573,22 @@ export class UpdaterBackupV1 {
     const fileSha256 = await sha256FileV1(dumpPath, undefined);
     if (fileSha256 !== dumped.sha256) throw UpdaterBackupV1.#refuse("updater_backup_dump_digest_mismatch");
     // The evidence is the SHAPE digest and the row counts, not the release's
-    // ownership-bearing schema digest. A restore runs with `--no-owner` (R9.3
-    // step 4: `--no-owner --role=control_room_migrator`), so every restored object
-    // belongs to whoever ran `pg_restore`; comparing the source's ownership-
-    // bearing digest against that can never match, and would refuse every good
-    // backup in the world. See src/updater/v1/backup-evidence.mjs for the
-    // measured digests and the reason.
+    // ownership-bearing schema digest; see backup-evidence.mjs for why.
     const source = dumped.evidence;
     if (!source || typeof source.shapeDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(source.shapeDigest)
         || !Array.isArray(source.rowCounts) || source.rowCounts.length < 1)
       throw UpdaterBackupV1.#refuse("updater_backup_evidence_refused");
+    // The row counts' shape is the ledger's, checked NOW rather than at
+    // completion: a shape the ledger refuses must fail the attempt while there
+    // is still nothing promoted (review backup19b H1b).
+    assertRowCountsV1(source.rowCounts);
 
     const verified = await this.ports.restoreVerify({ generationId, dumpPath, scratchId: generationId,
       expectedShapeDigest: source.shapeDigest, expectedRowCounts: source.rowCounts });
-    // WHICH half disagreed, and by how much, is recorded. "updater_backup_verify_failed"
-    // on its own left this lane's only clue as a bare refusal name, and the two
-    // halves fail for entirely different reasons: a schema digest difference
-    // means the restore did not recreate the objects (a real problem), while a
+    // WHICH half disagreed, and by how much, is recorded: a schema digest
+    // difference means the restore did not recreate the objects, while a
     // row-count difference means data was lost OR that the two sides counted
-    // different table sets (usually a fixture problem). Telling them apart from
-    // the ledger next week is worth the three extra bounded fields.
+    // different table sets.
     if (verified?.shapeDigest !== source.shapeDigest) {
       const refusal = UpdaterBackupV1.#refuse("updater_backup_shape_digest_mismatch");
       refusal.evidence = `source=${source.shapeDigest} restored=${verified?.shapeDigest}`;
@@ -456,15 +609,14 @@ export class UpdaterBackupV1 {
     // last read. `pg_dump` and `openssl` are both child processes and each chose
     // its own output mode under the updater's umask (a real 0644 was observed on
     // this Mac), so a group- or world-readable dump is possible unless root
-    // tightens it itself. It cannot be done earlier: the restore-verify and the
-    // seal both need to read and rewrite this file, and 0400 is unreadable to
-    // anything but the owner — measured as `EACCES: permission denied` when the
-    // chmod was moved ahead of the seal. The port is untrusted for the same
-    // reason the digest re-read above is: it contains a subprocess.
-    // `assertSafeGenerationV1` refuses any generation whose dump is still loose,
-    // so a generation left readable by some future path is caught on the next
-    // sweep rather than trusted here.
+    // tightens it itself. `assertSafeGenerationV1` refuses any generation whose
+    // dump is still loose.
     await chmod(dumpPath, 0o400);
+    const completion = { generationId, dumpSha256: dumped.sha256, dumpBytes: dumped.bytes,
+      fileSha256: sealedSha256, shapeDigest: source.shapeDigest, rowCounts: source.rowCounts,
+      snapshotXid: source.snapshotXid ?? null, encrypted };
+    // Everything the completion UPDATE would refuse, refused BEFORE the rename.
+    assertCompletionV1(completion);
     const manifest = backupManifestV1({ generationId, createdAt: this.clock().toISOString(),
       dumpSha256: dumped.sha256, dumpBytes: dumped.bytes, fileSha256: sealedSha256,
       shapeDigest: source.shapeDigest, rowCounts: source.rowCounts, snapshotXid: source.snapshotXid ?? null,
@@ -478,49 +630,83 @@ export class UpdaterBackupV1 {
     // real. There is no window in which a partial generation is countable.
     //
     // The ledger row is written AFTER the rename, deliberately. A crash between
-    // the two leaves a real directory the ledger does not know about, and the
-    // sweep then ignores it forever (`known` is the ledger's set) — a wasted
-    // dump, reported as `damaged`, which is a safe failure. The reverse order
-    // would leave a `verified` row pointing at a directory that does not exist,
-    // which is worse: the badge would read fresh because of a dump that is gone,
-    // and §9.5's "blocks DB plans until fixed" would be satisfied by a lie.
+    // the two leaves a complete directory beside an in-flight row. The next run
+    // settles that row to `updater_backup_record_interrupted` and the sweep KEEPS
+    // the directory (reported `unrecorded`) until enough newer verified
+    // generations exist — it is never deleted as if it were surplus, which is
+    // what the first version did (review backup19b M1, measured: the only good
+    // dump of a first-ever backup was removed by the next run's sweep). The
+    // reverse order would leave a `verified` row pointing at a directory that
+    // does not exist, which is worse: the badge would read fresh because of a
+    // dump that is gone.
+    await assertBackupRootUnchangedV1(root);
     await rename(paths.inProgress, paths.final);
-    await this.store.completeAttempt({ generationId, dumpSha256: dumped.sha256, dumpBytes: dumped.bytes,
-      fileSha256: sealedSha256, shapeDigest: source.shapeDigest, rowCounts: source.rowCounts,
-      snapshotXid: source.snapshotXid ?? null, encrypted });
-    const retained = await this.sweep({ policy });
+    await this.store.completeAttempt(completion);
+    const retained = await this.#sweep(policy, root);
     return Object.freeze({ status: "verified", generationId, dumpBytes: dumped.bytes,
       retained: retained.retained, removed: retained.removed, message: "The nightly backup completed." });
   }
 
   /** An in-progress directory is never promoted, so it is simply removed. It is
-   * removed with a name-rooted path (the id was checked) and the root's own
-   * no-follow walk, so a planted symlink at that name removes nothing else. */
-  async #discardInProgress(paths) {
+   * removed with a name-rooted path (the id was checked) under a root that
+   * passed its on-disk check, so a planted symlink at that name removes nothing
+   * else. */
+  async #discardInProgress(paths, root) {
     try {
+      await assertBackupRootUnchangedV1(root);
       const entry = await lstat(paths.inProgress);
-      if (entry.isSymbolicLink()) throw updaterRefuseV1("updater_backup_generation_refused");
+      if (entry.isSymbolicLink() || !entry.isDirectory()) return;
       await rm(paths.inProgress, { recursive: true, force: false, maxRetries: 1 });
-    } catch (error) {
-      if (error?.code === "ENOENT") return;
-      // A failure to clean up is NOT swallowed: the directory is still named
-      // `.inprogress-` so it is not counted, and the next sweep will report it.
-      if (error?.code === "updater_backup_generation_refused") throw error;
+    } catch {
+      // A failure to clean up is NOT fatal: the directory is still named
+      // `.inprogress-` so it is never counted, and the next sweep clears it.
     }
   }
 
   /**
-   * Retention: keep the newest `kept_generations` VERIFIED generations, keep
-   * every pinned one, and remove the rest.
+   * Retention, called on its own (by an operator or a test). It takes the
+   * backup lock first, because it removes `.inprogress-` directories, and a
+   * sweep that ran beside a live backup would delete that backup's work. A busy
+   * lock is answered `busy`, with nothing removed.
+   */
+  async sweep({ policy = null } = {}) {
+    if (!this.policy.backupRoot) throw updaterRefuseV1("updater_backup_root_unconfigured");
+    let acquired = false, root = null;
+    if (!this.store.holdsBackupLock?.()) {
+      const lock = await this.store.acquireBackupLock();
+      if (lock.status !== "acquired") return Object.freeze({ status: "busy", retained: [], removed: [],
+        unsafe: [], damaged: [], unrecorded: [] });
+      acquired = true;
+    }
+    try {
+      root = await assertBackupRootOnDiskV1(this.policy.backupRoot, { ownerUid: this.#ownerUid() });
+      return await this.#sweep(policy, root);
+    } finally {
+      await root?.handle.close().catch(() => {});
+      if (acquired) await this.store.releaseBackupLock().catch(() => {});
+    }
+  }
+
+  /**
+   * Retention: keep the newest `kept_generations` VERIFIED generations THAT ARE
+   * ACTUALLY ON DISK AND WHOLE, keep every pinned one, and remove the rest.
    *
-   * The two daemons4 findings are both closed structurally here:
-   *   * only `verified` rows are candidates, so a failed attempt never occupies
-   *     a slot (it has no digest and no row counts, and it is not in the
-   *     partial index the read walks);
-   *   * a directory is deleted only when it does NOT have a valid manifest, and
-   *     an entry whose manifest is missing is reported rather than counted —
-   *     so a good dump is never deleted to make room for a directory that only
-   *     exists.
+   * The daemons4 findings are closed structurally here:
+   *   * only `verified` rows can fill a kept slot, so a failed attempt never
+   *     occupies one;
+   *   * a slot is filled only by a generation whose directory passes the
+   *     structural check — the first version filled the fourteen slots from
+   *     LEDGER rows, so fourteen rows whose directories were missing or unsafe
+   *     made every older, valid generation surplus (review backup19b L1);
+   *   * a directory is removed only after the FULL check (manifest and dump
+   *     digest), and by renaming it to `.removing-` first, so a sweep killed in
+   *     the middle of an `rm` leaves a name the next sweep clears rather than a
+   *     half-deleted `gen-` directory reported unsafe forever.
+   *
+   * A `failed` row whose directory is a complete generation (a run that died
+   * between promote and record — review backup19b M1) is `unrecorded`: kept and
+   * reported, never removed, until `kept_generations` valid verified
+   * generations newer than it exist.
    *
    * The `unsafe` bucket is the interesting one: a generation directory that
    * cannot be validated (a symlink, an extra file, a dump that does not match
@@ -528,57 +714,84 @@ export class UpdaterBackupV1 {
    * something in `backups/` could otherwise get a real dump deleted by making
    * it look unsafe. It is reported for the operator instead.
    */
-  async sweep({ policy = null } = {}) {
+  async #sweep(policy, root) {
     const effective = policy ?? await this.store.policy();
     const keep = effective.keptGenerations;
-    const rows = await this.store.verifiedGenerations(keep);
+    const ledger = await this.store.ledgerRows();
     const pinned = new Set((await this.store.pinnedGenerations()).map(row => row.generationId));
-    const known = new Set(await this.store.knownGenerationIds());
-    const keepSet = new Set();
-    for (const row of rows.slice(0, keep)) keepSet.add(row.generationId);
-    for (const id of pinned) keepSet.add(id);
-    const removed = [], retained = [], unsafe = [], damaged = [];
-    // A partial generation is never promoted, so it is never counted. The sweep
-    // clears leftovers, which is what stops a run killed mid-dump from filling
-    // the disk with half-dumps over fourteen nights. Cleared by the SHARED leaf
-    // prefix, and only when the entry is a real directory rather than a symlink
-    // a lower-trust writer planted at that name.
+    const removed = [], retained = [], unsafe = [], damaged = [], unrecorded = [], surplus = [];
+    // Leftovers first: partial generations (never promoted, so never counted)
+    // and interrupted removals. Cleared by the SHARED prefixes, and only when
+    // the entry is a real directory rather than a symlink a lower-trust writer
+    // planted at that name.
+    await assertBackupRootUnchangedV1(root);
     for await (const item of await opendir(this.policy.backupRoot)) {
-      if (!item.name.startsWith(IN_PROGRESS_PREFIX_V1)) continue;
+      if (!item.name.startsWith(IN_PROGRESS_PREFIX_V1) && !item.name.startsWith(REMOVING_PREFIX_V1)) continue;
       const stale = join(this.policy.backupRoot, item.name);
       const entry = await lstat(stale).catch(() => null);
       if (entry?.isDirectory() && !entry.isSymbolicLink())
         await rm(stale, { recursive: true, force: true, maxRetries: 1 }).catch(() => {});
     }
-    // The ledger drives the sweep, forward from each generation id to its leaf.
-    // A directory the ledger does not name is therefore never a deletion
-    // candidate at all — which is the strongest form of the daemons4 fix, since
-    // it does not depend on parsing anything an attacker could write.
-    for (const generationId of known) {
+    // The ledger drives the sweep, NEWEST FIRST, forward from each generation id
+    // to its leaf. A directory the ledger does not name is therefore never a
+    // deletion candidate at all, which does not depend on parsing anything an
+    // attacker could write.
+    let keptValid = 0;
+    for (const row of ledger) {
+      const generationId = row.generationId;
       const paths = generationPathsV1(this.policy.backupRoot, generationId);
       const entry = await lstat(paths.final).catch(() => null);
       if (entry === null) continue; // Ledger row with no directory: nothing to keep or remove.
       let safe = null;
-      try { safe = await assertSafeGenerationV1(this.policy.backupRoot, generationId, { requireManifest: false }); }
+      try { safe = await assertSafeGenerationV1(this.policy.backupRoot, generationId, { hashDump: false }); }
       catch { unsafe.push(generationId); continue; }
-      if (!safe.entries.includes(MANIFEST_FILE_V1)) { damaged.push(generationId); continue; }
-      if (!keepSet.has(generationId)) {
-        try {
-          // The full check, manifest digest and all, before anything is removed.
-          await assertSafeGenerationV1(this.policy.backupRoot, generationId);
-          await rm(paths.final, { recursive: true, force: false, maxRetries: 1 });
-          removed.push(generationId);
-        } catch { unsafe.push(generationId); }
-      } else retained.push(generationId);
+      if (safe === null) { damaged.push(generationId); continue; }
+      if (row.state === "verified") {
+        if (keptValid < keep) { keptValid += 1; retained.push(generationId); }
+        else if (pinned.has(generationId)) retained.push(generationId);
+        else surplus.push(generationId);
+      } else if (keptValid < keep) unrecorded.push(generationId);
+      else surplus.push(generationId);
+    }
+    for (const generationId of surplus) {
+      const paths = generationPathsV1(this.policy.backupRoot, generationId);
+      try {
+        // The full check, manifest digest and all, before anything is removed.
+        await assertSafeGenerationV1(this.policy.backupRoot, generationId);
+        await assertBackupRootUnchangedV1(root);
+        const doomed = join(this.policy.backupRoot, `${REMOVING_PREFIX_V1}${generationLeafV1(generationId)}`);
+        await rename(paths.final, doomed);
+        await rm(doomed, { recursive: true, force: false, maxRetries: 1 });
+        removed.push(generationId);
+      } catch { unsafe.push(generationId); }
     }
     return Object.freeze({ retained: retained.sort(), removed: removed.sort(),
-      unsafe: unsafe.sort(), damaged: damaged.sort() });
+      unsafe: unsafe.sort(), damaged: damaged.sort(), unrecorded: unrecorded.sort() });
   }
 
-  /** The badge, the push and the plan refusal all read this one answer. */
+  /**
+   * The badge, the push and the plan refusal all read the freshness predicate.
+   *
+   * The badge ALSO looks at the disk (review backup19b L1): freshness is a fact
+   * about the ledger, so a lost or emptied backup disk used to keep Home green.
+   * When the newest verified generation's directory is missing or not whole,
+   * the badge says so, even though the database still admits plans on the
+   * ledger's word (item 18 takes its own pre-image dump before any migration).
+   */
   async status() {
     const freshness = await this.store.freshness();
     const latest = await this.store.latestAttempt();
+    let onDisk = null;
+    if (freshness.fresh && this.policy.backupRoot && typeof this.store.verifiedGenerations === "function") {
+      const newest = (await this.store.verifiedGenerations(1))[0];
+      onDisk = false;
+      if (newest) {
+        try {
+          onDisk = (await assertSafeGenerationV1(this.policy.backupRoot, newest.generationId,
+            { hashDump: false })) !== null;
+        } catch { onDisk = false; }
+      }
+    }
     return Object.freeze({
       fresh: freshness.fresh,
       state: latest?.state ?? "none",
@@ -587,9 +800,8 @@ export class UpdaterBackupV1 {
       lastFailureAt: freshness.lastFailureAt,
       nextDueAt: freshness.nextDueAt,
       consecutiveFailures: freshness.consecutiveFailures,
-      // Plain status words, for the Home red badge (§12). "needs you" is the
-      // attention-first wording the product vision asks for: one line, no prose.
-      badge: freshness.fresh ? "ok" : (latest === null ? "never run" : "failed"),
+      // Plain status words, for the Home red badge (§12).
+      badge: freshness.fresh ? (onDisk === false ? "missing" : "ok") : (latest === null ? "never run" : "failed"),
     });
   }
 }
