@@ -12,6 +12,7 @@ import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "../src/updater/v1/runner.mj
 import { UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1 } from "../src/updater/v1/runtime.mjs";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
+import { sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -153,10 +154,10 @@ test("Off, rescue, pause/stop, retry failure and a second concurrent caller fail
     assert.deepEqual(fixture.effects.calls, ["measure", "rollback"]); assert.equal(fixture.rescued(), false);
   });
   await t.test("pause before drain waits and stop refuses without switching", async () => {
-    const paused = new UpdaterModeV1(); paused.set("paused");
+    const paused = new UpdaterModeV1(); await paused.set("paused");
     const fixture = makeRunner({ mode: paused }), result = await fixture.runner.runOnce();
     assert.equal(result.status, "waiting"); assert.deepEqual(fixture.effects.calls, []);
-    paused.set("stopped"); assert.equal((await fixture.runner.runOnce()).status, "refused");
+    await paused.set("stopped"); assert.equal((await fixture.runner.runOnce()).status, "refused");
     assert.ok(!fixture.effects.calls.includes("switch"));
   });
   await t.test("post-drain failure rolls back and preserves the original code", async () => {
@@ -173,6 +174,96 @@ test("Off, rescue, pause/stop, retry failure and a second concurrent caller fail
     assert.equal(burst.filter(row => row.status === "busy").length, 49);
     fixture.effects.gate = undefined; release(); assert.equal((await first).status, "succeeded");
   });
+});
+
+test("P1b: Check and continue clears a rescue marker when the real store contract reports no live run", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  await writeFile(join(root, "updater-state/rescued.json"), "{}\n", { mode: 0o600 });
+  const store = new MemoryStore(null);
+  const updater = await startUpdaterV1({ root, store });
+  t.after(() => updater.stop());
+  updater.loop.stop();
+  assert.equal(updater.loop.lastOutcome.status, "uncertain");
+  const results = await Promise.all(Array.from({ length: 50 }, () => updater.runner.checkAndContinue()));
+  assert.equal(results.filter(result => result.status === "idle").length, 1);
+  assert.equal(results.filter(result => result.status === "busy").length, 49);
+  await assert.rejects(lstat(join(root, "updater-state/rescued.json")), /ENOENT/u);
+  store.requests = [{ id: "owner-request:00000000-0000-4000-8000-000000000001",
+    request_kind: "check_and_continue" }];
+  assert.equal((await updater.loop.tick()).status, "idle");
+  assert.equal(store.finished[1], "refused", "a retry after the marker was cleared is refused");
+});
+
+test("P7: Pause and Stop survive restart, a request-row Resume is refused, and root control may Resume", async t => {
+  for (const [index, requested] of ["pause", "stop"].entries()) {
+    const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
+    const store = new MemoryStore(null);
+    let updater = await startUpdaterV1({ root, store }); updater.loop.stop();
+    t.after(async () => { await updater?.stop(); });
+    const socket = join(root, "updater-state/control.sock");
+    const burst = await Promise.all(Array.from({ length: 50 }, (_, caller) => sendControlRequestV1(socket, {
+      schema: "control-room.updater-control/v1", requestId: `p7-${index}-${caller}`, verb: requested, arguments: [],
+    })));
+    assert.equal(burst.every(result => result.accepted === true), true);
+    assert.equal(await updater.loop.mode.read(), requested === "pause" ? "paused" : "stopped");
+    await updater.stop();
+
+    updater = await startUpdaterV1({ root, store }); updater.loop.stop();
+    assert.equal(await updater.loop.mode.read(), requested === "pause" ? "paused" : "stopped");
+    store.requests = [{ id: `owner-request:00000000-0000-4000-8000-00000000000${index + 2}`,
+      request_kind: "resume" }];
+    await updater.loop.tick();
+    assert.equal(store.finished[1], "refused");
+    assert.equal(await updater.loop.mode.read(), requested === "pause" ? "paused" : "stopped");
+    assert.deepEqual(await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
+      requestId: `p7-resume-${index}`, verb: "resume", arguments: [] }), { accepted: true });
+    assert.equal(await updater.loop.mode.read(), "running");
+    await updater.stop();
+  }
+});
+
+test("a malformed saved updater mode refuses startup instead of silently resuming", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
+  await writeFile(join(root, "updater-state/mode.json"), '{"schema":"control-room.updater-mode/v1","mode":"running","extra":true}\n');
+  const store = new MemoryStore(null);
+  let started;
+  try { started = await startUpdaterV1({ root, store }); }
+  catch (error) { assert.match(error.message, /updater_mode_state_refused/u); }
+  if (started) { await started.stop(); assert.fail("startup accepted malformed durable mode state"); }
+  await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u);
+});
+
+test("P8a: the default control handlers publish and consume the registration without an injected handler", async t => {
+  const productionSource = await readFile("src/updater/v1/updater.mjs", "utf8");
+  assert.match(productionSource, /new PasskeyStoreV1\(client\)/u);
+  assert.match(productionSource, /if \(ownsPasskeyStore\) await passkeyStore\.initialize\(\)/u);
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  const registrationSecret = "A".repeat(43), registrationDigest = `sha256:${"b".repeat(64)}`;
+  const calls = [];
+  const store = new MemoryStore(null);
+  store.openRegistration = async value => { calls.push(["open", value]); };
+  store.consumeRegistration = async value => { calls.push(["consume", value]); return true; };
+  const passkeys = {
+    async beginRegistration() { return { registrationSecret, registrationDigest,
+      authorizationChallenge: "C".repeat(43), expiresAt: "2026-10-01T00:00:00.000Z",
+      config: { installationId: "install-fixture", expectedOrigin: "https://mac.example.test" } }; },
+    async registrationOptions(secret) { assert.equal(secret, registrationSecret); return {
+      schema: "control-room.passkey-registration-options/v1", registrationDigest, publicKey: { challenge: "D".repeat(43) } }; },
+    async completeRegistration({ registrationSecret: secret, typedCode }) {
+      assert.equal(secret, registrationSecret); assert.equal(typedCode, "ABC234");
+      return { credentialId: "credential", coolingOffUntil: null };
+    },
+  };
+  const updater = await startUpdaterV1({ root, store, passkeys }); updater.loop.stop(); t.after(() => updater.stop());
+  const socket = join(root, "updater-state/control.sock");
+  const begun = await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
+    requestId: "p8-begin", verb: "passkey-add-begin", arguments: [] });
+  assert.equal(begun.registrationSecret, registrationSecret);
+  const completed = await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
+    requestId: "p8-complete", verb: "passkey-add-complete", arguments: [registrationSecret, "ABC234"] });
+  assert.equal(completed.credentialId, "credential");
+  assert.equal(calls[0][0], "open"); assert.equal(calls[0][1].optionsJson.registrationDigest, registrationDigest);
+  assert.deepEqual(calls[1], ["consume", registrationDigest]);
 });
 
 test("a torn live file journal becomes uncertain, then Check and continue archives it before settling", async t => {

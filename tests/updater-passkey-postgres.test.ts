@@ -27,14 +27,18 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { securityDefinerAuditLive } from "./support/attack-kit/search-path-audit";
 import { applyUpdaterSchemaV1 } from "../src/updater/v1/schema-installer";
 import { PasskeyStoreV1, PasskeyWebStoreV1 } from "../src/updater/v1/passkey-store.mjs";
 import { comparisonCodeV1, PasskeyRefusalAggregatorV1 } from "../src/updater/v1/passkey.mjs";
+import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
+import { sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
+import { createMacLocalPasskeyRegistrationPortV1 } from "../src/web/v1/mac-local-host";
 
 // 59670 is the port block this job was given.
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59670), PG = requiresRealPostgres();
@@ -207,6 +211,63 @@ const uuidShaped = (value: string) => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 };
 const REGISTRATION_ID = (value: string) => `passkey-registration:${uuidShaped(value)}`;
+
+test("P8: default updater and Mac-local composition complete add -> phone -> typed code", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres); await seedOwnerSession(postgres);
+    await seedSubscription(postgres, "https://web.push.apple.com/p8-default-path");
+    const root = await mkdtemp(join(tmpdir(), "updater-p8-default-"));
+    await mkdir(join(root, "updater-state"), { recursive: true }); await mkdir(join(root, "status"));
+    await mkdir(join(root, "Protected/config"), { recursive: true });
+    await writeFile(join(root, "updater-state/self-update"), "Off\n");
+    await writeFile(join(root, "Protected/config/host.json"), JSON.stringify({ installationId: INSTALLATION,
+      rpId: RP_ID, expectedOrigin: `https://${RP_ID}` }));
+    const deployer = as(postgres, "deployer"), web = as(postgres, "web");
+    const credentialId = Buffer.alloc(32, 23).toString("base64url"), code = comparisonCodeV1(credentialId);
+    let updater: Awaited<ReturnType<typeof startUpdaterV1>> | undefined;
+    try {
+      await deployer.connect(); await web.connect();
+      updater = await startUpdaterV1({ root, client: deployer, passkeyVerifier: {
+        async verifyRegistration({ response }: { response: { id: string } }) {
+          return { credentialId: response.id, publicKey: Buffer.alloc(64, 31).toString("base64url"),
+            algorithm: -7, counter: 0, transports: ["internal"] };
+        }, async verifyAuthentication() { throw new Error("no existing passkey in cooling-off route"); },
+      } });
+      updater.loop.stop();
+      const socket = join(root, "updater-state/control.sock");
+      const begun = await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
+        requestId: "p8-default-begin", verb: "passkey-add-begin", arguments: [] }) as { registrationSecret: string };
+      const phone = createMacLocalPasskeyRegistrationPortV1(web as never);
+      const options = await phone.options({ ownerSessionDigest: OWNER_SESSION,
+        registrationSecret: begun.registrationSecret }) as { publicKey: { challenge: string } };
+      assert.match(options.publicKey.challenge, /^[A-Za-z0-9_-]{43}$/u);
+      const response = { id: credentialId, rawId: credentialId, type: "public-key", clientExtensionResults: {},
+        response: { clientDataJSON: b64(CLIENT), attestationObject: b64(ATTEST), transports: ["internal"] } };
+      await Promise.all(Array.from({ length: 20 }, () => phone.insert({ ownerSessionDigest: OWNER_SESSION,
+        registrationSecret: begun.registrationSecret, comparisonCode: code, response,
+        authorizationAssertion: null })));
+      assert.equal((await deployer.query<{ n: number }>(`SELECT count(*)::int AS n
+        FROM updater.passkey_registrations`)).rows[0]?.n, 1,
+      "a burst of exact phone retries creates one row");
+      const completed = await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
+        requestId: "p8-default-complete", verb: "passkey-add-complete",
+        arguments: [begun.registrationSecret, code] }) as { credentialId: string; coolingOffUntil: string };
+      assert.equal(completed.credentialId, credentialId); assert.equal(typeof completed.coolingOffUntil, "string");
+      assert.equal((await deployer.query<{ n: number }>(`SELECT count(*)::int AS n
+        FROM updater.passkey_open_registrations WHERE consumed_at IS NULL`)).rows[0]?.n, 0);
+      const listed = await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
+        requestId: "p8-default-list", verb: "passkey-list", arguments: [] }) as { credentialId: string }[];
+      assert.deepEqual(listed.map(item => item.credentialId), [credentialId]);
+    } finally {
+      await updater?.stop();
+      await Promise.allSettled([web.end(), deployer.end()]);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
+});
 
 /**
  * The shape `PasskeyStoreV1.registrationRows` promises.
@@ -1397,15 +1458,18 @@ test("the web insert path validates the response shape before it reaches the tab
       // A digest the updater never opened is refused here too, so the web port
       // refuses before PostgreSQL does.
       await assert.rejects(insert({ registrationDigest: registrationDigest("never-opened") }));
-      // And a retried POST reusing its id is a primary-key refusal, which is
-      // what stops one ceremony becoming a two-row race.
+      // And a retried POST reusing its id is a successful no-op, which is what
+      // lets a phone recover from a lost HTTP response without turning one
+      // ceremony into a two-row race.
       //
       // The FIRST insert with an id succeeds — it has to, or the retry has
       // nothing to collide with. An earlier version of these three lines asserted
       // that the first insert was REFUSED, which cannot be true for any id the
       // port accepts; the port was right and the assertion was not.
       await insert({ id: REGISTRATION_ID("fixed-retry") });
-      await assert.rejects(insert({ id: REGISTRATION_ID("fixed-retry") }), /duplicate key/u);
+      await insert({ id: REGISTRATION_ID("fixed-retry") });
+      assert.equal((await store.registrationRows(digest) as RegistrationRowV1[]).length, 3,
+        "the exact retry does not add a fourth registration row");
       // And the port refuses a malformed id outright, before any SQL — so a
       // caller that cannot even shape an idempotency key gets a named refusal
       // rather than a database error.

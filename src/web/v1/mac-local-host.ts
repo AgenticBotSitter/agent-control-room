@@ -1,4 +1,5 @@
 import type { DatabaseClient } from "../../persistence/database";
+import { createHash } from "node:crypto";
 import type { Server, ServerOptions } from "node:http";
 import type { PrivateClientAssets } from "./private-assets";
 import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-configuration";
@@ -20,6 +21,9 @@ import { createOperationsModeSupervisorPortV1 } from "./operations-mode-supervis
 import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { createUpdaterHomeStatusReaderV1, type UpdaterHomeStatusReaderV1 } from "./updater-home-status";
 import type { UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
+import { PasskeyWebStoreV1 } from "../../updater/v1/passkey-store.mjs";
+import { updaterRefuseV1 } from "../../updater/v1/contracts.mjs";
+import { canonicalJsonV1 } from "../../updater/v1/canonical-json.mjs";
 
 /** The installation's one supervisor identity. The Mac-local host runs a single
  * supervisor loop, so this is fixed rather than configurable: a second id would
@@ -32,6 +36,55 @@ type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; i
 type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "resultFileStore" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">
   & Partial<Pick<MacLocalTaskApplicationV1, "taskService">>;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
+
+function passkeyRegistrationDigestV1(secret: string): string {
+  const bytes = Buffer.from(secret, "base64url");
+  if (bytes.length !== 32 || bytes.toString("base64url") !== secret)
+    throw updaterRefuseV1("updater_registration_secret_refused");
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+/** A stable idempotency key for one exact browser response. A lost HTTP reply
+ * can therefore be retried without creating the second row that the updater
+ * must treat as a registration race. A changed response gets a different key,
+ * stays visible as a second row, and is refused by the updater's one-row rule. */
+function passkeyRegistrationRowIdV1(value: Readonly<Record<string, unknown>>): string {
+  const hex = createHash("sha256").update(canonicalJsonV1({
+    schema: "control-room.passkey-registration-row/v1", ...value,
+  })).digest("hex");
+  const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+  return `passkey-registration:${uuid}`;
+}
+
+/** The ordinary web-login side of item 10a. It is lazy so host construction
+ * stays inert, but the first registration request asserts the production role
+ * before reading or writing a ceremony row. */
+export function createMacLocalPasskeyRegistrationPortV1(client: DatabaseClient):
+  NonNullable<MacLocalWebProcessOptionsV1["passkeyRegistration"]> {
+  const store = new PasskeyWebStoreV1(client);
+  let initializing: Promise<void> | undefined;
+  const ready = () => initializing ??= Promise.resolve(store.initialize()).catch((error: unknown) => {
+    initializing = undefined; throw error;
+  });
+  return Object.freeze({
+    async options(input) {
+      await ready();
+      const registration = await store.options(passkeyRegistrationDigestV1(input.registrationSecret));
+      return registration.options;
+    },
+    async insert(input) {
+      await ready();
+      const response = input.response as { id?: unknown } | null;
+      const registrationDigest = passkeyRegistrationDigestV1(input.registrationSecret);
+      const material = { ownerSessionDigest: input.ownerSessionDigest, registrationDigest,
+        credentialId: response?.id, comparisonCode: input.comparisonCode, response: input.response,
+        authorizationAssertion: input.authorizationAssertion ?? null };
+      await (store.insert as unknown as (value: Record<string, unknown>) => Promise<unknown>)({
+        id: passkeyRegistrationRowIdV1(material), ...material });
+      return Object.freeze({ accepted: true });
+    },
+  });
+}
 
 /** The protected enablement is the only Mac-local source of exact worker and
  * model identities. Historical Hermes 0.21 evidence is deliberately not an
@@ -138,6 +191,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     ...(input.operationsMode ? { operationsMode: input.operationsMode } : {}),
     updaterHomeStatus: input.updaterHomeStatus ?? createUpdaterHomeStatusReaderV1(),
     ...(input.updaterOwnerUi ? { updaterOwnerUi: input.updaterOwnerUi } : {}),
+    passkeyRegistration: createMacLocalPasskeyRegistrationPortV1(input.database.client),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),

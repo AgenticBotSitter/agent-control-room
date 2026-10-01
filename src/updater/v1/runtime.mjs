@@ -20,6 +20,26 @@ export class UpdaterStateFilesV1 {
     await this.hasRescueMarker();
     await unlink(`${this.root}/updater-state/rescued.json`);
   }
+  async readMode() {
+    let value;
+    try { value = JSON.parse(await readFileNoFollowV1(this.root, "updater-state/mode.json", { maxBytes: 256 })); }
+    catch (error) {
+      if (error?.code === "ENOENT") return "running";
+      if (error instanceof SyntaxError) throw updaterRefuseV1("updater_mode_state_refused");
+      throw error;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)
+        || Object.keys(value).sort().join(",") !== "mode,schema"
+        || value.schema !== "control-room.updater-mode/v1"
+        || !["running", "paused", "stopped"].includes(value.mode))
+      throw updaterRefuseV1("updater_mode_state_refused");
+    return value.mode;
+  }
+  writeMode(mode) {
+    return atomicWriteNoFollowV1(this.root, "updater-state/mode.json", `${JSON.stringify({
+      schema: "control-room.updater-mode/v1", mode,
+    })}\n`);
+  }
   async writeHeartbeat(value) {
     await atomicWriteNoFollowV1(this.root, "updater-state/heartbeat", `${JSON.stringify({
       schema: "control-room.updater-heartbeat/v1", at: new Date().toISOString(), ...value,
@@ -51,10 +71,21 @@ export class UpdaterStateFilesV1 {
 
 export class UpdaterModeV1 {
   #value = "running";
-  async read() { return this.#value; }
-  set(value) {
+  #serial = Promise.resolve();
+  constructor(stateFiles) { this.stateFiles = stateFiles; }
+  async initialize() {
+    if (this.stateFiles?.readMode) this.#value = await this.stateFiles.readMode();
+    return this.#value;
+  }
+  async read() { await this.#serial; return this.#value; }
+  async set(value) {
     if (!["running", "paused", "stopped"].includes(value)) throw updaterRefuseV1("updater_mode_refused");
-    this.#value = value;
+    const change = this.#serial.then(async () => {
+      if (this.stateFiles?.writeMode) await this.stateFiles.writeMode(value);
+      this.#value = value;
+    });
+    this.#serial = change.catch(() => {});
+    await change;
   }
 }
 

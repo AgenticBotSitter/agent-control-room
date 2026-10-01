@@ -440,10 +440,10 @@ export class PasskeyWebStoreV1 {
    * whole envelope at most 16 KiB of JSON. An over-bound response is refused
    * here with a named code and never reaches the CHECKs, the table, or a parser.
    *
-   * `id` is the caller's idempotency key, so a retried POST (a phone that lost
-   * the response on a flaky connection) cannot create a second row for one
-   * ceremony — which would turn a single registration into a two-row race the
-   * installer refuses.
+   * `id` is the caller's idempotency key. An exact replay is a successful no-op,
+   * so a phone that lost the HTTP response can retry without creating a second
+   * row for one ceremony. A changed response must use a different key and stays
+   * visible to the installer's one-row race refusal.
    */
   async insert({ id, ownerSessionDigest, registrationDigest, credentialId, comparisonCode, response,
     authorizationAssertion = null }) {
@@ -474,7 +474,8 @@ export class PasskeyWebStoreV1 {
         (id, registration_digest, credential_id, attestation_object, client_data_json, transports,
          comparison_code, owner_session_digest, auth_credential_id, auth_authenticator_data,
          auth_client_data_json, auth_signature, auth_user_handle)
-      VALUES ($1,$2,$3,$4,$5,$6::text[],$7,$8,$9,$10,$11,$12,$13)`,
+      VALUES ($1,$2,$3,$4,$5,$6::text[],$7,$8,$9,$10,$11,$12,$13)
+      ON CONFLICT (id) DO NOTHING`,
     [id, registrationDigest, credentialId, decoded.attestationObject, decoded.clientDataJSON,
       decoded.transports, comparisonCode, ownerSessionDigest,
       authorization?.id ?? null, authorization?.authenticatorData ?? null, authorization?.clientDataJSON ?? null,

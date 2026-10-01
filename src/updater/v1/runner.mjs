@@ -198,7 +198,13 @@ export class UpdaterRunnerV1 {
       const run = await this.store.liveRun();
       const rescued = await this.stateFiles.hasRescueMarker(), journalUncertain = await this.stateFiles.journalUncertain?.();
       const journalRecoveryPending = await this.stateFiles.journalRecoveryPending?.();
-      if (!run || run.lease_token !== this.stateFiles.leaseToken || (!rescued && !journalUncertain && !journalRecoveryPending))
+      if (!run) {
+        if (!rescued || journalUncertain || journalRecoveryPending)
+          throw updaterRefuseV1("updater_check_continue_refused");
+        await this.stateFiles.removeRescueMarker();
+        return { status: "idle", message: "The rescue status is cleared; no update is active." };
+      }
+      if (run.lease_token !== this.stateFiles.leaseToken || (!rescued && !journalUncertain && !journalRecoveryPending))
         throw updaterRefuseV1("updater_check_continue_refused");
       if (run.state !== "uncertain") throw updaterRefuseV1("updater_check_continue_refused");
       if (journalUncertain && !await this.stateFiles.repairJournalUncertain?.())
