@@ -72,6 +72,12 @@
 -- evaluate it during a restore of a dumped row, and a constraint that changed
 -- its verdict between install and reload would be a worse defect than a missing
 -- one. Anything this function cannot decide is false.
+--
+-- The `table` key is the SERVER-quoted qualified name (`format('%I.%I')`), so
+-- ANY legal identifier is accepted: upper case, quotes, unicode. The first
+-- version required `^[a-z0-9_]{1,63}$`, and one migration creating
+-- `public."Audit"` then made every backup fail (review backup19b H1b). The
+-- bound is in BYTES: two 63-byte names, each fully quote-doubled, plus the dot.
 CREATE OR REPLACE FUNCTION updater.backup_row_counts_shape(value jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, updater, pg_temp AS $$
   SELECT pg_catalog.jsonb_typeof(value) = 'array'
@@ -81,7 +87,7 @@ LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, updater, pg_temp AS $$
         WHERE pg_catalog.jsonb_typeof(entry) <> 'object'
            OR pg_catalog.jsonb_typeof(entry -> 'table') <> 'string'
            OR pg_catalog.jsonb_typeof(entry -> 'count') <> 'number'
-           OR entry ->> 'table' !~ '^[a-z0-9_]{1,63}$'
+           OR pg_catalog.octet_length(entry ->> 'table') NOT BETWEEN 1 AND 257
            OR (entry ->> 'count')::bigint < 0)
 $$;
 -- Same treatment as the two CHECK helpers in `0002_schema.sql`, and for the
@@ -124,7 +130,7 @@ CREATE TABLE IF NOT EXISTS updater.backup_generations (
   encrypted boolean NOT NULL DEFAULT false,
   -- The exported snapshot the dump and the evidence were both taken from. Kept
   -- for the operator, bounded, and never parsed back into a query.
-  snapshot_xid text CHECK (snapshot_xid IS NULL OR snapshot_xid ~ '^[0-9A-Fa-f:]{1,64}$'),
+  snapshot_xid text CHECK (snapshot_xid IS NULL OR snapshot_xid ~ '^[0-9A-Fa-f:-]{1,64}$'),
   failure_code text CHECK (failure_code IS NULL OR failure_code ~ '^[a-z][a-z0-9_]{1,63}$'),
   failure_detail text CHECK (failure_detail IS NULL OR length(failure_detail) <= 200),
   -- Item 18's pin. §9.2 keeps a pre-update dump until the next successful
@@ -206,6 +212,23 @@ INSERT INTO updater.backup_state (singleton, max_age_seconds, kept_generations)
   ON CONFLICT (singleton) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
+-- backup_lock — the lock a candidate release cannot take
+-- ---------------------------------------------------------------------------
+-- One row, locked `FOR UPDATE NOWAIT` by a dedicated deployer session for the
+-- whole of a backup attempt (src/updater/v1/backup-store.mjs `acquireBackupLock`),
+-- and by item 18's pre-image dump. It replaces a session ADVISORY lock, and the
+-- reason is the whole of review backup19b H1a: an advisory key is global and any
+-- login may take it — the web and the migrator each held it and every backup
+-- after that was skipped without a failure being recorded. Taking a row lock
+-- needs UPDATE on this table, and nobody but its owner (the deployer) holds any
+-- privilege on it: the web is granted nothing below, and the migrator has no
+-- USAGE on the schema at all.
+CREATE TABLE IF NOT EXISTS updater.backup_lock (
+  singleton boolean PRIMARY KEY CHECK (singleton)
+);
+INSERT INTO updater.backup_lock (singleton) VALUES (true) ON CONFLICT (singleton) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
 -- backup_is_fresh — the one predicate behind the badge, the push and the
 -- refusal (design §9.5, §12)
 -- ---------------------------------------------------------------------------
@@ -252,6 +275,17 @@ REVOKE ALL ON FUNCTION updater.backup_is_fresh() FROM PUBLIC;
 -- owner would be asked to approve a plan that can never run; refusing on INSERT
 -- means the watcher learns immediately and can report `attended_upgrade_required`
 -- with this code, which is what the card shows.
+--
+-- WHICH PLAN STATES ARE CHECKED, and what that relies on (review backup19b L1).
+-- Freshness is checked while a database plan is `building`,
+-- `ready_for_approval` or `approved` — on INSERT and on every UPDATE into one of
+-- those states. It is NOT re-checked when an already-approved plan later moves
+-- into `running`: a plan approved while the last backup was fresh may run after
+-- that backup has aged past the bound. That is acceptable ONLY because item 18's
+-- pre-image dump (§9.2) is MANDATORY before any database plan changes the
+-- database — the upgrade takes its own verified dump, under this same backup
+-- lock, immediately before it migrates. If item 18 ever makes the pre-image
+-- dump optional, this guard must also fire on the transition to `running`.
 --
 -- The advisory lock is the same one the plan-open guard takes, taken in the same
 -- order, so a plan insert and a backup completion are serialised: without it a
@@ -438,6 +472,8 @@ REVOKE ALL ON SCHEMA updater FROM PUBLIC;
 REVOKE ALL ON updater.backup_generations, updater.backup_state FROM control_room_private_web;
 GRANT SELECT (generation_id, state, created_at, completed_at, encrypted, failure_code, retain_until)
   ON updater.backup_generations TO control_room_private_web;
+-- The backup lock's table: nothing at all, so the web cannot take the lock.
+REVOKE ALL ON updater.backup_lock FROM control_room_private_web;
 GRANT SELECT (singleton, max_age_seconds, kept_generations, last_attempt_at, last_success_at,
   last_failure_code, last_failure_at, next_due_at, consecutive_failures, last_generation_id)
   ON updater.backup_state TO control_room_private_web;

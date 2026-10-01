@@ -23,7 +23,16 @@ const updaterBackupRowCountsRefusedV1 = () => updaterRefuseV1("updater_backup_ro
 const GENERATION_ID_V1 = /^backup:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{4}Z$/u;
 const FAILURE_CODE_V1 = /^[a-z][a-z0-9_]{1,63}$/u;
 const DIGEST_V1 = /^sha256:[a-f0-9]{64}$/u;
-const XID_V1 = /^[0-9A-Fa-f:]{1,64}$/u;
+// An exported snapshot id (`pg_export_snapshot()`, e.g. `00000003-0000001B-1`)
+// or an xid-snapshot text. Bounded and never parsed back into a query.
+const XID_V1 = /^[0-9A-Fa-f:-]{1,64}$/u;
+/**
+ * One row-count key: the SERVER-quoted qualified name, `format('%I.%I')`, so
+ * every legal identifier — upper case, quotes, unicode — is representable, and
+ * two tables can never share a key. Bounded by bytes: two quoted 63-byte names
+ * with every byte a doubled quote is 2*(2*63+2)+1 = 257.
+ */
+const ROW_COUNT_TABLE_MAX_BYTES_V1 = 257;
 
 /** §9.5's default: red at 26 hours, which is two missed nights plus a margin. */
 export const BACKUP_MAX_AGE_SECONDS_V1 = 93_600;
@@ -32,6 +41,30 @@ export const BACKUP_KEPT_GENERATIONS_V1 = 14;
 /** A failure retries within the hour; a success waits for the next night. */
 export const BACKUP_SUCCESS_RETRY_SECONDS_V1 = 86_400;
 export const BACKUP_FAILURE_RETRY_SECONDS_V1 = 3_600;
+
+/**
+ * The per-table row counts' shape, shared by the runner (which checks it BEFORE
+ * the promote rename) and the completion (which checks it again before the
+ * UPDATE). Exported so the runner refuses a shape the ledger would refuse while
+ * nothing is promoted yet — review backup19b H1(b): a refusal raised only at
+ * completion left a promoted `gen-` directory beside a `failed` row.
+ *
+ * ANY legal identifier is accepted (the first version accepted only
+ * `[a-z0-9_]`, so one upper-case table made every backup fail).
+ */
+export function assertRowCountsV1(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 4096) throw updaterRefuseV1("updater_backup_row_counts_refused");
+  const counts = value.map(entry => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw updaterRefuseV1("updater_backup_row_counts_refused");
+    const table = entry.table, count = entry.count;
+    if (typeof table !== "string" || table.length < 1 || table.includes("\0")
+        || Buffer.byteLength(table) > ROW_COUNT_TABLE_MAX_BYTES_V1 || !Number.isSafeInteger(count) || count < 0)
+      throw updaterRefuseV1("updater_backup_row_counts_refused");
+    return Object.freeze({ table, count });
+  });
+  if (Buffer.byteLength(JSON.stringify(counts)) > 65_536) throw updaterBackupRowCountsRefusedV1();
+  return counts;
+}
 
 export function assertGenerationIdV1(value, code = "updater_backup_generation_refused") {
   if (typeof value !== "string" || !GENERATION_ID_V1.test(value)) throw updaterRefuseV1(code);
@@ -102,15 +135,28 @@ export async function nextGenerationIdV1(client) {
   return assertGenerationIdV1(id, "updater_backup_generation_id_refused");
 }
 
-function assertRowCountsV1(value) {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 4096) throw updaterRefuseV1("updater_backup_row_counts_refused");
-  return value.map(entry => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw updaterRefuseV1("updater_backup_row_counts_refused");
-    const table = entry.table, count = entry.count;
-    if (typeof table !== "string" || !/^[a-z0-9_]{1,63}$/u.test(table) || !Number.isSafeInteger(count) || count < 0)
-      throw updaterRefuseV1("updater_backup_row_counts_refused");
-    return Object.freeze({ table, count });
-  });
+/**
+ * Everything `completeAttempt` will refuse, checked without touching the
+ * database. The runner calls this BEFORE the promote rename, so a completion
+ * the ledger would refuse is refused while the generation is still an
+ * `.inprogress-` directory (review backup19b H1b), and `completeAttempt` calls
+ * it again so the two can never disagree.
+ */
+export function assertCompletionV1({ generationId, dumpSha256, dumpBytes, fileSha256, shapeDigest, rowCounts,
+  snapshotXid = null, encrypted = false, retainedFor = null }) {
+  assertGenerationIdV1(generationId, "updater_backup_completion_refused");
+  const digest = assertOptionalDigestV1(dumpSha256, "updater_backup_completion_refused");
+  const fileDigest = assertOptionalDigestV1(fileSha256, "updater_backup_completion_refused");
+  const shape = assertOptionalDigestV1(shapeDigest, "updater_backup_completion_refused");
+  if (digest === null || fileDigest === null || shape === null)
+    throw updaterRefuseV1("updater_backup_completion_refused");
+  if (!Number.isSafeInteger(dumpBytes) || dumpBytes <= 0 || dumpBytes >= 1_099_511_627_776)
+    throw updaterRefuseV1("updater_backup_completion_refused");
+  const counts = assertRowCountsV1(rowCounts);
+  const xid = snapshotXid === null ? null : (typeof snapshotXid === "string" && XID_V1.test(snapshotXid)
+    ? snapshotXid : (() => { throw updaterRefuseV1("updater_backup_completion_refused"); })());
+  return Object.freeze({ generationId, digest, dumpBytes, fileDigest, shape, counts, xid,
+    encrypted: encrypted === true, retainedFor });
 }
 
 function assertOptionalDigestV1(value, code) {
@@ -143,9 +189,15 @@ function generationFromRowV1(row) {
 
 /** Typed adapter over item 19a's tables. The client is the production
  * peer-authenticated `control_room_deployer` login, the same one the rest of
- * the updater uses; nothing here works as any other login. */
+ * the updater uses; nothing here works as any other login.
+ *
+ * `connectLock` opens a SECOND deployer session, which holds the backup lock
+ * (see `acquireBackupLock`). It is a factory, not a client, because the lock is
+ * a transaction held open for the whole attempt and the ledger writes must
+ * commit on their own as they happen — one session cannot do both. */
 export class PostgresBackupStoreV1 {
-  constructor(client) { this.client = client; }
+  #lockClient = null;
+  constructor(client, { connectLock = null } = {}) { this.client = client; this.connectLock = connectLock; }
 
   async initialize() {
     await this.client.query("SET search_path = pg_catalog, updater, pg_temp");
@@ -278,19 +330,10 @@ export class PostgresBackupStoreV1 {
    * retry cannot complete a row a later attempt already rewrote), and requires
    * no previous success newer than this one.
    */
-  async completeAttempt({ generationId, dumpSha256, dumpBytes, fileSha256, shapeDigest, rowCounts,
-    snapshotXid = null, encrypted = false, retainedFor = null }) {
-    assertGenerationIdV1(generationId, "updater_backup_completion_refused");
-    const digest = assertOptionalDigestV1(dumpSha256, "updater_backup_completion_refused");
-    const fileDigest = assertOptionalDigestV1(fileSha256, "updater_backup_completion_refused");
-    const shape = assertOptionalDigestV1(shapeDigest, "updater_backup_completion_refused");
-    if (digest === null || fileDigest === null || shape === null)
-      throw updaterRefuseV1("updater_backup_completion_refused");
-    if (!Number.isSafeInteger(dumpBytes) || dumpBytes <= 0 || dumpBytes >= 1_099_511_627_776)
-      throw updaterRefuseV1("updater_backup_completion_refused");
-    const counts = assertRowCountsV1(rowCounts);
+  async completeAttempt(fields) {
+    const { generationId, digest, dumpBytes, fileDigest, shape, counts, xid, encrypted, retainedFor }
+      = assertCompletionV1(fields);
     const rowCountsJson = JSON.stringify(counts);
-    if (Buffer.byteLength(rowCountsJson) > 65_536) throw updaterBackupRowCountsRefusedV1();
     // Computed HERE, in JavaScript, over the exact bytes handed to PostgreSQL —
     // not with digest(…,'sha256') in SQL. Two reasons, and the second is the
     // one that matters: (1) the column's CHECK wants the `sha256:` prefix, which
@@ -300,15 +343,13 @@ export class PostgresBackupStoreV1 {
     // different ways on two different sides of that comparison is a comparison
     // that proves nothing.
     const rowCountsDigest = `sha256:${createHash("sha256").update(rowCountsJson).digest("hex")}`;
-    const xid = snapshotXid === null ? null : (typeof snapshotXid === "string" && XID_V1.test(snapshotXid)
-      ? snapshotXid : (() => { throw updaterRefuseV1("updater_backup_completion_refused"); })());
     const result = await this.client.query(`UPDATE updater.backup_generations SET state='verified',
         completed_at=pg_catalog.now(), dump_sha256=$2, dump_bytes=$3, file_sha256=$4, shape_digest=$5,
         row_counts=$6::jsonb, row_counts_digest=$7, snapshot_xid=$8,
         encrypted=$9, retain_until=$10, failure_code=NULL, failure_detail=NULL
       WHERE generation_id=$1 AND state='failed' AND failure_code='backup_in_progress'
       RETURNING generation_id`,
-    [generationId, digest, dumpBytes, fileDigest, shape, rowCountsJson, rowCountsDigest, xid, encrypted === true, retainedFor]);
+    [generationId, digest, dumpBytes, fileDigest, shape, rowCountsJson, rowCountsDigest, xid, encrypted, retainedFor]);
     if (result.rows.length !== 1) throw updaterRefuseV1("updater_backup_completion_refused");
     await this.client.query(`UPDATE updater.backup_state SET last_success_at=pg_catalog.now(),
       last_failure_at=NULL, last_failure_code=NULL, consecutive_failures=0,
@@ -427,12 +468,12 @@ export class PostgresBackupStoreV1 {
   }
 
   /**
-   * Move the next attempt forward WITHOUT recording a failure.
-   *
-   * The deferred case — the backup lock was held by a database upgrade — is not
-   * a failed backup, and writing a `failed` row for it would turn the Home badge
-   * red for a backup that was correctly postponed by a few minutes. So only the
-   * schedule moves; the failure pair and the counter are untouched.
+   * Move the next attempt forward. Only the schedule moves here; a busy lock is
+   * ALSO recorded as a failed attempt by the runner (review backup19b H1: a skip
+   * that recorded nothing let a held lock stop every backup silently). The badge
+   * is driven by freshness, not by the failure row, so a backup deferred for a
+   * few minutes by a database upgrade does not turn Home red while the last
+   * backup is still fresh.
    */
   async scheduleNext(seconds) {
     if (!Number.isSafeInteger(seconds) || seconds < 60 || seconds > 604_800)
@@ -441,33 +482,102 @@ export class PostgresBackupStoreV1 {
       SET next_due_at=pg_catalog.now() + make_interval(secs => $1) WHERE singleton`, [seconds]);
   }
 
-  /** The active claim is the `finished_at IS NULL` analogue, and the reason it
-   * is a lease rather than a counter: the advisory lock below is held for the
-   * PostgreSQL SESSION, so a crashed process releases it when its session ends,
-   * and the next attempt can be admitted. A `busy` answer is a refusal, not a
-   * failure, and the caller must not retry it as one.
-   *
-   * `inFlight` is the same crash signal the legacy job had to guess at: a row
-   * still marked `backup_in_progress`. It is reported, never acted on by
-   * refusing — the caller's decision is to retry after the retry interval, and
-   * refusing here would turn a crashed backup into a permanently stuck one. */
-  async acquireBackupLock() {
-    const result = await this.client.query(
-      "SELECT pg_catalog.pg_try_advisory_lock($1::integer,$2::integer) AS acquired", BACKUP_LOCK_V1);
-    if (result.rows[0]?.acquired !== true) return Object.freeze({ status: "busy" });
-    const live = await this.client.query(`SELECT count(*)::int AS count FROM updater.backup_generations
-      WHERE failure_code='backup_in_progress' AND created_at > pg_catalog.now() - interval '1 hour'`);
-    return Object.freeze({ status: "acquired", inFlight: Number(live.rows[0]?.count ?? 0) > 0 });
+  /**
+   * The rows still marked in flight. Called only while the backup lock is HELD,
+   * so every one of them belongs to a run that is no longer alive: the lock is
+   * a transaction on a session, and a dead process's session ends with it.
+   * Bounded, because a ledger with a thousand stuck rows is itself a fault and
+   * settling them a hundred at a time per run still converges.
+   */
+  async inFlightGenerations() {
+    const result = await this.client.query(`SELECT * FROM updater.backup_generations
+      WHERE state='failed' AND failure_code='backup_in_progress' ORDER BY created_at, generation_id LIMIT 100`);
+    return result.rows.map(generationFromRowV1);
   }
 
+  /**
+   * Every ledger row, newest first, for the sweep: the state is what decides
+   * whether a directory on disk may be removed (only a `verified` one, once it
+   * is surplus) or must be kept (a `failed` row whose directory is a complete
+   * generation — review backup19b M1). Bounded at the ten thousand most recent
+   * attempts: an older row's directory is reported as unknown, never removed.
+   */
+  async ledgerRows() {
+    const result = await this.client.query(`SELECT * FROM updater.backup_generations
+      ORDER BY created_at DESC, generation_id DESC LIMIT 10000`);
+    return result.rows.map(generationFromRowV1);
+  }
+
+  /**
+   * THE BACKUP LOCK: a row lock on `updater.backup_lock`, held by a dedicated
+   * deployer session in an open transaction for the whole attempt.
+   *
+   * WHY NOT AN ADVISORY LOCK, which the first version used (review backup19b
+   * H1a). An advisory key is global to the database and ANY login may take it:
+   * measured, `control_room_web` and `control_room_migrator` each ran
+   * `pg_try_advisory_lock(<the key>)` and every backup after that returned
+   * `busy` — with no failure recorded — for as long as they held it. A row lock
+   * needs UPDATE on the row's table, which only the deployer holds: the web has
+   * no privilege at all on `updater.backup_lock`, and the migrator has no USAGE
+   * on the schema. A candidate release therefore cannot take this lock.
+   *
+   * The two properties the advisory lock was chosen for are kept:
+   *   * it dies with its session, so a `kill -9` releases it (the transaction
+   *     aborts when the connection drops);
+   *   * item 18 takes the SAME lock for its pre-image dump, so a nightly backup
+   *     and a database upgrade can never dump one cluster at once.
+   *
+   * BOUNDED both ways. `NOWAIT` means a busy lock is an immediate answer, never
+   * a wait; and the holding session carries an idle-in-transaction timeout, so
+   * a process that hangs (rather than dies) holding the lock loses it after six
+   * hours instead of blocking every later backup forever.
+   */
+  async acquireBackupLock() {
+    if (this.#lockClient) return Object.freeze({ status: "busy" });
+    if (typeof this.connectLock !== "function") throw updaterRefuseV1("updater_backup_lock_unbound");
+    const lockClient = await this.connectLock();
+    try {
+      const who = await lockClient.query("SELECT current_user AS current_user");
+      if (who.rows[0]?.current_user !== "control_room_deployer") throw updaterRefuseV1("updater_backup_store_role_refused");
+      await lockClient.query("SET search_path = pg_catalog, updater, pg_temp");
+      await lockClient.query("SET idle_in_transaction_session_timeout = '21600s'");
+      await lockClient.query("BEGIN");
+      let rows;
+      try {
+        ({ rows } = await lockClient.query(
+          "SELECT singleton FROM updater.backup_lock WHERE singleton FOR UPDATE NOWAIT"));
+      } catch (error) {
+        // 55P03 lock_not_available: somebody holds it. Anything else is a fault.
+        if (error?.code === "55P03") {
+          await lockClient.query("ROLLBACK").catch(() => {});
+          await lockClient.end().catch(() => {});
+          return Object.freeze({ status: "busy" });
+        }
+        throw error;
+      }
+      if (rows.length !== 1) throw updaterRefuseV1("updater_backup_lock_missing");
+      // An error on the idle holding session (its timeout fired, or the server
+      // went away) must not become an unhandled 'error' event in a root process.
+      lockClient.on?.("error", () => {});
+      this.#lockClient = lockClient;
+      return Object.freeze({ status: "acquired" });
+    } catch (error) {
+      await lockClient.end().catch(() => {});
+      throw error;
+    }
+  }
+
+  /** Whether THIS store holds the lock, so the sweep can tell "inside a run"
+   * from "called on its own". */
+  holdsBackupLock() { return this.#lockClient !== null; }
+
   async releaseBackupLock() {
-    await this.client.query("SELECT pg_catalog.pg_advisory_unlock($1::integer,$2::integer)", BACKUP_LOCK_V1);
+    const lockClient = this.#lockClient;
+    this.#lockClient = null;
+    if (!lockClient) return;
+    try { await lockClient.query("ROLLBACK"); } finally { await lockClient.end().catch(() => {}); }
   }
 }
 
-/** A separate lock key from the updater's run lease, and the SAME key item 18
- * will use for its pre-image dump: §9.5 "it needs no upgrader" but §9.2's
- * quiesce step "the backup lock is taken in-process". One key, so a nightly
- * backup and a database upgrade can never dump the same cluster at once — which
- * is the property the brief asks for, and which two separate keys would lose. */
-export const BACKUP_LOCK_V1 = Object.freeze([1128354390, 1431323731]);
+/** The backup lock's table. Named once so item 18 takes the same lock. */
+export const BACKUP_LOCK_TABLE_V1 = "updater.backup_lock";
