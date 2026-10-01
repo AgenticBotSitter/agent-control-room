@@ -50,8 +50,21 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
  * else, so after applying it onto current cook/v1 and running 0234's down, the
  * schema must come back to exactly what cook/v1 says it is.
  */
-// Re-pinned when files part 2 (0209–0211, numbered before 0234) landed: equals files2's own pre-0234 schema digest.
-const PRE_0234_DIGEST = "45393cc6221f1a613b8dce8fb9f676821ba1cdb15ea7ae0f828b666ebc2df24a";
+// Re-pinned twice, for two separate reasons, and both are visible in the diff
+// rather than buried:
+//  1. files part 2 (0209-0211, numbered before 0234) landed, so the pre-0234
+//     schema they produce became the before-state. Equals files2's own pre-0234
+//     schema digest.
+//  2. THIS merge. The text-copy derivations are 0212-0213, ALSO numbered before
+//     0234, so 0234's down now leaves them in place and the before-state moves
+//     again. The value below is measured on real PostgreSQL 17 from the merged
+//     tree, not carried across: it is cook/v1's value plus 0212+0213 exactly,
+//     which is provable because the merged tree minus 0212/0213 minus 0234
+//     reproduces cook/v1's own PRE_0234 constant above (`45393cc6...`) byte for
+//     byte. Carrying the old constant instead would have left this test green on
+//     a schema it no longer describes -- the failure mode the file's own header
+//     exists to prevent.
+const PRE_0234_DIGEST = "73ebc791e5800ff7a33d4d6ff18edddca06bc352b1bd2d3abc6ae85ee277bf85";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {
