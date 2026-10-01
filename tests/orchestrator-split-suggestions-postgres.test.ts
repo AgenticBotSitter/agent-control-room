@@ -1674,7 +1674,15 @@ test("ONE owner grant and twenty concurrent presses is ONE run, and nineteen hon
       // fails 42501 after it, which is the property worth keeping.
       const grant = () => new PostgresIntakeOwnerRetryStoreV1(database(ownerLogin)).grant({ tenantId: scope.tenantId,
         projectId: scope.projectId, requestKey: "p3-retry-0001", ownerRequest: description });
-      assert.equal(await grant(), 1);
+      // 0205's grant function is handed ALL FOUR candidate scope keys and its
+      // UPDATE matches every row among them, so one owner grant latches BOTH the
+      // project scope and the request scope -- which is what a second failure
+      // leaves behind. The count it reports is rows latched, not retries earned:
+      // the RETRY is one, and what makes it one is that a press spends it once
+      // (see `#escalated`). Asserting exactly 1 row here would pin the wrong
+      // number, and would have hidden the two-runs-from-one-grant this test exists
+      // to rule out.
+      assert.ok((await grant()) >= 1, "one owner grant latches at least one escalating scope");
       // A second grant is refused, so the twenty presses below cannot be spending
       // twenty latches -- the bound has to be in the GRANT as well as the spend.
       assert.equal(await new PostgresIntakeOwnerRetryStoreV1(database(ownerLogin)).grant({ tenantId: scope.tenantId,
@@ -1718,8 +1726,17 @@ test("ONE owner grant and twenty concurrent presses is ONE run, and nineteen hon
           return (await working_.coordinateInitial({ principal: agent, projectId: scope.projectId,
             ownerRequest: description, idempotencyKey: `p3-press-${String(index).padStart(4, "0")}`, now: LATER })).status;
         }));
+        // The counter rows are read here rather than only the run count, because
+        // "3 runs" without them is a number nobody can act on: the defect is 0205's
+        // grant function latching BOTH the project scope and the request scope in
+        // one call, so the scopes that still carry a latch afterwards name which of
+        // them was spent twice.
+        const remaining = await admin.query<{ scope_key: string; failure_count: string; latched: string }>(
+          `SELECT scope_key, failure_count::text, coalesce(owner_retry_cleared_at::text,'') AS latched
+             FROM control_planner_failure_counters ORDER BY scope_key`);
         assert.equal(runs, 1,
-          `one owner grant authorised ${runs} planner runs under twenty concurrent presses; it must authorise exactly one`);
+          `one owner grant authorised ${runs} planner runs under twenty concurrent presses; `
+          + `it must authorise exactly one. counters: ${JSON.stringify(remaining.rows)}`);
         const statuses = outcomes.reduce<Record<string, number>>((acc, status) => {
           acc[status] = (acc[status] ?? 0) + 1; return acc;
         }, {});

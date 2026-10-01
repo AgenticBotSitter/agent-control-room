@@ -511,9 +511,28 @@ export class IntakeCoordinatorV1 {
    * The grant is checked only when the count HAS escalated, so an unconfigured
    * store (one with no `ownerRetryGranted`) answers the same way it always did. */
   async #escalated(input: Readonly<{ projectScope: string; failureScope: string }>) {
+    // ONE GRANT IS ONE RUN, WHICHEVER SCOPE IT LANDED ON. The loop returns as soon
+    // as a retry is SPENT, not as soon as one fails to be spent, and that return is
+    // the fix for a bound the round-4 test still measured wrong.
+    //
+    // 0205's grant function is given ALL FOUR candidate scope keys and its UPDATE
+    // matches every row among them, so one owner grant latches BOTH the project
+    // scope and the request scope when both are at 2 or more -- which is exactly
+    // what a second failure produces. A loop that spent on each scope in turn
+    // therefore authorised two runs from one grant, and measured 3 under twenty
+    // concurrent presses (the third being the losing press that found the request
+    // scope already spent and the project scope freshly re-escalated).
+    //
+    // The spend zeroes failure_count in the SAME statement, so the row it spent is
+    // at 0 and cannot be spent again; the other scope's row is still latched, and
+    // the press is over. A press that arrives later re-reads the escalation and
+    // finds no latch, so it answers needs_you -- which is the bound.
     for (const scope of [input.projectScope, input.failureScope]) {
       if (await this.failures.count(scope) < 2) continue;
-      if (!(await this.#spendRetry(scope))) return true;
+      const spent = await this.#spendRetry(scope);
+      // Spent or not, this press has had its one decision about a retry.
+      if (spent) return false;
+      return true;
     }
     return false;
   }
