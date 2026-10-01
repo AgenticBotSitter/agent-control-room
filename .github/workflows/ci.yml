@@ -274,6 +274,8 @@ jobs:
         run: node --test tests/check-pr-claims.test.mjs
       - name: Test the affected-test planner
         run: node --test tests/affected-tests.test.mjs
+      - name: Test the generic VPS front-door installer
+        run: pnpm run test:front-door
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
       - name: Reject stale or incomplete test quarantines

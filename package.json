@@ -107,6 +107,7 @@
     "test:private-local-installation-operator": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-local-installation-operator.test.ts",
     "test:private-local-installation-operator-cli": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-local-installation-operator-cli.test.ts",
     "test:private-activation": "node scripts/run-tests-with-quarantine.mjs --test tests/private-vps-activation.test.mjs",
+    "test:front-door": "node scripts/run-tests-with-quarantine.mjs --test tests/front-door-vps-setup.test.mjs",
     "test:private-postgres-production-boundary": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-postgres-production-boundary.test.ts && node scripts/run-tests-with-quarantine.mjs --test tests/private-postgres-owner-tool-host.test.mjs",
     "test:private-installed-configuration-custody": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-installed-configuration-custody.test.ts",
     "test:private-installed-configuration-preparation": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-installed-configuration-preparation.test.ts",
