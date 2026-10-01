@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import test, { after } from "node:test";
 import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
@@ -46,9 +47,21 @@ test("an uncertain write makes health unready and a supervised replacement serve
   "concurrent callers after the uncertain write must fail closed without reaching the old pool");
   assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "COMMIT"]);
 
-  const nonces = Array.from({ length: 50 }, (_, index) => Buffer.alloc(32, index + 1).toString("base64url"));
+  // Each nonce must be a REAL one -- `createHealthNonceV1` at the CURRENT clock,
+  // because verifyHealthRequestV1 rejects a nonce whose embedded issued-at falls
+  // outside the fixed window around the server's own clock, and this app is
+  // built with no injected clock, so that clock is `Date.now()`. (Using this
+  // file's `conformanceNow` constant instead minted a nonce 17 days stale and
+  // every probe was refused 403.) Each also carries its `reqTag`, which
+  // verifyHealthRequestV1's exactObject(["nonce","reqTag"]) requires after the
+  // merge into cook/v1 brought in item 14's request-signing contract. The
+  // assertion below is about a health-probe BURST exposing the outage, so the
+  // probes have to be well-formed enough to reach the signed response at all.
+  const nonces = Array.from({ length: 50 }, () =>
+    createHealthNonceV1(Date.now(), size => randomBytes(size)));
   const health = await Promise.all(nonces.map(nonce => app.handle(new Request(`${origin}/api/v1/local-host-health`, {
-    method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }),
+    method: "POST", headers: { origin, "content-type": "application/json" },
+    body: JSON.stringify({ nonce, reqTag: healthRequestTagV1(key, nonce, LOCAL_HOST_HEALTH_ENDPOINT_V1) }),
   }), () => new Response("unused"))));
   assert.equal(health.every(response => response.status === 200), true);
   const bodies = await Promise.all(health.map(response => response.json())) as Array<Record<string, unknown>>;
