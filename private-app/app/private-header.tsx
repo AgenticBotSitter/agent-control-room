@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useProductDisplayName, useProductModule } from "./product-configuration";
 import { useLocalRuntime } from "./local-runtime";
 import { readTaskAttention } from "../../src/web/v1/queue-attention-browser-client";
-import { headerPageRegistry } from "./page-registry";
+import { headerPageRegistry, isPageRegistryEntryVisible } from "./page-registry";
 
 function isCurrent(pathname: string | undefined, href: string) {
   return href === "/" ? pathname === href : pathname === href || pathname?.startsWith(`${href}/`);
@@ -98,14 +98,18 @@ export function PrivateHeader() {
       toggle's `aria-expanded` is what conveys the collapsed state. */}
     <nav id="private-workspace-navigation" className={menuOpen ? "private-navigation is-open" : "private-navigation"}
       aria-label="Workspace pages">
-      {headerPageRegistry.filter(item => runtime.mode === "hosted" ? !item.localOnly && (!item.optional || ideaLab)
-        : ["/", "/morning", "/projects", "/workers", "/session-watch", "/needs-me", "/sign-out"].includes(item.headerHref ?? item.href)).map(item => {
+      {headerPageRegistry.filter(item => isPageRegistryEntryVisible(item, {
+        runtimeMode: runtime.mode, enabledProductModules: { ideaLab },
+      })).map(item => {
         const href = item.headerHref ?? item.href;
         return <a key={item.key} href={href} aria-current={isCurrent(pathname, href) ? "page" : undefined}>
         {item.headerTitle ?? item.title}{item.optional ? <span className="private-optional">Optional</span> : null}
         {item.key === "needs-me" ? <NeedsAttentionBadge enabled={runtime.mode !== "checking"} /> : null}
       </a>;
       })}
+      {/* Sign out is an account action, not the `/session` page. Keep the
+          established Mac-local action without making that page navigable. */}
+      {runtime.mode !== "hosted" ? <a href="/sign-out" aria-current={isCurrent(pathname, "/sign-out") ? "page" : undefined}>Sign out</a> : null}
     </nav>
   </header>;
 }

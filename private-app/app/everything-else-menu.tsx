@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { pageGroupLabels, pageRegistry, type PageGroup } from "./page-registry";
+import { useProductModule } from "./product-configuration";
+import { useLocalRuntime } from "./local-runtime";
+import { isPageRegistryEntryVisible, pageGroupLabels, pageRegistry, type PageGroup } from "./page-registry";
 
 const groups: readonly PageGroup[] = ["projects", "workers", "automation", "system"];
 
@@ -12,6 +14,8 @@ function matches(entry: (typeof pageRegistry)[number], query: string) {
 }
 
 export function EverythingElseMenu() {
+  const runtime = useLocalRuntime();
+  const ideaLab = useProductModule("ideaLab");
   const [query, setQuery] = useState("");
   const [phone, setPhone] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -36,7 +40,9 @@ export function EverythingElseMenu() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [phone, menuOpen]);
-  const visible = useMemo(() => pageRegistry.filter(entry => matches(entry, query)), [query]);
+  const visible = useMemo(() => pageRegistry.filter(entry => isPageRegistryEntryVisible(entry, {
+    runtimeMode: runtime.mode, enabledProductModules: { ideaLab },
+  }) && matches(entry, query)), [ideaLab, query, runtime.mode]);
   return <section className="private-panel private-everything-else" aria-labelledby="everything-else-title">
     <div className="private-everything-else-heading">
       <h2 id="everything-else-title">Everything else</h2>
@@ -47,6 +53,7 @@ export function EverythingElseMenu() {
       <label className="private-everything-else-filter" htmlFor="everything-else-filter">Find a page…</label>
       <input id="everything-else-filter" type="search" value={query} onChange={event => setQuery(event.target.value)}
         placeholder="Find a page…" autoComplete="off" />
+      <p className="private-sr-only" role="status" aria-live="polite">{visible.length} {visible.length === 1 ? "page" : "pages"} found</p>
       {visible.length ? <div className="private-page-groups">
         {groups.map(group => {
           const entries = visible.filter(entry => entry.group === group);
@@ -55,7 +62,7 @@ export function EverythingElseMenu() {
             <ul>{entries.map(entry => <li key={entry.key}><a href={entry.href}>{entry.title}</a></li>)}</ul>
           </section> : null;
         })}
-      </div> : <p className="private-page-filter-empty" role="status">No pages match '{query}'.</p>}
+      </div> : <p className="private-page-filter-empty">No pages match '{query}'.</p>}
     </div>
   </section>;
 }
