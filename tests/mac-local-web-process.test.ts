@@ -73,7 +73,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   });
   const origin = "http://127.0.0.1:3210", trustedOrigin = "https://control-room-mac.example.ts.net";
   const ownerCode = "mac-local-owner-code-long-enough";
-  let actionInboxReads = 0;
+  let actionInboxReads = 0; const passkeyCalls: unknown[] = [];
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
@@ -87,13 +87,21 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
     taskWorkersStarted: true,
     actionInboxSource: { read: async () => { actionInboxReads += 1; return {
-      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } } });
+      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } },
+    passkeyRegistration: {
+      options: async input => { passkeyCalls.push(input); return { publicKey: { challenge: "A".repeat(43) } }; },
+      insert: async input => { passkeyCalls.push(input); return { accepted: true }; },
+    } });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedOutApi = await app.handle(request("/api/v1/projects"), () => new Response("unused"));
   assert.equal(signedOutApi.status, 401);
   assert.deepEqual(await signedOutApi.json(), { error: "authentication_required" });
   const signedOutInbox = await app.handle(request("/api/v1/needs-me/action-items"), () => new Response("unused"));
   assert.equal(signedOutInbox.status, 401);
+  const signedOutPasskey = await app.handle(request("/api/v1/passkeys/registration/options", { method: "POST",
+    headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ registrationSecret: "A".repeat(43) }) }),
+  () => new Response("unused"));
+  assert.equal(signedOutPasskey.status, 401);
   const signedOutFile = await app.handle(request("/api/v1/projects/project:test/tasks/job:test/files/artifact:test?disposition=preview&token=untrusted"),
     () => new Response("unused"));
   assert.equal(signedOutFile.status, 401, "file preview requires an authenticated owner session before a ticket is considered");
@@ -129,6 +137,21 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);
   const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const passkeyHeaders = { cookie: cookie!, origin, "content-type": "application/json" };
+  const passkeyOptions = await app.handle(request("/api/v1/passkeys/registration/options", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43) }) }), () => new Response("unused"));
+  assert.equal(passkeyOptions.status, 200);
+  const passkeyResponse = { id: "B".repeat(43), rawId: "B".repeat(43), type: "public-key", response: {} };
+  const passkeyInsert = await app.handle(request("/api/v1/passkeys/registration", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43), comparisonCode: "ABC234",
+      response: passkeyResponse, authorizationAssertion: null }) }), () => new Response("unused"));
+  assert.equal(passkeyInsert.status, 201); assert.deepEqual(await passkeyInsert.json(), { accepted: true });
+  assert.equal(passkeyCalls.length, 2);
+  assert.match((passkeyCalls[0] as { ownerSessionDigest: string }).ownerSessionDigest, /^sha256:[a-f0-9]{64}$/);
+  const oversizedPasskey = await app.handle(request("/api/v1/passkeys/registration", { method: "POST",
+    headers: passkeyHeaders, body: JSON.stringify({ registrationSecret: "A".repeat(43), comparisonCode: "ABC234",
+      response: { value: "x".repeat(21_000) }, authorizationAssertion: null }) }), () => new Response("unused"));
+  assert.equal(oversizedPasskey.status, 400); assert.equal(passkeyCalls.length, 2);
   const actionInboxResponse = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(actionInboxResponse.status, 200, await actionInboxResponse.clone().text());
   assert.deepEqual(await actionInboxResponse.json(), { observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false });

@@ -6,6 +6,7 @@ import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
 import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
   newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
+import { PasskeyAuthorityV1, PasskeyRefusalAggregatorV1, SimpleWebAuthnVerifierV1 } from "./passkey.mjs";
 
 // The fixed updater bundle exposes the item-13 actuator for composition with
 // the item-5 lifecycle and item-14 health ports. `startUpdaterV1` accepts that
@@ -96,6 +97,14 @@ export async function startUpdaterV1(options = {}) {
   stateFiles.settleJournalRecovery = () => { journalRecoveryPending = false; };
   const runner = new UpdaterRunnerV1({ store, effects, referee, mode, stateFiles, journal,
     onHeartbeatState: setHeartbeatState });
+  // Item 10b binds the web/approval polling loop. Item 10a exposes the complete
+  // authority and typed DB/sink ports now, without adding SQL here.
+  const passkeyStore = options.passkeyStore ?? store;
+  const passkeys = options.passkeys ?? new PasskeyAuthorityV1({ root,
+    store: passkeyStore, verifier: options.passkeyVerifier ?? new SimpleWebAuthnVerifierV1() });
+  const refusalAggregator = options.refusalAggregator ?? (passkeyStore?.recordApprovalRefusal && options.refusalJournal
+      && options.refusalPush ? new PasskeyRefusalAggregatorV1({ store: passkeyStore,
+        journal: options.refusalJournal, push: options.refusalPush }) : undefined);
   const ownerActions = options.ownerActions ?? { handle: async request => {
     if (request.request_kind === "pause") mode.set("paused");
     else if (request.request_kind === "stop") mode.set("stopped");
@@ -111,6 +120,25 @@ export async function startUpdaterV1(options = {}) {
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportTimerError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
+    if (request.verb === "passkey-add-begin") {
+      if (request.arguments.length) throw updaterRefuseV1("updater_passkey_arguments_refused");
+      const registration = await passkeys.beginRegistration({ mode: "add" });
+      return { registrationSecret: registration.registrationSecret,
+        expectedOrigin: registration.config.expectedOrigin, expiresAt: registration.expiresAt };
+    }
+    if (request.verb === "passkey-add-complete") {
+      if (request.arguments.length !== 2) throw updaterRefuseV1("updater_passkey_arguments_refused");
+      return passkeys.completeRegistration({ registrationSecret: request.arguments[0], typedCode: request.arguments[1] });
+    }
+    if (request.verb === "passkey-list") {
+      if (request.arguments.length) throw updaterRefuseV1("updater_passkey_arguments_refused");
+      return passkeys.listPasskeys();
+    }
+    if (request.verb === "passkey-revoke") {
+      if (request.arguments.length !== 1 || !/^[1-9][0-9]{0,2}$/u.test(request.arguments[0]))
+        throw updaterRefuseV1("updater_passkey_number_refused");
+      return passkeys.revokePasskey(Number(request.arguments[0]));
+    }
     const map = { pause: "paused", resume: "running", stop: "stopped" };
     if (map[request.verb]) { mode.set(map[request.verb]); return { accepted: true }; }
     return ownerActions.handle({ request_kind: request.verb.replaceAll("-", "_"), detail: { arguments: request.arguments },
@@ -127,7 +155,7 @@ export async function startUpdaterV1(options = {}) {
     if (ownsClient) await client.end();
     throw error;
   }
-  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control,
+  return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, passkeys, refusalAggregator,
     setHeartbeatState,
     async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
       if (ownsClient) await client.end(); } });
