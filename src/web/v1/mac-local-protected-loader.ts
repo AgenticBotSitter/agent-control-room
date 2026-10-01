@@ -1,7 +1,8 @@
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { captureMacLocalProtectedConfigurationV1, type MacLocalProtectedConfigurationV1 } from "./mac-local-protected-configuration";
-import { captureMacLocalDatabaseRolesV1, type MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
+import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1, type MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
+import { validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
 import { captureWorkIntakeServerConfigurationV1, type WorkIntakeServerConfigurationV1 } from
   "../../work-intake/v1/installed-configuration";
 import { captureOwnerWebPushConfigV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
@@ -41,10 +42,11 @@ export async function loadMacLocalProtectedConfigurationFromRootV1(protectedRoot
   } catch { throw new Error("mac_local_protected_configuration_root_invalid"); }
 }
 
-/** Reads the fixed six-role map beside mac-local.json. Every role is checked
- * by the existing one-authority-database validator before any pool can open. */
-export async function loadMacLocalDatabaseRolesFromRootV1(protectedRoot: string,
-  runtime: Runtime = production): Promise<MacLocalDatabaseRolesV1> {
+/** The protected-file checks every database-role read shares. Returns the
+ * parsed `database-roles.json`, or throws. A link, a world- or group-readable
+ * file, an oversized file, or a lax directory is refused before any JSON is
+ * parsed, so no caller gets a record out of a file the owner did not protect. */
+async function readProtectedDatabaseRolesFileV1(protectedRoot: string, runtime: Runtime): Promise<Record<string, unknown>> {
   if (!isAbsolute(protectedRoot) || resolve(protectedRoot) !== protectedRoot) throw new Error("mac_local_database_roles_root_invalid");
   const configRoot = join(protectedRoot, "config"), path = join(configRoot, "database-roles.json");
   if (resolve(path) !== path) throw new Error("mac_local_database_roles_root_invalid");
@@ -55,8 +57,45 @@ export async function loadMacLocalDatabaseRolesFromRootV1(protectedRoot: string,
     }
     const entry = await runtime.lstat(path);
     if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0 || entry.size > 64 * 1024) throw new Error();
-    return captureMacLocalDatabaseRolesV1(JSON.parse(await runtime.readFile(path, "utf8")));
+    return JSON.parse(await runtime.readFile(path, "utf8")) as Record<string, unknown>;
   } catch { throw new Error("mac_local_database_roles_root_invalid"); }
+}
+
+/** Reads the fixed six-role map beside mac-local.json. Every role is checked
+ * by the existing one-authority-database validator before any pool can open. */
+export async function loadMacLocalDatabaseRolesFromRootV1(protectedRoot: string,
+  runtime: Runtime = production): Promise<MacLocalDatabaseRolesV1> {
+  try { return captureMacLocalDatabaseRolesV1(await readProtectedDatabaseRolesFileV1(protectedRoot, runtime)); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException)?.message === "mac_local_database_roles_root_invalid") throw error;
+    throw new Error("mac_local_database_roles_invalid");
+  }
+}
+
+/**
+ * Reads ONLY the `web` login out of the same protected record, under the same
+ * no-follow/mode/size/directory checks, validated by the same one-authority
+ * configuration validator.
+ *
+ * Why this exists: the full-map loader requires the six-role record a
+ * COMPLETED install writes. An install that has not yet run `--finish` carries
+ * only the four always-present logins, so anything that runs BEFORE the
+ * database handoff — `mac:upgrade`'s own ledger-head read — could not read the
+ * record it was about to upgrade. That made `pnpm mac:upgrade` refuse on
+ * exactly the installs it exists for, with an unrecognised
+ * `mac_local_database_roles_root_invalid` that the CLI collapsed to the opaque
+ * `upgrade_failed`. This reader is narrower rather than laxer: it accepts a
+ * record with fewer logins, but still reads it as a protected file, still
+ * validates the one database, and still cannot invent a username.
+ */
+export async function loadMacLocalWebRoleFromRootV1(protectedRoot: string,
+  runtime: Runtime = production): Promise<PrivatePostgresConfiguration> {
+  const record = await readProtectedDatabaseRolesFileV1(protectedRoot, runtime);
+  try {
+    if (record.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || !record.web || typeof record.web !== "object"
+      || Array.isArray(record.web)) throw new Error();
+    return validatePrivatePostgresConfiguration(record.web as PrivatePostgresConfiguration);
+  } catch { throw new Error("mac_local_database_roles_invalid"); }
 }
 
 /** Optional installed child of the existing Mac-local host. A missing record
