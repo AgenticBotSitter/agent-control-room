@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -391,6 +391,69 @@ test("dry-run lists changes and writes nothing", async () => {
     assert.match(result.stdout, /would move apache website listeners/u);
     assert.match(result.stdout, /would save and reset the existing Tailscale Serve configuration/u);
     assert.deepEqual(await treeSnapshot(harness.root), before);
+  } finally { await rm(harness.directory, { recursive: true, force: true }); }
+});
+
+test("Apache ports.conf and Caddyfile escapes are refused on apply without changes", async () => {
+  for (const variant of ["apache", "caddy"]) {
+    const harness = await createHarness(variant);
+    try {
+      const config = variant === "apache"
+        ? join(harness.root, "etc/apache2/ports.conf")
+        : join(harness.root, "etc/caddy/Caddyfile");
+      const outside = join(harness.directory, `outside-${variant}.conf`);
+      await writeFile(outside, `outside ${variant}\n`);
+      await rm(config);
+      await symlink(outside, config);
+      const before = await treeSnapshot(harness.root);
+
+      const result = await run(setupScript, harness.args, { env: harness.env });
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /(?:Apache ports\.conf|Caddyfile) escapes the selected root/u);
+      assert.equal(await readlink(config), outside);
+      assert.equal(await readFile(outside, "utf8"), `outside ${variant}\n`);
+      assert.deepEqual(await treeSnapshot(harness.root), before);
+    } finally { await rm(harness.directory, { recursive: true, force: true }); }
+  }
+});
+
+test("Apache ports.conf and Caddyfile escapes are refused on remove without changes", async () => {
+  for (const variant of ["apache", "caddy"]) {
+    const harness = await createHarness(variant);
+    try {
+      const installed = await run(setupScript, harness.args, { env: harness.env });
+      assert.equal(installed.code, 0, installed.stderr);
+      const config = variant === "apache"
+        ? join(harness.root, "etc/apache2/ports.conf")
+        : join(harness.root, "etc/caddy/Caddyfile");
+      const outside = join(harness.directory, `outside-remove-${variant}.conf`);
+      await writeFile(outside, `outside ${variant}\n`);
+      await rm(config);
+      await symlink(outside, config);
+      const before = await treeSnapshot(harness.root);
+
+      const result = await run(setupScript, ["--test-root", harness.root, "--remove"], { env: harness.env });
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /(?:Apache ports\.conf|Caddyfile) escapes the selected root/u);
+      assert.equal(await readlink(config), outside);
+      assert.equal(await readFile(outside, "utf8"), `outside ${variant}\n`);
+      assert.deepEqual(await treeSnapshot(harness.root), before);
+    } finally { await rm(harness.directory, { recursive: true, force: true }); }
+  }
+});
+
+test("apply, dry-run, idempotency, and remove all run with nounset enabled", async () => {
+  const harness = await createHarness("nothing");
+  try {
+    assert.match(await readFile(setupScript, "utf8"), /^set -euo pipefail$/mu);
+    const dryRun = await run(setupScript, [...harness.args, "--dry-run"], { env: harness.env });
+    assert.equal(dryRun.code, 0, dryRun.stderr);
+    const applied = await run(setupScript, harness.args, { env: harness.env });
+    assert.equal(applied.code, 0, applied.stderr);
+    const idempotent = await run(setupScript, harness.args, { env: harness.env });
+    assert.equal(idempotent.code, 0, idempotent.stderr);
+    const removed = await run(setupScript, ["--test-root", harness.root, "--remove"], { env: harness.env });
+    assert.equal(removed.code, 0, removed.stderr);
   } finally { await rm(harness.directory, { recursive: true, force: true }); }
 });
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Generic Ubuntu/Debian front-door installer. TLS on :443 is never terminated
 # here: HAProxy reads ClientHello SNI and forwards the original byte stream.
-set -eo pipefail
+set -euo pipefail
 umask 077
 
 root=/
@@ -15,8 +15,8 @@ dry_run=
 remove=
 render=
 disable_old_serve=
-declare -a website_hosts=()
-declare -a allowed_sources=()
+website_hosts=()
+allowed_sources=()
 
 usage() {
   cat <<'EOF'
@@ -132,7 +132,7 @@ validate_render_inputs() {
   [ "$front_port" != "$site_http_port" ] && [ "$front_port" != "$site_https_port" ] \
     && [ "$site_http_port" != "$site_https_port" ] || refuse "ports must be distinct"
   local source
-  for source in "${allowed_sources[@]}"; do
+  for source in "${allowed_sources[@]+${allowed_sources[@]}}"; do
     valid_cidr "$source" || refuse "--allow-source must be an IPv4 or IPv6 CIDR"
   done
 }
@@ -177,7 +177,7 @@ frontend public_tls
 EOF
   if [ "${#allowed_sources[@]}" -gt 0 ]; then
     printf '  acl control_room_source_allowed src'
-    for source in "${allowed_sources[@]}"; do printf ' %s' "$source"; done
+    for source in "${allowed_sources[@]+${allowed_sources[@]}}"; do printf ' %s' "$source"; done
     printf '\n  tcp-request content reject if control_room_sni !control_room_source_allowed\n'
   fi
   cat <<EOF
@@ -210,6 +210,35 @@ state_dir="$state_root/state"
 lock_file="$root/run/control-room-front-door.lock"
 haproxy_config="$root/etc/haproxy/haproxy.cfg"
 
+resolved_file_within_root() {
+  local path=$1 description=$2 resolved
+  resolved=$(readlink -f "$path") || refuse "could not resolve $description"
+  { [ "$root" = / ] || [[ $resolved == "$root"/* ]]; } \
+    || refuse "$description escapes the selected root"
+  printf '%s\n' "$resolved"
+}
+
+check_haproxy_config_path() {
+  [ -e "$haproxy_config" ] || return 0
+  resolved_file_within_root "$haproxy_config" "HAProxy configuration" >/dev/null
+}
+
+check_fixed_variant_paths() {
+  local ports caddy
+  case $variant in
+    apache)
+      ports="$root/etc/apache2/ports.conf"
+      [ -f "$ports" ] || return 0
+      resolved_file_within_root "$ports" "Apache ports.conf" >/dev/null
+      ;;
+    caddy)
+      caddy="$root/etc/caddy/Caddyfile"
+      [ -f "$caddy" ] || return 0
+      resolved_file_within_root "$caddy" "Caddyfile" >/dev/null
+      ;;
+  esac
+}
+
 if [ -n "$remove" ]; then
   [ -z "$variant$front_host$tailnet_target$front_port$disable_old_serve" ] \
     && [ "${#website_hosts[@]}" -eq 0 ] && [ "${#allowed_sources[@]}" -eq 0 ] \
@@ -221,7 +250,7 @@ else
     refuse "at least one --website-host is required for this variant"
   fi
   local_host=
-  for local_host in "${website_hosts[@]}"; do
+  for local_host in "${website_hosts[@]+${website_hosts[@]}}"; do
     valid_host "$local_host" || refuse "--website-host must be a plain DNS hostname"
     [ "$(printf '%s' "$local_host" | tr '[:upper:]' '[:lower:]')" != \
       "$(printf '%s' "$front_host" | tr '[:upper:]' '[:lower:]')" ] \
@@ -256,8 +285,11 @@ run_change() {
 }
 
 if [ -n "$dry_run" ]; then
+  check_haproxy_config_path
   if [ -n "$remove" ]; then
     [ -d "$state_dir" ] || refuse "front door is not installed"
+    variant=$(awk -F= '$1 == "variant" { print $2; exit }' "$state_dir/meta")
+    check_fixed_variant_paths
     printf 'would restore the saved website, HAProxy, Tailscale, and service state\n'
     printf 'would verify every saved website before and after removal\n'
   else
@@ -276,6 +308,11 @@ if [ -n "$dry_run" ]; then
     fi
   fi
   exit 0
+fi
+
+if [ -z "$remove" ]; then
+  check_haproxy_config_path
+  check_fixed_variant_paths
 fi
 
 mkdir -p "${lock_file%/*}"
@@ -418,24 +455,33 @@ collect_variant_files() {
         [ -d "$entry" ] || continue
         while IFS= read -r -d '' resolved; do
           resolved=$(readlink -f "$resolved") || refuse "could not resolve nginx configuration"
-          [[ $resolved == "$root"/* ]] || refuse "website configuration escapes the selected root"
+          { [ "$root" = / ] || [[ $resolved == "$root"/* ]]; } \
+            || refuse "website configuration escapes the selected root"
           variant_files+=("$resolved")
         done < <(find -L "$entry" -type f \( -name '*.conf' -o -path "$root/etc/nginx/sites-enabled/*" \) -print0)
       done
       web_service=nginx
       ;;
     apache)
-      [ -f "$root/etc/apache2/ports.conf" ] && variant_files+=("$root/etc/apache2/ports.conf")
+      if [ -f "$root/etc/apache2/ports.conf" ]; then
+        resolved=$(resolved_file_within_root "$root/etc/apache2/ports.conf" "Apache ports.conf")
+        variant_files+=("$resolved")
+      fi
       if [ -d "$root/etc/apache2/sites-enabled" ]; then
         while IFS= read -r -d '' resolved; do
           resolved=$(readlink -f "$resolved") || refuse "could not resolve Apache configuration"
-          [[ $resolved == "$root"/* ]] || refuse "website configuration escapes the selected root"
+          { [ "$root" = / ] || [[ $resolved == "$root"/* ]]; } \
+            || refuse "website configuration escapes the selected root"
           variant_files+=("$resolved")
         done < <(find -L "$root/etc/apache2/sites-enabled" -type f -name '*.conf' -print0)
       fi
       web_service=apache2
       ;;
-    caddy) variant_files=("$root/etc/caddy/Caddyfile"); web_service=caddy ;;
+    caddy)
+      resolved=$(resolved_file_within_root "$root/etc/caddy/Caddyfile" "Caddyfile")
+      variant_files=("$resolved")
+      web_service=caddy
+      ;;
     nothing) variant_files=(); web_service= ;;
   esac
   if [ "$variant" != nothing ] && [ "${#variant_files[@]}" -eq 0 ]; then
@@ -479,7 +525,7 @@ PY
 
 health_check() {
   local port=$1 host
-  for host in "${website_hosts[@]}"; do
+  for host in "${website_hosts[@]+${website_hosts[@]}}"; do
     curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
       --connect-to "$host:443:127.0.0.1:$port" "https://$host/" >/dev/null
   done
@@ -565,8 +611,8 @@ same_install() {
     && [ "$(read_meta site_http_port)" = "$site_http_port" ] \
     && [ "$(read_meta site_https_port)" = "$site_https_port" ] \
     && [ "$(read_meta disable_old_serve)" = "${disable_old_serve:-no}" ] \
-    && cmp -s <(printf '%s\n' "${website_hosts[@]}") "$state_dir/website-hosts" \
-    && cmp -s <(printf '%s\n' "${allowed_sources[@]}") "$state_dir/allowed-sources" \
+    && cmp -s <(printf '%s\n' "${website_hosts[@]+${website_hosts[@]}}") "$state_dir/website-hosts" \
+    && cmp -s <(printf '%s\n' "${allowed_sources[@]+${allowed_sources[@]}}") "$state_dir/allowed-sources" \
     && cmp -s <(render_haproxy) "$haproxy_config"
 }
 
@@ -612,7 +658,7 @@ if [ -z "$remove" ]; then
   fi
   [ -f "$haproxy_config" ] && snapshot_file "$work_dir" "$haproxy_config" || : >"$work_dir/haproxy.absent"
   file=
-  for file in "${variant_files[@]}"; do snapshot_file "$work_dir" "$file"; done
+  for file in "${variant_files[@]+${variant_files[@]}}"; do snapshot_file "$work_dir" "$file"; done
   save_tailscale_state "$work_dir"
   printf '%s\n' "$timestamp" >"$work_dir/backup.timestamp"
 
@@ -648,8 +694,8 @@ if [ -z "$remove" ]; then
     printf 'package_preexisting=%s\n' "$package_preexisting"
     printf 'installed_at=%s\n' "$timestamp"
   } >"$work_dir/meta"
-  printf '%s\n' "${website_hosts[@]}" >"$work_dir/website-hosts"
-  printf '%s\n' "${allowed_sources[@]}" >"$work_dir/allowed-sources"
+  printf '%s\n' "${website_hosts[@]+${website_hosts[@]}}" >"$work_dir/website-hosts"
+  printf '%s\n' "${allowed_sources[@]+${allowed_sources[@]}}" >"$work_dir/allowed-sources"
   mv "$work_dir" "$state_dir"
   work_dir=
   transaction=
@@ -672,6 +718,9 @@ website_hosts=()
 while IFS= read -r entry; do [ -n "$entry" ] && website_hosts+=("$entry"); done <"$state_dir/website-hosts"
 allowed_sources=()
 while IFS= read -r entry; do [ -n "$entry" ] && allowed_sources+=("$entry"); done <"$state_dir/allowed-sources"
+check_haproxy_config_path
+check_fixed_variant_paths
+collect_variant_files
 health_check 443
 work_dir="$state_root/.remove-$$"
 mkdir -p "$work_dir/files"
