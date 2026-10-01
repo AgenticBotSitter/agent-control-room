@@ -78,8 +78,8 @@
   },
   {
     "file": "deploy/front-door/vps-setup.sh",
-    "find": "if [ -n \"$dry_run\" ]; then\n  if [ -n \"$remove\" ]; then",
-    "replace": "if false; then\n  if [ -n \"$remove\" ]; then",
+    "find": "if [ -n \"$dry_run\" ]; then\n  check_haproxy_config_path\n  if [ -n \"$remove\" ]; then",
+    "replace": "if false; then\n  check_haproxy_config_path\n  if [ -n \"$remove\" ]; then",
     "test": "node --test --test-name-pattern='dry-run lists changes' tests/front-door-vps-setup.test.mjs",
     "why": "dry-run must return before any mutation"
   },
