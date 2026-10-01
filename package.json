@@ -154,7 +154,7 @@
     "mac:down": "node scripts/mac-local/down.mjs",
     "mac:status": "node scripts/mac-local/status.mjs",
     "mac:upgrade": "node --import tsx scripts/mac-local/upgrade.mjs",
-    "test:mac-upgrade": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/mac-local-upgrade.test.mjs && pnpm run test:entry-guards test:mac-upgrade-default-path",
+    "test:mac-upgrade": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/mac-local-upgrade.test.mjs && pnpm run test:entry-guards && pnpm run test:mac-upgrade-default-path",
     "mac:remote-access": "node --import tsx scripts/mac-local/remote-access.ts",
     "test:mac-host-supervisor": "node --test tests/mac-local-task-host-supervisor.test.mjs",
     "mac:service-status": "node scripts/mac-local/service-status.mjs",
