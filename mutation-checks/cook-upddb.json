@@ -1,0 +1,79 @@
+[
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF TG_OP = 'INSERT' AND NOT EXISTS (SELECT 1 FROM updater.plans p WHERE p.plan_id = NEW.plan_id\n      AND p.state = 'approved' AND p.expires_at > pg_catalog.now()) THEN",
+    "replace": "  IF TG_OP = 'INSERT' AND false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "B2: a run must be bound to an approved, unexpired plan at INSERT, or a refused or expired approval can still start an update. Removing the check lets an INSERT against a closed plan through."
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NEW.state = 'superseded' AND EXISTS (\n      SELECT 1 FROM updater.runs r WHERE r.plan_id = OLD.plan_id AND r.finished_at IS NULL) THEN",
+    "replace": "  IF NEW.state = 'superseded' AND false AND EXISTS (\n      SELECT 1 FROM updater.runs r WHERE r.plan_id = OLD.plan_id AND r.finished_at IS NULL) THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "B2: a plan with a LIVE run may not be superseded, or a newer commit landing mid-update moves the plan out from under the run executing from it (review P2)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "    (OLD.state = 'uncertain' AND NEW.state IN ('succeeded','rolled_back','rollback_started')) OR",
+    "replace": "    (OLD.state = 'uncertain' AND NEW.state IN ('rollback_started')) OR",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "B3: `uncertain` must be able to reach the measured terminal states, or \"Check and continue\" cannot clear the state it exists to clear (review P1)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF OLD.state = 'uncertain' AND NEW.state IN ('succeeded','rolled_back')\n      AND NEW.detail->>'measured' IS DISTINCT FROM 'true' THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "B3: leaving `uncertain` as `succeeded` requires `detail.measured = true`, per design §11 — without it the database records a success on a run that admits it does not know what happened"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "    (OLD.state = 'attended_upgrade_required' AND NEW.state IN ('succeeded','rolled_back','rollback_started'))",
+    "replace": "    (OLD.state = 'attended_upgrade_required' AND NEW.state IN ('rollback_started'))",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "B3: §9.7's attended hand-off must be able to record what the owner watched, or the attended upgrader cannot finish"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NOT FOUND THEN\n    RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';\n  END IF;",
+    "replace": "  IF NOT FOUND AND false THEN\n    RAISE EXCEPTION 'updater run lease lost for %', p_run_id USING ERRCODE = '42501';\n  END IF;",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "B4: the lease token is re-checked INSIDE the atomic statement, so a caller without it moves nothing rather than reading ownership and then writing"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NOT p_terminal THEN\n    INSERT INTO updater.run_events(run_id, ordinal, state, detail)",
+    "replace": "  IF false THEN\n    INSERT INTO updater.run_events(run_id, ordinal, state, detail)",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "B4: the journal mirror row is written by the SAME statement as the move; removing it leaves `guard_run_state`'s journal-agreement check to wedge the next step"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "REVOKE ALL ON FUNCTION updater.record_run_step(text, text, text, jsonb, boolean) FROM PUBLIC;",
+    "replace": "-- mutation removes the revoke of the atomic transition function",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "B4: the web login owns the tables but must not reach the routine, or a compromised release can move a run row"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "  IF NOT FOUND OR plan_kind IS DISTINCT FROM expected_kind THEN",
+    "replace": "  IF false THEN",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "M1: a rollback request must cite an approval for a `kind:rollback` plan; without the check it can cite an install plan's approval (review P5c)"
+  },
+  {
+    "file": "src/updater/v1/ddl/0003_guards.sql",
+    "find": "CREATE OR REPLACE FUNCTION updater.guard_owner_request_approval_kind() RETURNS trigger\nLANGUAGE plpgsql SECURITY DEFINER",
+    "replace": "CREATE OR REPLACE FUNCTION updater.guard_owner_request_approval_kind() RETURNS trigger\nLANGUAGE plpgsql",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "M1: the guard reads `plans`, which the web login has no privilege on, so SECURITY DEFINER is load-bearing — without it the trigger fails and refuses EVERY rollback request"
+  },
+  {
+    "file": "src/updater/v1/ddl/0002_schema.sql",
+    "find": "    ALTER TABLE updater.owner_requests ADD CONSTRAINT owner_request_passkey_kinds\n      CHECK ((request_kind IN ('rollback','serve_accepted')) = requires_passkey);",
+    "replace": "    ALTER TABLE updater.owner_requests ADD CONSTRAINT owner_request_passkey_kinds\n      CHECK (true);",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
+    "why": "M1: `requires_passkey` is derived from the request KIND, not chosen by the web login; without it a rollback can claim it needs no passkey (review P5a)"
+  }
+]
