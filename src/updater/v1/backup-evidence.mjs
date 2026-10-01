@@ -269,8 +269,8 @@ export async function readOwnership(client) {
  * where a query landing in the wrong order produces a wrong row count.
  */
 export async function readDumpEvidence(client) {
-  await assertEvidenceReaderV1(client);
   await pinEvidenceSessionV1(client);
+  await assertEvidenceReaderV1(client);
   const shapeDigest = await readShapeDigest(client);
   const rowCounts = await readRowCounts(client);
   const ownership = await readOwnership(client);

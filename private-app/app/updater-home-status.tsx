@@ -86,22 +86,30 @@ function Controls({ value, onChanged }: { value: UpdaterOwnerUiReadV1; onChanged
 
 export function UpdaterHomeStatus() {
   const [read, setRead] = useState<UpdaterOwnerUiBrowserReadV1>({ state: "not_configured" });
-  const [legacyState, setLegacyState] = useState<"off" | "attention">("attention");
+  const [legacy, setLegacy] = useState<Awaited<ReturnType<typeof readUpdaterHomeStatusV1>>>({
+    schema: "control-room.updater-home-status/v1", state: "attention", backup: null,
+  });
   const load = useCallback(async (signal: AbortSignal) => {
-    const next = await readUpdaterOwnerUiV1(fetch, signal);
-    if (next.state === "not_configured") setLegacyState((await readUpdaterHomeStatusV1(fetch, signal)).state);
+    const [next, nextLegacy] = await Promise.all([readUpdaterOwnerUiV1(fetch, signal), readUpdaterHomeStatusV1(fetch, signal)]);
+    if (!signal.aborted) setLegacy(nextLegacy);
     if (!signal.aborted) setRead(next);
   }, []);
   const refresh = useVisiblePolling(load);
-  if (read.state === "not_configured") return legacyState === "off"
+  const backupLine = legacy.backup === "failed"
+    ? <p className="private-updater-status private-updater-attention" role="alert"><strong>Backup needs your attention.</strong> Check the backup folder on this Mac, then choose Back up now.</p>
+    : legacy.backup === "missing"
+      ? <p className="private-updater-status private-updater-attention" role="alert"><strong>Backup is missing or too old.</strong> Connect the backup drive if you use one, then choose Back up now.</p>
+      : null;
+  if (read.state === "not_configured") return <>{legacy.state === "off"
     ? <p className="private-updater-status">Self-update: Off — fixes are installed by you on this Mac.</p>
-    : <p className="private-updater-status private-updater-attention" role="alert"><strong>Self-update needs your attention.</strong> The updater is not answering clearly.</p>;
-  if (read.state === "unavailable") return <p className="private-updater-status private-updater-attention" role="alert"><strong>Update status needs your attention.</strong> Control Room could not read the updater.</p>;
+    : <p className="private-updater-status private-updater-attention" role="alert"><strong>Self-update needs your attention.</strong> The updater is not answering clearly.</p>}{backupLine}</>;
+  if (read.state === "unavailable") return <><p className="private-updater-status private-updater-attention" role="alert"><strong>Update status needs your attention.</strong> Control Room could not read the updater.</p>{backupLine}</>;
   const value = read.value, isAttention = ["uncertain", "attended_upgrade_required", "needs_attention"].includes(value.state);
   const isProtectedPlan = value.plan?.classes.some(name => ["updater", "protected", "dependency"].includes(name)) ?? false;
   const isRedCard = isAttention || isProtectedPlan;
   return <section className={`private-panel private-updater-card ${isRedCard ? "private-attention-box has-items" : ""}`} aria-labelledby="updater-install-title">
     <PanelHeading id="updater-install-title">Install</PanelHeading>
+    {backupLine}
     <StateChip state={value.state} tone={isRedCard ? "bad" : value.state === "ready_for_approval" ? "warn" : "neutral"} label={stateWords[value.state]} />
     {value.activeSubscriptions === 0 ? <p className="private-updater-warning" role="alert"><strong>Phone alerts are off.</strong> No phone is subscribed, so update alerts cannot reach you.</p> : null}
     <Facts value={value} /><Controls value={value} onChanged={refresh} />

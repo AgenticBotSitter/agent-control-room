@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { PostgresUpdaterStoreV1 } from "./store.mjs";
 import { UpdaterControlServerV1 } from "./control-socket.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "./runner.mjs";
-import { FileStepJournalV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
+import { FileStepJournalV1, UpdaterBackupWorkerV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
   newUpdaterIdentityV1, reconcileJournalDisplayV1 } from "./runtime.mjs";
 import { updaterRefuseV1 } from "./contracts.mjs";
 import { UpdaterAlertSenderV1 } from "./alerts.mjs";
@@ -155,18 +155,28 @@ export async function startUpdaterV1(options = {}) {
   const refusalAggregator = options.refusalAggregator ?? (passkeyStore?.recordApprovalRefusal && options.refusalJournal
       && options.refusalPush ? new PasskeyRefusalAggregatorV1({ store: passkeyStore,
         journal: options.refusalJournal, push: options.refusalPush }) : undefined);
+  let backupWorker = null;
   const ownerActions = options.ownerActions ?? { handle: async request => {
     if (request.request_kind === "pause") {
       if (request.source !== "root" && await mode.read() === "stopped")
         throw updaterRefuseV1("updater_web_pause_from_stopped_refused");
       await mode.set("paused");
     }
-    else if (request.request_kind === "stop") await mode.set("stopped");
+    else if (request.request_kind === "stop") {
+      await mode.set("stopped");
+      backupWorker?.cancel();
+    }
     // A web login can mint an owner session and insert owner_requests. Resume is
     // therefore deliberately root-control-only until the approval join exists.
     else if (request.request_kind === "resume") throw updaterRefuseV1("updater_web_resume_refused");
     else if (request.request_kind === "check_and_continue")
       return runner.checkAndContinue({ source: request.source });
+    else if (request.request_kind === "backup_now") {
+      if (request.source !== "root" && request.requires_passkey !== false)
+        throw updaterRefuseV1("updater_backup_owner_request_refused");
+      if (!backupWorker) throw updaterRefuseV1("updater_backup_unavailable");
+      return backupWorker.runManual();
+    }
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
   // Item 19a, the nightly backup, on the DEFAULT path. Like `alerts`, the
@@ -178,6 +188,7 @@ export async function startUpdaterV1(options = {}) {
   // the database's 26-hour freshness bound is what then turns Home red and
   // blocks database plans, so a missing backup cannot pass unnoticed.
   let backup = options.backup === null || options.backup === false ? null : options.backup ?? null;
+  let backupUnavailable = false;
   if (options.backup === undefined && ownsClient) {
     try {
       const source = { host: env.PGHOST, port: env.PGPORT ? Number(env.PGPORT) : undefined, database: env.PGDATABASE };
@@ -187,12 +198,15 @@ export async function startUpdaterV1(options = {}) {
         return opened;
       } });
     } catch (error) {
+      backupUnavailable = true;
       reportError(Object.assign(new Error("updater_backup_unavailable"), { code: "updater_backup_unavailable",
         warning: true, cause: error }));
     }
   }
+  if (backup) backupWorker = options.backupWorker ?? new UpdaterBackupWorkerV1({ backup, stateFiles,
+    clock: options.backupClock, timeoutMs: options.backupTimeoutMs, onError: reportError });
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, watcher: options.watcher ?? null,
-    alerts: alertSender, alertFacts: options.alertFacts, onError: reportError, backup });
+    alerts: alertSender, alertFacts: options.alertFacts, onError: reportError, backupWorker, backupUnavailable });
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
@@ -239,15 +253,15 @@ export async function startUpdaterV1(options = {}) {
     await effects.recover?.();
     await control.start(); await heartbeat.beat(); await loop.tick(); await heartbeat.beat(); heartbeat.start(); loop.start();
   } catch (error) {
-    loop.stop(); await heartbeat.stop(); await control.stop();
+    loop.stop(); await backupWorker?.stop(); await heartbeat.stop(); await control.stop();
     if (store.release) await store.release().catch(() => {});
     if (ownsClient) await client.end();
     throw error;
   }
   return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, passkeys, refusalAggregator, alerts: alertSender,
-    backup,
+    backup, backupWorker,
     setHeartbeatState,
-    async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
+    async stop() { loop.stop(); await backupWorker?.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
       if (ownsClient) await client.end(); } });
 }
 

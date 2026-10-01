@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lchown, lstat, mkdir, open, opendir, rm } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { updaterRefuseV1 } from "./contracts.mjs";
@@ -74,17 +74,21 @@ const DEFAULT_TIMEOUTS_V1 = Object.freeze({ dumpMs: 3_600_000, restoreMs: 3_600_
  * code 0; anything else — a non-zero exit, a signal, a timeout, a spawn error,
  * a broken pipe — is a refusal carrying `code` and a bounded slice of stderr.
  */
-async function runChildV1({ spawnChild, file, args, runAs, timeoutMs, stdin = null, stdoutTo = null, code }) {
+async function runChildV1({ spawnChild, file, args, runAs, timeoutMs, stdin = null, stdoutTo = null, code,
+  signal = null }) {
+  if (signal?.aborted) throw updaterRefuseV1("updater_backup_cancelled");
   const child = spawnChild(file, args, {
     env: buildTrustedEnvironment(), shell: false, detached: true,
     stdio: [stdin ? "pipe" : "ignore", stdoutTo ? "pipe" : "ignore", "pipe"],
     ...(runAs ? { uid: runAs.uid, gid: runAs.gid } : {}),
   });
-  let stderr = "", timedOut = false;
+  let stderr = "", timedOut = false, cancelled = false;
   child.stderr?.on("data", chunk => { if (stderr.length < STDERR_MAX_V1) stderr += String(chunk); });
   // The process GROUP, so a pg_ctl or initdb that forked is killed whole. It is
   // this child's own group (detached), never a pattern.
   const killGroup = () => { try { process.kill(-child.pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch {} } };
+  const cancel = () => { cancelled = true; killGroup(); };
+  signal?.addEventListener("abort", cancel, { once: true });
   const timer = setTimeout(() => { timedOut = true; killGroup(); }, timeoutMs);
   const exited = new Promise((resolvePromise, reject) => {
     child.once("error", reject);
@@ -99,8 +103,8 @@ async function runChildV1({ spawnChild, file, args, runAs, timeoutMs, stdin = nu
     }));
     if (stdoutTo) flows.push(pipeline(child.stdout, stdoutTo));
     const [{ exitCode, signal }] = await Promise.all([exited, ...flows]);
-    if (timedOut || exitCode !== 0) {
-      const refusal = updaterRefuseV1(timedOut ? `${code}_timeout` : code);
+    if (cancelled || timedOut || exitCode !== 0) {
+      const refusal = updaterRefuseV1(cancelled ? "updater_backup_cancelled" : timedOut ? `${code}_timeout` : code);
       refusal.message = `${refusal.code}: exit ${exitCode ?? signal} ${stderr.replace(/\s+/gu, " ").trim()}`.slice(0, 400);
       throw refusal;
     }
@@ -110,7 +114,7 @@ async function runChildV1({ spawnChild, file, args, runAs, timeoutMs, stdin = nu
     const refusal = updaterRefuseV1(code);
     refusal.message = `${code}: ${error?.message ?? error}`.slice(0, 400);
     throw refusal;
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); signal?.removeEventListener("abort", cancel); }
 }
 
 /** A writable that hashes and counts every byte on its way to a descriptor. */
@@ -158,7 +162,13 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
 
   /** Stop and remove every scratch cluster a killed run left behind. Called
    * only under the backup lock, so none of them is in use. */
-  async function reapStaleScratchV1() {
+  const removeScratchV1 = async (path, signal = null) => {
+    if (runAs) await child("/bin/rm", ["-rf", path], { timeoutMs: timeouts.clusterMs,
+      code: "updater_backup_scratch_remove_failed", signal });
+    else await rm(path, { recursive: true, force: true, maxRetries: 2 });
+  };
+
+  async function reapStaleScratchV1(signal = null) {
     let directory;
     try { directory = await opendir(scratchRoot); } catch (error) { if (error?.code === "ENOENT") return; throw error; }
     for await (const item of directory) {
@@ -168,20 +178,21 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
       if (!entry?.isDirectory() || entry.isSymbolicLink()) continue;
       if (await lstat(join(path, "postmaster.pid")).catch(() => null)) {
         await child(bin("pg_ctl"), ["-D", path, "-m", "immediate", "-w", "-t", "30", "stop"],
-          { timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_stop_failed" }).catch(() => {});
+          { timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_stop_failed", signal }).catch(() => {});
       }
-      await rm(path, { recursive: true, force: true, maxRetries: 2 });
+      await removeScratchV1(path, signal);
     }
   }
 
   return Object.freeze({
-    async dump({ path }) {
+    sealBound: typeof seal === "function",
+    async dump({ path, signal }) {
       const reader = await connect({ host: source.host, port: source.port, user: BACKUP_READER_ROLE_V1,
         database: source.database });
       reader.on?.("error", () => {});
       try {
-        await assertEvidenceReaderV1(reader);
         await pinEvidenceSessionV1(reader);
+        await assertEvidenceReaderV1(reader);
         await reader.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
         const snapshot = String((await reader.query("SELECT pg_catalog.pg_export_snapshot() AS snapshot"))
           .rows[0]?.snapshot ?? "");
@@ -197,7 +208,7 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
           await child(bin("pg_dump"), ["--format=custom", `--snapshot=${snapshot}`, "--lock-wait-timeout=60000",
             "--no-password", "--host", source.host, ...portArgs, "--username", BACKUP_READER_ROLE_V1,
             "--dbname", source.database], { timeoutMs: timeouts.dumpMs, stdoutTo: sink,
-            code: "updater_backup_dump_failed" });
+            code: "updater_backup_dump_failed", signal });
           await handle.sync();
           written = result();
         } finally { await handle.close(); }
@@ -208,29 +219,33 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
       }
     },
 
-    async restoreVerify({ generationId, dumpPath }) {
+    async restoreVerify({ generationId, dumpPath, signal }) {
       await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
-      await reapStaleScratchV1();
+      await reapStaleScratchV1(signal);
       const dataDir = join(scratchRoot, `${SCRATCH_PREFIX_V1}${generationLeafV1(generationId)}`);
       await mkdir(dataDir, { recursive: false, mode: 0o700 });
       if (runAs) await lchown(dataDir, runAs.uid, runAs.gid);
       let started = false;
       try {
         await child(bin("initdb"), ["-D", dataDir, "-U", SCRATCH_ADMIN_V1, "-A", "trust", "--no-sync",
-          "-E", "UTF8", "--no-locale"], { timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_failed" });
+          "-E", "UTF8", "--no-locale"], { timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_failed", signal });
         // A throwaway cluster: socket inside its own 0700 data directory, no TCP
         // listener, and no durability (it exists to prove the dump restores).
-        const conf = await open(join(dataDir, "postgresql.conf"), constants.O_WRONLY | constants.O_APPEND
-          | (constants.O_NOFOLLOW ?? 0));
-        try {
-          await conf.write(`\nunix_socket_directories = ${confQuoteV1(dataDir)}\nlisten_addresses = ''\n`
-            + `port = ${scratchPort}\n`
-            + "fsync = off\nfull_page_writes = off\nsynchronous_commit = off\n"
-            + "max_connections = 20\nshared_buffers = 32MB\n");
-        } finally { await conf.close(); }
+        const settings = `\nunix_socket_directories = ${confQuoteV1(dataDir)}\nlisten_addresses = ''\n`
+          + `port = ${scratchPort}\n`
+          + "fsync = off\nfull_page_writes = off\nsynchronous_commit = off\n"
+          + "max_connections = 20\nshared_buffers = 32MB\n";
+        if (runAs) await child("/usr/bin/tee", ["-a", join(dataDir, "postgresql.conf")], {
+          timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_config_failed",
+          stdin: Readable.from([settings]), signal });
+        else {
+          const conf = await open(join(dataDir, "postgresql.conf"), constants.O_WRONLY | constants.O_APPEND
+            | (constants.O_NOFOLLOW ?? 0));
+          try { await conf.write(settings); } finally { await conf.close(); }
+        }
         started = true;
         await child(bin("pg_ctl"), ["-D", dataDir, "-l", join(dataDir, "server.log"), "-w", "-t", "60", "start"],
-          { timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_failed" });
+          { timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_failed", signal });
         // The scratch superuser runs FIXED statements only, before any dump byte
         // is in the cluster. The restore and the read run as the two
         // non-superusers it creates.
@@ -255,7 +270,7 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
             "--no-password", "--host", dataDir, "--port", String(scratchPort), "--username", SCRATCH_RESTORE_V1,
             "--dbname", SCRATCH_DATABASE_V1],
           { timeoutMs: timeouts.restoreMs, stdin: dump.createReadStream({ autoClose: false }),
-            code: "updater_backup_verify_failed" });
+            code: "updater_backup_verify_failed", signal });
         } finally { await dump.close(); }
         const reader = await connect({ host: dataDir, port: scratchPort, user: SCRATCH_READER_V1,
           database: SCRATCH_DATABASE_V1 });
@@ -267,7 +282,7 @@ export function postgresBackupPortsV1({ pgBin, source, connect, scratchRoot, run
       } finally {
         if (started) await child(bin("pg_ctl"), ["-D", dataDir, "-m", "immediate", "-w", "-t", "30", "stop"],
           { timeoutMs: timeouts.clusterMs, code: "updater_backup_scratch_stop_failed" }).catch(() => {});
-        await rm(dataDir, { recursive: true, force: true, maxRetries: 2 });
+        await removeScratchV1(dataDir);
       }
     },
 
@@ -309,8 +324,13 @@ export async function serviceAccountV1(name, { execFileAsync = promisify(execFil
  * As root, children drop to `_crdb`; a non-root caller (the test lane) runs them
  * as itself.
  */
-export async function createNightlyBackupV1({ root, client, connect, source, pgBin = null, runAs,
-  spawnChild, timeouts, ownerUid = null, scratchPort = 5432 }) {
+/** @param {{root: string, client: any, connect: Function,
+ * source: {host: string, port?: number, database: string}, pgBin?: string | null,
+ * runAs?: {uid: number, gid: number} | null, spawnChild?: Function, timeouts?: any,
+ * ownerUid?: number | null, scratchPort?: number}} options */
+export async function createNightlyBackupV1(options) {
+  const { root, client, connect, source, pgBin = null, runAs,
+    spawnChild, timeouts, ownerUid = null, scratchPort = 5432 } = options;
   if (typeof root !== "string" || !isAbsolute(root) || resolve(root) !== root)
     throw updaterRefuseV1("updater_backup_ports_refused");
   const store = new PostgresBackupStoreV1(client, {

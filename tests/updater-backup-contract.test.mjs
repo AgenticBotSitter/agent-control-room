@@ -419,6 +419,15 @@ test("a second concurrent caller is refused as busy, not queued behind the first
   assert.equal(store.names().filter(name => name === "acquireBackupLock").length, 1);
 });
 
+test("a stop before work begins is recorded as cancelled, not allowed to enter the dump path", async () => {
+  const store = new RecordingStore(), controller = new AbortController(); controller.abort();
+  const outcome = await makeBackup(store).runOnce({ manual: true, signal: controller.signal });
+  assert.equal(outcome.status, "failed"); assert.equal(outcome.code, "updater_backup_cancelled");
+  assert.ok(!store.names().includes("acquireBackupLock"), "a pre-cancelled worker never takes the backup lock");
+  assert.equal(store.calls.find(entry => entry.name === "failAttempt")?.code, "updater_backup_cancelled",
+    "the cancellation is still visible in the ledger");
+});
+
 test("an unconfigured backup root is a RECORDED failure, and touches no disk", async () => {
   const store = new RecordingStore();
   const backup = new UpdaterBackupV1({ store, ports: throwingPorts,
@@ -431,6 +440,33 @@ test("an unconfigured backup root is a RECORDED failure, and touches no disk", a
   // never put a single row on the ledger.
   assert.deepEqual(store.names(), ["acquireBackupLock", "policy", "beginAttempt", "failAttempt", "releaseBackupLock"]);
   assert.equal(store.calls.find(entry => entry.name === "failAttempt").code, "updater_backup_root_unconfigured");
+});
+
+test("an outside-root backup with no seal is refused before the first plaintext dump byte", async t => {
+  const base = await mkdtemp(join(await realpath(tmpdir()), "b19-seal-first-"));
+  t.after(() => rm(base, { recursive: true, force: true, maxRetries: 2 }));
+  const installRoot = join(base, "install"), backupRoot = join(base, "external-backups");
+  await mkdir(installRoot, { mode: 0o700 }); await mkdir(backupRoot, { mode: 0o700 });
+  let dumps = 0;
+  const store = new RecordingStore(), backup = new UpdaterBackupV1({ store,
+    policy: { installRoot, backupRoot, seal: true, freeSpaceFloorBytes: 0 }, ports: {
+      ...throwingPorts, sealBound: false, async dump() { dumps += 1; throw new Error("plaintext_written"); },
+    } });
+  const outcome = await backup.runOnce({ manual: true });
+  assert.equal(outcome.status, "failed"); assert.equal(outcome.code, "updater_backup_seal_unbound");
+  assert.equal(dumps, 0, "the unavailable seal is detected before dump() can create plaintext");
+  assert.equal(store.calls.find(entry => entry.name === "failAttempt")?.code, "updater_backup_seal_unbound");
+});
+
+test("production scratch config and removal stay in the _crdb child boundary", async () => {
+  const source = await readFile(join(process.cwd(), "src/updater/v1/backup-ports.mjs"), "utf8");
+  assert.match(source, /if \(runAs\) await child\("\/usr\/bin\/tee", \["-a", join\(dataDir, "postgresql\.conf"\)\]/u,
+    "root does not append inside an _crdb-owned data directory");
+  assert.match(source, /if \(runAs\) await child\("\/bin\/rm", \["-rf", path\]/u,
+    "root does not recursively remove an _crdb-owned data directory");
+  assert.doesNotMatch(source, /await rm\(dataDir/u, "the production dataDir cleanup has no root rm path");
+  assert.match(source, /await pinEvidenceSessionV1\(reader\);\n\s*await assertEvidenceReaderV1\(reader\);/u,
+    "the live source reader is pinned before its first authority/catalog query");
 });
 
 test("a restore whose shape or rows differ is refused before promote, and recorded with the half that differed", async t => {
@@ -557,6 +593,7 @@ test("every evidence statement that touches a catalog name goes over the extende
   }
   // And the session settings that pin the reader are all applied.
   const settings = sent.filter(query => /^SET /u.test(query.text)).map(query => query.text);
+  assert.match(sent[0].text, /^SET search_path/u, "the reader is pinned before even the authority assertion query");
   for (const pinned of [/search_path = pg_catalog, pg_temp/u, /row_security = off/u, /statement_timeout/u,
     /lock_timeout/u, /default_transaction_read_only = on/u]) {
     assert.ok(settings.some(text => pinned.test(text)), `the session pins ${pinned}`);

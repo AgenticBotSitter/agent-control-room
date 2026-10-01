@@ -436,7 +436,7 @@ export class UpdaterBackupV1 {
    * about it is identical, deliberately: a manual backup that took a different
    * path would be untested by every nightly run.
    */
-  async runOnce({ manual = false } = {}) {
+  async runOnce({ manual = false, signal = null } = {}) {
     // An in-process second caller is NOT recorded: the first caller is running
     // and will record its own outcome, so this is not a backup that failed.
     if (this.#running) return Object.freeze({ status: "busy", code: "updater_backup_already_running",
@@ -444,6 +444,7 @@ export class UpdaterBackupV1 {
     this.#running = true;
     let generationId = null, lockHeld = false, root = null;
     try {
+      if (signal?.aborted) throw UpdaterBackupV1.#refuse("updater_backup_cancelled");
       if (!manual) {
         // The due check reads `next_due_at` — written from `pg_catalog.now()` —
         // and compares it with this process's clock. The two are different clocks,
@@ -485,12 +486,16 @@ export class UpdaterBackupV1 {
       // unsafe root is a recorded failure like any other, and BEFORE any byte is
       // written or any directory is read.
       if (!this.policy.backupRoot) throw UpdaterBackupV1.#refuse("updater_backup_root_unconfigured");
-      resolveBackupRootPolicyV1(this.policy); // Re-derived, never trusted from a field.
+      const rootPolicy = resolveBackupRootPolicyV1(this.policy); // Re-derived, never trusted from a field.
       root = await assertBackupRootOnDiskV1(this.policy.backupRoot, { ownerUid: this.#ownerUid() });
+      // An outside-root dump has no ownership protection. Refuse before the
+      // first dump byte when the production port has no sealing implementation.
+      if (rootPolicy.sealRequired && this.ports.sealBound === false)
+        throw UpdaterBackupV1.#refuse("updater_backup_seal_unbound");
       await this.#settleInterrupted(generationId);
       const paths = generationPathsV1(this.policy.backupRoot, generationId);
       await this.#intent({ generationId, phase: "begin" });
-      const outcome = await this.#attempt(generationId, paths, policy, root);
+      const outcome = await this.#attempt(generationId, paths, policy, root, signal);
       await this.#done({ generationId, phase: "complete", state: outcome.status });
       this.onResult(outcome);
       return outcome;
@@ -566,7 +571,8 @@ export class UpdaterBackupV1 {
    * failure at any of those steps leaves an `.inprogress-` directory and a
    * `failed` row, and never a `gen-` directory.
    */
-  async #attempt(generationId, paths, policy, root) {
+  async #attempt(generationId, paths, policy, root, signal) {
+    if (signal?.aborted) throw UpdaterBackupV1.#refuse("updater_backup_cancelled");
     const floor = Number.isSafeInteger(this.policy.freeSpaceFloorBytes) ? this.policy.freeSpaceFloorBytes : 0;
     const free = await freeBytesAtV1(this.policy.backupRoot);
     if (Number.isFinite(free) && free < floor) throw UpdaterBackupV1.#refuse("updater_backup_disk_full");
@@ -576,7 +582,8 @@ export class UpdaterBackupV1 {
     // R17c: the dump is streamed, not staged. The dump port writes the bytes to
     // a file the ROOT created and owns; `_crdb` writes to a pipe and never has
     // a path under `backups/`.
-    const dumped = await this.ports.dump({ path: dumpPath, generationId });
+    const dumped = await this.ports.dump({ path: dumpPath, generationId, signal });
+    if (signal?.aborted) throw UpdaterBackupV1.#refuse("updater_backup_cancelled");
     if (!(dumped?.bytes > 0) || typeof dumped.sha256 !== "string"
         || !/^sha256:[a-f0-9]{64}$/u.test(dumped.sha256))
       throw UpdaterBackupV1.#refuse("updater_backup_dump_failed");
@@ -593,7 +600,8 @@ export class UpdaterBackupV1 {
       throw UpdaterBackupV1.#refuse("updater_backup_evidence_refused");
 
     const verified = await this.ports.restoreVerify({ generationId, dumpPath, scratchId: generationId,
-      expectedShapeDigest: source.shapeDigest, expectedRowCounts: source.rowCounts });
+      expectedShapeDigest: source.shapeDigest, expectedRowCounts: source.rowCounts, signal });
+    if (signal?.aborted) throw UpdaterBackupV1.#refuse("updater_backup_cancelled");
     // WHICH half disagreed, and by how much, is recorded: a schema digest
     // difference means the restore did not recreate the objects, while a
     // row-count difference means data was lost OR that the two sides counted
@@ -607,7 +615,7 @@ export class UpdaterBackupV1 {
       throw UpdaterBackupV1.#refuse("updater_backup_row_counts_mismatch");
     const sealPolicy = resolveBackupRootPolicyV1(this.policy);
     const mustSeal = sealPolicy.sealRequired || sealPolicy.seal;
-    const encrypted = mustSeal ? await this.ports.seal({ path: dumpPath, generationId }) === true : false;
+    const encrypted = mustSeal ? await this.ports.seal({ path: dumpPath, generationId, signal }) === true : false;
     if (sealPolicy.sealRequired && encrypted !== true)
       throw UpdaterBackupV1.#refuse("updater_backup_seal_refused");
     // The file digest AFTER sealing, so the manifest records the bytes that are

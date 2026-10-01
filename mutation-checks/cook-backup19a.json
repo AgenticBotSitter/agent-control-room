@@ -162,7 +162,7 @@
   },
   {
     "file": "src/updater/v1/backup-evidence.mjs",
-    "find": "  await assertEvidenceReaderV1(client);\n  await pinEvidenceSessionV1(client);\n  const shapeDigest",
+    "find": "  await pinEvidenceSessionV1(client);\n  await assertEvidenceReaderV1(client);\n  const shapeDigest",
     "replace": "  await pinEvidenceSessionV1(client);\n  const shapeDigest",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "C1: the evidence read must refuse a login that can grant or become anything (a superuser reader is what turned the name bug into SUPERUSER for the release login)"
@@ -250,5 +250,124 @@
     "replace": "await admin.query(`CREATE ROLE ${SCRATCH_RESTORE_V1} LOGIN SUPERUSER",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
     "why": "the scratch restore must not run as a superuser: a release's own functions (CHECK helpers, index expressions) run during a restore, and a superuser restore is a shell as _crdb. The hostile-name test carries a CHECK function that raises if it ever runs as a superuser, so a superuser restore fails the backup"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      if (this.#startup) {",
+    "replace": "      if (false) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1: neither a missing nor an overdue schedule marker may launch from the updater's startup tick; an overdue marker rolls to the next 02:30 window"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "      await this.stateFiles.writeBackupSchedule(nextBackupWindowV1(now).toISOString());\n      return this.#start(false);",
+    "replace": "      return this.#start(false);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1: the schedule is advanced before launch as the durable claim, so one missed window cannot start repeatedly and several missed nights collapse to one catch-up"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "    return Object.freeze({ status: \"started\" });\n  }\n  runManual()",
+    "replace": "    return running;\n  }\n  runManual()",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M2: launching the worker must return immediately; returning its completion promise blocks the updater tick and Stop behind a long backup"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        await this.alerts.reconcile({ ...facts, backupFailed: facts.backupFailed === true || backupFailed,",
+    "replace": "        await this.alerts.reconcile({ ...facts, backupFailed: facts.backupFailed === true,",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "H1: the default path must derive backupFailed from the real backup status and queue the existing backup-failed push without a caller-supplied alertFacts port"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "    else if (request.request_kind === \"backup_now\") {",
+    "replace": "    else if (false) {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "L4: Backup now must be handled by the default owner-action composition instead of falling through to the unbound refusal"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "      if (request.source !== \"root\" && request.requires_passkey !== false)\n        throw updaterRefuseV1(\"updater_backup_owner_request_refused\");",
+    "replace": "      if (false)\n        throw updaterRefuseV1(\"updater_backup_owner_request_refused\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "L4: a phone Backup now row must have the existing session-only owner-request shape; a passkey-shaped or forged row is refused while root control remains available"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      if (rootPolicy.sealRequired && this.ports.sealBound === false)\n        throw UpdaterBackupV1.#refuse(\"updater_backup_seal_unbound\");",
+    "replace": "      if (false)\n        throw UpdaterBackupV1.#refuse(\"updater_backup_seal_unbound\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L1: an external root without a bound seal must refuse before dump writes the first plaintext byte"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "    if (runAs) await child(\"/bin/rm\", [\"-rf\", path], { timeoutMs: timeouts.clusterMs,",
+    "replace": "    if (false) await child(\"/bin/rm\", [\"-rf\", path], { timeoutMs: timeouts.clusterMs,",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L2: recursive removal inside an _crdb-owned scratch directory must execute as _crdb, not as root following paths the service account can race"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "        if (runAs) await child(\"/usr/bin/tee\", [\"-a\", join(dataDir, \"postgresql.conf\")], {",
+    "replace": "        if (false) await child(\"/usr/bin/tee\", [\"-a\", join(dataDir, \"postgresql.conf\")], {",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L2: the scratch configuration append must execute as _crdb, not as root inside a directory _crdb owns"
+  },
+  {
+    "file": "src/updater/v1/backup-evidence.mjs",
+    "find": "  await pinEvidenceSessionV1(client);\n  await assertEvidenceReaderV1(client);\n  const shapeDigest",
+    "replace": "  await assertEvidenceReaderV1(client);\n  await pinEvidenceSessionV1(client);\n  const shapeDigest",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L3: the scratch evidence reader session must be pinned before its first authority or catalog query"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "        await pinEvidenceSessionV1(reader);\n        await assertEvidenceReaderV1(reader);",
+    "replace": "        await assertEvidenceReaderV1(reader);\n        await pinEvidenceSessionV1(reader);",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "L3: the live source evidence reader session must be pinned before its first authority or catalog query"
+  },
+  {
+    "file": "src/updater/v1/runtime.mjs",
+    "find": "        || value.schema !== \"control-room.backup-schedule/v1\"\n        || typeof value.nextWindowAt !== \"string\" || !Number.isFinite(Date.parse(value.nextWindowAt)))",
+    "replace": "        || value.schema !== \"control-room.backup-schedule/v1\")",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M1: the root-held schedule marker must carry a real timestamp; malformed state cannot invent a due window or suppress the nightly job"
+  },
+  {
+    "file": "src/updater/v1/backup-runner.mjs",
+    "find": "      if (signal?.aborted) throw UpdaterBackupV1.#refuse(\"updater_backup_cancelled\");\n      if (!manual)",
+    "replace": "      if (false) throw UpdaterBackupV1.#refuse(\"updater_backup_cancelled\");\n      if (!manual)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "M2: a bounded worker stopped before it begins must not enter the dump path or take the shared backup lock"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "    || value.backup !== undefined && ![\"ok\", \"failed\", \"missing\"].includes(String(value.backup))",
+    "replace": "    || false",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-home-status.test.tsx",
+    "why": "H1: Home must fail closed on an unknown backup badge instead of rendering it as calm"
+  },
+  {
+    "file": "src/web/v1/updater-home-status-browser.ts",
+    "find": "      || status.backup !== null && ![\"ok\", \"failed\", \"missing\"].includes(String(status.backup))) throw new Error();",
+    "replace": "      || false) throw new Error();",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-home-status.test.tsx",
+    "why": "H1: the browser boundary must reject an unknown backup badge rather than pass it into the owner UI"
+  },
+  {
+    "file": "src/web/v1/updater-home-status.ts",
+    "find": "      if (value.selfUpdate === \"On\" || value.needsYou || ATTENTION_STATES_V1.has(value.state)",
+    "replace": "      if (value.needsYou || ATTENTION_STATES_V1.has(value.state)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-home-status.test.tsx",
+    "why": "H1: self-update On remains adverse on the legacy surface while its bounded backup badge is still available to the configured Home line"
+  },
+  {
+    "file": "src/updater/v1/updater.mjs",
+    "find": "      await mode.set(\"stopped\");\n      backupWorker?.cancel();",
+    "replace": "      await mode.set(\"stopped\");",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-skeleton.test.mjs",
+    "why": "M2: Stop must immediately signal a long-running backup child instead of merely recording the stopped mode while dump work continues"
   }
 ]

@@ -197,7 +197,7 @@ function generationFromRowV1(row) {
  * commit on their own as they happen — one session cannot do both. */
 export class PostgresBackupStoreV1 {
   #lockClient = null;
-  constructor(client, { connectLock = null } = {}) { this.client = client; this.connectLock = connectLock; }
+  constructor(client, { connectLock } = {}) { this.client = client; this.connectLock = connectLock; }
 
   async initialize() {
     await this.client.query("SET search_path = pg_catalog, updater, pg_temp");

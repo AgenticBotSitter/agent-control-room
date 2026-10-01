@@ -8,7 +8,8 @@ import test from "node:test";
 import { atomicWriteNoFollowV1, lchownNoFollowV1, readFileNoFollowV1 } from "../src/updater/v1/fs-safety.mjs";
 import { FileStepJournalV1 } from "../src/updater/v1/journal.mjs";
 import { UpdaterHeartbeatV1, UpdaterRunnerV1 } from "../src/updater/v1/runner.mjs";
-import { UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1 } from "../src/updater/v1/runtime.mjs";
+import { UpdaterBackupWorkerV1, UpdaterMainLoopV1, UpdaterModeV1, UpdaterStateFilesV1,
+  nextBackupWindowV1 } from "../src/updater/v1/runtime.mjs";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 import { startUpdaterV1 } from "../src/updater/v1/updater.mjs";
 import { sendControlRequestV1 } from "../src/updater/v1/control-socket.mjs";
@@ -546,7 +547,100 @@ test("the main loop feeds updater and health facts to the alert sender without t
       publicFacts: async () => ({}), async writeStatus() {} }, mode: new UpdaterModeV1(), ownerActions: { async handle() {} },
     alerts, alertFacts: async () => ({ webDown: true, backupMissing: true }) });
   await loop.tick();
-  assert.deepEqual(facts, [{ webDown: true, backupMissing: true, needsOwner: false, uncertain: true, rescue: false }]);
+  assert.deepEqual(facts, [{ webDown: true, backupMissing: true, backupFailed: false,
+    needsOwner: false, uncertain: true, rescue: false }]);
+});
+
+test("the default updater path turns a failed backup into the existing phone alert and public red badge", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  const store = new MemoryStore(null); let runs = 0;
+  const backup = { async runOnce() { runs += 1; return { status: "failed" }; }, async status() { return {
+    fresh: false, state: "failed", badge: "failed", consecutiveFailures: 1,
+  }; } };
+  const updater = await startUpdaterV1({ root, store, backup, alertRuntime: await rootHeldVapid(root) });
+  t.after(() => updater.stop());
+  assert.equal(runs, 0, "starting the updater initializes the next 02:30 window and does not run a backup");
+  assert.ok(store.queued.includes("control-room-updater.backup-failed"),
+    "the default alert facts queue the existing backup-failed template");
+  const status = JSON.parse(await readFile(join(root, "status/status.json"), "utf8"));
+  assert.equal(status.backup, "failed"); assert.equal(status.needsYou, true,
+    "the same failed status makes the public Home projection red");
+});
+
+test("the backup worker starts at 02:30, collapses missed nights, and admits one of 50 concurrent callers", async t => {
+  const root = await temporaryRoot(t), stateFiles = new UpdaterStateFilesV1(root, "lease-one");
+  let now = new Date(2026, 9, 1, 1, 45, 0, 0), runs = 0, finish;
+  const backup = { async status() { return { fresh: true, state: "verified", badge: "ok", consecutiveFailures: 0 }; },
+    async runOnce() { runs += 1; await new Promise(resolve => { finish = resolve; }); return { status: "verified" }; } };
+  const worker = new UpdaterBackupWorkerV1({ backup, stateFiles, clock: () => new Date(now), timeoutMs: 10_000 });
+  t.after(async () => { finish?.(); await worker.stop(); });
+  assert.equal((await worker.tick()).status, "initialized"); assert.equal(runs, 0, "startup never runs the job");
+  const first = await stateFiles.readBackupSchedule();
+  assert.equal(new Date(first.nextWindowAt).getHours(), 2); assert.equal(new Date(first.nextWindowAt).getMinutes(), 30);
+  now = new Date(Date.parse(first.nextWindowAt) + 1);
+  const burst = await Promise.all(Array.from({ length: 50 }, () => worker.tick()));
+  assert.equal(burst.filter(value => value.status === "started").length, 1); assert.equal(runs, 1);
+  finish(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await worker.tick()).status, "not_due", "the same window is not retried");
+  await stateFiles.writeBackupSchedule(new Date(now.getTime() - 3 * 86_400_000).toISOString());
+  let catchupFinish; backup.runOnce = async () => { runs += 1; await new Promise(resolve => { catchupFinish = resolve; }); return { status: "verified" }; };
+  const restarted = new UpdaterBackupWorkerV1({ backup, stateFiles, clock: () => new Date(now), timeoutMs: 10_000 });
+  assert.equal((await restarted.tick()).status, "initialized"); assert.equal(runs, 1,
+    "an overdue marker is rolled forward instead of running during updater startup");
+  const next = await stateFiles.readBackupSchedule(); now = new Date(Date.parse(next.nextWindowAt) + 1);
+  const missed = await Promise.all(Array.from({ length: 20 }, () => restarted.tick()));
+  assert.equal(missed.filter(value => value.status === "started").length, 1, "several missed nights collapse to one catch-up");
+  assert.equal(runs, 2); catchupFinish(); await restarted.stop();
+  assert.equal(nextBackupWindowV1(new Date(2026, 9, 1, 2, 29, 59)).getHours(), 2);
+  assert.equal(nextBackupWindowV1(new Date(2026, 9, 1, 2, 30, 0)).getDate(), 2,
+    "02:30 itself advances to tomorrow instead of firing repeatedly");
+});
+
+test("a malformed backup schedule refuses instead of skipping or running at an invented time", async t => {
+  const root = await temporaryRoot(t), stateFiles = new UpdaterStateFilesV1(root, "lease-one");
+  await writeFile(join(root, "updater-state/backup-schedule.json"), JSON.stringify({
+    schema: "control-room.backup-schedule/v1", nextWindowAt: "not-a-time",
+  }));
+  const worker = new UpdaterBackupWorkerV1({ stateFiles, timeoutMs: 10_000, backup: {
+    async runOnce() { throw new Error("must_not_run"); }, async status() { return {}; },
+  } });
+  await assert.rejects(worker.tick(), /updater_backup_schedule_state_refused/u);
+});
+
+test("Backup now uses the owner-request path and Stop stays prompt during a long backup", async t => {
+  const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
+  const store = new MemoryStore(null); let runs = 0, cancelled = 0, watcherTicks = 0, alertTicks = 0;
+  const backup = { async status() { return { fresh: true, state: "verified", badge: "ok", consecutiveFailures: 0 }; },
+    async runOnce({ signal }) { runs += 1; await new Promise(resolve => {
+      if (signal.aborted) { cancelled += 1; resolve(); } else signal.addEventListener("abort", () => {
+        cancelled += 1; resolve();
+      }, { once: true });
+    }); return { status: "failed" }; } };
+  const alerts = { async preflight() {}, async reconcile() {}, async tick() { alertTicks += 1; } };
+  const watcher = { async tick() { watcherTicks += 1; } };
+  const updater = await startUpdaterV1({ alerts, watcher, root, store, backup, backupTimeoutMs: 30_000 });
+  t.after(() => updater.stop());
+  store.requests.push({ id: "owner-request:00000000-0000-4000-8000-000000000000", request_kind: "backup_now",
+    requires_passkey: true });
+  await updater.loop.tick();
+  assert.equal(runs, 0); assert.deepEqual(store.finished,
+    ["owner-request:00000000-0000-4000-8000-000000000000", "refused"],
+  "Backup now only accepts the session-only owner-request shape");
+  store.requests.push({ id: "owner-request:00000000-0000-4000-8000-000000000001", request_kind: "backup_now",
+    requires_passkey: false });
+  await updater.loop.tick();
+  assert.equal(runs, 1); assert.deepEqual(store.finished, ["owner-request:00000000-0000-4000-8000-000000000001", "acted"]);
+  const alertsBeforeStop = alertTicks;
+  await writeFile(join(root, "updater-state/self-update"), "On\n");
+  store.requests.push({ id: "owner-request:00000000-0000-4000-8000-000000000002", request_kind: "stop",
+    requires_passkey: false });
+  const started = Date.now(); await updater.loop.tick();
+  assert.ok(Date.now() - started < 250, "Stop is handled by the main loop without awaiting the backup worker");
+  assert.equal(cancelled, 1, "Stop immediately signals the running backup child");
+  assert.equal(watcherTicks, 1, "the update watcher stays responsive while backup work is still running");
+  assert.equal(alertTicks, alertsBeforeStop + 1, "the alert sender stays responsive while backup work is still running");
+  assert.equal(await updater.loop.mode.read(), "stopped");
+  assert.deepEqual(store.finished, ["owner-request:00000000-0000-4000-8000-000000000002", "acted"]);
 });
 
 test("the PostgreSQL adapter refuses a wrong production role and never transitions without the run lease", async () => {
