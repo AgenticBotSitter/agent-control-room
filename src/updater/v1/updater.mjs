@@ -9,6 +9,7 @@ import { updaterRefuseV1 } from "./contracts.mjs";
 import { UpdaterAlertSenderV1 } from "./alerts.mjs";
 import { PasskeyAuthorityV1, PasskeyRefusalAggregatorV1, SimpleWebAuthnVerifierV1 } from "./passkey.mjs";
 import { PasskeyStoreV1 } from "./passkey-store.mjs";
+import { createNightlyBackupV1 } from "./backup-ports.mjs";
 
 // The fixed updater bundle exposes the item-13 actuator for composition with
 // the item-5 lifecycle and item-14 health ports. `startUpdaterV1` accepts that
@@ -27,9 +28,9 @@ function updaterRootV1(env) {
 
 export async function startUpdaterV1(options = {}) {
   const env = options.env ?? process.env, root = options.root ?? updaterRootV1(env);
-  let client = options.client, ownsClient = false, store = options.store;
+  let client = options.client, ownsClient = false, store = options.store, pg = options.pg;
   if (!store) {
-    const pg = options.pg ?? await import("pg");
+    pg ??= await import("pg");
     if (!client) {
       client = new pg.Client({ host: env.PGHOST, port: env.PGPORT ? Number(env.PGPORT) : undefined,
         database: env.PGDATABASE, user: "control_room_deployer" });
@@ -168,8 +169,30 @@ export async function startUpdaterV1(options = {}) {
       return runner.checkAndContinue({ source: request.source });
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
+  // Item 19a, the nightly backup, on the DEFAULT path. Like `alerts`, the
+  // ABSENCE of a `backup` key means the real one whenever this function opened
+  // the production connection itself; only an explicit `backup: null`/`false`
+  // opts out, and a caller that injects its own store or client composes its
+  // own (or none). A composition that cannot be built — no socket configured,
+  // the store's role check refused — is REPORTED and the updater still starts:
+  // the database's 26-hour freshness bound is what then turns Home red and
+  // blocks database plans, so a missing backup cannot pass unnoticed.
+  let backup = options.backup === null || options.backup === false ? null : options.backup ?? null;
+  if (options.backup === undefined && ownsClient) {
+    try {
+      const source = { host: env.PGHOST, port: env.PGPORT ? Number(env.PGPORT) : undefined, database: env.PGDATABASE };
+      backup = await createNightlyBackupV1({ root, client, source, connect: async target => {
+        const opened = new pg.Client(target);
+        await opened.connect();
+        return opened;
+      } });
+    } catch (error) {
+      reportError(Object.assign(new Error("updater_backup_unavailable"), { code: "updater_backup_unavailable",
+        warning: true, cause: error }));
+    }
+  }
   const loop = new UpdaterMainLoopV1({ runner, store, stateFiles, mode, ownerActions, watcher: options.watcher ?? null,
-    alerts: alertSender, alertFacts: options.alertFacts, onError: reportError });
+    alerts: alertSender, alertFacts: options.alertFacts, onError: reportError, backup });
   const heartbeat = new UpdaterHeartbeatV1({ store, stateFiles, ...identity, report: () => heartbeatState,
     onError: reportError });
   const control = new UpdaterControlServerV1({ root, handler: async request => {
@@ -222,6 +245,7 @@ export async function startUpdaterV1(options = {}) {
     throw error;
   }
   return Object.freeze({ root, identity, store, runner, loop, heartbeat, control, passkeys, refusalAggregator, alerts: alertSender,
+    backup,
     setHeartbeatState,
     async stop() { loop.stop(); await heartbeat.stop(); await control.stop(); await store.release?.();
       if (ownsClient) await client.end(); } });

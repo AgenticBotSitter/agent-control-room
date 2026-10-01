@@ -94,8 +94,8 @@ const RISK_REDUCING_WHILE_OFF_V1 = new Set(["pause", "stop", "backup_now", "chec
 export class UpdaterMainLoopV1 {
   #timer; #ticking = false;
   constructor({ runner, store, stateFiles, mode, ownerActions, watcher = null, alerts = null,
-    alertFacts = async () => ({}), intervalMs = 5_000, onError = () => {} }) {
-    this.runner = runner; this.store = store; this.stateFiles = stateFiles; this.mode = mode;
+    alertFacts = async () => ({}), intervalMs = 5_000, onError = () => {}, backup = null }) {
+    this.runner = runner; this.store = store; this.stateFiles = stateFiles; this.mode = mode; this.backup = backup;
     this.ownerActions = ownerActions; this.watcher = watcher; this.alerts = alerts; this.alertFacts = alertFacts;
     this.intervalMs = intervalMs; this.onError = onError;
     this.lastOutcome = { status: "idle" };
@@ -140,6 +140,14 @@ export class UpdaterMainLoopV1 {
         needsYou: ["busy", "uncertain", "attended_upgrade_required", "needs_attention", "error"]
           .includes(this.lastOutcome.status),
       selfUpdate: flag });
+      // Item 19a: the nightly backup is TIMER work, so it runs whatever the
+      // self-update flag says (a backup reduces risk). `runOnce` decides "due"
+      // from the database's own schedule and records every failure itself; an
+      // error escaping it is reported, and never stops the tick.
+      if (this.backup) {
+        try { this.lastBackup = await this.backup.runOnce(); }
+        catch (error) { this.onError(error); }
+      }
       if (this.alerts) {
         const facts = await this.alertFacts();
         if (!facts || typeof facts !== "object" || Array.isArray(facts)) throw updaterRefuseV1("updater_alert_facts_refused");
