@@ -29,6 +29,7 @@
 // one.
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import test from "node:test";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -36,6 +37,8 @@ import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { PostgresUpdaterStoreV1 } from "../src/updater/v1/store.mjs";
 import { applyUpdaterSchemaV1 } from "../src/updater/v1/schema-installer";
+
+const KILL_CHILD = join(process.cwd(), "tests/updater-run-recovery-kill-child.mjs");
 
 // Ports 59480-59489 are this job's block. The lane takes one at a time.
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59480), PG = requiresRealPostgres();
@@ -227,6 +230,102 @@ const runRow = async (client: Client, runId: string) => (await client.query(
   "SELECT state, finished_at IS NOT NULL AS finished FROM updater.runs WHERE run_id=$1", [runId])).rows[0];
 const eventStates = async (client: Client, runId: string) => (await client.query(
   "SELECT state FROM updater.run_events WHERE run_id=$1 ORDER BY ordinal", [runId])).rows.map(row => row.state);
+
+/**
+ * Run the real transition in a CHILD process and SIGKILL it at `killAt`.
+ *
+ * This is the reproduction B4 needs and cannot be faked: the child holds a real
+ * `control_room_deployer` session on a real cluster, drives the real
+ * `PostgresUpdaterStoreV1`, and is killed with SIGKILL — so there is no
+ * ROLLBACK, no `finally`, no cleanup, and whatever PostgreSQL had committed is
+ * what survives. Killing only the child's own pid (`-child.pid` is the group,
+ * which the child does not lead here) would leave a grandchild holding the
+ * session, so the whole GROUP is signalled.
+ *
+ * The protocol the child implements — write the label, THEN park — is what makes
+ * this synchronous rather than a race: the kill is sent only once the label has
+ * arrived, so the child is provably parked with its session open. A child that
+ * died before reporting its seam is a failure here, not a silent pass, because
+ * otherwise "the kill landed somewhere" would be indistinguishable from "the
+ * kill landed where we meant".
+ *
+ * @param {object} options
+ * @param {string} options.socketDirectory cluster socket directory
+ * @param {number} options.port cluster port
+ * @param {string} options.database database name
+ * @param {string} options.password the deployer fixture password
+ * @param {string} options.runId the run to move
+ * @param {string} options.leaseToken the run's durable lease token
+ * @param {string} options.from the state the run is in
+ * @param {string} options.to the state to move it to
+ * @param {string} options.killAt the seam to die at
+ * @param {boolean} options.terminal whether the move finishes the run
+ * @param {number} options.boundMs how long to wait for the seam label
+ * @returns {Promise<{seam: string, signal: string|null, transcript: string}>}
+ */
+async function killDuringTransition(options: {
+  socketDirectory: string; port: number; database: string; password: string;
+  runId: string; leaseToken: string; from: string; to: string; killAt: string;
+  terminal: boolean; boundMs?: number;
+}): Promise<{ seam: string; signal: string | null; transcript: string }> {
+  const boundMs = options.boundMs ?? 60_000;
+  const child = spawn(process.execPath, [KILL_CHILD, options.socketDirectory, String(options.port),
+    options.database, options.runId, options.leaseToken, options.from, options.to, options.killAt,
+    String(options.terminal)], {
+    // Its own process group, so the whole test owns one group to tear down.
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, CONTROL_ROOM_TEST_DEPLOYER_PASSWORD: options.password },
+  });
+  const group = child.pid;
+  let transcript = "";
+  const say = (chunk: string) => { transcript += chunk; };
+  child.stdout?.setEncoding("utf8"); child.stdout?.on("data", say);
+  child.stderr?.setEncoding("utf8"); child.stderr?.on("data", say);
+
+  // The seam arrives on stderr as a line, then the child parks. Read ONE line,
+  // kill, and only then wait for the exit.
+  const parked = await new Promise<{ seam: string; failure?: Error }>((resolve) => {
+    let buffered = "";
+    const timer = setTimeout(() => resolve({ seam: "",
+      failure: new Error(`the child never reached seam ${options.killAt} within ${boundMs}ms;`
+        + ` it must write the label BEFORE it parks, or this read blocks forever`) }), boundMs);
+    child.stderr?.on("data", (chunk: string) => {
+      buffered += chunk;
+      const newline = buffered.indexOf("\n");
+      if (newline < 0) return;
+      const line = buffered.slice(0, newline).trim();
+      // Only a SEAM resolves this wait. `moved:` and `error:` are the child's
+      // ordinary output; treating either as a seam would make the parent kill on
+      // a line that means something else, and the test would assert nothing about
+      // the parking it was written to prove.
+      if (!line || line.startsWith("moved:") || line.startsWith("error:")) return;
+      clearTimeout(timer);
+      resolve({ seam: line });
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ seam: "", failure: new Error(`the child exited before reaching seam `
+        + `${options.killAt} (code=${code} signal=${signal}); transcript=${transcript.trim()}`) });
+    });
+  });
+
+  let signal: string | null = null;
+  if (!parked.failure) {
+    // The kill. The GROUP, not the pid: `detached: true` made the child a group
+    // leader, so a negative pid reaches anything it spawned as well.
+    try { process.kill(-(group as number), "SIGKILL"); } catch { /* already gone */ }
+    signal = await new Promise<string | null>((resolve) => {
+      child.once("exit", (_code, exitSignal) => resolve(exitSignal));
+      setTimeout(() => resolve("still-running"), 30_000).unref?.();
+    });
+  }
+  // Belt and braces: whatever the exit reported, the group must be gone before
+  // this returns, or a session outlives the test that started it.
+  try { process.kill(-(group as number), "SIGKILL"); } catch { /* already gone */ }
+  if (parked.failure) throw parked.failure;
+  return { seam: parked.seam, signal, transcript };
+}
 
 // ---------------------------------------------------------------------------
 
@@ -502,6 +601,95 @@ test("B4: the run row and its journal mirror move in one statement", async t => 
         assert.match(await refuses(web, "SELECT updater.record_run_step($1,$2,'healthy','{}'::jsonb,false)",
           [runId2, leaseToken2]), /permission denied/u);
       } finally { await web.end(); }
+    } finally { await client.end(); }
+  }, { port: PORT, allowedPorts: [PORT], boundMs: 900_000 });
+});
+
+test("B4: a SIGKILL at every seam of the transition leaves a run that can still move", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    const client = as(postgres, "deployer"); await client.connect();
+    try {
+      const store = new PostgresUpdaterStoreV1(client); await store.initialize();
+      // The step the review's P4 killed at: `draining -> switched`, the instant at
+      // which the new code is ALREADY live. A wedge here is the worst outcome the
+      // updater has — new code running, no health check, no rollback.
+      const path = ["prechecked", "staged", "quick_backup", "draining"];
+
+      // EVERY seam of the one statement, one at a time. `before_transition` is
+      // the window the old two-statement form had and does not have now;
+      // `after_transition` is "the move committed, the caller has not yet
+      // learned it did"; `after_report` is "the caller knows, and has not
+      // written anything else". All three must leave the same property.
+      for (const seam of ["before_transition", "after_transition", "after_report"] as const) {
+        await quiesceInstall(store, client);
+        const planId = `plan-kill-${seam}`, leaseToken = `lease-kill-${seam.replace(/_/gu, "-")}`;
+        const runId = await liveRun(store, client, planId, leaseToken, path);
+        assert.equal((await runRow(client, runId)).state, "draining", `${seam}: fixture is at draining`);
+
+        const killed = await killDuringTransition({ socketDirectory: postgres.socketDirectory,
+          port: postgres.port, database: postgres.database, password: DEPLOYER_PASSWORD,
+          runId, leaseToken, from: "draining", to: "switched", killAt: seam, terminal: false });
+        assert.equal(killed.seam, seam, `${seam}: the child parked at the seam we named`);
+        assert.equal(killed.signal, "SIGKILL",
+          `${seam}: the child really died from a signal, not an exit (transcript=${killed.transcript.trim()})`);
+
+        // THE PROPERTY. Whatever survived the kill, the row and its last mirror
+        // event are the SAME fact — and the run is still at a state the next step
+        // can be taken from. Either the statement committed (row at `switched`,
+        // last event `switched`) or it did not (row at `draining`, last event
+        // `draining`). The old form had a third possibility, and it was the bug.
+        const row = await runRow(client, runId);
+        const events = await eventStates(client, runId);
+        assert.equal(events.at(-1), row.state,
+          `${seam}: the row says ${row.state} and its mirror says ${events.at(-1)}`);
+        assert.equal(row.finished, false, `${seam}: a killed non-terminal step never finishes the run`);
+
+        // AND THE RUN IS NOT WEDGED. This is the assertion the whole thing is
+        // for: after the kill, a fresh caller can take the very next step. Under
+        // the old two-statement form this is where `23514 updater run state
+        // disagrees with its journal` fired and the run was stranded.
+        const next = row.state === "switched" ? "restarted" : "switched";
+        assert.equal((await store.transition(runId, leaseToken, next, { step: next })).state, next,
+          `${seam}: the next step after a kill at ${seam} is reachable`);
+        // And the run can still finish the ordinary way, so a kill at any seam
+        // costs a repeated step rather than the update.
+        for (const state of ["restarted", "healthy"])
+          if ((await runRow(client, runId)).state !== state) await store.transition(runId, leaseToken, state, {});
+        await store.transition(runId, leaseToken, "succeeded", {}, { terminal: true });
+        assert.equal((await runRow(client, runId)).finished, true, `${seam}: the run still completes`);
+      }
+
+      // A kill at a TERMINAL step, which is the one asymmetry in the function: it
+      // writes no mirror row, so "the mirror agrees with the row" has a different
+      // meaning here — the row is finished and the mirror correctly stops at the
+      // last real step. Asserted because an asymmetry nobody states is an
+      // asymmetry nobody reviewed.
+      await quiesceInstall(store, client);
+      const finalPlan = "plan-kill-terminal", finalLease = "lease-kill-terminal";
+      const finalRun = await liveRun(store, client, finalPlan, finalLease,
+        [...path, "switched", "restarted", "healthy"]);
+      await killDuringTransition({ socketDirectory: postgres.socketDirectory, port: postgres.port,
+        database: postgres.database, password: DEPLOYER_PASSWORD, runId: finalRun,
+        leaseToken: finalLease, from: "healthy", to: "succeeded", killAt: "after_transition", terminal: true });
+      const finalRow = await runRow(client, finalRun);
+      assert.equal(finalRow.state, "succeeded", "the terminal move committed");
+      assert.equal(finalRow.finished, true, "and carried its finish time with it");
+      assert.equal((await eventStates(client, finalRun)).at(-1), "healthy",
+        "a terminal step writes no mirror row, so the mirror correctly stops at `healthy`");
+      // A finished run is finished, and the REFUSAL is the lease check rather
+      // than the terminal check — worth stating, because it is the function's
+      // own `finished_at IS NULL` predicate answering first. The run is done
+      // either way: nothing can move it, and the mirror is still at `healthy`.
+      assert.match(await refuses(client, "SELECT updater.record_run_step($1,$2,'restarted','{}'::jsonb,false)",
+        [finalRun, finalLease]), /updater run lease lost/u,
+      "a run that already finished admits no further step, whatever the reason it reports");
+      assert.match(await refuses(client, "UPDATE updater.runs SET state='restarted' WHERE run_id=$1", [finalRun]),
+        /updater run succeeded is terminal/u,
+      "and the row itself says so too, for a caller that goes around the function");
     } finally { await client.end(); }
   }, { port: PORT, allowedPorts: [PORT], boundMs: 900_000 });
 });
