@@ -81,8 +81,8 @@ export class PostgresUpdaterStoreV1 {
    * failure is still identifiable at the call site.
    *
    * A terminal step writes no mirror row (the insert guard requires an unfinished
-   * run), so `appendEvent`'s ordinal bookkeeping is not needed here at all: the
-   * function derives the ordinal from the run's own last event. */
+   * run), and the function derives the ordinal from the run's own last event, so
+   * this method no longer needs an ordinal from the caller. */
   async transition(runId, leaseToken, state, detail = {}, { terminal = false } = {}) {
     assertSafeIdV1(leaseToken);
     if (typeof runId !== "string" || !/^run:[0-9a-f-]{36}$/u.test(runId) || !RUN_STATES_V1.has(state))
@@ -99,20 +99,6 @@ export class PostgresUpdaterStoreV1 {
     const row = result.rows[0]?.run;
     if (!row || typeof row !== "object") throw updaterRefuseV1("updater_run_lease_lost");
     return row;
-  }
-
-  /** The journal mirror, for callers that append one row without moving the run.
-   *
-   * The runner no longer uses this — `transition()` writes the mirror itself —
-   * and it is kept because it is the one way to say "this event already exists",
-   * which the atomic function makes a duplicate rather than a gap. Two callers
-   * that both try to record the same ordinal get one success and one primary-key
-   * refusal, which is the retry-safe property §11 wants. */
-  async appendEvent(runId, ordinal, state, detail = {}) {
-    if (!Number.isSafeInteger(ordinal) || ordinal < 1 || !RUN_STATES_V1.has(state))
-      throw updaterRefuseV1("updater_event_refused");
-    await this.client.query(`INSERT INTO updater.run_events(run_id,ordinal,state,detail)
-      VALUES($1,$2,$3,$4::jsonb)`, [runId, ordinal, state, JSON.stringify(detail)]);
   }
 
   async events(runId) {
