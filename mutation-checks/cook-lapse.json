@@ -64,8 +64,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-store.ts",
-    "find": "        if (databaseSqlStateIsAnyV1(error, [\"23P01\", \"23514\"])) return fleetFail(\"conflict\");",
-    "replace": "        throw error;",
+    "find": "        if (databaseSqlStateIsAnyV1(error, FLEET_LEASE_SCOPE_REFUSAL_SQL_STATES_V1)) return fleetFail(\"conflict\");",
+    "replace": "        if (false) return fleetFail(\"conflict\");",
     "test": "pnpm run test:fleet:lapse-stress",
     "why": "a claim overlapping a live ownership lease is the clean conflict it always was, not a crash"
   }
