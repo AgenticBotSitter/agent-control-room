@@ -112,12 +112,17 @@ export async function startUpdaterV1(options = {}) {
       && options.refusalPush ? new PasskeyRefusalAggregatorV1({ store: passkeyStore,
         journal: options.refusalJournal, push: options.refusalPush }) : undefined);
   const ownerActions = options.ownerActions ?? { handle: async request => {
-    if (request.request_kind === "pause") await mode.set("paused");
+    if (request.request_kind === "pause") {
+      if (request.source !== "root" && await mode.read() === "stopped")
+        throw updaterRefuseV1("updater_web_pause_from_stopped_refused");
+      await mode.set("paused");
+    }
     else if (request.request_kind === "stop") await mode.set("stopped");
     // A web login can mint an owner session and insert owner_requests. Resume is
     // therefore deliberately root-control-only until the approval join exists.
     else if (request.request_kind === "resume") throw updaterRefuseV1("updater_web_resume_refused");
-    else if (request.request_kind === "check_and_continue") await runner.checkAndContinue();
+    else if (request.request_kind === "check_and_continue")
+      return runner.checkAndContinue({ source: request.source });
     else throw updaterRefuseV1("updater_owner_action_port_unbound");
   } };
   const reportTimerError = options.onTimerError ?? (error => {
@@ -144,8 +149,8 @@ export async function startUpdaterV1(options = {}) {
       const registration = await passkeys.registrationOptions(request.arguments[0]);
       if (!passkeyStore?.consumeRegistration) throw updaterRefuseV1("updater_passkey_store_port_unbound");
       // Close the phone write window first. The response row remains readable
-      // by the updater, so a dropped reply can retry completion without opening
-      // the ceremony to a second browser write.
+      // by the updater, but the registration secret is single-use: after an
+      // uncertain reply the owner must use passkey list to verify the result.
       await passkeyStore.consumeRegistration(registration.registrationDigest);
       return passkeys.completeRegistration({ registrationSecret: request.arguments[0], typedCode: request.arguments[1] });
     }
@@ -161,7 +166,7 @@ export async function startUpdaterV1(options = {}) {
     const map = { pause: "paused", resume: "running", stop: "stopped" };
     if (map[request.verb]) { await mode.set(map[request.verb]); return { accepted: true }; }
     return ownerActions.handle({ request_kind: request.verb.replaceAll("-", "_"), detail: { arguments: request.arguments },
-      requires_passkey: request.verb === "rollback" });
+      requires_passkey: request.verb === "rollback", source: "root" });
   } });
   try {
     await mode.initialize();

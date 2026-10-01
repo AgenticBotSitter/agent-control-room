@@ -176,7 +176,7 @@ test("Off, rescue, pause/stop, retry failure and a second concurrent caller fail
   });
 });
 
-test("P1b: Check and continue clears a rescue marker when the real store contract reports no live run", async t => {
+test("P1b: only root Check and continue clears a no-run rescue marker on the default path", async t => {
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
   await writeFile(join(root, "updater-state/rescued.json"), "{}\n", { mode: 0o600 });
   const store = new MemoryStore(null);
@@ -184,11 +184,26 @@ test("P1b: Check and continue clears a rescue marker when the real store contrac
   t.after(() => updater.stop());
   updater.loop.stop();
   assert.equal(updater.loop.lastOutcome.status, "uncertain");
-  const results = await Promise.all(Array.from({ length: 50 }, () => updater.runner.checkAndContinue()));
-  assert.equal(results.filter(result => result.status === "idle").length, 1);
-  assert.equal(results.filter(result => result.status === "busy").length, 49);
-  await assert.rejects(lstat(join(root, "updater-state/rescued.json")), /ENOENT/u);
+  assert.match(updater.loop.lastOutcome.message, /no update is running, clear the rescue on the Mac/u);
+  await assert.rejects(updater.runner.checkAndContinue(),
+    error => error?.code === "updater_web_rescue_clear_refused");
   store.requests = [{ id: "owner-request:00000000-0000-4000-8000-000000000001",
+    request_kind: "check_and_continue" }];
+  assert.equal((await updater.loop.tick()).status, "uncertain");
+  assert.equal(store.finished[1], "refused");
+  assert.equal(await readFile(join(root, "updater-state/rescued.json"), "utf8"), "{}\n");
+  const status = JSON.parse(await readFile(join(root, "status/status.json"), "utf8"));
+  assert.deepEqual({ state: status.state, needsYou: status.needsYou }, { state: "uncertain", needsYou: true });
+  const socket = join(root, "updater-state/control.sock");
+  const results = await Promise.allSettled(Array.from({ length: 50 }, (_, index) => sendControlRequestV1(socket, {
+    schema: "control-room.updater-control/v1", requestId: `p1b-root-clear-${index}`,
+    verb: "check-and-continue", arguments: [],
+  })));
+  assert.equal(results.filter(result => result.status === "fulfilled" && result.value.status === "idle").length, 1);
+  assert.equal(results.filter(result => (result.status === "fulfilled" && result.value.status === "busy")
+    || (result.status === "rejected" && result.reason?.code === "updater_check_continue_refused")).length, 49);
+  await assert.rejects(lstat(join(root, "updater-state/rescued.json")), /ENOENT/u);
+  store.requests = [{ id: "owner-request:00000000-0000-4000-8000-000000000002",
     request_kind: "check_and_continue" }];
   assert.equal((await updater.loop.tick()).status, "idle");
   assert.equal(store.finished[1], "refused", "a retry after the marker was cleared is refused");
@@ -210,6 +225,12 @@ test("P7: Pause and Stop survive restart, a request-row Resume is refused, and r
 
     updater = await startUpdaterV1({ root, store }); updater.loop.stop();
     assert.equal(await updater.loop.mode.read(), requested === "pause" ? "paused" : "stopped");
+    if (requested === "stop") {
+      store.requests = [{ id: "owner-request:00000000-0000-4000-8000-000000000009", request_kind: "pause" }];
+      await updater.loop.tick();
+      assert.equal(store.finished[1], "refused", "a web Pause cannot lower the owner's durable Stop");
+      assert.equal(await updater.loop.mode.read(), "stopped");
+    }
     store.requests = [{ id: `owner-request:00000000-0000-4000-8000-00000000000${index + 2}`,
       request_kind: "resume" }];
     await updater.loop.tick();

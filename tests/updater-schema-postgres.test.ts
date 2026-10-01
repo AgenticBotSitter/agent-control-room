@@ -993,13 +993,13 @@ test("startUpdaterV1 boots with a live run and only one of 20 production session
   }, { port: PORT, allowedPorts: [PORT], boundMs: 600_000 });
 });
 
-test("P1b/P7: the production store clears no-run rescue and refuses web Resume across restart", async t => {
+test("P1b/P7: web cannot clear no-run rescue and web Resume stays refused across restart", async t => {
   const skip = needsPg();
   if (skip) { t.skip(skip.skip); return; }
   ran += 1;
   await withRealPostgres(async postgres => {
     await installUpdaterSchema(postgres); await seedOwnerSession(postgres);
-    const root = await mkdtemp(join(tmpdir(), "updater-rescue-mode-pg-"));
+    const root = await mkdtemp("/tmp/cr-upd-pg-");
     await mkdir(join(root, "updater-state")); await mkdir(join(root, "status"));
     await writeFile(join(root, "updater-state/self-update"), "On\n");
     await writeFile(join(root, "updater-state/rescued.json"), "{}\n", { mode: 0o600 });
@@ -1013,9 +1013,16 @@ test("P1b/P7: the production store clears no-run rescue and refuses web Resume a
       const checkId = `owner-request:${randomUUID()}`;
       await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)
         VALUES($1,'check_and_continue',false,$2)`, [checkId, OWNER_SESSION]);
-      assert.equal((await updater.loop.tick()).status, "idle");
+      assert.equal((await updater.loop.tick()).status, "uncertain");
       assert.equal((await deployer.query("SELECT handled_outcome FROM updater.owner_requests WHERE id=$1", [checkId]))
-        .rows[0]?.handled_outcome, "acted");
+        .rows[0]?.handled_outcome, "refused");
+      assert.equal(await readFile(join(root, "updater-state/rescued.json"), "utf8"), "{}\n");
+      const refusedStatus = JSON.parse(await readFile(join(root, "status/status.json"), "utf8"));
+      assert.deepEqual({ state: refusedStatus.state, needsYou: refusedStatus.needsYou },
+        { state: "uncertain", needsYou: true });
+      await sendControlRequestV1(join(root, "updater-state/control.sock"), {
+        schema: "control-room.updater-control/v1", requestId: "p1b-pg-root-clear",
+        verb: "check-and-continue", arguments: [] });
       await assert.rejects(readFile(join(root, "updater-state/rescued.json")), /ENOENT/u);
 
       await sendControlRequestV1(join(root, "updater-state/control.sock"), {
@@ -1030,6 +1037,16 @@ test("P1b/P7: the production store clears no-run rescue and refuses web Resume a
       assert.equal((await deployer.query("SELECT handled_outcome FROM updater.owner_requests WHERE id=$1", [resumeId]))
         .rows[0]?.handled_outcome, "refused");
       assert.equal(await updater.loop.mode.read(), "paused");
+
+      await sendControlRequestV1(join(root, "updater-state/control.sock"), {
+        schema: "control-room.updater-control/v1", requestId: "p7-pg-stop", verb: "stop", arguments: [] });
+      const pauseId = `owner-request:${randomUUID()}`;
+      await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)
+        VALUES($1,'pause',false,$2)`, [pauseId, OWNER_SESSION]);
+      await updater.loop.tick();
+      assert.equal((await deployer.query("SELECT handled_outcome FROM updater.owner_requests WHERE id=$1", [pauseId]))
+        .rows[0]?.handled_outcome, "refused");
+      assert.equal(await updater.loop.mode.read(), "stopped");
     } finally {
       await updater?.stop();
       await Promise.allSettled([web.end(), deployer.end()]);

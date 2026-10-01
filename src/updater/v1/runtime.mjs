@@ -104,7 +104,7 @@ export class UpdaterMainLoopV1 {
         await this.store.finishOwnerRequest(request.id, "refused"); continue;
       }
       try {
-        await this.ownerActions.handle(request);
+        await this.ownerActions.handle({ ...request, source: "web" });
         await this.store.finishOwnerRequest(request.id, "acted");
       } catch { await this.store.finishOwnerRequest(request.id, "refused"); }
     }
@@ -122,7 +122,8 @@ export class UpdaterMainLoopV1 {
       if (rescued) {
         const measured = await this.runner.runOnce();
         this.lastOutcome = measured.status === "idle" ? { status: "uncertain",
-          message: "A rescue occurred; owner review is required." } : measured;
+          message: "A rescue occurred; owner review is required. If no update is running, clear the rescue on the Mac." }
+          : measured;
       } else this.lastOutcome = flag === "Off" ? { status: "idle", message: "Self-update is Off." }
         : await this.runner.runOnce();
       const mode = await this.mode.read();
