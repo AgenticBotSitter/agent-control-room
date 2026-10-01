@@ -798,14 +798,20 @@ CREATE OR REPLACE TRIGGER run_events_insert_guard BEFORE INSERT ON updater.run_e
 -- — the same wedge with a new name.
 --
 -- THE CALLER OWNS NOTHING ELSE. The lease token is checked inside the statement,
--- and it is checked in BOTH places that filter on it: the row lock below and the
--- UPDATE that follows. The second is what makes the guard load-bearing on its
--- own — measured, with the token removed from the lock alone, the impostor's
--- call is still refused, because the UPDATE refuses it too. The lock's copy is
--- defence in depth and it is what makes ownership the FIRST thing decided,
--- before the function has read anything about the row; both must hold, because a
--- statement that filtered on the token only after reading the row would have
--- consulted a run it had no business reading.
+-- in the two places that filter on it: the row lock below and the UPDATE that
+-- follows. They are NOT equally load-bearing, and that is measured rather than
+-- assumed: removing the token from either alone still refuses an impostor, so
+-- each looks redundant — but only the LOCK's copy can actually be relied on,
+-- because the repeat path (a step the row is already in) returns the row it read
+-- without ever reaching the UPDATE. Remove the lock's filter and an impostor who
+-- asks for the state the run is already in gets the row, with its state, from a
+-- run it does not hold. The UPDATE's filter is the belt to that braces, and it
+-- stays.
+--
+-- So the mutation manifest tests the LOCK's filter, because that is the one whose
+-- removal a test can actually observe, and the suite asserts both refusals — the
+-- ordinary step and the repeat. An entry for the UPDATE's copy would be a check
+-- that provably cannot bite, which is a false positive rather than evidence.
 --
 -- The return value is `jsonb` of the row rather than the composite type, on
 -- purpose: a composite return arrives at a client driver as an unparsed string,

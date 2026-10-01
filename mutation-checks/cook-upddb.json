@@ -36,13 +36,6 @@
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
-    "find": "  UPDATE updater.runs SET state = p_state, detail = p_detail,\n      finished_at = CASE WHEN p_terminal THEN pg_catalog.now() ELSE NULL END\n    WHERE run_id = p_run_id AND lease_token = p_lease_token AND finished_at IS NULL\n    RETURNING * INTO moved;",
-    "replace": "  UPDATE updater.runs SET state = p_state, detail = p_detail,\n      finished_at = CASE WHEN p_terminal THEN pg_catalog.now() ELSE NULL END\n    WHERE run_id = p_run_id AND finished_at IS NULL\n    RETURNING * INTO moved;",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
-    "why": "a second updater boot must not transition a run without its exact lease token. This UPDATE's filter is what refuses it — measured: the row lock's copy is defence in depth, and removing that alone changes nothing observable"
-  },
-  {
-    "file": "src/updater/v1/ddl/0003_guards.sql",
     "find": "  IF NOT p_terminal THEN\n    INSERT INTO updater.run_events(run_id, ordinal, state, detail)",
     "replace": "  IF false THEN\n    INSERT INTO updater.run_events(run_id, ordinal, state, detail)",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-postgres.test.ts",
