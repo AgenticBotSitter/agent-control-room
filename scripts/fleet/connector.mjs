@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Control Room worker connector. One file, no dependencies, Node 20 or newer.
 //
 // It runs on a worker machine and only ever connects OUT to the Control Room
@@ -26,7 +27,6 @@ import { assertConnectorReleaseTrustCompatibleV1, checkForConnectorUpdateV1, con
   connectorInstallRootFromConfigPathV1,
   connectorUpdatesPausedV1, installConnectorLauncherV1, launchCurrentConnectorV1,
   setConnectorUpdatesPausedV1 } from "./connector-update.mjs";
-import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { captureReleaseTrustV1, compareReleaseVersionsV1, verifyConnectorReleaseAdvertisementV1 } from "../release-signing.mjs";
 
 export { verifyConnectorReleaseAdvertisementV1 };
@@ -2532,7 +2532,7 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   }
 }
 
-const invokedDirectly = invokedDirectlyV1(process.argv[1], import.meta.url);
+const invokedDirectly = isMainModuleV1(process.argv[1], import.meta.url);
 // Defer the CLI body until the bundle entry has registered its built-in
 // harness factory. Direct source execution still starts in the same turn.
 if (invokedDirectly) Promise.resolve().then(() => main()).then(code => { process.exitCode = code; });

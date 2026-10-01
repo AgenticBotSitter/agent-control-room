@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /** Runs only under the PostgreSQL owner account on the VPS. The dry run issues
  * SELECTs only. A login code (a SCRAM verifier, never a password) is read from
  * stdin only when the plan creates a new login, and never appears in the
@@ -8,7 +9,6 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { applyMigrations } from "../../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../../deploy/postgres/evidence.mjs";
-import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { applyMacGrantDiffV1, diffMacGrantsV1, macRolePlan, readDesiredMacGrantsV1,
   readMacGrantCatalogV1, macGrantRowsToSetV1, macGrantCatalogSqlV1 } from "./database-upgrade-grants.mjs";
 import { checkedPostgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
@@ -314,7 +314,7 @@ async function readVerifierStdinV1() {
   return input;
 }
 
-if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   let stage = "plan";
   try {
     const result = await runMacDatabaseUpgradeCommandV1({ args: process.argv.slice(2),

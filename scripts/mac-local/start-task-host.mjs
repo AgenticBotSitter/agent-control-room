@@ -1,5 +1,5 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { parseMacLocalWebHostArguments, startMacLocalTaskHost } from "./start-web-host.mjs";
-import { pathToFileURL } from "node:url";
 
 export function monitorActiveTaskHost(active, runtime = process, timers = globalThis, supervisor = undefined) {
   let closed = false, supervisorLost = false, boundedStop, readinessTimer;
@@ -73,7 +73,7 @@ async function main() {
   monitorActiveTaskHost(active, process, globalThis, supervisor);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   void main().catch(error => {
     console.error(`host stopped because startup failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
     process.exitCode = 1;

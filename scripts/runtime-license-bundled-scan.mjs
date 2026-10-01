@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Artifact-derived bundled-undisclosed scanner.
 //
 // Walks the vendor roots THAT THE INVENTORY ALREADY DECLARES (artifact-only,
@@ -16,7 +17,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { buildArtifactInventory } from './runtime-license-artifact-inventory.mjs';
 import { assertInsideRepository, normalizeRelative } from './runtime-license-repository-guard.mjs';
 
@@ -142,7 +142,7 @@ export function scanBundledUndisclosed(repository = process.cwd()) {
   };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const result = scanBundledUndisclosed();
   const target = process.argv[2] || 'research/runtime-license-bundled-scan.json';
   fs.writeFileSync(target, JSON.stringify(result, null, 2) + '\n');

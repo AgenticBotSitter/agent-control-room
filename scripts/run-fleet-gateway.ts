@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Starts the control-side fleet gateway that remote worker connectors call.
 //
 //   pnpm fleet:gateway <protected-config.json>
@@ -13,7 +14,6 @@ import { lstat, open, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { invokedDirectlyV1 } from "./dev/invoked-directly.mjs";
 import type { DatabaseClient } from "../src/persistence/database";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "../src/web/v1/private-postgres";
@@ -206,6 +206,6 @@ async function main(path: string | undefined) {
   process.stderr.write(`Fleet gateway listening on 127.0.0.1:${config.port}\n`);
 }
 
-if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   main(process.argv[2]).catch(error => { process.stderr.write(`${error instanceof Error ? error.message : "failed"}\n`); process.exitCode = 1; });
 }

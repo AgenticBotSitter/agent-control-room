@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Operator backup tool around pg_dump. Effect-free unless --source and --out are
 // both supplied; without them it prints the planned steps and exits 0.
 //   node deploy/postgres/backup-database.mjs --source "<conn>" --out /srv/backups/cr-20260913 \
@@ -20,7 +21,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { computeDatabaseRestoreIdentity } from "./restore-identity.mjs";
 import { readSchemaDigest } from "./apply-migrations.mjs";
@@ -126,7 +126,7 @@ export async function backupDatabase({ source, out, pgBin, requiredTables = [], 
   return { planned: false, out, identityDigest: metadata.identity.identityDigest };
 }
 
-const invoked = resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url);
+const invoked = isMainModuleV1(process.argv[1], import.meta.url);
 if (invoked) {
   const args = process.argv.slice(2);
   try {

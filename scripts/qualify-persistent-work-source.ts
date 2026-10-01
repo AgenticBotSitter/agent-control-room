@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 /**
  * Persistent-work source qualification runner (issue #215).
  *
@@ -746,10 +747,7 @@ export function summarizeQualification(records: SourceQualificationRecord[]): Qu
   };
 }
 
-const invokedDirectly = typeof process !== "undefined"
-  && Array.isArray(process.argv)
-  && process.argv.length > 1
-  && (process.argv[1].endsWith("qualify-persistent-work-source.ts") || process.argv[1].endsWith("qualify-persistent-work-source.js"));
+const invokedDirectly = isMainModuleV1(process.argv[1], import.meta.url);
 
 if (invokedDirectly) {
   qualifyAllPersistentWorkSources().then(records => {

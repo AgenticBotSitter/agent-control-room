@@ -1,9 +1,9 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { chmod, cp, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const refuse = code => { throw Object.assign(new Error(code), { code }); };
 const sha256 = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -105,8 +105,13 @@ export async function buildFixedUpdaterBundleV1(input) {
   const staging = join(dirname(output), `.${basename(output)}.${process.pid}.${randomBytes(8).toString("hex")}.staging`);
   await mkdir(staging, { recursive: false, mode: 0o700 });
   try {
-    const workspace = join(staging, ".build");
+    const workspaceRoot = join(staging, ".build");
+    const workspace = join(workspaceRoot, "src/updater/v1");
+    await mkdir(dirname(workspace), { recursive: true, mode: 0o700 });
     await copyTree(sourceUpdater, workspace);
+    await mkdir(join(workspaceRoot, "src/installer/shared"), { recursive: true, mode: 0o700 });
+    await copyTree(join(source, "src/installer/shared/is-main-module.mjs"),
+      join(workspaceRoot, "src/installer/shared/is-main-module.mjs"));
     await run(packageManager, ["install", "--offline", "--ignore-scripts", "--frozen-lockfile",
       `--store-dir=${store}`, `--dir=${workspace}`], workspace);
     if (input.testNodeModules) {
@@ -120,7 +125,7 @@ export async function buildFixedUpdaterBundleV1(input) {
     for (const name of ["ddl", "policy"]) await copyTree(join(workspace, name), join(staging, name));
     await copyTree(join(workspace, "guard/guard.sh"), join(staging, "guard.sh"));
     await copyTree(join(workspace, "bin/control-room"), join(staging, "bin/control-room"));
-    await rm(workspace, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
     await chmod(join(staging, "updater.mjs"), 0o500); await chmod(join(staging, "bin/control-room.mjs"), 0o500);
     await chmod(join(staging, "guard.sh"), 0o500); await chmod(join(staging, "bin/control-room"), 0o500);
     const manifest = { schema: "control-room.updater-bundle-manifest/v1", files: await manifestFiles(staging) };
@@ -130,7 +135,7 @@ export async function buildFixedUpdaterBundleV1(input) {
   } catch (error) { await rm(staging, { recursive: true, force: true }); throw error; }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const args = argumentsV1(process.argv.slice(2));
   buildFixedUpdaterBundleV1(args).then(result => process.stdout.write(`${result.digest}\n`)).catch(error => {
     process.stderr.write(`${error?.code ?? "updater_bundle_failed"}\n`); process.exitCode = 1;

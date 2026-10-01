@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../shared/is-main-module.mjs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
@@ -23,7 +24,6 @@ import {
   resolve,
   sep,
 } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createDeterministicTarGzipV1 } from "./local-release-assembly.mjs";
 import { runLocalLauncherCoreV1 } from "./local-launcher-core.mjs";
 import { stageLocalReleaseV1 } from "./local-release-stager.mjs";
@@ -42,9 +42,9 @@ export const MACOS_LOCAL_LAUNCHER_BUNDLE_V3 =
 
 const MANIFEST_NAME = "MACOS_LAUNCHER_MANIFEST.json";
 const COMMAND_NAME = "Open Agent Control Room.command";
-const FIXED_FILE_COUNT = 19;
-const EXPANDED_FILE_COUNT = 31;
-const CLAUDE_BOUND_FILE_COUNT = 36;
+const FIXED_FILE_COUNT = 20;
+const EXPANDED_FILE_COUNT = 32;
+const CLAUDE_BOUND_FILE_COUNT = 37;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const digestPattern = /^[a-f0-9]{64}$/u;
@@ -197,6 +197,7 @@ function expectedBundleMembers(version, architecture, bundleLevel = 1) {
   const expanded = bundleLevel >= 2, claudeBound = bundleLevel >= 3;
   const paths = [COMMAND_NAME, "release/SHA256SUMS", `release/agent-control-room-${version}.manifest.json`,
     `release/agent-control-room-${version}.tar.gz`,
+    "shared/is-main-module.mjs",
     ...(claudeBound ? CLAUDE_BOUND_RUNTIME_FILES : expanded ? EXPANDED_RUNTIME_FILES : RUNTIME_FILES)
       .map(name => `runtime/${name}`),
     `${NATIVE_SIDECAR_DIRECTORY}/MACOS_PROTECTED_DIRECTORY_SIDECAR.json`,
@@ -685,7 +686,8 @@ async function assembleMacosLocalLauncherBundle(input, bundleLevel) {
       const bundleRoot = join(work, rootName);
       await mkdir(join(bundleRoot, "release"), { recursive: true, mode: 0o755 });
       await mkdir(join(bundleRoot, "runtime"), { recursive: true, mode: 0o755 });
-      await Promise.all([bundleRoot, join(bundleRoot, "release"), join(bundleRoot, "runtime")]
+      await mkdir(join(bundleRoot, "shared"), { recursive: true, mode: 0o755 });
+      await Promise.all([bundleRoot, join(bundleRoot, "release"), join(bundleRoot, "runtime"), join(bundleRoot, "shared")]
         .map(path => chmod(path, 0o755)));
       const releaseNames = (await readdir(releaseDirectory, { withFileTypes: true })).map(entry => entry.name).sort();
       for (const name of releaseNames) {
@@ -702,6 +704,10 @@ async function assembleMacosLocalLauncherBundle(input, bundleLevel) {
         await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
         await chmod(destination, 0o644);
       }
+      const helperSource = join(sourceRoot, "src/installer/shared/is-main-module.mjs");
+      await regularFile(helperSource, sourceRoot);
+      await copyFile(helperSource, join(bundleRoot, "shared/is-main-module.mjs"), fsConstants.COPYFILE_EXCL);
+      await chmod(join(bundleRoot, "shared/is-main-module.mjs"), 0o644);
       let protectedDirectoryNativeSidecar, installationJournalNativeSidecar,
         installedConfigurationNativeSidecar, macosServiceNativeSidecar, claudeCodeProcessNativeSidecar;
       try {
@@ -790,7 +796,7 @@ async function cli() {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   cli().catch(error => {
     const message = error?.code === "macos_local_launcher_unsupported_platform"
       ? "This launcher supports macOS on Apple silicon or Intel only."

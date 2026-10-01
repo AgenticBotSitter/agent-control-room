@@ -1,6 +1,6 @@
+import { isMainModuleV1 } from "../../installer/shared/is-main-module.mjs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { PHONE_FALLBACK_VERBS_V1, SUDO_ONLY_VERBS_V1, publicStatusV1, updaterRefuseV1 } from "./contracts.mjs";
 import { atomicWriteNoFollowV1, readFileNoFollowV1 } from "./fs-safety.mjs";
@@ -142,7 +142,7 @@ export async function runUpdaterCliV1(argv, options = {}) {
   return 64;
 }
 
-const invoked = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const invoked = isMainModuleV1(process.argv[1], import.meta.url);
 if (invoked) runUpdaterCliV1(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(error => {
   process.stderr.write(`${typeof error?.code === "string" ? error.code : "updater_cli_failed"}\n`); process.exitCode = 1;
 });

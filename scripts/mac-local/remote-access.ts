@@ -1,7 +1,8 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { execFileSync } from "node:child_process";
 import { lstat, readFile, writeFile, rename } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { loadMacLocalProtectedConfigurationFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
 import type { MacLocalProtectedConfigurationV1 } from "../../src/web/v1/mac-local-protected-configuration";
 
@@ -202,6 +203,6 @@ async function main() {
   if (!result.ok) process.exitCode = 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   void main().catch(error => { console.error(`mac-remote-access: ${error instanceof Error ? error.message : "failed"}`); process.exitCode = 1; });
 }

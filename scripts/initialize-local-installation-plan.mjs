@@ -1,7 +1,7 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const installationIdPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/u;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
@@ -85,5 +85,5 @@ export async function runInitializeLocalInstallationPlan(args, runtime = install
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   process.exitCode = await runInitializeLocalInstallationPlan(process.argv.slice(2));

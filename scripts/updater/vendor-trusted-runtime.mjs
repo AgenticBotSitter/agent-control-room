@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -7,7 +8,6 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import {
   sha256File, validateTrustedRuntimeManifest, verifyPinnedFile,
 } from "../../src/updater/v1/trusted-runtime.mjs";
@@ -173,7 +173,7 @@ function argumentsFrom(argv) {
   return { sourceDirectory: values["--source-directory"], runtimeDirectory: values["--runtime-directory"] };
 }
 
-if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   void vendorTrustedRuntime(argumentsFrom(process.argv.slice(2))).then(result => {
     process.stdout.write(`${JSON.stringify({ schema: "control-room.runtime-vendor-result/v1", ...result })}\n`);
   }).catch(error => {

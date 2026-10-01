@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 /** Explicit release-build tool, never imported by the runtime. Uses the
  * installed macOS toolchain only. No toolchain/package download or install.
  * A separate native artifact is necessary: portable-node's manifest currently
@@ -9,7 +10,7 @@ import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createDeterministicTarGzipV1 } from "../src/installer/v1/local-release-assembly.mjs";
 import { INSTALLATION_JOURNAL_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-installation-journal-native-sidecar.mjs";
@@ -80,7 +81,7 @@ export async function buildInstallationJournalNativeArtifactV1({ outputDirectory
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     if (process.argv.length !== 4 || process.argv[2] !== "--output-directory") refused();
     console.log(JSON.stringify(await buildInstallationJournalNativeArtifactV1({ outputDirectory: process.argv[3] })));

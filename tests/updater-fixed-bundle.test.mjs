@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, cp, lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,9 @@ async function fixtureV1(t) {
   t.after(async () => { await import("node:fs/promises").then(fs => fs.rm(root, { recursive: true, force: true })); });
   await mkdir(join(source, "src/updater"), { recursive: true });
   await cp(join(process.cwd(), "src/updater/v1"), join(source, "src/updater/v1"), { recursive: true });
+  await mkdir(join(source, "src/installer/shared"), { recursive: true });
+  await cp(join(process.cwd(), "src/installer/shared/is-main-module.mjs"),
+    join(source, "src/installer/shared/is-main-module.mjs"));
   await mkdir(join(source, "updater-bundle")); await writeFile(join(source, "updater-bundle/evil.mjs"), "throw 'candidate';\n");
   const store = join(root, "store"), pnpm = join(root, "pnpm"), pnpmLog = join(root, "pnpm.args");
   await mkdir(store); await writeFile(pnpm, `#!/bin/sh\nprintf '%s\\n' \"$@\" > '${pnpmLog}'\n`); await chmod(pnpm, 0o500);
@@ -34,6 +37,21 @@ test("the fixed step builds updater and CLI from source with pinned arguments an
     "the updater's pinned dependency is bundled, not loaded from release node_modules");
   assert.deepEqual((await readFile(fixture.pnpmLog, "utf8")).trim().split("\n").slice(0, 4),
     ["install", "--offline", "--ignore-scripts", "--frozen-lockfile"]);
+
+  const current = join(fixture.root, "current");
+  await symlink(fixture.output, current);
+  const cli = await import("node:child_process").then(({ spawnSync }) => spawnSync(process.execPath,
+    [join(current, "bin/control-room.mjs")], { encoding: "utf8" }));
+  assert.equal(cli.status, 64, cli.stderr);
+  assert.match(cli.stderr, /Usage: control-room/u,
+    "the bundled updater CLI runs through a release-style current symlink");
+
+  const updater = await import("node:child_process").then(({ spawnSync }) => spawnSync(process.execPath,
+    [join(current, "updater.mjs")], { encoding: "utf8", env: { ...process.env,
+      CONTROL_ROOM_UPDATER_TESTING: "1", CONTROL_ROOM_UPDATER_ROOT: fixture.root } }));
+  assert.equal(updater.status, 1, updater.stderr);
+  assert.match(updater.stderr, /updater_test_root_refused/u,
+    "the bundled updater service entry runs through a release-style current symlink");
 });
 
 test("the fixed step refuses policy drift, a tool override outside rehearsal, and a retry over an existing output", async t => {

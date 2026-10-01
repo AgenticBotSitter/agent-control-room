@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Starts the Mac-local stack in the fixed order: database check, owner verification, repin,
 // task provider, task host. The database connection is direct over the protected Tailscale route.
 // Repeat-safe: a running stack is left alone.
@@ -11,7 +12,6 @@ import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { lstat, mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { alive, FLEET_GATEWAY_PORT, fleetGatewayCommand, hostCommand, protectedRootFromArguments, readPid, repoRoot,
   runtimePaths, stopRecorded, stopRecordedHost, taskHostCommand } from "./stack.mjs";
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
@@ -335,6 +335,6 @@ async function startService(root, paths, port, hostReady) {
   log("fleet gateway launchd hand-off pending: cook/daemons item 5 owns its production service definition");
 }
 
-if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   main().catch(error => fail(error instanceof Error ? error.message : "unknown"));
 }
