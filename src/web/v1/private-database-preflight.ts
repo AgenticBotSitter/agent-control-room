@@ -131,7 +131,20 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // 0218 (cursor): the "since you last looked" boundary, one row per
   // (tenant, identity, surface). The web login selects its own row and inserts
   // it on first read; it never deletes one, so the boundary only moves forward.
-  "owner_surface_cursors"] as const;
+  "owner_surface_cursors",
+  // 0240-0242 (navigation + Home): the owner's own chores, and the two tiny
+  // tables behind Home's daily tiles. All three are OWNER-level, so the web login
+  // holds a table-wide SELECT and the isolation lives in the predicate — every
+  // read and every write names owner_identity_id from the authenticated session,
+  // and each of the three write guards in 0241 re-reads the live owner grant
+  // before accepting a row. A second identity's rows are therefore unreachable
+  // from this login, not merely unread because a UI forgot to filter.
+  //
+  // `page_pins` also holds DELETE, which is the one asymmetry in this group and
+  // is deliberate: "Pin this page" is a toggle, so unpinning needs a spelling.
+  // The DELETE set below names it, and it is listed here rather than only there
+  // because the column audit compares the live grant against BOTH declarations.
+  "recurring_chores", "page_visits", "page_pins"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -184,6 +197,14 @@ privateWebInsertTables.add("control_job_artifact_inputs");
 // guard refuses any UPDATE that would lower seen_through, so acknowledging
 // cannot rewind the boundary and hide work that already finished.
 privateWebInsertTables.add("owner_surface_cursors");
+// 0240-0242 (navigation + Home): the owner declares their own chores, records
+// their own page visits, and pins their own pages. Insert-only for the first
+// visit on each (tenant, identity, page); every later write is an UPDATE over the
+// same columns, so INSERT here is the only way a new row appears. The three
+// guards in 0241 refuse a rewind, so none of them can be used to hide history.
+privateWebInsertTables.add("recurring_chores");
+privateWebInsertTables.add("page_visits");
+privateWebInsertTables.add("page_pins");
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -202,6 +223,23 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
   owner_surface_cursors: ["seen_through", "updated_at"],
+  // 0240-0242 (navigation + Home). These lists are the preflight's copy of what
+  // 0241 grants, and they are deliberately IDENTICAL rather than a superset: a
+  // column here that 0241 does not grant, or one missing that it does, is
+  // refused by the column audit rather than tolerated. The exact sets are the
+  // point, because each one is the complete set of ways the web login can change
+  // what the owner sees on Home:
+  //   * recurring_chores: Done moves last_done_at, Snooze moves snoozed_until,
+  //     and updated_at rides along because the guard requires it to advance. No
+  //     title, cadence, page key or owner — those are frozen, so a rename is a
+  //     new chore rather than a rewrite of the owner's own record.
+  //   * page_visits: the recency stamp and the counter. Nothing else about the
+  //     row exists to change.
+  //   * page_pins: the pin order. A pin may be re-ordered (the owner putting it
+  //     back at the back of their own list) but never re-pointed at another page.
+  recurring_chores: ["last_done_at", "snoozed_until", "updated_at"],
+  page_visits: ["last_opened_at", "open_count", "updated_at"],
+  page_pins: ["pinned_at", "updated_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_completion_gate_records: ["web_lock"],
   control_jobs: ["web_lock", "stage_kind", "stage_ordinal", "pipeline_run_id"],
@@ -704,7 +742,12 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
   const allowedInserts = kind === "agentReviewer" ? agentReviewerInserts : kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "publisher" ? publisherInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : privateWebInsertTables;
   const allowedUpdates = kind === "agentReviewer" ? agentReviewerUpdates : kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "publisher" ? publisherUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : privateWebUpdateColumns;
   const allowedDeletes = kind === "coordinator" ? coordinatorDeletes : kind === "web"
-    ? new Set(["owner_web_push_subscriptions"]) : new Set<string>();
+    // page_pins is the one deletable table in the navigation group, and the
+    // reason is the shape of the feature: "Pin this page" is a toggle, so
+    // unpinning needs a DELETE (0220's cursor and 0240's chores deliberately do
+    // NOT have one). It stays owner-scoped: the service deletes by
+    // (tenant_id, owner_identity_id, page_key) and never by page_key alone.
+    ? new Set(["owner_web_push_subscriptions", "page_pins"]) : new Set<string>();
   try {
     await db.transaction(async tx => {
       await verifySession(tx, config, role);

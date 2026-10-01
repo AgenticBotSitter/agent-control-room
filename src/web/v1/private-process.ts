@@ -64,6 +64,8 @@ import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-ht
 import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
+import { OwnerNavigationServiceV1 } from "./owner-navigation-service";
+import { createOwnerNavigationHttpHandlerV1 } from "./owner-navigation-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
 import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-owner";
 import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
@@ -336,6 +338,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey, newsIntegrityKey: options.news?.integrityKey,
       productConfiguration });
   const recurringRules = new RecurringRuleServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
+  // Navigation + Home stages 0 and 0b. Owner-level, owner-scoped, no project and
+  // no queue, so this is a web-login read/write on the VPS exactly as it is on the
+  // Mac; the guard in 0241 is the same one either way.
+  const ownerNavigation = new OwnerNavigationServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
   const reusableSkills = new ReusableSkillServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
@@ -871,6 +878,14 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               planning, assignment, approvals, submission, revisions, gatewayAssertionProfile, clock })(request);
           if (/^\/api\/v1\/projects\/[^/]+\/recurring-rules(?:\/|$)/.test(url.pathname))
             return createRecurringRuleHttpHandlerV1({ origin: site.origin, trust, service: recurringRules,
+              gatewayAssertionProfile, clock })(request);
+          // Stages 0 and 0b. Exact paths, as on the Mac process: a prefix would
+          // match `/api/v1/home/chores/anything` and answer a route that does not
+          // exist with a parse failure rather than a 404.
+          if (url.pathname === "/api/v1/home/chores" || url.pathname === "/api/v1/home/chores/action"
+            || url.pathname === "/api/v1/home/shortcuts" || url.pathname === "/api/v1/home/page-visit"
+            || url.pathname === "/api/v1/home/page-pin")
+            return createOwnerNavigationHttpHandlerV1({ origin: site.origin, trust, service: ownerNavigation,
               gatewayAssertionProfile, clock })(request);
           if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname))
             return createReusableSkillHttpHandlerV1({ origin: site.origin, trust, service: reusableSkills,

@@ -43,6 +43,28 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
 -- in 0219 rejects any UPDATE that lowers seen_through.
 GRANT SELECT, INSERT ON owner_surface_cursors TO control_room_private_web;
 GRANT UPDATE (seen_through,updated_at) ON owner_surface_cursors TO control_room_private_web;
+-- Navigation + Home (0240-0242): the owner's own chores, page visits and pins.
+-- All three are owner-level, not per-project and not per-device, because the
+-- owner works from the Mac and the phone and a tile order that differed per
+-- browser would be wrong on the device they are holding. Every read and write
+-- names the owner from the authenticated session, and each write guard re-reads
+-- the live owner grant in the database, so one owner's rows are unreachable from
+-- another rather than merely hidden.
+--
+-- A chore is removed only by its down migration: Done stops it appearing and
+-- snoozes push it out, and there is deliberately no DELETE path. The UPDATE is
+-- column-scoped to exactly the three columns Done and Snooze move, so the login
+-- cannot rewrite a chore's title, cadence, page key or owner even if it tried.
+GRANT SELECT, INSERT ON recurring_chores TO control_room_private_web;
+GRANT UPDATE (last_done_at,snoozed_until,updated_at) ON recurring_chores TO control_room_private_web;
+-- Page visits are an observation, upserted on navigation. GREATEST in the
+-- statement and the 0241 guard together make it retry-safe; no DELETE.
+GRANT SELECT, INSERT ON page_visits TO control_room_private_web;
+GRANT UPDATE (last_opened_at,open_count,updated_at) ON page_visits TO control_room_private_web;
+-- Pins are the one table here that grants DELETE, because "Pin this page" is a
+-- toggle and unpinping needs a spelling. Still owner-scoped by the predicate.
+GRANT SELECT, INSERT, DELETE ON page_pins TO control_room_private_web;
+GRANT UPDATE (pinned_at,updated_at) ON page_pins TO control_room_private_web;
 GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
   control_recurring_rules TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,

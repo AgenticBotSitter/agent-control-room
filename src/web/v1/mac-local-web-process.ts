@@ -44,6 +44,8 @@ import type { FleetConnectorReleaseManifestV1 } from "../../fleet/v1/connector-r
 import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
+import { OwnerNavigationServiceV1 } from "./owner-navigation-service";
+import { createOwnerNavigationHttpHandlerV1 } from "./owner-navigation-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
 import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-owner";
 import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
@@ -242,6 +244,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
   const recurringRuleHttp = createRecurringRuleHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: recurringRules, clock });
+  // Navigation + Home stages 0 and 0b: the owner's chores, page visits and pins.
+  // Same local-owner-session authentication and same scope as everything else on
+  // this process; constructed here so the handler exists for the router below
+  // rather than being rebuilt per request the way private-process.ts does.
+  const ownerNavigation = new OwnerNavigationServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
+  const ownerNavigationHttp = createOwnerNavigationHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: ownerNavigation, clock });
   const reusableSkills = new ReusableSkillServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
   const reusableSkillHttp = createReusableSkillHttpHandlerV1({ origin: options.origin,
@@ -702,6 +712,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/recurring-rules(?:\/|$)/.test(url.pathname)) return recurringRuleHttp(request);
+      // Stages 0 and 0b. The one exact-path prefix among the sub-handlers because
+      // these six routes are exact paths under /api/v1/home and none of them has a
+      // trailing segment that a prefix could swallow; a regex here would accept
+      // `/api/v1/home/chores/anything` as a chore route and then refuse it deeper
+      // in, which is a worse error than not matching here at all.
+      if (url.pathname === "/api/v1/home/chores" || url.pathname === "/api/v1/home/chores/action"
+        || url.pathname === "/api/v1/home/shortcuts" || url.pathname === "/api/v1/home/page-visit"
+        || url.pathname === "/api/v1/home/page-pin") return ownerNavigationHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname)) return reusableSkillHttp(request);
       if (orchestrationHttp && (/^\/api\/v1\/projects\/[^/]+\/orchestration(?:-settings)?$/.test(url.pathname)
         || /^\/api\/v1\/projects\/[^/]+\/pipelines\/[^/]+\/suggestions(?:\/|$)/.test(url.pathname)))
