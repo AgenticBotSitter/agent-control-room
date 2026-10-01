@@ -169,8 +169,8 @@
   },
   {
     "file": "src/fleet/v1/gateway-http.ts",
-    "find": " || path === \"/fleet/v1/mcp/calls\"\n      || releaseRoute !== null || claimRoute.test(path) || proposalRoute.test(path)",
-    "replace": "\n      || releaseRoute !== null || claimRoute.test(path) || proposalRoute.test(path)",
+    "find": " || path === \"/fleet/v1/mcp/calls\"\n      || path === \"/fleet/v1/offline\"",
+    "replace": "\n      || path === \"/fleet/v1/offline\"",
     "test": "node --import tsx --test --test-name-pattern \"MCP server: exposes\" tests/fleet-connector.test.ts",
     "why": "the authenticated gateway audit route remains reachable"
   },
