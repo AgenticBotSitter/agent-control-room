@@ -1,12 +1,27 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { rename } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { parseMacLocalWebHostArguments, startHostWithOptionalIntake,
+import { loadMacLocalWebHostReleaseV1, parseMacLocalWebHostArguments, startHostWithOptionalIntake,
   startMacLocalTaskHost, startMacLocalWebHost } from "../scripts/mac-local/start-web-host.mjs";
 // The service host must never import bot executable inspection; it lives in
 // its own module so the launcher's own module graph stays spawn-free.
 import { readPinnedMacExecutableVersion, verifyPinnedMacModelPolicy }
   from "../scripts/mac-local/bot-executable-inspection.mjs";
 import { startMacLocalFleetGateway } from "../scripts/mac-local/start-fleet-gateway.mjs";
+
+async function buildReleaseInOwnedProcessGroup(t) {
+  const child = spawn(process.execPath, ["scripts/build-vps.mjs"], { cwd: process.cwd(), detached: true,
+    env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+  let finished = false, output = "";
+  child.stdout.on("data", chunk => { output += chunk; }); child.stderr.on("data", chunk => { output += chunk; });
+  const killGroup = () => { try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; } };
+  t.after(() => { if (!finished) killGroup(); });
+  const status = await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
+  finished = true; killGroup();
+  assert.equal(status, 0, output);
+}
 
 test("Mac local web host launcher accepts only the owner-attended fixed protected root", () => {
   assert.deepEqual(parseMacLocalWebHostArguments(["--owner-attended", "--protected-root", "/Library/Application Support/Agent Control Room"]),
@@ -16,6 +31,28 @@ test("Mac local web host launcher accepts only the owner-attended fixed protecte
     ["--owner-attended", "--protected-root", "/tmp/x\n"]]) {
     assert.throws(() => parseMacLocalWebHostArguments(args), /mac_local_web_host_arguments_invalid/);
   }
+});
+
+test("item 9: the built web-host release loads all seven real modules before any listener can start", async t => {
+  await buildReleaseInOwnedProcessGroup(t);
+  const hostPath = fileURLToPath(new URL("../dist-vps/server/macLocalHost.js", import.meta.url));
+  const missingPath = `${hostPath}.missing-fixture`;
+  let moved = false;
+  t.after(async () => { if (moved) await rename(missingPath, hostPath); });
+  await rename(hostPath, missingPath); moved = true;
+  await assert.rejects(loadMacLocalWebHostReleaseV1(), /Cannot find module|ERR_MODULE_NOT_FOUND/u);
+  await rename(missingPath, hostPath); moved = false;
+
+  const release = await loadMacLocalWebHostReleaseV1();
+  assert.equal(typeof release.hostModule.createMacLocalProtectedHostV1, "function");
+  assert.equal(typeof release.loaderModule.loadMacLocalProtectedConfigurationFromRootV1, "function");
+  assert.equal(typeof release.postgresModule.createPrivatePostgresDatabase, "function");
+  assert.equal(typeof release.servingModule.loadPrivateClientAssets, "function");
+  assert.equal(typeof release.rendererModule.default, "function");
+  assert.equal(typeof release.intakeModule.prepareWorkIntakePrivateServiceV1, "function");
+  assert.equal(typeof release.fleetModule.prepareMacLocalFleetOwnerV1, "function");
+  await assert.rejects(loadMacLocalWebHostReleaseV1(async path => path.endsWith("macLocalFleet.js")
+    ? { prepareMacLocalFleetOwnerV1() {} } : import(path)), /mac_local_web_host_release_invalid/u);
 });
 
 test("owner-attended setup reads a bounded exact executable version without shell expansion", async () => {

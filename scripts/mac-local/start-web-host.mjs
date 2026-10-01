@@ -41,14 +41,11 @@ export function parseMacLocalWebHostArguments(args) {
   return Object.freeze({ protectedRoot: args[2] });
 }
 
-export async function startMacLocalWebHost(input, runtime = {}) {
-  if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
+/** Load and validate the exact seven server modules shipped in the built
+ * release. Kept separate from startup so packaging can be proven before any
+ * database or listener effect is possible. */
+export async function loadMacLocalWebHostReleaseV1(load = path => import(path)) {
   const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
-  const [healthProbeKey, healthReleaseId] = await Promise.all([
-    runtime.loadHealthProbeKey ?? loadHealthProbeKeyV1(input.protectedRoot),
-    runtime.hostReleaseIdentity ?? hostReleaseIdentityV1(fileURLToPath(releaseRoot)),
-  ]);
-  const load = runtime.load ?? (path => import(path));
   const [hostModule, loaderModule, postgresModule, servingModule, rendererModule, intakeModule, fleetModule] = await Promise.all([
     load(new URL("macLocalHost.js", releaseRoot).href), load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
     load(new URL("privatePostgres.js", releaseRoot).href), load(new URL("serving.js", releaseRoot).href),
@@ -66,6 +63,18 @@ export async function startMacLocalWebHost(input, runtime = {}) {
     || typeof fleetModule.loadMacLocalFleetReleaseTrustV1 !== "function"
     || typeof fleetModule.loadMacLocalFleetConnectorReleaseV1 !== "function")
     throw new Error("mac_local_web_host_release_invalid");
+  return Object.freeze({ releaseRoot, hostModule, loaderModule, postgresModule, servingModule, rendererModule, intakeModule, fleetModule });
+}
+
+export async function startMacLocalWebHost(input, runtime = {}) {
+  if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
+  const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
+  const [healthProbeKey, healthReleaseId] = await Promise.all([
+    runtime.loadHealthProbeKey ?? loadHealthProbeKeyV1(input.protectedRoot),
+    runtime.hostReleaseIdentity ?? hostReleaseIdentityV1(fileURLToPath(releaseRoot)),
+  ]);
+  const { hostModule, loaderModule, postgresModule, servingModule, rendererModule, intakeModule, fleetModule }
+    = await loadMacLocalWebHostReleaseV1(runtime.load);
   const assets = await servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url)));
   const releaseTrust = await fleetModule.loadMacLocalFleetReleaseTrustV1(input.protectedRoot);
   const [configuration,installed,ownerWebPush,databaseRoles,connectorRelease] = await Promise.all([

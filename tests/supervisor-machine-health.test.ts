@@ -38,6 +38,19 @@ test("the process probe counts macOS and Linux shared-memory output without muta
   assert.deepEqual(await probe.sample(),{hostAlive:true,sharedMemorySegments:2,loadOneMinute:4.5});assert.equal(reads,1);
 });
 
+test("item 14: the default machine probe returns finite-or-null OS metrics without throwing", async () => {
+  const sample=await createSupervisorMachineProbeV1().sample();
+  assert.equal(typeof sample.hostAlive,"boolean");
+  assert.ok(sample.sharedMemorySegments===null||Number.isSafeInteger(sample.sharedMemorySegments)&&sample.sharedMemorySegments>=0);
+  assert.ok(sample.loadOneMinute===null||Number.isFinite(sample.loadOneMinute)&&sample.loadOneMinute>=0);
+});
+
+test("item 14 hostile: an ipcs failure and invalid load become null health evidence", async () => {
+  const probe=createSupervisorMachineProbeV1({parentAlive:()=>true,loadOneMinute:()=>Number.NaN,
+    sharedMemory:async()=>{throw new Error("ipcs_unavailable_fixture");}});
+  assert.deepEqual(await probe.sample(),{hostAlive:true,sharedMemorySegments:null,loadOneMinute:null});
+});
+
 test("the uninstalled LaunchDaemon kit survives logout/reboot and crash without embedding a machine path", async () => {
   const template=await readFile("deploy/macos/xyz.agentcontrolroom.supervisor.plist.in","utf8");
   const body=renderSupervisorLaunchDaemonV1(template,{serviceUser:"controlroom",nodeExecutable:"/opt/runtime/bin/node",
