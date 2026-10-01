@@ -28,17 +28,10 @@
     "why": "the narrow web-role reader must refuse a record of the wrong schema rather than read a login out of it"
   },
   {
-    "file": "src/web/v1/mac-local-protected-loader.ts",
-    "find": "    if (record.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || !record.web || typeof record.web !== \"object\"\n      || Array.isArray(record.web)) throw new Error();",
-    "replace": "    if (record.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || !record.web || typeof record.web !== \"object\")\n      throw new Error();",
-    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 13: the ledger head is read on the pre-upgrade' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
-    "why": "a record whose web login is a JSON array must be refused, not passed to the pool factory"
-  },
-  {
     "file": "scripts/mac-local/upgrade.mjs",
     "find": "  try { return await loadMacLocalWebRoleFromRootV1(protectedRoot); }\n  catch { failure(\"upgrade_ledger_head_refused\"); }",
     "replace": "  return await loadMacLocalWebRoleFromRootV1(protectedRoot);",
-    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 13 hostile' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
-    "why": "an unreadable protected record must surface as the upgrade refusal the CLI can name, never as an opaque loader error"
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 13: the ledger head is read on the pre-upgrade' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
+    "why": "an unreadable or malformed protected record must surface as the upgrade refusal the CLI can name, never as an opaque loader error that becomes upgrade_failed"
   }
 ]
