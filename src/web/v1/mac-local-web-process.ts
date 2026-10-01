@@ -45,6 +45,8 @@ import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
+import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-owner";
+import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
 import { hmacSha256Tag } from "../../security";
 import type { UpdaterHomeStatusReaderV1 } from "./updater-home-status";
 import { updaterOwnerRequestSchemaV1, type UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
@@ -106,6 +108,8 @@ export interface MacLocalWebProcessOptionsV1 {
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   /** The same protected authority captured by the coordinator lifecycle. */
   workBatchQueueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
+  /** Optional owner chief-of-staff bridge supplied by the host composition. */
+  orchestration?: ProjectOrchestrationOwnerPortV1;
   /** Host-owned append-only projection; this wrapper receives no writer. */
   projectEvents?: ProjectEventReadSourceV1;
   /** Host-generation display state built only after pinned executable
@@ -228,6 +232,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     options.workBatchQueueCatalog, options.workBatchQueueAdmissionAuthority) : undefined;
   const workBatchHttp = workBatches ? createWorkBatchOwnerHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: workBatches, clock }) : undefined;
+  const orchestrationHttp = options.orchestration ? createProjectOrchestrationHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: options.orchestration, clock }) : undefined;
   const pipelines = options.workBatchIntegrityKey ? new LinearPipelineServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey,
     options.workBatchQueueAdmissionAuthority, clock) : undefined;
@@ -636,6 +642,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/recurring-rules(?:\/|$)/.test(url.pathname)) return recurringRuleHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname)) return reusableSkillHttp(request);
+      if (orchestrationHttp && (/^\/api\/v1\/projects\/[^/]+\/orchestration(?:-settings)?$/.test(url.pathname)
+        || /^\/api\/v1\/projects\/[^/]+\/pipelines\/[^/]+\/suggestions(?:\/|$)/.test(url.pathname)))
+        return orchestrationHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
       if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
       if (resultFileHttp && /^\/api\/v1\/projects\/[^/]+\/result-files(?:\/|$)/.test(url.pathname))

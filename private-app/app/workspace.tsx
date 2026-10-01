@@ -22,6 +22,7 @@ import { ProjectAgentWorkspace } from "./project-agent-workspace";
 import { ProjectSettingsPanel } from "./project-settings-panel";
 import { useLocalRuntime } from "./local-runtime";
 import { StateChip } from "./owner-ui";
+import { ProjectOrchestrationPanel, ProjectOrchestrationSettings } from "./project-orchestration";
 
 /** Browser-side canonical JSON: stable across equivalent object key ordering. Mirrors the
  * server's canonical-digest implementation so the template-selection key the browser sends
@@ -316,6 +317,9 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
           {section === "settings" && project.origin === "ordinary" && <ProjectSettingsPanel projectId={projectId} />}
+          {section === "settings" && project.origin === "ordinary" && <ProjectOrchestrationSettings projectId={projectId} />}
+          {section === "overview" && project.origin === "ordinary" && project.lifecycle === "active"
+            && <ProjectOrchestrationPanel projectId={projectId} />}
           {section === "overview" && <ProjectOverviewActivity key={projectId} projectId={projectId} />}
           {section === "overview" && runtime.mode === "hosted" && <>
             <section className="private-panel"><h2>Worker availability</h2>

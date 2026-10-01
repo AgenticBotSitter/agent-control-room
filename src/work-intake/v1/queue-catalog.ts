@@ -58,7 +58,8 @@ export function captureWorkBatchQueueCatalogV1(value: readonly WorkBatchQueueWor
 }
 
 export function resolveWorkBatchQueueWorkerV1(catalog: WorkBatchQueueCatalogV1,
-  requested: { requestedWorkerId?: string; requestedWorkerKind?: string; requestedModelKey?: string }):
+  requested: { requestedWorkerId?: string; requestedWorkerKind?: string; requestedModelKey?: string;
+    requestedEffort?: string }):
   Readonly<{ worker: WorkBatchQueueWorkerV1; model: ResolvedTaskModelV1 }> | undefined {
   // A role-only preference is not an assignee. Keep it visible for owner
   // follow-up, but do not allocate a queue position until an exact registered
@@ -71,7 +72,8 @@ export function resolveWorkBatchQueueWorkerV1(catalog: WorkBatchQueueCatalogV1,
   if (!worker.modelPolicy) throw new Error("work_batch_queue_model_unavailable");
   const models = captureTaskModelCatalogV1([{ kind: worker.workerKind, policy: worker.modelPolicy }]);
   return Object.freeze({ worker, model: resolveTaskModelV1(models, worker.workerKind,
-    { ...(requested.requestedModelKey ? { model: requested.requestedModelKey } : {}) }) });
+    { ...(requested.requestedModelKey ? { model: requested.requestedModelKey } : {}),
+      ...(requested.requestedEffort ? { effort: requested.requestedEffort } : {}) }) });
 }
 
 /** One host-generation validator shared by owner admission and the later

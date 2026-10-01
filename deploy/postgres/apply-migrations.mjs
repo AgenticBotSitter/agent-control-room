@@ -197,7 +197,26 @@ export async function applyMigrations({ target, rootDir = root, ledgerPath, env 
       await client.query("RESET ROLE");
     } catch (error) {
       await client.query("RESET ROLE").catch(() => {});
-      if (error?.code !== "42P01") throw error;
+      // 42P01 is `undefined_table`: the file names a RELATION the cluster does not
+      // have, which is what an upgrade from an older applied ledger looks like --
+      // this release's grant file grants on tables a prefix of the migrations never
+      // created.
+      //
+      // 42883 is `undefined_function`, and it is the SAME situation for a FUNCTION
+      // grant. `production_table_grants.sql` and the role files grant EXECUTE on
+      // `work_intake_split_suggestion_visible`, `planner_failure_scope_key` and
+      // `control_room_planner_grant_owner_retry`, all created by 0203-0205. An
+      // upgrade rung whose applied ledger stops before them therefore raised
+      // `function work_intake_split_suggestion_visible(text, text, text) does not
+      // exist` and the whole run failed (round 4, R4-B3: test:postgres-production
+      // #11-#15, "upgrade from S2's / main's / ... applied ledger").
+      //
+      // So the deferred-partial-schema arm covers both codes. Nothing is weakened:
+      // `grants` is reported as `deferred_partial_schema:<message>`, the run
+      // continues, and the S-slice tests assert `grants === "applied"` on a
+      // complete schema -- so a deferral on a cluster that IS complete is still
+      // visible in the result rather than silent.
+      if (error?.code !== "42P01" && error?.code !== "42883") throw error;
       grants = `deferred_partial_schema:${error.message.split("\n")[0]}`;
     }
     // Schedule-admission scheduler login (idempotent, owned by the schema

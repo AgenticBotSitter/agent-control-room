@@ -40,7 +40,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // is expected to appear anywhere.
 //
 // Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "9e8d58708fc41b691e0372a485cb612e1778a63d0eddbbac002dcb09a3da9948";
+export const privateWebSchemaDigest = "b6825826157177bcd5170847b36c1eadb157a6cf2ccd20fb35046bfdd77f0acd";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -91,6 +91,10 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // preflight's column audit is what proves the web login cannot write a
   // catalog row, cannot quarantine a file and cannot rewrite a producer.
   "control_result_file_sets", "control_result_files", "control_result_file_download_grants",
+  // MIG-A 0200/0202/0201: the current-split-suggestion read, the open Needs-you
+  // ledger, and the stored planner selection. All three are VIEWS granted to the
+  // web login, so the column audit reads their columns like any other relation.
+  "work_batch_current_split_suggestions", "control_planner_open_needs_you", "control_project_planner_selections",
   // 0209-0211: the owner's approval artefacts for the upload path. Read plus
   // INSERT on the three the owner actually declares and binds; the upload
   // sessions, their chunks and the publication receipt are read only, so the
@@ -135,12 +139,20 @@ privateWebInsertTables.add("control_news_task_proposal_links");
 // S7b: the owner sets the installation's caps and reports the machine's cluster count.
 privateWebInsertTables.add("pipeline_installation_allowances"); privateWebInsertTables.add("pipeline_machine_capacity_observations");
 privateWebInsertTables.add("installation_operations_mode_revisions");
+// 0190: a task proposal may cite a retained news story (append-only provenance).
+privateWebInsertTables.add("control_news_task_proposal_links");
 // 0195: the owner's append-only module install approvals (read current, insert new).
 privateWebInsertTables.add("control_module_install_approvals");
 // 0208: the owner-facing download grant for one exact file. Insert and spend
 // only; the catalog itself is never written by the web login.
 privateWebInsertTables.add("control_result_file_download_grants");
 // cook/v1 (recurring + skills): the owner's rules and reusable skills.
+// MIG-A (0200-0202): the orchestrator's two owner-facing VIEWS are declared in
+// privateWebReadTables, and the base tables behind them are deliberately absent
+// from this insert set and must not be added -- the web login reads a
+// current-revision-only view of the suggestions and a content-free view of the
+// escalated Needs-you ledger, and holds nothing on either base table, so it can
+// neither insert a suggestion (an agent's act), clear a counter, nor raise an item.
 for (const table of ["control_skills", "control_skill_versions", "control_task_skill_bindings", "control_recurring_rules"])
   privateWebInsertTables.add(table);
 // 0209-0211: the owner approves what a part may produce and what it needs, and
@@ -198,7 +210,11 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
   control_project_settings: ["eligible_worker_kinds", "max_concurrent_tasks", "default_worker_kind",
-    "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
+    "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at",
+    // MIG-A (0201): the per-project orchestrator selection, owner-gated and
+    // column-scoped for the same reason as 0135's. The row's identity (tenant_id,
+    // project_id) stays outside the grant on purpose.
+    "planner_mode", "planner_worker_id", "planner_worker_kind", "planner_model", "planner_effort"],
   control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
   // 0206-0208: the owner's two retention decisions and the one-time spend of a
@@ -212,6 +228,26 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
     "updated_by_identity_id", "updated_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
+/** Every view that must carry `security_barrier = true`, and the reason each one
+ * is on the list.
+ *
+ * The first four are the exposure N-B1 measured: a view owned by the schema owner
+ * over a table a shared login can reach, whose WHERE clause is a tenant filter
+ * rather than a convenience. Without the reloption, a filter the CALLER adds is
+ * evaluated on every row the view produces before the view's own qual runs, so a
+ * cast or a 1/0 in it turns another tenant's row into an error message.
+ *
+ * The last two are DEFENSIVE ONLY and the distinction is load-bearing, so it is
+ * stated here rather than left to a reader of the list to infer: neither carries a
+ * tenant predicate, so there are no quals for the reloption to order, and adding
+ * one to them would be a different change with a different proof. They are on the
+ * list because the property costs nothing and means the next migration does not
+ * have to re-derive the argument for each view, not because the reloption fixes a
+ * read of these two. */
+const barrierViews = Object.freeze(["work_batch_current_split_suggestions",
+  "work_batch_effective_queue_admissions", "pipeline_ordered_stage_runs",
+  "installation_effective_operations_mode", "control_planner_open_needs_you",
+  "control_project_planner_selections"]);
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
   "control_idea_sessions", "control_idea_bot_run_events", "control_idea_contributions", "control_idea_syntheses",
   "control_idea_decisions", "control_idea_owner_authorizations", "control_policy_decisions", "projects",
@@ -284,6 +320,16 @@ coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_run
 coordinatorReads.push("control_improvement_requests", "control_update_candidates");
 // Scheduling reads each project's worker and concurrency settings (0135).
 coordinatorReads.push("control_project_settings");
+// MIG-A (0200-0202): the orchestrator's durable run bookkeeping. The coordinator
+// WRITES both tables -- the failure counter with a five-column UPDATE its guard
+// constrains, and the append-only escalation ledger -- and reads nothing of either
+// owner's views, which belong to the web login alone. Its split suggestions are
+// appended on the INTAKE login (0200 grants control_room_work_intake the table),
+// not here: the proposer is an agent, and a coordinator-login insert would put the
+// orchestrator's own suggestion on a login that also dispatches work.
+coordinatorReads.push("control_planner_failure_counters", "control_planner_needs_you_items");
+coordinatorInserts.add("control_planner_failure_counters");
+coordinatorInserts.add("control_planner_needs_you_items");
 coordinatorReads.push("installation_operations_mode_revisions");
 coordinatorReads.push("control_skills", "control_skill_versions", "control_task_skill_bindings",
   "control_recurring_rules", "control_recurring_proposals");
@@ -353,6 +399,27 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_provider_waits: ["state", "released_at"],
   control_recurring_proposals: ["state", "attempt_count", "batch_id", "safe_reason_code", "updated_at"],
   control_recurring_rules: ["last_evaluated_at"],
+  // MIG-A (0202, widened by 0205): the failure counter's admitted transitions and
+  // nothing else. The guard trigger refuses any other move, so a caller cannot set
+  // the count to 2 by hand and raise an escalation it never earned, nor reset a
+  // live failure. `owner_retry_cleared_at` is here because 0205's clear SPENDS an
+  // owner-retry latch by setting it to NULL, and that is a transition the
+  // coordinator must be able to make.
+  //
+  // WHAT THIS DOES NOT CLAIM, corrected after round 4 measured it: the coordinator
+  // can therefore UNSET a latch -- which spends an owner's granted retry -- and it
+  // can also clear a live counter outright, which it has been able to do since
+  // 0202. The trigger constrains WHICH transitions, not who asks. So neither the
+  // "only the owner's web login can ask" nor the "the coordinator holds no UPDATE
+  // on the column" claim is true of the DATABASE, and the code comments claiming
+  // them have been corrected rather than left standing. The bound that does hold is
+  // the one the coordinator enforces in one statement (spend the latch only when a
+  // row came back), plus the removal of the coordinator's EXECUTE on
+  // `control_room_planner_grant_owner_retry`, which is the only way to SET a latch
+  // from SQL. This list and the role file's are deliberately identical: a column in
+  // one and not the other fails the column audit rather than passing quietly.
+  control_planner_failure_counters: ["failure_count", "last_failure_at", "cleared_at", "version", "updated_at",
+    "owner_retry_cleared_at"],
   // An incident is opened with a bounded column set and then corrected in
   // place; the head's generation counter is the only service-registry write.
   control_service_incident_heads: ["next_generation"],
@@ -641,6 +708,159 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                     'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
                     'control_room_idea_creation','control_room_news_coordinator','control_room_fleet_gateway',
                     'control_room_fleet_owner_authority'))))
+            /* MIG-A 0204: the failure-scope key helper, and the SECOND half of
+               R4-B1 that the review did not name. The arm above is
+               '(EXECUTE OR SECURITY DEFINER) AND NOT (<these pins>)', so a pin is
+               needed by every function this login can EXECUTE, not only by every
+               SECURITY DEFINER one. 'planner_failure_scope_key(text, jsonb)' is
+               granted to the coordinator in db/roles/task_coordinator_roles.sql --
+               0204's header explains why it has to be: the SECURITY DEFINER guard
+               calls it, and PostgreSQL checks EXECUTE for the INSERTing role too,
+               so without the grant every escalation is refused with "permission
+               denied for function planner_failure_scope_key".
+
+               Measured consequence of its absence: the COORDINATOR login's startup
+               preflight refused every correct database (test:recurring-work and
+               this stream's own per-login preflight test), while the web login
+               passed -- which is why round 4's measurements, taken through the web
+               login, did not see it. The pin is not a widening: the function is
+               IMMUTABLE, pure SQL, computes a digest over a preimage the caller
+               already holds, and reaches no table, so EXECUTE discloses nothing the
+               coordinator could not compute.
+
+               Pinned on every property the others pin: the exact oid and
+               argument types, NOT SECURITY DEFINER (it is a helper, and a pin that
+               claimed otherwise would exempt a function running as the caller),
+               IMMUTABLE, 'proparallel='s'', not leakproof, owner
+               'control_room_schema_owner', the pinned search_path, no EXECUTE for
+               PUBLIC, and an ACL admitting exactly the one login the role file
+               grants it to. */
+            OR (p.oid='planner_failure_scope_key(text,jsonb)'::regprocedure
+              AND NOT p.prosecdef AND p.provolatile='i' AND p.prokind='f' AND p.prorettype='text'::regtype
+              AND p.pronargs=2 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
+              -- NO search_path IS PINNED, and that is read from the server rather
+              -- than assumed: measured on a real cluster, this function's proconfig
+              -- is NULL, because 0204 created it without a SET clause. Pinning a
+              -- search_path it does not have would refuse every correct database --
+              -- the same failure as R4-B1, one function over. The property is safe
+              -- without one because the body is a single IMMUTABLE SQL expression
+              -- that qualifies every function it calls (public.work_intake_canonical_jsonb,
+              -- pg_catalog.sha256, pg_catalog.encode, pg_catalog.convert_to) and so
+              -- resolves no name through the session's search_path.
+              AND p.proconfig IS NULL
+              AND p.proname='planner_failure_scope_key'
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND has_function_privilege('control_room_task_coordinator',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee)<>'control_room_task_coordinator')))
+            /* MIG-A 0204/0205: the Needs-you INSERT guard, a SECURITY DEFINER
+               TRIGGER function. THIS ENTRY IS WHAT ROUND 4 FOUND MISSING (R4-B1).
+
+               The catalog scan below exempts a SECURITY DEFINER function only by
+               pinning it, and it makes no exception for triggers -- so when 0204
+               (and 0205, again) rebuilt this guard with SECURITY DEFINER, every
+               private login's startup preflight began refusing a CORRECT database.
+               Measured on the merged tree: test:database 81/83, both failures
+               'private_database_preflight_failed' (module-install-approvals and
+               module-project-pack-transfer), and test:postgres-production #23/#25
+               the same. The declaration test never saw it, because that test's
+               scanner skips trigger functions -- it scans what a login can CALL,
+               and no login can call a trigger.
+
+               The two scans are now reconciled deliberately rather than by luck:
+               THIS list is the trigger side (every SECURITY DEFINER trigger a
+               migration creates must be pinned here), and
+               tests/private-web-role-preflight-declaration.test.ts is the
+               callable side (every callable function a migration creates must be
+               either pinned here or provably not login-callable). Neither scanner
+               is a filter over the other.
+
+               WHY IT IS SAFE, stated as the same argument the other entries use:
+               a trigger function cannot be invoked directly and returns
+               'trigger', so no login can call it whatever its ACL reads; it
+               executes as the owner of the table it is attached to; it writes
+               nothing and returns the row it was handed. SECURITY DEFINER is
+               load-bearing for a MEASURED reason, not a habit -- the guard calls
+               planner_failure_scope_key, and a plain trigger runs as the INSERTing
+               role, which holds no EXECUTE on it (0204's header: "permission
+               denied for function planner_failure_scope_key" on the first raise).
+
+               Pinned on every property the other entries pin: the exact oid with
+               its empty argument list, 'prorettype=trigger', 'prokind=f',
+               SECURITY DEFINER, VOLATILE, not leakproof, 'proparallel=u',
+               owner 'control_room_schema_owner', the pinned search_path, no
+               EXECUTE for PUBLIC, and an ACL that admits NO login at all -- so a
+               grant to any of them fails this preflight rather than passing
+               quietly. 'prolang' is named as plpgsql rather than left implicit:
+               a rebuild in another language is a different function body and has
+               to fail here rather than pass. */
+            OR (p.oid='guard_planner_needs_you_item_insert()'::regprocedure
+              AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND p.prorettype='trigger'::regtype
+              AND p.pronargs=0 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND p.proname='guard_planner_needs_you_item_insert'
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner))
+            /* MIG-A 0203: the split-suggestion visibility predicate. It is a
+               SECURITY DEFINER function because it is called from a VIEW's WHERE
+               clause, and a view runs with its OWNER's rights -- the intake login
+               holds no grant at all on work_batches or
+               work_intake_tenant_binding, so without SECURITY DEFINER the
+               predicate could not read the binding it exists to enforce. It is
+               safe to exempt for the same reason the fleet redemption function
+               is: it returns ONE boolean about three values the caller already
+               supplied, so it is not a window onto the two tables it reads, and it
+               reads them with no row-level policy of their own in the predicate
+               body (the bound tenant and the batch's own proposer are named by
+               the caller, then confirmed by EXISTS). It is pinned here the same
+               way: owner, SECURITY DEFINER, STABLE, a pinned search_path, no
+               grant to PUBLIC, and an ACL that admits only the two logins 0200
+               already granted the view to -- so a future grant to a third party
+               fails the private-web preflight rather than passing quietly. */
+            OR (p.oid='work_intake_split_suggestion_visible(text,text,text)'::regprocedure
+              AND p.prosecdef AND p.provolatile='s' AND p.prokind='f' AND p.prorettype='boolean'::regtype
+              AND p.pronargs=3 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND p.proname='work_intake_split_suggestion_visible'
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee) NOT IN ('control_room_work_intake','control_room_private_web'))))
+            /* MIG-A 0205: the owner's deliberate retry. It is SECURITY DEFINER
+               because the whole point is that the owner's web login holds NO
+               privilege at all on control_planner_failure_counters -- 0202 states
+               that in terms and the column audit above enforces it for every
+               column, so granting the web login an UPDATE would mean weakening a
+               reviewed invariant. One pinned function is the smaller change.
+
+               It is pinned the same way as every other entry: owner, SECURITY
+               DEFINER, VOLATILE, a pinned search_path, no grant to PUBLIC, and an
+               ACL that admits EXACTLY ONE login -- the owner's web login, which
+               calls it. Round 4 measured that the coordinator's grant, which this
+               entry used to admit, was never used by any coordinator code and
+               meant the coordinator login could set the latch itself; the role
+               file now REVOKEs it and the ACL test here is what makes a grant to
+               it (or to any third party) fail this preflight rather than pass
+               quietly. A function re-created with a different body or a missing
+               search_path fails it too. */
+            OR (p.oid='control_room_planner_grant_owner_retry(text,text,text[])'::regprocedure
+              AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND p.prorettype='integer'::regtype
+              AND p.pronargs=3 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+              AND p.proname='control_room_planner_grant_owner_retry'
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND has_function_privilege('control_room_private_web',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee)<>'control_room_private_web')))
             OR (p.oid='redeem_fleet_enrollment(text,text,text,text,timestamptz)'::regprocedure
               AND p.prosecdef AND p.provolatile='v' AND p.prokind='f' AND NOT p.proleakproof AND p.proparallel='u'
               AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
@@ -759,6 +979,38 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
         : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
       if (!columns.length) fail();
+      // The `security_barrier` reloption, on every view whose WHERE clause is a
+      // defence rather than a convenience.
+      //
+      // WHY IT NEEDS ITS OWN CHECK. A view runs with its OWNER's rights, so a
+      // tenant filter in a view's WHERE clause is the ONLY thing standing
+      // between a shared login and every tenant's rows -- and a plain view is not
+      // a security barrier: PostgreSQL evaluates the CALLER's own qual before the
+      // view's, so a cheap filter the caller adds runs first, on rows the view
+      // would have excluded, and a cast or a 1/0 in it turns another tenant's
+      // row into an error message. Measured as N-B1: a `::int` cast on one
+      // column, and a `CASE ... THEN 1/0`, both leaked the other tenant's full
+      // proposal text through the error, with the plain row count still 0.
+      //
+      // WHY IT IS NOT IN THE DIGEST. `readPrivateWebSchemaDigest` records
+      // columns, constraints, indexes, triggers, policies and functions. A
+      // view's reloptions are none of those, so dropping the barrier changed no
+      // digest at all and a correct-looking install would have started up. This
+      // is the only place the property is visible, so it is read from the server
+      // rather than from a constant.
+      //
+      // The list is the six views 0205 sets. The first FOUR are the ones where
+      // the barrier changes what a caller can observe; the last two have no
+      // tenant predicate at all, so the reloption orders no quals and is
+      // defensive only -- 0205's header says so rather than implying the fix
+      // covers a cross-tenant read of those two, which it does not.
+      const barriers = await tx.query<{ view: string; barrier: boolean }>(`SELECT c.relname AS view,
+        coalesce((SELECT true FROM unnest(coalesce(c.reloptions,'{}'::text[])) o
+          WHERE o='security_barrier=true'),false) AS barrier
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND c.relname=ANY($1::text[])`, [barrierViews]);
+      if (barriers.rows.length !== barrierViews.length
+        || barriers.rows.some(row => row.barrier !== true)) fail();
       // Fleet tables are granted to the web login by fleet_gateway_roles.sql, which the
       // Mac-local install never runs, so where the fleet gateway is absent the web login
       // must hold nothing on any fleet table. The expectation follows the install; the

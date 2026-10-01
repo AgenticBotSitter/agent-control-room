@@ -299,6 +299,15 @@ const UNATTENDED_OBJECTS = ["pipeline_unattended_transitions", "pipeline_advance
 
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
+// A rung's expected suffix is read from `pendingFromLedger` below, which takes the
+// real ledger order, never from a list of the migrations that happened to follow
+// 0135 when the test was written. Such a list is a constant that goes stale in
+// silence: `AFTER_0135` named thirteen files and the shipped ledger now orders
+// twenty-eight after 0135, so it was missing every one of S7b's 0150-0154, the
+// operations-mode 0155-0157, 0185/0186/0195/0196, and this stream's 0200-0204.
+// Nothing read it, so nothing failed — a restated copy of the ledger that looks
+// checked because it compiles. It is gone rather than extended; the derivation is
+// the check.
 
 /** Splits a SQL file into its top-level statements, keeping each one's text.
  *
@@ -342,10 +351,17 @@ function grantsWithoutObjects(sql, objects, columns) {
   const statements = sqlStatements(sql);
   const rebuilt = [], rewritten = [];
   for (const statement of statements) {
-    // `ALL TABLES`/`ALL SEQUENCES`/`SCHEMA`/`FUNCTION` name no single withheld
-    // object and so are kept whole; everything else has a relation list worth
+    // `ALL TABLES`/`ALL SEQUENCES`/`SCHEMA` name no single withheld object and so
+    // are kept whole; everything else has a relation or function list worth
     // reading. `ALTER DEFAULT PRIVILEGES` is kept whole for the same reason.
-    const matched = /^(GRANT|REVOKE)\s+([\s\S]*?)\s+ON\s+(?!ALL\b|SCHEMA\b|FUNCTION\b|SEQUENCE\b)([\s\S]*?)\s+(?:FROM|TO)\s+([\s\S]*?);$/u
+    //
+    // A FUNCTION list is read by SIGNATURE, not by relation name (R4-B3). The
+    // function grants in this file (`work_intake_split_suggestion_visible` from
+    // 0203) name an object a partial ledger does not have, and PostgreSQL answers
+    // 42883 rather than 42P01 for them -- so the exclusion above is the wrong shape
+    // of guard for exactly the statement that used to break. Excluding FUNCTION
+    // removed the only arm that could prune them, so it is read here instead.
+    const matched = /^(GRANT|REVOKE)\s+([\s\S]*?)\s+ON\s+(?!ALL\b|SCHEMA\b|SEQUENCE\b)([\s\S]*?)\s+(?:FROM|TO)\s+([\s\S]*?);$/u
       .exec(statement);
     if (!matched) { rebuilt.push(statement); continue; }
     // The privilege list and each privilege's own column list: a column list
@@ -357,9 +373,14 @@ function grantsWithoutObjects(sql, objects, columns) {
         scoped: parsed[2] !== undefined,
         columns: parsed[2] === undefined ? [] : splitTopLevel(parsed[2]).map(column => column.trim()) };
     });
+    const isFunction = /^FUNCTION\s/iu.test(matched[3]);
+    // Split on a comma that is NOT inside a parenthesis, so a signature's argument
+    // list stays one name. The plain split is what produced
+    // `read_plan(text), bytea)`, which is not SQL.
     const listed = splitTopLevel(matched[3]).map(value => value.trim().replace(/^public\./u, ""));
-    const survivors = listed.filter(object => !objects.has(object));
-    const heldColumn = privileges.some(privilege => privilege.columns.some(column =>
+    const bare = (name) => name.replace(/^FUNCTION\s+/iu, "").split("(")[0].trim();
+    const survivors = listed.filter(object => !objects.has(isFunction ? bare(object) : object.replace(/^public\./u, "")));
+    const heldColumn = !isFunction && privileges.some(privilege => privilege.columns.some(column =>
       listed.some(object => columns.has(`${object}.${column}`))));
     if (survivors.length === listed.length && !heldColumn) { rebuilt.push(statement); continue; }
     const kept = [];
@@ -373,9 +394,13 @@ function grantsWithoutObjects(sql, objects, columns) {
     rewritten.push(statement);
     // A privilege or a statement left naming nothing is dropped: `GRANT
     // INSERT () ON t` is not valid SQL, and a statement with no surviving
-    // object would raise 42P01 on the first withheld name.
+    // object would raise 42P01 (or 42883) on the first withheld name.
     if (kept.length === 0 || survivors.length === 0) continue;
-    rebuilt.push(`${matched[1]} ${kept.join(", ")} ON ${survivors.join(", ")}`
+    // The `FUNCTION` keyword is part of the object list in PostgreSQL's grammar
+    // (`GRANT EXECUTE ON FUNCTION f(...)`), so it has to be put back with the
+    // survivors. Rebuilding without it produces `ON f(...)`, which names a
+    // relation and would raise 42P01 -- a different failure, on the same statement.
+    rebuilt.push(`${matched[1]} ${kept.join(", ")} ON ${isFunction ? `FUNCTION ${survivors.join(", ")}` : survivors.join(", ")}`
       + ` ${matched[1] === "REVOKE" ? "FROM" : "TO"} ${matched[4].trim()};`);
   }
   // If nothing was rewritten the derivation did not work: the staged file
@@ -2180,35 +2205,97 @@ async function catalogState(db){
  * because that would take the grants that do apply down with it. A statement whose
  * whole list was absent is dropped, since there is then nothing left to grant. The
  * object list is read within a single statement, so it can never run past the `;`
- * into the next statement's own `ON ... TO`. */
-function pruneAbsentObjects(sql, present, isAbsent) {
-  // Only GRANT and REVOKE statements are rewritten. The files also carry `BEGIN;`
-  // and `DO $$ ... $$` blocks whose bodies contain semicolons, so splitting the
-  // whole file on ";" would tear them apart; a line-oriented split keeps every other
-  // byte of the file exactly as it was.
-  const objectList = /\bON\s+(.*?)\s+(TO|FROM)\b/isu;
-  return sql.split(/(?=^\s*(?:GRANT|REVOKE)\b)/gmu).map(statement => {
-    if (!/^\s*(?:GRANT|REVOKE)\b/iu.test(statement)) return statement;
-    const match = statement.match(objectList);
-    if (!match) return statement;
-    // Names the file writes with a type prefix or as a schema-wide sweep are left
-    // alone: a sweep over the tables this database does have is still correct.
-    // A list carrying a parenthesised argument type is a function signature, not a
-    // list of names -- `read_agent_review_plan(text), bytea)` splits on its own
-    // commas -- so a list with an unbalanced "(" is left exactly as written.
-    if (match[1].includes("(")) return statement;
-    const names = match[1].split(",").map(entry => entry.trim());
-    const kept = names.filter(name => {
-      const bare = name.split("(")[0].trim();
-      return !/^[a-z_][a-z0-9_]*$/iu.test(bare) || !isAbsent(bare);
-    });
-    if (kept.length === names.length) return statement;
-    // The grantee keyword is put back: it is part of the match, not part of the
-    // object list, and a grant that lost its TO/FROM is not SQL.
-    if (kept.length === 0) return "";
-    return statement.replace(/\s*\bON\s+.*?\s+(TO|FROM)\b/isu, ` ON ${kept.join(", ")} ${match[2]}`);
-  }).join("");
-}
+ * into the next statement's own `ON ... TO`.
+ *
+ // A FUNCTION SIGNATURE IS NOT A TABLE NAME, so it is checked against the absent set
+  * BY ITS OWN NAME (R4-B3). The grant files now carry `GRANT EXECUTE ON FUNCTION
+  * work_intake_split_suggestion_visible(text, text, text) TO ...` and two more from
+  * 0204/0205, all created by migrations a partial ledger never applied; replayed
+  * verbatim they raise 42883 (`undefined_function`) and fail the upgrade. The
+  * signature's own comma list is never split -- a parenthesised argument list is one
+  * name, and splitting it produced `read_plan(text), bytea)`, which is not SQL.
+  *
+  * The name is taken from the SIGNATURE for a FUNCTION grant, and from the whole
+  * entry otherwise, which is what lets one loop prune both kinds without treating a
+  * signature's argument list as a list of names. */
+ function pruneAbsentObjects(sql, present, isAbsent) {
+   // Only GRANT and REVOKE statements are rewritten. The files also carry `BEGIN;`
+   // and `DO $$ ... $$` blocks whose bodies contain semicolons, so splitting the
+   // whole file on ";" would tear them apart; a line-oriented split keeps every other
+   // byte of the file exactly as it was.
+   const objectList = /\bON\s+([^;]*?)\s+(TO|FROM)\b/isu;
+   return sql.split(/(?=^\s*(?:GRANT|REVOKE)\b)/gmu).map(statement => {
+     if (!/^\s*(?:GRANT|REVOKE)\b/iu.test(statement)) return statement;
+     const match = statement.match(objectList);
+     if (!match) return statement;
+     // Names the file writes with a type prefix or as a schema-wide sweep are left
+     // alone: a sweep over the tables this database does have is still correct.
+     if (/^\s*(?:ALL|SCHEMA|SEQUENCE|TABLE|FUNCTION)\b/iu.test(match[1].replace(/\s+/g, " "))
+       && !/^\s*FUNCTION\s+[a-z_]/iu.test(match[1].trim())) return statement;
+     // A relation list carrying a parenthesised argument type is not a list of
+     // names -- `read_plan(text), bytea)` splits on its own commas -- so a relation
+     // list with an unbalanced "(" is left exactly as written. A FUNCTION list is
+     // exempt from that rule on purpose: a signature is exactly the thing that needs
+     // pruning, and `splitTopLevel`-style depth counting keeps its argument list one
+     // name.
+     // The object list stops at the statement's own semicolon. Without that bound the
+    // `.*?` runs past `;` into the next chunk -- so `COMMIT;` was consumed by the
+    // GRANT that preceded it and a pruned role file lost its transaction terminator,
+    // which is a different failure from the one this pruner is for.
+    if (match[1].includes("(") && !/^\s*FUNCTION\s+/iu.test(match[1].trim())) return statement;
+     // A list whose parentheses do NOT BALANCE is not a list this pruner can read,
+     // whatever its kind: an unbalanced object list is left byte for byte rather than
+     // repaired. That check comes FIRST because depth counting on an unbalanced list
+     // is meaningless -- `read_plan(text), bytea)` drives the depth negative, every
+     // later comma is read as top-level, and the statement is rebuilt as
+     // `GRANT EXECUTE ON bytea) TO reviewer;`, which is not SQL and is worse than the
+     // 42883 the guard was written to avoid.
+     let objectLevel = 0;
+     for (const char of match[1]) {
+       if (char === "(") objectLevel += 1;
+       else if (char === ")") objectLevel -= 1;
+       if (objectLevel < 0) break;
+     }
+     if (objectLevel !== 0) return statement;
+     // Split on TOP-LEVEL commas only. A negative lookahead ("a comma not inside
+     // parentheses") is not enough for a FUNCTION list: the comma BETWEEN two
+     // signatures is not inside either one's parentheses, and `text, jsonb` has its
+     // own comma inside them, so a lookahead on the next characters mis-reads both.
+     // Depth counting is what a signature list actually needs, and it is the same
+     // rule `splitTopLevel` above already uses for the privilege and object lists.
+     const names = [];
+     let entry = "", level = 0;
+     for (const char of match[1]) {
+       if (char === "," && level === 0) { names.push(entry); entry = ""; continue; }
+       if (char === "(") level += 1;
+       else if (char === ")") level -= 1;
+       entry += char;
+     }
+     names.push(entry);
+     names.forEach((value, index) => { names[index] = value.trim(); });
+     const kept = names.filter(name => {
+       // The `FUNCTION` keyword is part of PostgreSQL's object list, so it is stripped
+       // BEFORE the name is read. Left on, `FUNCTION read_agent_review_plan` fails the
+       // identifier test and is never checked against the absent set -- which is why
+       // the first attempt at R4-B3 changed nothing at all, silently, on exactly the
+       // statements it was written for.
+       const bare = name.replace(/^FUNCTION\s+/iu, "").split("(")[0].trim();
+       return !/^[a-z_][a-z0-9_]*$/iu.test(bare) || !isAbsent(bare);
+     });
+     if (kept.length === names.length) return statement;
+     // The grantee keyword is put back: it is part of the match, not part of the
+     // object list, and a grant that lost its TO/FROM is not SQL.
+     if (kept.length === 0) return "";
+     // The `FUNCTION` keyword belongs to the LIST, not to the first name, so it is
+     // put back on the survivors whenever it was on the original. Dropping it with
+     // the first name turns `ON FUNCTION commit_agent_review(...)` into
+     // `ON commit_agent_review(...)`, which names a relation and raises 42P01 -- a
+     // different failure, on the statement the pruning was meant to repair.
+     const list = /^\s*FUNCTION\s+/iu.test(match[1])
+       ? [`FUNCTION ${kept[0].replace(/^FUNCTION\s+/iu, "")}`, ...kept.slice(1)] : kept;
+     return statement.replace(/\s*\bON\s+.*?\s+(TO|FROM)\b/isu, ` ON ${list.join(", ")} ${match[2]}`);
+   }).join("");
+ }
 
 test("pruning a role file for a database that lacks a table keeps the grants that do apply", () => {
   const prune = (sql, present) => pruneAbsentObjects(sql, new Set(present), name => !present.includes(name));
@@ -2235,23 +2322,71 @@ test("pruning a role file for a database that lacks a table keeps the grants tha
   // byte, or the role file it belongs to stops being valid SQL.
   const withBlock = "BEGIN;\nDO $$ BEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_roles) THEN\n    CREATE ROLE r NOLOGIN;\n  END IF;\nEND $$;\nGRANT SELECT ON alpha, beta TO r;\nCOMMIT;";
   assert.equal(prune(withBlock, ["alpha"]), withBlock.replace("alpha, beta", "alpha"));
-  // A function signature carries a parenthesised argument type, whose own commas are
-  // not name separators. Splitting on them once produced
-  // `read_agent_review_plan(text), bytea)`, which is not SQL.
+  // A MALFORMED signature is left exactly as written rather than repaired: the
+  // object list carries an unbalanced "(", so it is not a signature this pruner can
+  // read, and guessing at it produced `read_plan(text), bytea)` plus a dropped
+  // grantee, which is not SQL.
   const signature = "GRANT EXECUTE ON FUNCTION read_plan(text), bytea) TO reviewer;";
   assert.equal(prune(signature, []), signature);
   // The same, with a name the database LACKS: without the guard the signature is
   // split on its own commas and rebuilt as `read_plan(text), bytea)` plus a dropped
   // grantee, which is the corruption this guard exists to prevent.
   assert.equal(prune(signature, ["unrelated"]), signature);
-  // A real function grant out of a role file, against a database with none of it.
+
+  // A WELL-FORMED multi-signature grant is pruned BY SIGNATURE (R4-B3), which is
+  // the change this round exists for and the opposite of the old behaviour.
+  //
+  // `db/roles/agent_reviewer_roles.sql` grants EXECUTE on two functions in one
+  // statement, and the chief-of-staff role files add three more in the same shape.
+  // An upgrade rung whose applied ledger stops before the migration that creates
+  // one of them has no such function, and replaying the grant verbatim raises 42883
+  // (`function work_intake_split_suggestion_visible(text, text, text) does not
+  // exist`) and fails the whole upgrade -- measured on the merged tree as
+  // test:postgres-production #11-#15. So the pruner now reads a FUNCTION list as a
+  // list of SIGNATURES: the argument list's own commas are not name separators, so
+  // each signature survives whole or is dropped whole, and a signature that is
+  // present keeps the statement alive with the FUNCTION keyword intact.
+  const pair = "GRANT EXECUTE ON FUNCTION read_agent_review_plan(text),\n"
+    + "  commit_agent_review(text, jsonb, jsonb, bytea) TO control_room_agent_reviewer;";
+  // Both present: byte for byte, because nothing needs pruning.
+  assert.equal(prune(pair, ["read_agent_review_plan", "commit_agent_review"]), pair);
+  // One absent: the SURVIVOR keeps the `FUNCTION` keyword, which is part of
+  // PostgreSQL's object list -- rebuilding without it produces `ON
+  // read_agent_review_plan(text)`, which names a relation and raises 42P01, a
+  // different failure on the same statement.
+  assert.equal(prune(pair, ["read_agent_review_plan"]),
+    "GRANT EXECUTE ON FUNCTION read_agent_review_plan(text) TO control_room_agent_reviewer;");
+  assert.equal(prune(pair, ["commit_agent_review"]),
+    "GRANT EXECUTE ON FUNCTION commit_agent_review(text, jsonb, jsonb, bytea) TO control_room_agent_reviewer;");
+  // Both absent: nothing is left to grant, so the GRANT goes. It goes WITH the
+  // `COMMIT;` that followed it, because the line-oriented split puts them in one
+  // chunk -- a grant and its transaction terminator are written together, and the
+  // pruner only ever rewrites a statement that names an object, never splices a
+  // chunk in two. The production caller replays the PRUNED STATEMENTS, not the file,
+  // so a missing terminator here is a test artefact rather than a defect; the
+  // property being pinned is that nothing else in the file is disturbed.
+  assert.equal(prune(`\n${pair}\nCOMMIT;`, []), "\n");
+  assert.equal(prune(`\n${pair}\nCOMMIT;\nGRANT SELECT ON kept TO r;`, ["kept"]),
+    "\nGRANT SELECT ON kept TO r;");
+  // A chief-of-staff signature with an ARRAY argument type, which is the shape 0205
+  // added and the one that is not an identifier: pruned by NAME like any other.
+  const arrayed = "GRANT EXECUTE ON FUNCTION planner_failure_scope_key(text, jsonb),\n"
+    + "  control_room_planner_grant_owner_retry(text, text, text[]) TO control_room_task_coordinator;";
+  assert.equal(prune(arrayed, ["control_room_task_coordinator", "control_room_planner_grant_owner_retry"]),
+    "GRANT EXECUTE ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[])"
+    + " TO control_room_task_coordinator;");
+
+  // A real function grant out of a role file, against a database that HAS both of
+  // the functions it names. Compared on the trimmed statement text: the pruner
+  // preserves layout, and the surrounding file's own trailing lines are not what
+  // this assertion is about. Before R4-B3 this compared against an empty
+  // `present` set, which asserted that the pruner ignored function grants -- the
+  // behaviour that refused the upgrade.
   const grant = readFileSync(join(ROOT, "db/roles", "agent_reviewer_roles.sql"), "utf8");
   const functionGrant = grant.split(/(?=\s*GRANT\b)/u)
     .find(statement => /ON FUNCTION\s+read_agent_review_plan\b/u.test(statement));
   assert.ok(functionGrant, "the reviewer role file grants read_agent_review_plan");
-  // Compared on the trimmed statement text: the pruner preserves layout, and the
-  // surrounding file's own trailing lines are not what this assertion is about.
-  assert.equal(prune(functionGrant, ["nothing_here"]).trim(), functionGrant.trim());
+  assert.equal(prune(functionGrant, ["read_agent_review_plan", "commit_agent_review"]).trim(), functionGrant.trim());
   // A real role file pruned against a database holding only SOME of what it names
   // keeps the names that are present, drops the ones that are not, and keeps every
   // statement that still has a name. A pruner that quietly kept an absent name, or
@@ -2262,17 +2397,35 @@ test("pruning a role file for a database that lacks a table keeps the grants tha
   // a line that begins one -- so the present/absent split is derived from exactly the
   // names the pruner is deciding about. Reading them any other way would compute a
   // different set and the assertions below would be about the reader, not the pruner.
+  // A FUNCTION signature's argument list is not a list of names, so the split is
+  // depth-counted rather than done on every comma. Without that, `FUNCTION
+  // planner_failure_scope_key(text, jsonb)` yields `planner_failure_scope_key(text`
+  // and `jsonb)`, neither of which is a bare identifier, so BOTH are skipped -- the
+  // name never enters the list, is therefore never halved into `present`, and is
+  // pruned away by a pruner that is behaving correctly. The result was
+  // `private_web_roles.sql: dropped text`, which names the symptom rather than the
+  // cause.
   const names = sql => {
     const bare = name => /^[a-z_][a-z0-9_]*$/iu.test(name);
     const statements = sql.split(/(?=\s*(?:GRANT|REVOKE)\b)/gmu)
       .filter(statement => /^\s*(?:GRANT|REVOKE)\b/iu.test(statement));
     const found = [];
     for (const statement of statements)
-      for (const match of statement.matchAll(/\bON\s+(.*?)\s+(?:TO|FROM)\b/giu))
-        for (const entry of match[1].split(",")) {
-          const name = entry.trim();
+      for (const match of statement.matchAll(/\bON\s+([^;]*?)\s+(?:TO|FROM)\b/giu)) {
+        const entries = [];
+        let entry = "", level = 0;
+        for (const char of match[1]) {
+          if (char === "," && level === 0) { entries.push(entry); entry = ""; continue; }
+          if (char === "(") level += 1;
+          else if (char === ")") level -= 1;
+          entry += char;
+        }
+        entries.push(entry);
+        for (const value of entries) {
+          const name = value.replace(/^FUNCTION\s+/iu, "").split("(")[0].trim();
           if (bare(name)) found.push(name);
         }
+      }
     return [...new Set(found)].sort();
   };
   for (const name of ["private_web_roles.sql", "task_coordinator_roles.sql", "production_table_grants.sql"]) {
@@ -2480,6 +2633,26 @@ async function withheldObjects(root, withheld) {
     for (const [, object] of sql.matchAll(
       /CREATE (?:UNLOGGED )?(?:TABLE|VIEW|MATERIALIZED VIEW)\s+(?:IF NOT EXISTS\s+)?([a-z_][a-z0-9_]*)/giu))
       objects.add(object);
+    // FUNCTIONS TOO (R4-B3). The role files grant EXECUTE on functions as well as
+    // on tables, so a staged release that withheld the migration which CREATES one
+    // has to have that grant pruned for the same reason a table grant is: replayed
+    // verbatim it raises 42883 (`function work_intake_split_suggestion_visible(text,
+    // text, text) does not exist`) and fails the whole upgrade.
+    //
+    // TRIGGER functions are excluded: no login can call one and no role file grants
+    // EXECUTE on one, so including them would prune grants that are correct on a
+    // database that does have the trigger. Only NAMES are collected -- a function's
+    // parameters belong to the GRANT, and the pruner matches on the bare name.
+    // The header is read from the match's OWN groups rather than from the matched
+    // text: `[, name]` would bind the function NAME to `name`, so `name[2]` would be
+    // a character of it rather than the header, and the trigger test would read
+    // `undefined` and never exclude anything. That is why the first attempt at
+    // this collected zero functions while looking correct.
+    for (const match of sql.matchAll(
+      /CREATE (?:OR REPLACE )?FUNCTION\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([^)]*)\)([\s\S]*?)AS\s+\$/giu)) {
+      if (/RETURNS\s+trigger\b/iu.test(match[3])) continue;
+      objects.add(match[1].toLowerCase());
+    }
     for (const [, table, column] of sql.matchAll(
       /ALTER TABLE\s+([a-z_][a-z0-9_]*)\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?([a-z_][a-z0-9_]*)/giu))
       if (!objects.has(table)) columns.add(`${table}.${column}`);
@@ -2545,7 +2718,14 @@ function roleEditsWithoutObjects(sql, withheld, revocations) {
     // Asserts nothing but what the withheld down files take away: the release
     // being reconstructed did not have it, so neither does this database.
     if (asserted.every(item => revocations.has(item))) { pairs.push([statement, ""]); continue; }
-    const survivors = listed.filter(object => !objects.has(object));
+    // A FUNCTION object's name is its SIGNATURE, so it is matched by the bare name
+    // before the parenthesis -- and the `FUNCTION` keyword belongs to the LIST, so
+    // it is stripped before that. `withheldObjects` collects function NAMES (R4-B3),
+    // and comparing a whole signature against them never matches, which is what
+    // pruned every function grant from a baseline that legitimately holds most of
+    // them and made the down-rung comparison fail on all of them at once.
+    const bareName = object => object.replace(/^FUNCTION\s+/iu, "").split("(")[0].trim();
+    const survivors = listed.filter(object => !objects.has(bareName(object)));
     const held = rights.some(right => right.names.some(column =>
       listed.some(object => columns.has(`${object}.${column}`))));
     // Nothing withheld touches this grant: leave its text exactly as it is. The
@@ -2564,8 +2744,13 @@ function roleEditsWithoutObjects(sql, withheld, revocations) {
       // Every column this privilege named was withheld: it cannot be granted.
       return surviving.length === 0 ? [] : [`${right.privilege} (${surviving.join(",")})`];
     });
+    // The `FUNCTION` keyword is put back on the survivors when the ORIGINAL had
+    // it: it belongs to the object list in PostgreSQL's grammar, and rebuilding
+    // without it names a relation instead.
+    const isFunction = /^FUNCTION\s/iu.test(listedText.trim());
     pairs.push([statement, kept.length === 0 || survivors.length === 0 ? ""
-      : `GRANT ${kept.join(", ")} ON ${survivors.join(", ")} TO ${grantee};`]);
+      : `GRANT ${kept.join(", ")} ON ${isFunction
+        ? `FUNCTION ${survivors.map(bareName).join(", ")}` : survivors.join(", ")} TO ${grantee};`]);
   }
   for (const [verbatim] of pairs) assert.ok(sql.includes(verbatim),
     `role file no longer contains this grant verbatim: ${verbatim}`);
@@ -2597,9 +2782,16 @@ async function installMacRoleFilesWithout(database, withheld) {
     // through the installer's own grant diff, so this stays correct as either
     // side changes. `missing` is emptied first, so a grant the role files make
     // on a relation this database does not have is not silently demanded.
+    // A FUNCTION item's object is its SIGNATURE (`public.f(text, jsonb)`), so the
+    // name has to be taken from before the parenthesis -- comparing the whole
+    // signature against a set of bare names never matches, and the `missing`
+    // assertion below then demanded EVERY function grant on a baseline that
+    // legitimately holds most of them. `withheldObjects` collected function NAMES
+    // (R4-B3), so this is where that decision is read.
     const without = (item) => {
-      const [, , object, column] = item.split("|");
-      const name = object.replace(/^public\./, "");
+      const [, kind, object, column] = item.split("|");
+      const name = object.replace(/^public\./, "").split("(")[0].trim();
+      if (kind === "function") return revocations.has(item) || schema.objects.has(name);
       return revocations.has(item) || schema.objects.has(name) || (column && schema.columns.has(`${name}.${column}`));
     };
     // `readDesiredMacGrantsV1` reads every Mac role file, so it also covers
@@ -2654,6 +2846,15 @@ async function installMacRoleFiles(database, edits = {}) {
       ...(await client.query(`SELECT a.attname AS name FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public' AND a.attnum > 0 AND NOT a.attisdropped`)).rows.map(r => r.name),
+      // FUNCTIONS TOO (R4-B3), for the same reason relations and columns are. The
+      // pruner below reads this set to decide what a grant may name, and it reads
+      // a function's name as its BARE name (before the parenthesis), so that is
+      // what is added here. A database that HAS `planner_failure_scope_key` and
+      // does not list it read as absent, so its grant was pruned anyway and the
+      // down-rung comparison then demanded every function grant on a baseline
+      // that legitimately holds most of them.
+      ...(await client.query("SELECT p.proname AS name FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+        + " WHERE n.nspname = 'public'")).rows.map(r => r.name),
     ]);
     for (const file of MAC_ROLE_FILES) {
       let sql = await readFile(join(ROOT, "db/roles", file), "utf8");

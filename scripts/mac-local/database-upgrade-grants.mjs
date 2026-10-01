@@ -34,13 +34,69 @@ const fleetClaimFunction = "public.fleet_claim_is_live(text, text, text)";
 // function, and this one has to be named and checked.
 const ownerPushEndpointFunctions = new Set(["public.owner_push_endpoint_host(text)",
   "public.owner_push_endpoint_allowed(text)"]);
+// The chief-of-staff function grants (MIG-A 0203/0204/0205), each to the exact
+// role that may hold it.
+//
+// This list is CLOSED on purpose: it is the parser's statement of which function
+// privileges a Mac-local install may converge on, and a grant the list does not
+// know is refused rather than applied. That refusal is what the owner's install
+// path hit before this entry existed -- 0203, 0204 and 0205 each added a
+// `GRANT EXECUTE ON FUNCTION` and none was in the list, so `desiredMacGrantsV1`
+// threw `upgrade_grant_source_refused` on the documented clean-cluster journey
+// and on the 0108/0109 upgrade rungs (round 4, R4-B2: test:postgres-production
+// #36, #37 and #50).
+//
+// The role pin per function is what keeps this a check rather than an allowlist:
+//   * `work_intake_split_suggestion_visible` is the predicate 0203 calls from the
+//     current-split-suggestion VIEW's WHERE clause. A view's qual is checked
+//     against session_user, so BOTH logins that read that view need EXECUTE -- the
+//     intake login (production_table_grants.sql) and the owner's web login
+//     (private_web_roles.sql). Measured: without the web grant the owner's own
+//     batch page 500s on a plain SELECT.
+//   * `planner_failure_scope_key` is the immutable digest helper 0204's SECURITY
+//     DEFINER guard calls. The guard runs as the INSERTing role too, so the
+//     COORDINATOR login needs it or every escalation is refused with "permission
+//     denied for function planner_failure_scope_key".
+//   * `control_room_planner_grant_owner_retry` is 0205's one-shot latch. It is
+//     SECURITY DEFINER and the web login holds no privilege at all on the counter
+//     table, so the OWNER's web login is the actor that asks. The coordinator's
+//     grant is deliberately GONE here and in db/roles/task_coordinator_roles.sql:
+//     no coordinator code calls it, and leaving it would mean the coordinator
+//     could manufacture its own retry -- the authority the latch design exists to
+//     withhold. A convergent install revokes it, which is the correct direction.
+const plannerFunctions = new Map([
+  ["public.work_intake_split_suggestion_visible(text, text, text)",
+    new Set(["control_room_work_intake", "control_room_private_web"])],
+  ["public.planner_failure_scope_key(text, jsonb)", new Set(["control_room_task_coordinator"])],
+  ["public.control_room_planner_grant_owner_retry(text, text, text[])", new Set(["control_room_private_web"])],
+]);
 const knownFunctionGrant = object => object === workIntakeIdentityFunction || object === fleetEnrollmentFunction
   || object === fleetClaimFunction || ownerPushEndpointFunctions.has(object)
+  || plannerFunctions.has(object)
   || agentReviewFunctions.has(object);
 const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
   || (object === fleetEnrollmentFunction || object === fleetClaimFunction) && role === "control_room_fleet_gateway"
   || ownerPushEndpointFunctions.has(object) && role === "control_room_private_web"
+  || (plannerFunctions.get(object)?.has(role) ?? false)
   || agentReviewFunctions.has(object) && role === "control_room_agent_reviewer";
+/**
+ * A FUNCTION ARGUMENT TYPE, which is not an identifier: `text[]` is a one-element
+ * array of `text`, and 0205's grant function takes exactly that
+ * (`control_room_planner_grant_owner_retry(text, text, text[])`).
+ *
+ * `base[]` and `base` are both accepted, and nothing else. `[]` alone, a bare `*`,
+ * a qualified `pg_catalog.text[]`, or a shape with a space are refused, because
+ * this string is interpolated straight into a `GRANT ... ON FUNCTION` statement and
+ * a name that is not a type is not something to guess at. The array suffix is
+ * stripped before the identifier test so `text[]` and `text` cannot both reach the
+ * same catalogue row under two spellings.
+ */
+const argumentType = value => {
+  const array = value.endsWith("[]");
+  const base = array ? value.slice(0, -2) : value;
+  if (!identifier.test(base)) throw new Error("upgrade_grant_source_refused");
+  return array ? `${base}[]` : base;
+};
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");
   return value;
@@ -81,7 +137,7 @@ export function desiredMacGrantsV1(sources) {
           : null;
         if (objectKind === "FUNCTION" && !functionMatch) throw new Error("upgrade_grant_source_refused");
         const object = objectKind === "FUNCTION"
-          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${functionMatch[3].trim() ? splitCommas(functionMatch[3]).map(name).join(", ") : ""})`
+          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${functionMatch[3].trim() ? splitCommas(functionMatch[3]).map(argumentType).join(", ") : ""})`
           : objectKind === "SCHEMA" ? name(rawObject) : rawObject.split(".").map(name).join(".");
         if (!objectKind && !object.includes(".")) {
           if (!identifier.test(object)) throw new Error("upgrade_grant_source_refused");
@@ -150,7 +206,22 @@ UNION ALL
 -- after its grant had in fact been applied. quote_ident covers a type that has
 -- to be quoted; COALESCE keeps the zero-argument case rendering as empty.
 SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || COALESCE((SELECT string_agg(
-  pg_catalog.quote_ident(t.typname), ', ' ORDER BY u.ord)
+  CASE WHEN t.typelem <> 0 AND t.typlen = -1
+    -- AN ARRAY TYPE IS RECOGNISED BY ITS CATALOG SHAPE, NOT BY ITS NAME:
+    -- 'typelem' points at the element type and 'typlen = -1' is the varlena marker
+    -- every array type carries. ('typkind' is not a pg_type column and naming it
+    -- raised 42703 on the first real run -- checked against the live catalog
+    -- rather than recalled.)
+    -- Its catalog NAME is the element's with a leading underscore:
+    -- 'text[]' is stored as '_text', so spelling the catalog name verbatim makes
+    -- every array-typed signature read as a DIFFERENT function from the one the
+    -- role file grants. 0205's 'control_room_planner_grant_owner_retry(text, text,
+    -- text[])' is the only grant this touches, and the symptom is the backup
+    -- verifier reporting the same grant as both extra and missing at once:
+    -- 'database_backup_mac_grants_refused' with a diff whose two sides differ only
+    -- by 'text[]' against '_text'. The element type is what a GRANT spells.
+    THEN pg_catalog.quote_ident(t.typelem::regtype::text) || '[]'
+    ELSE pg_catalog.quote_ident(t.typname) END, ', ' ORDER BY u.ord)
   FROM unnest(p.proargtypes) WITH ORDINALITY AS u(oid, ord)
   JOIN pg_type t ON t.oid = u.oid), '') || ')', '', a.privilege_type, a.is_grantable
 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
@@ -182,6 +253,15 @@ function grantSql(item, verb) {
     if (!knownFunctionGrant(object) || verb === "GRANT" && !allowedFunctionGrant(role, object)
       || column || right !== "EXECUTE")
       throw new Error("upgrade_unexpected_function_grant");
+    // The signature is re-validated before it is interpolated into a GRANT. A
+    // function's argument list is types, and a type may be an array -- `text[]` --
+    // which `name()` refuses because it is not an identifier. The same
+    // `argumentType` the reader uses accepts it and nothing else, and the check is
+    // here rather than only in the reader because this string becomes SQL.
+    const signature = /^([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)\((.*)\)$/u.exec(object);
+    if (!signature) throw new Error("upgrade_grant_catalog_refused");
+    signature[1].split(".").map(name);
+    if (signature[2].trim() !== "") splitCommas(signature[2]).map(argumentType);
     return `${verb} EXECUTE ON FUNCTION ${object} ${verb === "GRANT" ? "TO" : "FROM"} ${role}`;
   }
   if (kind === "database") {
