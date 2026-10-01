@@ -29,8 +29,8 @@
   },
   {
     "file": "src/web/v1/mac-local-protected-loader.ts",
-    "find": "    if (record.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || !record.web || typeof record.web !== \\\"object\\\"\n      || Array.isArray(record.web)) throw new Error();",
-    "replace": "    if (record.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || !record.web || typeof record.web !== \\\"object\\\")\n      throw new Error();",
+    "find": "    if (record.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || !record.web || typeof record.web !== \"object\"\n      || Array.isArray(record.web)) throw new Error();",
+    "replace": "    if (record.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || !record.web || typeof record.web !== \"object\")\n      throw new Error();",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^item 13: the ledger head is read on the pre-upgrade' tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
     "why": "a record whose web login is a JSON array must be refused, not passed to the pool factory"
   },
