@@ -705,7 +705,19 @@ test("retention keeps exactly fourteen VERIFIED generations when failures are mi
       // failures are the daemons4 defect: each leaves a `failed` row that a
       // name-pattern retention would count, and would evict a good dump for.
       for (let index = 0; index < 20; index += 1) {
-        assert.equal((await backup.runOnce({ manual: true })).status, "verified", `success ${index}`);
+        // The failure's CODE is in the assertion message, not just "failed". This
+        // loop runs twenty real dumps in one test, so a run that fails says only
+        // WHICH of the twenty failed — and `failed` with no code is undiagnosable
+        // six hours later. It happened: two mutation-baseline runs failed here at
+        // `success 8` with a bare 'failed', and the mutation harness runs without
+        // CONTROL_ROOM_BACKUP_TRACE, so the code was gone by the time anyone looked.
+        const outcome = await backup.runOnce({ manual: true });
+        // `code` only exists on the refusing shapes, so it is read through a loose
+        // lookup: the point of the message is to name the refusal when there is
+        // one, and "undefined" in the message of a passing run is not a problem
+        // worth a cast per shape.
+        const named = outcome as { status: string; code?: string; message?: string };
+        assert.equal(named.status, "verified", `success ${index}: ${named.code ?? ""} ${named.message ?? ""}`);
         // Every third run fails. `index % 3 === 1` over 0..19 is SEVEN indices
         // (1, 4, 7, 10, 13, 16, 19), not six — the first version of this test
         // asserted six and failed, having counted by eye rather than by running
