@@ -722,6 +722,19 @@ test("retention keeps exactly fourteen VERIFIED generations when failures are mi
       for (const id of newest) assert.ok(await assertSafeGenerationV1(backupRoot, id));
       assert.deepEqual(swept.unsafe, []);
       assert.deepEqual(swept.damaged, []);
+      // ITEM 18's PIN outranks the count. The oldest of the fourteen is pinned,
+      // then the keep count drops by two: the pinned one must survive although
+      // it is outside the window, and only the unpinned surplus goes.
+      const oldest = verified[BACKUP_KEPT_GENERATIONS_V1 - 1].generationId;
+      const secondOldest = verified[BACKUP_KEPT_GENERATIONS_V1 - 2].generationId;
+      assert.equal(await store.pin(oldest, new Date(Date.now() + 7 * 86_400_000)), true);
+      await client.query("UPDATE updater.backup_state SET kept_generations=$1 WHERE singleton",
+        [BACKUP_KEPT_GENERATIONS_V1 - 2]);
+      const pinnedSweep = await backup.sweep();
+      assert.deepEqual(pinnedSweep.removed, [secondOldest],
+        "only the unpinned surplus generation is removed");
+      assert.ok(pinnedSweep.retained.includes(oldest), "the pinned generation is retained outside the window");
+      assert.ok(await assertSafeGenerationV1(backupRoot, oldest), "and it is still whole on disk");
     });
   }, { port: PORT, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
 });
