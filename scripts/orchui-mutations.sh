@@ -106,10 +106,10 @@ mutate M16-cards-on-decided-batch "$PIPES" \
 # M17: "Use this" saves the revision instead of only pre-filling. This is the
 # mutation that would turn the product promise into a lie.
 mutate M17-use-this-writes-revision "$PIPES" \
-  'try { const value = await orchestrationClient.useSuggestion(projectId, batchId, suggestion.suggestionId, detail.revision);
-      setRevisionReason("chief_of_staff_split"); setRevisionText(JSON.stringify(value.proposal, null, 2)); setRevisionOpen(true); }' \
-  'try { const value = await orchestrationClient.useSuggestion(projectId, batchId, suggestion.suggestionId, detail.revision);
-      setRevisionReason("chief_of_staff_split"); setRevisionText(JSON.stringify(value.proposal, null, 2)); setRevisionOpen(true);
+  'setRevisionReason("chief_of_staff_split"); setEditedProposal(value.proposal);
+      setRevisionText(JSON.stringify(value.proposal, null, 2)); }' \
+  'setRevisionReason("chief_of_staff_split"); setEditedProposal(value.proposal);
+      setRevisionText(JSON.stringify(value.proposal, null, 2));
       await submit(false, true); }'
 
 # M20: any method is allowed on the describe route.

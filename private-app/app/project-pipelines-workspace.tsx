@@ -477,7 +477,7 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
   onDecision = () => {}, onAll = () => {}, onSave = () => {}, onRetry = () => {},
   revisionText = "", revisionReason = "owner_revision", onRevisionText = () => {}, onRevisionReason = () => {}, onRevise = () => {},
   onDismissFlag = () => {}, onUseSuggestedSplit = () => {}, suggestions = [], suggestionPending = false,
-  dismissAvailable = false, suggestionError, revisionOpen = false, onUseSuggestion = () => {}, onDismissSuggestion = () => {},
+  dismissAvailable = false, suggestionError, onUseSuggestion = () => {}, onDismissSuggestion = () => {},
   editedProposal, onProposalChange = () => {}, startPending = false, startResult, startError, onStart = () => {} }:
   { projectId: string; data: ReadState<WorkBatchOwnerViewV1>; decisions?: PipelineDecisionDraft; pending?: boolean;
     saveError?: PipelineFailureCode; onDecision?: (localId: string, decision: Choice, reasonCode: string) => void;
@@ -487,7 +487,7 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
     editedProposal?: WorkBatchProposalV1; onProposalChange?: (value: WorkBatchProposalV1) => void;
     onDismissFlag?: (localId: string, flagKind: "needs_breakdown" | "needs_more_info") => void;
     onUseSuggestedSplit?: (localId: string) => void; suggestions?: readonly ProjectOrchestrationSuggestionV1[];
-    suggestionPending?: boolean; dismissAvailable?: boolean; suggestionError?: BrowserFailureCode; revisionOpen?: boolean;
+    suggestionPending?: boolean; dismissAvailable?: boolean; suggestionError?: BrowserFailureCode;
     onUseSuggestion?: (suggestion: ProjectOrchestrationSuggestionV1) => void;
     onDismissSuggestion?: (suggestion: ProjectOrchestrationSuggestionV1) => void;
     startPending?: boolean; startResult?: PipelineStartResult; startError?: PipelineFailureCode; onStart?: () => void }) {
@@ -603,7 +603,7 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
         <p className="private-note">Recorded by {revision.editedByIdentityId}.</p>
         <ProposalContents proposal={revision.proposal} routingOptions={value.routingOptions} />
       </details>)}
-      {!decided && <details open={revisionOpen || undefined}><summary>Revise this proposal</summary>
+      {!decided && <details open><summary>Edit this proposal graph</summary>
         {editedProposal && <ProposalGraphEditor proposal={editedProposal} routingOptions={value.routingOptions}
           disabled={pending} onChange={onProposalChange} />}
         <label>Reason code<input value={revisionReason}
@@ -628,7 +628,6 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
   const [suggestions, setSuggestions] = useState<readonly ProjectOrchestrationSuggestionV1[]>([]);
   const [dismissAvailable, setDismissAvailable] = useState(false);
   const [suggestionPending, setSuggestionPending] = useState(false), [suggestionError, setSuggestionError] = useState<BrowserFailureCode>();
-  const [revisionOpen, setRevisionOpen] = useState(false);
   const [editedProposal, setEditedProposal] = useState<WorkBatchProposalV1>();
   const [startPending, setStartPending] = useState(false), [startResult, setStartResult] = useState<PipelineStartResult>();
   const [startError, setStartError] = useState<PipelineFailureCode>();
@@ -696,7 +695,11 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
     if (!batchId || !detail || pending || suggestionPending) return;
     setSuggestionPending(true); setSuggestionError(undefined);
     try { const value = await orchestrationClient.useSuggestion(projectId, batchId, suggestion.suggestionId, detail.revision);
-      setRevisionReason("chief_of_staff_split"); setRevisionText(JSON.stringify(value.proposal, null, 2)); setRevisionOpen(true); }
+      // The graph editor and the JSON draft are one draft: filling only the JSON
+      // left the editor on the old plan, and its first edit wrote that back over
+      // the suggestion.
+      setRevisionReason("chief_of_staff_split"); setEditedProposal(value.proposal);
+      setRevisionText(JSON.stringify(value.proposal, null, 2)); }
     catch (error) { setSuggestionError(error instanceof BrowserRequestError ? error.code : "unavailable"); }
     finally { setSuggestionPending(false); }
   };
@@ -722,7 +725,7 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
       onRevisionReason={setRevisionReason} onRevise={() => { void submit(false, true); }}
       onDismissFlag={(localId, flagKind) => { void dismissFlag(localId, flagKind); }}
       onUseSuggestedSplit={useSuggestedSplit} suggestions={suggestions} suggestionPending={suggestionPending}
-      dismissAvailable={dismissAvailable} suggestionError={suggestionError} revisionOpen={revisionOpen}
+      dismissAvailable={dismissAvailable} suggestionError={suggestionError}
       onUseSuggestion={suggestion => { void useChiefSuggestion(suggestion); }}
       onDismissSuggestion={suggestion => { void dismissChiefSuggestion(suggestion); }}
       onStart={() => { void start(); }} />

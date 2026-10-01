@@ -173,13 +173,17 @@ test("without a planner host the panel says so plainly and offers no describe co
  * which is exactly why the guard had no CI anchor before. */
 test("Use this issues no revision save; it only pre-fills the owner's own form", async () => {
   const posts: Array<{ path: string; body: string }> = [];
+  // The suggested plan differs from the saved one, so the assertions below can
+  // tell "the form now holds the suggestion" from "the form still holds the
+  // batch's own plan" -- with one shared fixture both read the same.
+  const suggested = { ...proposal, tasks: [{ ...proposal.tasks[0], title: "Suggested split part" }] };
   const view = await mount(createElement(PrivateProjectPipelines, { projectId, batchId }), {
     // The page builds its own clients from the ambient fetch, so recording it is
     // what makes any write it attempted visible.
     fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (init?.method === "POST") posts.push({ path, body: String(init.body) });
-      if (path.endsWith("/use")) return Response.json({ proposal, startsWork: false,
+      if (path.endsWith("/use")) return Response.json({ proposal: suggested, startsWork: false,
         grantsExecutionAuthority: false, savesRevision: false });
       if (path.endsWith("/dismiss")) return new Response(null, { status: 204 });
       if (path.includes("/suggestions")) return Response.json({ projectId, batchId, dismissAvailable: true,
@@ -214,8 +218,16 @@ test("Use this issues no revision save; it only pre-fills the owner's own form",
     const jsonDraft = textareas.find(candidate =>
       candidate.closest("label")?.textContent?.includes("Strict proposal JSON") === true);
     assert.ok(jsonDraft, "the revision form's strict-JSON draft is on the page");
-    assert.match(jsonDraft.value, /First part/);
-    assert.equal(view.document.querySelector("details[open]")?.textContent?.includes("Revise this proposal"), true);
+    assert.match(jsonDraft.value, /Suggested split part/);
+    // The graph editor is the same draft as the JSON, so it shows the suggestion
+    // too. Filling only the JSON left the editor on the saved plan, and the
+    // owner's first edit there wrote the saved plan back over the suggestion.
+    const editorForm = [...view.document.querySelectorAll("details")].find(candidate =>
+      candidate.querySelector(":scope > summary")?.textContent === "Edit this proposal graph");
+    assert.ok(editorForm?.open, "the owner's revision form is open");
+    const titles = [...editorForm.querySelectorAll("label")].filter(label => label.firstChild?.textContent === "Title")
+      .map(label => (label.querySelector("input") as HTMLInputElement | null)?.value);
+    assert.deepEqual(titles, ["Suggested split part"], "the graph editor holds the suggested plan, not the saved one");
     // The reason code the prefill set is the INPUT's value, which textContent does
     // not carry; read it as the browser would.
     const reason = [...view.document.querySelectorAll("input")].find(input =>
@@ -242,10 +254,10 @@ test("Use this issues no revision save; it only pre-fills the owner's own form",
       proposedByIdentityId: "identity:agent", proposedAt: now, approvalIdentityId: null, decidedAt: null,
       proposal, revisions: [], items: [], queue: [], queueDepthLimit: 10, flagsByLocalId: {},
       startsWork: false, grantsExecutionAuthority: false } as WorkBatchOwnerViewV1 },
-    suggestions: [suggestion], revisionOpen: true, revisionReason: "chief_of_staff_split",
+    suggestions: [suggestion], revisionReason: "chief_of_staff_split",
     revisionText: JSON.stringify(suggestion.proposal), dismissAvailable: true }));
   assert.match(batchHtml, /Chief of staff suggests a new split/);
-  assert.match(batchHtml, /<details open=""><summary>Revise this proposal/);
+  assert.match(batchHtml, /<details open=""><summary>Edit this proposal graph/);
   assert.match(batchHtml, /chief_of_staff_split/);
 });
 
