@@ -189,7 +189,7 @@
     "mac:fleet-gateway": "pnpm -s build:fleet-connector && pnpm -s build && node scripts/mac-local/start-fleet-gateway.mjs",
     "test:text-copy-derivation:postgres": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/text-copy-derivation-postgres.test.ts",
     "test:mac-local-fleet-postgres": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/mac-local-fleet-postgres.test.ts",
-    "test:mac-upgrade-default-path": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/mac-local-upgrade-pin-default-path-pg17.test.mjs",
+    "test:mac-upgrade-default-path": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/mac-local-upgrade-pin-default-path-pg17.test.mjs"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
