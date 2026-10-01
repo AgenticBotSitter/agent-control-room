@@ -516,5 +516,12 @@
     "replace": "GRANT SELECT (tenant_id, id, expires_at)",
     "test": "PG_BIN=/opt/homebrew/opt/postgresql@17/bin node --import tsx --test --test-name-pattern='can queue its own alerts' tests/updater-alerts-postgres.test.ts",
     "why": "item 21 makes the updater the process that SENDS the push, so it must be able to read the endpoint; without these three columns the sender is refused permission denied on a real cluster"
+  },
+  {
+    "file": "src/updater/v1/alerts.mjs",
+    "find": "export const UPDATER_PUSH_TEMPLATES_V1 = Object.freeze(Object.assign(Object.create(null), {",
+    "replace": "export const UPDATER_PUSH_TEMPLATES_V1 = Object.freeze({",
+    "test": "node --test --test-name-pattern='50 concurrent ticks' tests/updater-alerts.test.mjs",
+    "why": "the template table must have no prototype: a queue row whose template is 'constructor' or '__proto__' passes an `in` check on a normal object and would then be rendered into the payload and SENT"
   }
 ]

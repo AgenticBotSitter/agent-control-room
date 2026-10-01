@@ -86,6 +86,48 @@ test("a hostile queue row and hostile endpoint are never contacted; 50 alerts ar
   await assert.rejects(sender.observe("untrusted"), /updater_push_condition_refused/u);
 });
 
+test("50 concurrent ticks, a burst at the limit, and a hostile template settle the queue exactly once", async t => {
+  // The stress cases. A health loop and an owner action can both reach `tick()`
+  // at once, and a 30s loop over a flapping condition can produce a burst well
+  // past the 50-row drain limit. Nothing here may double-send, lose a row, or
+  // leave an attempt unrecorded.
+  const root = await fixture(t), rows = [];
+  for (let n = 1; n <= 120; n++) rows.push({ id: id(200 + n), template: "control-room-updater.web-down", attempts: 0 });
+  // A row whose template is a PROTOTYPE key. `in` on a normal object would say
+  // true for "constructor", and the sender would then render
+  // `Object.prototype.constructor` as the push body.
+  rows.push({ id: id(400), template: "constructor", attempts: 0 });
+  rows.push({ id: id(401), template: "__proto__", attempts: 0 });
+  const store = new MemoryStore(rows), calls = [];
+  let now = 500_000;
+  const sender = new UpdaterAlertSenderV1({ root, store, now: () => now, timeoutMs: 2_000,
+    loadVapid: async () => vapid, send: async (_key, subscription, payload) => {
+      calls.push(payload.tag); await new Promise(resolve => setImmediate(resolve));
+    } });
+  // 50 callers at once, on ONE sender: `#running` must admit exactly one.
+  const results = await Promise.all(Array.from({ length: 50 }, () => sender.tick()));
+  assert.equal(results.filter(result => result.status === "busy").length, 49,
+    "one tick runs and the other 49 are told the loop is busy, not left to double-send");
+  const sentTags = calls.filter(tag => tag === "control-room-updater.web-down");
+  assert.equal(sentTags.length, 1, "a 120-row burst of one condition is ONE push, not 120");
+  assert.ok(calls.every(tag => typeof tag === "string" && tag.startsWith("control-room-updater.")),
+    `no send carried a prototype key: ${JSON.stringify(calls.filter(tag => !tag.startsWith("control-room-updater.")))}`);
+  for (const row of rows) {
+    assert.equal(row.attempts, 1, `row ${row.id} consumed exactly one bounded attempt`);
+    assert.equal(row.sent, true, `row ${row.id} is settled rather than retried forever`);
+  }
+  assert.deepEqual(rows.filter(row => row.template === "constructor" || row.template === "__proto__")
+    .map(row => row.errorCode), ["updater_push_template_refused", "updater_push_template_refused"],
+  "a prototype key in the queue is refused, not rendered");
+
+  // A second burst inside the hour adds no push and no new attempt, and a
+  // dropped connection mid-send leaves exactly one retry, not fifty.
+  now += 1_000;
+  await sender.reconcile({ webDown: true });
+  assert.equal((await sender.tick()).sent, 0, "the hourly rate limit holds across processes of time");
+  assert.ok(rows.every(row => row.attempts === 1), "a rate-limited burst consumes no attempt at all");
+});
+
 test("a slow push is timed out, retried on a bounded schedule, and never piles up", async t => {
   const root = await fixture(t), rows = [{ id: id(99), template: "control-room-updater.uncertain", attempts: 0 }];
   const store = new MemoryStore(rows); let now = 100, calls = 0;
