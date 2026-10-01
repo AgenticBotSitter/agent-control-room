@@ -204,7 +204,16 @@ test("Mac-local acceptance explicitly attests the owner read the result and atom
   const list = await f.tasks.list(f.identity, binding.projectId);
   assert.equal(list.tasks.find(task => task.jobId === binding.jobId)?.qualityStatus, "accepted",
     "the Work list receives authenticated ready evidence");
-  const home = await f.tasks.home(f.identity);
+  // `recent: true` is required here, and deliberately so. Under the "since you
+  // last looked" cursor a first visit to a surface starts from now, which is the
+  // whole point of the feature: an owner who has never looked should not be shown
+  // a wall of work that predates their first look. This assertion is not about
+  // the boundary -- it checks that an acceptance recorded above reached the Home
+  // result list at all -- so it asks for the Recent view explicitly rather than
+  // relying on the default. Calling plain `home()` here would assert the OLD
+  // unconditional behaviour, and a test that silently goes on asserting a
+  // no-longer-true default is exactly what stops later regressions being caught.
+  const home = await f.tasks.home(f.identity, { recent: true });
   assert.equal(home.recentResults.find(item => item.task.jobId === binding.jobId)?.task.qualityStatus, "accepted",
     "Home receives authenticated ready evidence");
 });

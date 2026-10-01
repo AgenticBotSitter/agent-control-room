@@ -382,7 +382,7 @@ export class FleetGatewayStoreV1 {
    * it was disabled or removed on that machine. Only the supervisor may say
    * unreachable. */
   async #presence(tx: DatabaseSession, workerId: string, connectorVersion: string, platform: string, now: string,
-    sessionId: string, agents: readonly PresenceAgentV1[]) {
+    sessionId: string, agents: readonly PresenceAgentV1[], advisoryLock = true) {
     // The advisory lock is taken BEFORE the prior-state read, and it is what
     // makes that read safe to derive a transition from. `SELECT ... FOR UPDATE`
     // cannot serialise racers before the row exists, so between enrollment and
@@ -393,9 +393,11 @@ export class FleetGatewayStoreV1 {
     // window that the row lock structurally cannot. The hash is of the tenant
     // and worker id together, never one alone, so two workers in one tenant
     // (or the same worker id in two tenants) cannot collide on one lock.
-    await tx.query(`SELECT pg_catalog.pg_advisory_xact_lock(
-      pg_catalog.hashtextextended($1,0), pg_catalog.hashtextextended($2,0))`,
-    [`fleet:presence:${this.#tenantId}`, workerId]);
+    if (advisoryLock) {
+      await tx.query(`SELECT pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended($1,0), pg_catalog.hashtextextended($2,0))`,
+      [`fleet:presence:${this.#tenantId}`, workerId]);
+    }
     const prior = (await tx.query<PresenceRowV1>(`SELECT session_id,presence_state,last_seen_at FROM fleet_worker_presence
       WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE`, [this.#tenantId, workerId])).rows[0];
     await tx.query(`INSERT INTO fleet_worker_presence(tenant_id,worker_id,last_seen_at,connector_version,platform,session_id,
@@ -435,6 +437,20 @@ export class FleetGatewayStoreV1 {
       [this.#tenantId, workerId, agent.agent_id, now]);
       await this.#transition(tx, workerId, "agent", agent.agent_id, sessionId, "online", "offline", now);
     }
+  }
+
+  /** Test-only: the same presence write with the advisory lock deliberately
+   * omitted, so the race test can prove its own invariant has teeth. It exists
+   * because "N first heartbeats must produce 1 transition" is an assertion about
+   * a lock, and an assertion about a lock that cannot fail when the lock is
+   * removed proves nothing. Nothing in the application calls this: the only
+   * production caller is #presence, which always locks. */
+  async presenceWithoutAdvisoryLockForTestV1(principal: FleetWorkerPrincipalV1,
+    input: Readonly<{ connectorVersion: string; platform: string; sessionId: string;
+      agents: readonly PresenceAgentV1[] }>): Promise<void> {
+    const now = this.#now();
+    await this.db.transaction(tx => this.#presence(tx, principal.workerId, input.connectorVersion, input.platform,
+      now, input.sessionId, input.agents, false));
   }
 
   /** Supplies the digest-only startup cache through the gateway's existing

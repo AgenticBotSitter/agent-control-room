@@ -503,12 +503,23 @@ test("the role manifest names every role the migrations, down files and schema f
   // here introduces no live role the upgrade cannot reason about, and the
   // `vpsOnlyGroups` count assertion above still holds: a Mac install creates
   // them, it just never had a migration that mentioned them.
+  //
+  // 0215-0217 added control_room_fleet_owner_authority, and for the same reason
+  // every other entry here is here: it is already declared in
+  // database-role-manifest.mjs (so the upgrade creates and reasons about it), but
+  // 0217 is the first migration whose SQL text names it -- `GRANT SELECT ... TO
+  // control_room_fleet_owner_authority` -- and 0220's down file revokes from it
+  // too. A role named by a migration but absent from this list would leave the
+  // owner with a live role that no tool reasons about, which is the exact failure
+  // this list exists to prevent. It is a VPS-only group, not a Mac login, so the
+  // vpsOnlyGroups count assertion above still holds.
   assert.deepEqual([...touched.keys()].sort(),
     ["control_room_agent_reviewer", "control_room_application", "control_room_backup",
-      "control_room_fleet_gateway", "control_room_github_broker", "control_room_local_result_publisher",
-      "control_room_native_queue_worker", "control_room_native_results", "control_room_news_coordinator",
-      "control_room_private_web", "control_room_reader", "control_room_schedule_admissions",
-      "control_room_schema_owner", "control_room_task_coordinator", "control_room_work_intake"],
+      "control_room_fleet_gateway", "control_room_fleet_owner_authority", "control_room_github_broker",
+      "control_room_local_result_publisher", "control_room_native_queue_worker", "control_room_native_results",
+      "control_room_news_coordinator", "control_room_private_web", "control_room_reader",
+      "control_room_schedule_admissions", "control_room_schema_owner", "control_room_task_coordinator",
+      "control_room_work_intake"],
   "the migrations name these manifest roles and no others");
 
   // The scanner reads what SQL actually means, so prove it on a temp copy of
