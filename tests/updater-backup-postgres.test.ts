@@ -735,6 +735,23 @@ test("retention keeps exactly fourteen VERIFIED generations when failures are mi
         "only the unpinned surplus generation is removed");
       assert.ok(pinnedSweep.retained.includes(oldest), "the pinned generation is retained outside the window");
       assert.ok(await assertSafeGenerationV1(backupRoot, oldest), "and it is still whole on disk");
+      // A surplus generation whose dump no longer matches its manifest (same
+      // size, different bytes) is NOT removed: the slot pass checks structure
+      // only, and the full digest check before removal refuses it, so it is
+      // reported `unsafe` — a tampered dump is the operator's to look at, and an
+      // attacker cannot get a real dump deleted by corrupting it.
+      const tampered = verified[BACKUP_KEPT_GENERATIONS_V1 - 3].generationId;
+      const tamperedDump = join(backupRoot, `gen-${generationLeafV1(tampered)}`, "database.dump");
+      const original = await readFile(tamperedDump);
+      await chmod(tamperedDump, 0o600);
+      await writeFile(tamperedDump, Buffer.alloc(original.length, 0x58));
+      await chmod(tamperedDump, 0o400);
+      await client.query("UPDATE updater.backup_state SET kept_generations=$1 WHERE singleton",
+        [BACKUP_KEPT_GENERATIONS_V1 - 3]);
+      const tamperedSweep = await backup.sweep();
+      assert.ok(tamperedSweep.unsafe.includes(tampered), "the tampered surplus generation is reported unsafe");
+      assert.deepEqual(tamperedSweep.removed, [], "and nothing is removed");
+      assert.equal(await existsAsync(tamperedDump), true, "its directory is left for the operator");
     });
   }, { port: PORT, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
 });
@@ -1219,6 +1236,13 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
         assert.match(await refuses(reader, "ALTER ROLE control_room_migrator SUPERUSER"), /permission denied|must be superuser/u,
           "and cannot change any role");
       } finally { await reader.end(); }
+      // And the updater's loader is the OUTSIDE check: grant the reader one more
+      // role (here with ADMIN, the "can grant" case) and the next start refuses.
+      await seed("GRANT control_room_private_web TO control_room_backup_reader WITH ADMIN OPTION");
+      await assert.rejects(installUpdaterSchema(postgres), /updater_schema_refused:backup_reader_attributes/u,
+        "a reader that was granted more than pg_read_all_data stops the updater at startup");
+      await seed("REVOKE control_room_private_web FROM control_room_backup_reader");
+      await installUpdaterSchema(postgres);
       // The WEB can read the badge, and it is the same verdict the trigger uses.
       const web = await as(postgres, "web");
       try {

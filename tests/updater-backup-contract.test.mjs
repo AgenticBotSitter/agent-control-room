@@ -24,7 +24,7 @@ import { BACKUP_LOCK_TABLE_V1, BACKUP_MAX_AGE_SECONDS_V1, BACKUP_KEPT_GENERATION
   generationLeafV1 } from "../src/updater/v1/backup-store.mjs";
 import { UpdaterBackupV1, assertBackupRootOnDiskV1, assertSafeGenerationV1, backupManifestV1,
   resolveBackupRootPolicyV1 } from "../src/updater/v1/backup-runner.mjs";
-import { isQuotedIdentifierV1 } from "../src/updater/v1/backup-evidence.mjs";
+import { isQuotedIdentifierV1, readDumpEvidence } from "../src/updater/v1/backup-evidence.mjs";
 
 const DDL_DIRECTORY = join(process.cwd(), "src/updater/v1/ddl");
 const read = async file => readFile(join(DDL_DIRECTORY, file), "utf8");
@@ -527,5 +527,48 @@ test("a completion the ledger would refuse is refused BEFORE the promote rename"
     assert.ok(!store.names().includes("completeAttempt"), `${label}: the ledger is never asked`);
     assert.deepEqual((await readdir(backupRoot)).filter(name => name.startsWith("gen-")), [],
       `${label}: nothing was promoted`);
+  }
+});
+
+test("every evidence statement that touches a catalog name goes over the extended protocol", async () => {
+  // C1's second fence. The extended protocol refuses a second statement in one
+  // call ("cannot insert multiple commands into a prepared statement"), so even
+  // a quoting bug cannot smuggle `;ALTER ROLE ...` through. A recording client
+  // answers like the catalog would and records how each statement was sent.
+  const sent = [];
+  const client = { async query(input) {
+    const query = typeof input === "string" ? { text: input } : input;
+    sent.push(query);
+    const text = query.text;
+    if (/FROM pg_catalog\.pg_roles r WHERE r\.rolname/u.test(text)) return { rows: [{ rolsuper: false,
+      rolcreaterole: false, rolcreatedb: false, rolreplication: false, inherits_authority: false, can_grant: false }] };
+    if (/AS snapshot/u.test(text)) return { rows: [{ snapshot: [] }] };
+    if (/AS quoted_schema/u.test(text)) return { rows: [{ schema: "public", name: 'Odd"Name', quoted_schema: "public",
+      quoted_name: '"Odd""Name"', qualified: 'public."Odd""Name"' }] };
+    if (/count\(\*\)/u.test(text)) return { rows: [{ count: "3" }] };
+    return { rows: [] };
+  } };
+  const evidence = await readDumpEvidence(client);
+  assert.deepEqual(evidence.rowCounts, [{ table: 'public."Odd""Name"', count: 3 }]);
+  const reads = sent.filter(query => !/^SET /u.test(query.text));
+  assert.ok(reads.length >= 5, "the reader check, the shape, the table list, a count and ownership");
+  for (const query of reads) {
+    assert.equal(query.queryMode, "extended", `sent over the extended protocol: ${query.text.trim().slice(0, 60)}`);
+  }
+  // And the session settings that pin the reader are all applied.
+  const settings = sent.filter(query => /^SET /u.test(query.text)).map(query => query.text);
+  for (const pinned of [/search_path = pg_catalog, pg_temp/u, /row_security = off/u, /statement_timeout/u,
+    /lock_timeout/u, /default_transaction_read_only = on/u]) {
+    assert.ok(settings.some(text => pinned.test(text)), `the session pins ${pinned}`);
+  }
+});
+
+test("the evidence reader refuses a login that could grant or become anything", async () => {
+  for (const attribute of ["rolsuper", "rolcreaterole", "rolcreatedb", "rolreplication", "inherits_authority",
+    "can_grant"]) {
+    const row = { rolsuper: false, rolcreaterole: false, rolcreatedb: false, rolreplication: false,
+      inherits_authority: false, can_grant: false, [attribute]: true };
+    const client = { async query() { return { rows: [row] }; } };
+    await assert.rejects(readDumpEvidence(client), /updater_backup_evidence_reader_refused/u, attribute);
   }
 });

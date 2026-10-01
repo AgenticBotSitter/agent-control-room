@@ -157,8 +157,8 @@
     "file": "src/updater/v1/backup-evidence.mjs",
     "find": "const extended = (text, values = []) => Object.freeze({ text, values, queryMode: \"extended\" });",
     "replace": "const extended = (text, values = []) => Object.freeze({ text, values });",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "C1 defence in depth: the extended protocol refuses a second statement in one call. Without it a quoting bug is a takeover again rather than a refused statement"
+    "test": "node --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "C1 defence in depth: the extended protocol refuses a second statement in one call, so a quoting bug is a refused statement rather than a takeover (with quoting removed, the reviewer's name fails with \"cannot insert multiple commands into a prepared statement\"). It is a second fence, so the contract test pins it by recording how every evidence statement is sent"
   },
   {
     "file": "src/updater/v1/backup-evidence.mjs",
@@ -171,15 +171,15 @@
     "file": "src/updater/v1/backup-evidence.mjs",
     "find": "  await client.query(\"SET row_security = off\");\n",
     "replace": "",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "a policy expression is release code; with row_security left on, a non-BYPASSRLS reader would evaluate it on every count"
+    "test": "node --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "a policy expression is release code; with row_security left on, a reader without BYPASSRLS would evaluate it on every count. The production reader HAS BYPASSRLS, so this is a second fence and the contract test pins it by recording the session settings"
   },
   {
     "file": "src/updater/v1/schema-installer.ts",
-    "find": "    || readerRow.rolbypassrls !== true || readerRow.can_grant !== false || readerRow.has_members !== false",
-    "replace": "    || readerRow.rolbypassrls !== true || readerRow.has_members !== false",
+    "find": "readerRow.can_grant !== false || readerRow.has_members !== false\n    || readerRow.owns_objects !== false\n    || JSON.stringify(readerRow.member_of) !== JSON.stringify([\"pg_read_all_data\"])) {",
+    "replace": "readerRow.has_members !== false\n    || readerRow.owns_objects !== false) {",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59790}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-backup-postgres.test.ts",
-    "why": "the backup reader must hold ADMIN on no role; the loader is the outside check that nothing granted it the power to grant"
+    "why": "the backup reader's ONLY membership is pg_read_all_data and it holds ADMIN on nothing; the loader is the outside check, on every start, that nobody granted it more. Both clauses go together because an ADMIN grant is also a membership, so either alone would catch the test's grant"
   },
   {
     "file": "src/updater/v1/backup-store.mjs",
