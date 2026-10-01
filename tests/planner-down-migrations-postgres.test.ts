@@ -23,10 +23,19 @@ import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { readMigrationGraph } from "./helpers/down-migration-order";
 
-// Reserved disposable-cluster lane for the planner down migrations: the runner's
-// assigned port block when it gives one, so concurrent runs never collide.
-const PORT = Number(process.env.ORCHESTRATOR_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59370);
-const ALLOWED = Array.from({ length: 10 }, (_, index) => PORT + index);
+// Reserved disposable-cluster lane for the planner down migrations: 59500-59511,
+// or the runner's assigned port block when it gives one, so concurrent runs never
+// collide.
+//
+// Its OWN block, and that is the point. Three files in test:database default to
+// 59370 -- the orchestrator lane's -- and two more share 59450, so a file that
+// copies either number collides with its own lane-mates and fails
+// `refusing_occupied_port` on tests that have nothing to do with the port. Four
+// failures in one lane came from exactly that. It also used to read
+// ORCHESTRATOR_PG_PORT, which is not this file's lane and is one more way to be
+// handed somebody else's ports.
+const PORT = Number(process.env.PLANNER_DOWN_PG_PORT ?? process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59500);
+const ALLOWED = Array.from({ length: 12 }, (_, index) => PORT + index);
 const PG = requiresRealPostgres();
 
 const MIGRATIONS = "db/migrations";
