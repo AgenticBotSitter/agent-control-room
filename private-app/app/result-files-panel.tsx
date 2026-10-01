@@ -42,6 +42,20 @@ const stateWord = (file: ResultFileItem) => ({
   stored: "Ready", declared: "Still arriving", quarantined: "Held back", missing: "Missing",
 } as const)[file.state];
 
+/**
+ * Put a refusal ahead of a delivery that is merely still in progress.  The set
+ * state is deliberately first: the catalog permits a quarantined set to retain
+ * stored file rows as its record, so ranking only those rows could bury a
+ * held-back delivery beneath an incomplete one.
+ */
+function setAttentionRank(set: ResultFileSet): number {
+  if (set.state === "quarantined") return 0;
+  if (set.files.some(file => file.state === "quarantined" || file.state === "missing")) return 1;
+  if (set.state === "declared" || set.state === "incomplete"
+    || set.files.some(file => file.state === "declared")) return 2;
+  return 3;
+}
+
 /** The one line that says what happened, per file. Never a bare status colour. */
 function fileStatus(file: ResultFileItem) {
   switch (file.state) {
@@ -74,7 +88,7 @@ function ResultFileRow({ projectId, set, file }: { projectId: string; set: Resul
   }, [projectId, set.setId, file.fileId]);
   const mismatched = file.declaredMediaType !== file.detectedMediaType;
   return <li className="private-result-list-item"><div>
-    <h4>{file.displayName}</h4>
+    <h4 className="private-result-file-name">{file.displayName}</h4>
     <p>{formatBytes(file.sizeBytes)} · {stateWord(file)}</p>
     {fileStatus(file)}
     {mismatched && <p className="private-notice">Sent as {file.declaredMediaType}; the bytes look like
@@ -90,7 +104,7 @@ function ResultFileRow({ projectId, set, file }: { projectId: string; set: Resul
       </dl>
     </details>
     {problem && <p role="alert" className="private-notice">{problem}</p>}
-  </div><div>
+  </div><div className="private-result-file-actions">
     {downloadable(set, file)
       ? <button type="button" className="private-action-link" disabled={pending} onClick={() => { void download(); }}>
         {pending ? "Starting…" : "Download"}
@@ -168,7 +182,8 @@ export function ResultFilesView({ projectId, jobId, data }: { projectId: string;
   </section>;
   return <section className="private-panel">
     <h2>Delivered files</h2>
-    {value.sets.map(set => <ResultFileSetPanel key={set.setId} projectId={projectId} set={set} />)}
+    {[...value.sets].sort((left, right) => setAttentionRank(left) - setAttentionRank(right))
+      .map(set => <ResultFileSetPanel key={set.setId} projectId={projectId} set={set} />)}
     {value.additionalSetsOmitted && <p className="private-note">More result sets are saved than are shown here.</p>}
   </section>;
 }

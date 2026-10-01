@@ -352,6 +352,8 @@ test("every owner page is usable at phone width", async ({ page }, testInfo: Tes
       .toHaveCount(0, { timeout: 30_000 });
     if (route === "/workers/connect")
       await page.screenshot({ path: testInfo.outputPath("workers-connect-375.png"), fullPage: true, animations: "disabled" });
+    if (route.endsWith("/files"))
+      await page.screenshot({ path: testInfo.outputPath("project-files-375.png"), fullPage: true, animations: "disabled" });
     const measured = await measure(page);
 
     if (measured.scrollWidth > measured.clientWidth) {
