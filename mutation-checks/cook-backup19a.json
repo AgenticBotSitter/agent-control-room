@@ -397,5 +397,19 @@
     "replace": "    if (false) throw updaterRefuseV1(\"updater_backup_cancelled\");",
     "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
     "why": "M2 L8: Stop must translate the forced evidence-session disconnect into cancellation instead of a false backup failure"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "    await close(cancelled || signal?.aborted);",
+    "replace": "    // mutation leaks the owned evidence client on every completed exit",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "Stop and every other evidence-reader exit must await the owned client close; otherwise a rejected query can let the backup return while its production reader backend still consumes a connection slot and snapshot"
+  },
+  {
+    "file": "src/updater/v1/backup-ports.mjs",
+    "find": "  if (!Number.isSafeInteger(closeTimeoutMs) || closeTimeoutMs < 1)",
+    "replace": "  if (false)",
+    "test": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 TMPDIR=/private/tmp node --import tsx --test --test-concurrency=1 tests/updater-backup-contract.test.mjs",
+    "why": "The evidence close bound must be a positive safe integer so cleanup cannot become unbounded or silently use an immediate timer through invalid composition"
   }
 ]

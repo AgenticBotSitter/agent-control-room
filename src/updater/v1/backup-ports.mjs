@@ -67,6 +67,7 @@ const SNAPSHOT_ID_V1 = /^[0-9A-Fa-f]{1,16}(-[0-9A-Fa-f]{1,16}){1,2}$/u;
 const STDERR_MAX_V1 = 4096;
 
 const DEFAULT_TIMEOUTS_V1 = Object.freeze({ dumpMs: 3_600_000, restoreMs: 3_600_000, clusterMs: 180_000 });
+const EVIDENCE_CLOSE_TIMEOUT_MS_V1 = 5_000;
 
 /**
  * Run one child, bounded. `stdin` is a readable stream piped to the child;
@@ -134,17 +135,38 @@ const confQuoteV1 = value => `'${value.replaceAll("\\", "\\\\").replaceAll("'", 
 
 /**
  * Own a PostgreSQL evidence client for the duration of one operation.
- * `pg` force-closes a non-pipelined connection with an active query when
- * `end()` is called, which makes Stop interrupt a blocked evidence statement
- * immediately instead of waiting for its 60/600 second server timeout.
+ * Stop must not merely reject the active query: its backend is a scarce
+ * production-reader session too. One shared close promise owns `end()` and an
+ * explicit socket destroy, and the operation cannot return until that close
+ * has either completed or reached its bounded hard-close fallback.
  */
-async function withAbortableEvidenceClientV1(client, signal, operation, beforeEnd = async () => {}) {
+export async function withAbortableEvidenceClientV1(client, signal, operation, beforeEnd = async () => {},
+  closeTimeoutMs = EVIDENCE_CLOSE_TIMEOUT_MS_V1) {
+  if (!Number.isSafeInteger(closeTimeoutMs) || closeTimeoutMs < 1)
+    throw updaterRefuseV1("updater_backup_ports_refused");
   let cancelled = false;
+  let closePromise;
+  const destroy = () => { try { client.connection?.stream?.destroy?.(); } catch {} };
+  const close = force => {
+    if (force) destroy();
+    if (closePromise) return closePromise;
+    closePromise = (async () => {
+      let timer;
+      const timedOut = new Promise(resolvePromise => {
+        timer = setTimeout(() => { destroy(); resolvePromise(); }, closeTimeoutMs);
+      });
+      try {
+        const ending = Promise.resolve().then(() => client.end()).catch(() => { destroy(); });
+        await Promise.race([ending, timedOut]);
+      } finally { clearTimeout(timer); }
+    })();
+    return closePromise;
+  };
   const cancel = () => {
     cancelled = true;
-    // Observe the promise here; the operation's active query is what reports
-    // the disconnect to the main control flow.
-    void client.end().catch(() => {});
+    // Hard-close now so the active SQL rejects; the finally below awaits this
+    // same promise, so returning cancellation also proves cleanup was awaited.
+    void close(true);
   };
   if (signal?.aborted) cancel();
   else signal?.addEventListener("abort", cancel, { once: true });
@@ -156,8 +178,18 @@ async function withAbortableEvidenceClientV1(client, signal, operation, beforeEn
     throw error;
   } finally {
     signal?.removeEventListener("abort", cancel);
-    await beforeEnd(client).catch(() => {});
-    await client.end().catch(() => {});
+    if (!cancelled && !signal?.aborted) {
+      let cleanupTimer;
+      const cleanupTimedOut = new Promise(resolvePromise => {
+        cleanupTimer = setTimeout(resolvePromise, closeTimeoutMs, false);
+      });
+      const cleaned = await Promise.race([
+        Promise.resolve().then(() => beforeEnd(client)).then(() => true, () => true), cleanupTimedOut,
+      ]);
+      clearTimeout(cleanupTimer);
+      if (!cleaned) destroy();
+    }
+    await close(cancelled || signal?.aborted);
   }
 }
 

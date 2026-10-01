@@ -25,7 +25,7 @@ import { BACKUP_LOCK_TABLE_V1, BACKUP_MAX_AGE_SECONDS_V1, BACKUP_KEPT_GENERATION
 import { UpdaterBackupV1, assertBackupRootOnDiskV1, assertSafeGenerationV1, backupManifestV1,
   resolveBackupRootPolicyV1 } from "../src/updater/v1/backup-runner.mjs";
 import { isQuotedIdentifierV1, readDumpEvidence } from "../src/updater/v1/backup-evidence.mjs";
-import { postgresBackupPortsV1 } from "../src/updater/v1/backup-ports.mjs";
+import { postgresBackupPortsV1, withAbortableEvidenceClientV1 } from "../src/updater/v1/backup-ports.mjs";
 
 const DDL_DIRECTORY = join(process.cwd(), "src/updater/v1/ddl");
 const read = async file => readFile(join(DDL_DIRECTORY, file), "utf8");
@@ -407,6 +407,74 @@ test("Stop interrupts a blocked source evidence query and reports cancellation",
   await inQuery; controller.abort();
   await assert.rejects(running, /updater_backup_cancelled/u);
   assert.ok(ends >= 1, "abort closes the exact client holding the blocked SQL statement");
+});
+
+test("the evidence client is closed on normal, error, cancellation and cleanup-timeout exits", async () => {
+  const makeClient = ({ hangingEnd = false, rejectingEnd = false } = {}) => {
+    let ends = 0, destroys = 0;
+    const client = {
+      connection: { stream: { destroy() { destroys += 1; } } },
+      end() { ends += 1; return hangingEnd ? new Promise(() => {})
+        : rejectingEnd ? Promise.reject(new Error("end failed")) : Promise.resolve(); },
+    };
+    return { client, counts: () => ({ ends, destroys }) };
+  };
+
+  const invalid = makeClient();
+  await assert.rejects(withAbortableEvidenceClientV1(invalid.client, null, async () => "must not run",
+    async () => {}, 0), /updater_backup_ports_refused/u);
+  assert.deepEqual(invalid.counts(), { ends: 0, destroys: 0 }, "an invalid close bound is refused before client use");
+
+  const normal = makeClient();
+  let rollbacks = 0;
+  assert.equal(await withAbortableEvidenceClientV1(normal.client, null, async () => "ok",
+    async () => { rollbacks += 1; }, 20), "ok");
+  assert.deepEqual(normal.counts(), { ends: 1, destroys: 0 });
+  assert.equal(rollbacks, 1, "normal completion runs transaction cleanup before close");
+
+  const failed = makeClient();
+  await assert.rejects(withAbortableEvidenceClientV1(failed.client, null, async () => {
+    throw new Error("evidence failed");
+  }, async () => { rollbacks += 1; }, 20), /evidence failed/u);
+  assert.deepEqual(failed.counts(), { ends: 1, destroys: 0 });
+  assert.equal(rollbacks, 2, "an evidence error still runs transaction cleanup and closes");
+
+  const cancelled = makeClient();
+  const controller = new AbortController();
+  let rejectBlocked, entered;
+  const blocked = new Promise((_, reject) => { rejectBlocked = reject; });
+  const inOperation = new Promise(resolvePromise => { entered = resolvePromise; });
+  cancelled.client.connection.stream.destroy = () => {
+    cancelled.client.connection.stream.destroyed = true;
+    rejectBlocked?.(new Error("socket destroyed"));
+  };
+  const stopping = withAbortableEvidenceClientV1(cancelled.client, controller.signal, async () => {
+    entered(); return blocked;
+  }, async () => { throw new Error("rollback must not run after cancellation"); }, 20);
+  await inOperation; controller.abort();
+  await assert.rejects(stopping, /updater_backup_cancelled/u);
+  assert.equal(cancelled.client.connection.stream.destroyed, true);
+  assert.equal(cancelled.counts().ends, 1, "cancellation still awaits the owned client end");
+
+  const timedOut = makeClient({ hangingEnd: true });
+  const startedAt = Date.now();
+  assert.equal(await withAbortableEvidenceClientV1(timedOut.client, null, async () => "done",
+    async () => {}, 20), "done");
+  assert.deepEqual(timedOut.counts(), { ends: 1, destroys: 1 },
+    "a hung graceful close reaches the bounded hard-close fallback");
+  assert.ok(Date.now() - startedAt < 1_000, "a hung close cannot hang backup completion");
+
+  const rejectedClose = makeClient({ rejectingEnd: true });
+  assert.equal(await withAbortableEvidenceClientV1(rejectedClose.client, null, async () => "done",
+    async () => {}, 20), "done");
+  assert.deepEqual(rejectedClose.counts(), { ends: 1, destroys: 1 },
+    "a rejected graceful close also hard-closes the owned connection");
+
+  const timedOutCleanup = makeClient();
+  assert.equal(await withAbortableEvidenceClientV1(timedOutCleanup.client, null, async () => "done",
+    async () => new Promise(() => {}), 20), "done");
+  assert.deepEqual(timedOutCleanup.counts(), { ends: 1, destroys: 1 },
+    "a hung transaction cleanup cannot prevent the bounded client close");
 });
 
 test("a due backup takes the lock, and a held lock is RECORDED as a failed attempt", async () => {
