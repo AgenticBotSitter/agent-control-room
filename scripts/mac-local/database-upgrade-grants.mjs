@@ -48,6 +48,59 @@ const name = value => {
 const tuple = ({ role, kind, object, column = "", privilege: right, is_grantable = false }) =>
   [role, kind, object, column, right, is_grantable ? "grantable" : "plain"].join("|");
 
+/** The `updater` schema is the UPDATER's, not this converger's, and it is not
+ * the release's to converge.
+ *
+ * WHY. The updater owns its schema and its role end to end. Its own DDL
+ * (`src/updater/v1/ddl/0002_schema.sql`) creates it, REVOKEs it from PUBLIC and
+ * re-GRANTs `USAGE ON SCHEMA updater` plus `EXECUTE` on `updater.authorization_complete`
+ * and `updater.bounded_transports` to `control_room_private_web`, and the loader
+ * re-asserts all three on every single run. Nothing in `db/roles/*.sql` names an
+ * `updater` object, so the desired set can never legitimately hold one — and
+ * `control_room_deployer`, which owns the schema, is deliberately absent from the
+ * role manifest, so this converger never creates, alters or revokes that role.
+ *
+ * WHAT WENT WRONG WITHOUT THIS, and it is worse than a failed upgrade. The
+ * catalog sees those three grants, `diffMacGrantsV1` calls them `extra` (they are
+ * in no desired file), and the converger emits a REVOKE for each. Two outcomes,
+ * both bad:
+ *
+ *   1. As the MIGRATOR — the release converger's login — the REVOKE fails
+ *      `permission denied for schema updater`, because the migrator holds
+ *      nothing there by design. MEASURED. The whole grant transaction rolls
+ *      back, so no retry past that point converges.
+ *   2. As `postgres` — which is the login THIS converger actually runs as
+ *      (`runMacDatabaseUpgradeCommandV1` refuses anything but the superuser) —
+ *      the REVOKE SUCCEEDS. MEASURED. There is no refusal to notice: the web
+ *      login silently loses USAGE on the schema and EXECUTE on the updater's own
+ *      guard functions, and the next release read fails on a database the
+ *      operator believes is fully upgraded. A schema-kind item has no allow-list
+ *      at all (`grantSql` guards only functions), so even the one path that
+ *      refuses for functions silently applies the schema one.
+ *
+ * So the filter cannot live at the statement generator alone, and it must not be
+ * `role === "control_room_private_web"`: the updater grants to `postgres` too
+ * (owner rights), and a schema can hold grants for any role. The one predicate
+ * that is exactly right is on the SCHEMA of the object, and it is applied at BOTH
+ * ends — the snapshot the diff reads, and the statements the applier emits — so
+ * an `updater` item cannot enter the diff even if it arrived by some other route
+ * (a hand-built snapshot, the offline `planMacDatabaseUpgradeSnapshotV1` path,
+ * `verify-database-backup.mjs`). Belt and braces on purpose: the applier is the
+ * only place a REVOKE can actually reach the database, and it is the last thing
+ * between a catalog row and a change on disk.
+ */
+export const macUpdaterOwnedSchema = "updater";
+const updaterOwned = item => {
+  const object = String(item).split("|")[2] ?? "";
+  // `updater.x` and the bare schema name `updater` are both updater-owned. The
+  // `\.|$` anchor is what stops `updater_release_reader_roles.sql`-style names
+  // and any future `updater_x.y` relation from being silently skipped: only an
+  // exact `updater` schema prefix matches.
+  return object === macUpdaterOwnedSchema || object.startsWith(`${macUpdaterOwnedSchema}.`);
+};
+/** The live snapshot. Anything the updater owns is not compared at all. */
+export const macReleaseOwnedGrantV1 = item => !updaterOwned(item);
+
 function splitCommas(source) {
   let depth = 0, part = "";
   const parts = [];
@@ -160,7 +213,10 @@ JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])`;
 export async function readMacGrantCatalogV1(client) {
   const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
   const rows = (await client.query(macGrantCatalogSqlV1, [principals])).rows;
-  return macGrantRowsToSetV1(rows);
+  // END ONE of the filter: the live snapshot. `updater` rows are dropped HERE,
+  // at the root every caller reads through, so `planMacDatabaseUpgradeSnapshotV1`,
+  // the backup verifier and `applyMacDatabaseUpgradeV1` all stop seeing them.
+  return macGrantRowsToSetV1(rows.filter(row => macReleaseOwnedGrantV1(tuple(row))));
 }
 
 export function macGrantRowsToSetV1(rows) {
@@ -175,6 +231,15 @@ export function diffMacGrantsV1(actual, desired) {
 
 function grantSql(item, verb) {
   const [role, kind, object, column, right, grantable] = item.split("|");
+  // END TWO of the filter: the statement itself. Reached only when an `updater`
+  // item arrives from a route that did not pass `readMacGrantCatalogV1` — a
+  // hand-built snapshot, `planMacDatabaseUpgradeSnapshotV1` fed a captured JSON
+  // file, or a caller that assembles a diff directly. Refusing here is what
+  // makes the guarantee hold for those, rather than only for the happy path.
+  // A REFUSAL and not a skip: the caller passed in a grant set this converger
+  // is not allowed to act on, and silently dropping one of a pair of statements
+  // would report convergence it did not perform.
+  if (updaterOwned(item)) throw new Error("upgrade_updater_grant_refused");
   if (![...groups, ...Object.keys(macRolePlan)].includes(role) || !privilege.has(right))
     throw new Error("upgrade_grant_catalog_refused");
   if (grantable !== "plain" && grantable !== "grantable") throw new Error("upgrade_grant_catalog_refused");
