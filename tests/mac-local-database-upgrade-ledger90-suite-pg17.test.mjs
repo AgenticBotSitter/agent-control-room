@@ -87,6 +87,32 @@ const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encodi
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const never = async () => { throw new Error("a run that needs no login must never read one"); };
 
+/**
+ * How long the two kill tests wait for the real child to reach the window they
+ * kill it in.
+ *
+ * This is a budget for waiting on REAL work, not for the assertions. Both kill
+ * tests spawn the production apply, which takes a full `pg_dump` backup and then
+ * applies every pending migration — each in its own transaction and each framed
+ * by two whole-schema digest reads, so the cost grows with the ledger rather
+ * than being a fixed one-off. Measured on an idle 12-core machine the child
+ * needs ~6.5s to reach the killed window (backup ~0.8s, roles ~0.04s, the 56
+ * migrations ~5.3s); the same run under the CPU contention of other lanes takes
+ * ~13s. A 30s ceiling therefore left only a ~2x margin, and a busy shared Mac
+ * crossed it: the child was still inside its first migrations when the deadline
+ * expired, the ledger still read 90 rows, and the test reported that as "the
+ * migrations did not commit" — a product claim the run never established.
+ *
+ * The assertions are untouched by this number. It is only the ceiling on "how
+ * long to keep waiting before calling the window unreachable", and it is set to
+ * the repo's own convention for a suite that starts a real cluster and drives
+ * the real applier (240_000 in the sibling pg17 suites) so a loaded machine
+ * cannot turn a scheduling delay into a red suite. A genuinely stuck child
+ * still fails here, just after a quarter of a minute of slack rather than at
+ * the edge of the work it is waiting for.
+ */
+const KILL_WINDOW_BUDGET_MS = Number(process.env.CONTROL_ROOM_KILL_WINDOW_BUDGET_MS ?? 240_000);
+
 /** A dedicated port per cluster, all inside the assigned test port range, so a
  * run can be moved out of the way of whatever else is using 58520-58529. */
 const PORT_BASE = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58520);
@@ -439,18 +465,38 @@ test("a real kill between migrations leaves the ledger at the last committed fil
     child.stdin.write(bothLoginCodes);
     child.stdin.end();
     const exited = new Promise(resolveExit => child.on("close", code => resolveExit(code)));
+    // Whatever ends this test — including an assertion below — the real child
+    // must not survive it. Left alone it sits blocked on this test's advisory
+    // lock forever, holding a connection to a cluster the teardown then stops.
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await exited.catch(() => {});
+      try { await blocker.query(`SELECT pg_advisory_unlock(${lockKey})`); } catch { /* connection already gone */ }
+      await blocker.end().catch(() => {});
+    });
 
     // Every real migration has committed exactly when the ledger holds the whole
     // real run; the appended one is still blocked and has not written its row.
     const committedReal = APPLIED_AFTER_UPGRADE;
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + KILL_WINDOW_BUDGET_MS;
     let committed = 0;
     while (Date.now() < deadline) {
       committed = (await blocker.query("SELECT count(*)::int AS n FROM control_room_schema_migrations")).rows[0].n;
       if (committed >= committedReal) break;
       await sleep(20);
     }
-    assert.equal(committed, committedReal, `all ${realPending} real migrations must commit before the appended one blocks`);
+    // A deadline that expires with the child still running says nothing about the
+    // product: the run never reached the state it was about to judge. Say which
+    // of the two happened instead of letting "the migrations did not commit"
+    // stand as a product claim. A child that refused early is reported with its
+    // own line, which is the evidence worth reading.
+    if (committed < committedReal) {
+      const ended = child.exitCode !== null || child.signalCode !== null;
+      assert.fail(`the apply did not reach the point this test kills it: waited ${KILL_WINDOW_BUDGET_MS}ms and the `
+        + `ledger holds ${committed} of ${committedReal} migration rows. The child `
+        + `${ended ? `ended (code ${child.exitCode}, signal ${child.signalCode})` : "was still running when the budget ran out"}`
+        + `.${ended && stderr.trim() ? ` Its stderr: ${stderr.trim()}` : ""}`);
+    }
     child.kill("SIGKILL");
     await exited;
     await blocker.query(`SELECT pg_advisory_unlock(${lockKey})`);
@@ -517,17 +563,41 @@ test("a real kill inside the grants transaction rolls back every grant and membe
     const dest = await mkdtemp(join(cluster.root, "co-"));
     const staged = await checkout(upstream, dest);
     const child = spawn(process.execPath, [staged.stepModule, "apply", staged.commit, target, root, PG_BIN, "2", digest]);
+    // Captured from the first byte, so a child that refused for any reason can be
+    // quoted in the failure instead of the test reporting only that it never
+    // reached the lock.
+    let stderr = "";
+    child.stderr.on("data", chunk => { stderr += String(chunk); });
     child.stdin.end(); // no login code needed: createRoles is empty.
     const exited = new Promise(resolveExit => child.on("close", code => resolveExit(code)));
+    // Same reasoning as the migrations kill test: an assertion that fails while
+    // the child is still running must not leave it blocked on the ACCESS
+    // EXCLUSIVE lock this test holds, with the ROLLBACK below never reached.
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await exited.catch(() => {});
+      try { await blocker.query("ROLLBACK"); } catch { /* transaction already ended */ }
+    });
 
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + KILL_WINDOW_BUDGET_MS;
     let waiting = 0;
     while (Date.now() < deadline) {
       waiting = (await blocker.query("SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted")).rows[0].n;
       if (waiting >= 1) break;
       await sleep(20);
     }
-    assert.equal(waiting >= 1, true, "the apply must be blocked waiting for the lock this test holds");
+    // Same reasoning as the migrations kill test: a budget that runs out with the
+    // child still applying has established nothing about the grants
+    // transaction, so report that rather than implying it never blocked. A child
+    // that ended early is quoted from its own refusal line.
+    if (waiting < 1) {
+      const ended = child.exitCode !== null || child.signalCode !== null;
+      if (ended) await exited;
+      assert.fail(`the apply did not reach the grants transaction this test locks it out of: waited `
+        + `${KILL_WINDOW_BUDGET_MS}ms with no ungranted lock waiting. The child `
+        + `${ended ? `ended (code ${child.exitCode}, signal ${child.signalCode})` : "was still applying when the budget ran out"}`
+        + `.${ended && stderr.trim() ? ` Its stderr: ${stderr.trim()}` : ""}`);
+    }
     child.kill("SIGKILL");
     await exited;
     await blocker.query("ROLLBACK"); // releases the ACCESS EXCLUSIVE lock.
