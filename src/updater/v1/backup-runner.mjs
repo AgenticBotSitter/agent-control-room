@@ -435,6 +435,7 @@ export class UpdaterBackupV1 {
    * runs while self-update is Off) and skips the due-time check. Everything else
    * about it is identical, deliberately: a manual backup that took a different
    * path would be untested by every nightly run.
+   * @param {{manual?: boolean, signal?: AbortSignal | null}} [options]
    */
   async runOnce({ manual = false, signal = null } = {}) {
     // An in-process second caller is NOT recorded: the first caller is running

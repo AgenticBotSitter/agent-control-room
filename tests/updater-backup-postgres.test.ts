@@ -1911,12 +1911,37 @@ test("a backup killed between promote and record keeps its verified dump and set
   }, { port: PORT + 2, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
 });
 
+test("a production-login cancellation is recorded and leaves the shared backup lock available", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    await installUpdaterSchema(postgres);
+    await withBackupStoreV1(postgres, async ({ store }) => {
+      const { installRoot, backupRoot } = await backupRootForV1(t);
+      const controller = new AbortController(); controller.abort();
+      const backup = new UpdaterBackupV1({ store, ports: filePortsV1(postgres),
+        policy: internalPolicyV1(installRoot, backupRoot) });
+      const outcome = await backup.runOnce({ manual: true, signal: controller.signal });
+      assert.equal(outcome.status, "failed"); assert.equal(outcome.code, "updater_backup_cancelled");
+      const recorded = await store.generation(outcome.generationId);
+      assert.equal(recorded?.state, "failed"); assert.equal(recorded?.failureCode, "updater_backup_cancelled",
+        "the production deployer records Stop cancellation instead of losing it between process and database");
+      const freshness = await store.freshness();
+      assert.equal(freshness.consecutiveFailures, 1); assert.equal((await backup.status()).badge, "failed");
+      const lock = await store.acquireBackupLock();
+      assert.equal(lock.status, "acquired", "cancellation leaves the row lock immediately available to retry or upgrade");
+      await store.releaseBackupLock();
+    });
+  }, { port: PORT + 2, allowedPorts: ALLOWED, boundMs: 300_000, pgBin: PG_BIN });
+});
+
 test("the backup lane ran on a real cluster, not a skip", () => {
   // `required` is read HERE, inside the test body, and not hoisted into a constant
   // at module scope: `needsPg()` runs as each test is registered, so a constant
   // captured at import time would freeze the count at zero and this assertion
   // would pass for the wrong reason — vacuously, having compared 0 to 0.
-  assert.ok(required >= 13, `the lane declares a real number of PostgreSQL tests (${required}), not a token pair`);
+  assert.ok(required >= 14, `the lane declares a real number of PostgreSQL tests (${required}), not a token pair`);
   assert.equal(ran, required, "and every one of them ran rather than skipping");
   void updaterDdlFilesV1;
 });
