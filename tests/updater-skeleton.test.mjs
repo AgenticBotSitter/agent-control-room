@@ -338,9 +338,15 @@ test("the production call shape starts the REAL alert sender; only an explicit n
   const root = await temporaryRoot(t);
   await writeFile(join(root, "updater-state/self-update"), "On\n");
   const store = new MemoryStore();
+  // The started updaters are stopped in a `finally`, so a FAILING assertion —
+  // which is exactly what a guard mutation produces — cannot leak a 5s loop
+  // timer and hang the test runner instead of reporting the failure.
+  const started = [];
+  t.after(async () => { for (const updater of started.splice(0)) await updater.stop().catch(() => {}); });
   const updater = await startUpdaterV1({ root, store,
     identity: { bootId: "boot-wiring", leaseToken: "lease-new" },
     alertRuntime: await rootHeldVapid(root) });
+  started.push(updater);
   assert.ok(updater.alerts, "no `alerts` key means the real sender, not null");
   assert.equal(updater.alerts.constructor.name, "UpdaterAlertSenderV1");
   assert.equal(updater.alerts.root, root, "it is bound to the real root");
@@ -349,6 +355,7 @@ test("the production call shape starts the REAL alert sender; only an explicit n
   // An explicit opt-out still works, for a caller that supplies its own port.
   for (const optOut of [{ alerts: null }, { alerts: false }]) {
     const off = await startUpdaterV1({ root, store, ...optOut, alertRuntime: await rootHeldVapid(root) });
+    started.push(off);
     assert.equal(off.alerts, null, `explicit ${JSON.stringify(optOut)} turns the sender off`);
     assert.equal(off.loop.alerts, null);
     await off.stop();
@@ -366,12 +373,22 @@ test("startup refuses a VAPID key that is not root-held, and does not strand the
   const store = new MemoryStore();
   let acquired = 0;
   store.acquire = async token => { acquired += 1; return { status: "acquired", run: store.run, leaseToken: token }; };
-  await assert.rejects(startUpdaterV1({ root, store,
-    alertRuntime: { getuid: () => 0, lstat: async path => Object.assign(await lstat(path), { uid: 0 }) } }),
-    /updater_vapid_permissions_refused/u);
+  // Both attempts below are expected to REFUSE, so nothing is started — but if a
+  // guard mutation makes one of them start instead, the updater it returns owns
+  // a 5s loop timer. Registering every successful start means a broken guard is
+  // reported as a failed assertion rather than as a hung test runner.
+  const started = [];
+  t.after(async () => { for (const updater of started.splice(0)) await updater.stop().catch(() => {}); });
+  const start = async options => {
+    const updater = await startUpdaterV1({ root, store, ...options });
+    started.push(updater); return updater;
+  };
+  await assert.rejects(start({ alertRuntime: { getuid: () => 0,
+    lstat: async path => Object.assign(await lstat(path), { uid: 0 }) } }),
+  /updater_vapid_permissions_refused/u);
   assert.equal(acquired, 0, "the key is checked before the updater takes its lease");
   await chmod(key, 0o600);
-  await assert.rejects(startUpdaterV1({ root, store, alertRuntime: { getuid: () => 501 } }),
+  await assert.rejects(start({ alertRuntime: { getuid: () => 501 } }),
     /updater_vapid_not_root/u);
   assert.equal(acquired, 0);
 });
