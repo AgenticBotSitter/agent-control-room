@@ -166,7 +166,16 @@ test("the migration REFUSES a boundary that is already wrong, at apply time", as
       // with 42723 -- which would mask the boundary checks and make this a test that
       // passes for the wrong reason. Re-applying as CREATE OR REPLACE removes that
       // confound: the only statement left that can refuse is its own guard.
-      const migration = (await readFile(MIGRATION, "utf8"))
+      const source = await readFile(MIGRATION, "utf8");
+      const migration = source
+        .replace("CREATE FUNCTION updater_health_counts()", "CREATE OR REPLACE FUNCTION updater_health_counts()");
+      // The same file with the PRE-CREATE guard block removed, so the post-CREATE
+      // ACL checks are the only thing left that can refuse. Removing the pre-CREATE
+      // block is what makes those checks reachable at all: with it present it fires
+      // first, in the only state they could be reached in.
+      const preGuardStart = source.indexOf("-- WHAT MUST BE TRUE BEFORE THE FUNCTION IS CREATED");
+      const preGuardEnd = source.indexOf("CREATE FUNCTION updater_health_counts()");
+      const migrationWithoutPreGuard = (source.slice(0, preGuardStart) + source.slice(preGuardEnd))
         .replace("CREATE FUNCTION updater_health_counts()", "CREATE OR REPLACE FUNCTION updater_health_counts()");
       const refusesBoundary = async (why: string, expected?: RegExp) => {
         await assert.rejects(
@@ -212,6 +221,23 @@ test("the migration REFUSES a boundary that is already wrong, at apply time", as
           return true;
         },
         "the migration must refuse to install over a same-signature impostor, whatever its ACL");
+
+      // An EXECUTE the updater's login may hand onward. Reached through the
+      // CREATE-OR-REPLACE apply, which is the only path past the pre-CREATE guard --
+      // and that is exactly why this case exists: with the is_grantable check
+      // removed it installs a grantable privilege and nothing else notices.
+      await dropEverySignature(owner);
+      await owner.query(migration);
+      await owner.query(`GRANT EXECUTE ON FUNCTION ${FUNCTION} TO control_room_deployer WITH GRANT OPTION`);
+      await assert.rejects(
+        async () => { await owner.query(migrationWithoutPreGuard); },
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          assert.match(message, /grants EXECUTE onward/u, `refused by the named guard: ${message}`);
+          assert.doesNotMatch(message, /already exists/u, "the pre-CREATE guard would mask this one");
+          return true;
+        },
+        "the migration must refuse a grantable EXECUTE");
 
       // The SAME NAME, the SAME signature, but not SECURITY DEFINER: this is the case
       // the shape check exists for and the only one that isolates it. An OVERLOAD
