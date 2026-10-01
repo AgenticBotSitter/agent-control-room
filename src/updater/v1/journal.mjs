@@ -245,7 +245,7 @@ export class FileStepJournalV1 {
 }
 
 /** A deliberately typed DB display port. Item 15 does not issue SQL or grant
- * privileges; Marvin supplies the updater.run_events projection implementation. */
+ * privileges; the database worker supplies the updater.run_events projection implementation. */
 export async function reconcileJournalDisplayV1({ journal, display, rescued = false }) {
   if (rescued) return { state: "uncertain", reason: "rescue_marker" };
   let authority;
