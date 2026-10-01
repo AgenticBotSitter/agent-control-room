@@ -41,13 +41,19 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // merged tree's and only the merged tree's. No earlier value is expected to
 // appear anywhere.
 //
-// MEASURED, NOT CARRIED: derived with 0239 PRESENT (see tests/
-// updater-health-counts-postgres.test.ts, which measures it on real
-// PostgreSQL 17 and re-measures after rolling 0239 back, so a future change to
-// an earlier migration moves this constant and fails there).
+// MEASURED, NOT CARRIED, AND NOT THE LEAD'S PRE-MERGE VALUE. The lead measured
+// this with 0239 present as 23edbb21...; the cook/v1 merge that followed moved
+// the whole ledger (orchestration, planner, run-recovery and more), so that value
+// described a tree that no longer exists. Measured again on the MERGED tree by
+// tests/updater-health-schema-digest-postgres.test.ts on real PostgreSQL 17, which
+// also rolls 0239 back and re-applies it, so a future change to any earlier
+// migration moves this constant and fails there with the measured value in the
+// message rather than leaving it stale. The previous pre-merge value is recorded
+// here only so its absence is expected:
+//   23edbb216b3898a9b59e727d17a7a45107d35d756e5657d5f2105a75297f8777  (pre-merge)
 //
 // Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "23edbb216b3898a9b59e727d17a7a45107d35d756e5657d5f2105a75297f8777";
+export const privateWebSchemaDigest = "f0fdb754069b30d16e9126db9e9a889a1cf60692b6a71259011e3444d9d5e850";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway

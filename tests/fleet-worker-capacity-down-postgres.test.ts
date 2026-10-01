@@ -71,7 +71,23 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 //     and taking 0205..0200's downs off that, newest first, gives the previous
 //     constant (`73ebc791...`) byte for byte -- so the move is 0200-0205 and
 //     nothing else.
-const PRE_0234_DIGEST = "5c5562866faf1221bb5f8da6e162da4f48f97c707ee540666a8dae1e07372d27";
+//  4. THIS branch, which adds 0239 (the updater's health counts). 0239 is
+//     numbered AFTER 0234, so this before-state -- recovered by rolling 0234
+//     back from the committed ledger -- HAS 0239 in it, and the value moved a
+//     fourth time. Measured on real PostgreSQL 17 from this tree, not carried
+//     across, and it is exactly the value the lead measured with 0239 present
+//     (`23edbb21...`). The previous value, `5c556286...`, is cook/v1's own and
+//     describes a tree with no 0239; it is expected to appear nowhere.
+//
+// PROVENANCE, so the next person need not re-derive it. The other half of this
+// pair is produced by tests/updater-health-schema-digest-postgres.test.ts on the
+// same cluster kit: privateWebSchemaDigest is the digest with 0239 PRESENT, and
+// that test prints the pre-0239 value it measures by rolling 0239's own down
+// file back. The pre-0239 value it measured is `b6825826...`, which is cook/v1's
+// own privateWebSchemaDigest byte for byte, so 0239's down restores exactly the
+// schema it was applied to. The value below is one step earlier still -- 0234
+// additionally rolled back -- and is measured by THIS test.
+const PRE_0234_DIGEST = "23edbb216b3898a9b59e727d17a7a45107d35d756e5657d5f2105a75297f8777";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {
