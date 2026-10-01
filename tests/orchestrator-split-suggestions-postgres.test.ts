@@ -1560,6 +1560,23 @@ test("one description gives one Needs-you item however many times it is pressed,
       await failures.clear(inFlight);
       assert.equal(await failures.count(inFlight), 0, "the granted run's success clears the counter");
 
+      // R5-B1: THE RAISE RESOLVES ONLY WHEN AN ITEM STANDS, because the owner is
+      // told "it has raised an item for you" on the strength of it.
+      const quiet = "Failed once, never escalated.";
+      assert.equal(await failures.record(intakeProjectScopeV1("initial", scope.tenantId, scope.projectId, quiet)), 1);
+      const itemsBefore = (await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n;
+      await assert.rejects(needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:quiet-0001", reasonCode: "orchestrator_failed_twice", ownerRequest: quiet, now: LATER }),
+      /planner_needs_you_not_escalated/u, "no escalation and no item: the raise refuses, so no Needs-you is claimed");
+      // A description whose escalation a success has just cleared, but whose item
+      // was raised: the raise writes nothing and resolves, because the item is real.
+      await failures.clear(secondScope);
+      await needsYou.raise({ tenantId: scope.tenantId, projectId: scope.projectId,
+        requestKey: "orchestrator:second-after-success", reasonCode: "orchestrator_failed_twice",
+        ownerRequest: second, now: LATER });
+      assert.equal((await admin.query("SELECT count(*)::int AS n FROM control_planner_needs_you_items")).rows[0]!.n,
+        itemsBefore, "and it writes no second item");
+
       // N9: a `resplit` raise is now accepted. 0204 recomputed only the
       // `initial` project scope, so a re-split escalation passed the adapter's own
       // check and was then refused by the trigger -- measured as "planner

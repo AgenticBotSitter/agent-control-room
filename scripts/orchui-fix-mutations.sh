@@ -19,6 +19,10 @@
 # condition. Every mutation is restored afterwards; the tree must end clean.
 #
 # Usage: PG_BIN=/opt/homebrew/opt/postgresql@17/bin bash scripts/orchui-fix-mutations.sh
+#   ONLY=<regex>     run only the mutations whose id matches (e.g. ONLY='^R5')
+#   ANCHORS_ONLY=1   check every anchor still exists exactly once, run nothing --
+#                    round 4 left four anchors stale, and a stale anchor is a
+#                    SETUP-ERROR that a full run takes an hour to report
 set -u
 cd "$(dirname "$0")/.."
 
@@ -72,12 +76,14 @@ mutate() {
   # The backtick is introduced through a variable rather than inline: a nested
   # command substitution inside the pattern substitution read as a quoting error,
   # and under `set -u` the guard then saw fewer than four arguments.
+  if [ -n "${ONLY:-}" ] && ! [[ "$id" =~ $ONLY ]]; then return; fi
   local literal_tick
   literal_tick=$(printf '\140')
   if ! grep -qF -- "${old//@TICK@/$literal_tick}" "$file"; then
     echo "SETUP-ERROR $id: anchor not found in $file" | tee "$RESULTS_DIR/$id.log"
     fail=$((fail+1)); failures="$failures $id(setup)"; return
   fi
+  if [ -n "${ANCHORS_ONLY:-}" ]; then echo "ANCHOR-OK  $id"; pass=$((pass+1)); return; fi
   python3 - "$file" "$old" "$new" <<'PY'
 import sys
 path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -200,8 +206,8 @@ mutate B3a-project-scope-not-counted "$COORD" \
 # B3b: the escalation check runs AFTER the allowance and the planner, so the
 # third press costs a run before it is refused.
 mutate B3b-escalation-check-moved-after-run "$COORD" \
-  "      if (!(await this.failures.ownerRetryGranted?.(scope))) return true;" \
-  "      return false;" \
+  "    if (await this.#escalated(input)) return this.#raiseNeedsYou(input, Object.freeze({ ...common," \
+  "    if (false && await this.#escalated(input)) return this.#raiseNeedsYou(input, Object.freeze({ ...common," \
   --lane unit --pattern "escalated description is refused"
 
 # B3c: a success clears only one scope, leaving the project counter live so a
@@ -412,26 +418,25 @@ mutate F3e-latch-could-survive-its-own-clear "$RETRY_MIGRATION" \
 # is what lets a press through, and it is spent by the run.
 # ---------------------------------------------------------------------------
 mutate F4a-escalated-press-runs-anyway "$COORD" \
-  "      if (!(await this.failures.ownerRetryGranted?.(scope))) return true;" \
-  "      if (false) return true;" \
+  "      return !(await this.failures.spendOwnerRetry?.(scope));" \
+  "      return false;" \
   --lane unit --pattern "escalated description is refused"
 
 # Single-quoted, not double-quoted: the replacement ends a line with a bare `}`,
 # and a double-quoted continuation does not stop bash treating a following `}` or
 # `(` as a command. Two runs died at exactly this line with "AND: command not
 # found", which reads like the script's problem and is a quoting one.
+# Round 5: the press READS the latch instead of spending it, so one grant would
+# authorise every press after it.
 mutate F4b-retry-is-never-spent "$COORD" \
-  '      await this.failures.clear(scope);
-    }
-    return false;' \
-  '    }
-    return false;' \
+  "      return !(await this.failures.spendOwnerRetry?.(scope));" \
+  "      return !(await (this.failures as unknown as { ownerRetryGranted(s: string): boolean }).ownerRetryGranted(scope));" \
   --lane unit --pattern "retry that fails again"
 
 mutate F4c-any-store-is-treated-as-having-a-grant "$COORD" \
-  "      if (!(await this.failures.ownerRetryGranted?.(scope))) return true;" \
-  "      if (!(await this.failures.ownerRetryGranted?.(scope)) && false) return true;" \
-  --lane unit --pattern "escalated description is refused"
+  "      return !(await this.failures.spendOwnerRetry?.(scope));" \
+  "      return !(await (this.failures.spendOwnerRetry?.(scope) ?? true));" \
+  --lane unit --pattern "retry that fails again"
 
 # The ledger identity in the ADAPTER: it is what stops one item per press, and the
 # in-memory double cannot stand in for it.
@@ -464,6 +469,59 @@ mutate F6b-completion-lookup-answers-an-unfinished-request "$STORE" \
   " AND status='completed'@TICK@," \
   " @TICK@," \
   --lane coord --pattern "completion lookup answers only a COMPLETED request"
+
+# ---------------------------------------------------------------------------
+# Round 5 (R5-B1, R5-M1, R5-M2): a spent retry keeps the description escalated
+# until its own run ends, a success always frees it, and needs_you always has an
+# item behind it.
+# ---------------------------------------------------------------------------
+R5_STRESS="ONE owner grant is ONE run"
+R5_LIVE="R5-B1 on real logins"
+# Round 4's spend: zero the count while spending. The guard admits it (it is the
+# clear transition), so only the stress can catch it -- every peer reads 0 and runs.
+mutate R5a-spend-zeroes-the-count-again "$STORE" \
+  "      @TICK@UPDATE control_planner_failure_counters SET owner_retry_cleared_at=NULL,
+        version=version+1, updated_at=GREATEST(updated_at,\$4::timestamptz)" \
+  "      @TICK@UPDATE control_planner_failure_counters SET failure_count=0, cleared_at=\$4::timestamptz,
+        owner_retry_cleared_at=NULL, version=version+1, updated_at=GREATEST(updated_at,\$4::timestamptz)" \
+  --lane db --pattern "$R5_STRESS"
+
+# The reviewer's requested mutation, in the form this tree can express: a counter
+# that a SUCCESS cleared reads as still escalated. That is exactly what open()'s
+# \`cleared_at IS NOT NULL\` did, and the liveness test must refuse it.
+mutate R5b-a-cleared-counter-reads-as-escalated "$STORE" \
+  "    return row ? Number(row.failure_count) : 0;" \
+  "    return row ? (row.cleared_at ? 2 : Number(row.failure_count)) : 0;" \
+  --lane db --pattern "$R5_LIVE"
+
+# The guard's spend branch admits a change of count.
+mutate R5c-spend-may-lower-the-count "$RETRY_MIGRATION" \
+  "  IF OLD.owner_retry_cleared_at IS NOT NULL AND NEW.owner_retry_cleared_at IS NULL
+    AND NEW.failure_count=OLD.failure_count
+" \
+  "  IF OLD.owner_retry_cleared_at IS NOT NULL AND NEW.owner_retry_cleared_at IS NULL
+" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+# The guard lets an increment drop a latch (round 4's guard did).
+mutate R5d-increment-may-drop-the-latch "$RETRY_MIGRATION" \
+  "    AND NEW.last_failure_at IS NOT NULL AND NEW.cleared_at IS NULL
+    AND NEW.owner_retry_cleared_at IS NOT DISTINCT FROM OLD.owner_retry_cleared_at THEN" \
+  "    AND NEW.last_failure_at IS NOT NULL AND NEW.cleared_at IS NULL THEN" \
+  --lane db --pattern "$RETRY_PATTERN"
+
+# The coordinator says needs_you when the port reported no item stands.
+mutate R5e-needs-you-without-an-item "$COORD" \
+  "      return withoutItem;" \
+  "      void withoutItem;" \
+  --lane unit --pattern "needs_you is answered only when"
+
+# The production port resolves when no item stands.
+mutate R5f-raise-resolves-with-no-item "$STORE" \
+  "      if (await this.#itemStands(tenantId, projectId, counters)) return;
+      throw new Error(\"planner_needs_you_not_escalated\");" \
+  "      return;" \
+  --lane db --pattern "$RETRY_PATTERN"
 
 echo
 echo "round-3 summary: $pass caught / $fail escaped  (failures:${failures:- none})"
