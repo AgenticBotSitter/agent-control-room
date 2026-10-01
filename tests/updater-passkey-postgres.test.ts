@@ -230,7 +230,7 @@ test("P8: default updater and Mac-local composition complete add -> phone -> typ
     let updater: Awaited<ReturnType<typeof startUpdaterV1>> | undefined;
     try {
       await deployer.connect(); await web.connect();
-      updater = await startUpdaterV1({ root, client: deployer, passkeyVerifier: {
+      updater = await startUpdaterV1({ alerts: null, root, client: deployer, passkeyVerifier: {
         async verifyRegistration({ response }: { response: { id: string } }) {
           return { credentialId: response.id, publicKey: Buffer.alloc(64, 31).toString("base64url"),
             algorithm: -7, counter: 0, transports: ["internal"] };

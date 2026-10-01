@@ -991,7 +991,7 @@ test("startUpdaterV1 boots with a live run and only one of 20 production session
         { mode: 0o600 });
       const vapidRuntime = { getuid: () => 0,
         lstat: async (path: string) => Object.assign(await lstat(path), { uid: 0 }) };
-      updater = await startUpdaterV1({ root, store,
+      updater = await startUpdaterV1({ alerts: null, root, store,
         identity: { bootId: "boot-live-resume", leaseToken: "lease-new-session" }, effects,
         referee: { async assertPlanAllowed() {} }, alertRuntime: vapidRuntime });
       assert.equal(updater.identity.leaseToken, "lease-previous-session");
@@ -1023,7 +1023,7 @@ test("P1b/P7: web cannot clear no-run rescue and web Resume stays refused across
     try {
       await deployer.connect(); await web.connect();
       const store = new PostgresUpdaterStoreV1(deployer); await store.initialize();
-      updater = await startUpdaterV1({ root, store }); updater.loop.stop();
+      updater = await startUpdaterV1({ alerts: null, root, store }); updater.loop.stop();
       assert.equal(updater.loop.lastOutcome.status, "uncertain");
       const checkId = `owner-request:${randomUUID()}`;
       await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)
@@ -1043,7 +1043,7 @@ test("P1b/P7: web cannot clear no-run rescue and web Resume stays refused across
       await sendControlRequestV1(join(root, "updater-state/control.sock"), {
         schema: "control-room.updater-control/v1", requestId: "p7-pg-pause", verb: "pause", arguments: [] });
       await updater.stop();
-      updater = await startUpdaterV1({ root, store }); updater.loop.stop();
+      updater = await startUpdaterV1({ alerts: null, root, store }); updater.loop.stop();
       assert.equal(await updater.loop.mode.read(), "paused");
       const resumeId = `owner-request:${randomUUID()}`;
       await web.query(`INSERT INTO updater.owner_requests(id,request_kind,requires_passkey,owner_session_digest)

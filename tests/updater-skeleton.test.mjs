@@ -201,7 +201,7 @@ test("P1b: only root Check and continue clears a no-run rescue marker on the def
   const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "Off\n");
   await writeFile(join(root, "updater-state/rescued.json"), "{}\n", { mode: 0o600 });
   const store = new MemoryStore(null);
-  const updater = await startUpdaterV1({ root, store });
+  const updater = await startUpdaterV1({ alerts: null, root, store });
   t.after(() => updater.stop());
   updater.loop.stop();
   assert.equal(updater.loop.lastOutcome.status, "uncertain");
@@ -234,7 +234,7 @@ test("P7: Pause and Stop survive restart, a request-row Resume is refused, and r
   for (const [index, requested] of ["pause", "stop"].entries()) {
     const root = await temporaryRoot(t); await writeFile(join(root, "updater-state/self-update"), "On\n");
     const store = new MemoryStore(null);
-    let updater = await startUpdaterV1({ root, store }); updater.loop.stop();
+    let updater = await startUpdaterV1({ alerts: null, root, store }); updater.loop.stop();
     t.after(async () => { await updater?.stop(); });
     const socket = join(root, "updater-state/control.sock");
     const burst = await Promise.all(Array.from({ length: 50 }, (_, caller) => sendControlRequestV1(socket, {
@@ -244,7 +244,7 @@ test("P7: Pause and Stop survive restart, a request-row Resume is refused, and r
     assert.equal(await updater.loop.mode.read(), requested === "pause" ? "paused" : "stopped");
     await updater.stop();
 
-    updater = await startUpdaterV1({ root, store }); updater.loop.stop();
+    updater = await startUpdaterV1({ alerts: null, root, store }); updater.loop.stop();
     assert.equal(await updater.loop.mode.read(), requested === "pause" ? "paused" : "stopped");
     if (requested === "stop") {
       store.requests = [{ id: "owner-request:00000000-0000-4000-8000-000000000009", request_kind: "pause" }];
@@ -269,7 +269,7 @@ test("a malformed saved updater mode refuses startup instead of silently resumin
   await writeFile(join(root, "updater-state/mode.json"), '{"schema":"control-room.updater-mode/v1","mode":"running","extra":true}\n');
   const store = new MemoryStore(null);
   let started;
-  try { started = await startUpdaterV1({ root, store }); }
+  try { started = await startUpdaterV1({ alerts: null, root, store }); }
   catch (error) { assert.match(error.message, /updater_mode_state_refused/u); }
   if (started) { await started.stop(); assert.fail("startup accepted malformed durable mode state"); }
   await assert.rejects(lstat(join(root, "updater-state/control.sock")), /ENOENT/u);
@@ -296,7 +296,7 @@ test("P8a: the default control handlers publish and consume the registration wit
       return { credentialId: "credential", coolingOffUntil: null };
     },
   };
-  const updater = await startUpdaterV1({ root, store, passkeys }); updater.loop.stop(); t.after(() => updater.stop());
+  const updater = await startUpdaterV1({ alerts: null, root, store, passkeys }); updater.loop.stop(); t.after(() => updater.stop());
   const socket = join(root, "updater-state/control.sock");
   const begun = await sendControlRequestV1(socket, { schema: "control-room.updater-control/v1",
     requestId: "p8-begin", verb: "passkey-add-begin", arguments: [] });
