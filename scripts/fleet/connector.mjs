@@ -15,7 +15,7 @@
 // widen permissions: the gateway has no such routes.
 
 import { createHash, randomBytes } from "node:crypto";
-import { constants as fsConstants, promises as fsPromises, realpathSync } from "node:fs";
+import { constants as fsConstants, promises as fsPromises } from "node:fs";
 import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -26,6 +26,7 @@ import { assertConnectorReleaseTrustCompatibleV1, checkForConnectorUpdateV1, con
   connectorInstallRootFromConfigPathV1,
   connectorUpdatesPausedV1, installConnectorLauncherV1, launchCurrentConnectorV1,
   setConnectorUpdatesPausedV1 } from "./connector-update.mjs";
+import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { captureReleaseTrustV1, compareReleaseVersionsV1, verifyConnectorReleaseAdvertisementV1 } from "../release-signing.mjs";
 
 export { verifyConnectorReleaseAdvertisementV1 };
@@ -2531,9 +2532,7 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   }
 }
 
-const invokedDirectly = (() => {
-  try { return process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1])); } catch { return false; }
-})();
+const invokedDirectly = invokedDirectlyV1(process.argv[1], import.meta.url);
 // Defer the CLI body until the bundle entry has registered its built-in
 // harness factory. Direct source execution still starts in the same turn.
 if (invokedDirectly) Promise.resolve().then(() => main()).then(code => { process.exitCode = code; });

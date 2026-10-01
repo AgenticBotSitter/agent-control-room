@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, constants, fstatSync, openSync, writeSync } from "node:fs";
 import { chmod, lstat, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { alive, hostCommand, protectedRootFromArguments, repoRoot, runtimePaths, taskHostCommand } from "./stack.mjs";
 
 export const HOST_LOG_MAX_BYTES = 5 * 1024 * 1024;
@@ -270,7 +270,7 @@ async function main() {
   process.exitCode = await superviseTaskHost(root);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   void main().catch(async error => {
     const root = protectedRootFromArguments(process.argv.slice(2));
     const message = `${new Date().toISOString()} host stopped because supervisor error: ${cleanDetail(error?.message ?? "unknown")}`;

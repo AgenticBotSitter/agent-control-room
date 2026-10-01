@@ -10,7 +10,8 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { lstat, mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { alive, FLEET_GATEWAY_PORT, fleetGatewayCommand, hostCommand, protectedRootFromArguments, readPid, repoRoot,
   runtimePaths, stopRecorded, stopRecordedHost, taskHostCommand } from "./stack.mjs";
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
@@ -334,6 +335,6 @@ async function startService(root, paths, port, hostReady) {
   log("fleet gateway launchd hand-off pending: cook/daemons item 5 owns its production service definition");
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   main().catch(error => fail(error instanceof Error ? error.message : "unknown"));
 }

@@ -13,6 +13,7 @@ import { lstat, open, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { invokedDirectlyV1 } from "./dev/invoked-directly.mjs";
 import type { DatabaseClient } from "../src/persistence/database";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "../src/web/v1/private-postgres";
@@ -205,6 +206,6 @@ async function main(path: string | undefined) {
   process.stderr.write(`Fleet gateway listening on 127.0.0.1:${config.port}\n`);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   main(process.argv[2]).catch(error => { process.stderr.write(`${error instanceof Error ? error.message : "failed"}\n`); process.exitCode = 1; });
 }

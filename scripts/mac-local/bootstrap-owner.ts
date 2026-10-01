@@ -1,7 +1,7 @@
 // Read-only verification of the one-time Mac-local owner setup.
 // Usage: pnpm mac:bootstrap-owner ABSOLUTE_PROTECTED_ROOT
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { invokedDirectlyV1 } from "../dev/invoked-directly.mjs";
 import { loadMacLocalProtectedConfigurationFromRootV1, loadMacLocalDatabaseRolesFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
 import { sha256Digest } from "../../src/security";
@@ -129,7 +129,7 @@ export async function verifyMacLocalOwnerBindingV1(root: string): Promise<void> 
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (invokedDirectlyV1(process.argv[1], import.meta.url)) {
   const root = process.argv[2];
   if (!root || process.argv.length !== 3 || !isAbsolute(root) || resolve(root) !== root) {
     console.error("usage: pnpm mac:bootstrap-owner ABSOLUTE_PROTECTED_ROOT");
