@@ -1885,8 +1885,16 @@ test("DB-3: an item-7 updater schema upgrades to this one, with its rows, and ma
     // Item 7's schema, byte for byte (tests/fixtures/updater-ddl-item7 is
     // `git show 00722d26c:src/updater/v1/ddl/*`), applied through this tree's
     // loader. The loader runs every file and THEN asserts the table set, so the
-    // apply completes and the assertion names exactly the three tables item 7
-    // did not have — which is also the proof that this really is item 7's shape.
+    // apply completes and the assertion names exactly the tables item 7 did
+    // not have — which is also the proof that this really is item 7's shape.
+    //
+    // The fixture carries item 19a's `0004_backups.sql` alongside the item-7
+    // files, for one reason: the loader reads the FILE LIST from this tree, not
+    // from the directory it was pointed at, so without a `0004` here the read
+    // fails with ENOENT and the test never reaches the assertion that is the
+    // point of the fixture. The file is verbatim, so applying it creates the
+    // backup tables and they drop out of the missing list below; the four the
+    // assertion still names are item 7's real gap, and that list is the proof.
     await assert.rejects(installUpdaterSchema(postgres, { directory: ITEM7_DDL,
       rolesFile: join(ITEM7_DDL, "updater_release_reader_roles.sql") }),
     /updater_schema_refused:missing_tables:passkey_open_registrations,passkey_registrations_limits,approval_refusals,approval_refusal_buckets/u);
