@@ -798,8 +798,17 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return Response.json(await connections.readQueueAttention(identity, queueAttention), { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/home/tasks") {
-            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-            return Response.json(await tasks.home(identity), { headers: privateResponseHeaders });
+            const allowed = ["surface", "recent"];
+            if (allowed.some(key => url.searchParams.getAll(key).length > 1)
+              || [...url.searchParams.keys()].some(key => !allowed.includes(key))) throw new WebAccessError("invalid_request");
+            if (request.method === "GET") return Response.json(await tasks.home(identity, {
+              surface: url.searchParams.get("surface") ?? undefined, recent: url.searchParams.get("recent") === "true",
+            }), { headers: privateResponseHeaders });
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
+              throw new WebAccessError("invalid_request");
+            return Response.json(await tasks.acknowledgeHome(identity, await readBoundedJson(request.body, 1024) as never),
+              { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/session-watch") {
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")

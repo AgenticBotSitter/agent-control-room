@@ -46,6 +46,30 @@ function mergeGrant(existing: Columns | undefined, granted: Columns): Columns {
   return [...new Set([...(existing ?? []), ...granted])];
 }
 
+/** The privileges in a GRANT's privilege list, each with its own column list.
+ * Walks the text so that `INSERT (a, b), UPDATE (c)` yields two entries with the
+ * right columns rather than one mangled privilege name. */
+function parsePrivileges(list: string): { privilege: string; columns: string[] | null }[] {
+  const found: { privilege: string; columns: string[] | null }[] = [];
+  // `<priv>`, optionally followed by `(cols)`, then a separator. The column list
+  // is non-greedy so the comma INSIDE it does not terminate the privilege.
+  const pattern = /([A-Za-z]+)\s*(?:\(([^()]*)\))?\s*(,|$)/gu;
+  let consumed = 0;
+  for (const match of list.matchAll(pattern)) {
+    const [, privilege, columns] = match;
+    found.push({ privilege: privilege!.trim().toUpperCase(),
+      columns: columns === undefined ? null
+        : columns.split(",").map(column => column.trim()).filter(column => column !== "") });
+    consumed = (match.index ?? 0) + match[0].length;
+  }
+  // Anything between matches that the pattern did not cover is unreadable rather
+  // than silently dropped, because a dropped privilege becomes a phantom drift.
+  const stripped = list.replace(pattern, "").replace(/[\s,]/gu, "");
+  assert.equal(stripped, "", `unreadable privilege list: ${list.slice(0, 120)}`);
+  void consumed;
+  return found;
+}
+
 /** Every table `GRANT` of a table privilege to `role` in one SQL file. */
 function parseGrants(sql: string, role: string): Grants {
   const grants: Grants = new Map();
@@ -67,15 +91,22 @@ function parseGrants(sql: string, role: string): Grants {
     assert.ok(grantees.every(name => name !== ""), `unreadable grantee list: ${statement.slice(0, 120)}`);
     // A column list belongs to the PRIVILEGE, not the object list:
     // `GRANT UPDATE (a, b) ON t ...`, never `GRANT UPDATE ON t (a, b) ...`.
-    const listed = /\(([^()]*)\)\s*$/i.exec(match[1]!.trim());
-    const columns = listed
-      ? listed[1]!.split(",").map(column => column.trim()).filter(column => column !== "")
-      : null;
-    const privileges = (listed ? match[1]!.trim().slice(0, listed.index) : match[1]!)
-      .split(",").map(privilege => privilege.trim().toUpperCase()).filter(privilege => privilege !== "");
+    //
+    // The privilege list is walked left to right rather than split on commas,
+    // because ONE GRANT may carry SEVERAL privileges and each may have its own
+    // column list: `GRANT INSERT (a, b), UPDATE (c) ON t ...` is valid SQL and
+    // means two different privileges on two different column sets. The earlier
+    // version matched only a trailing `(...)`, so on that shape it latched onto
+    // the LAST column list, read the privilege head as the literal string
+    // `INSERT (tenant_id` and `correlation_key)` -- neither of which is a
+    // privilege -- and silently DROPPED the INSERT. The result was a false
+    // "declared, not granted" for a grant that a live database applies
+    // correctly: exactly the class of drift this test exists to catch, missed
+    // by the test itself.
+    const privileges = parsePrivileges(match[1]!.trim());
     if (!grantees.includes(role) || (match[2] ?? "TABLE").toUpperCase() !== "TABLE") continue;
     for (const table of match[3]!.split(",").map(name => name.trim()).filter(name => name !== "")) {
-      for (const privilege of privileges) {
+      for (const { privilege, columns } of privileges) {
         if (!PRIVILEGES.includes(privilege as Privilege)) continue;
         const forPrivilege = grants.get(privilege as Privilege) ?? new Map<string, Columns>();
         forPrivilege.set(table, mergeGrant(forPrivilege.get(table), columns));
@@ -824,4 +855,33 @@ test("the comparison above reads role files it has to be able to read", () => {
   assert.equal(parseGrants(
     `GRANT SELECT ON control_wide TO ${ROLE};\nGRANT SELECT (only_one) ON control_wide TO ${ROLE};`, ROLE)
     .get("SELECT")?.get("control_wide"), null);
+
+  // One GRANT carrying SEVERAL privileges, each with its own column list. This is
+  // the exact grammar that broke test:database: an earlier version of parseGrants
+  // matched only a TRAILING `(...)`, so on
+  // `GRANT INSERT (a, b), UPDATE (c) ON t ...` it read the privilege head as the
+  // literal `INSERT (a` — not a privilege — and dropped the INSERT. The role file
+  // is correct SQL and applies correctly on a live database, so the drift check
+  // reported a false "declared, not granted" for a grant that really existed.
+  //
+  // The assertion below is therefore a guard on the PARSER, not on any role file:
+  // if someone simplifies the privilege walk again, this fails immediately
+  // instead of the failure surfacing later as a phantom drift in an unrelated
+  // lane.
+  const combined = parseGrants(
+    `GRANT INSERT (tenant_id,correlation_key), UPDATE (next_generation) ON control_combined TO ${ROLE};`, ROLE);
+  assert.deepEqual([...combined.get("INSERT")?.get("control_combined") ?? []].sort(),
+    ["correlation_key", "tenant_id"], "the INSERT half of a combined GRANT is registered");
+  assert.deepEqual(combined.get("UPDATE")?.get("control_combined"), ["next_generation"],
+    "the UPDATE half of a combined GRANT still carries its own columns");
+  // The same shape with a table-wide privilege alongside a column-scoped one.
+  const mixed = parseGrants(`GRANT DELETE, INSERT (a) ON control_mixed TO ${ROLE};`, ROLE);
+  assert.equal(mixed.get("DELETE")?.get("control_mixed"), null, "a bare privilege stays table-wide");
+  assert.deepEqual(mixed.get("INSERT")?.get("control_mixed"), ["a"]);
+  // Trailing comma and multi-line spellings parse to the same thing.
+  assert.deepEqual(
+    [...(parseGrants(`GRANT SELECT (a),\n  UPDATE (b)\n  ON control_multiline TO ${ROLE};`, ROLE)
+      .get("SELECT")?.get("control_multiline") ?? [])], ["a"]);
+  assert.deepEqual(parseGrants(`GRANT SELECT (a), UPDATE (b) ON control_multiline TO ${ROLE};`, ROLE)
+    .get("UPDATE")?.get("control_multiline"), ["b"]);
 });

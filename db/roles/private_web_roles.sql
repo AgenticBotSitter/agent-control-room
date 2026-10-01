@@ -37,6 +37,12 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_revisions, work_batch_items, work_batch_intake_flag_dismissals,
   control_action_inbox TO control_room_private_web;
+-- The "since you last looked" cursor. The private-web login reads its own row
+-- and moves the boundary forward only; there is no DELETE grant, so a cursor
+-- can never be reset or rewound from the web side, and the append-only guard
+-- in 0219 rejects any UPDATE that lowers seen_through.
+GRANT SELECT, INSERT ON owner_surface_cursors TO control_room_private_web;
+GRANT UPDATE (seen_through,updated_at) ON owner_surface_cursors TO control_room_private_web;
 GRANT SELECT ON control_skills, control_skill_versions, control_task_skill_bindings,
   control_recurring_rules TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,

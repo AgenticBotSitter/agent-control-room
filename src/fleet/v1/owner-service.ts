@@ -3,6 +3,7 @@ import { databaseSqlStateIsAnyV1, type DatabaseClient, type DatabaseSession } fr
 import { WebSessionAuthority, type WebActor } from "../../web/v1/session-authority";
 import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { fleetFail } from "./errors";
+import { projectFleetPresenceV1 } from "./presence";
 import { FLEET_CAPABILITY_PATTERN_V1, FLEET_CODE_LIFETIME_MS_V1, FLEET_ENTITY_ID_PATTERN_V1,
   FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1, FLEET_WORKER_KIND_PATTERN_V1, newFleetCodeV1,
   FLEET_WORKER_KINDS_V1, plainSha256V1, randomHexV1 } from "./identifiers";
@@ -152,10 +153,11 @@ export class FleetOwnerServiceV1 {
       const now = Date.parse(actor.now);
       const workers = (await tx.query<{ worker_id: string; display_name: string; worker_kind: string; project_ids: string[];
         capabilities: string[]; max_concurrent: number; state: string; enrolled_at: string | Date; last_seen_at: string | Date | null;
-        platform: string | null; connector_version: string | null; active_claims: string; credential_expires_at: string | Date | null;
+        presence_state: "online" | "offline" | "unreachable" | null; platform: string | null; connector_version: string | null;
+        active_claims: string; credential_expires_at: string | Date | null;
         note_kind: string | null; note_message: string | null; note_at: string | Date | null; note_title: string | null }>(
         `SELECT w.worker_id,w.display_name,w.worker_kind,w.project_ids,w.capabilities,w.max_concurrent,w.state,w.enrolled_at,
-          p.last_seen_at,p.platform,p.connector_version,n.kind AS note_kind,n.message AS note_message,n.occurred_at AS note_at,
+          p.last_seen_at,p.presence_state,p.platform,p.connector_version,n.kind AS note_kind,n.message AS note_message,n.occurred_at AS note_at,
           n.title AS note_title,
           (SELECT count(*)::text FROM fleet_claims fc JOIN control_leases l ON l.tenant_id=fc.tenant_id AND l.id=fc.lease_id
             WHERE fc.tenant_id=w.tenant_id AND fc.worker_id=w.worker_id AND l.state='active') AS active_claims,
@@ -171,6 +173,13 @@ export class FleetOwnerServiceV1 {
           WHERE e.tenant_id=w.tenant_id AND e.worker_id=w.worker_id AND e.occurred_at>$2::timestamptz-interval '1 day'
           ORDER BY e.occurred_at DESC,e.event_id DESC LIMIT 1) n ON true
         WHERE w.tenant_id=$1 ORDER BY w.state,w.display_name LIMIT 100`, [this.#tenantId, actor.now])).rows;
+      const agents = (await tx.query<{ worker_id: string; agent_id: string; display_name: string; agent_kind: string;
+        enabled: boolean; presence_state: "online" | "offline" | "unreachable"; last_reported_at: string | Date }>(
+        `SELECT worker_id,agent_id,display_name,agent_kind,enabled,presence_state,last_reported_at
+        FROM fleet_worker_agents WHERE tenant_id=$1 ORDER BY worker_id,display_name,agent_id LIMIT 1600`,
+      [this.#tenantId])).rows;
+      const agentsByWorker = new Map<string, typeof agents>();
+      for (const agent of agents) agentsByWorker.set(agent.worker_id, [...(agentsByWorker.get(agent.worker_id) ?? []), agent]);
       const codes = (await tx.query<{ id: string; purpose: string; worker_id: string; display_name: string; expires_at: string | Date }>(
         `SELECT c.id,c.purpose,c.worker_id,c.display_name,c.expires_at FROM fleet_enrollment_codes c
           WHERE c.tenant_id=$1 AND c.state='issued' AND c.expires_at>$2::timestamptz
@@ -178,14 +187,22 @@ export class FleetOwnerServiceV1 {
           ORDER BY c.created_at DESC LIMIT 20`, [this.#tenantId, actor.now])).rows;
       return Object.freeze({
         workers: workers.map(row => {
-          const seen = row.last_seen_at ? Date.parse(iso(row.last_seen_at)) : undefined;
+          // A machine that has never checked in has missed no window, so it is
+          // not "Unreachable": it is simply never seen. Only the supervisor may
+          // conclude unreachable, and only for a session that was online.
           const status = row.state === "revoked" ? "revoked" : !row.credential_expires_at ? "needs_new_key"
-            : seen !== undefined && now - seen < 5 * 60_000 ? (Number(row.active_claims) > 0 ? "working" : "connected") : "offline";
+            : row.last_seen_at && row.presence_state ? projectFleetPresenceV1({ storedState: row.presence_state,
+              lastSeenAt: row.last_seen_at, nowMs: now }) : "never_seen";
           return Object.freeze({ workerId: row.worker_id, displayName: row.display_name, workerKind: row.worker_kind, status,
             projectIds: row.project_ids, capabilities: row.capabilities, maxConcurrent: Number(row.max_concurrent),
-            activeClaims: Number(row.active_claims), enrolledAt: iso(row.enrolled_at),
+            activeClaims: Number(row.active_claims), working: Number(row.active_claims) > 0, enrolledAt: iso(row.enrolled_at),
             lastSeenAt: row.last_seen_at ? iso(row.last_seen_at) : null, platform: row.platform,
             connectorVersion: row.connector_version,
+            agents: Object.freeze((agentsByWorker.get(row.worker_id) ?? []).map(agent => Object.freeze({
+              agentId: agent.agent_id, displayName: agent.display_name, agentKind: agent.agent_kind, enabled: agent.enabled,
+              status: projectFleetPresenceV1({ storedState: agent.presence_state,
+                lastSeenAt: agent.last_reported_at, nowMs: now }), lastSeenAt: iso(agent.last_reported_at),
+            }))),
             credentialExpiresAt: row.credential_expires_at ? iso(row.credential_expires_at) : null,
             latestNote: row.note_kind && row.note_message && row.note_at ? Object.freeze({ kind: row.note_kind,
               message: row.note_message, occurredAt: iso(row.note_at), taskTitle: row.note_title ?? "" }) : null });

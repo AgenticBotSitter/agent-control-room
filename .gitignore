@@ -70,3 +70,6 @@ scripts/fleet/release/
 # The CI workflow is reviewed in docs/ci-budget-security-review.md. Anything
 # further needs its own review; this line no longer blocks the directory, so the
 # rule above is the guard.
+
+# Local pnpm store used by parallel cook helpers
+.pnpm-store/

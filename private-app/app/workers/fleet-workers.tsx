@@ -6,8 +6,9 @@ import { StateChip, UnavailableState, type ChipTone } from "../owner-ui";
 /** Remote machines that joined through the connector. Owner decisions only:
  * the browser never sees a worker credential, and a join code is shown once. */
 type FleetWorker = { workerId: string; displayName: string; workerKind: string; status: string; projectIds: string[];
-  capabilities: string[]; maxConcurrent: number; activeClaims: number; lastSeenAt: string | null; platform: string | null;
+  capabilities: string[]; maxConcurrent: number; activeClaims: number; working: boolean; lastSeenAt: string | null; platform: string | null;
   credentialExpiresAt: string | null;
+  agents: { agentId: string; displayName: string; agentKind: string; enabled: boolean; status: string; lastSeenAt: string }[];
   latestNote?: { kind: string; message: string; occurredAt: string; taskTitle: string } | null };
 type FleetResult = { resultId: string; projectId: string; workerName: string; title: string; summary: string;
   fileCount: number; submittedAt: string; decision: string | null; note: string | null };
@@ -16,7 +17,9 @@ type FleetBoard = { workers: FleetWorker[]; pendingCodes: { codeId: string; disp
 type Issued = { code: string; expiresAt: string; purpose: string; commands?: { unix: string; windows: string } };
 
 const statusWords: Record<string, [string, ChipTone]> = {
-  working: ["Working", "busy"], connected: ["Connected", "good"], offline: ["Offline", "warn"],
+  online: ["Online", "good"], checking_in: ["Checking in", "warn"], offline: ["Offline", "neutral"],
+  unreachable: ["Unreachable", "bad"],
+  never_seen: ["Never seen", "neutral"],
   revoked: ["Removed", "neutral"], needs_new_key: ["Needs a new key", "bad"],
 };
 async function call(path: string, body?: unknown) {
@@ -115,8 +118,16 @@ export function FleetWorkers() {
       {board.workers.map(worker => { const [label, tone] = statusWords[worker.status] ?? [worker.status, "neutral" as ChipTone];
         return <li key={worker.workerId} className="private-local-agent-card">
           <h3>{worker.displayName}</h3>
-          <p><StateChip state={worker.status} tone={tone} label={label} /> Last seen {ago(worker.lastSeenAt)}
+          <p><StateChip state={worker.status} tone={tone} label={label} /> {worker.working
+            ? <><StateChip state="working" tone="busy" label="Working" />{" "}</> : null}Last seen {ago(worker.lastSeenAt)}
             {worker.activeClaims > 0 ? ` · ${worker.activeClaims} task${worker.activeClaims === 1 ? "" : "s"} in progress` : ""}</p>
+          {worker.agents.length ? <ul aria-label={`${worker.displayName} bots`} className="private-dashboard-list">
+            {worker.agents.map(agent => { const [agentLabel, agentTone] = statusWords[agent.status]
+                ?? [agent.status, "neutral" as ChipTone];
+              return <li key={agent.agentId}><span>{agent.displayName}</span>
+                <span><StateChip state={agent.status} tone={agentTone} label={agentLabel} />{" "}
+                  <small>{agent.enabled ? `Last seen ${ago(agent.lastSeenAt)}` : "Disabled locally"}</small></span></li>; })}
+          </ul> : <p className="private-note">No bot roster has checked in from this machine yet.</p>}
           {worker.latestNote && <p role={worker.latestNote.kind === "blocker" ? "alert" : undefined}>
             {worker.latestNote.kind === "blocker" && <><StateChip state="blocked" tone="bad" label="Blocked" />{" "}</>}
             {worker.latestNote.taskTitle ? <strong>{worker.latestNote.taskTitle}: </strong> : null}

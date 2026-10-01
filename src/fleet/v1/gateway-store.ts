@@ -62,7 +62,14 @@ function observedToolCapabilities(value: unknown): readonly string[] {
 type WorkerRow = { worker_id: string; node_id: string; identity_id: string; worker_kind: string; display_name: string;
   project_ids: string[]; capabilities: string[]; max_concurrent: number; state: string };
 type ClaimRow = { claim_id: string; offer_id: string; worker_id: string; node_id: string; project_id: string;
-  job_id: string; attempt_id: string; lease_id: string; idempotency_key: string; claimed_at: string | Date };
+  job_id: string; attempt_id: string; lease_id: string; agent_id: string | null;
+  idempotency_key: string; claimed_at: string | Date };
+type PresenceAgentV1 = Readonly<{ agentId: string; displayName: string; agentKind: string; enabled: boolean }>;
+type PresenceRowV1 = { session_id: string | null; presence_state: "online" | "offline" | "unreachable";
+  last_seen_at: string | Date };
+const sessionPattern = /^fleet-session:[a-f0-9]{32}$/u;
+const agentPattern = /^[a-z][a-z0-9._-]{0,63}$/u;
+const agentDisplayPattern = /^[^\u0000-\u001F\u007F]{1,80}$/u;
 
 /** The installation-wide Pause / Drain / Stop switch as the gateway reports
  * it to connectors. Only "running" admits a new claim. */
@@ -295,7 +302,8 @@ export class FleetGatewayStoreV1 {
         const worker = (await tx.query<{ state: string }>(`SELECT state FROM fleet_workers
           WHERE tenant_id=$1 AND worker_id=$2`, [this.#tenantId, row.worker_id])).rows[0];
         if (!credential || worker?.state !== "active") return fleetFail("unauthenticated");
-        await this.#presence(tx, row.worker_id, connectorVersion, platform, now);
+        // Enrollment is a join, not a check-in: it records no presence, so the
+        // machine is "never seen" until its connector heartbeats with a session.
         return Object.freeze({ workerId: row.worker_id, nodeId: linked.nodeId, displayName: row.display_name,
           workerKind: row.worker_kind, projectIds: row.project_ids, capabilities: row.capabilities,
           maxConcurrent: Number(row.max_concurrent), credentialExpiresAt: iso(credential.expires_at), purpose: row.purpose,
@@ -342,7 +350,6 @@ export class FleetGatewayStoreV1 {
         if (databaseSqlStateIsAnyV1(error, ["23505"])) return fleetFail("conflict");
         throw error;
       }
-      await this.#presence(tx, row.worker_id, connectorVersion, platform, now);
       await appendAuditWith(tx, { id: `audit:fleet-enroll:${row.id.slice(11)}`, tenantId: this.#tenantId,
         actorId: linked.identityId, actorType: "worker", action: row.purpose === "join" ? "fleet.worker.enrolled" : "fleet.worker.rekeyed",
         targetType: "fleet_worker", targetId: row.worker_id, occurredAt: now,
@@ -357,11 +364,104 @@ export class FleetGatewayStoreV1 {
     return result;
   }
 
-  async #presence(tx: DatabaseSession, workerId: string, connectorVersion: string, platform: string, now: string) {
-    await tx.query(`INSERT INTO fleet_worker_presence(tenant_id,worker_id,last_seen_at,connector_version,platform)
-      VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,worker_id) DO UPDATE SET last_seen_at=GREATEST(
-        fleet_worker_presence.last_seen_at,EXCLUDED.last_seen_at),connector_version=EXCLUDED.connector_version,
-        platform=EXCLUDED.platform`, [this.#tenantId, workerId, now, connectorVersion, platform]);
+  async #transition(tx: DatabaseSession, workerId: string, subjectKind: "machine" | "agent", agentId: string | null,
+    sessionId: string, fromState: PresenceRowV1["presence_state"] | null, toState: PresenceRowV1["presence_state"], now: string) {
+    if (fromState === toState) return;
+    await tx.query(`INSERT INTO fleet_presence_transitions(tenant_id,transition_id,worker_id,subject_kind,agent_id,
+      session_id,from_state,to_state,source,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'connector',$9)`,
+    [this.#tenantId, `fleet-presence:${randomHexV1()}`, workerId, subjectKind, agentId, sessionId, fromState, toState, now]);
+  }
+
+  /** Records the machine row and every rostered bot for one authenticated
+   * check-in. Only a heartbeat may declare a machine online, and only with the
+   * connector's own session id: enrollment is a join, not a check-in, so a
+   * machine that has just enrolled has no presence row at all and the owner
+   * sees it as never seen.
+   *
+   * A bot the roster no longer names is a clean offline, not a disappearance:
+   * it was disabled or removed on that machine. Only the supervisor may say
+   * unreachable. */
+  async #presence(tx: DatabaseSession, workerId: string, connectorVersion: string, platform: string, now: string,
+    sessionId: string, agents: readonly PresenceAgentV1[], advisoryLock = true) {
+    // The advisory lock is taken BEFORE the prior-state read, and it is what
+    // makes that read safe to derive a transition from. `SELECT ... FOR UPDATE`
+    // cannot serialise racers before the row exists, so between enrollment and
+    // a worker's very first check-in every racing caller would read "no row",
+    // decide it was the one opening the session, and append its own
+    // `null -> online` transition: N first heartbeats, N history rows. The lock
+    // is transaction-scoped and keyed on (tenant, worker), so it serialises the
+    // window that the row lock structurally cannot. The hash is of the tenant
+    // and worker id together, never one alone, so two workers in one tenant
+    // (or the same worker id in two tenants) cannot collide on one lock.
+    if (advisoryLock) {
+      // The two-int form, not `hashtextextended`: PostgreSQL's two-argument
+      // pg_advisory_xact_lock takes (int4, int4), and hashtextextended returns
+      // bigint -- `hashtextextended($1,0), hashtextextended($2,0)` does not
+      // resolve at all and fails every heartbeat with 42883. Both ids are cast
+      // to int4 here, which is what the two-int overload expects.
+      //
+      // Keying on two SEPARATE hashes (tenant, worker) rather than one hash of
+      // the pair keeps the key space the database's own, and a collision between
+      // two distinct (tenant, worker) pairs costs one extra serialisation, never
+      // correctness: the lock is only ever held for the duration of this one
+      // worker's presence write.
+      await tx.query(`SELECT pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtext($1)::int, pg_catalog.hashtext($2)::int)`,
+      [`fleet:presence:${this.#tenantId}`, workerId]);
+    }
+    const prior = (await tx.query<PresenceRowV1>(`SELECT session_id,presence_state,last_seen_at FROM fleet_worker_presence
+      WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE`, [this.#tenantId, workerId])).rows[0];
+    await tx.query(`INSERT INTO fleet_worker_presence(tenant_id,worker_id,last_seen_at,connector_version,platform,session_id,
+      presence_state,state_changed_at,graceful_offline_at) VALUES($1,$2,$3,$4,$5,$6,'online',$3,NULL)
+      ON CONFLICT(tenant_id,worker_id) DO UPDATE SET last_seen_at=GREATEST(fleet_worker_presence.last_seen_at,EXCLUDED.last_seen_at),
+        connector_version=EXCLUDED.connector_version,platform=EXCLUDED.platform,session_id=EXCLUDED.session_id,
+        presence_state='online',state_changed_at=CASE WHEN fleet_worker_presence.presence_state<>'online'
+          OR fleet_worker_presence.session_id IS DISTINCT FROM EXCLUDED.session_id THEN EXCLUDED.state_changed_at
+          ELSE fleet_worker_presence.state_changed_at END,graceful_offline_at=NULL`,
+    [this.#tenantId, workerId, now, connectorVersion, platform, sessionId]);
+    await this.#transition(tx, workerId, "machine", null, sessionId, prior?.presence_state ?? null, "online", now);
+    const priorAgents = (await tx.query<{ agent_id: string; presence_state: PresenceRowV1["presence_state"] }>(
+      `SELECT agent_id,presence_state FROM fleet_worker_agents WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE`,
+    [this.#tenantId, workerId])).rows;
+    const byId = new Map(priorAgents.map(agent => [agent.agent_id, agent.presence_state]));
+    const reported = new Set<string>();
+    for (const agent of agents) {
+      reported.add(agent.agentId);
+      const nextState = agent.enabled ? "online" : "offline";
+      await tx.query(`INSERT INTO fleet_worker_agents(tenant_id,worker_id,agent_id,display_name,agent_kind,enabled,session_id,
+        presence_state,last_reported_at,state_changed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+        ON CONFLICT(tenant_id,worker_id,agent_id) DO UPDATE SET display_name=EXCLUDED.display_name,
+          agent_kind=EXCLUDED.agent_kind,enabled=EXCLUDED.enabled,session_id=EXCLUDED.session_id,
+          presence_state=EXCLUDED.presence_state,last_reported_at=GREATEST(fleet_worker_agents.last_reported_at,EXCLUDED.last_reported_at),
+          state_changed_at=CASE WHEN fleet_worker_agents.presence_state<>EXCLUDED.presence_state
+            OR fleet_worker_agents.session_id<>EXCLUDED.session_id THEN EXCLUDED.state_changed_at
+            ELSE fleet_worker_agents.state_changed_at END`,
+      [this.#tenantId, workerId, agent.agentId, agent.displayName, agent.agentKind, agent.enabled, sessionId, nextState, now]);
+      await this.#transition(tx, workerId, "agent", agent.agentId, sessionId, byId.get(agent.agentId) ?? null, nextState, now);
+    }
+    // A bot missing from this session's roster is no longer running here. The
+    // roster is reported whole every beat, so omission is an explicit signal.
+    for (const agent of priorAgents) {
+      if (reported.has(agent.agent_id) || agent.presence_state !== "online") continue;
+      await tx.query(`UPDATE fleet_worker_agents SET presence_state='offline',state_changed_at=$4
+        WHERE tenant_id=$1 AND worker_id=$2 AND agent_id=$3 AND presence_state='online'`,
+      [this.#tenantId, workerId, agent.agent_id, now]);
+      await this.#transition(tx, workerId, "agent", agent.agent_id, sessionId, "online", "offline", now);
+    }
+  }
+
+  /** Test-only: the same presence write with the advisory lock deliberately
+   * omitted, so the race test can prove its own invariant has teeth. It exists
+   * because "N first heartbeats must produce 1 transition" is an assertion about
+   * a lock, and an assertion about a lock that cannot fail when the lock is
+   * removed proves nothing. Nothing in the application calls this: the only
+   * production caller is #presence, which always locks. */
+  async presenceWithoutAdvisoryLockForTestV1(principal: FleetWorkerPrincipalV1,
+    input: Readonly<{ connectorVersion: string; platform: string; sessionId: string;
+      agents: readonly PresenceAgentV1[] }>): Promise<void> {
+    const now = this.#now();
+    await this.db.transaction(tx => this.#presence(tx, principal.workerId, input.connectorVersion, input.platform,
+      now, input.sessionId, input.agents, false));
   }
 
   /** Supplies the digest-only startup cache through the gateway's existing
@@ -399,17 +499,64 @@ export class FleetGatewayStoreV1 {
       maxConcurrent: Number(row.max_concurrent), credentialId: row.credential_id, credentialExpiresAt: iso(row.expires_at) });
   }
 
-  async heartbeat(principal: FleetWorkerPrincipalV1, input: Readonly<{ connectorVersion: unknown; platform: unknown; adapterCapabilities?: unknown }>) {
+  async heartbeat(principal: FleetWorkerPrincipalV1, input: Readonly<{ connectorVersion: unknown; platform: unknown;
+    sessionId?: unknown; agents?: unknown; adapterCapabilities?: unknown }>) {
     const version = typeof input.connectorVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/u.test(input.connectorVersion)
       ? input.connectorVersion : fleetFail("invalid");
     const platform = platforms[input.platform as keyof typeof platforms] ?? "other";
+    // 0215: presence is session-fenced, so a check-in with no session, or one
+    // that does not match the format, cannot declare a state at all. This is
+    // checked here and not at the HTTP edge so the rule is the store's.
+    const sessionId = typeof input.sessionId === "string" && sessionPattern.test(input.sessionId)
+      ? input.sessionId : fleetFail("invalid");
+    if (input.agents !== undefined && (!Array.isArray(input.agents) || input.agents.length > 16)) return fleetFail("invalid");
+    const agents = (input.agents ?? []).map((value: unknown) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return fleetFail("invalid");
+      const raw = value as Record<string, unknown>;
+      if (Object.keys(raw).some(name => !["agentId", "displayName", "agentKind", "enabled"].includes(name))
+        || typeof raw.agentId !== "string" || !agentPattern.test(raw.agentId)
+        || typeof raw.agentKind !== "string" || !agentPattern.test(raw.agentKind)
+        || typeof raw.displayName !== "string" || !agentDisplayPattern.test(raw.displayName.trim())
+        || typeof raw.enabled !== "boolean") return fleetFail("invalid");
+      return Object.freeze({ agentId: raw.agentId, displayName: raw.displayName.trim(), agentKind: raw.agentKind,
+        enabled: raw.enabled });
+    });
+    if (new Set(agents.map(agent => agent.agentId)).size !== agents.length) return fleetFail("invalid");
     const adapterCapabilities = observedToolCapabilities(input.adapterCapabilities ?? []);
     const now = this.#now();
-    await this.db.transaction(tx => this.#presence(tx, principal.workerId, version, platform, now));
+    await this.db.transaction(tx => this.#presence(tx, principal.workerId, version, platform, now, sessionId, agents));
     await this.#toolCapabilityEvidence?.observe(Object.freeze({ tenantId: this.#tenantId, workerId: principal.workerId,
       observedAt: now, phase: "heartbeat", connectorVersion: version, platform, capabilities: adapterCapabilities }));
     const operationsMode = await this.operationsMode();
     return Object.freeze({ ...this.me(principal), operationsMode, claimsAllowed: operationsMode === "running" });
+  }
+
+  /** A clean connector stop is fenced to its session. A delayed stop from an
+   * older process cannot take a newer authenticated session offline. */
+  async gracefulOffline(principal: FleetWorkerPrincipalV1, input: Readonly<{ sessionId: unknown }>) {
+    const sessionId = typeof input.sessionId === "string" && sessionPattern.test(input.sessionId)
+      ? input.sessionId : fleetFail("invalid");
+    const now = this.#now();
+    return this.db.transaction(async tx => {
+      const prior = (await tx.query<PresenceRowV1>(`SELECT session_id,presence_state,last_seen_at FROM fleet_worker_presence
+        WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE`, [this.#tenantId, principal.workerId])).rows[0];
+      if (!prior || prior.session_id !== sessionId || prior.presence_state !== "online")
+        return Object.freeze({ offline: false, staleSession: true });
+      await tx.query(`UPDATE fleet_worker_presence SET presence_state='offline',state_changed_at=$3,graceful_offline_at=$3
+        WHERE tenant_id=$1 AND worker_id=$2 AND session_id=$4 AND presence_state='online'`,
+      [this.#tenantId, principal.workerId, now, sessionId]);
+      await this.#transition(tx, principal.workerId, "machine", null, sessionId, "online", "offline", now);
+      const agents = (await tx.query<{ agent_id: string; presence_state: PresenceRowV1["presence_state"] }>(
+        `SELECT agent_id,presence_state FROM fleet_worker_agents WHERE tenant_id=$1 AND worker_id=$2 AND session_id=$3 FOR UPDATE`,
+      [this.#tenantId, principal.workerId, sessionId])).rows;
+      for (const agent of agents.filter(agent => agent.presence_state === "online")) {
+        await tx.query(`UPDATE fleet_worker_agents SET presence_state='offline',state_changed_at=$4
+          WHERE tenant_id=$1 AND worker_id=$2 AND agent_id=$3 AND session_id=$5 AND presence_state='online'`,
+        [this.#tenantId, principal.workerId, agent.agent_id, now, sessionId]);
+        await this.#transition(tx, principal.workerId, "agent", agent.agent_id, sessionId, "online", "offline", now);
+      }
+      return Object.freeze({ offline: true, staleSession: false });
+    });
   }
 
   me(principal: FleetWorkerPrincipalV1) {
@@ -424,13 +571,38 @@ export class FleetGatewayStoreV1 {
    * deliberately never reads or writes a claim, attempt, or lease. */
   async recordWaitPresence(principal: FleetWorkerPrincipalV1) {
     const now = this.#now();
-    const rows = (await this.db.query<{ worker_id: string }>(`UPDATE fleet_worker_presence p SET last_seen_at=GREATEST(
-        p.last_seen_at,$3::timestamptz) FROM fleet_workers w,fleet_worker_credentials c
-      WHERE p.tenant_id=$1 AND p.worker_id=$2 AND w.tenant_id=p.tenant_id AND w.worker_id=p.worker_id
-        AND w.state='active' AND c.tenant_id=p.tenant_id AND c.worker_id=p.worker_id AND c.credential_id=$4
-        AND c.state='active' AND c.expires_at>statement_timestamp() RETURNING p.worker_id`,
-    [this.#tenantId, principal.workerId, now, principal.credentialId])).rows;
-    if (rows.length !== 1) return fleetFail("unauthenticated");
+    // A parked long-poll beat renews the machine's presence. It is a PRESENCE
+    // write, not an authentication check, so it renews whatever row exists and
+    // reports which credential did it.
+    //
+    // The original form JOINed fleet_worker_presence and returned
+    // `unauthenticated` when the join matched no row -- which silently coupled
+    // this beat to a prior heartbeat having happened. Under 0215's design a
+    // machine is not "online" until its first heartbeat, and enrollment
+    // deliberately writes no presence row at all, so a worker that had joined
+    // but not yet checked in could never park: the beat returned
+    // `unauthenticated`, the wait tore itself down, and the owner saw a worker
+    // that had just connected refuse its own first long poll.
+    //
+    // The credential is still verified first, and by the credential alone:
+    // revocation, expiry and the worker's own state decide this, not whether a
+    // presence row happens to exist yet. The UPDATE is best-effort by design --
+    // a beat that found nothing to renew is not a failure, it just has no row.
+    const current = (await this.db.query<{ active: boolean }>(`SELECT EXISTS(SELECT 1 FROM fleet_workers w
+      JOIN fleet_worker_credentials c ON c.tenant_id=w.tenant_id AND c.worker_id=w.worker_id
+      WHERE w.tenant_id=$1 AND w.worker_id=$2 AND w.state='active' AND c.credential_id=$3
+        AND c.state='active' AND c.expires_at>statement_timestamp()) AS active`,
+    [this.#tenantId, principal.workerId, principal.credentialId])).rows[0]?.active === true;
+    if (!current) return fleetFail("unauthenticated");
+    // Renew whatever session this worker currently has, unconditionally on the
+    // session id. The request authenticated the CREDENTIAL, which is the same
+    // authority the beat already checked, and the row is the worker's own single
+    // presence row -- there is nothing for a wrong session to write here, since
+    // this statement cannot change presence_state, only push last_seen_at
+    // forward. A worker whose session was superseded still renews, which is
+    // correct: it really did just reach the gateway.
+    await this.db.query(`UPDATE fleet_worker_presence SET last_seen_at=GREATEST(last_seen_at,$3::timestamptz)
+      WHERE tenant_id=$1 AND worker_id=$2`, [this.#tenantId, principal.workerId, now]);
     return Object.freeze({ presentAt: now, renewsLease: false as const });
   }
 
@@ -507,8 +679,10 @@ export class FleetGatewayStoreV1 {
   }
 
   /** Claims one offered task through the shared canonical claim path. */
-  async claim(principal: FleetWorkerPrincipalV1, input: Readonly<{ offerId: unknown; idempotencyKey: unknown }>) {
+  async claim(principal: FleetWorkerPrincipalV1, input: Readonly<{ offerId: unknown; idempotencyKey: unknown; agentId?: unknown }>) {
     const offerId = entityId(input.offerId, "offer"), idempotencyKey = key(input.idempotencyKey);
+    const agentId = input.agentId === undefined ? null
+      : typeof input.agentId === "string" && agentPattern.test(input.agentId) ? input.agentId : fleetFail("invalid");
     const now = this.#now();
     // Read the mode before the transaction: the provider uses its own pool
     // connection, and reading it inside would hold two per claim. The 0156
@@ -521,17 +695,21 @@ export class FleetGatewayStoreV1 {
     // already knows to handle by moving to its next offer. Without this the
     // refusal travels as `400 refused`, which the connector reads as terminal
     // and ends the whole pass, stranding the job it had begun.
-    return this.#contending(() => this.#claimInTransaction(principal, offerId, idempotencyKey, mode, now),
+    return this.#contending(() => this.#claimInTransaction(principal, offerId, idempotencyKey, mode, now, agentId),
       () => fleetFail("conflict"));
   }
 
   async #claimInTransaction(principal: FleetWorkerPrincipalV1, offerId: string, idempotencyKey: string,
-    mode: string, now: string) {
+    mode: string, now: string, agentId: string | null = null) {
     return this.db.transaction(async tx => {
       const prior = (await tx.query<ClaimRow>(`SELECT * FROM fleet_claims WHERE tenant_id=$1 AND worker_id=$2
         AND idempotency_key=$3`, [this.#tenantId, principal.workerId, idempotencyKey])).rows[0];
       if (prior) {
-        if (prior.offer_id !== offerId) return fleetFail("conflict");
+        // A replay must agree with the original claim on BOTH the offer and the
+        // agent. Without the agent check, one idempotency key reused across two
+        // harnesses would replay as whichever agent claimed first, and the
+        // connector would be told its task is held by a bot it never claimed.
+        if (prior.offer_id !== offerId || prior.agent_id !== agentId) return fleetFail("conflict");
         return this.#claimView(tx, principal, prior, true);
       }
       // Pause, Drain and Stop all stop new claims; a replay above is not new.
@@ -592,9 +770,9 @@ export class FleetGatewayStoreV1 {
       if (Date.parse(expiresAt) <= Date.parse(now)) return fleetFail("conflict");
       try {
         await tx.query(`INSERT INTO fleet_claims(tenant_id,claim_id,offer_id,worker_id,node_id,project_id,job_id,attempt_id,
-          lease_id,idempotency_key,claimed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          lease_id,idempotency_key,claimed_at,agent_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [this.#tenantId, claimId, offerId, principal.workerId, principal.nodeId, offer.project_id, job.id, attemptId, leaseId,
-          idempotencyKey, now]);
+          idempotencyKey, now, agentId]);
       } catch (error) {
         // The database guards refuse revoked, out-of-scope, over-capacity and
         // doubly-leased claims, each with a SQLSTATE the store reads wherever

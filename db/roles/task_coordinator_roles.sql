@@ -109,6 +109,20 @@ GRANT UPDATE (node_id,state,safe_reason_code,last_heartbeat_at,observed_at)
 GRANT UPDATE (version,last_started_at,last_completed_at,state)
   ON control_supervisor_loop_heads TO control_room_task_coordinator;
 GRANT UPDATE (state,released_at) ON control_provider_waits TO control_room_task_coordinator;
+-- The fleet lights the coordinator reports: presence is read for every worker
+-- and bot, the transition history is append-only, and only presence_state and
+-- state_changed_at move. Only the coordinator's own supervisor sweep and the
+-- connector's own fenced gracefulOffline() ever write presence; a connector
+-- cannot grant itself a state, and nothing here deletes history.
+GRANT SELECT ON fleet_workers, fleet_worker_presence, fleet_worker_agents, fleet_presence_transitions
+  TO control_room_task_coordinator;
+GRANT INSERT ON fleet_presence_transitions TO control_room_task_coordinator;
+GRANT UPDATE (presence_state,state_changed_at) ON fleet_worker_presence TO control_room_task_coordinator;
+GRANT UPDATE (presence_state,state_changed_at) ON fleet_worker_agents TO control_room_task_coordinator;
+-- One privilege per statement: the static preflight-declaration check in
+-- tests/private-web-role-preflight-declaration.test.ts parses this file as text
+-- and must see every grant individually to detect preflight drift without a
+-- database. Do not merge these into a comma-separated privilege list.
 GRANT INSERT (tenant_id,correlation_key) ON control_service_incident_heads TO control_room_task_coordinator;
 GRANT UPDATE (next_generation) ON control_service_incident_heads TO control_room_task_coordinator;
 GRANT INSERT (id,tenant_id,correlation_key,generation,service_id,severity,safe_reason_code,safe_remedy_code,state,opened_at,last_observed_at)

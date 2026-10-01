@@ -272,7 +272,14 @@ test("fleet connector end to end and least privilege, as the production logins",
       await owner.withdrawOffer(ownerIdentity(), overlappingOffer.offerId);
       const leaseBeforeWait = await direct("web", `SELECT l.expires_at FROM control_leases l JOIN fleet_claims c
         ON c.tenant_id=l.tenant_id AND c.lease_id=l.id WHERE c.claim_id=$1`, [pendingClaim.claimId]);
+      // Enrollment is a join, not a check-in: under 0215 it deliberately writes NO
+      // presence row, so a machine that has just enrolled has missed no window and
+      // the owner must see it as never-seen rather than Unreachable. The worker
+      // here has not heart-beaten, so there is nothing to renew yet -- which is
+      // also the case that used to refuse its own first long poll.
       const presenceBeforeWait = await direct("web", "SELECT last_seen_at FROM fleet_worker_presence WHERE worker_id=$1", [joined.workerId]);
+      assert.equal(presenceBeforeWait.rows.length, 0,
+        "joining writes no presence: a machine that has checked in nowhere has no window to miss");
       await new Promise(done => setTimeout(done, 5));
       assert.deepEqual(await client.waitForWork(), { offers: [], operationsMode: "running" });
       const leaseAfterWait = await direct("web", `SELECT l.expires_at FROM control_leases l JOIN fleet_claims c
@@ -280,8 +287,23 @@ test("fleet connector end to end and least privilege, as the production logins",
       const presenceAfterWait = await direct("web", "SELECT last_seen_at FROM fleet_worker_presence WHERE worker_id=$1", [joined.workerId]);
       assert.equal(new Date(leaseAfterWait.rows[0].expires_at).toISOString(), new Date(leaseBeforeWait.rows[0].expires_at).toISOString(),
         "a parked wait never renews its active lease");
-      assert.ok(new Date(presenceAfterWait.rows[0].last_seen_at) >= new Date(presenceBeforeWait.rows[0].last_seen_at),
-        "the production fleet login records the wait as presence");
+      // The wait still had to SUCCEED with no presence row at all. That is the
+      // regression this asserts: the beat used to JOIN fleet_worker_presence and
+      // answer `unauthenticated` when the join matched nothing, so a worker that
+      // had joined but not yet checked in could never park. A parked wait renews
+      // presence only if a session has already opened one.
+      assert.equal(presenceAfterWait.rows.length, 0,
+        "a parked wait before any heartbeat neither invents a session nor refuses the wait");
+      // And once a heartbeat HAS opened a session, a parked wait renews it --
+      // otherwise "best effort" would quietly become "never".
+      await client.heartbeat([]);
+      const opened = await direct("web", "SELECT last_seen_at FROM fleet_worker_presence WHERE worker_id=$1", [joined.workerId]);
+      assert.equal(opened.rows.length, 1, "the first heartbeat is what opens a session");
+      await new Promise(done => setTimeout(done, 5));
+      await client.waitForWork();
+      const renewed = await direct("web", "SELECT last_seen_at FROM fleet_worker_presence WHERE worker_id=$1", [joined.workerId]);
+      assert.ok(new Date(renewed.rows[0].last_seen_at) >= new Date(opened.rows[0].last_seen_at),
+        "a parked wait renews an open session's presence");
       await client.result(pendingClaim.claimId, "Unreviewed.", [], "pg-result-key-003");
       await assert.rejects(direct("fleet", `UPDATE control_jobs SET state='succeeded',
         payload=jsonb_set(payload,'{state}','"succeeded"') WHERE id=$1`, [pending.jobId]), /job write rejected/u);

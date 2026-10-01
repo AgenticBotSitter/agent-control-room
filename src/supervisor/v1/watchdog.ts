@@ -104,7 +104,8 @@ export class SupervisorServiceV1 {
     operations:SupervisorOperationsModePortV1;clock?:()=>number;healthConfig?:SupervisorMachineHealthConfigV1}>){
     const clock=input.clock??Date.now;this.#watchdog=new SupervisorWatchdogV1(input.db,input.tenantId,input.supervisorId,
       input.machine,input.operations,clock,input.healthConfig);this.#reconciler=new SupervisorReconcilerV1(input.db,input.tenantId,clock);}
-  async cycle(){const health=await this.#watchdog.cycle();const suspectAgents=await this.#reconciler.refreshAgentHeartbeatHealth();
+  async cycle(){const health=await this.#watchdog.cycle();const unreachablePresence=await this.#reconciler.markFleetPresenceUnreachable();
+    const suspectAgents=await this.#reconciler.refreshAgentHeartbeatHealth();
     const waits=await this.#reconciler.releaseDueProviderWaits();const reconciled=await this.#reconciler.reconcileStalled();
-    return Object.freeze({health,waits,reconciled,suspectAgents});}
+    return Object.freeze({health,waits,reconciled,suspectAgents,unreachablePresence});}
 }

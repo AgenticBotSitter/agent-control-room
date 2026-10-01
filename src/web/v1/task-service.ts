@@ -49,6 +49,8 @@ import { costForUsageV1, rollupUsageGroupsV1, usageMeasurementSchemaV1, usagePri
 import type { HarnessRunEventV1, HarnessRunV1 } from "../../harness/v1/types";
 import type { ProductConfigurationV1 } from "../../config/v1/product-configuration";
 
+const iso = (value: string | Date) => new Date(value).toISOString();
+
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
 function joined(tx: DatabaseSession): DatabaseClient {
@@ -1045,9 +1047,14 @@ export class WebTaskService {
    * project visibility; a partial project grant cannot turn this into an enumeration
    * endpoint. Result candidates are re-read through the signed result store before
    * any metadata is returned. */
-  async home(identity: VerifiedWebIdentity) {
+  async home(identity: VerifiedWebIdentity, input: Readonly<{ surface?: unknown; recent?: unknown }> = {}) {
+    const surface = input.surface === undefined ? "home" : input.surface;
+    if (surface !== "home" && surface !== "morning") throw new WebAccessError("invalid_request");
+    const recent = input.recent === true;
     return this.authenticatedRead(identity, async (tx, actor) => {
       const sources = this.attentionSources(actor);
+      const cursor = (await tx.query<{ seen_through: string | Date }>(`SELECT seen_through FROM owner_surface_cursors
+        WHERE tenant_id=$1 AND identity_id=$2 AND surface=$3`, [this.scope.tenantId, actor.id, surface])).rows[0];
       const visibleProject = `((p.adapter_id=$2 AND $4::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
         WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$3 AND $5::boolean))`;
       const sourceParameters = [`adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`,
@@ -1067,9 +1074,11 @@ export class WebTaskService {
           JOIN control_artifact_manifests m ON m.tenant_id=a.tenant_id AND m.id=a.artifact_id
           JOIN projects p ON p.tenant_id=a.tenant_id AND p.id=a.project_id
           WHERE a.tenant_id=$1 AND p.workspace_id=$6 AND $7::boolean AND ${visibleProject}
+            AND ($8::boolean OR m.created_at>$9::timestamptz)
           ORDER BY m.created_at DESC,a.artifact_id COLLATE "C" LIMIT 11
         ) SELECT * FROM active_rows UNION ALL SELECT * FROM result_rows`,
-      [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId, canReadResults])).rows;
+      [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId, canReadResults, recent,
+        cursor ? iso(cursor.seen_through) : actor.now])).rows;
       const activeRows = homeRows.filter(row => row.home_kind === "active");
       await this.projects.getViewsInSession(tx, actor, homeRows.map(row => row.project_id));
       const activeSummaries = [];
@@ -1105,7 +1114,29 @@ export class WebTaskService {
       return taskHomeActivitySchema.parse({ active, recentResults,
         additionalActiveOmitted: remainingActive.length > 10 || activeRows.length > 250, additionalResultsOmitted,
         resultSource: !this.resultStore ? "not_configured" : canReadResults ? "configured" : "not_authorized",
+        cursor: { surface, mode: recent ? "recent" : "since_last_look", firstVisit: !cursor,
+          acknowledgeThrough: actor.now },
         observedAt: actor.now, startsWork: false });
+    });
+  }
+
+  async acknowledgeHome(identity: VerifiedWebIdentity, input: Readonly<{ surface?: unknown; acknowledgeThrough?: unknown }>) {
+    const surface = input.surface;
+    if (surface !== "home" && surface !== "morning") throw new WebAccessError("invalid_request");
+    if (typeof input.acknowledgeThrough !== "string" || !Number.isFinite(Date.parse(input.acknowledgeThrough)))
+      throw new WebAccessError("invalid_request");
+    const through = iso(input.acknowledgeThrough);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      this.attentionSources(actor);
+      if (Date.parse(through) > Date.parse(actor.now)) throw new WebAccessError("invalid_request");
+      const row = (await tx.query<{ seen_through: string | Date }>(`INSERT INTO owner_surface_cursors
+        (tenant_id,identity_id,surface,seen_through,updated_at) VALUES($1,$2,$3,$4,$5)
+        ON CONFLICT(tenant_id,identity_id,surface) DO UPDATE SET
+          seen_through=GREATEST(owner_surface_cursors.seen_through,EXCLUDED.seen_through),
+          updated_at=GREATEST(owner_surface_cursors.updated_at,EXCLUDED.updated_at)
+        RETURNING seen_through`, [this.scope.tenantId, actor.id, surface, through, actor.now])).rows[0];
+      if (!row) throw new Error("owner_surface_cursor_unavailable");
+      return Object.freeze({ acknowledged: true as const, seenThrough: iso(row.seen_through) });
     });
   }
 

@@ -493,6 +493,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     const releaseRoute = /^\/fleet\/v1\/connector-releases\/(\d+\.\d+\.\d+)$/u.exec(path);
     const known = path === "/fleet/v1/me" || path === "/fleet/v1/heartbeat" || path === "/fleet/v1/rotate"
       || path === "/fleet/v1/work" || path === "/fleet/v1/work/wait" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
+      || path === "/fleet/v1/offline"
       || releaseRoute !== null || claimRoute.test(path) || proposalRoute.test(path) || uploadRoute.test(path)
       || chunkRoute.test(path) || inputBytesRoute.test(path);
     if (!known) return fleetFail("not_found");
@@ -615,9 +616,20 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       return send(response, 201, { ok: true, result: await options.store.recordMcpCall(principal, body as never) });
     }
     if (path === "/fleet/v1/heartbeat") {
-      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"], ["adapterCapabilities"]);
+      // 0215 (presence) requires the connector's own session id, so a check-in
+      // cannot claim a state without an authenticated session behind it. 0.5.0
+      // connectors do not send one, and they must keep checking in, so the field
+      // is optional here and the store fails the heartbeat when it is absent or
+      // malformed; `agents` and `adapterCapabilities` are the two rosters the
+      // merged connector can report and both are optional.
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"],
+        ["sessionId", "agents", "adapterCapabilities"]);
       return send(response, 200, { ok: true, result: { ...await options.store.heartbeat(principal, body as never),
         releaseTrust, ...(release ? { connector: release.advertisement } : {}) } });
+    }
+    if (path === "/fleet/v1/offline") {
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["sessionId"]);
+      return send(response, 200, { ok: true, result: await options.store.gracefulOffline(principal, body as never) });
     }
     if (path === "/fleet/v1/rotate") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["newCredentialDigest"]);
@@ -626,7 +638,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       return send(response, 200, { ok: true, result });
     }
     if (path === "/fleet/v1/claims") {
-      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["offerId", "idempotencyKey"]);
+      const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["offerId", "idempotencyKey"], ["agentId"]);
       const result = await options.store.claim(principal, body as never);
       return send(response, result.replayed ? 200 : 201, { ok: true, result });
     }

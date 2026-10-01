@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { actionInboxItemSchemaV1 } from "../../operator-surfaces/v1/validators";
+import { FLEET_PRESENCE_TIMING_V1 } from "../../fleet/v1/presence";
 import { ServiceIncidentStore } from "../../services/v1/incident-store";
 
 type Candidate = Readonly<{ project_id: string; job_id: string; job_state: string; job_version: number | string;
@@ -222,5 +223,52 @@ export class SupervisorReconcilerV1 {
           safe_reason_code=EXCLUDED.safe_reason_code,last_heartbeat_at=EXCLUDED.last_heartbeat_at,observed_at=EXCLUDED.observed_at`,
       [this.tenantId,row.worker_id,row.node_id,suspect?"suspect":"healthy",suspect?"heartbeat_lost":null,heartbeat,at]);}
     return rows.rows.filter(row=>!row.expires_at||Date.parse(iso(row.expires_at))<=Date.parse(at)).length;
+  }
+
+  /** The only time-driven presence transition. Connector writes can report an
+   * authenticated online check-in or a clean stop; they cannot manufacture
+   * this missed-window conclusion. Concurrent sweeps lock and transition each
+   * session at most once. */
+  async markFleetPresenceUnreachable(limit = 64): Promise<number> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 256) throw new Error("supervisor_limit_invalid");
+    const at = safeNow(this.clock);
+    const candidates = (await this.db.query<{ worker_id: string }>(`SELECT worker_id FROM fleet_worker_presence
+      WHERE tenant_id=$1 AND presence_state='online'
+        AND last_seen_at<=$2::timestamptz-interval '90 seconds'
+      ORDER BY last_seen_at,worker_id LIMIT $3`, [this.tenantId, at, limit])).rows;
+    let changed = 0;
+    for (const candidate of candidates) changed += await this.db.transaction(async tx => {
+      const machine = (await tx.query<{ session_id: string; last_seen_at: string | Date }>(`SELECT session_id,last_seen_at
+        FROM fleet_worker_presence WHERE tenant_id=$1 AND worker_id=$2 AND presence_state='online'
+          AND last_seen_at<=$3::timestamptz-interval '90 seconds' FOR UPDATE`,
+      [this.tenantId, candidate.worker_id, at])).rows[0];
+      if (!machine?.session_id) return 0;
+      // Keep the TypeScript constant and SQL interval tied together even though
+      // PostgreSQL owns the final comparison and lock.
+      if (Date.parse(at) - Date.parse(iso(machine.last_seen_at)) < FLEET_PRESENCE_TIMING_V1.unreachableMs) return 0;
+      await tx.query(`UPDATE fleet_worker_presence SET presence_state='unreachable',state_changed_at=$3
+        WHERE tenant_id=$1 AND worker_id=$2 AND session_id=$4 AND presence_state='online'`,
+      [this.tenantId, candidate.worker_id, at, machine.session_id]);
+      await tx.query(`INSERT INTO fleet_presence_transitions(tenant_id,transition_id,worker_id,subject_kind,agent_id,
+        session_id,from_state,to_state,source,occurred_at)
+        VALUES($1,$2,$3,'machine',NULL,$4,'online','unreachable','supervisor',$5)`,
+      [this.tenantId, `fleet-presence:${randomUUID().replaceAll("-", "")}`, candidate.worker_id, machine.session_id, at]);
+      const agents = (await tx.query<{ agent_id: string }>(`SELECT agent_id FROM fleet_worker_agents
+        WHERE tenant_id=$1 AND worker_id=$2 AND session_id=$3 AND presence_state='online'
+          AND last_reported_at<=$4::timestamptz-interval '90 seconds' FOR UPDATE`,
+      [this.tenantId, candidate.worker_id, machine.session_id, at])).rows;
+      for (const agent of agents) {
+        await tx.query(`UPDATE fleet_worker_agents SET presence_state='unreachable',state_changed_at=$4
+          WHERE tenant_id=$1 AND worker_id=$2 AND agent_id=$3 AND session_id=$5 AND presence_state='online'`,
+        [this.tenantId, candidate.worker_id, agent.agent_id, at, machine.session_id]);
+        await tx.query(`INSERT INTO fleet_presence_transitions(tenant_id,transition_id,worker_id,subject_kind,agent_id,
+          session_id,from_state,to_state,source,occurred_at)
+          VALUES($1,$2,$3,'agent',$4,$5,'online','unreachable','supervisor',$6)`,
+        [this.tenantId, `fleet-presence:${randomUUID().replaceAll("-", "")}`, candidate.worker_id,
+          agent.agent_id, machine.session_id, at]);
+      }
+      return 1;
+    });
+    return changed;
   }
 }

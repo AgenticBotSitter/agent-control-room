@@ -39,6 +39,34 @@ const SECRET_PATTERN = /^crf_[A-Za-z0-9_-]{43}$/u;
 const CODE_PATTERN = /^crj_[A-Za-z0-9_-]{43}$/u;
 const WORKER_PATTERN = /^fleet-worker:[a-f0-9]{32}$/u;
 const ROTATE_BEFORE_MS = 7 * 86_400_000;
+/** Presence check-ins are independent of the work poll. The owner sees a machine
+ * as Online only inside a short window, so a connector that only checked in once
+ * per work poll would flap through "checking in" every minute -- and cook/v1's
+ * long-poll holds the work loop for up to 32 s at a time. This is comfortably
+ * inside the server's window with room for one slow beat. */
+export const PRESENCE_CHECK_IN_MS = 15_000;
+
+/** Registers the stop-signal handlers that make a clean offline stop reachable
+ * at all. Node's default SIGINT/SIGTERM behaviour terminates the process without
+ * running pending async cleanup, so without this the connector's final
+ * `offline()` never fires and the owner's light degrades to Unreachable after the
+ * server's window instead of going calmly Offline.
+ *
+ * Returns the unregister function. The second signal while shutting down exits
+ * immediately at the conventional 130 rather than waiting on the network: an
+ * owner who pressed Ctrl-C twice means it. */
+export function installStopSignalsV1(onSignal) {
+  const handlers = new Map();
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    const handler = () => onSignal(signal);
+    handlers.set(signal, handler);
+    process.on(signal, handler);
+  }
+  return () => {
+    for (const [signal, handler] of handlers) process.off(signal, handler);
+    handlers.clear();
+  };
+}
 const MEDIA_TYPES = Object.freeze({ ".txt": "text/plain", ".log": "text/plain", ".md": "text/markdown",
   ".csv": "text/csv", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg", ".pdf": "application/pdf", ".srt": "text/plain", ".vtt": "text/plain" });
@@ -282,7 +310,7 @@ export async function loadConfig(path) {
   return config;
 }
 
-export function createClient(config, fetcher = globalThis.fetch) {
+export function createClient(config, fetcher = globalThis.fetch, presenceSessionId = `fleet-session:${randomBytes(16).toString("hex")}`) {
   async function call(method, path, body, secret = config.secret, extraHeaders = {}, timeoutMs = 30_000) {
     const response = await fetcher(`${config.server}${path}`, { method, redirect: "error",
       signal: AbortSignal.timeout(timeoutMs),
@@ -308,8 +336,15 @@ export function createClient(config, fetcher = globalThis.fetch) {
   return Object.freeze({
     enroll: body => call("POST", "/fleet/v1/enroll", body, null),
     me: () => call("GET", "/fleet/v1/me"),
-    heartbeat: (adapterCapabilities = []) => call("POST", "/fleet/v1/heartbeat",
-      { connectorVersion: CONNECTOR_VERSION, platform: platformName(), adapterCapabilities }),
+    // 0215: presence is session-fenced, so every check-in carries the session id
+    // the server uses to tell this process apart from a stale one. The roster is
+    // the machine's own view of which bots run here, reported whole every beat.
+    heartbeat: (adapterCapabilities = [], agents = []) => call("POST", "/fleet/v1/heartbeat",
+      { connectorVersion: CONNECTOR_VERSION, platform: platformName(), adapterCapabilities,
+        sessionId: presenceSessionId, agents }),
+    // A deliberate stop. Fenced to this session, so a delayed call from an older
+    // process can never take a newer one offline.
+    offline: () => call("POST", "/fleet/v1/offline", { sessionId: presenceSessionId }),
     rotate: (digest, secret) => call("POST", "/fleet/v1/rotate", { newCredentialDigest: digest }, secret),
     work: () => call("GET", "/fleet/v1/work"),
     waitForWork: () => call("GET", "/fleet/v1/work/wait", undefined, config.secret, {}, 32_000),
@@ -2196,15 +2231,79 @@ export async function runClaimedTask({ client, claim, adapter, progressIntervalM
 export async function runWorker({ configPath, harnessesPath = defaultHarnessSettingsPath(configPath), fetcher, once = false,
   importer, progressIntervalMs = 60_000, pollMs = 1_000, log = message => process.stderr.write(`${message}\n`),
   sleep = ms => new Promise(done => setTimeout(done, ms)), random = Math.random, watchdogGraceMs = WATCHDOG_GRACE_MS,
-  now = Date.now, updateCheck }) {
+  now = Date.now, updateCheck, presenceIntervalMs = PRESENCE_CHECK_IN_MS,
+  // Bug 1 fix seam: a test injects a stop signal instead of raising a real one.
+  // The production default is the real signal handler, and the production
+  // default is what the end-to-end stop test exercises with no injection.
+  installStopSignals = installStopSignalsV1 }) {
   const handedBack = new Set(); // tasks this machine could not finish; left for another worker
-  let adapter = null, said = "", agreementShown = false, consecutiveFailures = 0;
+  let adapter = null, said = "", agreementShown = false, consecutiveFailures = 0, currentClient = null;
+  // The presence beat is separate from the work poll: cook/v1's long-poll holds
+  // the work loop for up to 32 s and a task can hold it for hours, so neither can
+  // keep the owner's light accurate. One in-flight check-in at a time.
+  let presenceBusy = false, presenceTimerHandle = null, sessionRoster = [];
+  const stopPresence = () => { if (presenceTimerHandle) { clearInterval(presenceTimerHandle); presenceTimerHandle = null; } };
+  // 0215: one session id for this process's whole life. Every check-in and the
+  // final stop carry it, so the server can tell a stale process from this one.
+  const presenceSessionId = `fleet-session:${randomBytes(16).toString("hex")}`;
+  // Reported whole on every beat: a bot missing from the roster is a clean
+  // offline on the server, so the roster must be this machine's own truth.
+  const refreshRoster = settings => {
+    sessionRoster = HANDOFF_HARNESSES.map(agentId => Object.freeze({ agentId, displayName: HARNESS_LABELS[agentId],
+      agentKind: agentId, enabled: settings?.harnesses?.[agentId]?.enabled === true }));
+  };
   const retryDelay = failures => {
     const ceiling = Math.min(MAX_RUN_FAILURE_BACKOFF_MS, pollMs * (2 ** Math.min(Math.max(0, failures - 1), 8)));
     return Math.max(1, Math.floor(ceiling * (0.5 + random() * 0.5)));
   };
   const say = message => { if (message !== said) { said = message; log(`${new Date().toISOString()} ${message}`); } };
-  for (;;) {
+  // A deliberate stop must be visible immediately, and the ONLY way this process
+  // learns about one is the signal: with no listener registered Node terminates at
+  // the libuv layer and no `finally` below ever runs, so the machine would sit on
+  // "checking in" until the server's 90 s window lapsed into "Unreachable" -- the
+  // exact alarming red state the fenced offline call exists to prevent.
+  let stopping = false;
+  let announceStop = () => undefined;
+  const stopped = new Promise(resolve => { announceStop = resolve; });
+  // A stop requested during a backoff sleep must not wait out the backoff: a
+  // 60 s wait after Ctrl-C is indistinguishable, to the owner, from a hang.
+  // A stop must not wait out a backoff, and it must do so without leaking a
+  // handle. A bare `Promise.race([sleep(ms), stopped])` is wrong twice over: the
+  // losing `sleep` keeps its setTimeout handle referenced, so the process cannot
+  // exit (this is what made the whole test:fleet lane hang after 28 passing
+  // tests), and if it later rejects that rejection is UNHANDLED, which crashes
+  // Node rather than hanging it.
+  //
+  // So the losing branch is always settled, never abandoned: `sleepOrStop` awaits
+  // the sleeping promise to completion after the race. `sleep` is the injected
+  // seam, so its own timer is settled by its own implementation and there is no
+  // orphaned handle to clear here.
+  const sleepOrStop = async ms => {
+    const sleeping = Promise.resolve().then(() => sleep(ms));
+    const outcome = await Promise.race([
+      sleeping.then(() => ({ kind: "slept" }), error => ({ kind: "failed", error })),
+      stopped.then(() => ({ kind: "stopped" })),
+    ]);
+    // Drain the loser. If it rejects here, that is now a HANDLED rejection.
+    await sleeping.catch(() => undefined);
+    if (outcome.kind === "failed") throw outcome.error;
+  };
+  const shutdownPresence = async () => {
+    stopPresence();
+    try { await currentClient?.offline(); } catch { /* best effort; the server times out otherwise */ }
+  };
+  const onStopSignal = signal => {
+    if (stopping) { process.exit(130); }
+    stopping = true;
+    log(`${new Date().toISOString()} Stop requested (${signal}); reporting a clean offline stop.`);
+    announceStop();
+    void shutdownPresence();
+  };
+  const unregisterStopSignals = installStopSignals(onStopSignal);
+  try { for (;;) {
+    // A stop that arrived while the loop was blocked in a long poll or a task
+    // takes effect here rather than at the end of that wait.
+    if (stopping) { await shutdownPresence(); return Object.freeze({ state: "stopped" }); }
     let tools = null, toolsError = null;
     try { tools = await loadToolAdapters(defaultToolAdaptersPath(configPath)); }
     catch (error) { toolsError = error instanceof Error ? error.message : "The local tool manifest could not be read."; }
@@ -2223,9 +2322,26 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       }
       throw error;
     }
-    const client = createClient(current, fetcher);
+    const client = createClient(current, fetcher, presenceSessionId);
+    currentClient = client;
+    const presenceBeat = async () => {
+      if (presenceBusy) return;
+      presenceBusy = true;
+      try { await client.heartbeat(tools?.capabilities ?? [], sessionRoster); }
+      catch { /* a failed check-in is not fatal here; the next beat retries */ }
+      finally { presenceBusy = false; }
+    };
+    // `unref()` so this timer can never be the reason the process stays alive.
+    // It matters: a caller that abandons runWorker mid-pass (a test, or a host that
+    // stops awaiting it) would otherwise leave a 15s repeating handle behind, and
+    // the process would sit there with nothing to do. The presence beat is a
+    // keep-alive for the SERVER's view of us, never a reason WE wait.
+    if (!once) {
+      presenceTimerHandle = setInterval(() => { void presenceBeat(); }, presenceIntervalMs);
+      presenceTimerHandle.unref?.();
+    }
     let me;
-    try { me = await client.heartbeat(tools?.capabilities ?? []); }
+    try { me = await client.heartbeat(tools?.capabilities ?? [], sessionRoster); }
     catch (error) {
       if (error?.code === "unauthenticated") {
         say("Control Room revoked this machine's key. The background worker is stopping cleanly.");
@@ -2235,7 +2351,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       if (once) return Object.freeze({ state: "unreachable" });
       consecutiveFailures += 1;
       const localBackoff = retryDelay(consecutiveFailures);
-      await sleep(Number.isFinite(error?.retryAfterMs) ? Math.max(localBackoff, error.retryAfterMs) : localBackoff);
+      await sleepOrStop(Number.isFinite(error?.retryAfterMs) ? Math.max(localBackoff, error.retryAfterMs) : localBackoff);
       continue;
     }
     if (me.connector && updateCheck) {
@@ -2256,6 +2372,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
     adapter = null;
     try { if (harness) settings = await loadHarnessSettings(harnessesPath); }
     catch (error) { settingsError = error instanceof Error ? error.message : "The harness settings could not be read."; }
+    refreshRoster(settings); // the roster follows the settings actually read this pass
     const isTool = me.workerKind === "tool";
     let pass = { state: "idle" }, answeredEmpty = false, retryAfterMs;
     if (isTool && toolsError) {
@@ -2314,7 +2431,7 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
       else if (!claim && pass.state !== "unreachable") say(`Connected as ${me.displayName}. Waiting for work (${offers.length} offered).`);
       else if (claim) {
         say(`Claimed "${claim.title}" for ${isTool ? "the owner-declared local tool" : HARNESS_LABELS[harness]}.`);
-        const readMode = async () => operationsMode((await client.heartbeat()).operationsMode);
+        const readMode = async () => operationsMode((await client.heartbeat(tools?.capabilities ?? [], sessionRoster)).operationsMode);
         // The adapter never receives these; they are only checked against the
         // adapter's own answer afterward, so a leaked key cannot be sent on.
         const secrets = [current.secret, current.pendingSecret].filter(value => typeof value === "string" && value);
@@ -2331,13 +2448,21 @@ export async function runWorker({ configPath, harnessesPath = defaultHarnessSett
           + "run has stopped taking work; check this machine before starting it again.");
       }
     }
-    if (once) return Object.freeze(pass);
+    if (once) { stopPresence(); return Object.freeze(pass); }
+    stopPresence();
     if (pass.state === "unreachable") consecutiveFailures += 1;
     else consecutiveFailures = 0;
     if (pass.state !== "ran" && !answeredEmpty) {
       const localBackoff = pass.state === "unreachable" ? retryDelay(consecutiveFailures) : retryDelay(1);
-      await sleep(Number.isFinite(retryAfterMs) ? Math.max(localBackoff, retryAfterMs) : localBackoff);
+      await sleepOrStop(Number.isFinite(retryAfterMs) ? Math.max(localBackoff, retryAfterMs) : localBackoff);
     }
+  }
+  } finally {
+    // Reached by a normal `--once` return, a revoked key, a fatal error and a
+    // stop signal: in every one of those the owner should see a clean stop, and
+    // the signal listeners are removed so this process can exit normally.
+    unregisterStopSignals();
+    await shutdownPresence();
   }
 }
 
@@ -2474,6 +2599,8 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
           installRoot, configPath, config, advertised, currentVersion: CONNECTOR_VERSION,
           fetcher: runtime.fetcher, healthCheck: runtime.healthCheck }) });
       await serviceLogWrites;
+      // A deliberate stop is a clean exit (0): a service manager or a shell that
+      // sees a non-zero code would report a failure for an intended action.
       return pass.state === "unreachable" ? 1 : pass.state === "updated" ? 75 : 0;
     }
     const config = await recoverPending({ configPath, fetcher: runtime.fetcher });

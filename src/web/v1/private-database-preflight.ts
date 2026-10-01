@@ -29,8 +29,8 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 //    and the combine-input bindings) merged onto that ledger, then once more after
 //    0210's stored-set guard was corrected to key on `producer_kind` rather than
 //    `source_kind`;
-//  - THIS merge round, for the text-copy derivations: cook/v1 at 0238 plus 0212
-//    (the derivation record) and 0213 (its two read views).
+//  - this merge round: cook/v1 at 0238 plus 0212/0213 (text-copy derivations)
+//    and 0215-0220 (fleet presence and the owner surface cursor).
 //
 // Neither side's value survived the merge and neither could have. cook/v1's value
 // was derived from a tree with no 0212/0213; this branch's pre-merge value was
@@ -40,7 +40,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // is expected to appear anywhere.
 //
 // Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "b6825826157177bcd5170847b36c1eadb157a6cf2ccd20fb35046bfdd77f0acd";
+export const privateWebSchemaDigest = "cc4c093eeaa7bec08da9604f2c222f802ff6724c9647b712757df857915b58ee";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -48,7 +48,8 @@ export const privateWebSchemaDigest = "b6825826157177bcd5170847b36c1eadb157a6cf2
  * because the column audit still compares every column against the live grant, so an
  * unexpected fleet grant is refused either way. */
 export const privateWebFleetReadTables = ["fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials",
-  "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events",
+  "fleet_worker_presence", "fleet_worker_agents", "fleet_presence_transitions", "fleet_work_offers",
+  "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events",
   "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
@@ -113,7 +114,11 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   // cross-project read the view exists to prevent; a future migration that
   // granted the table to the web login therefore fails the preflight rather than
   // silently widening the owner.
-  "control_project_text_copy_derivations"] as const;
+  "control_project_text_copy_derivations",
+  // 0218 (cursor): the "since you last looked" boundary, one row per
+  // (tenant, identity, surface). The web login selects its own row and inserts
+  // it on first read; it never deletes one, so the boundary only moves forward.
+  "owner_surface_cursors"] as const;
 export const privateWebInsertTables = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -162,6 +167,10 @@ for (const table of ["control_skills", "control_skill_versions", "control_task_s
 privateWebInsertTables.add("control_task_declared_outputs");
 privateWebInsertTables.add("control_task_declared_inputs");
 privateWebInsertTables.add("control_job_artifact_inputs");
+// 0218 (cursor): the owner marks a surface seen. Insert-only, and the 0219
+// guard refuses any UPDATE that would lower seen_through, so acknowledging
+// cannot rewind the boundary and hide work that already finished.
+privateWebInsertTables.add("owner_surface_cursors");
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
  * table-wide INSERT grant on one of these tables fails the check. */
@@ -179,6 +188,7 @@ export const privateWebReadColumns: Record<string, readonly string[]> = {
 export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
+  owner_surface_cursors: ["seen_through", "updated_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_completion_gate_records: ["web_lock"],
   control_jobs: ["web_lock", "stage_kind", "stage_ordinal", "pipeline_run_id"],
@@ -331,6 +341,8 @@ coordinatorReads.push("control_planner_failure_counters", "control_planner_needs
 coordinatorInserts.add("control_planner_failure_counters");
 coordinatorInserts.add("control_planner_needs_you_items");
 coordinatorReads.push("installation_operations_mode_revisions");
+coordinatorReads.push("fleet_workers", "fleet_worker_presence", "fleet_worker_agents", "fleet_presence_transitions");
+coordinatorInserts.add("fleet_presence_transitions");
 coordinatorReads.push("control_skills", "control_skill_versions", "control_task_skill_bindings",
   "control_recurring_rules", "control_recurring_proposals");
 coordinatorInserts.add("control_recurring_proposals");
@@ -381,6 +393,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_project_delegation_policies: ["coordinator_lock"],
   control_project_coordination_operation_receipts: ["coordinator_lock"],
   control_project_coordination_operation_jobs: ["coordinator_lock"],
+  fleet_worker_presence: ["presence_state", "state_changed_at"],
+  fleet_worker_agents: ["presence_state", "state_changed_at"],
   control_work_resources: ["coordinator_lock"],
   control_attempt_resource_admissions: ["state", "version", "retired_at", "retirement_kind", "retirement_proof_digest"],
   control_attempt_resource_scopes: ["coordinator_lock"],

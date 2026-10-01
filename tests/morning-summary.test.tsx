@@ -33,8 +33,12 @@ async function mountMorning(fixtures: { activity?: unknown; attention?: unknown 
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const path = String(input);
-    if (path === "/api/v1/home/tasks") return Response.json(fixtures.activity ?? { active: [], recentResults: [],
+    // The Morning page asks for its own surface, so the path carries a query
+    // string; match on the route, not the whole path.
+    if (path.split("?")[0] === "/api/v1/home/tasks") return Response.json(fixtures.activity ?? { active: [], recentResults: [],
       additionalActiveOmitted: false, additionalResultsOmitted: false, resultSource: "not_configured",
+      cursor: { surface: "morning", mode: "since_last_look", firstVisit: false,
+        acknowledgeThrough: "2026-09-29T07:00:00.000Z" },
       observedAt: "2026-09-29T07:00:00.000Z", startsWork: false });
     if (path === "/api/v1/needs-me/tasks") return Response.json(fixtures.attention ?? { items: [], nextCursor: null,
       examined: 0, observedAt: "2026-09-29T07:00:00.000Z", startsWork: false,
@@ -69,6 +73,8 @@ test("a finished result and a waiting task each render their own count and link"
       artifact: { artifactId: "artifact:one", attemptId: "attempt:one", runId: "run:one", contentHash: `sha256:${"a".repeat(64)}`,
         sizeBytes: 42, receivedAt: "2026-09-29T03:00:00.000Z", byteCheck: "matched_recorded_claim", qualityAccepted: false },
     }], additionalActiveOmitted: false, additionalResultsOmitted: false, resultSource: "configured",
+      cursor: { surface: "morning", mode: "since_last_look", firstVisit: false,
+        acknowledgeThrough: "2026-09-29T07:00:00.000Z" },
       observedAt: "2026-09-29T07:00:00.000Z", startsWork: false },
     attention: { items: [{
       task: { projectId: "project:alpha", requestId: "request:beta", jobId: "job:review", title: "Review overnight PR", state: "waiting_approval",
