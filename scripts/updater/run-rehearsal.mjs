@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { pathToFileURL } from "node:url";
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { readRehearsalConfigV1 } from "../../src/updater/v1/rehearsal/config.mjs";
 import { runUpdaterRehearsalV1 } from "../../src/updater/v1/rehearsal/harness.mjs";
 
@@ -19,7 +19,7 @@ export async function main(args = process.argv.slice(2)) {
   return result.failed === 0 ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   main().then(code => { process.exitCode = code; }).catch(error => {
     process.stderr.write(`${error?.code ?? error?.message ?? "rehearsal_failed"}\n`); process.exitCode = 1;
   });

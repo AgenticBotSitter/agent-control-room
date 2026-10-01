@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Control Room worker connector. One file, no dependencies, Node 20 or newer.
 //
 // It runs on a worker machine and only ever connects OUT to the Control Room
@@ -15,7 +16,7 @@
 // widen permissions: the gateway has no such routes.
 
 import { createHash, randomBytes } from "node:crypto";
-import { constants as fsConstants, promises as fsPromises, realpathSync } from "node:fs";
+import { constants as fsConstants, promises as fsPromises } from "node:fs";
 import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile, chmod, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -2531,9 +2532,7 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   }
 }
 
-const invokedDirectly = (() => {
-  try { return process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1])); } catch { return false; }
-})();
+const invokedDirectly = isMainModuleV1(process.argv[1], import.meta.url);
 // Defer the CLI body until the bundle entry has registered its built-in
 // harness factory. Direct source execution still starts in the same turn.
 if (invokedDirectly) Promise.resolve().then(() => main()).then(code => { process.exitCode = code; });

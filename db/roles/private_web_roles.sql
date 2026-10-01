@@ -84,6 +84,50 @@ GRANT INSERT ON control_project_settings TO control_room_private_web;
 GRANT UPDATE (eligible_worker_kinds, max_concurrent_tasks, default_worker_kind, default_model,
   default_effort, version, updated_by_identity_id, updated_at) ON control_project_settings
   TO control_room_private_web;
+-- MIG-A (0201): the per-project orchestrator selection. Same owner-gated path and
+-- the same reason for a column-scoped grant -- the web login may change WHICH
+-- orchestrator the owner chose, never the row's identity, tenant or version
+-- bookkeeping through this path. Whether that selection still resolves is the
+-- application's check against the protected queue catalog on every run, not this
+-- column's constraint.
+GRANT UPDATE (planner_mode, planner_worker_id, planner_worker_kind, planner_model, planner_effort)
+  ON control_project_settings TO control_room_private_web;
+-- The orchestrator's split suggestions (0200) and its Needs-you ledger (0202).
+-- The web login holds NO table grant on either base table: it reads suggestions
+-- only through a current-revision-only view, because a stale suggestion is history
+-- and offering it would be offering the owner a plan against a revision that no
+-- longer exists. It must never be able to INSERT a suggestion -- a suggestion is an
+-- agent's proposal and this login is the owner's -- and it must never be able to
+-- clear a failure counter or raise an item. 0201's planner selection needs no
+-- grant at all here: 0135's SELECT on control_project_settings already covers the
+-- new columns.
+GRANT SELECT ON work_batch_current_split_suggestions, control_planner_open_needs_you,
+  control_project_planner_selections TO control_room_private_web;
+-- MIG-A 0203: the same EXECUTE the intake login holds, and for the same measured
+-- reason -- a view's WHERE clause is checked against session_user, so the owner
+-- login needs EXECUTE on the visibility predicate to read the current-split view
+-- it already has SELECT on. Without it the owner's own batch page 500s on a
+-- plain SELECT. The predicate is not a widening for this login: it returns one
+-- boolean about values the caller supplied, and its non-intake branch defers, so
+-- the owner's read is unchanged by 0203.
+GRANT EXECUTE ON FUNCTION work_intake_split_suggestion_visible(text, text, text)
+  TO control_room_private_web;
+-- MIG-A 0205: the ONE thing the owner may do to a planner failure counter, and
+-- deliberately that and nothing else. The comment above this file says the web
+-- login must "never be able to clear a failure counter or raise an item", and both
+-- still hold: this function cannot lower a count, cannot invent an escalation, and
+-- cannot touch a counter that is not one of the four scopes the requesting
+-- request itself computed. What it does is set a one-shot LATCH on a counter that
+-- is live at 2 or more, which lets the owner's next press run the planner once --
+-- the deliberate way out of an escalation that was otherwise permanent (N-B3).
+--
+-- It is SECURITY DEFINER and takes the scope keys as an argument rather than
+-- deriving them, so it is not a window onto the table: it is a single UPDATE with
+-- no other caller-controlled predicate, guarded by 0205's trigger. EXECUTE alone
+-- grants no SELECT on control_planner_failure_counters, and the preflight's
+-- function allowlist pins this one to the web and coordinator logins.
+GRANT EXECUTE ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[])
+  TO control_room_private_web;
 -- Project coordination page (attentionList, readDependencies): exactly the
 -- read, filter and join columns the composer names. No payload, deep_link or
 -- source columns and no writes; tenant scoping is the composer's WHERE clause.

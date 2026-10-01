@@ -50,7 +50,7 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
  * else, so after applying it onto current cook/v1 and running 0234's down, the
  * schema must come back to exactly what cook/v1 says it is.
  */
-// Re-pinned twice, for two separate reasons, and both are visible in the diff
+// Re-pinned three times, for three separate reasons, and all are visible in the diff
 // rather than buried:
 //  1. files part 2 (0209-0211, numbered before 0234) landed, so the pre-0234
 //     schema they produce became the before-state. Equals files2's own pre-0234
@@ -64,7 +64,14 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 //     byte. Carrying the old constant instead would have left this test green on
 //     a schema it no longer describes -- the failure mode the file's own header
 //     exists to prevent.
-const PRE_0234_DIGEST = "73ebc791e5800ff7a33d4d6ff18edddca06bc352b1bd2d3abc6ae85ee277bf85";
+//  3. The chief-of-staff merge. 0200-0205 (split suggestions and the planner
+//     tables) also sort before 0234, so the before-state moves a third time.
+//     Measured on real PostgreSQL 17 from the merged tree: the whole ledger is
+//     the committed privateWebSchemaDigest, 0234's down gives the value below,
+//     and taking 0205..0200's downs off that, newest first, gives the previous
+//     constant (`73ebc791...`) byte for byte -- so the move is 0200-0205 and
+//     nothing else.
+const PRE_0234_DIGEST = "5c5562866faf1221bb5f8da6e162da4f48f97c707ee540666a8dae1e07372d27";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {

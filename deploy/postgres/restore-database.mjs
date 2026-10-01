@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Operator restore tool around pg_restore. Effect-free unless --backup, --target
 // and --confirm-target are all supplied; without them it prints the planned steps.
 //   node deploy/postgres/restore-database.mjs --backup /srv/backups/cr-20260913 \
@@ -12,7 +13,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { computeDatabaseRestoreIdentity, verifyRestoredIdentity } from "./restore-identity.mjs";
 import { collectDatabaseEvidence, connectTarget, digestOf, targetCli } from "./evidence.mjs";
@@ -186,7 +186,7 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
   return { planned: false, targetFingerprint: digestOf(target), identityDigest: actual.identityDigest };
 }
 
-const invoked = resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url);
+const invoked = isMainModuleV1(process.argv[1], import.meta.url);
 if (invoked) {
   const args = process.argv.slice(2);
   try {

@@ -34,19 +34,125 @@ const fleetClaimFunction = "public.fleet_claim_is_live(text, text, text)";
 // function, and this one has to be named and checked.
 const ownerPushEndpointFunctions = new Set(["public.owner_push_endpoint_host(text)",
   "public.owner_push_endpoint_allowed(text)"]);
+// The chief-of-staff function grants (MIG-A 0203/0204/0205), each to the exact
+// role that may hold it.
+//
+// This list is CLOSED on purpose: it is the parser's statement of which function
+// privileges a Mac-local install may converge on, and a grant the list does not
+// know is refused rather than applied. That refusal is what the owner's install
+// path hit before this entry existed -- 0203, 0204 and 0205 each added a
+// `GRANT EXECUTE ON FUNCTION` and none was in the list, so `desiredMacGrantsV1`
+// threw `upgrade_grant_source_refused` on the documented clean-cluster journey
+// and on the 0108/0109 upgrade rungs (round 4, R4-B2: test:postgres-production
+// #36, #37 and #50).
+//
+// The role pin per function is what keeps this a check rather than an allowlist:
+//   * `work_intake_split_suggestion_visible` is the predicate 0203 calls from the
+//     current-split-suggestion VIEW's WHERE clause. A view's qual is checked
+//     against session_user, so BOTH logins that read that view need EXECUTE -- the
+//     intake login (production_table_grants.sql) and the owner's web login
+//     (private_web_roles.sql). Measured: without the web grant the owner's own
+//     batch page 500s on a plain SELECT.
+//   * `planner_failure_scope_key` is the immutable digest helper 0204's SECURITY
+//     DEFINER guard calls. The guard runs as the INSERTing role too, so the
+//     COORDINATOR login needs it or every escalation is refused with "permission
+//     denied for function planner_failure_scope_key".
+//   * `control_room_planner_grant_owner_retry` is 0205's one-shot latch. It is
+//     SECURITY DEFINER and the web login holds no privilege at all on the counter
+//     table, so the OWNER's web login is the actor that asks. The coordinator's
+//     grant is deliberately GONE here and in db/roles/task_coordinator_roles.sql:
+//     no coordinator code calls it, and leaving it would mean the coordinator
+//     could manufacture its own retry -- the authority the latch design exists to
+//     withhold. A convergent install revokes it, which is the correct direction.
+const plannerFunctions = new Map([
+  ["public.work_intake_split_suggestion_visible(text, text, text)",
+    new Set(["control_room_work_intake", "control_room_private_web"])],
+  ["public.planner_failure_scope_key(text, jsonb)", new Set(["control_room_task_coordinator"])],
+  ["public.control_room_planner_grant_owner_retry(text, text, text[])", new Set(["control_room_private_web"])],
+]);
 const knownFunctionGrant = object => object === workIntakeIdentityFunction || object === fleetEnrollmentFunction
   || object === fleetClaimFunction || ownerPushEndpointFunctions.has(object)
+  || plannerFunctions.has(object)
   || agentReviewFunctions.has(object);
 const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
   || (object === fleetEnrollmentFunction || object === fleetClaimFunction) && role === "control_room_fleet_gateway"
   || ownerPushEndpointFunctions.has(object) && role === "control_room_private_web"
+  || (plannerFunctions.get(object)?.has(role) ?? false)
   || agentReviewFunctions.has(object) && role === "control_room_agent_reviewer";
+/**
+ * A FUNCTION ARGUMENT TYPE, which is not an identifier: `text[]` is a one-element
+ * array of `text`, and 0205's grant function takes exactly that
+ * (`control_room_planner_grant_owner_retry(text, text, text[])`).
+ *
+ * `base[]` and `base` are both accepted, and nothing else. `[]` alone, a bare `*`,
+ * a qualified `pg_catalog.text[]`, or a shape with a space are refused, because
+ * this string is interpolated straight into a `GRANT ... ON FUNCTION` statement and
+ * a name that is not a type is not something to guess at. The array suffix is
+ * stripped before the identifier test so `text[]` and `text` cannot both reach the
+ * same catalogue row under two spellings.
+ */
+const argumentType = value => {
+  const array = value.endsWith("[]");
+  const base = array ? value.slice(0, -2) : value;
+  if (!identifier.test(base)) throw new Error("upgrade_grant_source_refused");
+  return array ? `${base}[]` : base;
+};
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");
   return value;
 };
 const tuple = ({ role, kind, object, column = "", privilege: right, is_grantable = false }) =>
   [role, kind, object, column, right, is_grantable ? "grantable" : "plain"].join("|");
+
+/** The `updater` schema is the UPDATER's, not this converger's, and it is not
+ * the release's to converge.
+ *
+ * WHY. The updater owns its schema and its role end to end. Its own DDL
+ * (`src/updater/v1/ddl/0002_schema.sql`) creates it, REVOKEs it from PUBLIC and
+ * re-GRANTs `USAGE ON SCHEMA updater` plus `EXECUTE` on `updater.authorization_complete`
+ * and `updater.bounded_transports` to `control_room_private_web`, and the loader
+ * re-asserts all three on every single run. Nothing in `db/roles/*.sql` names an
+ * `updater` object, so the desired set can never legitimately hold one — and
+ * `control_room_deployer`, which owns the schema, is deliberately absent from the
+ * role manifest, so this converger never creates, alters or revokes that role.
+ *
+ * WHAT WENT WRONG WITHOUT THIS, and it is worse than a failed upgrade. The
+ * catalog sees those three grants, `diffMacGrantsV1` calls them `extra` (they are
+ * in no desired file), and the converger emits a REVOKE for each. Two outcomes,
+ * both bad:
+ *
+ *   1. As the MIGRATOR — the release converger's login — the REVOKE fails
+ *      `permission denied for schema updater`, because the migrator holds
+ *      nothing there by design. MEASURED. The whole grant transaction rolls
+ *      back, so no retry past that point converges.
+ *   2. As `postgres` — which is the login THIS converger actually runs as
+ *      (`runMacDatabaseUpgradeCommandV1` refuses anything but the superuser) —
+ *      the REVOKE SUCCEEDS. MEASURED. There is no refusal to notice: the web
+ *      login silently loses USAGE on the schema and EXECUTE on the updater's own
+ *      guard functions, and the next release read fails on a database the
+ *      operator believes is fully upgraded. A schema-kind item has no allow-list
+ *      at all (`grantSql` guards only functions), so even the one path that
+ *      refuses for functions silently applies the schema one.
+ *
+ * So the filter cannot live at the statement generator alone, and it must not be
+ * `role === "control_room_private_web"`: the updater grants to `postgres` too
+ * (owner rights), and a schema can hold grants for any role. The predicate is
+ * therefore on the SCHEMA of the object, and it is applied at the two places an
+ * `updater` item could otherwise reach a GRANT or a REVOKE — see
+ * `macGrantRowsToSetV1` and `grantSql` below, which are the two ends of the
+ * pipeline.
+ */
+export const macUpdaterOwnedSchema = "updater";
+const updaterOwned = item => {
+  const object = String(item).split("|")[2] ?? "";
+  // `updater.x` and the bare schema name `updater` are both updater-owned. The
+  // `\.|$` anchor is what stops `updater_release_reader_roles.sql`-style names
+  // and any future `updater_x.y` relation from being silently skipped: only an
+  // exact `updater` schema prefix matches.
+  return object === macUpdaterOwnedSchema || object.startsWith(`${macUpdaterOwnedSchema}.`);
+};
+/** Whether the release's converger is allowed to act on this grant at all. */
+export const macReleaseOwnedGrantV1 = item => !updaterOwned(item);
 
 function splitCommas(source) {
   let depth = 0, part = "";
@@ -81,7 +187,7 @@ export function desiredMacGrantsV1(sources) {
           : null;
         if (objectKind === "FUNCTION" && !functionMatch) throw new Error("upgrade_grant_source_refused");
         const object = objectKind === "FUNCTION"
-          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${functionMatch[3].trim() ? splitCommas(functionMatch[3]).map(name).join(", ") : ""})`
+          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${functionMatch[3].trim() ? splitCommas(functionMatch[3]).map(argumentType).join(", ") : ""})`
           : objectKind === "SCHEMA" ? name(rawObject) : rawObject.split(".").map(name).join(".");
         if (!objectKind && !object.includes(".")) {
           if (!identifier.test(object)) throw new Error("upgrade_grant_source_refused");
@@ -150,7 +256,22 @@ UNION ALL
 -- after its grant had in fact been applied. quote_ident covers a type that has
 -- to be quoted; COALESCE keeps the zero-argument case rendering as empty.
 SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || COALESCE((SELECT string_agg(
-  pg_catalog.quote_ident(t.typname), ', ' ORDER BY u.ord)
+  CASE WHEN t.typelem <> 0 AND t.typlen = -1
+    -- AN ARRAY TYPE IS RECOGNISED BY ITS CATALOG SHAPE, NOT BY ITS NAME:
+    -- 'typelem' points at the element type and 'typlen = -1' is the varlena marker
+    -- every array type carries. ('typkind' is not a pg_type column and naming it
+    -- raised 42703 on the first real run -- checked against the live catalog
+    -- rather than recalled.)
+    -- Its catalog NAME is the element's with a leading underscore:
+    -- 'text[]' is stored as '_text', so spelling the catalog name verbatim makes
+    -- every array-typed signature read as a DIFFERENT function from the one the
+    -- role file grants. 0205's 'control_room_planner_grant_owner_retry(text, text,
+    -- text[])' is the only grant this touches, and the symptom is the backup
+    -- verifier reporting the same grant as both extra and missing at once:
+    -- 'database_backup_mac_grants_refused' with a diff whose two sides differ only
+    -- by 'text[]' against '_text'. The element type is what a GRANT spells.
+    THEN pg_catalog.quote_ident(t.typelem::regtype::text) || '[]'
+    ELSE pg_catalog.quote_ident(t.typname) END, ', ' ORDER BY u.ord)
   FROM unnest(p.proargtypes) WITH ORDINALITY AS u(oid, ord)
   JOIN pg_type t ON t.oid = u.oid), '') || ')', '', a.privilege_type, a.is_grantable
 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
@@ -163,8 +284,16 @@ export async function readMacGrantCatalogV1(client) {
   return macGrantRowsToSetV1(rows);
 }
 
+/** THE first of the two ends of the filter, and the one every path crosses:
+ * every path from catalogue rows to compared tuples goes through here — the live
+ * `readMacGrantCatalogV1`, and `planMacDatabaseUpgradeSnapshotV1`, which is handed
+ * a captured snapshot's rows directly and never calls the live reader. Filtering
+ * in either caller instead would have left the other one offering `updater` rows
+ * to `diffMacGrantsV1` as EXTRA. MEASURED: that is what made the whole upgrade
+ * path answer `upgrade_convergence_refused` while the `grantSql` refusal below
+ * was already in place. */
 export function macGrantRowsToSetV1(rows) {
-  return new Set(rows.map(row => tuple(row)));
+  return new Set(rows.map(row => tuple(row)).filter(macReleaseOwnedGrantV1));
 }
 
 export function diffMacGrantsV1(actual, desired) {
@@ -175,6 +304,13 @@ export function diffMacGrantsV1(actual, desired) {
 
 function grantSql(item, verb) {
   const [role, kind, object, column, right, grantable] = item.split("|");
+  // THE SECOND root of the filter: the statement itself. Reached when an
+  // `updater` item arrives from a route that never built a set through
+  // `macGrantRowsToSetV1` — a caller assembling a diff by hand. A REFUSAL and
+  // not a skip: the caller passed in a grant set this converger is not allowed
+  // to act on, and silently dropping one of a pair of statements would report a
+  // convergence it did not perform.
+  if (updaterOwned(item)) throw new Error("upgrade_updater_grant_refused");
   if (![...groups, ...Object.keys(macRolePlan)].includes(role) || !privilege.has(right))
     throw new Error("upgrade_grant_catalog_refused");
   if (grantable !== "plain" && grantable !== "grantable") throw new Error("upgrade_grant_catalog_refused");
@@ -182,6 +318,15 @@ function grantSql(item, verb) {
     if (!knownFunctionGrant(object) || verb === "GRANT" && !allowedFunctionGrant(role, object)
       || column || right !== "EXECUTE")
       throw new Error("upgrade_unexpected_function_grant");
+    // The signature is re-validated before it is interpolated into a GRANT. A
+    // function's argument list is types, and a type may be an array -- `text[]` --
+    // which `name()` refuses because it is not an identifier. The same
+    // `argumentType` the reader uses accepts it and nothing else, and the check is
+    // here rather than only in the reader because this string becomes SQL.
+    const signature = /^([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)\((.*)\)$/u.exec(object);
+    if (!signature) throw new Error("upgrade_grant_catalog_refused");
+    signature[1].split(".").map(name);
+    if (signature[2].trim() !== "") splitCommas(signature[2]).map(argumentType);
     return `${verb} EXECUTE ON FUNCTION ${object} ${verb === "GRANT" ? "TO" : "FROM"} ${role}`;
   }
   if (kind === "database") {

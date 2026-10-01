@@ -22,10 +22,10 @@
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",
-    "find": "  IF NOT EXISTS (SELECT 1 FROM updater.plans p WHERE p.plan_id = NEW.plan_id\n      AND p.state = 'approved' AND p.expires_at > pg_catalog.now()) THEN",
-    "replace": "  IF false THEN",
+    "find": "  IF TG_OP = 'INSERT' AND NOT EXISTS (SELECT 1 FROM updater.plans p WHERE p.plan_id = NEW.plan_id\n      AND p.state = 'approved' AND p.expires_at > pg_catalog.now()) THEN",
+    "replace": "  IF TG_OP = 'INSERT' AND false THEN",
     "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59510}\" node --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/updater-schema-postgres.test.ts",
-    "why": "a run must be bound to an approved, unexpired plan, or a refused or superseded plan can still install something"
+    "why": "a run must be bound to an approved, unexpired plan at INSERT — the only place a run comes into existence, and so the only place the check is load-bearing (review B2: re-asking on every UPDATE wedged a live run)"
   },
   {
     "file": "src/updater/v1/ddl/0003_guards.sql",

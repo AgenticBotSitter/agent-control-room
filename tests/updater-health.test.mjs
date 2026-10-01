@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHmac } from "node:crypto";
 import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UpdaterHealthEvaluatorV1, UpdaterScheduledHealthV1, loadRunningHealthPolicyV1,
   readUpdaterHealthProbeKeyV1 } from "../src/updater/v1/health.mjs";
 import { createHealthNonceV1, HealthNonceLedgerV1, healthRequestTagV1, healthResponseTagV1,
-  LOCAL_HOST_HEALTH_ENDPOINT_V1, UPDATER_HEALTH_ENDPOINT_V1, verifyHealthRequestV1 } from "../src/updater/v1/health-protocol.mjs";
+  LOCAL_HOST_HEALTH_ENDPOINT_V1, LOCAL_HOST_HEALTH_PURPOSE_V1, UPDATER_HEALTH_ENDPOINT_V1,
+  verifyHealthRequestV1 } from "../src/updater/v1/health-protocol.mjs";
 
 const NOW = Date.parse("2026-09-30T18:00:00.000Z");
 const STARTED = "2026-09-30T17:59:59.000Z";
@@ -22,10 +24,16 @@ function json(value, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
 }
 
+/** The compatibility route's tag, keyed on the purpose literal rather than on the
+ *  response object. `JSON.stringify` key order here IS the wire format, which is
+ *  why the object is written in the order all three callers write it. */
 function signedHost(nonce, overrides = {}) {
   const response = { schema: "control-room.local-host-health/v1", nonce, ready: true, pid: 4243,
     releaseId: "release-good", startedAt: "2026-09-30T17:59:59.500Z", ...overrides };
-  return { ...response, tag: healthResponseTagV1(KEY, LOCAL_HOST_HEALTH_ENDPOINT_V1, response) };
+  const material = JSON.stringify({ nonce: response.nonce, pid: response.pid,
+    purpose: LOCAL_HOST_HEALTH_PURPOSE_V1, ready: response.ready, releaseId: response.releaseId,
+    startedAt: response.startedAt });
+  return { ...response, tag: `hmac-sha256:${createHmac("sha256", KEY).update(material, "utf8").digest("hex")}` };
 }
 
 function signedWeb(nonce, overrides = {}) {
@@ -38,16 +46,25 @@ function fixture({ transport, host = {}, web = {}, forgeHost = false, forgeWeb =
   reads = COMPARISON_COUNTS,
   schemaDigest = DIGEST, gatewayHealth = { schema: "control-room.fleet-health/v1", ready: true, maintenance: false },
   workerHealth = { reconnectedCount: 1 }, manifestsHealthy = true, clock = () => NOW } = {}) {
+  // The two routes speak DIFFERENT protocols and the fixture asserts that,
+  // because that is the whole compatibility claim (lead decision: the new
+  // signed-request protocol applies to `/api/v1/updater-health` only).
+  //   * `/api/v1/local-host-health`: an UNSIGNED `{nonce}` body -- a `reqTag` is
+  //     refused 400 -- and a purpose-keyed response tag, as `mac:up`, the
+  //     installer's `checkWebHealthV1` and this evaluator all compute it.
+  //   * `/api/v1/updater-health`: `{nonce, reqTag}`, and a response-keyed tag.
+  // `healthRequestTagV1` no longer mints a tag for the old route at all, so a
+  // fixture that posted one there could not be written honestly.
   const defaultTransport = async (url, init) => {
     if (url.endsWith("/fleet/v1/health"))
       return json(gatewayHealth);
     const request = JSON.parse(init.body);
-    assert.equal(request.reqTag, healthRequestTagV1(KEY, request.nonce,
-      url.endsWith(LOCAL_HOST_HEALTH_ENDPOINT_V1) ? LOCAL_HOST_HEALTH_ENDPOINT_V1 : UPDATER_HEALTH_ENDPOINT_V1));
     if (url.endsWith(LOCAL_HOST_HEALTH_ENDPOINT_V1)) {
+      assert.deepEqual(Object.keys(request), ["nonce"], "the compatibility route takes an unsigned {nonce}");
       const response = signedHost(request.nonce, host);
       return json(forgeHost ? { ...response, tag: `hmac-sha256:${"0".repeat(64)}` } : response);
     }
+    assert.equal(request.reqTag, healthRequestTagV1(KEY, request.nonce, UPDATER_HEALTH_ENDPOINT_V1));
     const response = signedWeb(request.nonce, web);
     return json(forgeWeb ? { ...response, tag: `hmac-sha256:${"0".repeat(64)}` } : response);
   };
@@ -62,16 +79,25 @@ function fixture({ transport, host = {}, web = {}, forgeHost = false, forgeWeb =
 }
 
 test("health request authentication rejects missing, forged, replayed and stale nonces under 10k fuzz", () => {
-  const ledger = new HealthNonceLedgerV1(), endpoint = LOCAL_HOST_HEALTH_ENDPOINT_V1;
+  // The signed protocol's endpoint. The compatibility route has no signed
+  // protocol: `healthRequestTagV1` refuses it outright, asserted below.
+  const ledger = new HealthNonceLedgerV1(), endpoint = UPDATER_HEALTH_ENDPOINT_V1;
   for (let index = 0; index < 10_000; index += 1) {
     const nonce = createHealthNonceV1(NOW, size => {
       const bytes = Buffer.alloc(size); bytes.writeUInt32BE(index, size - 4); return bytes;
     });
-    const variants = [
+    // The cross-endpoint variant is written by HAND, not with
+  // `healthRequestTagV1(KEY, nonce, LOCAL_HOST_HEALTH_ENDPOINT_V1)`: that helper
+  // now refuses the compatibility route (it must, or a new caller could adopt the
+  // wrong protocol), so calling it here would throw instead of producing the
+  // forged-body variant. The bytes are the same material the old route would
+  // have used, which is the point: a tag for one endpoint must not verify the other.
+  const variants = [
       { nonce },
       { nonce: "short", reqTag: `hmac-sha256:${"0".repeat(64)}` },
       { nonce, reqTag: `hmac-sha256:${"0".repeat(64)}` },
-      { nonce, reqTag: healthRequestTagV1(KEY, nonce, UPDATER_HEALTH_ENDPOINT_V1) },
+      { nonce, reqTag: `hmac-sha256:${createHmac("sha256", KEY).update(
+        `request\0${nonce}${LOCAL_HOST_HEALTH_ENDPOINT_V1}`, "utf8").digest("hex")}` },
       { nonce, reqTag: `hmac-sha256:${"0".repeat(64)}`, extra: true },
     ];
     assert.throws(() => verifyHealthRequestV1({ key: KEY, endpoint,
@@ -91,6 +117,10 @@ test("health request authentication rejects missing, forged, replayed and stale 
     value: { nonce: future, reqTag: healthRequestTagV1(KEY, future, endpoint) }, ledger, now: NOW }), /health_request_stale/u);
   assert.throws(() => verifyHealthRequestV1({ key: KEY, endpoint, value: { nonce }, ledger, now: NOW }),
     /health_request_refused/u);
+  // A tag minted for the OTHER endpoint must not be accepted here, and one
+  // cannot even be minted for the compatibility route.
+  assert.throws(() => healthRequestTagV1(KEY, nonce, LOCAL_HOST_HEALTH_ENDPOINT_V1),
+    /health_endpoint_refused/u, "no signed request tag may be minted for /api/v1/local-host-health");
 });
 
 test("the full evaluator accepts only matching signed counts, release, schema, generation, gateway, workers and manifests", async () => {
@@ -132,7 +162,7 @@ test("bad or missing evidence fails closed and a dropped request can be retried"
   await assert.rejects(fixture().sample({ ...EXPECTATION, releaseId: "" }), /updater_health_expectation_refused/u);
   let dropped = true;
   const healthy = fixture(), retrying = fixture({ transport: async (url, init) => {
-    if (dropped && url.endsWith(LOCAL_HOST_HEALTH_ENDPOINT_V1)) { dropped = false; throw new Error("dropped"); }
+    if (dropped && url.endsWith(UPDATER_HEALTH_ENDPOINT_V1)) { dropped = false; throw new Error("dropped"); }
     return healthy.transport(url, init);
   } });
   assert.equal((await retrying.sample(EXPECTATION)).healthy, false);

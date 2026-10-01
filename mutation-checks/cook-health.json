@@ -36,10 +36,10 @@
   },
   {
     "file": "src/updater/v1/health.mjs",
-    "find": "if (!healthResponseTagMatchesV1(key, LOCAL_HOST_HEALTH_ENDPOINT_V1, response, value.tag))",
-    "replace": "if (false)",
+    "find": "if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes))\n    throw updaterRefuseV1(\"updater_host_health_auth_refused\");",
+    "replace": "if (false)\n    throw updaterRefuseV1(\"updater_host_health_auth_refused\");",
     "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
-    "why": "the evaluator must reject a forged host response even when every visible field looks healthy"
+    "why": "the evaluator must reject a forged cook/v1 host response, whose tag is purpose-keyed rather than response-keyed"
   },
   {
     "file": "src/updater/v1/health.mjs",
@@ -155,10 +155,10 @@
   },
   {
     "file": "src/web/v1/mac-local-web-process.ts",
-    "find": "const { nonce } = await authenticateHealthRequest(request, LOCAL_HOST_HEALTH_ENDPOINT_V1);",
+    "find": "const { nonce } = await authenticateHealthRequest(request, UPDATER_HEALTH_ENDPOINT_V1);",
     "replace": "const { nonce } = { nonce: \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\" };",
-    "test": "node --import tsx --test --test-name-pattern='both health endpoints' tests/updater-health-web.test.ts",
-    "why": "the web process must authenticate the request before rendering any health response"
+    "test": "node --import tsx --test --test-name-pattern='updater-health requires a fresh' tests/updater-health-web.test.ts",
+    "why": "the NEW updater-health route must authenticate its request before rendering any response"
   },
   {
     "file": "src/web/v1/mac-local-web-process.ts",
@@ -180,5 +180,26 @@
     "replace": "|| counts.homeRenderBytes > 4_194_304 || false)",
     "test": "node --test --test-name-pattern='matching signed counts' tests/updater-health.test.mjs",
     "why": "the production web login must prove INSERT privilege on updater plan approvals"
+  },
+  {
+    "file": "src/updater/v1/health-protocol.mjs",
+    "find": "if (endpoint !== UPDATER_HEALTH_ENDPOINT_V1) refuse(\"health_endpoint_refused\");",
+    "replace": "if (false) refuse(\"health_endpoint_refused\");",
+    "test": "node --test --test-name-pattern='10k fuzz' tests/updater-health.test.mjs",
+    "why": "no signed request tag may be minted for the compatibility route /api/v1/local-host-health, or a new caller adopts the wrong protocol"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "const tag = hmacSha256Tag(options.healthProbeKey!,\n          { purpose: \"local-host-health/v1\", nonce, pid, ready, releaseId, startedAt });",
+    "replace": "const tag = hmacSha256Tag(options.healthProbeKey!,\n          { nonce, pid, ready, releaseId, startedAt });",
+    "test": "node --import tsx --test --test-name-pattern='keeps cook/v1' tests/updater-health-web.test.ts",
+    "why": "the compatibility route's response tag must stay keyed on the purpose literal, which is the material mac:up and the installer verify"
+  },
+  {
+    "file": "src/web/v1/mac-local-web-process.ts",
+    "find": "if (url.pathname === \"/api/v1/updater-health\") {",
+    "replace": "if (false) {",
+    "test": "node --import tsx --test --test-name-pattern='updater-health requires a fresh' tests/updater-health-web.test.ts",
+    "why": "the new signed-request route must exist on its own path, separate from the compatibility route"
   }
 ]

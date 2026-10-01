@@ -30,6 +30,7 @@ const requiredFiles = Object.freeze([
   "scripts/verify-signed-release.mjs",
   "scripts/run-private-vps.mjs",
   "scripts/run-private-local-installation-operator.mjs",
+  "src/installer/shared/is-main-module.mjs",
   "src/installer/v1/local-installation-release.mjs",
   "src/installer/v1/signed-release-verifier.mjs",
 ]);

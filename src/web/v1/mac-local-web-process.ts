@@ -45,12 +45,20 @@ import { RecurringRuleServiceV1 } from "../../recurring/v1";
 import { ReusableSkillServiceV1 } from "../../skills/v1";
 import { createRecurringRuleHttpHandlerV1 } from "./recurring-rule-http";
 import { createReusableSkillHttpHandlerV1 } from "./reusable-skill-http";
+import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-owner";
+import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
+import { hmacSha256Tag } from "../../security";
+// The updater's OWN health endpoints. `/api/v1/local-host-health` keeps the
+// cook/v1 protocol EXACTLY (unsigned request, purpose-keyed response tag) and
+// does not use anything from here: `UPDATER_HEALTH_ENDPOINT_V1` and its
+// helpers are imported here only for the NEW route below, and the lead's
+// decision is that the signed-request protocol applies to that route alone.
 import { captureUpdaterHealthCountsV1, HealthNonceLedgerV1, healthResponseTagV1,
-  LOCAL_HOST_HEALTH_ENDPOINT_V1, UPDATER_HEALTH_ENDPOINT_V1,
-  verifyHealthRequestV1 } from "../../updater/v1/health-protocol.mjs";
+  UPDATER_HEALTH_ENDPOINT_V1, verifyHealthRequestV1 } from "../../updater/v1/health-protocol.mjs";
 import type { UpdaterHealthWebReadPortV1 } from "../../updater/v1/health-ports";
 import type { UpdaterHomeStatusReaderV1 } from "./updater-home-status";
 import { updaterOwnerRequestSchemaV1, type UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
+
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
@@ -108,6 +116,8 @@ export interface MacLocalWebProcessOptionsV1 {
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   /** The same protected authority captured by the coordinator lifecycle. */
   workBatchQueueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
+  /** Optional owner chief-of-staff bridge supplied by the host composition. */
+  orchestration?: ProjectOrchestrationOwnerPortV1;
   /** Host-owned append-only projection; this wrapper receives no writer. */
   projectEvents?: ProjectEventReadSourceV1;
   /** Host-generation display state built only after pinned executable
@@ -241,6 +251,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     options.workBatchQueueCatalog, options.workBatchQueueAdmissionAuthority) : undefined;
   const workBatchHttp = workBatches ? createWorkBatchOwnerHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: workBatches, clock }) : undefined;
+  const orchestrationHttp = options.orchestration ? createProjectOrchestrationHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: options.orchestration, clock }) : undefined;
   const pipelines = options.workBatchIntegrityKey ? new LinearPipelineServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey,
     options.workBatchQueueAdmissionAuthority, clock) : undefined;
@@ -423,19 +435,32 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           throw new WebAccessError("not_found");
         if (url.origin !== options.origin) throw new WebAccessError("access_denied");
         sessions.assertLocalRequest(request, true);
-        const { nonce } = await authenticateHealthRequest(request, LOCAL_HOST_HEALTH_ENDPOINT_V1);
-        const pid = options.hostProcessId,
-          releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!;
-        // `ready` is the process's REAL readiness, not a constant true. This is
-        // cook/updaterland's improvement, kept: an endpoint that always reports
-        // ready cannot report an outage, and the §8.4 evaluator refuses anything
-        // but `ready === true` -- so reporting the truth can only make health
-        // fail earlier, never pass wrongly. `ready` is inside the signed
-        // response, so a proxy cannot forge it either.
-        const response = { schema: "control-room.local-host-health/v1", nonce, ready: isReady(), pid, releaseId,
-          startedAt };
-        const tag = healthResponseTagV1(options.healthProbeKey!, LOCAL_HOST_HEALTH_ENDPOINT_V1, response);
-        return Response.json({ ...response, tag },
+        if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
+          || !request.body) throw new WebAccessError("invalid_request");
+        const body = await readBoundedJson(request.body, 256);
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.getPrototypeOf(body) !== Object.prototype
+          || Object.keys(body).length !== 1 || typeof (body as { nonce?: unknown }).nonce !== "string"
+          || !/^[A-Za-z0-9_-]{43}$/u.test((body as { nonce: string }).nonce))
+          throw new WebAccessError("invalid_request");
+        // cook/v1's protocol, byte for byte, and it is a COMPATIBILITY SURFACE
+        // with three existing callers that were written against it: `mac:up`'s
+        // readiness probe, the installer's `checkWebHealthV1` final health check
+        // on install night, and the updater's own §8.4 evaluator. The request is
+        // an UNSIGNED `{nonce}` and the response tag is keyed on
+        // `{purpose: "local-host-health/v1", nonce, pid, ready, releaseId,
+        // startedAt}`; the signed-request protocol in health-protocol.mjs applies
+        // ONLY to `/api/v1/updater-health` below.
+        //
+        // `ready` is the process's REAL readiness, not a constant true, and that
+        // IS updaterland's change and is kept: an endpoint that always reports
+        // ready cannot report an outage, every one of those three callers refuses
+        // anything but `ready === true`, and `ready` is inside the signed
+        // response, so a proxy cannot forge it.
+        const nonce = (body as { nonce: string }).nonce, pid = options.hostProcessId,
+          releaseId = options.healthReleaseId!, startedAt = options.healthStartedAt!, ready = isReady();
+        const tag = hmacSha256Tag(options.healthProbeKey!,
+          { purpose: "local-host-health/v1", nonce, pid, ready, releaseId, startedAt });
+        return Response.json({ schema: "control-room.local-host-health/v1", ready, pid, nonce, releaseId, startedAt, tag },
           { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/updater-health") {
@@ -663,6 +688,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/recurring-rules(?:\/|$)/.test(url.pathname)) return recurringRuleHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/skills(?:\/|$)/.test(url.pathname)) return reusableSkillHttp(request);
+      if (orchestrationHttp && (/^\/api\/v1\/projects\/[^/]+\/orchestration(?:-settings)?$/.test(url.pathname)
+        || /^\/api\/v1\/projects\/[^/]+\/pipelines\/[^/]+\/suggestions(?:\/|$)/.test(url.pathname)))
+        return orchestrationHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
       if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
       if (resultFileHttp && /^\/api\/v1\/projects\/[^/]+\/result-files(?:\/|$)/.test(url.pathname))

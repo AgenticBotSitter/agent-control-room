@@ -1,7 +1,7 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 // Read-only contribution cost report: worker, reviewer and lead phases with
 // honest unknown handling, similar-work grouping, and a sample threshold below
 // which delegation and direct-build methods are shown without a winner.
-import { pathToFileURL } from "node:url";
 import { parseHandoff } from "./review-handoff-controller.mjs";
 import { addCounts, exactField, median, parseReportedMetrics, parseReportedModel,
   renderDuration, summarizeIssueCycleTimes } from "./public-model-outcomes.mjs";
@@ -540,5 +540,5 @@ async function main() {
   const report = await readContributionMetrics({ ...options, token: process.env.GITHUB_TOKEN });
   console.log(options.json ? JSON.stringify(report, null, 2) : renderContributionMetrics(report));
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(error => { console.error(`public-contribution-metrics: ${error.message}`); process.exitCode = 1; });

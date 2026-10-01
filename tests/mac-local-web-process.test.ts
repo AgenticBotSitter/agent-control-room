@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
 import test, { after } from "node:test";
-import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
+import { hmacSha256Tag, InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
@@ -11,8 +10,6 @@ import { createPrivatePgDriver } from "../src/web/v1/private-pg-driver";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 import { nodeExchange } from "./helpers/web-node";
-import { createHealthNonceV1, healthRequestTagV1, healthResponseTagV1,
-  LOCAL_HOST_HEALTH_ENDPOINT_V1 } from "../src/updater/v1/health-protocol.mjs";
 
 after(closePrivateOwnerBootstrapConformanceDatabase);
 
@@ -47,30 +44,15 @@ test("an uncertain write makes health unready and a supervised replacement serve
   "concurrent callers after the uncertain write must fail closed without reaching the old pool");
   assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "COMMIT"]);
 
-  // Each nonce must be a REAL one -- `createHealthNonceV1` at the CURRENT clock,
-  // because verifyHealthRequestV1 rejects a nonce whose embedded issued-at falls
-  // outside the fixed window around the server's own clock, and this app is
-  // built with no injected clock, so that clock is `Date.now()`. (Using this
-  // file's `conformanceNow` constant instead minted a nonce 17 days stale and
-  // every probe was refused 403.) Each also carries its `reqTag`, which
-  // verifyHealthRequestV1's exactObject(["nonce","reqTag"]) requires after the
-  // merge into cook/v1 brought in item 14's request-signing contract. The
-  // assertion below is about a health-probe BURST exposing the outage, so the
-  // probes have to be well-formed enough to reach the signed response at all.
-  const nonces = Array.from({ length: 50 }, () =>
-    createHealthNonceV1(Date.now(), size => randomBytes(size)));
+  const nonces = Array.from({ length: 50 }, (_, index) => Buffer.alloc(32, index + 1).toString("base64url"));
   const health = await Promise.all(nonces.map(nonce => app.handle(new Request(`${origin}/api/v1/local-host-health`, {
-    method: "POST", headers: { origin, "content-type": "application/json" },
-    body: JSON.stringify({ nonce, reqTag: healthRequestTagV1(key, nonce, LOCAL_HOST_HEALTH_ENDPOINT_V1) }),
+    method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }),
   }), () => new Response("unused"))));
   assert.equal(health.every(response => response.status === 200), true);
   const bodies = await Promise.all(health.map(response => response.json())) as Array<Record<string, unknown>>;
   assert.equal(bodies.every(body => body.ready === false), true, "a health-probe burst must expose the outage");
-  // The tag is over the SIGNED response in item 14's contract (health-protocol.mjs),
-  // which is the one cook/updaterland's inline hmacSha256Tag was merged away from.
-  assert.equal(bodies[0]?.tag, healthResponseTagV1(key, LOCAL_HOST_HEALTH_ENDPOINT_V1,
-    { schema: "control-room.local-host-health/v1", nonce: nonces[0], ready: false, pid, releaseId: "dev",
-      startedAt }));
+  assert.equal(bodies[0]?.tag, hmacSha256Tag(key,
+    { purpose: "local-host-health/v1", nonce: nonces[0], pid, ready: false, releaseId: "dev", startedAt }));
   await app.close();
 
   let laterQueries = 0;
@@ -131,13 +113,11 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   }
   const signedOutWrite = await app.handle(request("/projects", { method: "POST" }), () => new Response("unused"));
   assert.equal(signedOutWrite.status, 401);
-  const healthKey = new Uint8Array(32).fill(9);
-  const nonce = createHealthNonceV1(conformanceNow, size => Buffer.alloc(size, 1));
-  const reqTag = healthRequestTagV1(healthKey, nonce, LOCAL_HOST_HEALTH_ENDPOINT_V1);
+  const nonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   const wrongHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
     origin, "content-type": "application/json" }, body: JSON.stringify({ nonce: "short" }) }),
   () => new Response("unused"));
-  assert.equal(wrongHealth.status, 403); assert.equal(wrongHealth.headers.get("set-cookie"), null);
+  assert.equal(wrongHealth.status, 400); assert.equal(wrongHealth.headers.get("set-cookie"), null);
   const unsignedHealth = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
     "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
   assert.equal(unsignedHealth.status, 403, "even the correct code needs the exact loopback Origin");
@@ -145,12 +125,13 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     origin: trustedOrigin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
   assert.equal(remoteHealth.status, 403, "the readiness oracle exists only on the loopback origin");
   const health = await app.handle(request("/api/v1/local-host-health", { method: "POST", headers: {
-    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce, reqTag }) }), () => new Response("unused"));
+    origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }), () => new Response("unused"));
   assert.equal(health.status, 200); assert.equal(health.headers.get("set-cookie"), null);
   assert.deepEqual(await health.json(), { schema: "control-room.local-host-health/v1", ready: true, pid: 4_243, nonce,
-    releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z", tag: healthResponseTagV1(healthKey,
-      LOCAL_HOST_HEALTH_ENDPOINT_V1, { schema: "control-room.local-host-health/v1", nonce, ready: true,
-        pid: 4_243, releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });  const healthRead = await app.handle(request("/api/v1/local-host-health"), () => new Response("unused"));
+    releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z", tag: hmacSha256Tag(new Uint8Array(32).fill(9),
+      { purpose: "local-host-health/v1", nonce, pid: 4_243, ready: true,
+        releaseId: "dev", startedAt: "2026-09-30T00:00:00.000Z" }) });
+  const healthRead = await app.handle(request("/api/v1/local-host-health"), () => new Response("unused"));
   assert.equal(healthRead.status, 404, "health is an authenticated POST, not a public read");
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));

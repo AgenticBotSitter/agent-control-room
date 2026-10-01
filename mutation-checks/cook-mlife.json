@@ -1,8 +1,8 @@
 [
   {
     "file": "tests/postgres-production-lifecycle.test.mjs",
-    "find": "    if (kept.length === 0 || survivors.length === 0) continue;\n    rebuilt.push(`${matched[1]} ${kept.join(\", \")} ON ${survivors.join(\", \")}`",
-    "replace": "    if (kept.length === 0 || survivors.length === 0) continue;\n    continue;\n    rebuilt.push(`${matched[1]} ${kept.join(\", \")} ON ${survivors.join(\", \")}`",
+    "find": "    if (kept.length === 0 || survivors.length === 0) continue;\n    // The `FUNCTION` keyword is part of the object list",
+    "replace": "    if (kept.length === 0 || survivors.length === 0) continue;\n    continue;\n    // The `FUNCTION` keyword is part of the object list",
     "test": "node --import tsx --test --test-name-pattern \"staged grants keep\" tests/postgres-production-lifecycle.test.mjs",
     "why": "the staged grants file keeps the revoke on the relations the staged release still has"
   },

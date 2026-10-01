@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /** The database half of `cr-db-upgrade` (deploy/vps/cr-db-upgrade). The root
  * wrapper runs it only as the `postgres` account, from a clean staged clone of
  * the approved commit. `plan` is read-only. `apply` checks again, refuses a
@@ -5,7 +6,6 @@
  * A login code arrives on stdin and is never printed or written to a file. */
 import { mkdir, rm, statfs, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { connectTarget, readSchemaDigest } from "../../deploy/postgres/evidence.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../ops/backup-database.mjs";
 import { databaseRoleManifestV1 as manifest } from "./database-role-manifest.mjs";
@@ -129,7 +129,7 @@ export async function runMacDatabaseUpgradeVpsStepV1({ args, readCode = readStdi
   } finally { await verify.end(); }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   let stage = "plan";
   try {
     await runMacDatabaseUpgradeVpsStepV1({ args: process.argv.slice(2), onStage: next => { stage = next; } });

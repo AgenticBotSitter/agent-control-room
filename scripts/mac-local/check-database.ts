@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { Client } from "pg";
 import { createPrivatePostgresDatabase, privatePostgresOptions, type PrivatePostgresConfiguration } from "../../src/web/v1/private-postgres";
 import { loadMacLocalDatabaseRolesFromRootV1 } from "./load-protected-configuration";
@@ -112,7 +113,7 @@ export async function checkMacLocalDatabaseV1(protectedRoot: string,
   return exitCode;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const root = process.argv[2];
   if (!root || process.argv.length !== 3) {
     process.stdout.write("Usage: pnpm mac:check-database /absolute/Protected\n");

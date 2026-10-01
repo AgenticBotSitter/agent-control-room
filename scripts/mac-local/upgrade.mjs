@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /**
  * Owner-attended Mac half of the two-command database upgrade. It deliberately
  * delegates start, stop, and login handling to the existing guarded commands.
@@ -231,7 +232,7 @@ export function parseMacUpgradeArgumentsV1(args) {
   return { protectedRoot: root, rollback };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try { await runMacUpgradeV1(parseMacUpgradeArgumentsV1(process.argv.slice(2))); }
   catch (error) {
     const code = error instanceof Error && /^upgrade_[a-z_]+$/u.test(error.message) ? error.message : "upgrade_failed";

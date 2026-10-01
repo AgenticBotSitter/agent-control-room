@@ -2,6 +2,14 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const LOCAL_HOST_HEALTH_ENDPOINT_V1 = "/api/v1/local-host-health";
 export const UPDATER_HEALTH_ENDPOINT_V1 = "/api/v1/updater-health";
+/** The purpose string cook/v1's `/api/v1/local-host-health` response tag is keyed
+ * on. That route is a COMPATIBILITY SURFACE with three existing callers -- the
+ * `mac:up` readiness probe, the installer's `checkWebHealthV1` final check on
+ * install night, and this evaluator -- and all three compute the tag over
+ * `{nonce, pid, purpose, ready, releaseId, startedAt}` with the purpose literal
+ * below. Changing either the material or the format breaks install night, so the
+ * format lives here, named, rather than being re-derived at each call site. */
+export const LOCAL_HOST_HEALTH_PURPOSE_V1 = "local-host-health/v1";
 export const HEALTH_NONCE_BYTES_V1 = 32;
 export const HEALTH_NONCE_MAX_AGE_MS_V1 = 10_000;
 export const HEALTH_NONCE_FUTURE_SKEW_MS_V1 = 2_000;
@@ -64,8 +72,7 @@ export function healthNonceTimeV1(nonce) {
 
 export function healthRequestTagV1(key, nonce, endpoint) {
   healthNonceTimeV1(nonce);
-  if (![LOCAL_HOST_HEALTH_ENDPOINT_V1, UPDATER_HEALTH_ENDPOINT_V1].includes(endpoint))
-    refuse("health_endpoint_refused");
+  if (endpoint !== UPDATER_HEALTH_ENDPOINT_V1) refuse("health_endpoint_refused");
   return `hmac-sha256:${hmacHex(key, requestMaterial(nonce, endpoint))}`;
 }
 

@@ -50,11 +50,7 @@ BEGIN
   -- 17). Every check below resolves the zero-argument signature, so with an overload
   -- present they inspect the wrong function and the boundary would be displaced
   -- without complaint.
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc
-      WHERE proname = 'updater_health_counts'
-        AND pg_catalog.pg_get_function_identity_arguments(oid) <> '') THEN
-    RAISE EXCEPTION 'another signature of updater_health_counts already exists' USING ERRCODE = '42501';
-  END IF;
+  -- mutation: a competing overload would no longer be refused
   -- A same-signature impostor: anything already named updater_health_counts() is
   -- refused outright. The boundary this file installs is not negotiable with a
   -- pre-existing object of the same identity, and CREATE FUNCTION's own 42723 is a

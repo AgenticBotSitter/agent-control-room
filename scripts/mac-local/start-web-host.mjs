@@ -1,4 +1,5 @@
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
+import { fileURLToPath } from "node:url";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { isAbsolute, resolve } from "node:path";
@@ -176,6 +177,6 @@ async function main() {
   process.once("SIGTERM", () => { void stop(); });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   void main().catch(error => { console.error(`mac-local-host: ${error.message}`); process.exitCode = 1; });
 }

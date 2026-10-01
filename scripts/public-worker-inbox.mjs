@@ -1,4 +1,4 @@
-import { pathToFileURL } from "node:url";
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { spawnSync } from "node:child_process";
 import { parseClaimPacket, parseClaimMarker as parseControllerClaim, parseExpiredMarker,
   verifiedLockScopes, evaluateAdmissionDecision, observeMainBase } from "./automatic-claim-controller.mjs";
@@ -364,5 +364,5 @@ async function main() {
     : renderWorkerInbox(options.workerId, actions));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(error => { console.error(`public-worker-inbox: ${error.message}`); process.exitCode = 1; });

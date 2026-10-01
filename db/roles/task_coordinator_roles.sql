@@ -150,4 +150,58 @@ GRANT UPDATE (signal_sequence, fingerprint, trust, observed_at, expires_at, payl
   ON control_node_fleet_current TO control_room_task_coordinator;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_task_coordinator;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_task_coordinator;
+-- MIG-A (0201, 0202): the orchestrator's selection read and its durable run
+-- bookkeeping. 0201's planner columns ride on the existing 0135 SELECT, so the
+-- coordinator holds nothing new there. For 0202 it holds SELECT and INSERT on the
+-- counter plus a five-column UPDATE that guard_planner_failure_counter_write
+-- constrains to exactly two transitions, and SELECT plus INSERT on the append-only
+-- ledger. It holds NO UPDATE or DELETE on either table, so a recorded escalation
+-- cannot be edited afterwards, and no privilege on either of the owner views.
+GRANT SELECT, INSERT ON control_planner_failure_counters TO control_room_task_coordinator;
+-- The sixth column is 0205's `owner_retry_cleared_at`, and it is the SPEND, not
+-- the grant: the retry latch is cleared by the run it authorised, so a granted
+-- retry cannot authorise a second one. The coordinator can therefore UNSET a latch
+-- and never SET one -- setting it is 0205's SECURITY DEFINER function, which
+-- refuses anything but a live counter at >= 2 -- and the guard trigger admits
+-- exactly that one transition.
+GRANT UPDATE (failure_count, last_failure_at, cleared_at, version, updated_at, owner_retry_cleared_at)
+  ON control_planner_failure_counters TO control_room_task_coordinator;
+GRANT SELECT, INSERT ON control_planner_needs_you_items TO control_room_task_coordinator;
+-- MIG-A 0204: EXECUTE on the failure-scope key helper. 0204's guard trigger calls
+-- it as the table owner, but the coordinator's own INSERT fires that trigger, and
+-- PostgreSQL checks EXECUTE for the INSERTing role as well -- measured: without
+-- this every escalation is refused with "permission denied for function
+-- planner_failure_scope_key", which reads as a broken guard rather than a missing
+-- grant. The grant is issued HERE rather than in the migration for the same reason
+-- the intake login's predicate grant is: this file runs after
+-- `ALTER DEFAULT PRIVILEGES ... REVOKE ALL ON FUNCTIONS FROM PUBLIC`, and it is
+-- the only file where the coordinator role exists.
+--
+-- The helper is IMMUTABLE and a pure function of a kind plus a jsonb preimage the
+-- caller already holds, so EXECUTE discloses nothing the login could not compute.
+GRANT EXECUTE ON FUNCTION planner_failure_scope_key(text, jsonb) TO control_room_task_coordinator;
+
+-- MIG-A 0205: NO EXECUTE on the owner's deliberate retry for the coordinator, and
+-- that is a change rather than an omission. Round 4 measured the consequence of
+-- having granted it: the coordinator login can set `owner_retry_cleared_at`
+-- directly, and can clear an escalated counter with no success at all -- so the
+-- "the only login that can ask is the owner's own web login" and "the
+-- coordinator holds no UPDATE on the column" claims were both false on a
+-- database built from these files.
+--
+-- The impact was low (the coordinator could always clear counters since 0202, so
+-- the loop bound was never enforced by the database against that login), but the
+-- grant had no user: no coordinator code calls
+-- `control_room_planner_grant_owner_retry`. The retry is asked for over the owner's
+-- own web pool by `PostgresIntakeOwnerRetryStoreV1` (see private_web_roles.sql),
+-- and the coordinator only READS the latch through its own SELECT.
+--
+-- The REVOKE is what makes an already-installed cluster converge: this file runs
+-- on every install and upgrade, so an install that carried the old grant drops it
+-- rather than keeping it. It names the function the file created, and the Mac
+-- upgrade path reaches the same state through
+-- scripts/mac-local/database-upgrade-grants.mjs, whose `plannerFunctions` map pins
+-- this function to the web login alone.
+REVOKE EXECUTE ON FUNCTION control_room_planner_grant_owner_retry(text, text, text[])
+  FROM control_room_task_coordinator;
 COMMIT;

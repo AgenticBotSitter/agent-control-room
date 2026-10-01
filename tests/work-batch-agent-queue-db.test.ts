@@ -6,6 +6,7 @@ import { WorkBatchStoreV1, workBatchProposalDigestV1, type WorkBatchProposalV1 }
   "../src/work-intake/v1";
 import { taskFixture, taskDraft } from "./helpers/web-task";
 import { now } from "./helpers/web-foundation";
+import { downRungBefore, readMigrationGraph } from "./helpers/down-migration-order";
 
 const integrityKey = new Uint8Array(32).fill(9);
 const proposer = (): AuthenticatedPrincipal => ({ tenantId: "tenant:web", identityId: "identity:queue-proposer",
@@ -163,6 +164,13 @@ test("0104 down migration refuses either queue metadata table and removes every 
   assert.equal((await populated.db.query("SELECT 1 FROM work_batch_agent_queue_heads")).rows.length, 1);
 
   const empty = await taskFixture(); t.after(() => void empty.db.close());
+  // A real rollback is stacked: every later migration whose objects are built on
+  // 0104's goes first, newest first. The rung is derived from the SQL, so 0213's
+  // view over work_batch_queue_admissions is in it without being named here.
+  const rung = downRungBefore(await readMigrationGraph("."), "0104_work_batch_agent_queue.sql");
+  assert.ok(rung.files.includes("0213_text_copy_derivation_grants.sql"),
+    "the rung must carry 0213, whose view reads work_batch_queue_admissions");
+  for (const file of rung.files) await empty.db.exec(await readFile(`db/down/${file}`, "utf8"));
   await empty.db.exec(down);
   const objects = (await empty.db.query<{ heads: string | null; admissions: string | null; effective: string | null; head_guard: string | null;
     admission_guard: string | null }>(`SELECT to_regclass('work_batch_agent_queue_heads')::text heads,

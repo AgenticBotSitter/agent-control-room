@@ -1,10 +1,11 @@
 #!/usr/bin/env node
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build as esbuild } from "esbuild";
 import { captureReleaseTrustV1 } from "./release-signing.mjs";
@@ -126,7 +127,7 @@ function parse(args) {
   return values;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   const parsed = parse(process.argv.slice(2));
   Promise.resolve().then(async () => {
     if (!parsed.releaseTrustPath) refused();

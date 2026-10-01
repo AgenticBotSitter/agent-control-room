@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { pathToFileURL } from "node:url";
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 
 function refuse(message) {
   throw new Error(message);
@@ -104,4 +104,4 @@ export function main(args = process.argv.slice(2)) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = main();
+if (isMainModuleV1(process.argv[1], import.meta.url)) process.exitCode = main();

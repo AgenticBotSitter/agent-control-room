@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { z } from "zod";
-import type { BrowserFailureCode } from "../../src/web/v1/browser-client";
+import { BrowserRequestError, type BrowserFailureCode } from "../../src/web/v1/browser-client";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "../../src/work-intake/v1/schemas";
 import { buildCompareAndCombineProposalV1 } from "../../src/work-intake/v1/compare-combine-template";
@@ -17,6 +17,10 @@ import { pipelineHistorySchemaV1,pipelineRunPageSchemaV1,pipelineRunViewSchemaV1
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { createProjectOrchestrationBrowserClient, orchestrationErrorMessage } from
+  "../../src/web/v1/project-orchestration-browser-client";
+import type { ProjectOrchestrationSuggestionV1 } from "../../src/web/v1/project-orchestration-wire";
+import { ChiefOfStaffSuggestionCard } from "./project-orchestration";
 
 type OwnerPage = z.infer<typeof workBatchOwnerPageSchemaV1>;
 type OwnerReceipt = z.infer<typeof workBatchOwnerReceiptSchemaV1>;
@@ -472,8 +476,9 @@ export function ProposalGraphEditor({ proposal, routingOptions = [], disabled = 
 export function PipelineBatchDetail({ projectId, data, decisions = {}, pending = false, saveError,
   onDecision = () => {}, onAll = () => {}, onSave = () => {}, onRetry = () => {},
   revisionText = "", revisionReason = "owner_revision", onRevisionText = () => {}, onRevisionReason = () => {}, onRevise = () => {},
-  editedProposal, onProposalChange = () => {}, onDismissFlag = () => {}, onUseSuggestedSplit = () => {},
-  startPending = false, startResult, startError, onStart = () => {} }:
+  onDismissFlag = () => {}, onUseSuggestedSplit = () => {}, suggestions = [], suggestionPending = false,
+  dismissAvailable = false, suggestionError, onUseSuggestion = () => {}, onDismissSuggestion = () => {},
+  editedProposal, onProposalChange = () => {}, startPending = false, startResult, startError, onStart = () => {} }:
   { projectId: string; data: ReadState<WorkBatchOwnerViewV1>; decisions?: PipelineDecisionDraft; pending?: boolean;
     saveError?: PipelineFailureCode; onDecision?: (localId: string, decision: Choice, reasonCode: string) => void;
     onAll?: (choice: Exclude<Choice, "undecided">) => void; onSave?: () => void; onRetry?: () => void;
@@ -481,8 +486,11 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
     onRevisionReason?: (value: string) => void; onRevise?: () => void;
     editedProposal?: WorkBatchProposalV1; onProposalChange?: (value: WorkBatchProposalV1) => void;
     onDismissFlag?: (localId: string, flagKind: "needs_breakdown" | "needs_more_info") => void;
-    onUseSuggestedSplit?: (localId: string) => void; startPending?: boolean; startResult?: PipelineStartResult;
-    startError?: PipelineFailureCode; onStart?: () => void }) {
+    onUseSuggestedSplit?: (localId: string) => void; suggestions?: readonly ProjectOrchestrationSuggestionV1[];
+    suggestionPending?: boolean; dismissAvailable?: boolean; suggestionError?: BrowserFailureCode;
+    onUseSuggestion?: (suggestion: ProjectOrchestrationSuggestionV1) => void;
+    onDismissSuggestion?: (suggestion: ProjectOrchestrationSuggestionV1) => void;
+    startPending?: boolean; startResult?: PipelineStartResult; startError?: PipelineFailureCode; onStart?: () => void }) {
   if (data.state === "loading") return <section className="private-panel"><h2>Batch review</h2>
     <p role="status">Loading the saved batch and every revision…</p></section>;
   if (data.state === "unavailable") return <section className="private-panel"><h2>Batch review</h2>
@@ -572,6 +580,9 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
       {pending && <p role="status">Saving this exact batch decision…</p>}
       {noWorkStarts()}
     </section>
+    {!decided && suggestions.map(suggestion => <ChiefOfStaffSuggestionCard key={suggestion.suggestionId} suggestion={suggestion}
+      pending={suggestionPending} dismissAvailable={dismissAvailable} onUse={onUseSuggestion} onDismiss={onDismissSuggestion} />)}
+    {suggestionError && <p className="private-notice" role="alert">{orchestrationErrorMessage[suggestionError]}</p>}
     {decided && value.state !== "rejected" && <section className="private-panel private-start-panel" aria-label="Start approved plan">
       <div className="private-pipeline-heading"><div><p className="private-eyebrow">Second tap</p><h2>Start approved plan</h2></div>
         <span className="private-state">{startable.length} admitted route{startable.length === 1 ? "" : "s"}</span></div>
@@ -608,11 +619,15 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
 
 function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId?: string }) {
   const [client] = useState(() => createWorkBatchOwnerBrowserClient());
+  const [orchestrationClient] = useState(() => createProjectOrchestrationBrowserClient());
   const [startClient] = useState(() => createWorkBatchStartBrowserClient());
   const [data, setData] = useState<ReadState<OwnerPage | WorkBatchOwnerViewV1>>({ state: "loading" });
   const [generation, setGeneration] = useState(0), [pending, setPending] = useState(false);
   const [saveError, setSaveError] = useState<PipelineFailureCode>(), [decisions, setDecisions] = useState<PipelineDecisionDraft>({});
   const [revisionText, setRevisionText] = useState(""), [revisionReason, setRevisionReason] = useState("owner_revision");
+  const [suggestions, setSuggestions] = useState<readonly ProjectOrchestrationSuggestionV1[]>([]);
+  const [dismissAvailable, setDismissAvailable] = useState(false);
+  const [suggestionPending, setSuggestionPending] = useState(false), [suggestionError, setSuggestionError] = useState<BrowserFailureCode>();
   const [editedProposal, setEditedProposal] = useState<WorkBatchProposalV1>();
   const [startPending, setStartPending] = useState(false), [startResult, setStartResult] = useState<PipelineStartResult>();
   const [startError, setStartError] = useState<PipelineFailureCode>();
@@ -626,6 +641,13 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
       code: error instanceof PipelineRequestError ? error.code : "unavailable" }); });
     return () => abort.abort();
   }, [client, projectId, batchId, generation]);
+  useEffect(() => {
+    let live = true; setSuggestions([]); setDismissAvailable(false); setSuggestionError(undefined);
+    if (batchId) void orchestrationClient.listSuggestions(projectId, batchId).then(value => {
+      if (live) { setSuggestions(value.suggestions); setDismissAvailable(value.dismissAvailable); }
+    }, error => { if (live && error instanceof BrowserRequestError && error.code !== "not_found") setSuggestionError(error.code); });
+    return () => { live = false; };
+  }, [orchestrationClient, projectId, batchId, generation]);
   const detail = data.state === "ready" && batchId ? data.value as WorkBatchOwnerViewV1 : undefined;
   const submit = async (retry = false, revise = false) => {
     if (!batchId || !detail || pending) return;
@@ -669,6 +691,26 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
     catch (error) { setStartError(error instanceof PipelineRequestError ? error.code : "uncertain"); }
     finally { setStartPending(false); }
   };
+  const useChiefSuggestion = async (suggestion: ProjectOrchestrationSuggestionV1) => {
+    if (!batchId || !detail || pending || suggestionPending) return;
+    setSuggestionPending(true); setSuggestionError(undefined);
+    try { const value = await orchestrationClient.useSuggestion(projectId, batchId, suggestion.suggestionId, detail.revision);
+      // The graph editor and the JSON draft are one draft: filling only the JSON
+      // left the editor on the old plan, and its first edit wrote that back over
+      // the suggestion.
+      setRevisionReason("chief_of_staff_split"); setEditedProposal(value.proposal);
+      setRevisionText(JSON.stringify(value.proposal, null, 2)); }
+    catch (error) { setSuggestionError(error instanceof BrowserRequestError ? error.code : "unavailable"); }
+    finally { setSuggestionPending(false); }
+  };
+  const dismissChiefSuggestion = async (suggestion: ProjectOrchestrationSuggestionV1) => {
+    if (!batchId || !detail || pending || suggestionPending || !dismissAvailable) return;
+    setSuggestionPending(true); setSuggestionError(undefined);
+    try { await orchestrationClient.dismissSuggestion(projectId, batchId, suggestion.suggestionId, detail.revision);
+      setSuggestions(current => current.filter(value => value.suggestionId !== suggestion.suggestionId)); }
+    catch (error) { setSuggestionError(error instanceof BrowserRequestError ? error.code : "unavailable"); }
+    finally { setSuggestionPending(false); }
+  };
   const content = batchId
     ? <PipelineBatchDetail projectId={projectId} data={data as ReadState<WorkBatchOwnerViewV1>} decisions={decisions}
       pending={pending} saveError={saveError} revisionText={revisionText} revisionReason={revisionReason}
@@ -682,7 +724,11 @@ function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId
         if (parsed.success && parsed.data.projectId === projectId) setEditedProposal(parsed.data); } catch { /* invalid advanced draft */ } }}
       onRevisionReason={setRevisionReason} onRevise={() => { void submit(false, true); }}
       onDismissFlag={(localId, flagKind) => { void dismissFlag(localId, flagKind); }}
-      onUseSuggestedSplit={useSuggestedSplit} onStart={() => { void start(); }} />
+      onUseSuggestedSplit={useSuggestedSplit} suggestions={suggestions} suggestionPending={suggestionPending}
+      dismissAvailable={dismissAvailable} suggestionError={suggestionError}
+      onUseSuggestion={suggestion => { void useChiefSuggestion(suggestion); }}
+      onDismissSuggestion={suggestion => { void dismissChiefSuggestion(suggestion); }}
+      onStart={() => { void start(); }} />
     : <PipelineBatchList projectId={projectId} data={data as ReadState<OwnerPage>} />;
   const heading = batchId ? "Pipeline batch" : "Project pipelines";
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>

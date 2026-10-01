@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 // Starts the Mac-local stack in the fixed order: database check, owner verification, repin,
 // task provider, task host. The database connection is direct over the protected Tailscale route.
 // Repeat-safe: a running stack is left alone.
@@ -6,17 +7,16 @@
 // Usage: pnpm mac:up -- --protected-root ABS_PATH [--install-service]   (or CONTROL_ROOM_PROTECTED_ROOT)
 import { spawn } from "node:child_process";
 import { connect } from "node:net";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { lstat, mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { alive, FLEET_GATEWAY_PORT, fleetGatewayCommand, hostCommand, protectedRootFromArguments, readPid, repoRoot,
   runtimePaths, stopRecorded, stopRecordedHost, taskHostCommand } from "./stack.mjs";
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
 import { captureMacLocalBuildSourceV1, macLocalBuildSourceV1 } from "./build-source.mjs";
 import { readHostState, readRecoverableHostState } from "./task-host-supervisor.mjs";
-import { createHealthNonceV1, healthRequestTagV1, healthResponseTagMatchesV1,
-  LOCAL_HOST_HEALTH_ENDPOINT_V1 } from "../../src/updater/v1/health-protocol.mjs";
 
 const PROVIDER_MODULE = "dist-vps/server/macLocalDefaultTaskProvider.js";
 const BUILD_SOURCE = "dist-vps/server/mac-local-build-source.json";
@@ -102,10 +102,9 @@ export async function readHealthProbeKey(root) {
 async function requestAuthenticatedHostHealth(port, healthProbeKey, timeoutMs = 1_000, transport = fetch) {
   const origin = `http://127.0.0.1:${port}`;
   try {
-    const nonce = createHealthNonceV1();
-    const reqTag = healthRequestTagV1(healthProbeKey, nonce, LOCAL_HOST_HEALTH_ENDPOINT_V1);
+    const nonce = randomBytes(32).toString("base64url");
     const response = await transport(`${origin}/api/v1/local-host-health`, { method: "POST",
-      headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce, reqTag }),
+      headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }),
       signal: AbortSignal.timeout(timeoutMs) });
     const value = await boundedHealthResponse(response);
     if (!value || typeof value !== "object" || Array.isArray(value)
@@ -114,16 +113,21 @@ async function requestAuthenticatedHostHealth(port, healthProbeKey, timeoutMs = 
       || value.nonce !== nonce || !Number.isSafeInteger(value.pid) || value.pid <= 1
       || typeof value.releaseId !== "string" || typeof value.startedAt !== "string"
       || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.tag !== "string") return undefined;
-    const signed = { schema: value.schema, nonce: value.nonce, ready: value.ready, pid: value.pid,
-      releaseId: value.releaseId, startedAt: value.startedAt };
-    if (!healthResponseTagMatchesV1(healthProbeKey, LOCAL_HOST_HEALTH_ENDPOINT_V1, signed, value.tag)) return undefined;
+    // The purpose-keyed tag, byte for byte as the web process computes it. This
+    // probe speaks cook/v1's `/api/v1/local-host-health` protocol, which three
+    // callers share: the installer on install night, the §8.4 evaluator, and this.
+    const material = JSON.stringify({ nonce, pid: value.pid, purpose: "local-host-health/v1", ready: value.ready,
+      releaseId: value.releaseId, startedAt: value.startedAt });
+    const expected = `hmac-sha256:${createHmac("sha256", healthProbeKey).update(material, "utf8").digest("hex")}`;
+    const actualBytes = Buffer.from(value.tag, "utf8"), expectedBytes = Buffer.from(expected, "utf8");
+    if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) return undefined;
     return value.pid;
   } catch { return undefined; }
 }
 
 /** A ready host proves one coherent generation: its supervisor wrote the private pid/state files,
  * both recorded processes still have the exact commands for this root, and the child itself answers
- * the independently keyed health route on the configured port. The records are re-read after
+ * the owner-code-authenticated health route on the configured port. The records are re-read after
  * the request so a restart halfway through the probe is a retry, never a mixed-generation success. */
 export async function authenticatedHostReady(root, port, runtime = {}) {
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return undefined;
@@ -334,6 +338,6 @@ async function startService(root, paths, port, hostReady) {
   log("fleet gateway launchd hand-off pending: cook/daemons item 5 owns its production service definition");
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   main().catch(error => fail(error instanceof Error ? error.message : "unknown"));
 }

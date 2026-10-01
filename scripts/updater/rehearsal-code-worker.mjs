@@ -17,16 +17,17 @@ async function atomicJson(path, value) {
 class FileStore {
   async liveRun() { return (await readJson(storePath)).run; }
   async events() { return (await readJson(storePath)).events; }
+  // The mirror row is written BY the transition (B4: the row and its journal
+  // mirror move in one statement). Appended separately it modelled the old
+  // two-statement contract, which left `events()` empty and gave every journal
+  // intent/done line the same ordinal.
   async transition(_runId, lease, state, detail, options = {}) {
     const value = await readJson(storePath);
     if (value.run.lease_token !== lease) throw new Error("updater_run_lease_lost");
     value.run = { ...value.run, state, detail, finished_at: options.terminal ? new Date().toISOString() : null };
+    if (!options.terminal && !value.events.some(row => row.state === state))
+      value.events.push({ ordinal: value.events.length + 1, state, detail });
     await atomicJson(storePath, value); return value.run;
-  }
-  async appendEvent(_runId, ordinal, state, detail) {
-    const value = await readJson(storePath);
-    if (!value.events.some(row => row.ordinal === ordinal)) value.events.push({ ordinal, state, detail });
-    await atomicJson(storePath, value);
   }
 }
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
@@ -16,8 +17,6 @@ import { RotatingHostLog, openHostLog, readHostState, rotateHostLog, stoppedBeca
   superviseTaskHost } from "../scripts/mac-local/task-host-supervisor.mjs";
 import { alive, FLEET_GATEWAY_PORT, fleetGatewayCommand, hostCommand, readPid, recordedHostCommand, runtimePaths, stopRecorded,
   stopRecordedHost, taskHostCommand } from "../scripts/mac-local/stack.mjs";
-import { healthRequestTagV1, healthResponseTagV1,
-  LOCAL_HOST_HEALTH_ENDPOINT_V1 } from "../src/updater/v1/health-protocol.mjs";
 
 const repoRoot = join(import.meta.dirname, "..");
 const supervisorModule = pathToFileURL(join(repoRoot, "scripts/mac-local/task-host-supervisor.mjs")).href;
@@ -34,8 +33,9 @@ const ACK_SERVER_SOURCE = `const server = createServer(socket => { socket.on("er
 
 function fakeHealthResponse(healthProbeKey, nonce, pid) {
   const releaseId = "dev", startedAt = "2026-09-30T00:00:00.000Z";
-  const response = { schema: "control-room.local-host-health/v1", nonce, ready: true, pid, releaseId, startedAt };
-  return { ...response, tag: healthResponseTagV1(healthProbeKey, LOCAL_HOST_HEALTH_ENDPOINT_V1, response) };
+  const material = JSON.stringify({ nonce, pid, purpose: "local-host-health/v1", ready: true, releaseId, startedAt });
+  const tag = `hmac-sha256:${createHmac("sha256", healthProbeKey).update(material, "utf8").digest("hex")}`;
+  return { schema: "control-room.local-host-health/v1", ready: true, pid, nonce, releaseId, startedAt, tag };
 }
 
 const ownedPids = new Map();
@@ -735,11 +735,8 @@ test("mac:up readiness follows the private host record after a supervisor replac
       assert.equal(request.url, "/api/v1/local-host-health");
       assert.equal(request.headers.origin, `http://127.0.0.1:${server.address().port}`);
       const parsed = JSON.parse(body);
-      assert.deepEqual(Object.keys(parsed), ["nonce", "reqTag"]);
+      assert.deepEqual(Object.keys(parsed), ["nonce"]);
       assert.match(parsed.nonce, /^[A-Za-z0-9_-]{43}$/u);
-      if (parsed.reqTag !== healthRequestTagV1(healthProbeKey, parsed.nonce, LOCAL_HOST_HEALTH_ENDPOINT_V1)) {
-        response.writeHead(403, { "content-type": "application/json" }); response.end("{}"); return;
-      }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(fakeHealthResponse(healthProbeKey, parsed.nonce, childPid)));
     });

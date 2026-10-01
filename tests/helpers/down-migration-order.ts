@@ -6,9 +6,10 @@
  * the test is about to execute:
  *
  *  - `owns` is what a migration's up file brings into being: tables, functions,
- *    indexes, triggers, policies, types, sequences and schemas.
+ *    indexes, triggers, policies, views, types, sequences and schemas.
  *  - `names` is everything a migration NAMES anywhere across its up and down
- *    files: the same verb set plus REFERENCES, ON, EXECUTE and bare calls.
+ *    files: the same verb set plus REFERENCES, ON, EXECUTE and bare calls,
+ *    and every relation a view's query or a policy's expression reads.
  *
  * A down file for migration N cannot run before the down file for migration M
  * (M < N) when N names an object M owns. Dropping M first would remove an
@@ -38,7 +39,19 @@ const CREATE_PATTERNS: RegExp[] = [
   /\bCREATE\s+(?:CONSTRAINT\s+)?TRIGGER\s+([A-Za-z0-9_."$]+)/gi,
   /\bCREATE\s+POLICY\s+([A-Za-z0-9_."$]+)/gi,
   /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TYPE|DOMAIN|SEQUENCE|SCHEMA)\s+([A-Za-z0-9_."$]+)/gi,
+  /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:RECURSIVE\s+|MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z0-9_."$]+)/gi,
 ];
+
+// A view's query, and a policy's USING / WITH CHECK expression, are stored as
+// parsed trees that PostgreSQL records a dependency for on every relation they
+// read -- unlike a PL/pgSQL body, which is plain text until it runs. So a FROM or
+// JOIN inside one of these statements is a real edge: 0213's
+// control_worker_text_copy_derivations joins 0104's work_batch_queue_admissions,
+// and 0104's down fails with "cannot drop table ... because other objects depend
+// on it" unless 0213's down has run first. The verb patterns below never see a
+// FROM, so these statements are read separately.
+const DEPENDENT_STATEMENTS = /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:TEMP(?:ORARY)?\s+)?(?:RECURSIVE\s+|MATERIALIZED\s+)?VIEW|POLICY)\b[^;]*;/gi;
+const RELATION_READS = /\b(?:FROM|JOIN)\s+(?:ONLY\s+)?([A-Za-z0-9_."$]+)/gi;
 
 const REFERENCE_PATTERNS: RegExp[] = [
   /\b(?:ALTER|DROP|TRUNCATE|LOCK)\s+(?:TABLE\s+|FUNCTION\s+|INDEX\s+|TRIGGER\s+|POLICY\s+|TYPE\s+|DOMAIN\s+)?(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([A-Za-z0-9_."$]+)/gi,
@@ -52,6 +65,12 @@ export const stripSqlComments = (sql: string) =>
   sql.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
 
 const normalise = (raw: string) => raw.replace(/^public\./i, "").toLowerCase();
+
+function readNames(sql: string, into: Set<string>) {
+  for (const pattern of REFERENCE_PATTERNS) for (const m of sql.matchAll(pattern)) into.add(normalise(m[1]!));
+  for (const statement of sql.matchAll(DEPENDENT_STATEMENTS))
+    for (const m of statement[0].matchAll(RELATION_READS)) into.add(normalise(m[1]!));
+}
 
 /** The four-digit ordering prefix every migration and down file is named with. */
 export const migrationOrdinal = (file: string) => Number(file.slice(0, 4));
@@ -85,13 +104,13 @@ export async function readMigrationGraph(root = "."): Promise<MigrationGraph> {
   for (const file of ups) {
     const sql = stripSqlComments(await readFile(join(migrationDir, file), "utf8"));
     const referenced = names.get(file) ?? new Set<string>();
-    for (const pattern of REFERENCE_PATTERNS) for (const m of sql.matchAll(pattern)) referenced.add(normalise(m[1]!));
+    readNames(sql, referenced);
     names.set(file, referenced);
   }
   for (const file of downs) {
     const sql = stripSqlComments(await readFile(join(downDir, file), "utf8"));
     const referenced = new Set<string>();
-    for (const pattern of REFERENCE_PATTERNS) for (const m of sql.matchAll(pattern)) referenced.add(normalise(m[1]!));
+    readNames(sql, referenced);
     // Merge into the up file's set under the same key so one migration's up and
     // down halves are read as a single statement of what it touches.
     const merged = names.get(file) ?? new Set<string>();

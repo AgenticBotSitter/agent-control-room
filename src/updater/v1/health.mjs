@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { loadavg } from "node:os";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { assertSafeIdV1, updaterRefuseV1 } from "./contracts.mjs";
 import { openNoFollowV1 } from "./fs-safety.mjs";
 import { captureUpdaterComparisonCountsV1, captureUpdaterHealthCountsV1, createHealthNonceV1, healthRequestTagV1,
-  healthResponseTagMatchesV1, LOCAL_HOST_HEALTH_ENDPOINT_V1, UPDATER_HEALTH_ENDPOINT_V1 } from "./health-protocol.mjs";
+  healthResponseTagMatchesV1, LOCAL_HOST_HEALTH_ENDPOINT_V1, LOCAL_HOST_HEALTH_PURPOSE_V1,
+  UPDATER_HEALTH_ENDPOINT_V1 } from "./health-protocol.mjs";
 
 const HEALTH_POLICY_KEYS_V1 = Object.freeze(["schema", "windowMs", "loadedWindowMs", "loadThreshold",
   "probeTimeoutMs", "retryIntervalMs", "replyMaxBytes", "startedAtClockSkewMs", "workerHeartbeatWindowMs",
@@ -126,6 +128,19 @@ function captureSupervisorV1(value) {
   return Object.freeze({ ...value });
 }
 
+/** The §8.4 evaluator's probe of `/api/v1/local-host-health`, which speaks that
+ * route's cook/v1 protocol: an UNSIGNED `{nonce}` request, a fresh 32 random
+ * bytes, and a purpose-keyed response tag. The new signed-request protocol
+ * applies to `/api/v1/updater-health` alone; posting a `reqTag` here is refused
+ * 400, and the old format is the only one three existing callers share. */
+async function unsignedPostV1({ transport, origin, endpoint, policy }) {
+  const nonce = randomBytes(32).toString("base64url");
+  const value = await fetchBoundedJsonV1(transport, `${origin}${endpoint}`, { method: "POST",
+    headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ nonce }) }, policy);
+  return { nonce, value };
+}
+
+/** The signed-request probe, used only for `/api/v1/updater-health`. */
 async function authenticatedPostV1({ transport, origin, endpoint, key, policy, clock }) {
   const nonce = createHealthNonceV1(clock());
   const value = await fetchBoundedJsonV1(transport, `${origin}${endpoint}`, { method: "POST",
@@ -140,11 +155,18 @@ function captureHostResponseV1(key, nonce, value) {
       || value.ready !== true || !Number.isSafeInteger(value.pid) || value.pid <= 1 || typeof value.releaseId !== "string"
       || typeof value.startedAt !== "string" || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.tag !== "string")
     throw updaterRefuseV1("updater_host_health_refused");
-  const response = { schema: value.schema, nonce: value.nonce, ready: value.ready, pid: value.pid,
-    releaseId: value.releaseId, startedAt: value.startedAt };
-  if (!healthResponseTagMatchesV1(key, LOCAL_HOST_HEALTH_ENDPOINT_V1, response, value.tag))
+  // cook/v1's purpose-keyed tag, computed the same way `mac:up` and the
+  // installer compute it. Deliberately NOT healthResponseTagMatchesV1: that is
+  // the response-keyed form item 14 introduced for the NEW endpoint, and using it
+  // here is what broke install night.
+  const expected = `hmac-sha256:${createHmac("sha256", key).update(JSON.stringify({ nonce, pid: value.pid,
+    purpose: LOCAL_HOST_HEALTH_PURPOSE_V1, ready: value.ready, releaseId: value.releaseId,
+    startedAt: value.startedAt }), "utf8").digest("hex")}`;
+  const actualBytes = Buffer.from(value.tag, "utf8"), expectedBytes = Buffer.from(expected, "utf8");
+  if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes))
     throw updaterRefuseV1("updater_host_health_auth_refused");
-  return Object.freeze(response);
+  return Object.freeze({ schema: value.schema, nonce: value.nonce, ready: value.ready, pid: value.pid,
+    releaseId: value.releaseId, startedAt: value.startedAt });
 }
 
 function captureWebResponseV1(key, nonce, value) {
@@ -194,8 +216,11 @@ export class UpdaterHealthEvaluatorV1 {
       }
       this.#starting = undefined;
       const [hostRaw, webRaw, updaterCounts, schemaDigest, gatewayHealth, workerHealth, manifestsHealthy] = await Promise.all([
-        authenticatedPostV1({ transport: this.transport, origin: webOrigin,
-          endpoint: LOCAL_HOST_HEALTH_ENDPOINT_V1, key, policy, clock: this.clock }),
+        // cook/v1's protocol for the old route, the signed protocol for the new
+        // one. See unsignedPostV1: the two routes are deliberately NOT the same
+        // verifier, and merging them is what broke the installer.
+        unsignedPostV1({ transport: this.transport, origin: webOrigin,
+          endpoint: LOCAL_HOST_HEALTH_ENDPOINT_V1, policy }),
         authenticatedPostV1({ transport: this.transport, origin: webOrigin,
           endpoint: UPDATER_HEALTH_ENDPOINT_V1, key, policy, clock: this.clock }),
         this.reads.readHealthCounts(), this.database.schemaDigest(),

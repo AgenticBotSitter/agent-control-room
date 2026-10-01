@@ -1,5 +1,5 @@
+import { isMainModuleV1 } from "../src/installer/shared/is-main-module.mjs";
 import { readFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
 
 const MARKER = /<!-- agent-control-room-handoff:v1 (\{[^\n]+\}) -->/;
 const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
@@ -237,5 +237,5 @@ async function main() {
   console.log(JSON.stringify(await runHandoff({ event, repository, api,
     maintainers: (process.env.HANDOFF_MAINTAINERS ?? '').split(',').map(s => s.trim()).filter(Boolean) })));
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (isMainModuleV1(process.argv[1], import.meta.url))
   main().catch(error => { console.error(error.message); process.exitCode = 1; });

@@ -1,3 +1,4 @@
+import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 /** VPS-local, read-only snapshot for an offline Mac grant plan. No password or
  * host identity is included. Run as root from a clean main checkout. */
 import { execFileSync } from "node:child_process";
@@ -26,7 +27,7 @@ export function captureMacUpgradeSnapshotV1(mainCommitSha, raw) {
   return { schema: MAC_DATABASE_UPGRADE_SNAPSHOT_V1, mainCommit: mainCommitSha, snapshot };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModuleV1(process.argv[1], import.meta.url)) {
   try {
     if (process.argv.slice(2).join(" ") !== "--print") throw new Error("upgrade_snapshot_usage_refused");
     const commit = mainCommit();
