@@ -425,15 +425,44 @@ test("queue fingerprint ignores which UTC days have queue_stats partitions but n
 
 test("the role manifest names every role the migrations, down files and schema files touch, with no dangerous attribute", async t => {
   const { databaseRoleManifestV1: manifest, databaseRoleAttributesV1, databaseRoleNamesInSqlV1,
-    databaseKnownRoleNamesV1, unknownDatabaseRoleNamesV1 } =
+    databaseKnownRoleNamesV1, databaseRoleNamesV1, databaseExternallyCreatedRolesV1,
+    unknownDatabaseRoleNamesV1 } =
     await import("../scripts/mac-local/database-role-manifest.mjs");
   const logins = Object.keys(manifest.logins), known = new Set(databaseKnownRoleNamesV1);
   // A name is owned by exactly one list, and the two Mac-owned lists do not
-  // overlap. A vpsOnlyGroup is a third category -- a role a migration may name
-  // that a Mac install neither creates nor grants to -- so it is counted
-  // separately rather than folded into "a group or a login".
-  assert.equal(known.size, manifest.groups.length + manifest.vpsOnlyGroups.length + logins.length,
-    "a name belongs to exactly one list: a Mac group, a VPS-only group, or a login");
+  // overlap. Two further categories are counted separately rather than folded
+  // into "a group or a login":
+  //   * a vpsOnlyGroup -- a role a migration may name that a Mac install neither
+  //     creates nor grants to (0238's news coordinator);
+  //   * an externally created role -- one that EXISTS but that nothing here
+  //     installs, so a migration may name it and the upgrade still must not
+  //     touch it (control_room_deployer, which the updater's own DDL creates at
+  //     startup, long after the installer and the ledger have run).
+  // Both are known -- a scanner that refused them would report a correct
+  // database as naming an unknown role -- and NEITHER is in `databaseRoleNamesV1`,
+  // so a Mac install still never invents them. The assertions below check both
+  // halves: counted here, absent from the Mac-installed list.
+  assert.equal(known.size,
+    manifest.groups.length + manifest.vpsOnlyGroups.length + logins.length
+      + databaseExternallyCreatedRolesV1.length,
+    "a name belongs to exactly one list: a Mac group, a VPS-only group, a login, or an externally created role");
+  const macInstalled = new Set(manifest.groups);
+  for (const login of logins) macInstalled.add(login);
+  assert.deepEqual([...databaseExternallyCreatedRolesV1].filter(role => macInstalled.has(role)), [],
+    "an externally created role is not also a Mac-installed one: the upgrade must never manage it");
+  // And the one role here really is the updater's, named by the migration that
+  // grants it EXECUTE and the down file that revokes it. If a future edit moved
+  // this name, the two lists would drift and the scanner would pass for the
+  // wrong reason.
+  assert.deepEqual([...databaseExternallyCreatedRolesV1], ["control_room_deployer"],
+    "the only externally created role is the updater's own, created by its DDL at startup");
+  // The other half, asserted directly rather than inferred: the Mac-installed
+  // list a fresh install creates from must NOT contain an externally created
+  // role, because a fresh Mac install has no updater and would otherwise invent
+  // one. This is the property `databaseExternallyCreatedRolesV1` exists to
+  // preserve while still letting a migration name the role.
+  assert.deepEqual(databaseRoleNamesV1.filter(role => databaseExternallyCreatedRolesV1.includes(role)), [],
+    "a Mac install must never create an externally created role");
   assert.deepEqual([...known].filter(role => role.startsWith("control_room_")).sort(), [...known].sort(),
     "every manifest name is a control_room role");
   for (const [login, { group }] of Object.entries(manifest.logins)) assert.ok(manifest.groups.includes(group), login);
@@ -503,13 +532,24 @@ test("the role manifest names every role the migrations, down files and schema f
   // here introduces no live role the upgrade cannot reason about, and the
   // `vpsOnlyGroups` count assertion above still holds: a Mac install creates
   // them, it just never had a migration that mentioned them.
+  // 0239 added control_room_deployer, and it is the first EXTERNALLY created
+  // role: 0239's up file asserts the updater's login is the only non-owner
+  // grantee of the health-counts function and its down file revokes that grant,
+  // so both name it, correctly, behind a `rolname = '...'` guard because on a
+  // fresh cluster the updater has not started yet. It cannot be a manifest
+  // login or group -- tests/updater-schema-ddl.test.ts requires the deployer to
+  // stay out of the upgrade's managed manifest, and rightly so -- so it is the
+  // one member of databaseExternallyCreatedRolesV1, asserted above to be absent
+  // from databaseRoleNamesV1. It is listed here so a future removal of that name
+  // from the migrations fails loudly rather than silently narrowing the set.
   assert.deepEqual([...touched.keys()].sort(),
     ["control_room_agent_reviewer", "control_room_application", "control_room_backup",
-      "control_room_fleet_gateway", "control_room_github_broker", "control_room_local_result_publisher",
-      "control_room_native_queue_worker", "control_room_native_results", "control_room_news_coordinator",
-      "control_room_private_web", "control_room_reader", "control_room_schedule_admissions",
-      "control_room_schema_owner", "control_room_task_coordinator", "control_room_work_intake"],
-  "the migrations name these manifest roles and no others");
+      "control_room_deployer", "control_room_fleet_gateway", "control_room_github_broker",
+      "control_room_local_result_publisher", "control_room_native_queue_worker", "control_room_native_results",
+      "control_room_news_coordinator", "control_room_private_web", "control_room_reader",
+      "control_room_schedule_admissions", "control_room_schema_owner", "control_room_task_coordinator",
+      "control_room_work_intake"],
+  "the migrations name these known roles and no others");
 
   // The scanner reads what SQL actually means, so prove it on a temp copy of
   // the tree with a role the manifest has never heard of planted in each

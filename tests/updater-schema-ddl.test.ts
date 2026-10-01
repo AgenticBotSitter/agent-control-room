@@ -140,7 +140,32 @@ test("the release-reader grant names only the three tables the loader allows", a
     "the updater's login holds EXECUTE on the health counts and nothing else by function");
   // The role must not be in the live upgrade's manifest, or the upgrade would
   // start managing a role whose authority is that the upgrade cannot reach it.
-  const manifest = await readFile(join(process.cwd(), "scripts/mac-local/database-role-manifest.mjs"), "utf8");
-  assert.doesNotMatch(manifest, /control_room_deployer/u,
-    "the deployer role must stay out of the upgrade's managed role manifest");
+  // The upgrade must never CREATE, ALTER or REVOKE the deployer role -- it is
+  // created by the updater's own DDL at startup, long after the installer and the
+  // release ledger have run. This used to be `assert.doesNotMatch(manifest,
+  // /control_room_deployer/)`, which also refused the role being NAMED anywhere
+  // in the file -- including inside a comment explaining why it must not be
+  // managed, which is the one place the reasoning belongs. The manifest now
+  // carries it in `databaseExternallyCreatedRolesV1`: known to the role scanner
+  // so 0239 may name it, and absent from every list the upgrade acts on.
+  //
+  // So the property is asserted as what it actually is -- absence from each
+  // MANAGED list -- which is both precise and stricter than a text match: it
+  // cannot be satisfied by moving the name somewhere harmless in the file, and
+  // it additionally proves the role is not merely un-managed but still NAMED
+  // (otherwise the known set could drop it and the scanner would silently stop
+  // recognising the role a migration refers to).
+  const { databaseRoleManifestV1: roleManifest, databaseRoleNamesV1: managedRoleNames,
+    databaseExternallyCreatedRolesV1 } =
+    await import("../scripts/mac-local/database-role-manifest.mjs");
+  assert.ok(roleManifest.groups.every(role => role !== "control_room_deployer"),
+    "the deployer role must not be a Mac-managed GROUP");
+  assert.ok(!Object.hasOwn(roleManifest.logins, "control_room_deployer"),
+    "the deployer role must not be a managed LOGIN");
+  assert.ok(!roleManifest.vpsOnlyGroups.includes("control_room_deployer"),
+    "the deployer role must not be a VPS-only group: a Mac install does install VPS-only groups on a VPS");
+  assert.ok(!managedRoleNames.includes("control_room_deployer"),
+    "the upgrade must never create the deployer role");
+  assert.ok(databaseExternallyCreatedRolesV1.includes("control_room_deployer"),
+    "but the role must still be a KNOWN name, so a migration may refer to it");
 });

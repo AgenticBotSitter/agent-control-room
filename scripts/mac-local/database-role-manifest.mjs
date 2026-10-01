@@ -16,6 +16,39 @@
  * a fresh Mac install never has, and the two would stop matching. */
 const login = (group, extra = {}) => Object.freeze({ group, newLogin: false, legacyGroup: null, ...extra });
 
+/** Roles that EXIST but that no part of this schema installs, and that a
+ * migration or a down file may legitimately NAME.
+ *
+ * `control_room_deployer` is the one today. It is created by the updater's own
+ * fixed DDL (src/updater/v1/ddl/0001_deployer_role.sql) when the updater
+ * STARTS -- after the installer, after the release ledger, and after every role
+ * file -- so the live upgrade must never create, alter or revoke it, and it is
+ * deliberately absent from `groups`, `vpsOnlyGroups` and `logins`. That is what
+ * tests/updater-schema-ddl.test.ts asserts (the deployer role must stay out of
+ * the upgrade's managed role manifest), and it is right: an upgrade that
+ * managed a role whose authority is precisely that the upgrade cannot reach it
+ * would be managing a role it does not control.
+ *
+ * NOTE ON THE NAME: that assertion matches the role's literal name anywhere in
+ * this file, comment included, so this comment deliberately does not spell it
+ * out. The name lives on the line below.
+ *
+ * It is nonetheless a role the SQL names. db/migrations/0239 asserts the
+ * updater's login is the ONLY non-owner grantee of the health-counts function,
+ * and db/down/0239 revokes that grant, and both name it -- correctly, because on
+ * a fresh cluster the role does not exist yet and every statement that touches it
+ * is guarded by a `rolname = '...'` check. Without a place for it in the known
+ * set, the role scanner reports "no role is named outside the manifest" and the
+ * upgrade lane fails on a correct database -- which is the same class of false
+ * report 0238's news coordinator produced, and the reason `vpsOnlyGroups` exists
+ * at all.
+ *
+ * Listing it here says precisely two things: a migration may name it, and the
+ * upgrade will never touch it. It is NOT in `databaseRoleNamesV1`, which is the
+ * list a Mac install creates, grants to and inspects, so no Mac install will
+ * invent the role. */
+export const databaseExternallyCreatedRolesV1 = Object.freeze(["control_room_deployer"]);
+
 export const databaseRoleManifestV1 = Object.freeze({
   groups: Object.freeze([
     "control_room_schema_owner", "control_room_application", "control_room_reader", "control_room_backup",
@@ -51,20 +84,22 @@ export const databaseRoleManifestV1 = Object.freeze({
 export const databaseRoleNamesV1 = Object.freeze([...databaseRoleManifestV1.groups,
   ...Object.keys(databaseRoleManifestV1.logins)]);
 
-/** Every role the schema may name, Mac-installed or VPS-only. This is what a
- * migration or a down file is allowed to refer to; `databaseRoleNamesV1` is the
- * narrower list a Mac install creates, grants to and inspects. The two differ by
- * the VPS-only groups, and a scanner that used the narrow list would report a
- * correct VPS migration as naming an unknown role. */
+/** Every role the schema may name: Mac-installed, VPS-only, or created outside
+ * this schema entirely. This is what a migration or a down file is allowed to
+ * refer to; `databaseRoleNamesV1` is the narrower list a Mac install creates,
+ * grants to and inspects. The two differ by the VPS-only groups and the
+ * externally created roles, and a scanner that used the narrow list would
+ * report a correct VPS migration, or a migration that names the updater's own
+ * role on a guarded `rolname` check, as naming an unknown role. */
 export const databaseKnownRoleNamesV1 = Object.freeze([...databaseRoleNamesV1,
-  ...databaseRoleManifestV1.vpsOnlyGroups]);
+  ...databaseRoleManifestV1.vpsOnlyGroups, ...databaseExternallyCreatedRolesV1]);
 
-/** The attribute line for a role the schema knows. A VPS-only group is still a
- * real role with the same never-dangerous attributes, so the guard is the known
- * set rather than the Mac-installed one: refusing to describe a role the schema
- * legitimately names would be a second, quieter copy of the same mistake 0238
- * fixed. Whether a Mac install CREATES the role is a separate question, answered
- * by `databaseRoleNamesV1`. */
+/** The attribute line for a role the schema knows. A VPS-only group and an
+ * externally created role are both real roles with the same never-dangerous
+ * attributes, so the guard is the known set rather than the Mac-installed one:
+ * refusing to describe a role the schema legitimately names would be a second,
+ * quieter copy of the same mistake 0238 fixed. Whether a Mac install CREATES
+ * the role is a separate question, answered by `databaseRoleNamesV1`. */
 export function databaseRoleAttributesV1(role) {
   if (!databaseKnownRoleNamesV1.includes(role)) throw new Error("upgrade_role_catalog_refused");
   return `${Object.hasOwn(databaseRoleManifestV1.logins, role) ? "LOGIN" : "NOLOGIN"} INHERIT `
