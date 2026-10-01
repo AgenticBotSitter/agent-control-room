@@ -24,8 +24,7 @@ import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
-import { buildFleetConnectorReleaseForTestV1 } from "../scripts/build-fleet-connector.mjs";
-import { loadFleetConnectorReleaseV1 } from "../scripts/run-fleet-gateway";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import { ScriptedBotV1, dogfoodProposalV1, makeBotWorkspaceV1, removeBotWorkspaceV1 } from "../scripts/dogfood/bot-journey.mjs";
@@ -71,9 +70,9 @@ test("bot stress: ten concurrent proposals, a mid-claim disconnect, and every du
     try {
       const releaseRoot = await makeBotWorkspaceV1("stress-release");
       workspaces.push(releaseRoot);
-      const built = await buildFleetConnectorReleaseForTestV1({ root: `${releaseRoot}/fleet`, builtFrom: "1".repeat(40) });
-      const connectorRelease = await loadFleetConnectorReleaseV1(built.root);
-      const handler = createFleetGatewayHandlerV1({ store: gateway, proposals, connectorRelease,
+      const { connectorRelease, releaseTrust } = await buildSignedFleetConnectorReleaseForTestV1(
+        { root: `${releaseRoot}/fleet`, builtFrom: "1".repeat(40) });
+      const handler = createFleetGatewayHandlerV1({ store: gateway, proposals, connectorRelease, releaseTrust,
         onUnexpectedError: error => { unexpected.push((error as { code?: string }).code ?? "unknown"); } });
       const server = createServer((request, response) => { void handler.handle(request, response); });
       servers.push(server);

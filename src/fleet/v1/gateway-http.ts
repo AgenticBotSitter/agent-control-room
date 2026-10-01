@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { captureFleetConnectorReleaseManifestV1, type FleetConnectorReleaseManifestV1 } from "./connector-release";
+import { captureFleetConnectorReleaseManifestV1, type FleetConnectorReleaseAdvertisementV1,
+  type FleetConnectorReleaseManifestV1 } from "./connector-release";
 import { isIP } from "node:net";
 import type { WorkBatchServiceV1 } from "../../work-intake/v1/service";
 import { WorkIntakeErrorV1 } from "../../work-intake/v1/errors";
@@ -8,6 +9,7 @@ import { FleetErrorV1, fleetFail, type FleetErrorCodeV1 } from "./errors";
 import type { FleetGatewayStoreV1, FleetWorkerPrincipalV1 } from "./gateway-store";
 import { FLEET_DIGEST_PATTERN_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
   plainSha256V1 } from "./identifiers";
+import { captureReleaseTrustV1, type ReleaseTrustV1 } from "../../../scripts/release-signing.mjs";
 import { FleetWaitAbortedErrorV1, FleetWaitCapacityErrorV1, FleetWaitRegistryV1 } from "./wait-registry";
 
 /**
@@ -364,7 +366,9 @@ function decodeFiles(value: unknown) {
 }
 
 export type FleetGatewayHttpOptionsV1 = Readonly<{ store: FleetGatewayStoreV1; proposals?: WorkBatchServiceV1;
-  connectorRelease?: Readonly<{ bundle: Uint8Array; manifest: FleetConnectorReleaseManifestV1; manifestBody: string }>;
+  connectorRelease?: Readonly<{ bundle: Uint8Array; manifest: FleetConnectorReleaseManifestV1; manifestBody: string;
+    advertisement: FleetConnectorReleaseAdvertisementV1 }>;
+  releaseTrust: ReleaseTrustV1;
   /** The upload ingress. Absent means this gateway has no byte store, and the
    * upload routes answer 503 rather than pretending the claim has no outputs. */
   uploads?: FleetUploadServiceV1;
@@ -398,6 +402,7 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
   const admission = options.admission ?? createFleetGatewayAdmissionV1();
   const waitRegistry = options.waitRegistry ?? new FleetWaitRegistryV1();
   let connectorRelease = options.connectorRelease;
+  const releaseTrust = captureReleaseTrustV1(options.releaseTrust);
   if (connectorRelease) {
     let manifest: FleetConnectorReleaseManifestV1, declared: FleetConnectorReleaseManifestV1;
     try {
@@ -407,9 +412,15 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     catch { throw new Error("fleet_connector_release_refused"); }
     if (JSON.stringify(manifest) !== JSON.stringify(declared)
       || connectorRelease.bundle.length !== manifest.size
-      || createHash("sha256").update(connectorRelease.bundle).digest("hex") !== manifest.sha256)
+      || createHash("sha256").update(connectorRelease.bundle).digest("hex") !== manifest.sha256
+      || connectorRelease.advertisement.version !== manifest.version
+      || connectorRelease.advertisement.file !== manifest.file
+      || connectorRelease.advertisement.sha256 !== manifest.sha256
+      || connectorRelease.advertisement.size !== manifest.size
+      || connectorRelease.advertisement.builtFrom !== manifest.builtFrom)
       throw new Error("fleet_connector_release_refused");
-    connectorRelease = Object.freeze({ bundle: connectorRelease.bundle, manifest, manifestBody: connectorRelease.manifestBody });
+    connectorRelease = Object.freeze({ bundle: connectorRelease.bundle, manifest, manifestBody: connectorRelease.manifestBody,
+      advertisement: connectorRelease.advertisement });
   }
   const claimRoute = /^\/fleet\/v1\/claims\/(fleet-claim:[a-f0-9]{32})\/(progress|blocker|result)$/u;
   const proposalRoute = /^\/fleet\/v1\/projects\/([^/]+)\/proposals$/u;
@@ -474,13 +485,15 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       try {
         const result = await options.store.enroll(body as never);
         admission.registerCredential(result.workerId, body.credentialDigest as string);
-        return send(response, result.replayed ? 200 : 201, { ok: true, result });
+        return send(response, result.replayed ? 200 : 201, { ok: true,
+          result: { ...result, releaseTrust, ...(release ? { connector: release.advertisement } : {}) } });
       } finally { lease.release(); }
     }
     // Every other route: authenticate first, then read the body.
+    const releaseRoute = /^\/fleet\/v1\/connector-releases\/(\d+\.\d+\.\d+)$/u.exec(path);
     const known = path === "/fleet/v1/me" || path === "/fleet/v1/heartbeat" || path === "/fleet/v1/rotate"
       || path === "/fleet/v1/work" || path === "/fleet/v1/work/wait" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
-      || claimRoute.test(path) || proposalRoute.test(path) || uploadRoute.test(path)
+      || releaseRoute !== null || claimRoute.test(path) || proposalRoute.test(path) || uploadRoute.test(path)
       || chunkRoute.test(path) || inputBytesRoute.test(path);
     if (!known) return fleetFail("not_found");
     let principal: FleetWorkerPrincipalV1;
@@ -496,7 +509,13 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       }
       throw error;
     }
-    if (method === "GET" && path === "/fleet/v1/me") return send(response, 200, { ok: true, result: options.store.me(principal) });
+    if (method === "GET" && releaseRoute && release && releaseRoute[1] === release.manifest.version) {
+      response.writeHead(200, { "cache-control": "no-store", "content-type": "text/javascript; charset=utf-8",
+        "content-length": String(release.manifest.size), "x-content-type-options": "nosniff", connection: "close" });
+      response.end(release.bundle); return;
+    }
+    if (method === "GET" && path === "/fleet/v1/me") return send(response, 200, { ok: true,
+      result: { ...options.store.me(principal), releaseTrust, ...(release ? { connector: release.advertisement } : {}) } });
     if (method === "GET" && path === "/fleet/v1/work") return send(response, 200, { ok: true, result: await options.store.listWork(principal) });
     if (method === "GET" && path === "/fleet/v1/work/wait") {
       const controller = new AbortController();
@@ -597,7 +616,8 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     if (path === "/fleet/v1/heartbeat") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["connectorVersion", "platform"], ["adapterCapabilities"]);
-      return send(response, 200, { ok: true, result: await options.store.heartbeat(principal, body as never) });
+      return send(response, 200, { ok: true, result: { ...await options.store.heartbeat(principal, body as never),
+        releaseTrust, ...(release ? { connector: release.advertisement } : {}) } });
     }
     if (path === "/fleet/v1/rotate") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["newCredentialDigest"]);

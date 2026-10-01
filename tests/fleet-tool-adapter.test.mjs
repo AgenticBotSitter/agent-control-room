@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn as nodeSpawn } from "node:child_process";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { RELEASE_TRUST_SCHEMA_V1, connectorReleaseSignatureMaterialV1,
+  releaseKeyIdV1 } from "../scripts/release-signing.mjs";
 
 /** The gateway ships the agreement metadata; a fake that omits it is refused. */
 const WORKING_AGREEMENT = Object.freeze({ version: connector.WORKING_AGREEMENT.version,
@@ -311,11 +314,22 @@ test("enrollment and heartbeat advertise manifest capabilities as evidence witho
   await manifest(dir, [entry(script), { ...entry(script), id: "gpu_script", capability: "gpu.metal" }]);
   const requests = [];
   const workerId = `fleet-worker:${"a".repeat(32)}`;
-  const fetcher = async (_url, init) => {
+  const keys = generateKeyPairSync("ed25519");
+  const publicKey = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const releaseTrust = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+    keyId: releaseKeyIdV1(publicKey), publicKey, versionFloor: connector.CONNECTOR_VERSION, revokedKeyIds: [] });
+  const connectorBytes = await readFile(join(process.cwd(), "scripts/fleet/connector.mjs"));
+  const unsignedRelease = { version: connector.CONNECTOR_VERSION, file: `connector-${connector.CONNECTOR_VERSION}.mjs`,
+    size: connectorBytes.length, sha256: createHash("sha256").update(connectorBytes).digest("hex"),
+    builtFrom: "a".repeat(40), minVersion: connector.CONNECTOR_VERSION };
+  const release = Object.freeze({ ...unsignedRelease,
+    signature: sign(null, connectorReleaseSignatureMaterialV1(unsignedRelease), keys.privateKey).toString("base64url") });
+  const fetcher = async (url, init = {}) => {
+    if (new URL(url).pathname === "/fleet/v1/connector-manifest.json") return new Response("missing", { status: 404 });
     requests.push(JSON.parse(init.body));
     if (requests.length === 1) return Response.json({ ok: true, result: { workerId, displayName: "Tools", projectIds: ["project:one"],
       capabilities: ["owner.approved"], workerKind: "tool", workingAgreement: WORKING_AGREEMENT,
-      credentialExpiresAt: new Date(Date.now() + 86_400_000).toISOString() } });
+      credentialExpiresAt: new Date(Date.now() + 86_400_000).toISOString(), releaseTrust, connector: release } });
     return Response.json({ ok: true, result: { workerId, capabilities: ["owner.approved"], workingAgreement: WORKING_AGREEMENT } });
   };
   const code = `crj_${"A".repeat(43)}`;

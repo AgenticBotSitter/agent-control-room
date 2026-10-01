@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -14,16 +14,34 @@ import { loadFleetConnectorReleaseV1 } from "../scripts/run-fleet-gateway";
 import { createFleetGatewayHandlerV1, type FleetGatewayStoreV1 } from "../src/fleet/v1";
 import { captureFleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
 import { FLEET_CONNECTOR_INSTALLER_CHECK_BASE64_V1 } from "../src/web/v1/fleet-owner-http";
+import { connectorReleaseSignatureMaterialV1, releaseKeyIdV1,
+  RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
+import { FLEET_WORKING_AGREEMENT_METADATA_V1 } from "../src/fleet/v1/working-agreement";
+import { loadMacLocalFleetConnectorReleaseV1,
+  loadMacLocalFleetReleaseTrustV1 } from "../src/fleet/v1/mac-local-composition";
 
 const builtFrom = "1".repeat(40);
 let sandbox: string, firstRoot: string, secondRoot: string;
 let release: Awaited<ReturnType<typeof buildFleetConnectorReleaseForTestV1>>;
+const releaseKeys = generateKeyPairSync("ed25519");
+const releasePublicKey = releaseKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const releaseTrust = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(releasePublicKey), publicKey: releasePublicKey, versionFloor: "0.4.0", revokedKeyIds: [] });
+
+async function writeAdvertisement(root: string, built: Awaited<ReturnType<typeof buildFleetConnectorReleaseForTestV1>>) {
+  const unsigned = { version: built.manifest.version, file: built.manifest.file, sha256: built.manifest.sha256,
+    size: built.manifest.size, builtFrom: built.manifest.builtFrom, minVersion: "0.4.0" };
+  const advertisement = { ...unsigned,
+    signature: sign(null, connectorReleaseSignatureMaterialV1(unsigned), releaseKeys.privateKey).toString("base64url") };
+  await writeFile(join(root, "connector-release.json"), `${JSON.stringify(advertisement, null, 2)}\n`);
+}
 
 before(async () => {
   sandbox = await mkdtemp(join(tmpdir(), "fleet-bundle-test-"));
   firstRoot = join(sandbox, "first"); secondRoot = join(sandbox, "second");
-  release = await buildFleetConnectorReleaseForTestV1({ root: firstRoot, builtFrom });
-  await buildFleetConnectorReleaseForTestV1({ root: secondRoot, builtFrom });
+  release = await buildFleetConnectorReleaseForTestV1({ root: firstRoot, builtFrom, releaseTrust });
+  const second = await buildFleetConnectorReleaseForTestV1({ root: secondRoot, builtFrom, releaseTrust });
+  await writeAdvertisement(firstRoot, release); await writeAdvertisement(secondRoot, second);
 });
 after(async () => { if (sandbox) await rm(sandbox, { recursive: true, force: true }); });
 
@@ -52,6 +70,8 @@ test("connector build is byte-identical and its manifest binds version, size, di
   assert.match(firstBundle.toString("utf8"), /Bundled third-party licence notice: zod@4\.1\.12/u);
   assert.match(firstBundle.toString("utf8"), /Copyright \(c\) 2025 Colin McDonnell/u);
   assert.match(firstBundle.toString("utf8"), /Permission is hereby granted, free of charge/u);
+  const connector = await import(`${pathToFileURL(join(firstRoot, release.manifest.file)).href}?trust-test=1`);
+  assert.deepEqual(connector.embeddedConnectorReleaseTrustV1(), releaseTrust);
   assert.throws(() => assertFleetConnectorBundleImportsV1({ outputs: { out: { imports: [
     { path: "left-in-worker-package", external: true },
   ] } } }), /fleet_connector_build_refused/u);
@@ -64,6 +84,36 @@ test("connector build is byte-identical and its manifest binds version, size, di
   assert.throws(() => assertFleetConnectorBundledLicensesV1({ inputs: {
     "node_modules/.pnpm/other@1.0.0/node_modules/other/index.js": {},
   } }), /fleet_connector_build_refused/u);
+});
+
+test("Mac-local release loading pins one protected trust and refuses a substituted trust file", async t => {
+  const protectedRoot = join(sandbox, "protected-release-trust"), configRoot = join(protectedRoot, "config");
+  await mkdir(configRoot, { recursive: true, mode: 0o700 });
+  await chmod(protectedRoot, 0o700); await chmod(configRoot, 0o700);
+  const trustPath = join(configRoot, "release-trust.json");
+  await writeFile(trustPath, `${JSON.stringify(releaseTrust)}\n`, { mode: 0o640 }); await chmod(trustPath, 0o640);
+  const loadedTrust = await loadMacLocalFleetReleaseTrustV1(protectedRoot);
+  assert.deepEqual(loadedTrust, releaseTrust);
+  const loadedRelease = await loadMacLocalFleetConnectorReleaseV1(firstRoot, loadedTrust);
+  assert.equal(loadedRelease?.advertisement.sha256, release.manifest.sha256);
+  const otherKeys = generateKeyPairSync("ed25519");
+  const otherKey = otherKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const otherTrust = { ...releaseTrust, keyId: releaseKeyIdV1(otherKey), publicKey: otherKey };
+  const mismatchedRoot = join(sandbox, "mismatched-embedded-key"); await mkdir(mismatchedRoot);
+  await copyFile(join(firstRoot, "manifest.json"), join(mismatchedRoot, "manifest.json"));
+  await copyFile(join(firstRoot, release.manifest.file), join(mismatchedRoot, release.manifest.file));
+  const unsigned = { version: release.manifest.version, file: release.manifest.file, sha256: release.manifest.sha256,
+    size: release.manifest.size, builtFrom: release.manifest.builtFrom, minVersion: "0.4.0" };
+  const mismatchedAdvertisement = { ...unsigned,
+    signature: sign(null, connectorReleaseSignatureMaterialV1(unsigned), otherKeys.privateKey).toString("base64url") };
+  await writeFile(join(mismatchedRoot, "connector-release.json"), `${JSON.stringify(mismatchedAdvertisement)}\n`);
+  await assert.rejects(loadMacLocalFleetConnectorReleaseV1(mismatchedRoot, otherTrust), /fleet_connector_release_refused/u);
+
+  const realTrustPath = join(configRoot, "real-release-trust.json");
+  await writeFile(realTrustPath, `${JSON.stringify(releaseTrust)}\n`, { mode: 0o640 });
+  await unlink(trustPath); await symlink(realTrustPath, trustPath);
+  await assert.rejects(loadMacLocalFleetReleaseTrustV1(protectedRoot), /mac_local_fleet_release_trust_refused/u);
+  t.after(() => rm(trustPath, { force: true }));
 });
 
 test("standalone bundle runs help and an MCP handshake from a repo-free directory with a fake gateway", async t => {
@@ -98,6 +148,113 @@ test("standalone bundle runs help and an MCP handshake from a repo-free director
   assert.equal(reply.result.serverInfo.name, "control-room"); assert.equal(requests, 0);
 });
 
+test("a default-home install runs its registered MCP shim end to end", async t => {
+  const home = join(sandbox, "default-home-install"); await mkdir(home);
+  const advertisement = JSON.parse(await readFile(join(firstRoot, "connector-release.json"), "utf8"));
+  const gateway = createServer(async (request, response) => {
+    const path = new URL(request.url ?? "/", "http://fixture.invalid").pathname;
+    for await (const _chunk of request) { /* drain request */ }
+    const result = path === "/fleet/v1/enroll" ? { workerId: `fleet-worker:${"a".repeat(32)}`,
+      displayName: "Default home", projectIds: ["project:test"], workerKind: "cursor", capabilities: ["writing"],
+      credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust, connector: advertisement,
+      workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }
+      : path === "/fleet/v1/heartbeat" ? { displayName: "Default home", operationsMode: "running", connector: advertisement,
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }
+        : path === "/fleet/v1/me" ? { displayName: "Default home", connector: advertisement, releaseTrust,
+          workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }
+          : null;
+    response.writeHead(result ? 200 : 404, { "content-type": "application/json" });
+    response.end(JSON.stringify(result ? { ok: true, result } : { ok: false, error: "not_found" }));
+  });
+  await new Promise<void>(done => gateway.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => gateway.close(() => done())));
+  const server = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
+  const bundle = join(firstRoot, release.manifest.file);
+  const installed = await child(process.execPath, [bundle, "install", "--server", server,
+    "--code", `crj_${"A".repeat(43)}`, "--bot", "cursor", "--name", "default", "--i-am-the-installer"], {
+    env: { PATH: process.env.PATH, HOME: home, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+  });
+  assert.equal(installed.code, 0, installed.stderr);
+  const cursor = JSON.parse(await readFile(join(home, ".cursor", "mcp.json"), "utf8"));
+  const registered = cursor.mcpServers["control-room-default"];
+  const shim = await child(registered.command, registered.args, { env: { PATH: process.env.PATH, HOME: home,
+    NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+    input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })}\n` });
+  assert.equal(shim.code, 0, shim.stderr);
+  assert.equal(JSON.parse(shim.stdout.trim()).result.serverInfo.name, "control-room");
+});
+
+test("an enrolled gateway cannot substitute the release key embedded in the bundle", async t => {
+  const attacker = generateKeyPairSync("ed25519");
+  const attackerPublicKey = attacker.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const attackerTrust = { ...releaseTrust, keyId: releaseKeyIdV1(attackerPublicKey), publicKey: attackerPublicKey };
+  const unsigned = JSON.parse(await readFile(join(firstRoot, "connector-release.json"), "utf8"));
+  delete unsigned.signature;
+  const attackerAdvertisement = { ...unsigned,
+    signature: sign(null, connectorReleaseSignatureMaterialV1(unsigned), attacker.privateKey).toString("base64url") };
+  const gateway = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* drain request */ }
+    if (new URL(request.url ?? "/", "http://fixture.invalid").pathname === "/fleet/v1/connector-manifest.json") {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: "not_found" }));
+      return;
+    }
+    response.writeHead(201, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: true, result: { workerId: `fleet-worker:${"b".repeat(32)}`,
+      displayName: "Hostile gateway", projectIds: [], workerKind: "cursor", capabilities: [],
+      credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust: attackerTrust,
+      connector: attackerAdvertisement } }));
+  });
+  await new Promise<void>(done => gateway.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => gateway.close(() => done())));
+  const home = join(sandbox, "substituted-key-home"); await mkdir(home);
+  const result = await child(process.execPath, [join(firstRoot, release.manifest.file), "install", "--server",
+    `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`, "--code", `crj_${"B".repeat(43)}`,
+    "--bot", "cursor", "--name", "hostile", "--i-am-the-installer"], {
+    env: { PATH: process.env.PATH, HOME: home, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+  });
+  assert.equal(result.code, 1); assert.match(result.stderr, /valid installation release key/u);
+});
+
+test("a connector from another Control Room is refused before its join code is redeemed", async t => {
+  const home = join(sandbox, "cross-control-room-home"); await mkdir(home);
+  const advertisement = JSON.parse(await readFile(join(firstRoot, "connector-release.json"), "utf8"));
+  let enrollments = 0;
+  const firstGateway = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* drain request */ }
+    const path = new URL(request.url ?? "/", "http://fixture.invalid").pathname;
+    if (path === "/fleet/v1/enroll") enrollments += 1;
+    const result = path === "/fleet/v1/enroll" ? { workerId: `fleet-worker:${"c".repeat(32)}`,
+      displayName: "First Control Room", projectIds: [], workerKind: "cursor", capabilities: [],
+      credentialExpiresAt: "2099-01-01T00:00:00.000Z", releaseTrust, connector: advertisement,
+      workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 }
+      : path === "/fleet/v1/heartbeat" ? { displayName: "First Control Room", operationsMode: "running",
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 } : null;
+    response.writeHead(result ? 200 : 404, { "content-type": "application/json" });
+    response.end(JSON.stringify(result ? { ok: true, result } : { ok: false, error: "not_found" }));
+  });
+  await new Promise<void>(done => firstGateway.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise<void>(done => firstGateway.close(() => done())));
+  const firstOrigin = `http://127.0.0.1:${(firstGateway.address() as AddressInfo).port}`;
+  const first = await child(process.execPath, [join(firstRoot, release.manifest.file), "install", "--server", firstOrigin,
+    "--code", `crj_${"C".repeat(43)}`, "--bot", "cursor", "--name", "first", "--i-am-the-installer"], {
+    env: { PATH: process.env.PATH, HOME: home, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+  });
+  assert.equal(first.code, 0, first.stderr); assert.equal(enrollments, 1);
+
+  const otherKeys = generateKeyPairSync("ed25519");
+  const otherPublicKey = otherKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const otherTrust = { ...releaseTrust, keyId: releaseKeyIdV1(otherPublicKey), publicKey: otherPublicKey };
+  const otherRoot = join(sandbox, "other-control-room-bundle");
+  const otherRelease = await buildFleetConnectorReleaseForTestV1({ root: otherRoot, builtFrom, releaseTrust: otherTrust });
+  const second = await child(process.execPath, [join(otherRoot, otherRelease.manifest.file), "install", "--server", firstOrigin,
+    "--code", `crj_${"D".repeat(43)}`, "--bot", "cursor", "--name", "second", "--i-am-the-installer"], {
+    env: { PATH: process.env.PATH, HOME: home, NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
+  });
+  assert.equal(second.code, 1); assert.match(second.stderr, /different Control Room.*Reinstalling/u);
+  assert.equal(enrollments, 1, "the second Control Room's join code was not sent or spent");
+});
+
 test("bundled harness adapter needs no checkout module path", async () => {
   const connector = await import(`${pathToFileURL(join(firstRoot, release.manifest.file)).href}?adapter-test=1`);
   const settingsPath = join(sandbox, "bundled-harnesses.json");
@@ -125,21 +282,37 @@ test("installer check refuses a tampered bundle, then accepts an intact retry", 
 });
 
 test("gateway serves only the captured bundle and manifest through a burst, a dropped caller and a retry", async t => {
-  const captured = await loadFleetConnectorReleaseV1(firstRoot);
+  const captured = await loadFleetConnectorReleaseV1(firstRoot, releaseTrust);
+  const otherKeys = generateKeyPairSync("ed25519");
+  const otherPublicKey = otherKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const wrongEmbeddedRoot = join(sandbox, "wrong-embedded-key");
+  const wrongEmbedded = await buildFleetConnectorReleaseForTestV1({ root: wrongEmbeddedRoot, builtFrom,
+    releaseTrust: { ...releaseTrust, keyId: releaseKeyIdV1(otherPublicKey), publicKey: otherPublicKey } });
+  await writeAdvertisement(wrongEmbeddedRoot, wrongEmbedded);
+  await assert.rejects(loadFleetConnectorReleaseV1(wrongEmbeddedRoot, releaseTrust), /fleet_connector_release_refused/u,
+    "gateway startup must refuse a signed bundle embedding another installation key");
   const changedBundle = Buffer.from(captured.bundle); changedBundle[changedBundle.length - 2] ^= 1;
   const corruptRoot = join(sandbox, "corrupt-release"); await mkdir(corruptRoot);
   await copyFile(join(firstRoot, "manifest.json"), join(corruptRoot, "manifest.json"));
   await writeFile(join(corruptRoot, captured.manifest.file), changedBundle);
-  await assert.rejects(loadFleetConnectorReleaseV1(corruptRoot), /fleet_connector_release_refused/u);
+  await copyFile(join(firstRoot, "connector-release.json"), join(corruptRoot, "connector-release.json"));
+  await assert.rejects(loadFleetConnectorReleaseV1(corruptRoot, releaseTrust), /fleet_connector_release_refused/u);
+  const wrongSignatureRoot = join(sandbox, "wrong-signature-release"); await mkdir(wrongSignatureRoot);
+  await copyFile(join(firstRoot, "manifest.json"), join(wrongSignatureRoot, "manifest.json"));
+  await copyFile(join(firstRoot, captured.manifest.file), join(wrongSignatureRoot, captured.manifest.file));
+  const signatureRecord = JSON.parse(await readFile(join(firstRoot, "connector-release.json"), "utf8"));
+  signatureRecord.signature = `${signatureRecord.signature[0] === "A" ? "B" : "A"}${signatureRecord.signature.slice(1)}`;
+  await writeFile(join(wrongSignatureRoot, "connector-release.json"), `${JSON.stringify(signatureRecord)}\n`);
+  await assert.rejects(loadFleetConnectorReleaseV1(wrongSignatureRoot, releaseTrust), /fleet_connector_release_refused/u);
   assert.throws(() => createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1,
-    connectorRelease: { ...captured, bundle: changedBundle } }),
+    releaseTrust, connectorRelease: { ...captured, bundle: changedBundle } }),
   /fleet_connector_release_refused/u);
   assert.throws(() => createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1,
-    connectorRelease: { ...captured, manifest: { ...captured.manifest, builtFrom: "2".repeat(40) } } }),
+    releaseTrust, connectorRelease: { ...captured, manifest: { ...captured.manifest, builtFrom: "2".repeat(40) } } }),
   /fleet_connector_release_refused/u);
   assert.throws(() => captureFleetConnectorReleaseManifestV1({ ...captured.manifest, extra: true }),
     /fleet_connector_release_refused/u);
-  const handler = createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1, connectorRelease: captured });
+  const handler = createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1, releaseTrust, connectorRelease: captured });
   const server = createServer((request, response) => { void handler.handle(request, response); });
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   t.after(() => new Promise<void>(done => server.close(() => done())));
@@ -158,7 +331,7 @@ test("gateway serves only the captured bundle and manifest through a burst, a dr
   const retry = await fetch(`${origin}/fleet/v1/${release.manifest.file}`);
   assert.equal(retry.status, 200); assert.equal((await retry.arrayBuffer()).byteLength, release.manifest.size);
 
-  const withoutRelease = createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1 });
+  const withoutRelease = createFleetGatewayHandlerV1({ store: {} as FleetGatewayStoreV1, releaseTrust });
   const absentServer = createServer((request, response) => { void withoutRelease.handle(request, response); });
   await new Promise<void>(done => absentServer.listen(0, "127.0.0.1", done));
   t.after(() => new Promise<void>(done => absentServer.close(() => done())));

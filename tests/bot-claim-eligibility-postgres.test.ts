@@ -28,8 +28,7 @@ import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
-import { buildFleetConnectorReleaseForTestV1 } from "../scripts/build-fleet-connector.mjs";
-import { loadFleetConnectorReleaseV1 } from "../scripts/run-fleet-gateway";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection";
 import { WebProjectService } from "../src/web/v1/project-service";
 import { WebTaskService } from "../src/web/v1/task-service";
@@ -79,9 +78,9 @@ test("an owner-picked model and a restricted worker kind both refuse a fleet cla
     try {
       const releaseRoot = await makeBotWorkspaceV1("elig-release");
       workspaces.push(releaseRoot);
-      const built = await buildFleetConnectorReleaseForTestV1({ root: `${releaseRoot}/fleet`, builtFrom: "3".repeat(40) });
-      const connectorRelease = await loadFleetConnectorReleaseV1(built.root);
-      const handler = createFleetGatewayHandlerV1({ store: gateway, connectorRelease,
+      const { connectorRelease, releaseTrust } = await buildSignedFleetConnectorReleaseForTestV1(
+        { root: `${releaseRoot}/fleet`, builtFrom: "3".repeat(40) });
+      const handler = createFleetGatewayHandlerV1({ store: gateway, connectorRelease, releaseTrust,
         onUnexpectedError: error => { unexpected.push(error); } });
       const server = createServer((request, response) => { void handler.handle(request, response); });
       servers.push(server);

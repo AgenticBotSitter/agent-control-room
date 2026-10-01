@@ -8,28 +8,30 @@ a second scheduler or permission system.
 ## 1. Join the machine
 
 In Control Room, open **Workers**, choose **Add a worker**, set its projects and
-capabilities, and run the one-time join command on that machine. The connector
-stores the generated credential in its private configuration file. Do not copy
-that file to another machine or put it in an MCP configuration.
+capabilities, and run the one-time `install` command on that machine. The
+connector stores the generated credential in its private configuration file and
+installs a machine-wide launcher and MCP shim. Do not copy the credential file
+to another machine or put its contents in an MCP configuration.
 
 Confirm the connection before adding an MCP client:
 
 ```sh
-node /opt/control-room/control-room-connector.mjs status
+node /path/printed/by/install/launcher.mjs launch status --config /path/printed/by/install/bot.json
 ```
 
 ## 2. Configure the MCP client
 
-The server command is always:
+Use the MCP shim path registered or printed by `install`:
 
 ```sh
-node /opt/control-room/control-room-connector.mjs mcp
+/path/printed/by/install/bin/control-room-mcp --profile BOT_NAME --config /path/printed/by/install/bot.json --workspace /work/project
 ```
 
 Start it with the agent's project directory as its working directory. Result
-files can only come from inside that directory. If the connector configuration
-is not in its default location, pass its private path through
-`CONTROL_ROOM_CONNECTOR_CONFIG`.
+files can only come from inside that directory. The shim starts the verified
+machine-wide launcher, so connector self-updates can take effect. Starting a
+downloaded `control-room-connector.mjs mcp` file directly is an unmanaged setup
+and never self-updates.
 
 Generic MCP client JSON:
 
@@ -37,12 +39,10 @@ Generic MCP client JSON:
 {
   "mcpServers": {
     "control-room": {
-      "command": "node",
-      "args": ["/opt/control-room/control-room-connector.mjs", "mcp"],
-      "cwd": "/work/project",
-      "env": {
-        "CONTROL_ROOM_CONNECTOR_CONFIG": "/secure/control-room/connector.json"
-      }
+      "command": "/path/printed/by/install/bin/control-room-mcp",
+      "args": ["--profile", "BOT_NAME", "--config", "/path/printed/by/install/bot.json",
+        "--workspace", "/work/project"],
+      "cwd": "/work/project"
     }
   }
 }
@@ -52,8 +52,8 @@ Codex CLI:
 
 ```sh
 codex mcp add control-room \
-  --env CONTROL_ROOM_CONNECTOR_CONFIG=/secure/control-room/connector.json \
-  -- node /opt/control-room/control-room-connector.mjs mcp
+  -- /path/printed/by/install/bin/control-room-mcp --profile BOT_NAME \
+  --config /path/printed/by/install/bot.json --workspace /work/project
 codex mcp list
 ```
 
@@ -61,16 +61,16 @@ Equivalent Codex `config.toml` entry:
 
 ```toml
 [mcp_servers.control-room]
-command = "node"
-args = ["/opt/control-room/control-room-connector.mjs", "mcp"]
+command = "/path/printed/by/install/bin/control-room-mcp"
+args = ["--profile", "BOT_NAME", "--config", "/path/printed/by/install/bot.json", "--workspace", "/work/project"]
 cwd = "/work/project"
-env = { CONTROL_ROOM_CONNECTOR_CONFIG = "/secure/control-room/connector.json" }
 ```
 
 Claude Code:
 
 ```sh
-claude mcp add control-room -- node /opt/control-room/control-room-connector.mjs mcp
+claude mcp add control-room -- /path/printed/by/install/bin/control-room-mcp \
+  --profile BOT_NAME --config /path/printed/by/install/bot.json --workspace /work/project
 claude mcp list
 ```
 

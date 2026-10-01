@@ -32,8 +32,7 @@ import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1, type FleetOperationsModeV1 } from "../src/fleet/v1";
-import { buildFleetConnectorReleaseForTestV1 } from "../scripts/build-fleet-connector.mjs";
-import { loadFleetConnectorReleaseV1 } from "../scripts/run-fleet-gateway";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
 import { WorkBatchServiceV1, WorkBatchOwnerServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import type { WorkBatchProposalV1 } from "../src/work-intake/v1";
 import { WebTaskService } from "../src/web/v1/task-service";
@@ -89,10 +88,10 @@ test("a bot can build Control Room through Control Room, end to end, as the prod
     try {
       const releaseRoot = await makeBotWorkspaceV1("release");
       workspaces.push(releaseRoot);
-      const built = await buildFleetConnectorReleaseForTestV1({ root: resolve(releaseRoot, "fleet"),
+      const releaseFixture = await buildSignedFleetConnectorReleaseForTestV1({ root: resolve(releaseRoot, "fleet"),
         builtFrom: "0".repeat(40) });
-      const connectorRelease = await loadFleetConnectorReleaseV1(built.root);
-      const handler = createFleetGatewayHandlerV1({ store: gateway, proposals, connectorRelease,
+      const { connectorRelease, releaseTrust } = releaseFixture;
+      const handler = createFleetGatewayHandlerV1({ store: gateway, proposals, connectorRelease, releaseTrust,
         onUnexpectedError: error => { unexpected.push(error); } });
       const gatewayServer = createServer((request, response) => { void handler.handle(request, response); });
       servers.push(gatewayServer);

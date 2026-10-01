@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { createServer } from "node:http";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,11 +8,16 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { buildFleetConnectorReleaseForTestV1 } from "../scripts/build-fleet-connector.mjs";
+import { connectorReleaseSignatureMaterialV1, releaseKeyIdV1, RELEASE_TRUST_SCHEMA_V1 } from "../scripts/release-signing.mjs";
 import { FLEET_WORKING_AGREEMENT_METADATA_V1 } from "../src/fleet/v1/working-agreement.ts";
 import { fleetConnectorOwnerNextStepV1, fleetJoinCommandsV1 } from "../src/web/v1/fleet-owner-http.ts";
 
 const run = promisify(execFile);
 const botKinds = ["claude-code", "codex", "hermes", "claude-desktop", "cursor", "mcp-agent"];
+const releaseKeys = generateKeyPairSync("ed25519");
+const releasePublicKey = releaseKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const releaseTrust = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(releasePublicKey), publicKey: releasePublicKey, versionFloor: "0.0.0", revokedKeyIds: [] });
 
 function joinCode(index) { return `crj_${String.fromCharCode(65 + index).repeat(43)}`; }
 function workerId(index) { return `fleet-worker:${index.toString(16).repeat(32)}`; }
@@ -68,6 +73,10 @@ writeFileSync(statePath, JSON.stringify(state) + "\\n", { mode: 0o600 });
 
 async function gateway(releaseRoot, manifest, bindings) {
   const connector = await readFile(join(releaseRoot, manifest.file));
+  const unsigned = { version: manifest.version, file: manifest.file, sha256: manifest.sha256,
+    size: manifest.size, builtFrom: manifest.builtFrom, minVersion: manifest.version };
+  const advertisement = Object.freeze({ ...unsigned,
+    signature: sign(null, connectorReleaseSignatureMaterialV1(unsigned), releaseKeys.privateKey).toString("base64url") });
   const used = new Map(), state = { enrollments: 0, heartbeats: 0 };
   const server = createServer(async (request, response) => {
     const send = (status, value, type = "application/json") => {
@@ -91,13 +100,17 @@ async function gateway(releaseRoot, manifest, bindings) {
       return send(201, JSON.stringify({ ok: true, result: { workerId: expected.workerId,
         displayName: expected.displayName, projectIds: ["project:test"], workerKind: expected.bot,
         capabilities: ["writing"], credentialExpiresAt: "2099-01-01T00:00:00.000Z",
-        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 } }));
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1, releaseTrust, connector: advertisement } }));
     }
+    if (request.method === "GET" && request.url === "/fleet/v1/me"
+      && /^Bearer crf_[A-Za-z0-9_-]{43}$/u.test(request.headers.authorization ?? ""))
+      return send(200, JSON.stringify({ ok: true, result: { displayName: "Installed",
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1, releaseTrust, connector: advertisement } }));
     if (request.method === "POST" && request.url === "/fleet/v1/heartbeat"
       && /^Bearer crf_[A-Za-z0-9_-]{43}$/u.test(request.headers.authorization ?? "")) {
       state.heartbeats += 1;
       return send(200, JSON.stringify({ ok: true, result: { displayName: "Installed", operationsMode: "running",
-        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1 } }));
+        workingAgreement: FLEET_WORKING_AGREEMENT_METADATA_V1, releaseTrust, connector: advertisement } }));
     }
     send(404, JSON.stringify({ ok: false, error: "not_found" }));
   });
@@ -115,7 +128,8 @@ test("exact macOS lines install all registrations and one idempotent worker for 
   const root = await mkdtemp(join(tmpdir(), "connect-bot-line-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const releaseRoot = join(root, "release"), stubs = join(root, "stubs"), serviceStubs = join(root, "service-stubs");
-  const release = await buildFleetConnectorReleaseForTestV1({ root: releaseRoot, builtFrom: "a".repeat(40) });
+  const release = await buildFleetConnectorReleaseForTestV1({ root: releaseRoot, builtFrom: "a".repeat(40),
+    releaseTrust });
   await writeAgentCliStubs(stubs);
   await writeServiceStubs(serviceStubs);
   const bindings = new Map(botKinds.map((bot, index) => [joinCode(index), {
@@ -146,7 +160,9 @@ test("exact macOS lines install all registrations and one idempotent worker for 
     const profile = commands.profileName;
     const credential = await readJson(join(xdg, "control-room", "bots", `${profile}.json`));
     assert.deepEqual(credential.installation, { bot, name: profile,
-      workspace: join(home, "ControlRoomWork", profile), state: "installed", ...(optedIn ? { unattended: true } : {}) });
+      workspace: join(home, "ControlRoomWork", profile), state: "installed",
+      updates: { releasePublicKey, floorVersion: release.manifest.version, keyId: releaseTrust.keyId,
+        epoch: 1, revokedKeyIds: [], paused: false }, ...(optedIn ? { unattended: true } : {}) });
     assert.equal((await stat(credential.installation.workspace)).isDirectory(), true);
     if (optedIn) {
       const agents = await readdir(join(home, "Library", "LaunchAgents"));

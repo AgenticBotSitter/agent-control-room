@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat, open, readFile, realpath } from "node:fs/promises";
 import { createServer as createNodeServer, type Server, type ServerOptions } from "node:http";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { DatabaseClient } from "../../persistence/database";
 import { ProjectEventStoreV1 } from "../../project-events/v1/store";
 import { deriveProjectEventIntegrityKeyV1 } from "../../project-events/v1/key";
@@ -16,6 +17,8 @@ import { captureFleetConnectorReleaseManifestV1, type FleetConnectorReleaseManif
 import { createFleetGatewayHandlerV1, type FleetGatewayHttpOptionsV1 } from "./gateway-http";
 import { FleetGatewayStoreV1 } from "./gateway-store";
 import { createFleetGatewayAdmissionV1 } from "./gateway-http";
+import { captureReleaseTrustV1, verifyConnectorReleaseAdvertisementV1,
+  type ReleaseTrustV1 } from "../../../scripts/release-signing.mjs";
 
 export const MAC_LOCAL_FLEET_GATEWAY_PORT_V1 = 3212;
 export const MAC_LOCAL_FLEET_GATEWAY_ORIGIN_V1 = `http://127.0.0.1:${MAC_LOCAL_FLEET_GATEWAY_PORT_V1}`;
@@ -34,7 +37,40 @@ function fleetRoles(roles: MacLocalDatabaseRolesV1) {
 
 /** Reads the connector release the gateway serves. A missing release is an
  * allowed web-only state (codes still work); malformed bytes always refuse. */
-export async function loadMacLocalFleetConnectorReleaseV1(root: string): Promise<ConnectorRelease | undefined> {
+export async function loadMacLocalFleetReleaseTrustV1(protectedRoot: string): Promise<ReleaseTrustV1> {
+  const refused = (): never => { throw new Error("mac_local_fleet_release_trust_refused"); };
+  if (!isAbsolute(protectedRoot) || resolve(protectedRoot) !== protectedRoot) refused();
+  try {
+    const supplied = await lstat(protectedRoot);
+    if (!supplied.isDirectory() || supplied.isSymbolicLink()) refused();
+    const canonicalRoot = await realpath(protectedRoot);
+    const configRoot = join(canonicalRoot, "config"), path = join(configRoot, "release-trust.json");
+    for (const directory of [canonicalRoot, configRoot]) {
+      const entry = await lstat(directory);
+      if (!entry.isDirectory() || entry.isSymbolicLink()
+        || process.platform !== "win32" && (entry.mode & 0o027) !== 0) refused();
+    }
+    const before = await lstat(path);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size < 1 || before.size > 64 * 1024
+      || process.platform !== "win32" && (before.mode & 0o027) !== 0) refused();
+    const handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) refused();
+      const bytes = await handle.readFile();
+      const after = await handle.stat();
+      if (bytes.length !== before.size || after.dev !== before.dev || after.ino !== before.ino
+        || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) refused();
+      return captureReleaseTrustV1(JSON.parse(bytes.toString("utf8")));
+    } finally { await handle.close(); }
+  } catch { return refused(); }
+}
+
+export async function loadMacLocalFleetConnectorReleaseV1(root: string,
+  trustValue: ReleaseTrustV1): Promise<ConnectorRelease | undefined> {
+  let trust: ReleaseTrustV1;
+  try { trust = captureReleaseTrustV1(trustValue); }
+  catch { throw new Error("fleet_connector_release_refused"); }
   let manifestBody: string;
   try { manifestBody = await readFile(join(root, "manifest.json"), "utf8"); }
   catch (error) {
@@ -46,7 +82,15 @@ export async function loadMacLocalFleetConnectorReleaseV1(root: string): Promise
     const bundle = await readFile(join(root, manifest.file));
     if (bundle.length !== manifest.size || createHash("sha256").update(bundle).digest("hex") !== manifest.sha256)
       throw new Error();
-    return Object.freeze({ bundle, manifest, manifestBody });
+    const embeddedKeyId = /^\/\/ Control Room embedded release key ID: (sha256:[a-f0-9]{64})$/mu
+      .exec(bundle.subarray(0, Math.min(bundle.length, 16 * 1024)).toString("utf8"))?.[1];
+    if (embeddedKeyId !== trust.keyId) throw new Error();
+    const advertisement = verifyConnectorReleaseAdvertisementV1(
+      JSON.parse(await readFile(join(root, "connector-release.json"), "utf8")), trust);
+    if (advertisement.version !== manifest.version || advertisement.file !== manifest.file
+      || advertisement.sha256 !== manifest.sha256 || advertisement.size !== manifest.size
+      || advertisement.builtFrom !== manifest.builtFrom) throw new Error();
+    return Object.freeze({ bundle, manifest, manifestBody, advertisement });
   } catch { throw new Error("fleet_connector_release_refused"); }
 }
 
@@ -79,12 +123,16 @@ export async function prepareMacLocalFleetGatewayV1(input: Readonly<{
   workIntake?: WorkIntakeServerConfigurationV1;
   harnessIntegrityKey?: Uint8Array;
   connectorRelease?: ConnectorRelease;
+  releaseTrust: ReleaseTrustV1;
   openDatabase(configuration: PrivatePostgresConfiguration): OpenedDatabase;
   createServer?: (options: Readonly<ServerOptions>, listener: Parameters<typeof createNodeServer>[1]) => Server;
   port?: number;
   reconcileIntervalMs?: number;
 }>): Promise<Readonly<{ store: FleetGatewayStoreV1; origin: string; start(): Promise<void>; close(): Promise<void> }>> {
   const roles = fleetRoles(input.databaseRoles), port = input.port ?? MAC_LOCAL_FLEET_GATEWAY_PORT_V1;
+  let releaseTrust: ReleaseTrustV1;
+  try { releaseTrust = captureReleaseTrustV1(input.releaseTrust); }
+  catch { throw new Error("mac_local_fleet_gateway_invalid"); }
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) throw new Error("mac_local_fleet_gateway_invalid");
   if (input.harnessIntegrityKey && input.harnessIntegrityKey.length !== 32)
     throw new Error("mac_local_fleet_gateway_invalid");
@@ -109,7 +157,7 @@ export async function prepareMacLocalFleetGatewayV1(input: Readonly<{
       admission.registerCredential(credential.workerId, credential.credentialDigest);
     const proposals = intakeDatabase && input.workIntake ? new WorkBatchServiceV1(new WorkBatchStoreV1(
       intakeDatabase.client, new Uint8Array(Buffer.from(input.workIntake.integrityKey, "base64url")))) : undefined;
-    const handler = createFleetGatewayHandlerV1({ store, admission,
+    const handler = createFleetGatewayHandlerV1({ store, admission, releaseTrust,
       ...(proposals ? { proposals } : {}), ...(input.connectorRelease ? { connectorRelease: input.connectorRelease } : {}) });
     const makeServer = input.createServer ?? ((options, listener) => createNodeServer(options, listener));
     server = makeServer(MAC_LOCAL_FLEET_GATEWAY_SERVER_OPTIONS_V1,

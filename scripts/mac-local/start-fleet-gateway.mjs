@@ -17,17 +17,19 @@ export async function startMacLocalFleetGateway(input, runtime = {}) {
     || typeof loader.loadWorkIntakeServerConfigurationFromRootV1 !== "function"
     || typeof postgres.createPrivatePostgresDatabase !== "function"
     || typeof fleet.prepareMacLocalFleetGatewayV1 !== "function"
+    || typeof fleet.loadMacLocalFleetReleaseTrustV1 !== "function"
     || typeof fleet.loadMacLocalFleetConnectorReleaseV1 !== "function")
     throw new Error("mac_local_fleet_gateway_release_invalid");
+  const releaseTrust = await fleet.loadMacLocalFleetReleaseTrustV1(input.protectedRoot);
   const [configuration, databaseRoles, workIntake, connectorRelease] = await Promise.all([
     loader.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
     loader.loadMacLocalDatabaseRolesFromRootV1(input.protectedRoot),
     loader.loadWorkIntakeServerConfigurationFromRootV1(input.protectedRoot),
-    fleet.loadMacLocalFleetConnectorReleaseV1(fileURLToPath(new URL("../fleet/release", import.meta.url))),
+    fleet.loadMacLocalFleetConnectorReleaseV1(fileURLToPath(new URL("../fleet/release", import.meta.url)), releaseTrust),
   ]);
   if (!connectorRelease) throw new Error("mac_local_fleet_connector_release_missing");
   const service = await fleet.prepareMacLocalFleetGatewayV1({ configuration, databaseRoles,
-    ...(workIntake ? { workIntake } : {}), connectorRelease,
+    ...(workIntake ? { workIntake } : {}), connectorRelease, releaseTrust,
     openDatabase: postgres.createPrivatePostgresDatabase });
   try { await service.start(); return service; }
   catch (error) { await service.close(); throw error; }

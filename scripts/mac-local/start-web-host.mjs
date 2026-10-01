@@ -63,15 +63,17 @@ export async function startMacLocalWebHost(input, runtime = {}) {
     || typeof loaderModule.loadMacLocalDatabaseRolesFromRootV1 !== "function"
     || typeof intakeModule.prepareWorkIntakePrivateServiceV1 !== "function"
     || typeof fleetModule.prepareMacLocalFleetOwnerV1 !== "function"
+    || typeof fleetModule.loadMacLocalFleetReleaseTrustV1 !== "function"
     || typeof fleetModule.loadMacLocalFleetConnectorReleaseV1 !== "function")
     throw new Error("mac_local_web_host_release_invalid");
   const assets = await servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url)));
+  const releaseTrust = await fleetModule.loadMacLocalFleetReleaseTrustV1(input.protectedRoot);
   const [configuration,installed,ownerWebPush,databaseRoles,connectorRelease] = await Promise.all([
     loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
     loaderModule.loadWorkIntakeServerConfigurationFromRootV1(input.protectedRoot),
     loaderModule.loadOwnerWebPushConfigFromRootV1(input.protectedRoot),
     loaderModule.loadMacLocalDatabaseRolesFromRootV1(input.protectedRoot),
-    fleetModule.loadMacLocalFleetConnectorReleaseV1(fileURLToPath(new URL("../fleet/release", import.meta.url)))]);
+    fleetModule.loadMacLocalFleetConnectorReleaseV1(fileURLToPath(new URL("../fleet/release", import.meta.url)), releaseTrust)]);
   verifyIntakeRoster(configuration,installed);
   const fleetOwner = fleetModule.prepareMacLocalFleetOwnerV1({ configuration, databaseRoles,
     openDatabase: postgresModule.createPrivatePostgresDatabase, ...(connectorRelease ? { connectorRelease } : {}) });

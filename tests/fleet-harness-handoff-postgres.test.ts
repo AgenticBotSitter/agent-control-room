@@ -27,6 +27,7 @@ import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycl
 import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
 import * as fake from "./support/fleet-fake-harness-adapter.mjs";
 
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59200);
@@ -59,7 +60,13 @@ test("harness hand-off end to end as the production logins: join, offer, run, re
     const owner = new FleetOwnerServiceV1(fleetOwner.client, { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE,
       afterDecision: () => gateway.reconcile() });
     const unexpected: unknown[] = [];
-    const handler = createFleetGatewayHandlerV1({ store: gateway, onUnexpectedError: error => { unexpected.push(error); } });
+    // The connector refuses enrollment unless the gateway advertises a release
+    // signed by the trust it hands out, so this gateway must carry one.
+    const release = await buildSignedFleetConnectorReleaseForTestV1({ root: resolve(dir, "fleet"),
+      builtFrom: "0".repeat(40) });
+    const handler = createFleetGatewayHandlerV1({ store: gateway, releaseTrust: release.releaseTrust,
+      connectorRelease: release.connectorRelease,
+      onUnexpectedError: error => { unexpected.push(error); } });
     const server = createServer((request, response) => { void handler.handle(request, response); });
     await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

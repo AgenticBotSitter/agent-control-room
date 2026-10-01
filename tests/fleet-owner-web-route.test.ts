@@ -2,6 +2,7 @@
 // signed-in owner only, same-origin writes only, and absent unless the host
 // runs the fleet gateway.
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
 import test, { after } from "node:test";
 import { sha256Digest } from "../src/security";
@@ -11,6 +12,7 @@ import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-
 import { FLEET_CONNECTOR_RELEASE_SCHEMA_V1, type FleetConnectorReleaseManifestV1 } from "../src/fleet/v1/connector-release";
 import { prepareMacLocalFleetGatewayV1, prepareMacLocalFleetOwnerV1 }
   from "../src/fleet/v1/mac-local-composition";
+import { RELEASE_TRUST_SCHEMA_V1, releaseKeyIdV1 } from "../scripts/release-signing.mjs";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 
@@ -18,6 +20,9 @@ after(closePrivateOwnerBootstrapConformanceDatabase);
 
 const connectorRelease: FleetConnectorReleaseManifestV1 = Object.freeze({ schema: FLEET_CONNECTOR_RELEASE_SCHEMA_V1,
   version: "0.3.0", file: "connector-0.3.0.mjs", sha256: "a".repeat(64), size: 1234, builtFrom: "b".repeat(40) });
+const releasePublicKey = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const releaseTrust = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(releasePublicKey), publicKey: releasePublicKey, versionFloor: "0.0.0", revokedKeyIds: [] });
 
 test("owner fleet routes: add a worker returns a one-time install command; foreign origins and signed-out calls are refused", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "fleet-owner-web" }); t.after(fixture.close);
@@ -137,6 +142,7 @@ test("the Mac fleet composition binds its independently owned listener to loopba
   const service = await prepareMacLocalFleetGatewayV1({
     configuration: { localOwnerSession: { tenantId: "tenant:test" } } as never,
     databaseRoles: { fleetGateway: { role: "gateway" }, fleetOwner: { role: "owner" } } as never,
+    releaseTrust,
     openDatabase(role) {
       opened.push(role);
       return { client: { async query() { return { rows: [], rowCount: 0 }; } } as never,

@@ -51,6 +51,7 @@ import { TaskProjectEventWriterV1 } from "../src/project-events/v1/task-lifecycl
 import { deriveProjectEventIntegrityKeyV1 } from "../src/project-events/v1/key";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
 
 // This lane is 59620-59629 by default and moves with CONTROL_ROOM_PG_TEST_PORT_BASE.
 const PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) =>
@@ -97,7 +98,14 @@ async function gatewayFor(postgres: RealPostgres, mode: { value: FleetOperations
   // is about the CLAIM path, not about how fast a person may add bots. Every
   // other cap — including concurrent authentication and per-worker request
   // limits — is left exactly as shipped, so the claim path is still bounded.
-  const handler = createFleetGatewayHandlerV1({ store: gateway,
+  // The connector refuses enrollment unless the gateway advertises a release
+  // signed by the trust it hands out, so this gateway must carry one. It is
+  // built per call (a fresh key pair) and removed by `close` below.
+  const releaseRoot = await mkdtemp(join(tmpdir(), "fleet-release-"));
+  const release = await buildSignedFleetConnectorReleaseForTestV1({ root: resolve(releaseRoot, "fleet"),
+    builtFrom: "0".repeat(40) });
+  const handler = createFleetGatewayHandlerV1({ store: gateway, releaseTrust: release.releaseTrust,
+    connectorRelease: release.connectorRelease,
     admission: createFleetGatewayAdmissionV1({ windowMs: 60_000, enrollPerIp: 64, ...(input.admission ?? {}) }),
     onUnexpectedError: error => { unexpected.push(error); } });
   const server = createServer((request, response) => { void handler.handle(request, response); });
@@ -113,6 +121,7 @@ async function gatewayFor(postgres: RealPostgres, mode: { value: FleetOperations
   return { admin, fleet, fleetOwner, coordinator, gateway, owner, unexpected, asWeb, asGateway,
     origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     close: async () => { await new Promise(done => server.close(done));
+      await rm(releaseRoot, { recursive: true, force: true });
       await Promise.all([admin.close(), fleet.close(), fleetOwner.close(), coordinator.close()]); } };
 }
 

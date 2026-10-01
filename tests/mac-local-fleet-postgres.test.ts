@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -28,6 +28,7 @@ import { prepareMacLocalFleetGatewayV1, prepareMacLocalFleetOwnerV1 } from "../s
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
 import { FLEET_TENANT, FLEET_WORKSPACE, PROJECT_A, seedFleetTenant, seedProposedTask } from "./support/fleet-fixture";
 import * as connector from "../scripts/fleet/connector.mjs";
+import { buildSignedFleetConnectorReleaseForTestV1 } from "./support/fleet-release";
 
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59600), PG = requiresRealPostgres();
 
@@ -86,8 +87,22 @@ test("real Mac-local host plus gateway completes code, install, claim, fake run,
         // production pool exposes and the supervisor's health monitor reads.
         return { ...opened, isAvailable: () => true };
       };
+      // The connector refuses enrollment unless the gateway advertises a release
+      // signed by the trust it hands out, so the production composition needs
+      // one too. It lives in this test's own temp root, removed below.
+      const release = await buildSignedFleetConnectorReleaseForTestV1({ root: resolve(root, "fleet"),
+        builtFrom: "0".repeat(40) });
+      // The installer pins a SIGNED bundle, not the source file: it re-verifies
+      // the bytes it writes against the advertised sha256/size, so installing
+      // `scripts/fleet/connector.mjs` directly is refused as
+      // `connector_update_refused:installed_release`. This test therefore
+      // installs the release it just built, exactly as the release-signing E2E
+      // does, which is also the path a real machine takes.
+      const bundledSource = resolve(root, "fleet", release.built.manifest.file);
+      const bundledConnector = await import(pathToFileURL(bundledSource).href) as typeof connector;
       gateway = await prepareMacLocalFleetGatewayV1({ configuration, databaseRoles: roles, port: gatewayPort,
-        workIntake: { database: intake.configuration, integrityKey: "k".repeat(43) } as never, openDatabase });
+        workIntake: { database: intake.configuration, integrityKey: "k".repeat(43) } as never,
+        releaseTrust: release.releaseTrust, connectorRelease: release.connectorRelease, openDatabase });
       await gateway.start();
       fleetOwner = prepareMacLocalFleetOwnerV1({ configuration, databaseRoles: roles, gatewayOrigin: gateway.origin, openDatabase });
       const protectedHost = createMacLocalProtectedHostV1({ connectorOnly: true, async loadConfiguration() { return configuration; },
@@ -105,9 +120,9 @@ test("real Mac-local host plus gateway completes code, install, claim, fake run,
           capabilities: ["writing"], maxConcurrent: 1 }) });
       assert.equal(issued.status, 201, await issued.clone().text()); const enrollment = await issued.json() as { code: string };
       const commands: unknown[] = [];
-      const installed = await connector.installConnector({ server: gateway.origin, code: enrollment.code, bot: "codex",
+      const installed = await bundledConnector.installConnector({ server: gateway.origin, code: enrollment.code, bot: "codex",
         name: "local-codex", homeDir: root, platform: "linux", env: { NODE_ENV: "test", CONTROL_ROOM_TEST_BLOCK_AGENT_CLI: "1" },
-        sourcePath: resolve("scripts/fleet/connector.mjs"),
+        sourcePath: bundledSource,
         fetcher: fetch, runner: async (...args: unknown[]) => { commands.push(args); return { stdout: "", stderr: "" }; } } as never);
       assert.equal(commands.length, 1, "the bot CLI registration was faked exactly once");
       const localWorkers = await fetch(`${origin}/api/v1/local-workers`, { headers: { cookie } });
@@ -116,14 +131,27 @@ test("real Mac-local host plus gateway completes code, install, claim, fake run,
       const offered = await fetch(`${origin}/api/v1/fleet/offers`, { method: "POST", headers: writeHeaders,
         body: JSON.stringify({ projectId: PROJECT_A, jobId: task.jobId, capability: "writing" }) });
       assert.equal(offered.status, 201, await offered.clone().text());
+      // A released bundle uses the REAL reviewed harness factory, which ignores
+      // `adapterModule` and drives the machine's local `codex` executable. This
+      // test installs a real signed bundle, so it must therefore point the
+      // codex harness at a fake CLI (tests/support/fake-codex-cli.sh) instead of
+      // at a fake adapter module. That keeps the assertion meaningful: the
+      // production adapter, delivery contract and result parsing all run.
+      const fakeCodex = join(root, "fake-codex.sh");
+      await copyFile(resolve("tests/support/fake-codex-cli.sh"), fakeCodex);
+      await chmod(fakeCodex, 0o700);
+      const workDir = join(root, "work");
+      await mkdir(workDir, { recursive: true, mode: 0o700 });
       const harnessesPath = join(root, "fake-harnesses.json");
       await writeFile(harnessesPath, JSON.stringify({ schema: "control-room.fleet-harnesses/v1",
         adapterModule: resolve("tests/support/fleet-fake-harness-adapter.mjs"),
-        harnesses: { codex: { enabled: true, deadlineMs: 5_000, fakeBehaviour: "success" } } }), { mode: 0o600 });
+        harnesses: { codex: { enabled: true, deadlineMs: 30_000, executablePath: fakeCodex, workingDirectory: workDir } } }),
+      { mode: 0o600 });
       const installedConnector = await import(`${pathToFileURL(installed.paths.connectorPath).href}?mac-local-pg=1`);
+      const workerLog: string[] = [];
       const pass = await installedConnector.runWorker({ configPath: installed.paths.configPath, harnessesPath,
-        fetcher: fetch, once: true, log: () => {}, progressIntervalMs: 25 });
-      assert.equal(pass.outcome, "submitted");
+        fetcher: fetch, once: true, log: (line: unknown) => { workerLog.push(String(line)); }, progressIntervalMs: 25 });
+      assert.equal(pass.outcome, "submitted", `the fake codex CLI should have completed the task; worker log: ${JSON.stringify(workerLog)}`);
       const board = await fetch(`${origin}/api/v1/fleet`, { headers: { cookie } });
       const result = (await board.json() as { results: { resultId: string; jobId: string }[] }).results[0]!;
       assert.equal(result.jobId, task.jobId);

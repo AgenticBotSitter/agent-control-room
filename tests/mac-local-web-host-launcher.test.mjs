@@ -69,7 +69,8 @@ test("web host validates and prepares optional intake before listeners and clean
       calls.push("prepare-intake"); return { async start() { calls.push("start-intake"); throw new Error("fixture"); },
         async close() { calls.push("close-intake"); } };
     } };
-    if (name === "macLocalFleet.js") return { async loadMacLocalFleetConnectorReleaseV1() { return undefined; },
+    if (name === "macLocalFleet.js") return { async loadMacLocalFleetReleaseTrustV1() { return {}; },
+      async loadMacLocalFleetConnectorReleaseV1() { return undefined; },
       prepareMacLocalFleetOwnerV1() { return { fleet: { ownerAuthority: {} }, async close() { calls.push("close-fleet"); } }; } };
     if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
     if (name === "serving.js") return { async loadPrivateClientAssets() { return {}; } };
@@ -127,7 +128,7 @@ test("task host is connector-only and loads neither a task provider nor a native
       if (path.endsWith("serving.js")) return { loadPrivateClientAssets: async () => ({ respond() {} }) };
       if (path.endsWith("index.js")) return { default() {} };
       if(path.endsWith("workIntakePrivateService.js"))return{prepareWorkIntakePrivateServiceV1(){}};
-      if(path.endsWith("macLocalFleet.js"))return{loadMacLocalFleetConnectorReleaseV1:async()=>undefined,
+      if(path.endsWith("macLocalFleet.js"))return{loadMacLocalFleetReleaseTrustV1:async()=>({}),loadMacLocalFleetConnectorReleaseV1:async()=>undefined,
         prepareMacLocalFleetOwnerV1:()=>({fleet:{ownerAuthority:{}},async close(){}})};
       throw new Error(`unexpected ${path}`);
     },
@@ -156,7 +157,7 @@ test("a zero-project connector-only start remains website/intake-only", async ()
     if (name === "serving.js") return { loadPrivateClientAssets: async () => ({ respond() {} }) };
     if (name === "index.js") return { default() {} };
     if(name==="workIntakePrivateService.js")return{prepareWorkIntakePrivateServiceV1(){}};
-    if(name==="macLocalFleet.js")return{loadMacLocalFleetConnectorReleaseV1:async()=>undefined,
+    if(name==="macLocalFleet.js")return{loadMacLocalFleetReleaseTrustV1:async()=>({}),loadMacLocalFleetConnectorReleaseV1:async()=>undefined,
       prepareMacLocalFleetOwnerV1:()=>({fleet:{ownerAuthority:{}},async close(){}})};
     throw new Error(`unexpected ${name}`);
   } });
@@ -177,10 +178,11 @@ test("the Mac fleet gateway launcher composes one separate loopback service from
     };
     if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
     if (name === "macLocalFleet.js") return {
+      loadMacLocalFleetReleaseTrustV1: async () => ({ keyId: "test" }),
       loadMacLocalFleetConnectorReleaseV1: async () => ({ manifest: {} }),
       async prepareMacLocalFleetGatewayV1(input) {
         assert.equal(input.configuration.localOwnerSession.tenantId, "tenant:test");
-        assert.ok(input.databaseRoles.fleetGateway); assert.ok(input.connectorRelease); return service;
+        assert.ok(input.databaseRoles.fleetGateway); assert.ok(input.connectorRelease); assert.equal(input.releaseTrust.keyId, "test"); return service;
       },
     };
     throw new Error(`unexpected ${name}`);

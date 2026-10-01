@@ -10,6 +10,7 @@
 // exists so a regression is caught in seconds rather than after a cluster
 // build, and so the guard is mutation-checkable in isolation.
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
@@ -17,6 +18,11 @@ import { createFleetGatewayHandlerV1 } from "../src/fleet/v1";
 import type { FleetGatewayStoreV1 } from "../src/fleet/v1";
 import { WorkIntakeErrorV1, type WorkIntakeSafeCodeV1 } from "../src/work-intake/v1/errors";
 import type { WorkBatchServiceV1 } from "../src/work-intake/v1/service";
+import { RELEASE_TRUST_SCHEMA_V1, releaseKeyIdV1 } from "../scripts/release-signing.mjs";
+
+const releasePublicKey = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const RELEASE_TRUST = Object.freeze({ schema: RELEASE_TRUST_SCHEMA_V1, epoch: 1,
+  keyId: releaseKeyIdV1(releasePublicKey), publicKey: releasePublicKey, versionFloor: "0.0.0", revokedKeyIds: [] });
 
 const principal = Object.freeze({ tenantId: "tenant:unit", workerId: "fleet-worker:" + "1".repeat(32),
   nodeId: "node:unit", identityId: "identity:unit", workerKind: "mcp-agent", displayName: "unit",
@@ -55,7 +61,7 @@ async function proposeWith(code: WorkIntakeSafeCodeV1 | null) {
         startsWork: false, grantsExecutionAuthority: false };
     },
   } as unknown as WorkBatchServiceV1;
-  const handler = createFleetGatewayHandlerV1({ store: stubStore(), proposals,
+  const handler = createFleetGatewayHandlerV1({ store: stubStore(), proposals, releaseTrust: RELEASE_TRUST,
     onUnexpectedError: error => { faults.push(error); } });
   const server = createServer((request, response) => { void handler.handle(request, response); });
   await listen(server);
@@ -106,7 +112,7 @@ test("a proposal that succeeds is a 202 with the intake service's own receipt", 
 test("a validation refusal (not an exception) is still a 422, unchanged", async () => {
   // `submit` can also answer `{ accepted: false }` for a proposal the intake
   // validator refused. That path must keep its own status.
-  const handler = createFleetGatewayHandlerV1({ store: stubStore(), proposals: { submit: async () => ({
+  const handler = createFleetGatewayHandlerV1({ store: stubStore(), releaseTrust: RELEASE_TRUST, proposals: { submit: async () => ({
     accepted: false, safeReasonCode: "proposal_schema_mismatch", startsWork: false,
     grantsExecutionAuthority: false }) } as unknown as WorkBatchServiceV1, onUnexpectedError: () => {} });
   const server = createServer((request, response) => { void handler.handle(request, response); });
