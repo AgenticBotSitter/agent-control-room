@@ -154,7 +154,7 @@
     "mac:down": "node scripts/mac-local/down.mjs",
     "mac:status": "node scripts/mac-local/status.mjs",
     "mac:upgrade": "node --import tsx scripts/mac-local/upgrade.mjs",
-    "test:mac-upgrade": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/mac-local-upgrade.test.mjs",
+    "test:mac-upgrade": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/mac-local-upgrade.test.mjs && pnpm run test:mac-upgrade-default-path",
     "mac:remote-access": "node --import tsx scripts/mac-local/remote-access.ts",
     "test:mac-host-supervisor": "node --test tests/mac-local-task-host-supervisor.test.mjs",
     "mac:service-status": "node scripts/mac-local/service-status.mjs",
@@ -189,7 +189,8 @@
     "test:bot-dogfood": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59620}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=300000 tests/bot-dogfood-postgres.test.ts tests/bot-dogfood-stress-postgres.test.ts tests/bot-claim-eligibility-postgres.test.ts",
     "mac:fleet-gateway": "pnpm -s build:fleet-connector && pnpm -s build && node scripts/mac-local/start-fleet-gateway.mjs",
     "test:text-copy-derivation:postgres": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/text-copy-derivation-postgres.test.ts",
-    "test:mac-local-fleet-postgres": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/mac-local-fleet-postgres.test.ts"
+    "test:mac-local-fleet-postgres": "PG_BIN=\"${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin}\" node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/mac-local-fleet-postgres.test.ts",
+    "test:mac-upgrade-default-path": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/mac-local-upgrade-pin-default-path-pg17.test.mjs"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
