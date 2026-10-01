@@ -31,8 +31,14 @@
 //      the SAME expression as the updater's login is measured false -- so the
 //      boolean §8.4 asks for is a measurement, not a constant.
 //   7. Load: 50 concurrent callers agree, 100 queries down one connection do not
-//      drift, and every backend the burst opened is closed.
-//   8. The down migration reverses exactly what the up file granted, and the up
+//      drift, every backend the burst opened is closed, and a second wave of 40
+//      racing callers plus an abandoned backend still get the same counts.
+//   8. THE PRODUCTION DEFAULT PATH: the real adapter
+//      (createUpdaterHealthAuthorityReadPortV1) is built from the real module
+//      over the real production login's real client, with no injected port,
+//      tool, runner or fake, returns the three counts as numbers, and agrees
+//      with the WEB LOGIN's own independent table reads.
+//   9. The down migration reverses exactly what the up file granted, and the up
 //      file re-applies cleanly afterwards.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -42,6 +48,7 @@ import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
 import { applyUpdaterSchemaV1, updaterReleaseReadTablesV1, updaterTablesV1 } from "../src/updater/v1/schema-installer";
+import { createUpdaterHealthAuthorityReadPortV1 } from "../src/updater/v1/health-authority-reads";
 
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59510), PG = requiresRealPostgres();
 let ran = 0;
@@ -526,7 +533,73 @@ test("the updater's health counts: boundary, contents, closed paths and load", a
       assert.equal(JSON.stringify((await afterAbandon.query<Counts>(`SELECT * FROM ${FUNCTION}`)).rows[0]), expected,
         "an abandoned backend does not starve the next caller");
 
-      // -- (10) The down migration reverses exactly what the up file granted ------
+      // -- (10) THE PRODUCTION DEFAULT PATH, END TO END ----------------------------
+      // Everything above drives the FUNCTION through hand-written SQL. The
+      // code that actually runs in the updater is not that SQL: it is
+      // createUpdaterHealthAuthorityReadPortV1, the adapter the evaluator holds,
+      // and it has to survive the driver's own conventions (node-pg returns a
+      // bigint as TEXT, and rejects any shape but the three columns). A
+      // hand-written `SELECT` cannot see any of that, so this drives the REAL
+      // adapter, built from the REAL module, over the REAL production login's
+      // REAL client -- no injected port, tool, runner or fake anywhere in the
+      // chain -- and asserts it returns exactly the three UI counts.
+      //
+      // This is the DEFAULT-PATH test for this port. The other coverage
+      // (tests/updater-health-count-ports.test.ts) exercises every refusal with
+      // a fake connection, which is exactly what a fake cannot tell you.
+      // A FRESH production client: this section runs after the load section's
+      // sessions.close(), which closed the original `updater` client along with
+      // the 50 burst callers'.
+      const productionLogin = await asUpdater(postgres, sessions);
+      const authorityPort = createUpdaterHealthAuthorityReadPortV1(productionLogin);
+      const throughTheAdapter = await authorityPort.readHealthCounts();
+      // `counts` is the RAW row the driver returned, so its bigint columns are
+      // STRINGS. The adapter's job is precisely to convert them; comparing
+      // against the raw row would assert the bug this adapter exists to prevent.
+      assert.deepEqual(throughTheAdapter, {
+        homeSummaryCount: Number(counts.home_summary_count),
+        projectCount: Number(counts.project_count),
+        updatesPanelCount: Number(counts.updates_panel_count),
+      }, "the production adapter returns the same three counts the UI reads, as NUMBERS not strings");
+      assert.equal(typeof throughTheAdapter.homeSummaryCount, "number",
+        "the adapter converts the driver's bigint text to a number, so a healthy database does not fail as \"3\" !== 3");
+      // And the whole point of §8.4 item 2: the updater's INDEPENDENT read and the
+      // WEB LOGIN's OWN read of the same three sets agree. The previous version
+      // of this assertion read the same function twice through the same login,
+      // which proves nothing. The web side below queries the underlying tables
+      // directly -- the projects the catalog would list and the ready update
+      // candidates the panel would show -- as `control_room_web`, which holds
+      // ordinary table SELECT rather than EXECUTE on this definer, so it is a
+      // genuinely separate authority from the SECURITY DEFINER read above.
+      const webIndependent = await asWeb(postgres, sessions).then(async client => (await client.query<{
+        projects: number; ready: number }>(`SELECT
+          (SELECT count(*)::int FROM public.projects p
+            WHERE p.tenant_id = $1 AND p.workspace_id = $2 AND p.adapter_id =
+              (SELECT 'adapter:manual:' || substr(encode(sha256(convert_to(
+                '{"tenantId":"' || $1 || '","workspaceId":"' || $2 || '"}', 'UTF8')), 'hex'), 1, 32))) AS projects,
+          (SELECT count(*)::int FROM public.control_update_candidates c
+            WHERE c.tenant_id = $1 AND c.state = 'ready') AS ready`,
+        [TENANT, WORKSPACE])).rows[0]!);
+      assert.equal(webIndependent.projects, throughTheAdapter.projectCount,
+        "the web login's own project-catalog read and the updater's definer read agree");
+      assert.equal(webIndependent.ready, throughTheAdapter.updatesPanelCount,
+        "the web login's own ready-candidate read and the updater's definer read agree");
+      // 12 concurrent callers THROUGH THE ADAPTER, so the load case covers the
+      // production entry point and not only the SQL beneath it. 12, not 40: the
+      // wave above already holds 40 backends open (same test, still tracked by
+      // `sessions`), and 40 more on top of those plus the fixture's own clients
+      // exceeds the disposable cluster's 57 usable slots (max_connections=60 less
+      // the 3 PostgreSQL reserves for SUPERUSER) and fails at CONNECT with
+      // SQLSTATE 53300 -- a connection ceiling reported where a boundary result
+      // was meant.
+      const adapterWave = await Promise.all(Array.from({ length: 12 }, async () => {
+        const client = await asUpdater(postgres, sessions);
+        return createUpdaterHealthAuthorityReadPortV1(client).readHealthCounts();
+      }));
+      for (const [index, seenCounts] of adapterWave.entries())
+        assert.deepEqual(seenCounts, throughTheAdapter, `adapter caller ${index} disagreed`);
+
+      // -- (11) The down migration reverses exactly what the up file granted ------
       const owner = await asSchemaOwner(postgres, sessions);
       await owner.query(await readFile(DOWN, "utf8"));
       assert.equal((await owner.query<{ gone: boolean }>(
