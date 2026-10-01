@@ -41,7 +41,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "pg";
 import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres } from "./support/attack-kit/index";
-import { applyUpdaterSchemaV1 } from "../src/updater/v1/schema-installer";
+import { applyUpdaterSchemaV1, updaterReleaseReadTablesV1, updaterTablesV1 } from "../src/updater/v1/schema-installer";
 
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 59510), PG = requiresRealPostgres();
 let ran = 0;
@@ -260,7 +260,15 @@ test("the updater's health counts: boundary, contents, closed paths and load", a
       await seedScope(postgres, TENANT, WORKSPACE);
       await seedScope(postgres, OTHER_TENANT, OTHER_WORKSPACE);
       const installed = await installUpdaterSchema(postgres);
-      assert.equal(installed.tables, 9, "the updater's own nine tables were created by its fixed DDL");
+      // DERIVED, not hard-coded. This assertion used to say `9`, which was the
+      // updater's original table count and went stale the moment cook/v1's item
+      // 10a passkey work added the open-registration, refusal-pair and limits
+      // tables (the merge into cook/v1 reported 13 !== 9). `updaterTablesV1` is
+      // the loader's declared list, and applyUpdaterSchemaV1 already refuses on
+      // a missing OR an extra table, so reading the count from there keeps the
+      // assertion true on every future table addition instead of failing on one.
+      assert.equal(installed.tables, updaterTablesV1.length,
+        "every table the loader declares was created by its fixed DDL, and no others");
 
       // -- (1) The function's shape, read from the catalog ------------------------
       const catalog = sessions.track(new Client(postgres.admin() as never));
@@ -305,9 +313,16 @@ test("the updater's health counts: boundary, contents, closed paths and load", a
       // `coalesce(array_agg(...), ARRAY[]::text[])` needs an explicit cast for the
       // driver to infer the result type; without it node-pg hands back `{}` and the
       // assertion compares an object to an array.
+      // The exemption list is `updaterReleaseReadTablesV1`, the loader's own
+      // declared set -- not a hard-coded three. cook/v1's item 21 added
+      // owner_web_push_subscriptions (the updater is the process that POSTs the
+      // owner's push), and hard-coding three reported that correct database as a
+      // boundary breach. Deriving it keeps the assertion's real meaning intact:
+      // the updater reaches the tables the loader says it may and NOTHING else,
+      // in both directions, so a fifth grant still fails here.
+      const exempted = updaterReleaseReadTablesV1.map(name => `c.relname <> '${name}'`).join(" AND ");
       const reachable = (await updater.query<{ tables: string[] }>(`
-        SELECT coalesce(array_agg(DISTINCT c.relname) FILTER (WHERE c.relname <> 'control_web_sessions'
-          AND c.relname <> 'control_identities' AND c.relname <> 'control_role_grants'),
+        SELECT coalesce(array_agg(DISTINCT c.relname) FILTER (WHERE ${exempted}),
           ARRAY[]::text[])::text[] AS tables
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public' AND c.relkind = 'r'
@@ -318,7 +333,29 @@ test("the updater's health counts: boundary, contents, closed paths and load", a
             OR has_table_privilege(current_user, c.oid, 'DELETE')
             OR has_table_privilege(current_user, c.oid, 'TRUNCATE'))`)).rows[0]!;
       assert.deepEqual(reachable.tables, [],
-        "the updater reaches no release table beyond the three its owner-session guard needs");
+        "the updater reaches no release table beyond the loader's declared release-read set");
+      // BOTH DIRECTIONS, so deriving the exemption above cannot quietly empty
+      // it. Each declared table must genuinely be reachable by the updater's
+      // login (otherwise the exemption is hiding a missing grant), and the set
+      // must still be exactly the design's narrow shape: the three tables the
+      // owner-session guard reads plus the push-subscription table item 21
+      // needs. A fifth entry -- any other release table -- fails here.
+      assert.deepEqual([...updaterReleaseReadTablesV1].sort(),
+        ["control_identities", "control_role_grants", "control_web_sessions", "owner_web_push_subscriptions"],
+        "the loader's release-read set is the three guard tables plus item 21's push table, and nothing else");
+      const reachableAny = (await updater.query<{ tables: string[] }>(`
+        SELECT coalesce(array_agg(DISTINCT c.relname), ARRAY[]::text[])::text[] AS tables
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'r'
+          AND (EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                 AND (has_column_privilege(current_user, c.oid, a.attname, 'SELECT')
+                   OR has_column_privilege(current_user, c.oid, a.attname, 'INSERT')
+                   OR has_column_privilege(current_user, c.oid, a.attname, 'UPDATE')))
+            OR has_table_privilege(current_user, c.oid, 'DELETE')
+            OR has_table_privilege(current_user, c.oid, 'TRUNCATE'))`)).rows[0]!;
+      assert.deepEqual(reachableAny.tables.filter(name => updaterReleaseReadTablesV1.includes(name)).sort(),
+        [...updaterReleaseReadTablesV1].sort(),
+        "every declared release-read table really is reachable, so the exemption above hides nothing");
       // The three release tables this lane counts are unreadable outright.
       for (const statement of ["SELECT count(*) FROM projects", "SELECT count(*) FROM control_update_candidates",
         "SELECT count(*) FROM control_jobs"]) {
