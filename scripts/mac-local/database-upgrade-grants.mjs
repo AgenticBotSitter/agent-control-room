@@ -80,24 +80,11 @@ const tuple = ({ role, kind, object, column = "", privilege: right, is_grantable
  *
  * So the filter cannot live at the statement generator alone, and it must not be
  * `role === "control_room_private_web"`: the updater grants to `postgres` too
- * (owner rights), and a schema can hold grants for any role. The one predicate
- * that is exactly right is on the SCHEMA of the object, and it is applied at BOTH
- * ends of the pipeline, so an `updater` item cannot reach a GRANT or a REVOKE:
- *
- *   1. the ROOT, `macGrantRowsToSetV1` — every path from catalogue rows to
- *      compared tuples goes through it. Both callers are covered by that one
- *      placement: the live `readMacGrantCatalogV1`, and
- *      `planMacDatabaseUpgradeSnapshotV1`, which is handed a captured snapshot's
- *      rows directly and never calls the live reader. Filtering in either
- *      caller instead would have left the other one offering `updater` rows to
- *      `diffMacGrantsV1` as EXTRA — MEASURED, that is what made the whole upgrade
- *      path answer `upgrade_convergence_refused` while the applier filter was
- *      already in place.
- *   2. the STATEMENT, `grantSql` — the last thing between a catalog row and a
- *      change on disk, reached whenever an `updater` item arrives from a route
- *      that never built a set at all (a caller assembling a diff by hand).
- *      REFUSED there, not skipped: skipping one of a pair would report a
- *      convergence that was not performed.
+ * (owner rights), and a schema can hold grants for any role. The predicate is
+ * therefore on the SCHEMA of the object, and it is applied at the two places an
+ * `updater` item could otherwise reach a GRANT or a REVOKE — see
+ * `macGrantRowsToSetV1` and `grantSql` below, which are the two ends of the
+ * pipeline.
  */
 export const macUpdaterOwnedSchema = "updater";
 const updaterOwned = item => {
@@ -108,7 +95,7 @@ const updaterOwned = item => {
   // exact `updater` schema prefix matches.
   return object === macUpdaterOwnedSchema || object.startsWith(`${macUpdaterOwnedSchema}.`);
 };
-/** The live snapshot. Anything the updater owns is not compared at all. */
+/** Whether the release's converger is allowed to act on this grant at all. */
 export const macReleaseOwnedGrantV1 = item => !updaterOwned(item);
 
 function splitCommas(source) {
@@ -226,12 +213,14 @@ export async function readMacGrantCatalogV1(client) {
   return macGrantRowsToSetV1(rows);
 }
 
-/** THE root of the filter. Every path from catalogue rows to compared tuples
- * goes through here — the live read below, and `planMacDatabaseUpgradeSnapshotV1`,
- * which is handed a captured snapshot's rows directly and never calls the live
- * reader. Filtering here rather than in either caller is what makes the
- * guarantee hold for both, and it is why `updater` rows cannot be offered to
- * `diffMacGrantsV1` as EXTRA by either route. */
+/** THE first of the two ends of the filter, and the one every path crosses:
+ * every path from catalogue rows to compared tuples goes through here — the live
+ * `readMacGrantCatalogV1`, and `planMacDatabaseUpgradeSnapshotV1`, which is handed
+ * a captured snapshot's rows directly and never calls the live reader. Filtering
+ * in either caller instead would have left the other one offering `updater` rows
+ * to `diffMacGrantsV1` as EXTRA. MEASURED: that is what made the whole upgrade
+ * path answer `upgrade_convergence_refused` while the `grantSql` refusal below
+ * was already in place. */
 export function macGrantRowsToSetV1(rows) {
   return new Set(rows.map(row => tuple(row)).filter(macReleaseOwnedGrantV1));
 }

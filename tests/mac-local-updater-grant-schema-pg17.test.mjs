@@ -55,11 +55,12 @@ import { PG_BIN, findFreePort, needsPg, requestedPort } from "./helpers/disposab
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const state = {};
 
-/** The updater's loader-owned tables. Named here because the DDL that creates
- * them is the updater's, not this repo's install path, and a fixture that invents
- * a table of its own would not be the shape the filter exists for. The passkey
- * and alert tables are the two the finding names. */
-const UPDATER_TABLES = ["authorization_challenges", "credential_registrations", "push_queue"];
+/** The updater's loader-owned tables, named from the updater's own DDL
+ * (`src/updater/v1/ddl/0002_schema.sql`) rather than invented here — a fixture
+ * that invented a table of its own would not be the shape the filter exists for,
+ * and a stale name would make this lane quietly weaker. The passkey and alert
+ * (push) tables are the two the finding names. */
+const UPDATER_TABLES = ["passkey_registrations", "passkey_open_registrations", "push_queue"];
 
 const exec = (file, args) => execFileSync(join(PG_BIN ?? "", file), args, { encoding: "utf8", timeout: 120_000,
   env: { ...process.env, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } });
@@ -77,13 +78,13 @@ async function updaterAcl(client) {
       a.is_grantable FROM pg_catalog.pg_namespace n
       CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
       WHERE n.nspname = $1 AND r.rolname = ANY($2::text[]) ORDER BY 1,3`, [macUpdaterOwnedSchema, roles])).rows,
-    tables: (await client.query(`SELECT r.rolname AS role, c.relname AS object, a.privilege_type AS privilege,
-      a.is_grantable FROM pg_catalog.pg_class c
+    tables: (await client.query(`SELECT r.rolname AS role, n.nspname || '.' || c.relname AS object,
+      a.privilege_type AS privilege, a.is_grantable FROM pg_catalog.pg_class c
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
       WHERE n.nspname = $1 AND c.relkind IN ('r','v') AND r.rolname = ANY($2::text[]) ORDER BY 1,2,3`,
     [macUpdaterOwnedSchema, roles])).rows,
-    functions: (await client.query(`SELECT r.rolname AS role, p.proname || '(' || COALESCE((SELECT
+    functions: (await client.query(`SELECT r.rolname AS role, n.nspname || '.' || p.proname || '(' || COALESCE((SELECT
       string_agg(quote_ident(t.typname), ', ' ORDER BY u.ord) FROM unnest(p.proargtypes) WITH ORDINALITY
       AS u(oid, ord) JOIN pg_type t ON t.oid = u.oid), '') || ')' AS object, a.privilege_type AS privilege,
       a.is_grantable FROM pg_catalog.pg_proc p
@@ -153,12 +154,28 @@ before(async () => {
   await state.client.query(`REVOKE ALL ON SCHEMA ${macUpdaterOwnedSchema} FROM PUBLIC`);
   for (const [name, args] of [["authorization_complete", "text, bytea, bytea, bytea"], ["bounded_transports", "text[]"]])
     await state.client.query(`REVOKE ALL ON FUNCTION ${macUpdaterOwnedSchema}.${name}(${args}) FROM PUBLIC`);
-  // The web login's grants, which the loader re-asserts on every run.
+  // The web login's grants, which the loader re-asserts on every run: the schema
+  // USAGE, the passkey table reads, the alert (push) queue read and EXECUTE on
+  // both guards.
   await state.client.query(`GRANT USAGE ON SCHEMA ${macUpdaterOwnedSchema} TO control_room_private_web`);
-  await state.client.query(`GRANT SELECT ON ${macUpdaterOwnedSchema}.push_queue TO control_room_private_web`);
+  await state.client.query(`GRANT SELECT ON ${macUpdaterOwnedSchema}.passkey_registrations TO control_room_private_web`);
+  await state.client.query(`GRANT SELECT ON ${macUpdaterOwnedSchema}.passkey_open_registrations TO control_room_private_web`);
+  await state.client.query(`GRANT SELECT, INSERT ON ${macUpdaterOwnedSchema}.push_queue TO control_room_private_web`);
   await state.client.query(`GRANT EXECUTE ON FUNCTION ${macUpdaterOwnedSchema}.authorization_complete(text, bytea, bytea, bytea)
     TO control_room_private_web`);
   await state.client.query(`GRANT EXECUTE ON FUNCTION ${macUpdaterOwnedSchema}.bounded_transports(text[]) TO control_room_private_web`);
+
+  // The fixture must actually carry what the finding describes, or every test
+  // below would pass against an empty schema. Asserted on the catalog. The
+  // function spellings are exactly what the catalogue query renders — argument
+  // types joined by `', '` — because a hand-written expectation that does not
+  // match the render would pass or fail for the wrong reason.
+  const acl = JSON.stringify(await updaterAcl(state.client));
+  for (const expected of ["updater", "updater.passkey_registrations", "updater.passkey_open_registrations",
+    "updater.push_queue", "updater.authorization_complete(text, bytea, bytea, bytea)",
+    "updater.bounded_transports(_text)"])
+    assert.ok(acl.includes(expected), `the fixture is missing a grant on ${expected}`);
+  assert.ok(!acl.includes('"grantee":0'), "PUBLIC holds nothing in the updater schema");
 });
 
 after(async () => {
