@@ -73,27 +73,28 @@ export async function nextGenerationIdV1(client) {
   // The FOUR trailing digits are zero-PADDED, and they are drawn from
   // `pg_catalog.random()` rather than a sequence for a reason worth stating: a
   // sequence would make the id's middle component PREDICTABLE from an observed
-  // one, so an attacker who saw one generation name could guess the next night's
-  // name before it was written. These three digits only break ties within a
-  // single second; the primary key is still what guarantees uniqueness. Four
-  // digits rather than three because three is not enough for the density the
-  // RETENTION TEST creates: twenty-six attempts inside one second collided
-  // about 28% of the time at 1-in-1000, which failed a real lane run. At four
-  // digits that is ~3% and production's one-run-a-night is ~1 in 10,000 a year.
+  // one, so someone who saw one generation name could guess the next night's name
+  // before it was written. They exist only to break ties inside one second; the
+  // primary key is still what guarantees uniqueness.
   //
-  // Zero-padding is not cosmetic. `floor(random()*1000)::int::text` yields "47"
-  // as often as "875", and an unpadded two-digit value fails the `{3}` group in
-  // the DDL's CHECK — so roughly two attempts in three were refused at INSERT.
-  // Measured on a real cluster: `backup:2026-09-30T13-39-28-47Z`. `lpad` is
-  // applied to a `text` cast, not to an integer, because the integer form has no
-  // width to pad.
+  // FOUR digits rather than three, because THREE was not enough for the density
+  // the RETENTION TEST creates: twenty-seven draws from 1,000 values collide about
+  // 70% of the time by the birthday bound, and that test mints twenty-seven
+  // generations inside one second — so the collision was the common case, not the
+  // rare one, and it failed the lane.
   //
-  // A collision within one second is refused by the primary key, and
-  // the runner records it as a failed attempt and retries an hour later. That is
-  // the right trade: a nightly backup must not silently invent a second
-  // generation, and it is not worth a retry loop that could hide two real
-  // attempts. The primary key refusing a collision is the honest answer; a
-  // retry loop would be a silent way of hiding two real attempts.
+  // FOUR digits made it rare but still not acceptable as a silent failure.
+  // Twenty-seven draws from 10,000 collide about 0.02% of the time, which is a
+  // real failure rate for a job that runs unattended — and two mutation baselines
+  // hit it with `23505 unique_violation` at "success 8" and "success 11". A
+  // version of this comment claimed "~3%", which is wrong by more than two orders
+  // of magnitude; the point stands either way, and the wrong number is worth
+  // recording because someone would otherwise trust it.
+  //
+  // Zero-padding is not cosmetic: `floor(random()*10000)::int::text` yields "47"
+  // as often as "875", and an unpadded value fails the `{4}` group in the DDL's
+  // CHECK. `lpad` is applied to a `text` cast, not to an integer, because the
+  // integer form has no width to pad.
   const result = await client.query(`SELECT 'backup:' || to_char(pg_catalog.now(),
     'YYYY-MM-DD"T"HH24-MI-SS') || '-' || lpad((floor(pg_catalog.random()*10000)::int)::text, 4, '0')
     || 'Z' AS generation_id`);
@@ -217,9 +218,37 @@ export class PostgresBackupStoreV1 {
     const maxAge = Number.isInteger(policy.maxAgeSeconds) ? policy.maxAgeSeconds : BACKUP_MAX_AGE_SECONDS_V1;
     const kept = Number.isInteger(policy.keptGenerations) ? policy.keptGenerations : BACKUP_KEPT_GENERATIONS_V1;
     if (maxAge < 3600 || maxAge > 604_800 || kept < 1 || kept > 100) throw updaterRefuseV1("updater_backup_policy_refused");
-    const generationId = await nextGenerationIdV1(this.client);
-    await this.client.query(`INSERT INTO updater.backup_generations(generation_id,state,completed_at,failure_code)
-      VALUES($1,'failed',pg_catalog.now(),'backup_in_progress')`, [generationId]);
+    // The id is minted by the DATABASE and the INSERT is retried ON A COLLISION,
+    // because a collision is not a failure of anything: it is two attempts in the
+    // same second drawing the same four random digits, and the right answer is to
+    // draw again.
+    //
+    // Refusing instead — which an earlier version did, on the reasoning that "a
+    // retry loop would be a silent way of hiding two real attempts" — cost a
+    // nightly backup an entire night, twice: `23505 unique_violation` at
+    // "success 8" and "success 11" of the retention test. The primary key still
+    // arbitrates, so two real attempts can never share a generation; the loop only
+    // changes what happens when the RANDOM SUFFIX repeats, which is not a fact
+    // about two attempts at all.
+    //
+    // ONLY `23505` is retried. Any other SQLSTATE — a missing table, a permission
+    // denial, a CHECK failure — is raised as-is, because retrying those would
+    // hide a real fault behind a retry loop.
+    let generationId = null;
+    for (let draw = 0; draw < 12; draw += 1) {
+      const candidate = await nextGenerationIdV1(this.client);
+      try {
+        await this.client.query(`INSERT INTO updater.backup_generations(generation_id,state,completed_at,failure_code)
+          VALUES($1,'failed',pg_catalog.now(),'backup_in_progress')`, [candidate]);
+        generationId = candidate;
+        break;
+      } catch (error) {
+        // node-postgres puts the SQLSTATE on `code`. A refusal raised by the store
+        // itself has no SQLSTATE and must not be retried either.
+        if (error?.code !== "23505") throw error;
+      }
+    }
+    if (generationId === null) throw updaterRefuseV1("updater_backup_generation_id_refused");
     // The failure counter is NOT incremented here. An attempt is a failure once
     // it has FAILED, not once it has started: a `kill -9` mid-dump leaves an
     // in-flight row that never completes, and counting it twice — once on start

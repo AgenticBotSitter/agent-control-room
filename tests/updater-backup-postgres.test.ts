@@ -1120,7 +1120,22 @@ test("the backup ledger refuses a forged, rewritten or widened state through eve
         shapeDigest: DIGEST("sreset2"), rowCounts: [{ table: "t", count: 1 }] });
       assert.equal((await store.freshness()).consecutiveFailures, 0,
         "and zeroing it alongside a success that really happened is permitted");
-      // The failure pair cannot be half-cleared, which is how "failed" would
+      // Twenty-seven generations inside one second is what the retention test does,
+      // and it collides about 3% of the time at four random digits — so this mints
+      // a burst and asserts that EVERY one of them is usable. The first version of
+      // this guard refused the collision, and the cost was a lost night: two
+      // mutation baselines failed with "23505 unique_violation" at success 8 and
+      // success 11. The retry is the fix, and this is what proves it, because a
+      // burst of this size raises the odds of a collision to near-certainty over
+      // enough repetitions.
+      for (let index = 0; index < 40; index += 1) {
+        const minted = await store.beginAttempt({});
+        assert.match(minted.generationId, /^backup:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{4}Z$/u,
+          `minted ${index} is a legal id`);
+        assert.equal((await store.generation(minted.generationId))?.state, "failed",
+          `minted ${index} has its own row, so no two attempts share an id`);
+      }
+      // And the failure pair cannot be half-cleared, which is how "failed" would
       // otherwise become "healthy" by clearing one column. Both halves are ALREADY
       // set at this point, because the `failAttempt` calls above set them, so
       // re-setting one of them is a no-op the guard correctly permits — the first
