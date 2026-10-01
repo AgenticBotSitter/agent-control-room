@@ -37,7 +37,11 @@ export async function completeMacLocalFirstOwnerV1(protectedRoot, receiptPath, r
   if (JSON.stringify(manifest) !== JSON.stringify(expectedManifest)) refuse();
 
   // Key pinning must be established before the independent rollback checkpoint.
-  await (runtime.pinNodeKeys ?? pinMacLocalNodeKeysV1)(protectedRoot, receiptPath, { receipt });
+  // The completion boundary owns the real pin command. Tests may isolate only
+  // that command's separate database port; the validated receipt cannot be
+  // replaced by the nested runtime.
+  await (runtime.pinNodeKeys ?? pinMacLocalNodeKeysV1)(protectedRoot, receiptPath,
+    { ...(runtime.pinNodeKeysRuntime ?? {}), receipt });
   const roles = await (runtime.loadRoles ?? loadMacLocalDatabaseRolesFromRootV1)(protectedRoot);
   const db = (runtime.openDatabase ?? createPrivatePostgresDatabase)(roles.coordinator);
   let checkpoints;
