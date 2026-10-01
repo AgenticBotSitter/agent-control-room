@@ -73,7 +73,7 @@
     "file": "src/updater/v1/ddl/0003_guards.sql",
     "find": "  IF prior_state = p_state AND NOT p_terminal THEN\n    SELECT r.* INTO moved FROM updater.runs r WHERE r.run_id = p_run_id;\n    RETURN pg_catalog.to_jsonb(moved);\n  END IF;",
     "replace": "  IF false THEN\n    SELECT r.* INTO moved FROM updater.runs r WHERE r.run_id = p_run_id;\n    RETURN pg_catalog.to_jsonb(moved);\n  END IF;",
-    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" CONTROL_ROOM_PG_TEST_PORT_BASE=\"${CONTROL_ROOM_PG_TEST_PORT_BASE:-59480}\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-load-postgres.test.ts",
+    "test": "PG_BIN=\"/opt/homebrew/opt/postgresql@17/bin\" node --import tsx --test --test-concurrency=1 --test-timeout=900000 tests/updater-run-recovery-load-postgres.test.ts",
     "why": "B4: repeating a step must be a no-op. Without it twenty concurrent callers asking for the same state each wrote a mirror event, so the run's journal carried twenty copies of one step"
   }
 ]
